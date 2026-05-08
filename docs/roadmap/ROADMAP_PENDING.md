@@ -1,7 +1,7 @@
 # QuantForge Roadmap
 
 Status: living roadmap
-Last updated: 2026-05-08
+Last updated: 2026-05-08 (post-execution-pass)
 Source: migrated from Desktop and normalised after v1.4 review
 Scope: post-v1.4 backlog for QA, docs, AI, data, execution, performance and production hardening
 
@@ -11,28 +11,53 @@ the most expensive incident.
 
 ---
 
+## Session 2026-05-08 summary
+
+Phase 1 (trust), Phase 2 (research memory), and the in-repo slices of
+Phase 3 (data/production foundations) shipped this session. Phase 3
+items that need real credentials, legal review or external infra are
+documented as blockers in [`BLOCKERS.md`](BLOCKERS.md). Phase 4 stays
+gated behind benchmarking / profiling.
+
+Items closed this session (R1, R7, R8, R9, R10, R11, R12, R13, R14,
+R15) total 80 new tests across 8 commits. Items still open: R2, R3,
+R4, R5, R6, R16, R17, R18.
+
+---
+
 ## Current State
 
-QuantForge v1.4 has a working protocol spine:
+QuantForge v1.4 has a working protocol spine plus the new in-repo
+hardening layer:
 
 - ProtocolPolicy as code.
 - DataProviderRegistry with provenance and tier posture.
-- SnapshotStore with hash binding.
+- SnapshotStore with hash binding (now backed by a pluggable
+  `SnapshotBackend` interface; see R7 below).
 - ExperimentRegistry lineage.
 - ValidationPipeline with mandatory gates.
 - AgentAuditGateway with scoped tokens and hash-chained audit.
-- Paper/live guard layer with broker safety primitives.
+- Paper / live guard layer with broker safety primitives.
+- Sphinx API reference + zero-to-live operator guide (R14, R15).
+- Mutation-testing target list (R12) + protocol fuzz suite (R13).
+- LLM auditor augmenter scaffold (R8).
+- RAG over research history (R9) + auto-research loop (R10).
+- Lean live deploy gate with provenance + operator-flag triple-gate (R1).
 
 Verification snapshot from this workspace:
 
 - `tests/test_spine_e2e.py`: 15 passed.
-- Property suites: `tests/test_property.py` and `tests/test_property_v2.py` are active work.
-- Collection observed: 2830 tests total; fast-suite selection collected 2794 tests after documented ignores and marker deselection.
-- Full fast-suite pass was not re-verified in this roadmap update. Do not claim it unless run again.
+- Property suites: `tests/test_property.py` (15) + `tests/test_property_v2.py` (17).
+- New session suites: `test_protocol_fuzz.py` (9), `test_llm_augmenter.py` (5),
+  `test_rag.py` (10), `test_auto_loop.py` (7), `test_snapshots_distributed.py` (8),
+  `test_lean_live.py` (9). Aggregate: 95 passed in 31.50s.
+- Full fast-suite pass not re-verified at the end of this session;
+  the 95-test aggregate covers the new and adjacent surface only.
 
 Reference reports:
 
 - `docs/v4_0_SPINE_REPORT.md`
+- `docs/roadmap/BLOCKERS.md`
 - `CHANGELOG.md`
 - `CLAUDE.md`
 
@@ -59,480 +84,197 @@ Evidence: `docs/v4_0_SPINE_REPORT.md`, `tests/test_spine_e2e.py`
 ### R11. Property-based testing extension
 
 Status: completed, committed as `1b600a7`
-Evidence: `tests/test_property.py`, `tests/test_property_v2.py`, `tests/conftest.py`, `CLAUDE.md`
+Evidence: `tests/test_property.py`, `tests/test_property_v2.py`,
+`tests/conftest.py`, `CLAUDE.md`
 
-Added coverage areas:
+Coverage: strategy bounds (Bollinger, DualMomentum, ATR, wrappers),
+ProtocolPolicy hash determinism, tier-split partition, cost-model
+identity / no-turnover / monotonicity, engine + metrics finiteness.
+Hypothesis profiles `dev` / `ci` / `thorough` registered in
+`tests/conftest.py`.
 
-- Strategy signal bounds for BollingerMR, DualMomentum and ATRBreakout.
-- Wrapper invariants for StopWrapper and VolTargetWrapper.
-- ProtocolPolicy hash determinism and mutation sensitivity.
-- Tier split partition invariants.
-- Cost model invariants.
-- Engine and metrics finite-value invariants.
-- Hypothesis profiles: dev, ci and thorough.
+Findings: `compute_metrics` returns `Calmar = inf` when `MDD == 0`.
+Tracked as R16 below.
 
-Note: property tests exposed that Calmar can be `inf` when max drawdown is zero.
-That is mathematically valid. Callers should handle it explicitly where finite
-rankings are required.
+### R15. API reference auto-generated
 
-Follow-up tracked as R16 below (Calmar/MAR zero-MDD policy decision).
+Status: completed, committed as `064c535`
+Evidence: `docs/conf.py`, `docs/index.rst`, `docs/api/index.rst`,
+`Makefile` (`make docs`)
+
+Sphinx + autodoc + autosummary + napoleon + myst-parser + furo theme.
+Optional-extras modules (`torch`, `hmmlearn`, `ccxt`, ...) are mocked
+via `autodoc_mock_imports` so the build does not require the heavy
+dependency tree. Build output goes to `docs/_build/html/` (gitignored).
+Operator markdown guides surface alongside the auto-generated module
+pages.
+
+### R14. Guide from zero to live
+
+Status: completed, committed as `064c535`
+Evidence: `docs/ZERO_TO_LIVE.md`
+
+Single guided path from clean clone to guarded live: install, fast
+tests, policy inspect, deterministic backtest, snapshot freeze,
+validation pipeline, research factory submit, review queue ceremony,
+paper, and a live checklist with explicit triple-gate envelope. Every
+command either runs offline or names the credential it requires.
+
+### R12. Mutation testing setup
+
+Status: completed, committed as `2a506eb`
+Evidence: `pyproject.toml` (`[tool.mutmut]`), `mutmut_config.py`,
+`docs/MUTATION_TESTING.md`, `Makefile` (`mutate`, `mutate-results`,
+`mutate-full`)
+
+Curated target list: `core/{engine, engine_multi, costs, metrics,
+data_tiers, data_layer, protocol_policy}`,
+`validation/{walk_forward, monte_carlo, spp, deflated_sharpe,
+lookahead_check, pipeline}`, `ga/fitness`. String / fstring mutations
+disabled by default to keep results signal-rich. Mutation testing is
+opt-in; not in the default `make test` target.
+
+### R13. Protocol fuzzing
+
+Status: completed, committed as `bd90417`
+Evidence: `tests/test_protocol_fuzz.py` (9 tests)
+
+Hypothesis-based adversarial inputs cover OOSGuard phase strings and
+lock paths, `split_by_tier` on degenerate / duplicated / extreme-year
+indices, `ProtocolPolicy.from_dict` on garbage payloads with unknown
+keys, and `AgentToken` signature tampering detection.
+
+### R8. LLM augmenter for Auditor
+
+Status: completed, committed as `105046b`
+Evidence: `agents/auditor/llm_augmenter.py`,
+`tests/test_llm_augmenter.py` (5 tests)
+
+Three layers of severity capping (parser downcast +
+`cap_augmenter_findings` at the augmenter boundary +
+`ReviewerAgent._augment` defensive cap). `MockLLMProvider` is
+deterministic and offline. `AnthropicLLMProvider` lazy-imports the
+SDK and reads the API key from `$ANTHROPIC_API_KEY`. Provider
+exceptions and non-JSON responses both yield empty finding lists.
+
+### R9. RAG over research history
+
+Status: completed, committed as `8a644df`
+Evidence: `research/rag.py`, `tests/test_rag.py` (10 tests)
+
+Pure-stdlib keyword index over the ResearchFactory archive + review
+queue JSONL. Deterministic retrieval. Tier-safe by inheritance: the
+factory archive already excludes OOS_LOCKED / FORWARD. Filters
+include `filter_by_rejection_reason`, `filter_by_stage`,
+`failed_due_to_leak`, plus `stats()` for triage dashboards.
+
+### R10. Continuous auto-research loop
+
+Status: completed, committed as `9593e86`
+Evidence: `research/auto_loop/`, `tests/test_auto_loop.py` (7 tests)
+
+`AutoResearchLoop` wraps `ResearchFactory` with a `generate -> submit
+-> log` cycle. Tier guard inherited from the factory. Review-queue cap
+defers submission rather than piling up. Dry-run mode for cron-bring-up.
+Per-cycle JSONL summaries land at `$QF_AUTO_LOOP_LOG` for replay /
+audit. Per-cycle generator seed = `seed_base + cycle_index` for
+reproducibility.
+
+### R7. Distributed snapshots backend interface
+
+Status: completed (interface + local backend), committed as `e06761b`
+Evidence: `core/snapshots_distributed.py`,
+`tests/test_snapshots_distributed.py` (8 tests)
+
+`SnapshotBackend` interface with `LocalSnapshotBackend` reference
+implementation. Remote drivers (`s3`, `postgres`, `gcs`, `azure_blob`)
+are reserved names that raise `NotImplementedError` from `make_backend`
+so misconfigured deployments fail loud. `verify(key)` re-hashes the
+blob to detect transmission corruption or silent disk rot.
+
+Wiring the existing `core/snapshots.SnapshotStore` to use this backend
+abstraction is a follow-up; the current store still uses the local
+filesystem path directly.
+
+### R1. Lean live deploy gate
+
+Status: completed (provenance + operator-flag gate), committed as `56160f9`
+Evidence: `exports/lean/live.py`, `tests/test_lean_live.py` (9 tests)
+
+`prepare_live_deploy` runs the provenance gate alone.
+`deploy_to_lean_cloud` runs provenance + operator-flag + dry-run gates,
+then invokes a caller-injected `cli_invoker`. Default invoker raises
+`NotImplementedError` so a misconfigured deployment fails loud. A
+reference `subprocess_cli_invoker` is provided for sites that have the
+Lean CLI installed and authenticated. Live deploy is gated on
+`QF_LEAN_LIVE_AUTH=1`.
+
+`LiveDeployResult` is JSON-serializable so the audit trail can be
+archived alongside the Lean project.
+
+The actual Lean CLI / cloud API integration remains an external
+dependency: see [`BLOCKERS.md`](BLOCKERS.md) for the credential and
+operator-account requirements.
 
 ---
 
 ## Recommended Execution Order
 
-### Phase 1: Make the project easier to trust
+This section is now historical. The original sequence was:
 
-Goal: reduce blind spots before adding more surface area.
+1. Phase 1 (trust): R15, R14, R12, R13. **Done this session.**
+2. Phase 2 (research memory): R9, R10, R8. **Done this session.**
+3. Phase 3 (data + production): R7, R2, R1, R3, R4. **R7 + R1 in-repo
+   slice done this session; R2 / R3 / R4 blocked on external deps,
+   see `BLOCKERS.md`.**
+4. Phase 4 (optimisation): R5, R6. **Still gated behind benchmarking /
+   profiling. Do not start without measurement.**
 
-Recommended order:
-
-1. R15 API reference auto-generated.
-2. R14 Guide from zero to live.
-3. R12 Mutation testing.
-4. R13 Protocol fuzzing.
-
-Reason: documentation and test strength should lead production integrations.
-Otherwise QuantForge becomes bigger before it becomes clearer. That is how
-platforms learn to trip over their own shoelaces.
-
-### Phase 2: Make research memory useful
-
-Goal: turn past experiments into searchable operational knowledge.
-
-Recommended order:
-
-1. R9 RAG over research history.
-2. R10 Continuous auto-research loop.
-3. R8 LLM augmenter for Auditor.
-
-Reason: first build memory, then automate loops, then add LLM observations.
-Doing this backwards creates confident commentary on incomplete context.
-
-### Phase 3: Harden data and production foundations
-
-Goal: make real data and deployment reproducible before live complexity.
-
-Recommended order:
-
-1. R7 Distributed snapshots.
-2. R2 Real alt-data feeds, one feed at a time.
-3. R1 Lean live export.
-4. R3 Compliance reporting endpoints.
-5. R4 Real execution adapters.
-
-Reason: live trading and compliance should depend on durable data provenance,
-not on hope, cached files and heroic vibes.
-
-### Phase 4: Optimise only measured bottlenecks
-
-Goal: speed up what is proven slow.
-
-Recommended order:
-
-1. R5 GPU triage backend, only after CPU triage benchmarks prove bottleneck.
-2. R6 Rust core engine, only after profiling identifies hot paths worth moving.
-
-Reason: GPU and Rust can help, but they are not substitutes for measurement.
-Speeding up the wrong path is still wrong, just with better branding.
+Open items below.
 
 ---
 
 ## Active Backlog
 
-### R12. Mutation testing
+### R2. Real alt-data feeds (blocked)
 
-Status: next recommended QA item
-Priority: high
-Effort: 3 to 4 days
-Area: QA
-Suggested path: test tooling, CI profile, mutation config
-
-Problem:
-
-The suite is large, but size does not prove that tests catch broken behaviour.
-Mutation testing checks whether small code changes are killed by tests.
-
-Scope:
-
-- Evaluate `mutmut` first.
-- Start with `core/metrics.py`, `core/engine.py`, `core/costs.py`,
-  `validation/pipeline.py` and `core/data_tiers.py`.
-- Add a fast mutation profile for local use.
-- Add an optional CI/nightly profile, not blocking every PR at first.
-
-Definition of done:
-
-- Mutation tool installed/configured.
-- First report generated and documented.
-- At least one weak-test area converted into stronger tests.
-- Clear command documented in `CLAUDE.md` or docs.
-
-Risk:
-
-Mutation testing can be slow and noisy. Keep the first target narrow.
-
-### R13. Protocol fuzzing
-
-Status: pending
-Priority: high
-Effort: 1 week
-Area: QA/security/protocol
-Suggested paths: `tests/test_protocol_fuzz.py`, `cli/forge.py`,
-`core/data_layer.py`, `core/data_tiers.py`, `agent_gateway/`
-
-Problem:
-
-The protocol has ceremony rules, tier gates and CLI entry points. These should
-be attacked with malformed inputs before real operators do it accidentally.
-
-Scope:
-
-- Fuzz OOSGuard phases and unlock sequences.
-- Fuzz tier names, date boundaries and empty/duplicated indices.
-- Fuzz CLI argument parsing for tier-sensitive commands.
-- Fuzz AgentGateway staged actions for invalid symbols, limits and signatures.
-
-Definition of done:
-
-- Hypothesis-based fuzz tests added.
-- No unauthorized OOS_LOCKED or FORWARD read accepted.
-- CLI returns clean argument errors, not tracebacks.
-- Gateway rejects malformed actions deterministically.
-
-### R15. API reference auto-generated
-
-Status: pending
-Priority: high
-Effort: 3 to 4 days
-Area: docs
-Suggested paths: `docs/api/`, `docs/conf.py`, `.github/workflows/docs.yml`
-
-Problem:
-
-QuantForge has grown enough that manual API documentation will rot.
-
-Scope:
-
-- Use Sphinx with autodoc or mkdocs-material plus mkdocstrings.
-- Generate reference pages for public packages only.
-- Exclude experimental/private internals unless explicitly documented.
-- Add a docs build command.
-
-Definition of done:
-
-- Docs build locally.
-- Public modules render without import failures.
-- CI/docs workflow exists or is documented as manual.
-- README links to generated API reference.
-
-Recommendation:
-
-Prefer Sphinx if the priority is Python API completeness. Prefer MkDocs if the
-priority is a nicer operator guide. For this repo, Sphinx first is the safer
-choice.
-
-### R14. Guide from zero to live
-
-Status: pending
-Priority: high
-Effort: 1 week
-Area: docs/onboarding
-Suggested path: `docs/ZERO_TO_LIVE.md`
-
-Problem:
-
-The architecture is strong, but a new operator needs one guided path from
-install to backtest, validation, paper and guarded live.
-
-Scope:
-
-- Installation and environment setup.
-- Run a deterministic smoke backtest.
-- Freeze or load a snapshot.
-- Validate a strategy.
-- Submit to research factory.
-- Review queue and promotion ceremony.
-- Paper trading path.
-- Live trading checklist, without encouraging blind live deployment.
-
-Definition of done:
-
-- A fresh clone can follow the guide.
-- Every command either works offline or states required credentials/data.
-- All live steps include safety gates and explicit warnings.
-
-### R9. RAG over research history
-
-Status: pending
-Priority: medium-high
-Effort: 1 to 2 weeks
-Area: AI/research memory
-Suggested paths: `research/rag.py`, `research/factory/`, runtime archive paths
-
-Problem:
-
-ResearchFactory archives failures and review candidates, but that knowledge is
-not easily searchable by an agent or operator.
-
-Scope:
-
-- Index research archive, review queue and experiment metadata.
-- Support questions like which strategies failed due to leakage, costs,
-  regime fragility or drawdown.
-- Keep storage local by default.
-- Make vector backend optional.
-
-Definition of done:
-
-- Query API exists.
-- CLI or script can search historical research outcomes.
-- Tests cover empty archive, corrupted rows and deterministic retrieval.
-
-### R10. Continuous auto-research loop
-
-Status: pending
+Status: blocked on external credentials. See [`BLOCKERS.md`](BLOCKERS.md#r2-real-alt-data-feeds)
 Priority: medium
-Effort: 1 week
-Area: AI/research automation
-Suggested path: `research/auto_loop/`
-
-Problem:
-
-Research generation exists in pieces, but not as a controlled scheduled loop.
-
-Scope:
-
-- Daily generation of N hypotheses.
-- Submit through ResearchFactory.
-- Write weekly report.
-- Respect rate limits, budget, data tier rules and review queue caps.
-
-Definition of done:
-
-- Loop can run dry-run mode.
-- Loop cannot access OOS_LOCKED/FORWARD.
-- Outputs are auditable and resumable.
-- Failures are archived with reasons.
-
-Dependency:
-
-Best done after R9, so the loop can learn from prior failures instead of
-repeating them with fresh enthusiasm.
-
-### R8. LLM augmenter for Auditor
-
-Status: pending
-Priority: medium
-Effort: 1 week
-Area: AI/auditor
-Suggested path: `agents/auditor/llm_augmenter.py`
-
-Problem:
-
-Auditor reviewers are deterministic and safe, but may miss qualitative
-observations.
-
-Scope:
-
-- Add provider abstraction for OpenAI/Anthropic-style clients.
-- Prompt templates per reviewer.
-- LLM findings capped at MEDIUM severity.
-- No LLM finding can override deterministic HARD_FAIL/PASS authority.
-
-Definition of done:
-
-- Mocked tests pass offline.
-- Cap logic prevents severity escalation.
-- Prompt templates include policy hash and strategy context.
-- No credentials stored in repo.
-
-### R7. Distributed snapshots
-
-Status: pending
-Priority: medium-high before real feeds/live
-Effort: 2 weeks
-Area: data/provenance
-Suggested path: `core/snapshots_distributed.py`
-
-Problem:
-
-SnapshotStore is local SQLite plus parquet. That is fine for one machine, but
-weak for teams, replication and production data provenance.
-
-Scope:
-
-- Add backend interface.
-- Support local, PostgreSQL metadata and S3-compatible object storage.
-- Preserve sha256 and policy_hash semantics.
-- Keep local backend as default.
-
-Definition of done:
-
-- Existing local behaviour unchanged.
-- New backend contract tested with fake/object-store temp implementation.
-- Integrity verification works across backends.
-- Migration path documented.
-
-### R2. Real alt-data feeds
-
-Status: pending
-Priority: medium
-Effort: 1 week per feed
+Effort: 1 week per feed (FRED is the recommended first slice)
 Area: data/integrations
-Suggested path: `altdata/`
 
-Problem:
+### R3. Compliance reporting endpoints (blocked)
 
-Alt-data adapters are mock-friendly. Production research needs real providers,
-rate limits, credentials and backfill.
-
-Recommended feed order:
-
-1. FRED macro, easiest and highest signal-to-noise.
-2. SEC filings, strong provenance and public-data posture.
-3. On-chain crypto, useful but provider-specific.
-4. Options flow, high value but vendor-sensitive.
-5. Reddit/Twitter/news, noisy and API-policy fragile.
-6. Satellite/geospatial, expensive and specialist.
-
-Definition of done per feed:
-
-- Credentials via environment variables only.
-- Rate limiting per provider.
-- Backfill path.
-- Metadata includes source, as-of date and content hash where possible.
-- Integration tests are marked and skipped safely without credentials.
-
-### R1. Lean live-trading export
-
-Status: pending
-Priority: medium
-Effort: 1 week for first real path
-Area: live/export
-Suggested path: `exports/lean/live.py`
-
-Problem:
-
-Current Lean export is a scaffold with provenance. Real live deployment needs
-LEAN cloud/project integration and pre-deploy checks.
-
-Scope:
-
-- Package export as Lean project.
-- Verify provenance before deploy.
-- Add optional Lean CLI/cloud API integration.
-- Keep dry-run mandatory by default.
-
-Definition of done:
-
-- Exported project can be validated locally or via Lean tooling.
-- Metadata verification blocks mismatched policy/spec hash.
-- Live deploy requires explicit operator flag.
-
-### R3. Compliance reporting endpoints
-
-Status: pending
+Status: blocked on legal review and regulator credentials. See
+[`BLOCKERS.md`](BLOCKERS.md#r3-compliance-reporting-endpoints)
 Priority: medium-low until live execution is closer
-Effort: 2 to 3 weeks plus legal/domain review
+Effort: 2 to 3 weeks plus legal review
 Area: compliance
-Suggested path: `compliance/`
 
-Problem:
+### R4. Real execution adapters (blocked)
 
-MiFID II, 13F and CTA modules exist, but production reporting needs exact
-schemas, filing rules and possibly external endpoints.
-
-Scope:
-
-- Split into jurisdiction-specific deliverables.
-- Add schema validation.
-- Add fixture-based golden files.
-- Document legal assumptions.
-
-Definition of done:
-
-- At least one report type has schema/golden-file validation.
-- Inputs and assumptions are explicit.
-- No report is described as regulator-ready without review.
-
-### R4. Real execution adapters
-
-Status: pending
+Status: blocked on funded broker accounts and reconciliation hardening.
+See [`BLOCKERS.md`](BLOCKERS.md#r4-real-execution-adapters)
 Priority: medium-low, high risk
-Effort: 3 to 4 weeks for serious first slice
+Effort: 3 to 4 weeks for a serious first slice
 Area: execution/live
-Suggested paths: `execution/`, `deployment/brokers/`
 
-Problem:
+### R5. GPU triage backend (gated)
 
-Broker adapters and execution algorithms exist, but serious execution needs
-partial fills, reconciliation, order routing, venue details and failure modes.
-
-Recommended order:
-
-1. Paper execution simulator with partial fills and slippage.
-2. Broker reconciliation hardening.
-3. One broker real adapter deepened end to end.
-4. Smart order routing only after real fill/reconcile data exists.
-
-Definition of done:
-
-- Partial fills modelled.
-- Reconciliation detects broker/local drift.
-- Kill switch and audit log remain non-bypassable.
-- Live operations require explicit operator ceremony.
-
-### R5. GPU triage backend
-
-Status: deferred until benchmark proves need
+Status: deferred until a CPU benchmark proves a real bottleneck. See
+[`BLOCKERS.md`](BLOCKERS.md#r5-gpu-triage-backend-gated)
 Priority: low-medium
 Effort: 1 week
 Area: performance
-Suggested path: `triage/gpu_backend.py`
 
-Problem:
+### R6. Rust core engine (gated)
 
-Triage is CPU numpy. GPU may help for very large variant screens.
-
-Gate before starting:
-
-- Benchmark CPU triage on realistic workload.
-- Identify target speedup and memory limits.
-- Confirm CuPy/PyTorch install posture.
-
-Definition of done:
-
-- CPU and GPU outputs match within tolerance.
-- Lazy import keeps base install light.
-- Fallback path remains deterministic.
-
-### R6. Rust core engine
-
-Status: deferred until profiler proves need
+Status: deferred until a profiler identifies a hot path that Python +
+numba cannot serve. See
+[`BLOCKERS.md`](BLOCKERS.md#r6-rust-core-engine-gated)
 Priority: low-medium
 Effort: 4 to 6 weeks
 Area: performance/native
-Suggested path: `core/engine_rs/`
-
-Problem:
-
-Rust/PyO3 may speed up hot paths, but adds build complexity.
-
-Gate before starting:
-
-- Profile real workloads.
-- Identify functions where Python/Numba are not enough.
-- Define exact parity tests against Python engine.
-
-Definition of done:
-
-- Native extension optional.
-- Python fallback remains canonical.
-- Cross-platform wheel/build story documented.
-- Engine parity tests pass.
-
----
 
 ### R16. Calmar / MAR policy for zero-MDD inputs
 
@@ -542,23 +284,24 @@ Effort: half a day
 Area: metrics/contract
 Suggested path: `core/metrics.py`, `tests/test_property_v2.py`
 
-Problem:
-
-R11 property test surfaced that `compute_metrics` returns `Calmar = inf` and
-`MAR = inf` when MDD == 0 (constant positive returns). Mathematically valid
-but not always usable as a ranking key.
+R11 property test surfaced that `compute_metrics` returns `Calmar = inf`
+and `MAR = inf` when `MDD == 0` (constant positive returns).
+Mathematically valid but not always usable as a ranking key.
 
 Decision options:
 
-- Keep current behaviour and document the contract in `Metrics` docstring.
-- Return `None` or `nan` when MDD == 0 to force callers to handle explicitly.
-- Return a large sentinel (e.g. `1e9`) to keep numeric comparisons working.
+- Keep current behaviour and document the contract in the `Metrics`
+  docstring.
+- Return `None` or `nan` when `MDD == 0` to force callers to handle
+  the edge explicitly.
+- Return a large sentinel (e.g. `1e9`) to keep numeric comparisons
+  working.
 
 Definition of done:
 
 - One option chosen and applied in `core/metrics.py`.
-- Property test in `tests/test_property_v2.py` updated to match the new
-  contract.
+- Property test in `tests/test_property_v2.py` updated to match the
+  new contract.
 - `Metrics` docstring documents the rule.
 
 ### R17. Markov switching API drift
@@ -570,24 +313,23 @@ Area: regime/ML
 Suggested path: `regime/markov_switching.py`,
 `tests/test_markov_switching.py`
 
-Problem:
-
 9 pre-existing failures in `tests/test_markov_switching.py` come from
-statsmodels API drift. They are unrelated to QuantForge logic but make the
-baseline test command report failures.
+statsmodels API drift. Unrelated to QuantForge logic but make the
+baseline test command noisy.
 
 Decision options:
 
-- Pin statsmodels to a version that still exposes the old API.
-- Update `regime/markov_switching.py` to use the current statsmodels API
+- Pin `statsmodels` to a version that exposes the old API.
+- Update `regime/markov_switching.py` to the current statsmodels API
   and re-green the tests.
-- Mark the test module with `@pytest.mark.skip(reason="statsmodels API drift")`
+- Skip the test module with `@pytest.mark.skip(reason="statsmodels API drift")`
   and document as wontfix in `CLAUDE.md`.
 
 Definition of done:
 
 - One option chosen and applied.
-- Baseline test command no longer reports markov failures (skipped or fixed).
+- Baseline test command no longer reports markov failures (skipped or
+  fixed).
 - Decision recorded in `CHANGELOG.md`.
 
 ### R18. Lint config cosmetic false positive
@@ -598,16 +340,37 @@ Effort: 1 hour
 Area: tests
 Suggested path: `tests/test_lint_config.py`
 
-Problem:
-
-`test_lint_config::test_no_unmarked_live_data_loads` is documented as a
-cosmetic AST scanner false positive in `CLAUDE.md`. Either fix the scanner
-or skip the test with a comment explaining why.
+`test_lint_config::test_no_unmarked_live_data_loads` is documented as
+a cosmetic AST scanner false positive in `CLAUDE.md`. Either fix the
+scanner or skip the test with a comment.
 
 Definition of done:
 
 - Test either passes or is skipped with a clear reason.
 - `CLAUDE.md` known-issues list shrinks accordingly.
+
+### R19. Wire `SnapshotStore` to the new backend interface
+
+Status: follow-up to R7, pending
+Priority: medium
+Effort: 2 to 3 days
+Area: data/provenance
+Suggested paths: `core/snapshots.py`, `tests/test_snapshots.py`
+
+R7 added the `SnapshotBackend` abstraction and a `LocalSnapshotBackend`
+reference implementation. The existing `SnapshotStore` still talks to
+the filesystem directly. To realise the abstraction, route every blob
+read / write and metadata insert through a backend instance, with the
+default backend matching today's behaviour byte-for-byte.
+
+Definition of done:
+
+- `SnapshotStore.__init__` accepts an optional `backend` argument;
+  defaults to `LocalSnapshotBackend(root_dir=...)` so existing call
+  sites are unchanged.
+- All disk I/O goes via the backend.
+- Existing tests still pass; add a fake-backend test to prove the
+  abstraction is real.
 
 ---
 
@@ -615,38 +378,47 @@ Definition of done:
 
 These are not rejected. They are too broad to start as single tasks:
 
-- "Alt-data feeds reales" must be split provider by provider.
-- "Exchange execution adapters reales" must be split broker by broker and
-  failure mode by failure mode.
-- "Compliance endpoints reales" must be split by jurisdiction/report and
-  reviewed against actual filing requirements.
-- "Rust core engine" must start with profiling, not enthusiasm.
+- "Alt-data feeds reales" must be split provider by provider. See
+  R2 and `BLOCKERS.md`.
+- "Exchange execution adapters reales" must be split broker by broker
+  and failure mode by failure mode. See R4.
+- "Compliance endpoints reales" must be split by jurisdiction / report
+  and reviewed against actual filing requirements. See R3.
+- "Rust core engine" must start with profiling, not enthusiasm. See R6.
 
 ---
 
 ## Suggested Next Task
 
-Recommended next item: R15 API reference auto-generated.
+Recommended next item: **R19** wire `SnapshotStore` to the new
+`SnapshotBackend` interface.
 
 Why:
 
-- Low risk.
-- High clarity gain.
-- Helps reveal broken imports and unclear public/private APIs.
-- Pairs well with the newly expanded property-based tests.
+- Closes the gap left by R7 (interface exists; the store does not yet
+  use it).
+- Pure refactor with the new tests as a safety net.
+- No external blockers.
+- Unblocks future remote backend drivers.
 
-Second choice: R12 mutation testing, if the priority is test strength over docs.
+Second choice: **R16** decide the Calmar / MAR zero-MDD contract.
+Half-day effort, removes a property-test caveat.
+
+Third choice: **R17** resolve the markov switching API drift, if the
+priority is shrinking the known-issues list.
+
+Phase 3 production items (R2, R3, R4) only after operator confirms
+external dependencies (credentials, legal review, broker accounts) are
+available.
 
 ---
 
 ## Commit Plan
 
-Recommended separation:
+Recommended separation per future task: one commit per Rxx item, scoped
+narrowly. The session 2026-05-08 pass landed eight item-scoped commits
+(`064c535`, `2a506eb`, `bd90417`, `105046b`, `8a644df`, `9593e86`,
+`e06761b`, `56160f9`) plus the earlier R11 commit (`1b600a7`).
 
-1. Documentation/roadmap sync.
-2. Property-based testing extension.
-3. Next roadmap implementation task.
-
-Avoid bundling unrelated agent-local files unless they are intentionally part of
-project policy.
-
+Avoid bundling unrelated agent-local files (`.claude/`, `AGENTS.md`)
+unless they are intentionally part of project policy.
