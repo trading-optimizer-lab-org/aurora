@@ -31,12 +31,25 @@ delivery), strategy lifecycle (curation policy + graveyard), benchmark
 scaffold (the gate for R5 / R6), full mutmut sweep, multi-user RBAC,
 spec signing, timezone audit and the `ZERO_costs` runtime warning.
 
+A second deep audit pass added R47 to R76 covering the items that only
+turn up when you grep the actual code: production-status of the 75+
+cross-asset / data / infra modules, triage of `experimental/`,
+oversized-file splits (cli/forge.py 3577 lines, deployment/brokers.py
+1861 lines, ...), 65 `raise NotImplementedError` sites, 24 TODO /
+FIXME markers, 243 broad `except Exception:` blocks, 16 undocumented
+env vars (including security-sensitive ones), pre-commit wiring,
+security-scanning / SBOM / mypy / coverage gates in CI, archive of
+historical version reports and dev plans, SECURITY.md, concurrent
+strategy isolation, numba JIT shadow-mutations workaround, the
+remaining hardcoded-path escapees from R22, and the R23 sub-task for
+env-var migration to `AU_*`.
+
 Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21,
-R23 through R46.
+R23 through R76.
 
 ---
 
@@ -897,6 +910,484 @@ in tests. Easy to forget on the way to live. Emit a one-shot warning
 the first time `run_backtest` runs with `ZERO_costs` in a process,
 unless an explicit `acknowledge_zero_costs=True` flag is passed.
 
+### R47. Production-status audit for cross-asset / data / infra modules
+
+Status: pending
+Priority: medium-high
+Effort: 1 to 2 weeks (audit) + per-module follow-ups
+Area: project hygiene / honesty
+Suggested paths: `markets/`, `signals/`, `risk/`, `dataeng/`,
+`infra/`, `marketdata/`
+
+The repository ships ~75 modules across `markets/`, `signals/`,
+`risk/`, `dataeng/`, `infra/`, and `marketdata/`. Each has a test file
+but the test files often only exercise mock-friendly happy paths. The
+roadmap (and `BLOCKERS.md`) currently has nothing concrete on which
+of those are production-ready vs scaffold vs mock-only.
+
+For each of the ~75 modules, classify and label in-source:
+
+- `production`: covers a real workload, real data, real edge cases.
+- `scaffold`: shape is right; behaviour is incomplete.
+- `mock-only`: returns deterministic placeholder values for tests.
+- `experimental`: see R48.
+
+Write the classification into a top-of-module docstring header so
+downstream consumers know what they are wiring.
+
+Definition of done:
+
+- Every module under those six directories carries a one-line status
+  label.
+- The README links to a status matrix.
+- Any module currently labelled `production` is verified against at
+  least one real-data integration test.
+
+### R48. Triage `experimental/` directory
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 days
+Area: repo hygiene
+Suggested path: `experimental/`
+
+20 speculative modules under `experimental/` (`ai_auto_ceo`,
+`dao_governance`, `quantum_placeholder`, `strategy_nft`,
+`smart_contract_escrow`, `zk_performance_proof`, `trader_dna`,
+`self_modifying_strategy`, `competitor_pnl_reverse`,
+`trade_vs_claude`, etc) carry a development cost and a discovery cost
+even when nobody touches them. Decide for each:
+
+- Keep in-tree as documented experiment with a pinned status.
+- Archive into a separate "aurora-experimental" repo with link.
+- Delete entirely.
+
+Definition of done:
+
+- Each surviving module has a one-paragraph rationale at the top.
+- Archived modules are removed from the wheel package list.
+- Deleted modules are gone, with a CHANGELOG note.
+
+### R49. Split `cli/forge.py` (3577 lines)
+
+Status: pending
+Priority: medium
+Effort: 3 to 5 days
+Area: refactor
+Suggested path: `cli/`
+
+`cli/forge.py` is the largest file in the repo by 2x. CLAUDE.md says
+800 lines max. Split per subcommand: `cli/cmd_run.py`, `cli/cmd_validate.py`,
+`cli/cmd_freeze.py`, `cli/cmd_research.py`, `cli/cmd_agent.py`, etc.
+Keep `cli/forge.py` as the dispatcher only.
+
+Definition of done:
+
+- No single CLI subcommand module exceeds 800 lines.
+- `forge --help` output unchanged.
+- Test suite green without modification.
+
+### R50. Split `deployment/brokers.py` (1861 lines)
+
+Status: pending
+Priority: medium
+Effort: 2 to 3 days
+Area: refactor
+Suggested path: `deployment/brokers/`
+
+Convert to a package: one file per broker (`paper.py`, `alpaca.py`,
+`ib.py`, `coinbase.py`, `kraken.py`) plus a base `__init__.py` that
+re-exports the public surface. Tests already partition by broker.
+
+### R51. Split `reporting/tearsheet.py` (1312 lines)
+
+Status: pending
+Priority: low
+Effort: 2 days
+Area: refactor
+
+Split by section: hero header, metrics table, equity curves, drawdown
+section, factor section, attribution section. Same exported entry
+point; new internal modules do the rendering.
+
+### R52. Split remaining oversized modules
+
+Status: pending
+Priority: low
+Effort: 1 day per file
+Area: refactor
+
+Files still over 800 lines after R49 / R50 / R51:
+
+- `reporting/daily_ops/builder.py` (994).
+- `analytics/metrics_full.py` (924).
+- `core/data_layer.py` (923).
+- `research/factory/factory.py` (882).
+- `deployment/preflight.py` (821).
+
+One commit per split. Keep behaviour identical. No bundling with
+semantic changes.
+
+### R53. Classify the 65 `raise NotImplementedError` sites
+
+Status: pending
+Priority: medium-high
+Effort: 2 to 3 days
+Area: project hygiene
+
+`grep -rn "raise NotImplementedError"` returns 65 hits in production
+modules. Each is one of:
+
+- a deliberate base-class abstract (`@abstractmethod`-style),
+- a deliberate "remote backend reserved" stub (R7-style fail-loud),
+- an unfinished implementation that someone gave up on.
+
+Tag each occurrence with one of three categories in a comment, then
+file follow-up tasks for the genuinely unfinished ones.
+
+### R54. Resolve the 24 TODO / FIXME markers
+
+Status: pending
+Priority: low
+Effort: 2 days
+Area: project hygiene
+
+A grep across production code finds 24 TODO / FIXME / XXX / HACK
+markers. Some are scaffold notes in the Lean exporter; others are
+real "come back to this" reminders. Triage: convert to a tracked
+roadmap item, fix in place, or drop with a one-line rationale.
+
+### R55. Audit `except Exception:` blocks
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: safety / error handling
+
+243 `except Exception:` blocks across the repo. Some are intentional
+(audit-trail writers must not crash the caller). Many are likely too
+broad and silently mask real failures. Walk every site and decide:
+
+- Keep with explicit comment naming the swallowed cases.
+- Tighten to a specific exception class.
+- Re-raise after logging.
+
+### R56. Replace `print()` calls with structured logging
+
+Status: pending
+Priority: low
+Effort: half a day
+Area: observability
+Suggested paths: `ga/runner.py`, `ga/multi_asset_runner.py`,
+`compliance/trade_reconstruction.py`
+
+Production code emits status via `print()` in a handful of places.
+Convert to module-level loggers so output is filterable and CI-friendly.
+
+### R57. Document the 16 missing environment variables
+
+Status: pending
+Priority: high (security-sensitive subset)
+Effort: half a day
+Area: docs / ops
+Suggested paths: `CLAUDE.md`, `README.md`, `docs/ZERO_TO_LIVE.md`
+
+Code references env vars not documented anywhere:
+
+Security:
+
+- `QF_GATEWAY_SECRET` (HMAC server secret for token signing).
+- `QF_OPERATOR_KEY` (HMAC operator countersign secret).
+- `QF_PII_FERNET_KEY` (encryption-at-rest for PII).
+- `QF_TOTP_SECRET` (two-factor auth seed).
+- `QF_SQLCIPHER_KEY` (audit DB encryption).
+
+Ops:
+
+- `QF_AUTO_LOOP_LOG`, `QF_CCXT_DEFAULT_EXCHANGE`,
+  `QF_CCXT_BINANCE_KEY`, `QF_CCXT_BINANCE_SECRET`,
+  `QF_CCXT_KILL_SWITCH`, `QF_CONFIG_DIR`, `QF_JOURNAL`,
+  `QF_LEAN_LIVE_AUTH`, `QF_REFRESH`, `QF_ALLOW_FULL_TIER`,
+  `QF_CACHE` (legacy alias of `QF_CACHE_DIR`).
+
+Definition of done:
+
+- Every env var the code reads is documented in one place with
+  purpose, default, and security caveat.
+- Security-sensitive env vars are flagged "must come from a secrets
+  manager, never .env file in repo".
+
+### R58. Resolve `QF_ALLOW_FULL_TIER` vs `QF_ALLOW_OOS_LOCKED`
+
+Status: pending
+Priority: low
+Effort: 1 hour
+Area: protocol / docs
+
+The CLI uses `QF_ALLOW_FULL_TIER`; `CLAUDE.md` mentions
+`QF_ALLOW_OOS_LOCKED`. Verify both are intended (separate ceremonies)
+or consolidate to one. Update docs to match the actual code.
+
+### R59. Wire the existing pre-commit configuration
+
+Status: pending
+Priority: medium (replaces R30 wording)
+Effort: 1 hour
+Area: dev tooling
+Suggested path: `.pre-commit-config.yaml`, `Makefile`,
+`docs/CONTRIBUTING.md`
+
+`.pre-commit-config.yaml` already exists with ruff + standard hooks
+(R30 incorrectly described it as "configure pre-commit"). What is
+missing:
+
+- A `make precommit-install` target that runs
+  `pre-commit install --hook-type pre-commit --hook-type pre-push`.
+- A doc paragraph in `CONTRIBUTING.md` telling new contributors to
+  run that target on first clone.
+- A CI job that runs `pre-commit run --all-files` so PRs that bypass
+  the hook locally are still caught.
+
+### R60. Cross-platform `wheel.yml` CI
+
+Status: pending
+Priority: low
+Effort: 1 hour
+Area: CI
+Suggested path: `.github/workflows/wheel.yml`
+
+`wheel.yml` creates a temp venv at `/tmp/test_venv` -- Linux-only.
+Once Windows is added to the wheel job (or if anyone moves the
+runner), it breaks. Switch to `runner.temp` or a tmp directory via
+`mktemp` / `Get-Item -LiteralPath $env:RUNNER_TEMP`.
+
+### R61. Security scanning in CI
+
+Status: pending
+Priority: medium
+Effort: half a day
+Area: CI / security
+Suggested paths: `.github/workflows/security.yml`
+
+No security-scanner runs in CI today. Add:
+
+- `bandit` over the repo for static security-issue patterns.
+- `pip-audit` over `pyproject.toml` resolved deps for known CVEs.
+- Optional: `safety check` as a second opinion.
+
+Make the job non-blocking initially (continue-on-error: true) so the
+first run produces a baseline rather than blocking every PR.
+
+### R62. SBOM generation in CI
+
+Status: pending
+Priority: low
+Effort: 2 hours
+Area: CI / supply chain
+
+Produce a software bill of materials per release. `cyclonedx-bom` or
+`syft` both work. Attach the SBOM artefact to the wheel build run so
+operators can audit transitive deps.
+
+### R63. mypy in CI
+
+Status: pending
+Priority: medium
+Effort: 1 day initial; ongoing maintenance
+Area: CI / type checking
+Suggested paths: `.github/workflows/typecheck.yml`,
+`pyproject.toml` (`[tool.mypy]`)
+
+`mypy` is in `[dev]` but not run by any CI workflow. Add a
+`typecheck` job that runs `python -m mypy quantforge/`. Start with
+`continue-on-error: true` (the legacy code is partially typed) and
+ratchet up over time.
+
+### R64. Coverage gate enforced in CI
+
+Status: pending
+Priority: medium
+Effort: 1 hour
+Area: CI / QA
+
+`.coveragerc` declares a fail-under threshold of 80 percent, but
+`pytest --cov` is not in the test workflow. Add `--cov` to the test
+command in `tests.yml` and let the .coveragerc threshold actually
+gate the job.
+
+### R65. Coverage artefact / dashboard
+
+Status: pending
+Priority: low
+Effort: half a day
+Area: observability
+
+Upload the coverage XML from CI either to Codecov / Coveralls or as
+a workflow artefact, so operators can see uncovered lines without
+re-running locally.
+
+### R66. Archive historical version completion reports
+
+Status: pending
+Priority: low
+Effort: 30 minutes
+Area: docs hygiene
+
+`docs/v1_COMPLETION_REPORT.md`, `v1_1_*`, `v1_2_*`, `v1_3_*` (four
+files), `v2_0_*`, `v3_0_*` -- nine historical reports clutter the
+docs index. Move into `docs/archive/version_reports/` and update
+references. Keep `v4_0_SPINE_REPORT.md` in place since it documents
+the current spine.
+
+### R67. Archive historical development plans
+
+Status: pending
+Priority: low
+Effort: 15 minutes
+Area: docs hygiene
+
+`docs/DEVELOPMENT_PLAN.md`, `DEVELOPMENT_PLAN_v1_1.md`,
+`DEVELOPMENT_PLAN_v1_2.md`, `DEVELOPMENT_PLAN_v1_3.md` -- move to
+`docs/archive/dev_plans/`. New plans live in the roadmap.
+
+### R68. Decision on `docs/GITHUB_RESEARCH_v1.1.md`
+
+Status: pending
+Priority: very low
+Effort: 15 minutes
+Area: docs hygiene
+
+Sphinx warns this file is not in any toctree. Either include it in
+the operator-guides toctree or move to `docs/archive/`.
+
+### R69. SECURITY.md vulnerability disclosure policy
+
+Status: pending
+Priority: medium
+Effort: 2 hours
+Area: docs / security
+Suggested path: `SECURITY.md`
+
+GitHub's standard `SECURITY.md` describes how to report a
+vulnerability privately, what response window to expect, and which
+versions are supported. Required before any public release.
+
+### R70. README references CONTRIBUTING.md
+
+Status: pending
+Priority: very low
+Effort: 5 minutes
+Area: docs
+
+`CONTRIBUTING.md` exists but `README.md` does not link to it. One-
+line fix.
+
+### R71. Concurrent strategy run isolation
+
+Status: pending
+Priority: medium-high
+Effort: 1 to 2 weeks
+Area: deployment / safety
+Suggested paths: `deployment/live.py`, `agent_gateway/gateway.py`
+
+Two strategies trading the same symbol simultaneously can produce
+contradictory orders or oscillating positions. The repository has no
+documented inter-strategy lock. Decide:
+
+- Per-symbol mutex at the broker layer.
+- Strategy-aware position netter.
+- Hard separation: only one strategy may hold a position in a given
+  symbol at a time.
+
+Definition of done:
+
+- The chosen approach is documented in `RESEARCH_PROTOCOL.md`.
+- A test exercises two strategies on the same symbol.
+- The live wrapper refuses the second when isolation rules are
+  violated.
+
+### R72. Numba JIT shadow-mutations workaround
+
+Status: pending; follow-up to R12 / R41
+Priority: low
+Effort: half a day
+Area: QA
+
+`docs/MUTATION_TESTING.md` notes that numba's JIT compilation can
+shadow source-level mutations: mutmut edits the source, but the
+already-compiled kernel keeps running the unmodified code, so the
+mutation is recorded as "killed" without ever executing. Document
+the workaround:
+
+- Set `NUMBA_DISABLE_JIT=1` for the mutation test runner, OR
+- Force re-compilation per test invocation.
+
+Decide which is the canonical mitigation and write it into the
+`[tool.mutmut].runner` env block.
+
+### R73. `cli/__init__.py` public API surface
+
+Status: pending
+Priority: low
+Effort: 1 hour
+Area: refactor / API hygiene
+
+`cli/__init__.py` is empty. Pair with R49 (CLI split): once the
+subcommand modules exist, declare the public symbols in
+`__init__.py` so external callers have a stable surface to import
+from rather than reaching into `cli.forge`.
+
+### R74. Cosmetic Windows-incompatible path in docstring
+
+Status: pending
+Priority: very low
+Effort: 5 minutes
+Area: docs
+
+`core/data_layer.py:164` has a docstring example using
+`/tmp/.oos_lock.json`. On Windows that path resolves under the C:
+drive root, which is usually not writable for non-admin users. Fix
+the example to use `tmp_path / ".oos_lock.json"` or
+`Path(tempfile.gettempdir()) / ".oos_lock.json"`.
+
+### R75. Audit hardcoded paths beyond `data_cache_qf`
+
+Status: pending; follow-up to R22
+Priority: medium
+Effort: 1 day
+Area: portability
+Suggested paths: `dataeng/airflow_dags.py` (already grep-flagged),
+plus any module that did not migrate to `runtime_paths`
+
+R22 retired the `quantforge/data_cache_qf` ghost dir; one or two
+hardcoded paths slipped through. `dataeng/airflow_dags.py` was
+flagged by the path audit. Sweep the remaining modules and route
+every disk-write through `runtime_paths.cache_dir()` or the
+appropriate `$QF_*` env var.
+
+### R76. R23 sub-task: env var migration plan
+
+Status: pending; sub-task of R23
+Priority: medium
+Effort: 1 day
+Area: branding / ops
+
+The Aurora rename touches every `QF_*` env var: rename to `AU_*`
+while keeping a one-release-cycle compatibility shim (read both,
+warn on `QF_*`, drop after the deprecation window). Includes:
+
+- 28 `QF_*` env vars currently referenced in code.
+- All `QF_CCXT_*` per-exchange tokens (the live-trade consent
+  token shape).
+- Operator-side documentation update across `CLAUDE.md`,
+  `README.md`, `docs/ZERO_TO_LIVE.md`, `docs/RESEARCH_PROTOCOL.md`.
+
+Definition of done:
+
+- `AU_*` reads are honored, `QF_*` reads emit a DeprecationWarning.
+- Compatibility shim has a clear retirement target version.
+- All docs reference `AU_*` as the canonical name.
+
 ---
 
 ## Deferred Or Split Items
@@ -915,27 +1406,42 @@ These are not rejected. They are too broad to start as single tasks:
 
 ## Suggested Next Task
 
-Three short-effort items can land before any of the bigger plays
-(R23 rename, R32 ruff legacy cleanup, R40 benchmark scaffold):
+Quick-win batch (run before any of the bigger plays). Total ~6 hours:
 
 1. **R25 + R26 + R27** -- bring `CLAUDE.md`, `ZERO_TO_LIVE.md` and
-   `CHANGELOG.md` up to the post-session reality. Total ~3 hours.
-   Removes the cosmetic discrepancies surfaced in the post-session
-   review.
+   `CHANGELOG.md` up to the post-session reality.
 2. **R33** -- run the full fast suite once and record the new pass
-   count. Mostly waiting; gives R25 something accurate to copy in.
-3. **R30** -- add pre-commit hooks so future PRs do not regrow
-   ruff debt while R32 is still in progress.
+   count.
+3. **R57** -- document the 16 missing env vars (security-sensitive
+   subset is high priority).
+4. **R59** -- wire the existing pre-commit config (install target +
+   contributing doc + CI verify job).
+5. **R70** -- README link to CONTRIBUTING.md.
+6. **R74** -- one-line docstring path fix.
 
-After that, the big plays in priority order:
+Medium plays (1 to 5 days each) before R23 rename:
 
-- **R23** Rename to AURORA. Touches everything; do it in isolation.
+- **R69** SECURITY.md vulnerability disclosure.
+- **R66 + R67** archive historical reports and dev plans.
+- **R56** replace `print()` with logging.
+- **R47** production-status audit of the 75+ cross-asset modules
+  (this one is a genuine surprise: the project ships modules whose
+  production state nobody has written down).
+- **R48** triage `experimental/`.
+- **R30 / R59** pre-commit + R63 mypy + R64 coverage gate as a CI
+  hardening batch.
+
+Big plays (priority order):
+
+- **R23** Rename to AURORA. Touches everything; do it in isolation
+  AFTER R76 (env var migration plan) is finalised.
+- **R49 + R50 + R51 + R52** oversized-file splits.
 - **R19** Wire `SnapshotStore` to the new `SnapshotBackend`.
-  Pure refactor; safety net is the R7 tests.
-- **R40** Performance benchmark scaffold. Unlocks the R5 / R6 gates.
+- **R40** Performance benchmark scaffold. Unlocks R5 / R6 gates.
 - **R32** Legacy ruff cleanup, batch by batch.
-- **R34** Audit log rotation (becomes urgent once long-running ops
-  start writing real audit chains).
+- **R34** Audit log rotation.
+- **R71** Concurrent strategy isolation.
+- **R55** `except Exception:` audit (243 sites).
 - **R20** Sphinx docstring cleanup.
 - **R16** Calmar / MAR zero-MDD contract.
 - **R17** Markov switching API drift.
