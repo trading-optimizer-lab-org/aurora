@@ -1,0 +1,35 @@
+name: wheel
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - name: Verify wheel imports cleanly
+        run: |
+          python -m venv /tmp/test_venv
+          /tmp/test_venv/bin/pip install dist/quantforge-*.whl
+          /tmp/test_venv/bin/python -c "
+          import quantforge
+          from quantforge.core.protocol_policy import ProtocolPolicy
+          import importlib.resources
+          p = ProtocolPolicy.default()
+          yaml_count = len(list(importlib.resources.files('quantforge').joinpath('config').iterdir()))
+          tpl_count = len(list(importlib.resources.files('quantforge.exports.lean').joinpath('templates').iterdir()))
+          assert yaml_count >= 7, f'config YAML count {yaml_count} < 7'
+          assert tpl_count >= 4, f'lean templates count {tpl_count} < 4'
+          print(f'wheel OK: {quantforge.__version__}, configs={yaml_count}, templates={tpl_count}')
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
