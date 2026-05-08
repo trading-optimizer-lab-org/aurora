@@ -127,11 +127,12 @@ Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 R45 (helper), R46, R47, R48, R53, R54, R56, R57, R58, R59, R60, R61,
 R62, R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72,
 R74, R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103,
-R104, R110, R119, R120, R122, R124, R134, R140 (scaffold), R143,
-R145, R146, R148, R149, R150, R151, R152, R154**.
+R104, R110, R111, R113, R114, R115, R116, R117, R118, R119, R120,
+R122, R123, R124, R134, R140 (scaffold), R143, R145, R146, R148,
+R149, R150, R151, R152, R154**.
 
-Total: 64 items closed in the 2026-05-08 session out of 154 (plus 11
-prior closures). Running tally: **75 / 154 = 48.7%**.
+Total: 72 items closed in the 2026-05-08 session out of 154 (plus 11
+prior closures). Running tally: **83 / 154 = 53.9%**.
 
 Detail of the new closures:
 
@@ -2302,7 +2303,7 @@ running drawdown. Pair with R85 dashboard for a visual mode.
 
 ### R111. Generator pre-acceptance constraints
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: medium
 Effort: 3 to 4 days
 Area: research / generator filters
@@ -2332,7 +2333,7 @@ handling, dividend adjustments, timezone bugs).
 
 ### R113. Symphony / conditional asset rotation primitive
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: high
 Effort: 2 to 3 weeks
 Area: strategies / portfolio
@@ -2354,7 +2355,7 @@ costs, and tier protocol carry over. Pair with R78 (rule editor IR).
 
 ### R114. Tax-loss harvesting awareness
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: low
 Effort: 2 weeks
 Area: deployment / tax
@@ -2370,7 +2371,7 @@ specific.
 
 ### R115. Group-based weighting rules
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: medium
 Effort: 1 week
 Area: strategies / portfolio
@@ -2383,7 +2384,7 @@ plus rules per group. Pair with R113.
 
 ### R116. Explicit cash-state within strategy
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: low
 Effort: 3 days
 Area: strategies / engine
@@ -2396,7 +2397,7 @@ are visible distinct from "no signal yet".
 
 ### R117. What-if scenario replay
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: low
 Effort: 1 to 2 weeks
 Area: analytics / what-if
@@ -2411,7 +2412,7 @@ overlays.
 
 ### R118. Sector / basket rotation primitive
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: medium
 Effort: 1 week
 Area: strategies
@@ -2492,7 +2493,7 @@ from env vars only.
 
 ### R123. Code preview from rule construction
 
-Status: pending
+Status: completed in 2026-05-08 batch
 Priority: low
 Effort: 1 week
 Area: tooling
