@@ -61,6 +61,47 @@ except ImportError:  # pragma: no cover - ga extras may be missing
     _ga_fitness = None  # type: ignore[assignment]
 
 
+# --------------------------------------------------------------------------
+# Hypothesis profiles (roadmap item #11 -- property-based testing)
+# --------------------------------------------------------------------------
+#
+# Three profiles. Per-test ``@settings(max_examples=...)`` decorators OVERRIDE
+# the profile, so this only kicks in for tests that don't set their own.
+#
+#   - ``dev`` (default): max_examples=15, no deadline. Fast local feedback.
+#   - ``ci``: max_examples=25, derandomize=True, fixed database. Reproducible.
+#   - ``thorough``: max_examples=200, no deadline. Stress sweep for nightly.
+#
+# Select with: ``pytest --hypothesis-profile=ci`` or ``HYPOTHESIS_PROFILE=ci``.
+try:
+    from hypothesis import HealthCheck as _HC, settings as _hyp_settings
+
+    _hyp_settings.register_profile(
+        "dev",
+        max_examples=15,
+        deadline=None,
+        suppress_health_check=[_HC.too_slow, _HC.function_scoped_fixture],
+    )
+    _hyp_settings.register_profile(
+        "ci",
+        max_examples=25,
+        deadline=None,
+        derandomize=True,
+        suppress_health_check=[_HC.too_slow, _HC.function_scoped_fixture],
+    )
+    _hyp_settings.register_profile(
+        "thorough",
+        max_examples=200,
+        deadline=None,
+        suppress_health_check=[_HC.too_slow, _HC.function_scoped_fixture],
+    )
+    import os as _os
+
+    _hyp_settings.load_profile(_os.environ.get("HYPOTHESIS_PROFILE", "dev"))
+except ImportError:  # pragma: no cover - hypothesis is optional
+    pass
+
+
 @pytest.fixture(autouse=True)
 def _isolate_default_oos_lock(tmp_path_factory, monkeypatch):
     """Redirect ``DEFAULT_LOCK_PATH`` to a per-session tmp directory.
