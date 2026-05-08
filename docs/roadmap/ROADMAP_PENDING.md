@@ -72,12 +72,29 @@ level circuit breaker and spread protection filter; multi-channel
 alerts (SMS / push / Telegram) and a properly-modelled grid template
 (martingale variants explicitly rejected).
 
+A fifth pass added R125 to R154 from original brainstorming -- items
+that do not appear in any of the surveyed competitor platforms but
+matter for a research-grade engine: causal-inference for strategy
+degradation, per-month decay attribution, cost decomposition,
+stochastic spread + borrow availability + slippage learning loops,
+strategy capacity estimator, dynamic liquidity-aware position caps,
+universe rebalance gate, live shadow + dry-run modes, pre-deploy
+freshness checks, auto-pause on data quality, live anomaly
+detection, lifecycle SLA + auto-archive, walk-forward refit cadence
+optimiser, ML-based degradation forecaster, snapshot freshness audit,
+synthetic adversarial market generator, out-of-distribution feature
+detector, reproducibility witness object, audit-replay integrity test,
+backtest determinism contract test, survivorship + corporate-action +
+holiday calendar audits, strategy ancestry tree visualisation, sealed
+envelope forecast ceremony, and cross-strategy regime correlation
+alerts.
+
 Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21,
-R23 through R124.
+R23 through R154.
 
 ---
 
@@ -2157,6 +2174,398 @@ isolation).
 Note: martingale-style position-doubling-after-loss templates were
 deliberately NOT added. They magnify the worst case rather than
 managing it; do not ship them as templates.
+
+### R125. Causal-inference layer for strategy degradation
+
+Status: pending
+Priority: high
+Effort: 3 to 4 weeks
+Area: analytics / causality
+Source: original
+
+When an approved strategy's realized Sharpe drops, the operator
+needs to know WHY: alpha shrink, cost growth, regime change, data
+drift, or operational issue. Run a counterfactual replay isolating
+each component (re-run with original costs but new prices, or new
+costs but original prices, etc) and decompose the delta. Output a
+"why is X failing" report with attribution per cause.
+
+### R126. Strategy decay attribution
+
+Status: pending
+Priority: medium-high
+Effort: 2 weeks
+Area: analytics / monitoring
+Source: original
+
+Companion to R125 but live: monthly automated breakdown of realized
+PnL drag versus the backtested baseline, attributing the gap to
+alpha vs cost vs regime vs data. Surfaces in the daily ops report.
+
+### R127. Cost decomposition view
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: tearsheet / reporting
+Source: original
+Suggested paths: `analytics/cost_breakdown.py`,
+`reporting/tearsheet.py`
+
+Today the tearsheet shows net returns. Add a section that breaks
+down the PnL drag by component: spread, slippage, borrow, taxes,
+execution delay, market impact. Operators see at a glance which
+cost is eating the edge.
+
+### R128. Bid-ask spread stochastic model
+
+Status: pending
+Priority: medium-low
+Effort: 2 weeks
+Area: cost realism
+Source: original
+Suggested path: `core/spread_model.py`
+
+Today spread is a constant in `CostModel`. Real spreads are regime-
+dependent (wider in vol spikes, in pre-open, around news). Model
+spread as a stochastic process keyed off realized vol or session
+phase. Pluggable so the existing constant-spread path stays as the
+default.
+
+### R129. Borrow availability simulation
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: cost realism / short side
+Source: original
+Suggested path: `core/borrow_model.py`
+
+Short-side trades may not be executable when borrow is unavailable
+or rates spike. Model borrow availability as a Poisson-on-off
+process with HTB tagging. Backtests that depend on shorts must
+respect borrow constraints rather than assume always-available.
+
+### R130. Slippage learning loop
+
+Status: pending
+Priority: medium-high
+Effort: 2 weeks
+Area: cost realism
+Source: original
+Suggested path: `core/slippage_calibration.py`
+
+Calibrate the slippage model from realized fills in paper / live.
+Each fill produces a residual (expected vs realized impact); the
+loop fits a regression and updates `CostModel` slippage_bps for the
+next backtest. Operators see the gap between assumed and observed.
+
+### R131. Order book impact model evolution
+
+Status: pending
+Priority: low
+Effort: 3 to 4 weeks
+Area: cost realism / microstructure
+Source: original
+
+Time-varying Kyle's lambda. Today microstructure / kyle's lambda
+is a static fit. Add a rolling estimator so impact assumptions
+adapt to current liquidity regime.
+
+### R132. Strategy capacity estimator
+
+Status: pending
+Priority: high
+Effort: 2 to 3 weeks
+Area: scaling / market impact
+Source: original
+Suggested path: `analytics/capacity.py`
+
+At what AUM does this strategy break? Combine R128 + R129 + R131
+plus the existing `deployment/liquidity.py` haircut model into a
+single estimator that returns "capacity = ~$X before realized
+Sharpe drops by Y%". Required before any meaningful AUM growth.
+
+### R133. Dynamic position-size cap based on realtime liquidity
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: deployment / safety
+
+Today position caps are static. Dynamically tighten the cap when
+realtime ADV / depth drops (e.g. illiquid period, holiday week).
+Surface caps in daily ops; refuse oversized orders at the gateway.
+
+### R134. Universe rebalance gate
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: data integrity / safety
+
+When the underlying universe shifts (S&P500 add / drop, ETF
+holdings change), audit which approved strategies are affected.
+Strategies referencing a removed name auto-pause until a manual
+ceremony.
+
+### R135. Live shadow trading mode
+
+Status: pending
+Priority: high
+Effort: 1 to 2 weeks
+Area: deployment / safety
+Source: original
+
+Run a strategy in parallel to live, with all the rule firing and
+audit logging, but skip the actual broker order submission. Lets
+operators verify a candidate strategy or a config change behaves
+as expected against the same realtime data, without sending capital.
+Different from paper because it sees real prices, not simulated.
+
+### R136. Dry-run live flag
+
+Status: pending
+Priority: medium-high
+Effort: 1 week
+Area: deployment / safety
+
+Full live wrapper invocation but every order is intercepted at the
+broker boundary and logged instead of submitted. Verifies the
+triple-gate, kill switch, audit chain and rate-limiter all fire
+correctly without touching capital. Pair with R135 (shadow) but
+operationally simpler: shadow mirrors a real strategy, dry-run is a
+mode for any strategy.
+
+### R137. Pre-deploy strategy freshness check
+
+Status: pending
+Priority: medium
+Effort: 3 to 4 days
+Area: lifecycle / safety
+
+Before promoting a strategy to live, assert it has been validated
+against data from the last N business days. A strategy whose latest
+OOS_DEV window predates the current date by months is stale: the
+regime it was evaluated against may no longer apply.
+
+### R138. Auto-pause on data quality alert
+
+Status: pending
+Priority: medium-high
+Effort: 1 week
+Area: data integrity / safety
+
+Data feed gaps, stale ticks, repeated bars, and time-jumps all
+indicate an upstream issue. When detected, pause every running
+strategy until an operator clears the alert. Auto-pause beats
+acting on bad data.
+
+### R139. Live anomaly detection
+
+Status: pending
+Priority: medium
+Effort: 2 weeks
+Area: monitoring
+
+Compute rolling realized metrics (Sharpe, win rate, trade frequency,
+notional turnover) live. When realized diverges from backtested
+expected by more than the bootstrap CI, alert. Catches "the
+strategy is not behaving like the backtest" early.
+
+### R140. Strategy lifecycle SLA + auto-archive
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: lifecycle
+
+Every promoted strategy declares an expected lifetime (e.g. 12
+months). At end-of-SLA the strategy is auto-suspended pending
+re-validation; operator extends or archives. Prevents zombie
+strategies from running indefinitely.
+
+### R141. Walk-forward refit cadence optimizer
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: research / lifecycle
+
+Per-strategy optimal refit cadence: rerun walk-forward at multiple
+cadences (weekly, monthly, quarterly) and pick the cadence with the
+best stability. Outputs a recommended refit schedule consumed by
+R93 (re-optimisation scheduler).
+
+### R142. Strategy degradation forecaster
+
+Status: pending
+Priority: low
+Effort: 4 to 6 weeks
+Area: ML / lifecycle
+Source: original
+
+Train an ML model on past strategy archive: features = early
+realized metrics, regime tags, parameter shape; label = months until
+strategy degraded below SLA. Use to forecast remaining lifetime of
+new candidates and rank.
+
+### R143. Snapshot freshness audit
+
+Status: pending
+Priority: low
+Effort: 3 to 4 days
+Area: data integrity
+
+Flag snapshots older than a configurable window (default 90 days)
+as stale. Auditor refuses to use a stale snapshot for a fresh
+backtest unless the operator overrides with a recorded reason.
+
+### R144. Synthetic adversarial market generator
+
+Status: pending
+Priority: medium-high
+Effort: 3 to 4 weeks
+Area: anti-overfit / robustness
+Source: original
+Suggested path: `validation/adversarial_markets.py`
+
+Generate price paths adversarially designed to break a given
+strategy: gradient-style perturbation that maximises strategy
+drawdown subject to realistic-volatility constraints. A strategy
+that survives adversarial scenarios is materially more robust than
+one that only survives Monte Carlo.
+
+### R145. Out-of-distribution feature detector
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: ML / safety
+
+For ML strategies, detect when live feature distributions diverge
+from training feature distributions (KL divergence, MMD, isolation
+forest). Auto-pause when out-of-distribution; alert operator.
+
+### R146. Reproducibility witness object
+
+Status: pending
+Priority: medium-high
+Effort: 1 to 2 weeks
+Area: provenance / reproducibility
+Source: original
+
+Every run (backtest, validation, GA, factory submit) emits a
+`Witness` object capturing seed, git_hash, policy_hash, snapshot_ids,
+input_hash, output_hash, compute_seconds, dependency_versions.
+Operators can replay any witness and assert byte-identical output.
+More complete than the existing per-artifact hashes.
+
+### R147. Audit-replay integrity test
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: provenance / audit
+
+Synthetic test that asserts every trade in a session can be
+reproduced from the audit log alone, without access to the source
+strategy code. If reproduction fails, the audit chain is incomplete
+and the session is not auditable -- regulator-relevant.
+
+### R148. Backtest determinism contract test
+
+Status: pending
+Priority: medium
+Effort: 3 days
+Area: QA / reproducibility
+
+CI-level test that runs the canonical smoke backtest twice with the
+same seed + git_hash and asserts byte-identical output. Catches
+non-determinism regressions (random call order, dict iteration,
+multi-thread races) at PR time.
+
+### R149. Survivorship-bias audit per backtest
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: data integrity
+
+For every backtest, assert the universe at time T was actually
+tradeable then (not selected post-hoc from current S&P500). Ties
+into R134 universe rebalance gate.
+
+### R150. Corporate-action correctness audit
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: data integrity
+
+Test fixture set covering splits, dividends, mergers, spinoffs,
+ticker changes. Run the engine against fixtures and assert price
+adjustments and position adjustments match expected. Today the
+behaviour exists but is not test-fixtured.
+
+### R151. Holiday calendar correctness audit
+
+Status: pending
+Priority: low
+Effort: 3 to 4 days
+Area: data integrity / time
+
+Test that the strategy honours per-market holiday calendars (NYSE,
+LSE, TSE) and does not place orders on closed exchanges. Catches
+the off-by-one weekend issue.
+
+### R152. Strategy ancestry tree visualization
+
+Status: pending
+Priority: low
+Effort: 2 weeks
+Area: research / observability
+Suggested paths: `cli/forge.py` (`forge research lineage`),
+`monitoring/dashboard.py`
+
+Visualise strategy lineage: parent strategy -> variants -> archived
+descendants. Builds on the existing `research/factory/lineage.py`.
+Pair with R39 (graveyard) and R140 (SLA auto-archive) so the tree
+shows live, paused, archived, and SLA-expired states.
+
+### R153. Sealed envelope forecast ceremony
+
+Status: pending; design call
+Priority: low
+Effort: 2 to 3 weeks
+Area: integrity / forecast verifiability
+Source: original
+
+Before live deployment, encrypt strategy params + a forward-looking
+forecast for window [T, T+N] under an operator key. The lockbox
+holds the ciphertext; only after T+N closes does the operator
+decrypt and compare forecast vs realized. Anti-cheating: prevents
+post-hoc rationalisation of strategy edits during the forward
+window.
+
+Definition of done:
+
+- Encrypted forecast lockbox primitive in `agent_gateway/`.
+- Decryption verifies the ciphertext was sealed before T.
+- Test fixture covering the happy path and a tampered-ciphertext
+  refusal.
+
+### R154. Cross-strategy regime correlation alert
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: portfolio / monitoring
+
+When N approved strategies all underperform simultaneously, run a
+common-cause analysis: are they all long the same regime? Same
+factor exposure? Same data dependency? Output a single-page
+"common cause" report with the suspected shared driver.
 
 ---
 
