@@ -59,12 +59,25 @@ matrices, consolidated stability index, regime-adaptive optimisation,
 realistic trade simulator, volume profile analysis, and a build-level
 goal-seeking GA driver.
 
+A fourth pass benchmarked against five additional platforms
+(BuildAlpha, Forex Strategy Builder Pro, Composer.trade, Molanis,
+EA Builder) and added R103 to R124. Highlights: BuildAlpha-style
+random-baseline statistical significance test, bootstrap CIs on every
+metric, per-signal contribution attribution, "OOS Plus" pre-
+construction holdout (a sixth tier above OOS_LOCKED), multi-market
+sweep, combinatorial alpha generation, vote-threshold ensemble;
+Composer-style symphony / conditional asset rotation primitive plus
+group-based weighting and sector rotation; Molanis-style account-
+level circuit breaker and spread protection filter; multi-channel
+alerts (SMS / push / Telegram) and a properly-modelled grid template
+(martingale variants explicitly rejected).
+
 Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21,
-R23 through R102.
+R23 through R124.
 
 ---
 
@@ -1786,6 +1799,364 @@ hours of compute" -- the build runs until the goal is met or the
 budget expires. Today GA runs for a fixed number of generations.
 Add a goal-seeking driver on top of `ga/runner.py` that watches the
 Pareto front and stops early on success.
+
+### R103. Random-baseline statistical significance test
+
+Status: pending
+Priority: high
+Effort: 1 week
+Area: validation
+Source: BuildAlpha
+Suggested path: `validation/random_baseline.py`
+
+For every approved strategy, generate N random-entry strategies with
+the same exit rules and identical bar count, then test whether the
+candidate's Sharpe / Calmar / total return is statistically distinct
+from the random distribution. A strategy whose Sharpe falls within
+the random ensemble's confidence band is curve-fit, not skilled.
+
+Definition of done:
+
+- `validation/random_baseline.py` returns a p-value on the candidate
+  metric vs the random ensemble.
+- Auditor pipeline raises a HIGH finding when p > 0.05.
+- Tests cover the obvious case (ZERO_costs random vs ZERO_costs
+  candidate must be indistinguishable when the candidate fitness fn
+  ignores prices).
+
+### R104. Bootstrap confidence intervals on metrics
+
+Status: pending
+Priority: high
+Effort: 1 to 2 weeks
+Area: analytics / metrics
+Source: BuildAlpha
+Suggested path: `analytics/metric_cis.py`
+
+Today `compute_metrics` returns point estimates. Add bootstrap CIs
+(default 95%) for: Sharpe, Sortino, Calmar, MDD, total return, win
+rate, profit factor. Surface the CIs in tearsheet and daily ops
+report. A strategy whose CI on Sharpe spans zero is not actually a
+positive-edge strategy regardless of point estimate.
+
+### R105. Per-signal contribution attribution
+
+Status: pending
+Priority: medium-high
+Effort: 1 to 2 weeks
+Area: analytics / ensemble
+Source: BuildAlpha
+Suggested paths: `analytics/signal_attribution.py`, paired with
+R109 (vote-threshold ensemble) and R86 (block library)
+
+When a strategy is built from N signals (R77 / R109), attribute
+realized PnL contribution per signal so an operator can drop the
+dead-weight signals before promotion. Surface contribution table in
+tearsheet.
+
+### R106. "OOS Plus" pre-construction holdout
+
+Status: pending
+Priority: medium-high
+Effort: 1 week
+Area: validation / tier protocol
+Source: BuildAlpha
+Suggested paths: `core/data_tiers.py`, `docs/RESEARCH_PROTOCOL.md`
+
+Today the tier protocol has IS_TRAIN / IS_VALID / OOS_DEV /
+OOS_LOCKED / FORWARD. Add an additional **OOS_PLUS** partition
+reserved BEFORE strategy construction even begins -- consulted only
+once at the very end, after OOS_LOCKED, before live deployment. It
+sits between OOS_LOCKED and FORWARD. Adds another defence layer
+against operator-side OOS leakage during research.
+
+Definition of done:
+
+- New tier added; ProtocolPolicy rejects reads without an explicit
+  ceremony.
+- Property test asserts the factory and triage cannot read it.
+- Documentation updated.
+
+### R107. Multi-market sweep
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: validation / robustness
+Source: BuildAlpha
+Suggested path: `validation/multi_market_sweep.py`
+
+Run the same strategy across N markets in parallel and produce a
+ranked table: best market, worst market, median market, market-
+specific Calmar. A strategy that only works on one symbol is more
+likely curve-fit than one that works across a basket.
+
+### R108. Combinatorial alpha generation
+
+Status: pending
+Priority: medium-high
+Effort: 1 to 2 weeks
+Area: research / strategy generation
+Source: BuildAlpha
+Suggested path: `research/auto_gen/combinatorial.py`
+
+Companion to R77 (random GA-style generation): exhaustively try
+every combination of M signals from a pool of K (with K-choose-M
+caps). Use when K is small enough; fall back to R77 for larger
+search spaces. Pair with R105 so per-combination attribution flags
+which combos are signal-driven vs noise-driven.
+
+### R109. Vote-threshold ensemble combiner
+
+Status: pending
+Priority: medium-high
+Effort: 1 week
+Area: strategies / ensemble
+Source: BuildAlpha
+Suggested path: `strategies/library/ensemble_vote.py`
+
+Combine M sub-signals; emit `+1` only when at least X% agree on
+long, `-1` when at least X% agree on short, `0` otherwise. Pair with
+R105 for contribution analysis and R98 for stability scoring.
+
+### R110. Bar-by-bar backtest replay debugger
+
+Status: pending
+Priority: low
+Effort: 1 to 2 weeks
+Area: tooling / debug
+Source: Forex Strategy Builder Pro
+Suggested paths: `cli/forge.py` (`forge debug step`),
+`monitoring/dashboard.py`
+
+Step through a backtest one bar at a time printing: bar OHLCV,
+indicator state, weight before / after, fill notional, running PnL,
+running drawdown. Pair with R85 dashboard for a visual mode.
+
+### R111. Generator pre-acceptance constraints
+
+Status: pending
+Priority: medium
+Effort: 3 to 4 days
+Area: research / generator filters
+Source: Forex Strategy Builder Pro
+Suggested paths: `research/factory/factory.py`,
+`research/auto_gen/`
+
+Before a generated candidate enters the validation pipeline, filter
+on cheap pre-acceptance metrics: max trades / day, target MDD band,
+target win-rate band, target turnover ceiling. Avoids burning
+compute on candidates that will obviously fail downstream.
+
+### R112. Multi-feed cross-validation
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: validation / data integrity
+Source: Forex Strategy Builder Pro
+Suggested paths: `validation/cross_feed.py`,
+`core/data_providers/`
+
+Run the same strategy against N data providers (Yahoo, OpenBB,
+broker-cached, vendor B) and assert the fitness numbers agree
+within tolerance. Catches data-source-specific anomalies (split
+handling, dividend adjustments, timezone bugs).
+
+### R113. Symphony / conditional asset rotation primitive
+
+Status: pending
+Priority: high
+Effort: 2 to 3 weeks
+Area: strategies / portfolio
+Source: Composer.trade
+Suggested paths: `strategies/symphony/`, `deployment/allocator.py`
+
+A higher-level construct than the per-asset Strategy: nested
+conditional rules that allocate a portfolio. Example::
+
+    IF SPY 50d MA > 200d MA:
+        weights = {SPY: 0.6, QQQ: 0.4}
+    ELSE IF VIX > 30:
+        weights = {TLT: 0.6, GLD: 0.4}
+    ELSE:
+        weights = {CASH: 1.0}
+
+Compiles to the existing per-asset weight contract so the engine,
+costs, and tier protocol carry over. Pair with R78 (rule editor IR).
+
+### R114. Tax-loss harvesting awareness
+
+Status: pending
+Priority: low
+Effort: 2 weeks
+Area: deployment / tax
+Source: Composer.trade
+Suggested paths: `core/taxes.py`, `deployment/allocator.py`
+
+`core/taxes.py` already has FIFO / LIFO / HIFO + wash-sale tracking.
+Surface tax implications during rebalance: when the allocator wants
+to close a long-held lot, the allocator emits the realized-gain
+estimate and a `tax_drag_bps` so the operator can decide whether
+the rebalance is worth the tax bill. Off-by-default and U.S.-tax-
+specific.
+
+### R115. Group-based weighting rules
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: strategies / portfolio
+Source: Composer.trade
+Suggested path: `strategies/symphony/`
+
+Operators want "apply rule X to my equity bucket, rule Y to my
+fixed-income bucket". Symphony language extension: groups of assets
+plus rules per group. Pair with R113.
+
+### R116. Explicit cash-state within strategy
+
+Status: pending
+Priority: low
+Effort: 3 days
+Area: strategies / engine
+Source: Composer.trade
+
+Today a flat strategy returns weight 0. There is no first-class
+"cash holds out for X bars while in cash" position. Add an explicit
+cash state in the engine so cooldown / regime-off / stop-out periods
+are visible distinct from "no signal yet".
+
+### R117. What-if scenario replay
+
+Status: pending
+Priority: low
+Effort: 1 to 2 weeks
+Area: analytics / what-if
+Source: Composer.trade
+Suggested path: `analytics/what_if.py`
+
+Replay an approved strategy under hypothetical perturbations: "if
+VIX had been 50 on every day", "if costs had been 2x", "if the
+2008 crash had occurred in 2024". Differs from R76 scenarios
+(canonical historical periods) by being arbitrary user-defined
+overlays.
+
+### R118. Sector / basket rotation primitive
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: strategies
+Source: Composer.trade
+Suggested path: `strategies/library/sector_rotation.py`
+
+Built-in rotator that selects top-N sectors by a configurable
+ranking (momentum, value, low-vol) and rebalances on cadence.
+Operators pick the universe (e.g. SPDR sector ETFs) and the
+ranking; the rotator does the rest. Pair with R113.
+
+### R119. Spread protection filter
+
+Status: pending
+Priority: medium
+Effort: 3 days
+Area: deployment / safety
+Source: Molanis
+Suggested path: `deployment/spread_filter.py`
+
+Pause trading when the live bid-ask spread exceeds a configured
+multiple of the average spread for the symbol. Cheap defence
+against thin-market lockups.
+
+### R120. Account-level circuit breaker
+
+Status: pending
+Priority: medium-high
+Effort: 1 week
+Area: deployment / safety
+Source: Molanis
+Suggested paths: `deployment/circuit_breaker.py`,
+`deployment/live.py`
+
+Hard stop trading when daily / weekly drawdown exceeds a configured
+threshold. Different from per-strategy stops because it integrates
+across all running strategies. Trips the kill switch and writes an
+audit-trail entry; restart requires explicit operator ceremony.
+
+### R121. Hedging support
+
+Status: pending; design-call required
+Priority: low
+Effort: 2 to 3 weeks
+Area: engine / position management
+Source: Molanis
+Suggested paths: `core/engine.py`, `core/engine_multi.py`,
+`deployment/brokers.py`
+
+Multiple opposing positions on the same symbol. Today the engine
+nets to a single position per symbol. Decide whether to:
+
+- support hedging natively (changes the engine state model), or
+- forbid hedging at the engine and require operators to model it as
+  two strategies on the same symbol with the R71 isolation override.
+
+Definition of done:
+
+- Decision recorded in `RESEARCH_PROTOCOL.md`.
+- If supported: engine state extension, broker translation, audit
+  for the consistency rule (long + short = flat after netting).
+- If forbidden: explicit refusal with a message pointing at R71.
+
+### R122. Multi-channel alerts
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: monitoring / ops
+Source: Molanis
+Suggested paths: `monitoring/alerts.py`, `reporting/daily_ops/`
+
+Existing alert channels: SMTP email, Slack, Discord. Extend to:
+SMS (Twilio), push (Pushbullet / Pushover), Telegram. Per-event
+channel routing: kill-switch fires SMS, daily summary goes to
+Slack, drift report goes to email. All channels read credentials
+from env vars only.
+
+### R123. Code preview from rule construction
+
+Status: pending
+Priority: low
+Effort: 1 week
+Area: tooling
+Source: Molanis
+Suggested paths: `strategies/rules/codegen.py`,
+paired with R78 (rule IR)
+
+When an operator authors a strategy via R78 IR, render the
+generated Python (or PineScript / MQL5 / etc per R80) so the
+operator can review what is about to ship before promotion. Pure
+pretty-printer over the IR.
+
+### R124. Grid trading strategy template
+
+Status: pending
+Priority: low
+Effort: 1 week
+Area: strategies
+Source: Molanis
+Suggested paths: `strategies/library/grid.py`,
+`strategies/templates/`
+
+Add a properly-modelled grid strategy: place buy orders at evenly
+spaced steps below current price, sell at steps above. Includes
+explicit max-grid-depth + cumulative position cap to prevent the
+classic grid-blowup failure mode. Honours R71 (concurrent strategy
+isolation).
+
+Note: martingale-style position-doubling-after-loss templates were
+deliberately NOT added. They magnify the worst case rather than
+managing it; do not ship them as templates.
 
 ---
 
