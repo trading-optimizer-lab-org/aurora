@@ -44,12 +44,27 @@ strategy isolation, numba JIT shadow-mutations workaround, the
 remaining hardcoded-path escapees from R22, and the R23 sub-task for
 env-var migration to `AU_*`.
 
+A third pass benchmarked the project against StrategyQuant X and added
+R77 to R102 covering the substantive feature gaps that are NOT GUI
+cosmetics or retail-broker plumbing: atomic-block strategy generator,
+visual rule editor IR, pattern recognition module, multi-platform
+code export (PineScript / MQL5 / EasyLanguage / NinjaScript), walk-
+forward + optimisation heatmaps, equity-curve and DNA similarity
+scoring, PDF report renderer, dashboard upgrade, indicator block
+library, strategy templates gallery, expanded money management,
+one-click robustness preset, distributed strategy generation,
+strategy publish / import bundle, re-optimisation scheduler, news
+and volatility filters, per-strategy session times, cross-validation
+matrices, consolidated stability index, regime-adaptive optimisation,
+realistic trade simulator, volume profile analysis, and a build-level
+goal-seeking GA driver.
+
 Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21,
-R23 through R76.
+R23 through R102.
 
 ---
 
@@ -1387,6 +1402,390 @@ Definition of done:
 - `AU_*` reads are honored, `QF_*` reads emit a DeprecationWarning.
 - Compatibility shim has a clear retirement target version.
 - All docs reference `AU_*` as the canonical name.
+
+### R77. Auto-discovery strategy generator from atomic blocks
+
+Status: pending
+Priority: high
+Effort: 3 to 4 weeks
+Area: research / strategy authoring
+Suggested paths: `research/auto_gen/`, `strategies/blocks/`,
+`research/factory/generators.py`
+
+StrategyQuant's headline feature: combine indicators + comparison
+operators + entry / exit rules randomly into N candidate strategies,
+then filter through validation. QuantForge today runs GA on existing
+strategies; it cannot invent new ones from atomic primitives.
+
+Scope:
+
+- Block library: indicators (`RSI`, `MA`, `EMA`, `ATR`, `Bollinger`,
+  `MACD`, `ADX`, `Stochastic`, `Donchian`, `Ichimoku`, ...), comparators
+  (`>`, `<`, `crosses_above`, `crosses_below`), logical connectors
+  (`AND`, `OR`, `NOT`), session filters, position rules.
+- Random generator: produce a candidate by sampling N blocks under
+  syntactic constraints (entry must reference a price or indicator,
+  exit must close the entry, ...).
+- Plug into the `HypothesisGenerator` protocol so the existing factory
+  (R10 auto-loop, R8 LLM augmenter, auditor pipeline) consumes the
+  output unchanged.
+- Output is a deterministic `StrategySpec` with a stable `spec_hash`.
+
+Definition of done:
+
+- Generator produces 10 000 syntactically valid candidates per minute
+  on a single CPU core.
+- Candidates flow through the factory exactly like human-authored
+  specs; no special-casing.
+- A property test asserts every generated spec is rejected if it
+  references a future bar.
+
+### R78. Visual rule editor (programmatic first)
+
+Status: pending
+Priority: medium-high
+Effort: 1 to 2 weeks for the IR; UI deferred
+Area: research / strategy authoring
+Suggested path: `strategies/rules/`
+
+Operators want to write `IF RSI(14) > 30 AND price > MA(50) THEN buy`
+without learning Python. Implement the intermediate representation
+(IR) first; the UI is a separate roadmap item once R77 stabilises.
+
+- IR: an AST-like structure with `Indicator`, `Comparator`, `Logical`,
+  `Action` nodes.
+- Compiler: IR -> a callable `signals(prices)` function that respects
+  the existing Strategy contract.
+- YAML serialisation so an operator can author rules in a text file
+  and round-trip them through the factory.
+
+### R79. Pattern recognition strategy module
+
+Status: pending
+Priority: medium
+Effort: 2 weeks
+Area: strategies
+Suggested path: `strategies/patterns/`
+
+Detect chart patterns (head and shoulders, double top / bottom,
+triangles, flags, breakouts on candle formations) and emit standard
+`signals()` arrays. Pair with R77 so generated strategies can use
+"pattern detected" as a precondition block.
+
+### R80. Multi-platform code export beyond Lean
+
+Status: pending
+Priority: medium
+Effort: 2 to 4 weeks (one slice per target)
+Area: exports
+Suggested path: `exports/{mql5,easylanguage,ninjascript,pinescript}/`
+
+Today only Lean export exists. Add per-platform translators with
+provenance metadata identical to R1 (`policy_hash`, `spec_hash`,
+`forge_version`, `exported_at`, README warning).
+
+Recommended slice order:
+
+1. PineScript (TradingView) -- highest reach, smallest grammar.
+2. MQL5 (MetaTrader 5).
+3. EasyLanguage (TradeStation).
+4. NinjaScript (NinjaTrader).
+
+Each slice ships its own `verify_project` equivalent.
+
+### R81. Walk-forward matrix heatmap
+
+Status: pending
+Priority: medium
+Effort: 3 to 4 days
+Area: validation / reporting
+Suggested paths: `validation/walk_forward.py`, `reporting/tearsheet.py`
+
+Render the per-window OOS performance as a 2D heatmap (window index
+x metric). Surfaces "this strategy passed walk-forward overall but
+fell apart in window 4" at a glance.
+
+### R82. Optimization heatmaps
+
+Status: pending
+Priority: medium
+Effort: 3 to 4 days
+Area: GA / reporting
+Suggested paths: `ga/runner.py`, `reporting/tearsheet.py`
+
+For 2-parameter optimizations, render a heatmap of the fitness
+landscape (param X x param Y -> Calmar). For higher-D, render
+pairwise slices. Surfaces "knife-edge" optima where one nudge in
+parameter space tanks performance.
+
+### R83. Equity curve similarity scoring
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: research / portfolio
+Suggested path: `analytics/equity_similarity.py`
+
+For every pair of approved strategies in the review queue, compute a
+similarity score (Pearson, dynamic time warping, or both) between
+their equity curves. Flag pairs above a configurable threshold so the
+operator does not accidentally combine two near-duplicates into a
+"diversified" portfolio. Pair with R39 (graveyard) so similar-to-an-
+archived-strategy candidates also get flagged.
+
+### R84. Auto-generated PDF reports with charts
+
+Status: pending
+Priority: low
+Effort: 1 week
+Area: reporting
+Suggested paths: `reporting/tearsheet.py`, `reporting/pdf_report.py`,
+`exports/lean/exporter.py`
+
+Tearsheet exists as HTML. Add a PDF variant via WeasyPrint (already
+in optional deps) that embeds equity, drawdown, factor and
+attribution charts plus the operator-facing run summary. Pair with
+R37 so the daily ops report can also be archived as PDF.
+
+### R85. Real-time GUI dashboard upgrade
+
+Status: pending
+Priority: medium
+Effort: 2 to 3 weeks
+Area: monitoring
+Suggested path: `monitoring/dashboard.py`
+
+Streamlit dashboard exists but is basic. Upgrade with: live equity
+curves per strategy, real-time PnL, live alerts feed, kill-switch
+state, last 100 audit-trail entries, broker connection health,
+position concentration view, and a "what no-trade reason fired
+today" panel pulling from the daily ops report (R37 / Daily Ops).
+
+### R86. Indicator block library
+
+Status: pending
+Priority: medium-high (gates R77)
+Effort: 1 to 2 weeks
+Area: strategies / building blocks
+Suggested path: `strategies/blocks/indicators.py`
+
+Catalogued, parameterised indicator library that R77 / R78 / R79
+sample from. Cover the standard set (RSI, MA, EMA, MACD, Bollinger,
+ATR, ADX, Stochastic, Ichimoku, Donchian, OBV, VWAP, CCI, Williams
+%R, ROC, MOM, Pivot Points). Each block declares its parameter
+ranges, warmup window, anti-lookahead audit.
+
+### R87. Strategy templates gallery
+
+Status: pending
+Priority: low
+Effort: 1 week
+Area: strategies / docs
+Suggested paths: `strategies/templates/`, `docs/STRATEGY_TEMPLATES.md`
+
+Curate a gallery of starter strategies grouped by family (trend
+following, mean reversion, breakout, pairs, vol-targeting overlay,
+regime-switching). Each template ships with a one-page description,
+a parameter cheat-sheet, and a smoke backtest expected output.
+
+### R88. Money management library
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: deployment / sizing
+Suggested path: `deployment/sizing.py`
+
+Today the sizing module covers fixed, vol-target and Kelly. Extend
+to: anti-martingale, fractional-Kelly with shrinkage, fixed-ratio
+(Larry Williams), profit-step pyramiding, drawdown-scaled sizing
+(reduce after losses). Each gets a unit test plus a property test
+asserting position never exceeds `max_leverage` from the policy.
+
+### R89. One-click robustness preset
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: validation
+Suggested path: `validation/robustness_suite.py`
+
+Today running noise injection, gap simulation, MC bootstrap,
+trade-reorder, SPP, scenarios, tail-risk and correlation-stress is
+several CLI calls. Bundle them into one `forge robustness --strategy
+... --preset {fast,full}` command that runs the suite, aggregates
+results into a single report, and exits non-zero on any gate failure.
+
+### R90. Cloud build / distributed strategy generation
+
+Status: pending
+Priority: medium-low
+Effort: 3 to 4 weeks
+Area: infra / scale
+Suggested paths: `infra/distributed.py`, `research/auto_gen/`,
+`agent_gateway/`
+
+Distribute the R77 strategy generator across N workers coordinated
+by a central node. Each worker is sandboxed, generates K candidates,
+hands them back to the central factory for validation. Pair with R7
+so workers see the same snapshot store, and R71 so concurrent runs
+do not collide.
+
+### R91. Strategy marketplace primitive
+
+Status: pending
+Priority: low
+Effort: 2 weeks for the publish/import primitive; full marketplace
+out of scope
+Area: distribution
+Suggested path: `cli/forge.py` (`forge strategy publish / import`)
+
+A marketplace is out of scope, but the import / publish primitive is
+not: package a strategy plus its `policy_hash`, `spec_hash`,
+audit-report hash, and a README into a single signed bundle.
+Operators on a different machine can import the bundle, verify the
+hash chain, and reproduce the validation locally.
+
+### R92. Strategy DNA / fingerprint similarity
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: research / curation
+
+Beyond the equity-curve similarity from R83: signal-vector
+similarity, parameter-space similarity, and a composite
+"fingerprint" that summarises both. The fingerprint feeds R38
+(curation) so a new candidate that is too close to an existing
+production strategy is auto-archived rather than competing for
+review-queue slots.
+
+### R93. Re-optimization scheduler
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: research / lifecycle
+Suggested path: `research/auto_loop/`
+
+Today R10 auto-loop generates new candidates daily. Add a sibling
+loop that re-validates approved strategies on a configurable
+cadence: weekly walk-forward refresh, monthly full pipeline rerun,
+quarterly OOS_LOCKED reseat (with ceremony). Output: a calendar of
+which strategy is up next, plus alerts on degradation.
+
+### R94. News / event filter
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: deployment / safety
+Suggested paths: `deployment/news_filter.py`,
+`altdata/economic_calendar.py`
+
+Block trading during scheduled high-impact events (Fed, NFP, CPI,
+earnings for held names). Pluggable provider so operators wire
+their own news feed. Include a `forge ops news --next-N hours`
+preview so the daily ops report flags upcoming blackouts.
+
+### R95. Volatility filter
+
+Status: pending
+Priority: medium
+Effort: 3 to 4 days
+Area: deployment / safety
+Suggested path: `deployment/vol_filter.py`
+
+Pause trading when a configured volatility metric (VIX, realized
+vol, regime detector) breaches a band. Filter integrates with the
+existing `LiveConfig` so operators do not need new wrappers.
+
+### R96. Custom session times per strategy
+
+Status: pending
+Priority: low
+Effort: 3 to 4 days
+Area: deployment
+
+Today strategies inherit the engine session calendar (RTH / 24h /
+ETH). Allow per-strategy session windows so an Asia-only signal does
+not fire during US hours. Honour exchange-local timezones (R45).
+
+### R97. Cross-validation matrices
+
+Status: pending
+Priority: medium-low
+Effort: 1 week
+Area: validation / reporting
+Suggested paths: `validation/cscv_pbo.py`, `reporting/tearsheet.py`
+
+Visualise the CSCV / PBO output as a matrix of train / test fold
+performance, plus a delta heatmap. Surfaces "the strategy looks fine
+on average but has a fold where it loses 30%".
+
+### R98. Consolidated stability index
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: validation / metrics
+Suggested path: `validation/stability_index.py`,
+`analytics/metrics_full.py`
+
+Aggregate SPP CV, walk-forward Calmar variance, MC trade-reorder
+spread, scenario breadth and CSCV PBO into a single 0..1 stability
+score. Single number is easier for operators to rank-order
+candidates by than the seven separate ones today.
+
+### R99. Adaptive optimization (regime-aware)
+
+Status: pending
+Priority: medium-low
+Effort: 3 to 4 weeks
+Area: research / regime
+Suggested paths: `research/regime_adaptive.py`, `regime/`
+
+Strategies that re-tune their parameters when a regime detector
+(R40 Hurst, HMM, Bayesian) flags a regime shift. Pair with R71 so
+adaptive re-tuning never lifts an OOSGuard.
+
+### R100. Trade simulator with realistic frictions
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 weeks
+Area: execution / paper
+
+Today PaperBroker is functional but does not model partial fills,
+queue priority, varying spread, latency, or rejected orders. Build a
+trade simulator that wraps PaperBroker with these knobs (cf. R4
+first-slice "paper execution simulator").
+
+### R101. Volume profile analysis
+
+Status: pending
+Priority: low
+Effort: 1 week
+Area: analytics / microstructure
+Suggested path: `analytics/volume_profile.py`
+
+Compute volume-by-price profiles (POC, value area, HVN/LVN). Useful
+input for support / resistance signals and post-trade analysis.
+Pair with R86 so a volume-profile node is available as a strategy
+block.
+
+### R102. Build-level goal-seeking optimisation
+
+Status: pending
+Priority: low
+Effort: 1 to 2 weeks
+Area: GA / research
+
+"Find me a strategy with Sharpe >= 1.2 and MDD <= 15% in under 2
+hours of compute" -- the build runs until the goal is met or the
+budget expires. Today GA runs for a fixed number of generations.
+Add a goal-seeking driver on top of `ga/runner.py` that watches the
+Pareto front and stops early on success.
 
 ---
 
