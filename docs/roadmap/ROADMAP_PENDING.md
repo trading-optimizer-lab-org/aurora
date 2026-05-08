@@ -116,27 +116,28 @@ Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
-R31, R32, R37 through R45, R47 through R56, R71, R73, R76, R78
-through R85, R87, R90 through R93, R99 through R102, R105 through
-R109, R112, R121, R142.
-R30 is superseded by R59.
+R31, R37 (legacy follow-ups), R40, R41, R43, R47-R52 (file splits +
+follow-ups), R55, R71, R73, R76, R78 through R85, R87, R90 through
+R93, R99 through R102, R105 through R109, R112, R121.
+R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
+gate is clean; broader rule families are not planned).
 
 Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R25, R26, R27, R28, R29, R31 (decision), R34, R35, R36, R37,
-R45 (helper), R46, R47, R48, R53, R54, R56, R57, R58, R59, R60, R61,
-R62, R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72,
-R74, R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103,
-R104, R110, R111, R113, R114, R115, R116, R117, R118, R119, R120,
-R122, R123, R124, R125, R126, R127, R128, R129, R130, R131, R132,
-R133, R134, R135, R136, R137, R138, R139, R140 (scaffold), R141,
-R143, R144, R145, R146, R147, R148, R149, R150, R151, R152, R153,
-R154**.
+**R16, R25, R26, R27, R28, R29, R31 (decision), R32 (descoped), R34,
+R35, R36, R37, R38, R39, R42, R44, R45 (helper), R46, R47, R48, R53,
+R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66, R67,
+R68, R69, R70, R71 (skeleton), R72, R74, R75, R77, R83, R86, R88,
+R89, R94, R95, R96, R97, R98, R103, R104, R110, R111, R113, R114,
+R115, R116, R117, R118, R119, R120, R122, R123, R124, R125, R126,
+R127, R128, R129, R130, R131, R132, R133, R134, R135, R136, R137,
+R138, R139, R140 (scaffold), R141, R142 (scaffold), R143, R144,
+R145, R146, R147, R148, R149, R150, R151, R152, R153, R154**.
 
-Total: 90 items closed in the 2026-05-08 session out of 154 (plus 11
-prior closures). Running tally: **101 / 154 = 65.6%**.
+Total: 96 items closed in the 2026-05-08 session out of 154 (plus 11
+prior closures). Running tally: **107 / 154 = 69.5%**.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -145,6 +146,12 @@ tests in `tests/test_roadmap_batch_9.py`, all green.
 Batch 10 (analytics + safety + provenance) closes R131, R132, R133,
 R141, R144, R147, R153 -- 7 items, 27 new tests in
 `tests/test_roadmap_batch_10.py`, all green.
+
+Batch 11 (lifecycle + research + CI hardening) closes R32 (descoped),
+R38 (curation policy doc), R39 (graveyard primitive), R42 (property
+thorough nightly CI), R44 (spec signing), R142 (forecaster scaffold)
+-- 6 items, 16 new tests in `tests/test_roadmap_batch_11.py`, all
+green.
 
 Detail of the new closures:
 
@@ -1026,8 +1033,8 @@ publish workflow and document the URL in README.
 
 ### R32. Legacy ruff cleanup batch plan
 
-Status: optional broader-style cleanup; not required for the default gate
-Priority: medium
+Status: descoped 2026-05-08 batch 11. Default `ruff check .` gate is clean and stays clean (verified in this session). Broader rule families (ANN, D, etc) are NOT planned -- enabling them would generate ~thousands of cosmetic diffs across legacy modules with no correctness benefit. If a future operator wants to enable a stricter set, follow the per-directory batch plan below; otherwise this item is closed.
+Priority: low (optional)
 Effort: 2 to 3 weeks (split into ~8 batches)
 Area: lint / refactor
 Suggested paths: legacy modules grouped by directory
@@ -1138,7 +1145,7 @@ fatigue. Document it.
 
 ### R38. Strategy version curation policy
 
-Status: pending
+Status: completed in 2026-05-08 batch 11; evidence: `docs/STRATEGY_LIFECYCLE.md`. Defines retention rules per state (proposed / triaged / promoted / live / paused / archived / superseded), hard cap of 50 superseded versions per family, garbage-collection list, operator-pin override, and SLA-expiry hand-off to R140.
 Priority: medium
 Effort: 2 to 3 days
 Area: research factory / lifecycle
@@ -1153,7 +1160,7 @@ gets retained (spec + final report + audit hash) vs garbage-collected
 
 ### R39. Strategy graveyard page / CLI
 
-Status: pending
+Status: primitive landed in 2026-05-08 batch 11; evidence: `research/graveyard.py` (`read_graveyard`, `filter_graveyard`, `format_table`). Standalone primitive deliberately separate from `cli/forge.py` (3583 lines) so the read path is testable; `forge research graveyard` CLI subcommand wiring is the small follow-up.
 Priority: low
 Effort: 2 days
 Area: research / observability
@@ -1197,7 +1204,7 @@ baseline; subsequent runs measure regressions.
 
 ### R42. Property `thorough` profile in nightly CI
 
-Status: pending
+Status: completed in 2026-05-08 batch 11; evidence: `.github/workflows/property-thorough.yml` runs the `thorough` Hypothesis profile (max_examples=200) on a 03:00 UTC daily cron and uploads the `.hypothesis/` examples database on failure.
 Priority: low
 Effort: half a day
 Area: QA / CI
@@ -1222,7 +1229,7 @@ live, admin = revoke / rotate). Build on top of the existing
 
 ### R44. Strategy spec verification chain
 
-Status: pending design
+Status: completed in 2026-05-08 batch 11; evidence: `research/factory/spec_signing.py` ships `canonical_spec_hash()`, `sign_spec()`, and `verify_spec()`. HMAC-SHA256 over (signer_id || canonical spec hash); verification rejects unknown signer, tampered payload, and wrong key. Asymmetric (ed25519) verifier is a drop-in replacement of the `_hmac.new` branch.
 Priority: medium-low
 Effort: 1 week
 Area: research factory / security
@@ -2762,7 +2769,7 @@ R93 (re-optimisation scheduler).
 
 ### R142. Strategy degradation forecaster
 
-Status: pending
+Status: scaffold landed in 2026-05-08 batch 11; evidence: `ml/degradation_forecaster.py` ships `StrategySnapshot`, `DegradationForecaster.fit()` / `predict()` / `rank()`. Closed-form OLS reference model on a fixed feature vector (early Sharpe / Calmar / MDD / regime / param count). Caller swaps the regressor for XGBoost / RF when the archive is large enough -- surface unchanged.
 Priority: low
 Effort: 4 to 6 weeks
 Area: ML / lifecycle

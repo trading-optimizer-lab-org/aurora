@@ -1,0 +1,45 @@
+name: property-thorough
+
+# R42: nightly thorough Hypothesis profile. Registered profile name is
+# `thorough` (max_examples=200, deadline=None). Runs once per day on
+# UTC-midnight; on failure, surfaces the same channel as the fast suite.
+on:
+  schedule:
+    # Daily at 03:00 UTC. Picked to land outside US trading hours.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  thorough:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ga]"
+
+      - name: Property suite (thorough profile)
+        env:
+          QF_DATA_DIR: ${{ runner.temp }}/qf_data
+          HYPOTHESIS_PROFILE: thorough
+        run: |
+          pytest tests/ -m "not slow and not integration" \
+            -k "property or hypothesis" \
+            --tb=short \
+            --hypothesis-show-statistics
+
+      - name: Upload Hypothesis examples database on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hypothesis-examples
+          path: .hypothesis/
+          if-no-files-found: ignore
