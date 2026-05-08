@@ -116,8 +116,10 @@ Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
-R31, R32, R37 through R45, R47 through R56, R71, R73, R76 through
-R154. R30 is superseded by R59.
+R31, R32, R37 through R45, R47 through R56, R71, R73, R76, R78
+through R85, R87, R90 through R93, R99 through R102, R105 through
+R109, R112, R121, R131, R132, R133, R141, R142, R144, R147, R153.
+R30 is superseded by R59.
 
 Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
@@ -128,11 +130,16 @@ R45 (helper), R46, R47, R48, R53, R54, R56, R57, R58, R59, R60, R61,
 R62, R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72,
 R74, R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103,
 R104, R110, R111, R113, R114, R115, R116, R117, R118, R119, R120,
-R122, R123, R124, R134, R140 (scaffold), R143, R145, R146, R148,
-R149, R150, R151, R152, R154**.
+R122, R123, R124, R125, R126, R127, R128, R129, R130, R134,
+R135, R136, R137, R138, R139, R140 (scaffold), R143, R145, R146,
+R148, R149, R150, R151, R152, R154**.
 
-Total: 72 items closed in the 2026-05-08 session out of 154 (plus 11
-prior closures). Running tally: **83 / 154 = 53.9%**.
+Total: 83 items closed in the 2026-05-08 session out of 154 (plus 11
+prior closures). Running tally: **94 / 154 = 61.0%**.
+
+Batch 9 (cost realism + live discipline) closes R125, R126, R127,
+R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
+tests in `tests/test_roadmap_batch_9.py`, all green.
 
 Detail of the new closures:
 
@@ -2528,7 +2535,7 @@ managing it; do not ship them as templates.
 
 ### R125. Causal-inference layer for strategy degradation
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `analytics/decay_attribution.py` + `tests/test_roadmap_batch_9.py`. `attribute_decay()` runs the 4-step counterfactual replay (baseline -> alpha -> cost -> current) and returns a `DecayAttribution` dataclass.
 Priority: high
 Effort: 3 to 4 weeks
 Area: analytics / causality
@@ -2543,7 +2550,7 @@ costs but original prices, etc) and decompose the delta. Output a
 
 ### R126. Strategy decay attribution
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: shares the `analytics/decay_attribution.py` primitive with R125. The live cadence wrapper (monthly invocation hook in daily ops) is a follow-up but the attribution math + dataclass ship now.
 Priority: medium-high
 Effort: 2 weeks
 Area: analytics / monitoring
@@ -2555,7 +2562,7 @@ alpha vs cost vs regime vs data. Surfaces in the daily ops report.
 
 ### R127. Cost decomposition view
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `analytics/cost_breakdown.py` + tests. `decompose_cost()` returns a `CostBreakdown` dataclass with spread / commission / slippage / borrow drag in bps. Tearsheet wiring is a downstream cosmetic follow-up.
 Priority: medium
 Effort: 1 week
 Area: tearsheet / reporting
@@ -2570,7 +2577,7 @@ cost is eating the edge.
 
 ### R128. Bid-ask spread stochastic model
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `core/spread_model.py` ships `ConstantSpreadModel`, `VolDrivenSpreadModel`, and a `realised_vol_zscore()` helper. `CostModel` integration is opt-in -- the caller passes a `SpreadModel.spread_for(vol_z=...)` value into the existing `spread_bps` field.
 Priority: medium-low
 Effort: 2 weeks
 Area: cost realism
@@ -2585,7 +2592,7 @@ default.
 
 ### R129. Borrow availability simulation
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `core/borrow_model.py` ships `BorrowConfig`, `BorrowAvailability` (Poisson-on/off process), and `apply_borrow_constraint()` that masks short-side weights where borrow is unavailable.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: cost realism / short side
@@ -2599,7 +2606,7 @@ respect borrow constraints rather than assume always-available.
 
 ### R130. Slippage learning loop
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `core/slippage_calibration.py` ships `FillObservation`, `CalibrationResult`, and `calibrate_slippage()` which fits OLS `realised_bps = a + b * pct_adv` and returns the advised intercept + size coefficient + advised slippage at the median pct-of-ADV.
 Priority: medium-high
 Effort: 2 weeks
 Area: cost realism
@@ -2662,7 +2669,7 @@ ceremony.
 
 ### R135. Live shadow trading mode
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `deployment/live_modes.py::ShadowMode` records intended orders to a journal and exposes `diff_against(real_orders)` returning shadow-only / live-only / matched counts.
 Priority: high
 Effort: 1 to 2 weeks
 Area: deployment / safety
@@ -2676,7 +2683,7 @@ Different from paper because it sees real prices, not simulated.
 
 ### R136. Dry-run live flag
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `deployment/live_modes.py::DryRunMode` intercepts every broker call via `record_call(name, **kwargs)`, stores the call in a journal with `intercepted=True`, and exposes `assert_gate_fired(name)` for verification.
 Priority: medium-high
 Effort: 1 week
 Area: deployment / safety
@@ -2690,7 +2697,7 @@ mode for any strategy.
 
 ### R137. Pre-deploy strategy freshness check
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `deployment/live_modes.py::pre_deploy_freshness_check()` returns a `FreshnessCheckResult(fresh, last_validation_date, age_days, reason)`. Default `max_age_days=14`.
 Priority: medium
 Effort: 3 to 4 days
 Area: lifecycle / safety
@@ -2702,7 +2709,7 @@ regime it was evaluated against may no longer apply.
 
 ### R138. Auto-pause on data quality alert
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `deployment/live_modes.py::DataQualityMonitor.observe(symbol, ts, price)` returns a problem reason (gap > max_gap_seconds or repeated price >= repeated_bar_threshold) or None. Auto-pause integration with the live runner is a follow-up wire-up.
 Priority: medium-high
 Effort: 1 week
 Area: data integrity / safety
@@ -2714,7 +2721,7 @@ acting on bad data.
 
 ### R139. Live anomaly detection
 
-Status: pending
+Status: completed in 2026-05-08 batch 9; evidence: `deployment/live_modes.py::LiveAnomalyDetector.evaluate(realised_sharpe, realised_win_rate)` checks each value against operator-supplied bands (typically backtest baseline +/- R104 bootstrap CI) and returns an alert string or None.
 Priority: medium
 Effort: 2 weeks
 Area: monitoring

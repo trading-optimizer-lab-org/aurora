@@ -11,15 +11,6 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{name = "QuantForge Project"}]
 
-# R28: canonical URLs. The AURORA rename (R23) will rotate these to the
-# new namespace; until the public repository home is decided, these point
-# at a placeholder so packaging metadata is at least well-formed.
-[project.urls]
-Homepage = "https://example.invalid/quantforge"
-Source = "https://example.invalid/quantforge"
-Issues = "https://example.invalid/quantforge/issues"
-Changelog = "https://example.invalid/quantforge/blob/main/CHANGELOG.md"
-Documentation = "https://example.invalid/quantforge/docs"
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
@@ -33,6 +24,16 @@ dependencies = [
     "platformdirs>=4.0",
     "networkx>=3.0",
 ]
+
+# R28: canonical URLs. The AURORA rename (R23) will rotate these to the
+# new namespace; until the public repository home is decided, these point
+# at a placeholder so packaging metadata is at least well-formed.
+[project.urls]
+Homepage = "https://example.invalid/quantforge"
+Source = "https://example.invalid/quantforge"
+Issues = "https://example.invalid/quantforge/issues"
+Changelog = "https://example.invalid/quantforge/blob/main/CHANGELOG.md"
+Documentation = "https://example.invalid/quantforge/docs"
 
 [project.optional-dependencies]
 ml = ["scikit-learn>=1.3", "statsmodels>=0.14", "hmmlearn>=0.3"]
