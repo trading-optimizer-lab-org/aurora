@@ -116,9 +116,8 @@ Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
-R31, R41, R47-R52 (file splits + follow-ups), R71, R73, R76, R78
-through R85, R87, R90 through R93, R99 through R102, R105 through
-R109, R112, R121.
+R31, R41, R47-R52 (file splits + follow-ups), R71, R73, R76, R78,
+R79, R80, R84, R85, R87, R90, R99, R100, R102, R106, R108, R121.
 R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
 gate is clean; broader rule families are not planned).
 
@@ -130,15 +129,16 @@ Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 R35, R36, R37, R38, R39, R40, R42, R43, R44, R45 (helper), R46, R47,
 R48, R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61, R62,
 R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72, R74,
-R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103, R104,
-R110, R111, R113, R114, R115, R116, R117, R118, R119, R120, R122,
-R123, R124, R125, R126, R127, R128, R129, R130, R131, R132, R133,
-R134, R135, R136, R137, R138, R139, R140 (scaffold), R141, R142
+R75, R77, R81, R82, R83, R86, R88, R89, R91, R92, R93, R94, R95,
+R96, R97, R98, R101, R103, R104, R105, R107, R109, R110, R111,
+R112, R113, R114, R115, R116, R117, R118, R119, R120, R122, R123,
+R124, R125, R126, R127, R128, R129, R130, R131, R132, R133, R134,
+R135, R136, R137, R138, R139, R140 (scaffold), R141, R142
 (scaffold), R143, R144, R145, R146, R147, R148, R149, R150, R151,
 R152, R153, R154**.
 
-Total: 99 items closed in the 2026-05-08 session out of 154 (plus 11
-prior closures). Running tally: **110 / 154 = 71.4%**.
+Total: 109 items closed in the 2026-05-08 session out of 154 (plus
+11 prior closures). Running tally: **120 / 154 = 77.9%**.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -157,6 +157,13 @@ green.
 Batch 12 (perf + RBAC + error-handling policy) closes R40 (benchmark
 scaffold), R43 (gateway RBAC), R55 (except-Exception audit doc) -- 3
 items, 14 new tests in `tests/test_roadmap_batch_12.py`, all green.
+
+Batch 13 (research + reporting + ensembles) closes R81, R82
+(heatmaps), R91 (publish/import bundle), R92 (DNA fingerprint), R93
+(re-opt scheduler), R101 (volume profile), R105 (signal attribution),
+R107 (multi-market sweep), R109 (vote ensemble), R112 (multi-feed CV)
+-- 10 items, 21 new tests in `tests/test_roadmap_batch_13.py`, all
+green.
 
 Detail of the new closures:
 
@@ -1900,7 +1907,7 @@ Each slice ships its own `verify_project` equivalent.
 
 ### R81. Walk-forward matrix heatmap
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `reporting/heatmaps.py::walk_forward_heatmap()` + `render_text()`. Returns `HeatmapData` (matrix + axis labels + title) ready for any renderer. Tearsheet integration is a downstream cosmetic follow-up.
 Priority: medium
 Effort: 3 to 4 days
 Area: validation / reporting
@@ -1912,7 +1919,7 @@ fell apart in window 4" at a glance.
 
 ### R82. Optimization heatmaps
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `reporting/heatmaps.py::optimisation_heatmap()` shares the `HeatmapData` payload with R81. 2-parameter fitness landscape ready to render via any backend.
 Priority: medium
 Effort: 3 to 4 days
 Area: GA / reporting
@@ -2038,7 +2045,7 @@ do not collide.
 
 ### R91. Strategy marketplace primitive
 
-Status: pending
+Status: completed in 2026-05-08 batch 13 (publish/import primitive only; full marketplace explicitly out of scope). Evidence: `research/bundle.py` ships `publish_bundle()`, `write_bundle()`, `read_bundle()`, `verify_bundle()`. Bundle envelope carries spec_payload + spec_hash + policy_hash + witness_hash + validation_report_hash + aux_files + optional spec_signature (R44).
 Priority: low
 Effort: 2 weeks for the publish/import primitive; full marketplace
 out of scope
@@ -2053,7 +2060,7 @@ hash chain, and reproduce the validation locally.
 
 ### R92. Strategy DNA / fingerprint similarity
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `research/dna_fingerprint.py::fingerprint()` returns `FingerprintScores(signal_similarity, parameter_similarity, equity_similarity, composite)`. `is_too_similar()` is the auto-archive guard. Composite is an operator-weighted average of the three sub-scores; default weights treat them equally.
 Priority: medium
 Effort: 1 week
 Area: research / curation
@@ -2067,7 +2074,7 @@ review-queue slots.
 
 ### R93. Re-optimization scheduler
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `research/auto_loop/reopt_scheduler.py` ships `ReoptJob`, `ScheduleConfig`, `schedule_for()`, and `upcoming_calendar()`. Three job types: walk_forward (default 7d), full_pipeline (30d), oos_locked_reseat (90d). The scheduler returns the calendar; the auto-loop runner consumes it.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: research / lifecycle
@@ -2168,7 +2175,7 @@ first-slice "paper execution simulator").
 
 ### R101. Volume profile analysis
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `analytics/volume_profile.py::compute_volume_profile()` returns `VolumeProfile(bin_edges, bin_volumes, poc_price, value_area_low, value_area_high, high_volume_nodes, low_volume_nodes)`. Default value-area = 70% of total volume; HVN/LVN flagged at +/-1 z-score.
 Priority: low
 Effort: 1 week
 Area: analytics / microstructure
@@ -2233,7 +2240,7 @@ positive-edge strategy regardless of point estimate.
 
 ### R105. Per-signal contribution attribution
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `analytics/signal_attribution.py::attribute_signals()` runs leave-one-out per signal and returns `AttributionResult(contributions, full_pnl, sum_of_contributions)` with `interaction_residual` property for the ensemble-only PnL. Caller supplies a `combine` callable so the primitive stays agnostic to the ensemble logic.
 Priority: medium-high
 Effort: 1 to 2 weeks
 Area: analytics / ensemble
@@ -2271,7 +2278,7 @@ Definition of done:
 
 ### R107. Multi-market sweep
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `validation/multi_market_sweep.py::sweep()` returns `SweepResult(per_market, best, worst, median, spread_sharpe)` ranked by Sharpe. Operator decides what to flag as curve-fit via the spread.
 Priority: medium
 Effort: 1 week
 Area: validation / robustness
@@ -2300,7 +2307,7 @@ which combos are signal-driven vs noise-driven.
 
 ### R109. Vote-threshold ensemble combiner
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `strategies/library/ensemble_vote.py::vote_combine()` emits +1/-1/0 from M sub-signals using configurable long/short thresholds + abstain-when-split flag. Pairs with R105 for per-signal contribution and R98 for stability scoring.
 Priority: medium-high
 Effort: 1 week
 Area: strategies / ensemble
@@ -2342,7 +2349,7 @@ compute on candidates that will obviously fail downstream.
 
 ### R112. Multi-feed cross-validation
 
-Status: pending
+Status: completed in 2026-05-08 batch 13; evidence: `validation/cross_feed.py::cross_feed_validate()` returns `CrossFeedReport(per_feed, sharpe_max_spread, calmar_max_spread, suspicious_feeds)`. Suspicious feeds are those whose Sharpe / Calmar deviate from the median by more than the configurable tolerance.
 Priority: medium
 Effort: 1 week
 Area: validation / data integrity
