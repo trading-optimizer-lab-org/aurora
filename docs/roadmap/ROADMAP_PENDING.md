@@ -20,9 +20,23 @@ documented as blockers in [`BLOCKERS.md`](BLOCKERS.md). Phase 4 stays
 gated behind benchmarking / profiling.
 
 Items closed this session (R1, R7, R8, R9, R10, R11, R12, R13, R14,
-R15, R22) total 80 new tests across 8 commits plus a follow-up
-honesty cleanup commit and a `data_cache_qf` ghost-dir retirement.
-Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21.
+R15, R22) total 80 new tests across 8 commits plus follow-up honesty
+cleanup commits.
+
+Items added to the roadmap during the post-session review (R23 to R46)
+capture every loose thread that surfaced in this chat: the project
+rename to **AURORA**, repo / docs / CI housekeeping, operational
+runbooks (audit rotation, HMAC keys, disaster recovery, daily ops
+delivery), strategy lifecycle (curation policy + graveyard), benchmark
+scaffold (the gate for R5 / R6), full mutmut sweep, multi-user RBAC,
+spec signing, timezone audit and the `ZERO_costs` runtime warning.
+
+Project name decision: **AURORA**. Rename execution tracked as R23.
+Until R23 lands, the project name on disk and in code remains
+`quantforge` -- doing the rename in isolation is the safer migration.
+
+Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21,
+R23 through R46.
 
 ---
 
@@ -510,6 +524,379 @@ Definition of done:
 - Any target with zero coverage is either covered with new tests or
   dropped from `paths_to_mutate`.
 
+### R23. Rename project from "QuantForge" to "AURORA"
+
+Status: decision made (2026-05-08); execution pending
+Priority: high
+Effort: 1 to 2 weeks (touches every file that references the project)
+Area: branding / packaging / docs
+
+Decision: the project is renamed to **AURORA**. Same product, new
+name. Pattern alignment with the existing strategy codenames (JADE,
+NAOMI). Aurora = dawn / light / Latin classical female register.
+
+Scope of change:
+
+- `pyproject.toml`: `name = "aurora"`, scripts `aurora = "aurora.cli.forge:main"`,
+  package list (`aurora.*`) and package-dir map.
+- Repository top-level directory rename: `QuantForge/` -> `Aurora/`.
+- Package import path: `quantforge.*` -> `aurora.*` across ~230 modules.
+- CLI entry point: `forge` -> `aurora`.
+- Environment variables: `QF_*` -> `AU_*`. Provide compatibility
+  fallbacks (read both, warn on `QF_*`) for at least one release.
+- Docs: README, ARCHITECTURE, SPINE, CHANGELOG, ZERO_TO_LIVE, all
+  reports under `docs/`. `docs/conf.py` `project = "Aurora"`.
+- Tests: import-path rewrite, fixture path adjustments.
+- Strategy file references / hardcoded strings.
+- `CLAUDE.md` regeneration.
+
+Migration plan:
+
+1. Land the rename behind a branch. Do not bundle other work.
+2. Provide an `aurora_compat.py` shim that re-exports the old
+   `quantforge` namespace for one release cycle, so external
+   consumers (sp500_ls_v2, naomi, jade) do not break overnight.
+3. Update CHANGELOG with the rename + the deprecation window for the
+   shim.
+4. Tag a release before the shim removal.
+
+Definition of done:
+
+- `import aurora` works; `import quantforge` works AND emits a
+  DeprecationWarning during the shim window.
+- `aurora --version` returns the new package version.
+- All 13 docs under `docs/` reference Aurora consistently.
+- Tests green under the new import path.
+- Wheel build produces `aurora-X.Y.Z-py3-none-any.whl`.
+
+Risk: the rename touches everything. Do it AFTER the open R19, R16,
+R17 follow-ups so a rename rollback is not entangled with semantic
+fixes.
+
+### R24. Decide policy on `AGENTS.md` and `.claude/`
+
+Status: pending decision
+Priority: low
+Effort: 1 hour
+Area: repo hygiene
+
+These files have stayed untracked across the whole session. The
+decision is: commit them, gitignore them, or leave them as
+intentionally untracked. Pick one and document it in `CLAUDE.md` so
+future sessions stop suggesting committing them.
+
+### R25. Refresh `CLAUDE.md` test count and known-issues block
+
+Status: pending
+Priority: low
+Effort: 30 minutes
+Area: docs / project memory
+
+`CLAUDE.md` still claims a baseline of 2780 tests. The session added
+80 new tests (R11 + R13 fuzz + R8/R9/R10/R7/R1 suites). After R17 and
+R18 land, the known-issues block should also shrink. Bring the file
+up to date.
+
+### R26. Refresh `docs/ZERO_TO_LIVE.md` test command
+
+Status: pending
+Priority: low
+Effort: 15 minutes
+Area: docs
+
+Section 2 still includes `--ignore=tests/test_config.py` even though
+that test was repaired in R22. Drop the stale flag so the recipe
+matches the live CI command.
+
+### R27. Update `CHANGELOG.md` for the v1.4.x follow-ups
+
+Status: pending
+Priority: medium
+Effort: 1 to 2 hours
+Area: docs
+
+The session shipped 14+ commits (R1, R7, R8, R9, R10, R11, R12, R13,
+R14, R15, R22 plus three cleanup commits) that are not yet reflected
+in `CHANGELOG.md`. Roll them into a single 1.4.1 entry (or a
+sequence of 1.4.x patches if you prefer to map one entry per item).
+Cite each commit hash for traceability.
+
+### R28. Set the canonical repository URL
+
+Status: pending
+Priority: low
+Effort: 5 minutes once decided
+Area: docs / packaging
+
+`docs/index.rst` no longer carries the `anthropics/quantforge`
+placeholder, but no canonical URL exists yet. Decide where the repo
+lives (private fork, organisation account, ...), set
+`project_urls` in `pyproject.toml`, and link from the README plus
+`docs/index.rst`.
+
+### R29. Add Python 3.14 to the CI matrix
+
+Status: pending
+Priority: low
+Effort: 1 hour
+Area: CI
+
+`tests.yml` runs against 3.11 / 3.12 / 3.13. The local developer
+machine is on 3.14 and there are no known incompatibilities. Add 3.14
+to the matrix once GitHub-hosted runners ship a stable 3.14 image.
+
+### R30. Pre-commit hooks
+
+Status: pending
+Priority: medium
+Effort: half a day
+Area: repo hygiene / lint
+Suggested paths: `.pre-commit-config.yaml`, `Makefile`
+
+Configure `pre-commit` to run ruff + ruff-format on changed files
+before each commit. Pair with a small `make precommit-install` target.
+Pre-commit hooks shrink R18 (the legacy ruff debt) over time without
+needing a flag-day cleanup.
+
+### R31. Sphinx docs hosting
+
+Status: pending decision
+Priority: low
+Effort: half a day for hosting; up to 2 days if also adding a
+publish workflow
+Area: docs / CI
+
+Right now `make docs` builds locally to `docs/_build/html/`. Decide
+on hosting: GitHub Pages, Read the Docs, internal mirror, or no
+hosting (operator runs `make docs` locally). If hosting, add a
+publish workflow and document the URL in README.
+
+### R32. Legacy ruff cleanup batch plan
+
+Status: pending
+Priority: medium
+Effort: 2 to 3 weeks (split into ~8 batches)
+Area: lint / refactor
+Suggested paths: legacy modules grouped by directory
+
+R18 says "clean up legacy ruff debt"; 6500+ findings is too big for
+a single sweep. Break it into batches and pick an explicit order:
+
+1. `core/` (highest-stakes; touches every consumer).
+2. `validation/`.
+3. `ga/` + `ml/`.
+4. `deployment/` + `agents/`.
+5. `compliance/`.
+6. `analytics/` + `regime/`.
+7. `altdata/`.
+8. CLI + reporting + experimental.
+
+After each batch, add the cleaned paths to `ruff-strict` so they stay
+clean. Keep one PR per batch; do not bundle behaviour changes with
+lint sweeps.
+
+### R33. Full suite re-verification
+
+Status: pending
+Priority: medium
+Effort: 1 hour (mostly waiting)
+Area: QA
+
+The session validated subsets (95 tests, 163 tests, 80 tests) but
+did not re-run the full fast suite end-to-end after the cleanup
+commits. Run the canonical baseline command once and record the new
+pass count + list of any new failures in `CLAUDE.md`.
+
+### R34. Audit log rotation policy
+
+Status: pending
+Priority: medium-low
+Effort: 1 to 2 days
+Area: ops / compliance
+Suggested paths: `core/runtime_paths.py`, `agent_gateway/audit.py`,
+SOC2 audit JSONL writer
+
+Audit JSONL files (`audit_trail.jsonl`, `gateway_audit.jsonl`,
+`auto_loop.jsonl`, factory archive) grow without bound. Add a rotation
+policy: per-day file or per-size cap, with optional archive
+compression. Preserve the hash chain across rotation boundaries.
+
+Definition of done:
+
+- Rotation strategy documented and configurable via env var.
+- Hash chain still verifiable across the rotation boundary.
+- A retention default exists (e.g. 90 days hot, archived after).
+
+### R35. HMAC key generation and rotation operator guide
+
+Status: pending
+Priority: medium
+Effort: half a day
+Area: docs / ops
+Suggested path: `docs/HMAC_KEY_OPERATIONS.md`
+
+`QF_GATEWAY_SECRET` and `QF_OPERATOR_KEY` are required for the
+agent gateway and operator countersign respectively. There is no
+documented recipe for generating, rotating or storing them safely.
+Write an operator-facing guide: how to mint a fresh key, where to
+store it, how to rotate without invalidating in-flight staged
+actions, and what the recovery procedure is if a key is lost or
+exposed.
+
+### R36. Disaster recovery / snapshot restore
+
+Status: pending
+Priority: medium
+Effort: 2 to 3 days
+Area: ops / data provenance
+Suggested paths: `docs/DISASTER_RECOVERY.md`, helper CLI under
+`cli/forge.py`
+
+R7 covered the backend interface; R19 will wire the store. Neither
+addresses what to do if `snapshots_index.sqlite` is corrupted or a
+parquet blob's hash no longer matches its declared `sha256`. Write
+the recovery runbook plus a `forge data repair` CLI helper that
+walks the blob directory, recomputes hashes, and rebuilds the index
+from blobs whose content matches their filename.
+
+### R37. Daily Ops Report delivery recipe
+
+Status: pending
+Priority: low
+Effort: 2 to 3 hours
+Area: ops / docs
+Suggested path: `docs/DAILY_OPS_RECIPE.md`
+
+`forge ops alerts --slack-webhook ...` exists in code; there is no
+operator-facing recipe for: setting up the Slack/email side, picking
+the right cron cadence, or rate-limiting alerts to avoid notification
+fatigue. Document it.
+
+### R38. Strategy version curation policy
+
+Status: pending
+Priority: medium
+Effort: 2 to 3 days
+Area: research factory / lifecycle
+Suggested paths: `research/factory/`, `cli/forge.py`,
+`docs/STRATEGY_LIFECYCLE.md`
+
+Lessons from MODELO SP500: JADE went to v112 and NAOMI to v14
+without a written archival policy. The Aurora research factory
+needs explicit rules: when a strategy version is superseded, what
+gets retained (spec + final report + audit hash) vs garbage-collected
+(intermediate snapshots, dev triage runs). Pair with R39.
+
+### R39. Strategy graveyard page / CLI
+
+Status: pending
+Priority: low
+Effort: 2 days
+Area: research / observability
+Suggested paths: `cli/forge.py` (`forge research graveyard`), or a
+new dashboard page under `monitoring/`
+
+Surface every archived candidate with its rejection reason and
+timestamp so an operator can see "what we tried and why it failed".
+Pair with R9 (RAG) so the graveyard is searchable.
+
+### R40. Performance benchmark scaffold
+
+Status: pending; gate for R5 / R6
+Priority: medium-high
+Effort: 3 to 5 days
+Area: performance / measurement
+Suggested paths: `examples/benchmarks/`, CI nightly job
+
+R5 (GPU triage) and R6 (Rust core) are explicitly gated behind
+"benchmark must prove a real bottleneck first". Without a benchmark
+scaffold those gates will never resolve. Land:
+
+- A representative benchmark suite covering: triage at 10k variants,
+  full validation pipeline, GA fitness loop, single-asset backtest
+  over 30 years.
+- Per-machine fixtures committed for regression tracking.
+- A CI nightly that compares latest run vs the committed baseline
+  and flags regressions.
+
+### R41. First mutation full sweep + report
+
+Status: pending; execution of R12 / R21
+Priority: medium
+Effort: 1 day (mostly compute)
+Area: QA / mutation testing
+
+R12 set up the runner; R21 flagged the runner needed sanity. Once
+both close, run the full curated sweep and publish the survivor
+table in `docs/MUTATION_TESTING.md`. Treat the first report as the
+baseline; subsequent runs measure regressions.
+
+### R42. Property `thorough` profile in nightly CI
+
+Status: pending
+Priority: low
+Effort: half a day
+Area: QA / CI
+
+`thorough` (max_examples=200) currently runs only when an operator
+runs `make property-thorough`. Add a nightly CI job that runs it
+under the same env. Surface failures via the same channel as the
+fast CI suite.
+
+### R43. Multi-user / RBAC for the agent gateway
+
+Status: pending design
+Priority: medium-low
+Effort: 2 to 3 weeks (with security review)
+Area: agent gateway / security
+Suggested paths: `agent_gateway/`, `compliance/rbac.py`
+
+The current gateway treats every actor symmetrically. A team of
+operators needs per-role caps (junior ops = paper-only, senior ops =
+live, admin = revoke / rotate). Build on top of the existing
+`compliance/rbac.py` skeleton.
+
+### R44. Strategy spec verification chain
+
+Status: pending design
+Priority: medium-low
+Effort: 1 week
+Area: research factory / security
+Suggested paths: `research/factory/spec.py`,
+`agent_gateway/tokens.py`
+
+Today the factory accepts a `StrategySpec` from any caller. There is
+no signature chain proving that a spec came from a trusted developer.
+Add an optional spec signature: developer signs the spec_hash, the
+factory verifies, and the audit chain records the signing identity.
+
+### R45. Timezone handling audit
+
+Status: pending
+Priority: medium
+Effort: 1 week
+Area: data / engine
+Suggested paths: `core/data_layer.py`, `core/engine_intraday.py`,
+broker adapters
+
+Backtest assumes UTC; live exchanges have local sessions
+(NY = America/New_York, London = Europe/London, ...). Audit every
+date / time boundary and document the convention. Surface a clear
+error when a tz-naive index is mixed with a tz-aware one rather than
+silently coercing.
+
+### R46. ZERO_costs runtime warning
+
+Status: pending
+Priority: low
+Effort: 1 hour
+Area: safety / engine
+
+`ZERO_costs` is the default cost model only because it is convenient
+in tests. Easy to forget on the way to live. Emit a one-shot warning
+the first time `run_backtest` runs with `ZERO_costs` in a process,
+unless an explicit `acknowledge_zero_costs=True` flag is passed.
+
 ---
 
 ## Deferred Or Split Items
@@ -528,30 +915,34 @@ These are not rejected. They are too broad to start as single tasks:
 
 ## Suggested Next Task
 
-Recommended next item: **R19** wire `SnapshotStore` to the new
-`SnapshotBackend` interface.
+Three short-effort items can land before any of the bigger plays
+(R23 rename, R32 ruff legacy cleanup, R40 benchmark scaffold):
 
-Why:
+1. **R25 + R26 + R27** -- bring `CLAUDE.md`, `ZERO_TO_LIVE.md` and
+   `CHANGELOG.md` up to the post-session reality. Total ~3 hours.
+   Removes the cosmetic discrepancies surfaced in the post-session
+   review.
+2. **R33** -- run the full fast suite once and record the new pass
+   count. Mostly waiting; gives R25 something accurate to copy in.
+3. **R30** -- add pre-commit hooks so future PRs do not regrow
+   ruff debt while R32 is still in progress.
 
-- Closes the gap left by R7 (interface exists; the store does not yet
-  use it).
-- Pure refactor with the new tests as a safety net.
-- No external blockers.
-- Unblocks future remote backend drivers.
+After that, the big plays in priority order:
 
-Second choice: **R20** clean up the Sphinx warning count so `make
-docs` runs warning-free, then promote `ruff-strict` to cover the
-docstrings affected.
+- **R23** Rename to AURORA. Touches everything; do it in isolation.
+- **R19** Wire `SnapshotStore` to the new `SnapshotBackend`.
+  Pure refactor; safety net is the R7 tests.
+- **R40** Performance benchmark scaffold. Unlocks the R5 / R6 gates.
+- **R32** Legacy ruff cleanup, batch by batch.
+- **R34** Audit log rotation (becomes urgent once long-running ops
+  start writing real audit chains).
+- **R20** Sphinx docstring cleanup.
+- **R16** Calmar / MAR zero-MDD contract.
+- **R17** Markov switching API drift.
 
-Third choice: **R16** decide the Calmar / MAR zero-MDD contract.
-Half-day effort, removes a property-test caveat.
-
-Fourth choice: **R17** resolve the markov switching API drift, if the
-priority is shrinking the known-issues list.
-
-Phase 3 production items (R2, R3, R4) only after operator confirms
-external dependencies (credentials, legal review, broker accounts) are
-available.
+Phase 3 production items (R2, R3, R4) and Phase 4 perf items
+(R5, R6) only after their gates are met (operator-side credentials
+or in-repo benchmark / profile evidence).
 
 ---
 
