@@ -145,11 +145,13 @@ class CloudSync:
     def _mock_root(self) -> str:
         if self.config.mock_root:
             return self.config.mock_root
-        # Default mock root sits under the package's data cache so it does
-        # not pollute the real cwd unintentionally.
-        return os.path.join(
-            os.path.dirname(__file__), "..", "data_cache_qf", "_cloud_mock",
-            self.config.provider, self.config.bucket,
+        # R75: default mock root resolves through runtime_paths so it
+        # never recreates the legacy in-repo `quantforge/data_cache_qf/`
+        # ghost directory.
+        from quantforge.core.runtime_paths import cache_dir
+        return str(
+            cache_dir() / "_cloud_mock"
+            / self.config.provider / self.config.bucket
         )
 
     def _mock_path(self, key: str) -> str:
@@ -168,18 +170,18 @@ class CloudSync:
 
     def _provider_upload(self, local_path: str, key: str) -> None:  # pragma: no cover
         if self.config.provider == "s3":
-            import boto3  # type: ignore
+            import boto3
 
             client = boto3.client("s3", region_name=self.config.region)
             client.upload_file(local_path, self.config.bucket, key)
         elif self.config.provider == "gcs":
-            from google.cloud import storage  # type: ignore
+            from google.cloud import storage
 
             client = storage.Client()
             bucket = client.bucket(self.config.bucket)
             bucket.blob(key).upload_from_filename(local_path)
         elif self.config.provider == "azure":
-            from azure.storage.blob import BlobServiceClient  # type: ignore
+            from azure.storage.blob import BlobServiceClient
 
             conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
             svc = BlobServiceClient.from_connection_string(conn)
@@ -189,18 +191,18 @@ class CloudSync:
 
     def _provider_download(self, key: str, local_path: str) -> None:  # pragma: no cover
         if self.config.provider == "s3":
-            import boto3  # type: ignore
+            import boto3
 
             client = boto3.client("s3", region_name=self.config.region)
             client.download_file(self.config.bucket, key, local_path)
         elif self.config.provider == "gcs":
-            from google.cloud import storage  # type: ignore
+            from google.cloud import storage
 
             client = storage.Client()
             bucket = client.bucket(self.config.bucket)
             bucket.blob(key).download_to_filename(local_path)
         elif self.config.provider == "azure":
-            from azure.storage.blob import BlobServiceClient  # type: ignore
+            from azure.storage.blob import BlobServiceClient
 
             conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
             svc = BlobServiceClient.from_connection_string(conn)
@@ -210,18 +212,18 @@ class CloudSync:
 
     def _provider_list(self, prefix: str) -> list[str]:  # pragma: no cover
         if self.config.provider == "s3":
-            import boto3  # type: ignore
+            import boto3
 
             client = boto3.client("s3", region_name=self.config.region)
             resp = client.list_objects_v2(Bucket=self.config.bucket, Prefix=prefix)
             return [o["Key"] for o in resp.get("Contents", [])]
         if self.config.provider == "gcs":
-            from google.cloud import storage  # type: ignore
+            from google.cloud import storage
 
             client = storage.Client()
             return [b.name for b in client.list_blobs(self.config.bucket, prefix=prefix)]
         if self.config.provider == "azure":
-            from azure.storage.blob import BlobServiceClient  # type: ignore
+            from azure.storage.blob import BlobServiceClient
 
             conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
             svc = BlobServiceClient.from_connection_string(conn)
@@ -231,19 +233,19 @@ class CloudSync:
 
     def _provider_delete(self, key: str) -> bool:  # pragma: no cover
         if self.config.provider == "s3":
-            import boto3  # type: ignore
+            import boto3
 
             client = boto3.client("s3", region_name=self.config.region)
             client.delete_object(Bucket=self.config.bucket, Key=key)
             return True
         if self.config.provider == "gcs":
-            from google.cloud import storage  # type: ignore
+            from google.cloud import storage
 
             client = storage.Client()
             client.bucket(self.config.bucket).blob(key).delete()
             return True
         if self.config.provider == "azure":
-            from azure.storage.blob import BlobServiceClient  # type: ignore
+            from azure.storage.blob import BlobServiceClient
 
             conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
             svc = BlobServiceClient.from_connection_string(conn)

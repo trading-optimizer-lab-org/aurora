@@ -46,6 +46,7 @@ if sys.platform == "win32":  # pragma: no cover - exercised on Windows
 
     def _lock_file(fp) -> None:
         # msvcrt.locking acquires a 1-byte lock at the current file pointer.
+        fp.seek(0)
         # LK_LOCK fails immediately if it cannot acquire after ~10s;
         # LK_NBLCK is non-blocking. Retry with bounded total wait and
         # jittered exponential backoff so concurrent writers don't
@@ -72,6 +73,7 @@ if sys.platform == "win32":  # pragma: no cover - exercised on Windows
 
     def _unlock_file(fp) -> None:
         try:
+            fp.seek(0)
             msvcrt.locking(fp.fileno(), msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
@@ -117,11 +119,13 @@ def _exclusive_file_lock(path: str):
                 _unlock_file(fp)
             fp.close()
 
-# Project root: quantforge/registry/versioning.py -> ../../
-_PROJ = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_DEFAULT_HISTORY = os.path.join(
-    _PROJ, "quantforge", "data_cache_qf", "version_history.jsonl"
-)
+def _default_history_path() -> str:
+    """Resolve the version-history JSONL path via runtime_paths (R75)."""
+    from quantforge.core.runtime_paths import cache_dir
+    return str(cache_dir() / "version_history.jsonl")
+
+
+_DEFAULT_HISTORY = _default_history_path()
 
 
 @dataclass

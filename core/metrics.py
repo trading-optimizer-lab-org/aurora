@@ -124,8 +124,12 @@ def compute_metrics(returns, ppy: int = 252) -> Metrics:
     dstd = downside.std() if len(downside) > 1 else std
     sortino = (mean / dstd) * math.sqrt(ppy) if dstd > 1e-12 else 0.0
 
-    sk = float(stats.skew(r)) if len(r) > 2 else 0.0
-    kt = float(stats.kurtosis(r, fisher=False)) if len(r) > 3 else 0.0
+    if std > 1e-12:
+        sk = float(stats.skew(r)) if len(r) > 2 else 0.0
+        kt = float(stats.kurtosis(r, fisher=False)) if len(r) > 3 else 0.0
+    else:
+        sk = 0.0
+        kt = 0.0
 
     wins = r[r > 0]; losses = r[r < 0]
     win_rate = len(wins) / len(r) if len(r) > 0 else 0.0

@@ -5,27 +5,56 @@ This guide covers the rules contributors must follow.
 
 ## Setup
 
-The editable install path is `quantforge/` (the package lives one directory
-below the repo root). From the repo root:
+The repository uses a flat Layout B: `pyproject.toml` lives at the repo
+root and the package itself is the repo directory plus its top-level
+subdirectories mapped through `[tool.setuptools.package-dir]`. There is
+no nested `quantforge/` source folder.
+
+From the repo root:
 
 ```bash
-pip install -e "quantforge/[dev,ml,ga]"
+pip install -e ".[dev,ga,docs,mutate]"
 ```
 
-Or `cd` into the package first and use `.`:
+For the full stack including optional deep-learning, RL, monitoring and
+broker integrations:
 
 ```bash
-cd quantforge
-pip install -e ".[dev,ml,ga]"
-```
-
-For the full stack:
-
-```bash
-pip install -e "quantforge/[dev,all]"
-# or, after `cd quantforge`:
 pip install -e ".[dev,all]"
 ```
+
+If you use `make`, the same install is wrapped:
+
+```bash
+make setup PYTHON=path/to/python
+```
+
+Pin the same `PYTHON` for every subsequent `make` target so subprocess-
+launching tests (mutmut, CLI smoke tests) see the editable install on
+their `sys.executable`.
+
+## Pre-commit hooks
+
+`.pre-commit-config.yaml` is checked into the repo. Install it once:
+
+```bash
+make precommit-install PYTHON=path/to/python
+```
+
+Or, equivalent without make:
+
+```bash
+pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+Run on demand:
+
+```bash
+make precommit-run
+```
+
+CI runs `pre-commit run --all-files` as a blocking job; matching the
+local hook prevents PR-time surprises.
 
 ## Running tests
 

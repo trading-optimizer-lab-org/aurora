@@ -22,6 +22,12 @@ import pandas as pd
 DEFAULT_SERIES = ("GDP", "UNRATE", "CPIAUCSL", "DFF", "T10Y2Y")
 
 
+def _default_fred_cache_dir() -> str:
+    """Resolve the FRED cache dir via runtime_paths (R75)."""
+    from quantforge.core.runtime_paths import cache_dir
+    return str(cache_dir() / "fred")
+
+
 @dataclass
 class FREDConfig:
     """Static config.
@@ -33,7 +39,12 @@ class FREDConfig:
             :meth:`FREDAdapter.fetch_default`.
     """
     api_key_env: str = "FRED_API_KEY"
-    cache_dir: str = "data_cache_qf/fred"
+    # R75: route through runtime_paths so the cache dir lands under
+    # $QF_CACHE_DIR / $QF_DATA_DIR instead of the legacy in-repo
+    # `data_cache_qf/` path.
+    cache_dir: str = field(
+        default_factory=lambda: _default_fred_cache_dir()
+    )
     default_series: tuple[str, ...] = field(
         default_factory=lambda: DEFAULT_SERIES
     )
@@ -94,7 +105,7 @@ class FREDAdapter:
     def _fetch_remote(self, series_id: str) -> pd.Series:  # pragma: no cover
         import os
         try:
-            from fredapi import Fred  # type: ignore
+            from fredapi import Fred
         except ImportError as e:
             raise ImportError("fredapi required for live FRED fetch") from e
         key = os.environ.get(self.config.api_key_env, "")

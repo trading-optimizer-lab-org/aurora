@@ -24,9 +24,18 @@ import pandas as pd
 from quantforge.registry.versioning import _exclusive_file_lock
 
 
-_DEFAULT_ROOT = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "data_cache_qf", "experiments")
-)
+def _default_root() -> str:
+    """Resolve the experiments root via runtime_paths (R75).
+
+    Honours $QF_DATA_DIR / $QF_CACHE_DIR; falls back to platformdirs.
+    Never lands inside the in-repo `quantforge/data_cache_qf/` ghost
+    directory.
+    """
+    from quantforge.core.runtime_paths import cache_dir
+    return str(cache_dir() / "experiments")
+
+
+_DEFAULT_ROOT = _default_root()
 
 
 # ---------- dataclasses ----------

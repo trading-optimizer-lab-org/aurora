@@ -4,9 +4,16 @@ on:
     branches: [main]
   pull_request:
 
+# R60: cross-platform wheel verification + smoke import. Linux-only
+# `/tmp/test_venv` was a portability bug; ${{ runner.temp }} resolves
+# correctly on every runner.
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,11 +21,16 @@ jobs:
           python-version: "3.12"
       - run: pip install build
       - run: python -m build
-      - name: Verify wheel imports cleanly
+
+      - name: Verify wheel imports cleanly (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          python -m venv /tmp/test_venv
-          /tmp/test_venv/bin/pip install dist/quantforge-*.whl
-          /tmp/test_venv/bin/python -c "
+          set -eu
+          VENV="${{ runner.temp }}/wheel_test_venv"
+          python -m venv "$VENV"
+          "$VENV/bin/pip" install dist/quantforge-*.whl
+          "$VENV/bin/python" -c "
           import quantforge
           from quantforge.core.protocol_policy import ProtocolPolicy
           import importlib.resources
@@ -29,7 +41,47 @@ jobs:
           assert tpl_count >= 4, f'lean templates count {tpl_count} < 4'
           print(f'wheel OK: {quantforge.__version__}, configs={yaml_count}, templates={tpl_count}')
           "
+
+      - name: Verify wheel imports cleanly (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $venv = "$env:RUNNER_TEMP\wheel_test_venv"
+          python -m venv $venv
+          $whl = (Get-ChildItem dist\quantforge-*.whl)[0].FullName
+          & "$venv\Scripts\pip.exe" install $whl
+          & "$venv\Scripts\python.exe" -c @"
+          import quantforge
+          from quantforge.core.protocol_policy import ProtocolPolicy
+          import importlib.resources
+          p = ProtocolPolicy.default()
+          yaml_count = len(list(importlib.resources.files('quantforge').joinpath('config').iterdir()))
+          tpl_count = len(list(importlib.resources.files('quantforge.exports.lean').joinpath('templates').iterdir()))
+          assert yaml_count >= 7
+          assert tpl_count >= 4
+          print(f'wheel OK: {quantforge.__version__}, configs={yaml_count}, templates={tpl_count}')
+          "@
+
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel
+          name: wheel-${{ matrix.os }}
           path: dist/*.whl
+          if-no-files-found: error
+
+  # R62: SBOM. cyclonedx-bom over the resolved dependency tree.
+  sbom:
+    runs-on: ubuntu-latest
+    needs: build
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cyclonedx-bom
+      - run: cyclonedx-py environment -o sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          if-no-files-found: warn

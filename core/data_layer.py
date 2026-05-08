@@ -43,7 +43,7 @@ def _resolve_qf_cache() -> str:
     ):
         return legacy
     try:
-        from platformdirs import user_cache_dir  # type: ignore
+        from platformdirs import user_cache_dir
 
         return user_cache_dir("quantforge")
     except ImportError:
@@ -52,6 +52,23 @@ def _resolve_qf_cache() -> str:
 
 QF_CACHE = _resolve_qf_cache()
 DEFAULT_LOCK_PATH = os.path.join(QF_CACHE, ".oos_lock.json")
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """Write JSON atomically using a per-process temp path."""
+    tmp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 # OOS partition dates (immutable, project-wide)
@@ -161,8 +178,11 @@ class OOSGuard:
         with OOSGuard("post_ga_validation") as guard:
             ...                # default lock_path = DEFAULT_LOCK_PATH
 
-        with OOSGuard("opt", lock_path="/tmp/.oos_lock.json") as guard:
-            ...                # explicit override
+        from pathlib import Path
+        import tempfile
+        lock = Path(tempfile.gettempdir()) / ".oos_lock.json"
+        with OOSGuard("opt", lock_path=str(lock)) as guard:
+            ...                # explicit override (cross-platform tmp dir)
 
         with OOSGuard("opt", lock_path=None) as guard:
             ...                # in-memory only (explicit opt-out, tests)
@@ -310,12 +330,7 @@ class OOSGuard:
                 # Atomic write: tmp file in the same directory, fsync, then
                 # os.replace. Avoids the half-written-file failure mode if
                 # the process dies between open() and the json dump finishing.
-                tmp_path = path + ".tmp"
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, path)
+                _atomic_write_json(path, payload)
 
     def record_oos_read(self, where: str) -> None:
         """Record an *authorized* OOS read.
@@ -489,12 +504,7 @@ class OOSGuard:
                     "authorized_reads": authorized,
                     "violations": violations,
                 }
-                tmp_path = path + ".tmp"
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, path)
+                _atomic_write_json(path, payload)
         # P2.1 round-4 audit: best-effort SOC2 mirror so the JSONL
         # canonical trail records the same external authorized read.
         _try_soc2_record(
@@ -541,12 +551,7 @@ class OOSGuard:
                 # file outright.
                 data.setdefault("authorized_reads", [])
                 data["locked_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
-                tmp_path = path + ".tmp"
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, path)
+                _atomic_write_json(path, data)
 
 
 def check_oos_integrity(lock_path: Optional[str] = None) -> bool:
@@ -691,7 +696,7 @@ def load_asset(symbol: str, source: str = "yfinance",
             else:
                 s = raw.iloc[:, 0]
         else:
-            s = raw  # type: ignore[assignment]
+            s = raw
         # Drop down to the same downstream filter pipeline below.
         idx = pd.to_datetime(s.index)
         if idx.tz is not None:

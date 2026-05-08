@@ -98,11 +98,38 @@ If a string mutation matters semantically (e.g. a key name in a hashed
 dict), add a dedicated test rather than re-enabling these categories
 globally.
 
+## Numba JIT shadow-mutation workaround (R72)
+
+mutmut edits Python source. Numba `@jit` decorators compile that source
+once at import time and the compiled kernel keeps running the
+unmodified code through the rest of the test session. Result: a
+mutation in `core/engine_jit.py` (or any other JIT-decorated module)
+can look "killed" without ever executing.
+
+**Canonical mitigation:** run mutation testing with `NUMBA_DISABLE_JIT=1`.
+
+The runner inherits the env var, so set it before invoking mutmut:
+
+```bash
+NUMBA_DISABLE_JIT=1 make mutate-full
+```
+
+Or pin the env in `[tool.mutmut].runner` so every developer sees the
+same configuration. The current runner does NOT yet pin the env -- if
+you rely on the survivor count, set it manually until the runner config
+is updated.
+
+Why disable rather than per-test recompile: forcing per-invocation
+recompile slows the suite by 5-10x with no semantic gain. Disable JIT
+makes mutmut see the actual source semantics; the JIT-vs-Python parity
+is the responsibility of `tests/test_jit_parity.py`, not of mutation
+testing.
+
 ## Limits
 
 - mutmut only mutates Python source. Numba `@jit`-compiled hot paths get
   mutated at the source level, but recompilation may shadow the mutant.
-  Verify any survivor in `core/engine_jit.py` by stepping through with
-  `numba` disabled (`NUMBA_DISABLE_JIT=1`).
+  Set `NUMBA_DISABLE_JIT=1` (see workaround section above) when
+  validating survivors in JIT modules.
 - Mutation testing is not a substitute for property tests, integration
   tests, or code review. It is one extra signal.

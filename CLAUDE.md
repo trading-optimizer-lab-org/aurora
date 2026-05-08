@@ -30,12 +30,19 @@ QuantForge/                  <- repo root + package root
 ## Test command
 
 ```
-"C:/Python314/python.exe" -m pytest tests/ -m "not slow and not integration" \
-    --ignore=tests/test_config.py
+python -m pytest tests/ -m "not slow and not integration"
 ```
 
-Baseline: 2780 pass + 32 property-based (test_property.py + test_property_v2.py),
-9 pre-existing fail (markov_switching statsmodels API drift).
+Use the same interpreter that installed the editable package. On a fresh
+checkout, run:
+
+```
+python -m pip install -e ".[dev,ga,docs,mutate]"
+```
+
+Baseline (verified 2026-05-08): 2781 passed, 23 skipped, 10 deselected.
+Coverage 80.40% (threshold 80%). Mypy clean across 321 source files.
+Ruff clean. Strict Sphinx docs build (`-W`) clean.
 
 Property-based tests now in baseline. Hypothesis profiles registered in
 `tests/conftest.py`:
@@ -119,13 +126,18 @@ policy_hash propagates: `spec.policy_hash == snapshot.policy_hash == validation.
 
 ## Known issues
 
-- 9 `test_markov_switching.py` failures: statsmodels API drift, pre-existing, unrelated to QF
-- 1 `test_lint_config::test_no_unmarked_live_data_loads`: cosmetic AST scanner false positive
+None blocking. Verification 2026-05-08 cleared the previously reported
+markov_switching API drift and lint-config cosmetic false-positive
+entries; both pass in the current baseline.
 
 ## Status
 
 v1.4.0 — extracted from MODELO SP500 on 2026-05-08.
-2780 tests passing. Hash provenance preserved.
+2781 tests passing, 23 skipped, 10 deselected. 80.40% coverage. Mypy /
+ruff / strict Sphinx clean. Hash provenance preserved.
+
+Project rename to AURORA decided 2026-05-08; execution tracked as
+roadmap R23.
 
 <!-- CONTEXT-OPTIMIZER:START -->
 ## 🧠 Context Optimization - Auto-injected Section

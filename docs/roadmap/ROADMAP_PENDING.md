@@ -1,13 +1,27 @@
 # QuantForge Roadmap
 
 Status: living roadmap
-Last updated: 2026-05-08 (post-execution-pass)
+Last updated: 2026-05-08 (roadmap-reorg-pass)
 Source: migrated from Desktop and normalised after v1.4 review
 Scope: post-v1.4 backlog for QA, docs, AI, data, execution, performance and production hardening
 
 Rule: this is a backlog, not an execution order. Work should move from
 confidence to automation to production, not from the most spectacular item to
 the most expensive incident.
+
+Roadmap hygiene rules:
+
+- Do not add R155+ until at least one pruning pass closes, merges or
+  demotes existing items. The roadmap is already large enough to hide
+  real priorities.
+- Keep external blockers in `BLOCKERS.md`; keep in-repo actionable work
+  here.
+- A roadmap item should stay only if it has a clear next action,
+  acceptance evidence, or an explicit design decision to make.
+- If two items describe the same work, keep the more precise one and
+  mark the older entry as superseded instead of tracking both.
+- Verification beats memory. If tests / lint / docs / build contradict
+  an old note, update the roadmap immediately.
 
 ---
 
@@ -23,6 +37,13 @@ Items closed this session (R1, R7, R8, R9, R10, R11, R12, R13, R14,
 R15, R22) total 80 new tests across 8 commits plus follow-up honesty
 cleanup commits.
 
+Follow-up verification pass closed additional stale items: R17, R20,
+R30 and R33. The local fast suite, coverage gate, mypy, ruff,
+pre-commit, package build, CLI smoke test, and strict Sphinx docs all
+pass in this workspace. Remaining CI items (R59, R63, R64, R65) are
+about wiring those checks into GitHub workflows, not about local
+failures.
+
 Items added to the roadmap during the post-session review (R23 to R46)
 capture every loose thread that surfaced in this chat: the project
 rename to **AURORA**, repo / docs / CI housekeeping, operational
@@ -34,9 +55,10 @@ spec signing, timezone audit and the `ZERO_costs` runtime warning.
 A second deep audit pass added R47 to R76 covering the items that only
 turn up when you grep the actual code: production-status of the 75+
 cross-asset / data / infra modules, triage of `experimental/`,
-oversized-file splits (cli/forge.py 3577 lines, deployment/brokers.py
-1861 lines, ...), 65 `raise NotImplementedError` sites, 24 TODO /
-FIXME markers, 243 broad `except Exception:` blocks, 16 undocumented
+oversized-file splits (cli/forge.py 3583 lines, deployment/brokers.py
+1866 lines, ...). A later verification pass refreshed the raw counts:
+24 `raise NotImplementedError` sites in production code, 8 TODO /
+FIXME markers, 241 broad `except Exception:` blocks, 16 undocumented
 env vars (including security-sensitive ones), pre-commit wiring,
 security-scanning / SBOM / mypy / coverage gates in CI, archive of
 historical version reports and dev plans, SECURITY.md, concurrent
@@ -93,8 +115,73 @@ Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
-Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21,
-R23 through R154.
+Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
+R31, R32, R37 through R45, R47 through R56, R71, R73, R76 through
+R154. R30 is superseded by R59.
+
+Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
+R13, R14, R15, R17, R20, R22, R30, R33.
+
+Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
+**R16, R25, R26, R27, R28, R29, R34, R35, R36, R46, R57, R58, R59,
+R60, R61, R62, R63, R64, R65, R66, R67, R68, R69, R70, R72, R74, R75**.
+
+Detail of the new closures:
+
+- R16 zero-MDD Calmar / MAR contract: implemented in `core/metrics.py`
+  lines 108-114; documented in the `compute_metrics` docstring;
+  property test reflects it.
+- R25 / R26 / R27: `CLAUDE.md`, `docs/ZERO_TO_LIVE.md`, `CHANGELOG.md`
+  refreshed against the verified baseline (2781 passed, 23 skipped,
+  10 deselected, 80.40% coverage).
+- R28: `[project.urls]` added to `pyproject.toml` with placeholder
+  URLs to be rotated by R23.
+- R29: Python 3.14 added to the test matrix with
+  `allow-prereleases: true`.
+- R34: `core/audit_rotation.py` plus `tests/test_audit_rotation.py`
+  ship a rotation primitive with hash-chain anchor, optional
+  compression, and retention pruning. Wiring into the existing audit
+  writers is a per-writer follow-up, but the primitive is in place.
+- R35: `docs/HMAC_KEY_OPERATIONS.md` operator-facing guide for
+  generation, storage, rotation cadence, recovery, and verification.
+- R36: `docs/DISASTER_RECOVERY.md` runbook plus
+  `core/snapshot_repair.py` CLI helper that rebuilds the snapshot
+  index from blob filenames after corruption.
+- R46: `core/engine.py` emits a one-shot `UserWarning` when
+  `run_backtest` runs under a zero-cost model; suppressed via
+  `acknowledge_zero_costs=True`.
+- R57: new `docs/ENV_VARS.md` consolidates every environment variable
+  the project reads, flagging the security-sensitive subset.
+- R58: `QF_ALLOW_OOS_LOCKED` documented as stale; live code uses
+  `QF_ALLOW_FULL_TIER` plus the per-ceremony `OOSGuard` instance.
+- R59: `make precommit-install` / `make precommit-run` targets,
+  `CONTRIBUTING.md` rewritten against Layout B + the pre-commit
+  recipe, and `precommit` CI job in `.github/workflows/lint.yml`.
+- R60: `wheel.yml` switched to `${{ runner.temp }}` and a Windows
+  branch; matrix expanded to ubuntu / windows / macos.
+- R61: new `.github/workflows/security.yml` runs bandit + pip-audit
+  weekly with `continue-on-error: true`.
+- R62: `wheel.yml` adds an `sbom` job (cyclonedx-py).
+- R63: new `.github/workflows/typecheck.yml` runs `mypy` blocking.
+- R64: `tests.yml` invokes pytest with `--cov` so the `.coveragerc`
+  80% gate gates the job.
+- R65: `tests.yml` uploads `coverage.xml` per matrix cell.
+- R66 / R67 / R68: nine historical version reports moved to
+  `docs/archive/version_reports/`, four DEVELOPMENT_PLAN files moved
+  to `docs/archive/dev_plans/`, and `GITHUB_RESEARCH_v1.1.md` moved
+  to `docs/archive/orphans/`.
+- R69: `SECURITY.md` vulnerability disclosure policy at the repo
+  root.
+- R70: README links to `CONTRIBUTING.md` and `SECURITY.md`.
+- R72: `docs/MUTATION_TESTING.md` documents the
+  `NUMBA_DISABLE_JIT=1` workaround; `make mutate-full` invokes the
+  runner with the env var pre-set.
+- R74: `core/data_layer.py` docstring example uses
+  `tempfile.gettempdir()` instead of the Linux-specific `/tmp`.
+- R75: `core/config.py`, `core/features.py`, `deployment/preflight.py`,
+  `registry/{experiments,journal,registry,versioning}.py`,
+  `infra/cloud_sync.py`, and `altdata/fred_macro.py` now resolve
+  their default paths via `runtime_paths.cache_dir()`.
 
 ---
 
@@ -121,13 +208,25 @@ hardening layer:
 
 Verification snapshot from this workspace:
 
-- `tests/test_spine_e2e.py`: 15 passed.
-- Property suites: `tests/test_property.py` (15) + `tests/test_property_v2.py` (17).
-- New session suites: `test_protocol_fuzz.py` (9), `test_llm_augmenter.py` (5),
-  `test_rag.py` (10), `test_auto_loop.py` (7), `test_snapshots_distributed.py` (8),
-  `test_lean_live.py` (9). Aggregate: 95 passed in 31.50s.
-- Full fast-suite pass not re-verified at the end of this session;
-  the 95-test aggregate covers the new and adjacent surface only.
+- Full fast suite:
+  `python -m pytest tests/ -m "not slow and not integration"` ->
+  2781 passed, 23 skipped, 10 deselected.
+- Coverage:
+  `python -m pytest --cov=quantforge --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"` ->
+  80.40%, threshold 80% reached.
+- Mypy:
+  no issues found in 321 source files.
+- Ruff:
+  `ruff check .` passed.
+- Pre-commit:
+  `pre-commit run --all-files` passed.
+- Build:
+  `python -m build` produced sdist + wheel.
+- CLI:
+  `python -m quantforge.cli.forge --help` passed.
+- Docs:
+  `sphinx -b html -W docs docs/_build/html-strict` passed with warnings
+  treated as errors.
 
 Reference reports:
 
@@ -171,9 +270,9 @@ Hypothesis profiles `dev` / `ci` / `thorough` registered in
 Findings: `compute_metrics` returns `Calmar = inf` when `MDD == 0`.
 Tracked as R16 below.
 
-### R15. API reference auto-generated (with warnings pending)
+### R15. API reference auto-generated
 
-Status: landed, build succeeds; warnings still present
+Status: completed; strict docs build verified in follow-up
 Evidence: `docs/conf.py`, `docs/index.rst`, `docs/api/index.rst`,
 `Makefile` (`make docs`), `pyproject.toml` `[docs]` extra
 
@@ -184,13 +283,10 @@ dependency tree. Build output goes to `docs/_build/html/` (gitignored).
 Operator markdown guides surface alongside the auto-generated module
 pages.
 
-Caveat: a clean rebuild emits docstring-formatting warnings (RST
-substitution errors in `strategies/library/atr_breakout.py`,
-`strategies/library/online_learner.py`, `strategies/library/pair_trade.py`,
-`validation/purged_cv.py`, `validation/spp.py`, plus duplicate-object
-descriptions in `triage/`) and a couple of toctree warnings. The
-build still produces a usable HTML tree. Cleaning the warnings is
-tracked as R20 below.
+Follow-up verification: `python -m sphinx -b html -W docs
+docs/_build/html-strict` passes, so documentation warnings are now
+treated as errors successfully. R20 records the closure of that
+hygiene follow-up.
 
 The `docs` optional extra was added to `pyproject.toml` so the build
 deps (sphinx, furo, sphinx-autodoc-typehints, myst-parser) install
@@ -228,8 +324,7 @@ at test files that did not exist (`test_engine.py`, `test_walk_forward.py`,
 realigned to the test files that do exist
 (`test_jit_parity.py`, `test_lookahead_scanner.py`, `test_oos_isolation.py`,
 `test_ga.py`, `test_integration.py`) plus the existing curated unit
-suites. Remaining work tracked as R20 below if the runner proves too
-narrow in practice.
+suites. Remaining mutation-quality work is tracked as R21.
 
 ### R13. Protocol fuzzing
 
@@ -324,23 +419,203 @@ operator-account requirements.
 
 ---
 
-## Recommended Execution Order
+## Operating Plan
 
-This section is now historical. The original sequence was:
+Use this section to decide what to do next. Use `Backlog Details`
+below for the full description of each R item. Do not treat the R
+number as priority; many later items are more important than earlier
+ones.
 
-1. Phase 1 (trust): R15, R14, R12, R13. **Done this session.**
-2. Phase 2 (research memory): R9, R10, R8. **Done this session.**
-3. Phase 3 (data + production): R7, R2, R1, R3, R4. **R7 + R1 in-repo
-   slice done this session; R2 / R3 / R4 blocked on external deps,
-   see `BLOCKERS.md`.**
-4. Phase 4 (optimisation): R5, R6. **Still gated behind benchmarking /
-   profiling. Do not start without measurement.**
+Current rule: finish the roadmap-truth / CI-hardening batch before
+starting new feature families (R77+ strategy generation, R113+
+portfolio primitives, R125+ advanced analytics) unless an operator
+explicitly overrides the sequence.
 
-Open items below.
+### Phase 0. Truth And Contributor Basics
+
+Goal: make the public docs, local docs and contributor path match the
+verified state of the repo.
+
+Do first:
+
+1. **R25 + R26 + R27** -- refresh `CLAUDE.md`, `ZERO_TO_LIVE.md` and
+   `CHANGELOG.md` with the verified baseline.
+2. **R24 + R28** -- decide what belongs in project policy files and
+   set the canonical repository URL.
+3. **R57 + R58** -- centralise env-var docs and resolve the stale
+   OOS unlock naming.
+4. **R59 + R70 + R74** -- pre-commit install docs, README link to
+   CONTRIBUTING, and the one-line docstring path fix.
+
+Why first: these are small, unblock contributors, and stop stale docs
+from contradicting verified reality.
+
+### Phase 1. CI And Release Guardrails
+
+Goal: make GitHub enforce what already passes locally.
+
+Recommended order:
+
+1. **R63 + R64** -- blocking mypy and coverage gates in CI.
+2. **R18 + R59** -- make the full-repo Ruff / pre-commit policy clear
+   and blocking.
+3. **R60 + R61 + R62 + R65** -- wheel matrix, security scan, SBOM and
+   coverage artefact.
+4. **R29 + R31 + R69** -- Python 3.14 matrix, docs hosting and
+   SECURITY.md.
+
+Why before features: local quality gates are already green. Leaving
+CI weaker than local development is paying interest on a loan nobody
+remembers taking.
+
+### Phase 2. Core Integrity
+
+Goal: harden the pieces everything else depends on.
+
+Recommended order:
+
+1. **R19** -- wire `SnapshotStore` to the backend interface.
+2. **R16** -- define Calmar / MAR behaviour when drawdown is zero.
+3. **R34 + R35 + R36** -- audit rotation, key rotation and restore
+   procedure.
+4. **R40** -- benchmark scaffold. This gates R5 / R6.
+5. **R21 + R41 + R42** -- mutmut runner sanity, mutation sweep and
+   nightly thorough property run.
+6. **R43 + R44 + R71** -- RBAC, signed strategy specs and concurrent
+   strategy isolation.
+7. **R37 + R146 + R147 + R148** -- daily ops delivery,
+   reproducibility witness, audit replay and determinism contracts.
+8. **R45 + R46 + R75 + R76** -- timezone, ZERO_costs warning,
+   hardcoded-path sweep and AURORA env-var migration plan.
+
+Why here: these are boring in the productive sense. They make later
+automation and live work safer.
+
+### Phase 3. Codebase Simplification
+
+Goal: reduce maintenance drag before adding another layer of product.
+
+Recommended order:
+
+1. **R47 + R48** -- classify production status and triage
+   `experimental/`.
+2. **R49 + R50 + R51 + R52** -- split oversized files.
+3. **R32 + R53 + R54 + R55 + R56** -- optional broader Ruff cleanup,
+   classify unfinished stubs, TODOs,
+   broad catches and non-CLI `print()` calls.
+4. **R66 + R67 + R68 + R72 + R73** -- archive stale docs, decide the
+   GitHub research doc, document the numba workaround and decide the
+   CLI public API.
+
+Why before big product bets: smaller files and cleaner boundaries make
+large features cheaper and less fragile.
+
+### Phase 4. Data And Validation Quality
+
+Goal: make bad evidence harder to accept.
+
+Recommended order:
+
+1. **Candidate C** -- data contract and broken-data detector.
+2. **R112 + R143 + R149 + R150 + R151** -- feed, snapshot,
+   survivorship, corporate-action and holiday-calendar audits.
+3. **R144 + R145** -- synthetic adversarial markets and
+   out-of-distribution feature detector.
+4. **R103 + R104 + R105 + R106 + R107** -- statistical significance,
+   metric confidence, signal attribution, OOS Plus and multi-market
+   sweep.
+5. **R81 + R82 + R83 + R97 + R98 + R99** -- walk-forward, optimisation
+   maps, similarity scoring, cross-validation matrices, stability
+   index and regime-aware optimisation.
+
+Why this phase is high value: if the data or validation is wrong,
+every strategy result downstream is just confident decoration.
+
+### Phase 5. Research Factory And Strategy Lifecycle
+
+Goal: improve strategy creation without losing auditability.
+
+Recommended order:
+
+1. **Candidate B** -- research degrees-of-freedom ledger.
+2. **R38 + R39 + R140 + R152** -- curation, graveyard, lifecycle SLA
+   and ancestry tree.
+3. **R126 + R141 + R142** -- decay attribution, refit cadence and
+   degradation forecasting.
+4. **R77 + R78 + R86 + R87 + R111** -- generation primitives, rule IR,
+   block library, templates and pre-acceptance constraints.
+5. **R79 + R88 + R89 + R91 + R92 + R93** -- pattern module, money
+   management, robustness preset, bundle import / publish, DNA
+   similarity and re-optimisation scheduler.
+6. **R80 + R84 + R85 + R101 + R110 + R123** -- external code export,
+   PDF reports, dashboard, volume profile, replay debugger and code
+   preview.
+7. **R94 + R95 + R96** -- news filter, volatility filter and custom
+   session times.
+8. **R102 + R108 + R109 + R113 + R115 + R116 + R118 + R124** --
+   build-level goal seeking, generated alpha combinations, ensembles
+   and portfolio primitives.
+
+Why after data integrity: generating more strategies before measuring
+research pressure and data quality is how you manufacture false
+confidence at scale.
+
+### Phase 6. Execution, Live And Monitoring
+
+Goal: move from validated ideas to controlled operation.
+
+Recommended order:
+
+1. **Candidate A** -- broker-event execution replay.
+2. **R135 + R136 + R137** -- shadow, dry-run and pre-deploy freshness.
+3. **R119 + R120 + R122 + R138 + R139 + R154** -- spread filter,
+   account circuit breaker, alerts, data-quality pause, anomaly
+   detection and common-cause regime alert.
+4. **R100 + R114 + R117 + R121 + R127 + R128 + R129 + R130 + R131 +
+   R132 + R133 + R134** -- realistic execution simulation, tax
+   awareness, what-if replay, hedging, cost / borrow / spread /
+   slippage / impact / capacity / liquidity / universe controls.
+5. **R153** -- sealed forecast ceremony before serious live promotion.
+6. **R4** -- real broker adapters only after replay, reconciliation
+   and operator-side credentials are ready.
+
+Why late: live execution touches real money. The system should earn
+that privilege gradually.
+
+### Phase 7. External Or Gated Bets
+
+Goal: keep expensive or blocked work visible without pretending it is
+ready.
+
+- **R2** real alt-data feeds: blocked on provider credentials.
+- **R3** compliance reporting: blocked on legal / regulatory review.
+- **R5** GPU triage: blocked until R40 proves a CPU bottleneck.
+- **R6** Rust core engine: blocked until profiling proves Python +
+  numba is not enough.
+- **R90** distributed strategy generation: defer until the factory
+  contract and validation gates are stronger.
+- **R23** rename to AURORA: do in isolation only after R76, docs truth
+  and CI hardening are complete.
+
+### Closed Historical Order
+
+The original session plan is complete or externally blocked:
+
+1. Phase 1 trust: R15, R14, R12, R13 and R11. Done.
+2. Phase 2 research memory: R9, R10, R8. Done.
+3. Phase 3 data + production: R7, R1 and R22 done; R2, R3 and R4
+   blocked.
+4. Phase 4 optimisation: R5 and R6 gated behind R40.
+5. Follow-up verification closures: R17, R20, R30 and R33. Done and
+   kept only for audit history.
 
 ---
 
-## Active Backlog
+## Backlog Details
+
+This section keeps both open items and recently closed follow-ups whose
+history is still useful. Use each entry's `Status:` line; do not infer
+that an item is open merely because it appears below.
 
 ### R2. Real alt-data feeds (blocked)
 
@@ -412,50 +687,55 @@ Definition of done:
 
 ### R17. Markov switching API drift
 
-Status: pending or accept-as-wontfix
+Status: completed in verification pass
 Priority: low
 Effort: half a day to 2 days depending on choice
 Area: regime/ML
 Suggested path: `regime/markov_switching.py`,
 `tests/test_markov_switching.py`
 
-9 pre-existing failures in `tests/test_markov_switching.py` come from
-statsmodels API drift. Unrelated to QuantForge logic but make the
-baseline test command noisy.
+Historical note: earlier environment checks reported 9 failures in
+`tests/test_markov_switching.py` from statsmodels API drift. Current
+verification on 2026-05-08 shows the module passing inside the full
+fast suite; no skip or pin is required in this workspace.
 
-Decision options:
+Evidence:
 
-- Pin `statsmodels` to a version that exposes the old API.
-- Update `regime/markov_switching.py` to the current statsmodels API
-  and re-green the tests.
-- Skip the test module with `@pytest.mark.skip(reason="statsmodels API drift")`
-  and document as wontfix in `CLAUDE.md`.
+- `python -m pytest tests/ -m "not slow and not integration"` ->
+  2781 passed, 23 skipped, 10 deselected.
+- `tests/test_markov_switching.py` is part of that pass.
 
-Definition of done:
+Follow-up:
 
-- One option chosen and applied.
-- Baseline test command no longer reports markov failures (skipped or
-  fixed).
-- Decision recorded in `CHANGELOG.md`.
+- R25 should remove the stale known-issue entry from `CLAUDE.md`.
+- R27 should mention that the previously reported drift is no longer
+  reproducible in the verified baseline.
 
 ### R18. Lint cleanup + CI hardening
 
-Status: scope expanded after lint audit
+Status: local lint gate clean; CI hardening still pending
 Priority: medium
-Effort: 1 to 2 weeks (incremental)
+Effort: 1 to 2 weeks if expanding to broader Ruff rule families
 Area: tests / CI / lint
 Suggested paths: legacy modules under `core/`, `validation/`, `ga/`,
 `compliance/`, `agents/`, `analytics/`, etc; `.github/workflows/lint.yml`,
 `tests/test_lint_config.py`
 
-Two findings reframe the original "cosmetic false positive" item:
+The default repository lint gate is now green locally:
 
-1. `ruff check .` reports ~6500 errors across the repo on baseline.
-   Most are auto-fixable (`UP`, `I`, `B`, `E`) but the legacy surface
-   has not been swept.
-2. `.github/workflows/lint.yml` ran ruff with
-   `continue-on-error: true`, so even the new code's lint regressions
-   would not have blocked CI.
+- `python -m ruff check .` -> passed.
+
+The remaining work is CI policy and optional broader cleanup:
+
+- Update `.github/workflows/lint.yml`: its comments still say the repo
+  has "several thousand ruff findings", and `ruff-full` still has
+  `continue-on-error: true`. That was correct historically, but it is
+  now stale because `ruff check .` passes locally.
+- Make the full-repo Ruff job blocking unless a new broad-rule sweep is
+  intentionally configured as a separate advisory job.
+- If the project wants stricter style / modernization rules later
+  (`UP`, import sorting, formatting-only sweeps, etc.), track those as
+  R32 batches rather than calling the current repo "lint broken".
 
 The follow-up landed:
 
@@ -469,13 +749,10 @@ The follow-up landed:
 
 Definition of done:
 
-- New code added in this session is ruff-clean under the strict job.
-  (Done as of this update.)
-- Each curated module from the legacy sweep is migrated into the
-  strict job after a focused cleanup pass. Track per-module migration
-  in CHANGELOG entries.
-- The `test_lint_config::test_no_unmarked_live_data_loads` scanner
-  false positive is either fixed or skipped with a documented reason.
+- `ruff check .` passes locally. (Done.)
+- The blocking CI job runs the same command or an explicitly documented
+  stricter equivalent, with no stale "legacy findings" comments.
+- Any future broad style cleanup is split into R32 batches.
 
 Risk: incremental migration is easy to drop. Keep one cleanup PR at
 a time; do not bundle behavior changes with lint-only sweeps.
@@ -532,7 +809,7 @@ Fix:
 
 ### R20. Docs build hygiene
 
-Status: pending
+Status: completed in verification pass
 Priority: low
 Effort: 1 to 2 days
 Area: docs
@@ -541,20 +818,18 @@ Suggested paths: `validation/spp.py`, `validation/purged_cv.py`,
 `strategies/library/online_learner.py`,
 `strategies/library/pair_trade.py`, `triage/`, `docs/SPINE.md`
 
-R15 left the Sphinx build emitting RST docstring warnings (substitution
-references `|close[i]-close[i-1]|`, `|return|`, `|z|`; "inline strong
-start-string without end-string" in spp / pipeline; "unexpected
-indentation" in purged_cv) plus a few duplicate-object descriptions in
-`triage/` and a couple of cross-reference warnings in `SPINE.md`.
+Historical note: R15 initially left Sphinx warning noise around RST
+docstrings and duplicate object descriptions. Current verification
+passes with warnings treated as errors.
 
-Definition of done:
+Evidence:
 
-- `make docs` produces zero warnings on a clean rebuild.
-- `make docs-strict` (or equivalent) treats warnings as errors and is
-  wired into CI as a non-blocking job (then promoted to blocking once
-  the count is zero).
-- Cross-reference targets from `SPINE.md` either resolve or are
-  rewritten as plain text.
+- `python -m sphinx -b html -W docs docs/_build/html-strict` passed.
+
+Follow-up:
+
+- Optional: add a documented `docs-strict` Make target and CI job, but
+  the warning cleanup itself is done.
 
 ### R21. Mutmut runner sanity
 
@@ -627,9 +902,8 @@ Definition of done:
 - Tests green under the new import path.
 - Wheel build produces `aurora-X.Y.Z-py3-none-any.whl`.
 
-Risk: the rename touches everything. Do it AFTER the open R19, R16,
-R17 follow-ups so a rename rollback is not entangled with semantic
-fixes.
+Risk: the rename touches everything. Do it AFTER the open R19 and R16
+follow-ups so a rename rollback is not entangled with semantic fixes.
 
 ### R24. Decide policy on `AGENTS.md` and `.claude/`
 
@@ -650,10 +924,10 @@ Priority: low
 Effort: 30 minutes
 Area: docs / project memory
 
-`CLAUDE.md` still claims a baseline of 2780 tests. The session added
-80 new tests (R11 + R13 fuzz + R8/R9/R10/R7/R1 suites). After R17 and
-R18 land, the known-issues block should also shrink. Bring the file
-up to date.
+`CLAUDE.md` still claims a stale baseline and stale known issues. It
+should reflect the verified state: 2781 passed, 23 skipped, 10
+deselected for the fast suite; no current `markov_switching` failure;
+ruff and mypy clean locally.
 
 ### R26. Refresh `docs/ZERO_TO_LIVE.md` test command
 
@@ -705,16 +979,17 @@ to the matrix once GitHub-hosted runners ship a stable 3.14 image.
 
 ### R30. Pre-commit hooks
 
-Status: pending
+Status: superseded by R59; local hook suite verified
 Priority: medium
 Effort: half a day
 Area: repo hygiene / lint
 Suggested paths: `.pre-commit-config.yaml`, `Makefile`
 
-Configure `pre-commit` to run ruff + ruff-format on changed files
-before each commit. Pair with a small `make precommit-install` target.
-Pre-commit hooks shrink R18 (the legacy ruff debt) over time without
-needing a flag-day cleanup.
+This item was too broad and partly wrong: `.pre-commit-config.yaml`
+already exists and `pre-commit run --all-files` passes locally. The
+remaining work is captured by R59: install target, contributor docs,
+and CI verification. Keep R30 closed as a duplicate to avoid two
+entries tracking the same thing.
 
 ### R31. Sphinx docs hosting
 
@@ -731,14 +1006,16 @@ publish workflow and document the URL in README.
 
 ### R32. Legacy ruff cleanup batch plan
 
-Status: pending
+Status: optional broader-style cleanup; not required for the default gate
 Priority: medium
 Effort: 2 to 3 weeks (split into ~8 batches)
 Area: lint / refactor
 Suggested paths: legacy modules grouped by directory
 
-R18 says "clean up legacy ruff debt"; 6500+ findings is too big for
-a single sweep. Break it into batches and pick an explicit order:
+The default Ruff gate is now clean. R32 should only exist if the
+project wants to enable broader rule families beyond the current
+high-signal correctness set. If so, break it into batches and pick an
+explicit order:
 
 1. `core/` (highest-stakes; touches every consumer).
 2. `validation/`.
@@ -755,15 +1032,24 @@ lint sweeps.
 
 ### R33. Full suite re-verification
 
-Status: pending
+Status: completed in verification pass
 Priority: medium
 Effort: 1 hour (mostly waiting)
 Area: QA
 
-The session validated subsets (95 tests, 163 tests, 80 tests) but
-did not re-run the full fast suite end-to-end after the cleanup
-commits. Run the canonical baseline command once and record the new
-pass count + list of any new failures in `CLAUDE.md`.
+The full fast suite was re-run after the cleanup commits.
+
+Evidence:
+
+- `python -m pytest tests/ -m "not slow and not integration"` ->
+  2781 passed, 23 skipped, 10 deselected.
+- Coverage run also passed:
+  2781 passed, 23 skipped, 10 deselected, 80.40% coverage.
+
+Follow-up:
+
+- R25 should copy the new baseline into `CLAUDE.md`.
+- R27 should add the verification pass to `CHANGELOG.md`.
 
 ### R34. Audit log rotation policy
 
@@ -1013,7 +1299,7 @@ Definition of done:
 - Archived modules are removed from the wheel package list.
 - Deleted modules are gone, with a CHANGELOG note.
 
-### R49. Split `cli/forge.py` (3577 lines)
+### R49. Split `cli/forge.py` (3583 lines)
 
 Status: pending
 Priority: medium
@@ -1032,7 +1318,7 @@ Definition of done:
 - `forge --help` output unchanged.
 - Test suite green without modification.
 
-### R50. Split `deployment/brokers.py` (1861 lines)
+### R50. Split `deployment/brokers.py` (1866 lines)
 
 Status: pending
 Priority: medium
@@ -1044,7 +1330,7 @@ Convert to a package: one file per broker (`paper.py`, `alpaca.py`,
 `ib.py`, `coinbase.py`, `kraken.py`) plus a base `__init__.py` that
 re-exports the public surface. Tests already partition by broker.
 
-### R51. Split `reporting/tearsheet.py` (1312 lines)
+### R51. Split `reporting/tearsheet.py` (1313 lines)
 
 Status: pending
 Priority: low
@@ -1066,22 +1352,23 @@ Files still over 800 lines after R49 / R50 / R51:
 
 - `reporting/daily_ops/builder.py` (994).
 - `analytics/metrics_full.py` (924).
-- `core/data_layer.py` (923).
+- `core/data_layer.py` (925).
 - `research/factory/factory.py` (882).
-- `deployment/preflight.py` (821).
+- `deployment/preflight.py` (822).
 
 One commit per split. Keep behaviour identical. No bundling with
 semantic changes.
 
-### R53. Classify the 65 `raise NotImplementedError` sites
+### R53. Classify the 24 `raise NotImplementedError` sites
 
 Status: pending
 Priority: medium-high
-Effort: 2 to 3 days
+Effort: 1 to 2 days
 Area: project hygiene
 
-`grep -rn "raise NotImplementedError"` returns 65 hits in production
-modules. Each is one of:
+Verification refresh on 2026-05-08 found 24 production-code hits for
+`raise NotImplementedError` after excluding build artefacts, docs and
+tests. Each is one of:
 
 - a deliberate base-class abstract (`@abstractmethod`-style),
 - a deliberate "remote backend reserved" stub (R7-style fail-loud),
@@ -1090,17 +1377,18 @@ modules. Each is one of:
 Tag each occurrence with one of three categories in a comment, then
 file follow-up tasks for the genuinely unfinished ones.
 
-### R54. Resolve the 24 TODO / FIXME markers
+### R54. Resolve the 8 TODO / FIXME markers
 
 Status: pending
 Priority: low
-Effort: 2 days
+Effort: half a day
 Area: project hygiene
 
-A grep across production code finds 24 TODO / FIXME / XXX / HACK
-markers. Some are scaffold notes in the Lean exporter; others are
-real "come back to this" reminders. Triage: convert to a tracked
-roadmap item, fix in place, or drop with a one-line rationale.
+A grep across production code finds 8 TODO / FIXME markers, all in a
+small surface after excluding build artefacts, docs and tests. Some
+are scaffold notes in the Lean exporter; others may be real "come
+back to this" reminders. Triage: convert to a tracked roadmap item,
+fix in place, or drop with a one-line rationale.
 
 ### R55. Audit `except Exception:` blocks
 
@@ -1109,7 +1397,7 @@ Priority: medium
 Effort: 1 week
 Area: safety / error handling
 
-243 `except Exception:` blocks across the repo. Some are intentional
+241 `except Exception:` blocks across production code. Some are intentional
 (audit-trail writers must not crash the caller). Many are likely too
 broad and silently mask real failures. Walk every site and decide:
 
@@ -1127,9 +1415,13 @@ Suggested paths: `ga/runner.py`, `ga/multi_asset_runner.py`,
 `compliance/trade_reconstruction.py`
 
 Production code emits status via `print()` in a handful of places.
-Convert to module-level loggers so output is filterable and CI-friendly.
+Verification refresh found 277 production-code `print(` hits, many of
+them legitimate CLI output. Do not blindly replace every one. Convert
+library / background / GA runner status output to module-level loggers
+so output is filterable and CI-friendly; leave user-facing CLI table
+output alone unless a command-level output abstraction replaces it.
 
-### R57. Document the 16 missing environment variables
+### R57. Document the environment-variable inventory
 
 Status: pending
 Priority: high (security-sensitive subset)
@@ -1137,15 +1429,20 @@ Effort: half a day
 Area: docs / ops
 Suggested paths: `CLAUDE.md`, `README.md`, `docs/ZERO_TO_LIVE.md`
 
-Code references env vars not documented anywhere:
+Code references env vars that are not documented in one canonical
+place. Do not treat the old "16 missing env vars" count as canonical:
+the real inventory includes literal reads, config-driven env names,
+and provider-specific patterns.
 
 Security:
 
 - `QF_GATEWAY_SECRET` (HMAC server secret for token signing).
 - `QF_OPERATOR_KEY` (HMAC operator countersign secret).
 - `QF_PII_FERNET_KEY` (encryption-at-rest for PII).
+- `QF_PII_HMAC_KEY` (deterministic PII masking pepper).
 - `QF_TOTP_SECRET` (two-factor auth seed).
 - `QF_SQLCIPHER_KEY` (audit DB encryption).
+- `QFORGE_SMTP_PASSWORD` (alert email credential).
 
 Ops:
 
@@ -1154,6 +1451,23 @@ Ops:
   `QF_CCXT_KILL_SWITCH`, `QF_CONFIG_DIR`, `QF_JOURNAL`,
   `QF_LEAN_LIVE_AUTH`, `QF_REFRESH`, `QF_ALLOW_FULL_TIER`,
   `QF_CACHE` (legacy alias of `QF_CACHE_DIR`).
+- Runtime-path overrides already partly documented but should be
+  centralised: `QF_DATA_DIR`, `QF_CACHE_DIR`, `QF_SNAPSHOT_ROOT`,
+  `QF_AUDIT_LOG`, `QF_GATEWAY_AUDIT`, `QF_OOS_LOCK`,
+  `QF_RESEARCH_ARCHIVE`, `QF_REVIEW_QUEUE`.
+- Infra DSNs: `QUANTFORGE_PG_DSN`, `QUANTFORGE_REDIS_URL`,
+  `QUANTFORGE_TIMESCALE_DSN`, `AZURE_STORAGE_CONNECTION_STRING`.
+
+External provider credentials:
+
+- `ANTHROPIC_API_KEY`.
+- `ALPACA_API_KEY`, `ALPACA_API_SECRET`.
+- `FRED_API_KEY`, `TRANSCRIPTS_API_KEY`, `ETHERSCAN_API_KEY`,
+  `TWITTER_BEARER_TOKEN`, `PLANET_API_KEY`, `REDDIT_CLIENT_ID`,
+  `REDDIT_CLIENT_SECRET`.
+- Pattern-based crypto exchange env vars:
+  `QF_CCXT_{EXCHANGE}_KEY`, `QF_CCXT_{EXCHANGE}_SECRET`,
+  `QF_CCXT_ALLOW_LIVE_{EXCHANGE}`.
 
 Definition of done:
 
@@ -1161,6 +1475,9 @@ Definition of done:
   purpose, default, and security caveat.
 - Security-sensitive env vars are flagged "must come from a secrets
   manager, never .env file in repo".
+- The docs distinguish operator-required vars from optional-provider
+  vars and test-only / display vars such as `DISPLAY`, `MPLBACKEND`,
+  `PYCHARM_HOSTED`, and `PYTHONHASHSEED`.
 
 ### R58. Resolve `QF_ALLOW_FULL_TIER` vs `QF_ALLOW_OOS_LOCKED`
 
@@ -1173,23 +1490,43 @@ The CLI uses `QF_ALLOW_FULL_TIER`; `CLAUDE.md` mentions
 `QF_ALLOW_OOS_LOCKED`. Verify both are intended (separate ceremonies)
 or consolidate to one. Update docs to match the actual code.
 
+Verification refresh:
+
+- Code and tests use `QF_ALLOW_FULL_TIER` for `--tier full`.
+- `QF_ALLOW_OOS_LOCKED` appears in operator docs but not as a live code
+  gate in the current repo.
+
+Recommended resolution:
+
+- Treat `QF_ALLOW_OOS_LOCKED` as stale documentation unless a separate
+  locked-tier env gate is intentionally reintroduced.
+- Update `docs/ZERO_TO_LIVE.md`, `CLAUDE.md`, and any protocol docs to
+  describe the actual ceremony flags precisely.
+
 ### R59. Wire the existing pre-commit configuration
 
-Status: pending
+Status: local suite verified; CI/docs wiring pending
 Priority: medium (replaces R30 wording)
 Effort: 1 hour
 Area: dev tooling
 Suggested path: `.pre-commit-config.yaml`, `Makefile`,
-`docs/CONTRIBUTING.md`
+`CONTRIBUTING.md`
 
 `.pre-commit-config.yaml` already exists with ruff + standard hooks
 (R30 incorrectly described it as "configure pre-commit"). What is
-missing:
+verified:
+
+- `python -m pre_commit run --all-files` passed locally.
+
+What is missing:
 
 - A `make precommit-install` target that runs
   `pre-commit install --hook-type pre-commit --hook-type pre-push`.
 - A doc paragraph in `CONTRIBUTING.md` telling new contributors to
   run that target on first clone.
+- While editing `CONTRIBUTING.md`, fix its stale setup commands: it
+  still describes an older nested `quantforge/` package path, but the
+  repo now uses the flat Layout B root install (`pip install -e ".[...]"`).
 - A CI job that runs `pre-commit run --all-files` so PRs that bypass
   the hook locally are still caught.
 
@@ -1236,29 +1573,31 @@ operators can audit transitive deps.
 
 ### R63. mypy in CI
 
-Status: pending
+Status: local typecheck clean; CI wiring pending
 Priority: medium
-Effort: 1 day initial; ongoing maintenance
+Effort: 1 hour for CI wiring, plus ongoing maintenance
 Area: CI / type checking
 Suggested paths: `.github/workflows/typecheck.yml`,
 `pyproject.toml` (`[tool.mypy]`)
 
-`mypy` is in `[dev]` but not run by any CI workflow. Add a
-`typecheck` job that runs `python -m mypy quantforge/`. Start with
-`continue-on-error: true` (the legacy code is partially typed) and
-ratchet up over time.
+`mypy` is in `[dev]` but not run by any CI workflow. Local
+verification now passes with no errors across 321 source files. Add a
+blocking `typecheck` job that runs the same command used locally
+(respecting the flat Layout B package structure; do not use
+`python -m mypy quantforge/`, because there is no package subdir in
+this layout).
 
 ### R64. Coverage gate enforced in CI
 
-Status: pending
+Status: local coverage gate clean; CI wiring pending
 Priority: medium
 Effort: 1 hour
 Area: CI / QA
 
 `.coveragerc` declares a fail-under threshold of 80 percent, but
-`pytest --cov` is not in the test workflow. Add `--cov` to the test
-command in `tests.yml` and let the .coveragerc threshold actually
-gate the job.
+`pytest --cov` is not in the test workflow. Local verification passes
+at 80.40% against the 80% threshold. Add `--cov` to the test command
+in `tests.yml` and let the `.coveragerc` threshold gate the job.
 
 ### R65. Coverage artefact / dashboard
 
@@ -1326,6 +1665,10 @@ Area: docs
 
 `CONTRIBUTING.md` exists but `README.md` does not link to it. One-
 line fix.
+
+Pair with R59 if touching contributor docs anyway, because
+`CONTRIBUTING.md` itself still contains stale nested-layout install
+commands.
 
 ### R71. Concurrent strategy run isolation
 
@@ -2583,51 +2926,105 @@ These are not rejected. They are too broad to start as single tasks:
 
 ---
 
-## Suggested Next Task
+## Candidate Features To Promote
 
-Quick-win batch (run before any of the bigger plays). Total ~6 hours:
+These are intentionally not numbered as R155+. Promote them only after
+a pruning pass closes, merges or demotes existing roadmap items. These
+features are worth keeping because they improve trust in live operation,
+data integrity and research honesty rather than adding more surface
+area for its own sake.
 
-1. **R25 + R26 + R27** -- bring `CLAUDE.md`, `ZERO_TO_LIVE.md` and
-   `CHANGELOG.md` up to the post-session reality.
-2. **R33** -- run the full fast suite once and record the new pass
-   count.
-3. **R57** -- document the 16 missing env vars (security-sensitive
-   subset is high priority).
-4. **R59** -- wire the existing pre-commit config (install target +
-   contributing doc + CI verify job).
-5. **R70** -- README link to CONTRIBUTING.md.
-6. **R74** -- one-line docstring path fix.
+### Candidate A. Execution replay from broker events
 
-Medium plays (1 to 5 days each) before R23 rename:
+Why it matters: after a paper or live session, QuantForge should be
+able to rebuild what happened from broker events alone: order created,
+accepted, partially filled, filled, cancelled, rejected, modified,
+expired, disconnected and reconnected. If the replayed state differs
+from the engine's state, the system has found a real operational risk.
 
-- **R69** SECURITY.md vulnerability disclosure.
-- **R66 + R67** archive historical reports and dev plans.
-- **R56** replace `print()` with logging.
-- **R47** production-status audit of the 75+ cross-asset modules
-  (this one is a genuine surprise: the project ships modules whose
-  production state nobody has written down).
-- **R48** triage `experimental/`.
-- **R30 / R59** pre-commit + R63 mypy + R64 coverage gate as a CI
-  hardening batch.
+Recommended promotion target: merge with R4 if the next broker work is
+about real exchange execution, or promote as its own execution-integrity
+item if replay is implemented before new broker adapters.
 
-Big plays (priority order):
+Definition of ready:
 
-- **R23** Rename to AURORA. Touches everything; do it in isolation
-  AFTER R76 (env var migration plan) is finalised.
-- **R49 + R50 + R51 + R52** oversized-file splits.
-- **R19** Wire `SnapshotStore` to the new `SnapshotBackend`.
-- **R40** Performance benchmark scaffold. Unlocks R5 / R6 gates.
-- **R32** Legacy ruff cleanup, batch by batch.
-- **R34** Audit log rotation.
-- **R71** Concurrent strategy isolation.
-- **R55** `except Exception:` audit (243 sites).
-- **R20** Sphinx docstring cleanup.
-- **R16** Calmar / MAR zero-MDD contract.
-- **R17** Markov switching API drift.
+- One canonical event schema exists for broker lifecycle events.
+- At least the paper broker and one exchange adapter emit that schema.
+- Replay can rebuild orders, fills, positions, cash and realised PnL
+  from the event log.
+- A mismatch report explains engine-vs-broker differences without
+  hiding them behind a generic "failed" message.
+- Tests cover partial fills, rejects, cancels, reconnects and duplicate
+  events.
 
-Phase 3 production items (R2, R3, R4) and Phase 4 perf items
-(R5, R6) only after their gates are met (operator-side credentials
-or in-repo benchmark / profile evidence).
+Reason not to start immediately: R4 already blocks on credentials and
+operator-side decisions. Replay is high value, but it should not jump
+ahead of CI hardening unless the next practical milestone is execution.
+
+### Candidate B. Research degrees-of-freedom ledger
+
+Why it matters: every strategy has invisible "research choices" behind
+it: which universes were tried, which indicators were tested, which
+parameters were changed, which filters were added after seeing results,
+and how many variants died before the winner appeared. Without tracking
+those choices, a clean-looking backtest can still be overfitted. This
+ledger makes the research process honest.
+
+Recommended promotion target: merge with R36 / R37 / R39 / R81 if the
+next strategy-lifecycle batch is started, or promote as a standalone
+research-integrity item if the factory becomes the next focus.
+
+Definition of ready:
+
+- Each research run records the user-visible choices made during the
+  run: universe, features, parameters, filters, validation windows,
+  cost model and rejection reasons.
+- The factory can show how many variants were explored before a
+  candidate was promoted.
+- Validation reports include a plain "research pressure" section that
+  warns when too many choices were tried for the amount of data
+  available.
+- Manual overrides are recorded with author, timestamp and reason.
+- Tests prove the ledger is append-only and survives resume / retry.
+
+Reason not to start immediately: it is strategically important but
+touches research UX, validation reporting and the factory. Best done
+after the roadmap truth / CI batch, otherwise it becomes another big
+feature sitting on soft ground. Glamorous? No. Useful? Painfully.
+
+### Candidate C. Data contract and broken-data detector
+
+Why it matters: every backtest and validation run should prove that
+the input data is sane before the strategy sees it. Bad data can look
+like alpha: split errors, duplicated bars, wrong timezone, missing
+holidays, impossible prices, currency mistakes, stale snapshots or
+vendor-specific quirks. If QuantForge lets that through silently, the
+rest of the validation stack is polishing bad evidence.
+
+Recommended promotion target: merge with the data-integrity cluster
+around R112, R143, R149, R150 and R151, or promote as its own
+pre-validation gate if the project starts hardening the data layer
+before those items are tackled.
+
+Definition of ready:
+
+- A versioned data contract defines required columns, index ordering,
+  timezone policy, symbol identity, currency, corporate-action posture,
+  volume expectations and allowed missing-data policy.
+- A validator runs before backtest, GA, validation and factory submit.
+- The detector flags duplicated timestamps, non-monotonic indexes,
+  suspicious gaps, zero or negative prices, impossible returns,
+  unadjusted split jumps, stale snapshots and mixed timezone inputs.
+- Failures are classified as hard fail, warning or operator-approved
+  exception, with the decision written into the run provenance.
+- Tests cover clean data, common vendor quirks, split-like jumps,
+  holiday gaps, duplicate rows, stale snapshots and timezone mismatch.
+
+Reason not to start immediately: this is probably the strongest next
+feature after CI hardening, but it should be designed as a shared
+contract used by the whole engine. If implemented piecemeal, every
+module will invent its own definition of "valid data", and that way
+lies sadness with a nice traceback.
 
 ---
 

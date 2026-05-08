@@ -4,9 +4,17 @@ QuantForge v1.4 - standalone quant research engine with a hash-bound
 7-stage protocol spine: policy, data providers, snapshots, experiment
 registry, validation, agent gateway, and paper/live guards. The GA fitness
 path is IS-only by construction; OOS_DEV is post-selection validation, and
-OOS_LOCKED/FORWARD require explicit ceremonies. Current collection:
-2830 tests total, with 2794 collected by the fast-suite selection after
-the documented ignores and marker deselection.
+OOS_LOCKED/FORWARD require explicit ceremonies. Current verified baseline:
+2781 passed, 23 skipped, 10 deselected on the fast suite, 80.40% coverage,
+mypy clean, ruff clean, strict-Sphinx docs build clean.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit style,
+the OOS-sagrado contract for new code, and the validation-gates checklist
+that every new strategy must pass before merge.
+
+Vulnerability reports: see [SECURITY.md](SECURITY.md).
 
 ## Filosofia
 
@@ -137,7 +145,7 @@ with the same seed reproduces identical results.
 
 ```bash
 # From the repository root, install the editable package.
-pip install -e ".[dev,ga]"
+python -m pip install -e ".[dev,ga,docs,mutate]"
 
 # List strategies
 forge list-strategies

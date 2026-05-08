@@ -4,10 +4,11 @@ Run all checks before allowing a strategy to go paper or live. Returns a
 PreflightReport. Any check with passed=False populates `blockers`.
 
 Convention: validate_pipeline writes a marker file under
-`quantforge/data_cache_qf/.validation_passed_<strategy_name>.json` when
-overall_passed=True. Preflight verifies that marker exists for the strategy.
+`.qf_cache/.validation_passed_<strategy_name>.json` when overall_passed=True.
+Preflight verifies that marker exists for the strategy.
 """
 from __future__ import annotations
+
 import json
 import logging
 import os
@@ -16,12 +17,10 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-
-from quantforge.core.data_layer import OOSGuard, QF_CACHE, load_asset
+from quantforge.core.data_layer import QF_CACHE, OOSGuard, load_asset  # noqa: F401
 from quantforge.validation.lookahead_check import runtime_lookahead_check
 
 _log = logging.getLogger(__name__)
@@ -246,7 +245,7 @@ def _resolve_project_dir(project_dir: str = ".") -> str:
 
 
 def _marker_path(strategy_name: str, project_dir: str = ".",
-                 cache_dir: Optional[str] = None) -> str:
+                 cache_dir: str | None = None) -> str:
     """Compute the marker JSON path for ``strategy_name``.
 
     ``cache_dir`` (optional, absolute) overrides the ``project_dir`` resolution
@@ -271,7 +270,7 @@ def _marker_path(strategy_name: str, project_dir: str = ".",
 def check_validation_marker(strategy_name: str,
                             project_dir: str = ".",
                             max_age_days: int = 7,
-                            cache_dir: Optional[str] = None) -> PreflightCheck:
+                            cache_dir: str | None = None) -> PreflightCheck:
     """Look for marker JSON written by validate_pipeline on overall_passed=True.
 
     Marker staleness
@@ -295,7 +294,7 @@ def check_validation_marker(strategy_name: str,
             f"missing marker: {path} (run validate_pipeline first)",
         )
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
         return PreflightCheck(
@@ -380,7 +379,7 @@ def check_no_conflicting_positions(broker, symbol: str) -> PreflightCheck:
 
 
 def check_market_hours(symbol: str, exchange: str = "NYSE",
-                       now_utc: Optional[pd.Timestamp] = None
+                       now_utc: pd.Timestamp | None = None
                        ) -> PreflightCheck:
     """Verify the market is open RIGHT NOW for ``symbol`` on ``exchange``.
 
@@ -388,7 +387,7 @@ def check_market_hours(symbol: str, exchange: str = "NYSE",
     paper deployments without that optional dep keep working.
     """
     try:
-        import pandas_market_calendars as mcal  # type: ignore
+        import pandas_market_calendars as mcal
     except Exception:
         return PreflightCheck(
             "market_hours", True,
@@ -433,7 +432,7 @@ def check_market_hours(symbol: str, exchange: str = "NYSE",
 
 
 def check_data_freshness(prices, max_age_hours: float = 24.0,
-                         now_utc: Optional[pd.Timestamp] = None
+                         now_utc: pd.Timestamp | None = None
                          ) -> PreflightCheck:
     """Verify the most recent bar is within ``max_age_hours`` of now.
 
@@ -486,7 +485,8 @@ def check_buying_power(broker, required_cash: float) -> PreflightCheck:
         if hasattr(broker, "get_account"):
             acct = broker.get_account()
             if isinstance(acct, dict):
-                bp = float(acct.get("buying_power", acct.get("cash", 0.0)))
+                raw_bp = acct.get("buying_power", acct.get("cash", 0.0))
+                bp = float(0.0 if raw_bp is None else raw_bp)
             else:
                 bp = float(getattr(acct, "buying_power",
                                    getattr(acct, "cash", 0.0)))
@@ -560,14 +560,14 @@ def check_files_exist(paths: list) -> PreflightCheck:
 
 def _query_ntp_server(ntp_server: str, timeout: float) -> float | None:
     """Send one NTP request; return server epoch seconds or None on failure."""
-    NTP_PORT = 123
-    NTP_PACKET = b"\x1b" + 47 * b"\0"
-    NTP_DELTA = 2208988800  # 1900 -> 1970
+    ntp_port = 123
+    ntp_packet = b"\x1b" + 47 * b"\0"
+    ntp_delta = 2208988800  # 1900 -> 1970
     sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout)
-        sock.sendto(NTP_PACKET, (ntp_server, NTP_PORT))
+        sock.sendto(ntp_packet, (ntp_server, ntp_port))
         data, _ = sock.recvfrom(48)
     except Exception:
         return None
@@ -579,7 +579,7 @@ def _query_ntp_server(ntp_server: str, timeout: float) -> float | None:
                 pass
     try:
         secs = struct.unpack("!12I", data)[10]
-        return float(secs - NTP_DELTA)
+        return float(secs - ntp_delta)
     except Exception:
         return None
 
@@ -665,7 +665,7 @@ def check_system_time(max_drift_sec: float = 1.0,
 
 def write_validation_marker(strategy_name: str, metrics: dict,
                             project_dir: str = ".",
-                            cache_dir: Optional[str] = None) -> str:
+                            cache_dir: str | None = None) -> str:
     """Write the marker JSON. Called by validate_pipeline when overall_passed.
 
     ``cache_dir`` (optional, absolute) bypasses ``project_dir`` and writes the
@@ -692,15 +692,15 @@ def write_validation_marker(strategy_name: str, metrics: dict,
 def run_preflight(strategy, symbol: str, broker=None,
                   min_data_bars: int = 200,
                   max_position_pct: float = 1.0,
-                  required_files: Optional[list] = None,
+                  required_files: list | None = None,
                   project_dir: str = ".",
-                  prices: Optional[pd.Series] = None,
-                  recent_weights: Optional[np.ndarray] = None,
+                  prices: pd.Series | None = None,
+                  recent_weights: np.ndarray | None = None,
                   min_disk_mb: int = 500,
                   check_ntp: bool = False,
-                  required_cash: Optional[float] = None,
+                  required_cash: float | None = None,
                   exchange: str = "NYSE",
-                  data_freshness_hours: Optional[float] = None,
+                  data_freshness_hours: float | None = None,
                   ) -> PreflightReport:
     """Run all preflight checks and return a PreflightReport.
 

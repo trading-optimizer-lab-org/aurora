@@ -212,7 +212,7 @@ class FeatureStore:
 
     def list_entries(self) -> list[FeatureKey]:
         """List all cached features by reading meta sidecars."""
-        entries = []
+        entries: list[FeatureKey] = []
         if not self.root.exists():
             return entries
         for sd in self.root.iterdir():

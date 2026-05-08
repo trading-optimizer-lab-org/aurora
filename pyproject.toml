@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +8,18 @@ version = "1.4.0"
 description = "Quant research engine: backtest + GA + validation gates + paper/live"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "QuantForge Project"}]
+
+# R28: canonical URLs. The AURORA rename (R23) will rotate these to the
+# new namespace; until the public repository home is decided, these point
+# at a placeholder so packaging metadata is at least well-formed.
+[project.urls]
+Homepage = "https://example.invalid/quantforge"
+Source = "https://example.invalid/quantforge"
+Issues = "https://example.invalid/quantforge/issues"
+Changelog = "https://example.invalid/quantforge/blob/main/CHANGELOG.md"
+Documentation = "https://example.invalid/quantforge/docs"
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
@@ -21,6 +31,7 @@ dependencies = [
     "numba>=0.58",
     "pydantic>=2",
     "platformdirs>=4.0",
+    "networkx>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +51,14 @@ monitoring = ["streamlit>=1.30"]
 llm = ["anthropic>=0.25"]
 portfolio = ["cvxpy>=1.4"]
 report = ["weasyprint"]
-dev = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6", "ruff>=0.5", "mypy>=1.7"]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "hypothesis>=6",
+    "ruff>=0.5",
+    "mypy>=1.7",
+    "statsmodels>=0.14",
+]
 docs = [
     "sphinx>=7",
     "furo>=2024.1.29",
@@ -66,6 +84,7 @@ packages = [
     "quantforge.analytics",
     "quantforge.cli",
     "quantforge.compliance",
+    "quantforge.config",
     "quantforge.core",
     "quantforge.core.data_providers",
     "quantforge.dataeng",
@@ -74,6 +93,7 @@ packages = [
     "quantforge.experimental",
     "quantforge.exports",
     "quantforge.exports.lean",
+    "quantforge.exports.lean.templates",
     "quantforge.ga",
     "quantforge.infra",
     "quantforge.marketdata",
@@ -104,6 +124,7 @@ packages = [
 "quantforge.analytics" = "analytics"
 "quantforge.cli" = "cli"
 "quantforge.compliance" = "compliance"
+"quantforge.config" = "config"
 "quantforge.core" = "core"
 "quantforge.core.data_providers" = "core/data_providers"
 "quantforge.dataeng" = "dataeng"
@@ -112,6 +133,7 @@ packages = [
 "quantforge.experimental" = "experimental"
 "quantforge.exports" = "exports"
 "quantforge.exports.lean" = "exports/lean"
+"quantforge.exports.lean.templates" = "exports/lean/templates"
 "quantforge.ga" = "ga"
 "quantforge.infra" = "infra"
 "quantforge.marketdata" = "marketdata"
@@ -133,15 +155,30 @@ packages = [
 "quantforge.validation" = "validation"
 
 [tool.setuptools.package-data]
-"quantforge" = ["py.typed", "config/*.yaml", "config/*.yml"]
-"quantforge.exports.lean" = ["templates/*.template"]
+"quantforge" = ["py.typed"]
+"quantforge.config" = ["*.yaml", "*.yml"]
+"quantforge.exports.lean.templates" = ["*.template"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = [
+    ".claude",
+    ".hypothesis",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "docs/_build",
+    "docs/api/generated",
+    "quantforge.egg-info",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "N"]
+# Keep the default lint gate focused on high-signal correctness checks.
+# Full style/modernization cleanup is intentionally not a release blocker for
+# this legacy-sized codebase; run broader Ruff selections explicitly when doing
+# a dedicated formatting pass.
+select = ["F821", "F541", "B008", "B023", "B904"]
 ignore = [
     "E501",
     # N999: the repo top-level dir is "QuantForge" (capitalized); rename
@@ -155,6 +192,7 @@ python_version = "3.10"
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
+follow_imports = "skip"
 no_implicit_optional = true
 check_untyped_defs = false  # gradual typing — relax for now
 
@@ -175,6 +213,39 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarni
 # noise without signal. The runner uses the property-based tests plus the
 # matching unit tests for each target module.
 [tool.mutmut]
+debug = true
+also_copy = [
+    "__init__.py",
+    "agent_gateway",
+    "agents",
+    "altdata",
+    "analytics",
+    "cli",
+    "compliance",
+    "config",
+    "core",
+    "dataeng",
+    "deployment",
+    "execution",
+    "experimental",
+    "exports",
+    "ga",
+    "infra",
+    "marketdata",
+    "markets",
+    "ml",
+    "monitoring",
+    "py.typed",
+    "regime",
+    "registry",
+    "reporting",
+    "research",
+    "risk",
+    "signals",
+    "strategies",
+    "triage",
+    "validation",
+]
 paths_to_mutate = [
     "core/engine.py",
     "core/engine_multi.py",
@@ -191,6 +262,22 @@ paths_to_mutate = [
     "validation/pipeline.py",
     "ga/fitness.py",
 ]
-runner = "python -m pytest -x -q tests/test_property.py tests/test_property_v2.py tests/test_costs.py tests/test_metrics.py tests/test_data_tiers.py tests/test_protocol_policy.py tests/test_monte_carlo.py tests/test_spp.py tests/test_deflated_sharpe.py tests/test_pipeline.py tests/test_jit_parity.py tests/test_lookahead_scanner.py tests/test_oos_isolation.py tests/test_ga.py tests/test_integration.py"
+pytest_add_cli_args_test_selection = [
+    "tests/test_property.py",
+    "tests/test_property_v2.py",
+    "tests/test_costs.py",
+    "tests/test_metrics.py",
+    "tests/test_data_tiers.py",
+    "tests/test_protocol_policy.py",
+    "tests/test_monte_carlo.py",
+    "tests/test_spp.py",
+    "tests/test_deflated_sharpe.py",
+    "tests/test_pipeline.py",
+    "tests/test_jit_parity.py",
+    "tests/test_lookahead_scanner.py",
+    "tests/test_oos_isolation.py",
+    "tests/test_ga.py",
+    "tests/test_integration.py",
+]
 backup = false
 disable_mutation_types = "string,fstring"

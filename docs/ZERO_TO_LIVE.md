@@ -36,7 +36,7 @@ Tested on Python 3.10+ (developer machine here is 3.14).
 ```powershell
 git clone <your-fork-or-mirror> QuantForge
 cd QuantForge
-python -m pip install -e ".[dev,ga]"
+python -m pip install -e ".[dev,ga,docs,mutate]"
 ```
 
 For the full stack including optional deep-learning, RL, monitoring and
@@ -76,12 +76,11 @@ editable install or invoke `python -m quantforge.cli.forge` directly.
 ## 2. Run the fast test suite
 
 ```powershell
-python -m pytest tests/ -m "not slow and not integration" --ignore=tests/test_config.py
+python -m pytest tests/ -m "not slow and not integration"
 ```
 
-Expected: green except 9 documented `test_markov_switching` failures
-(statsmodels API drift, tracked as roadmap R17) plus 1 cosmetic
-`test_lint_config` (R18).
+Expected baseline (verified 2026-05-08): 2781 passed, 23 skipped,
+10 deselected. Coverage gate: 80.40% against the 80% threshold.
 
 Optional: run property-based tests under thorough profile.
 

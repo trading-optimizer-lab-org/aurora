@@ -1,5 +1,6 @@
 .PHONY: help count-tests test lint format coverage docs docs-clean \
-	property-thorough mutate mutate-results mutate-full setup
+	property-thorough mutate mutate-results mutate-full setup \
+	precommit-install precommit-run mypy security-scan
 
 # `make` invokes every target through $(PYTHON). Default is plain
 # `python`; override when your shell's `python` is a fresh interpreter
@@ -77,4 +78,18 @@ mutate-results:
 	$(PYTHON) -m mutmut results
 
 mutate-full:
-	$(PYTHON) -m mutmut run
+	NUMBA_DISABLE_JIT=1 $(PYTHON) -m mutmut run
+
+precommit-install:
+	$(PYTHON) -m pre_commit install --hook-type pre-commit --hook-type pre-push
+
+precommit-run:
+	$(PYTHON) -m pre_commit run --all-files
+
+mypy:
+	$(PYTHON) -m mypy .
+
+security-scan:
+	$(PYTHON) -m pip install bandit pip-audit
+	$(PYTHON) -m bandit -r . -x tests,docs,build || true
+	$(PYTHON) -m pip_audit || true

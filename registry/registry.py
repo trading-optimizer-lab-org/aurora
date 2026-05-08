@@ -18,9 +18,13 @@ import pandas as pd
 from quantforge.core.sqlite_utils import _setup_sqlite
 
 
-_DEFAULT_DB_PATH = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "data_cache_qf", "registry.db")
-)
+def _default_db_path() -> str:
+    """Resolve the backtest-registry DB path via runtime_paths (R75)."""
+    from quantforge.core.runtime_paths import cache_dir
+    return str(cache_dir() / "registry.db")
+
+
+_DEFAULT_DB_PATH = _default_db_path()
 
 # Whitelist of metric names allowed in BacktestRegistry.best_by(metric=...)
 # (interpolated into a json_extract path, so a strict whitelist closes the
@@ -244,6 +248,8 @@ class BacktestRegistry:
                         )
                     result_id = int(row["id"])
                 else:
+                    if cur.lastrowid is None:  # pragma: no cover - sqlite defensive
+                        raise RuntimeError("insert succeeded but sqlite did not return row id")
                     result_id = int(cur.lastrowid)
             except Exception:
                 c.execute("ROLLBACK")

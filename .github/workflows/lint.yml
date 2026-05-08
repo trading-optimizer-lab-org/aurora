@@ -1,11 +1,9 @@
 name: lint
 on: [push, pull_request]
 
+# R18 + R59. Local `ruff check .` and `pre-commit run --all-files` are
+# both clean today. Make the same checks blocking in CI.
 jobs:
-  # Permissive sweep over the whole repo. The legacy surface still has
-  # several thousand ruff findings; cleaning them is tracked as roadmap
-  # R18. Keep continue-on-error here so the report is visible without
-  # gating every PR on legacy debt.
   ruff-full:
     runs-on: ubuntu-latest
     steps:
@@ -15,11 +13,7 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff
       - run: ruff check . --output-format=github
-        continue-on-error: true
 
-  # Strict sweep over the curated post-v1.4 surface. New code MUST stay
-  # lint-clean. Adding a path here is the agreed checkpoint that says
-  # "this module is ruff-clean and we want to keep it that way".
   ruff-strict:
     runs-on: ubuntu-latest
     steps:
@@ -42,3 +36,13 @@ jobs:
             tests/test_auto_loop.py \
             tests/test_snapshots_distributed.py \
             tests/test_lean_live.py
+
+  precommit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files

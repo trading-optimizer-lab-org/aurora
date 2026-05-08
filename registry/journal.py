@@ -37,9 +37,13 @@ import pandas as pd
 from quantforge.core.sqlite_utils import _setup_sqlite
 
 
-_DEFAULT_DB_PATH = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "data_cache_qf", "trade_journal.db")
-)
+def _default_db_path() -> str:
+    """Resolve the trade-journal DB path via runtime_paths (R75)."""
+    from quantforge.core.runtime_paths import cache_dir
+    return str(cache_dir() / "trade_journal.db")
+
+
+_DEFAULT_DB_PATH = _default_db_path()
 
 
 _VALID_SIDES = {"BUY", "SELL"}
@@ -246,6 +250,8 @@ class TradeJournal:
                     status, order_id, note,
                 ),
             )
+            if cur.lastrowid is None:  # pragma: no cover - sqlite defensive
+                raise RuntimeError("insert succeeded but sqlite did not return row id")
             return int(cur.lastrowid)
 
     def update_status(self, entry_id: int, status: str,
