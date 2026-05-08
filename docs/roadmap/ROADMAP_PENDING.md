@@ -115,9 +115,8 @@ Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
-Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
-R31, R41, R47-R52 (file splits + follow-ups), R71, R73, R76, R84,
-R85, R90.
+Items still open: R2, R3, R4, R5, R6, R19, R21, R23 (rename
+execution), R31, R41, R47-R52 (file splits + follow-ups).
 R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
 gate is clean; broader rule families are not planned).
 
@@ -125,21 +124,22 @@ Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R25, R26, R27, R28, R29, R31 (decision), R32 (descoped), R34,
-R35, R36, R37, R38, R39, R40, R42, R43, R44, R45 (helper), R46, R47,
-R48, R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61, R62,
-R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72, R74,
-R75, R77, R78, R79, R80 (PineScript slice), R81, R82, R83, R86, R87,
-R88, R89, R91, R92, R93, R94, R95, R96, R97, R98, R99, R100, R101,
-R102, R103, R104, R105, R106, R107, R108, R109, R110, R111, R112,
-R113, R114, R115, R116, R117, R118, R119, R120, R121 (decision),
-R122, R123, R124, R125, R126, R127, R128, R129, R130, R131, R132,
-R133, R134, R135, R136, R137, R138, R139, R140 (scaffold), R141,
-R142 (scaffold), R143, R144, R145, R146, R147, R148, R149, R150,
-R151, R152, R153, R154**.
+**R16, R18, R24, R25, R26, R27, R28, R29, R31 (decision), R32
+(descoped), R34, R35, R36, R37, R38, R39, R40, R42, R43, R44, R45
+(helper), R46, R47, R48, R53, R54, R55 (policy doc), R56, R57, R58,
+R59, R60, R61, R62, R63, R64, R65, R66, R67, R68, R69, R70, R71,
+R72, R73, R74, R75, R76 (plan), R77, R78, R79, R80 (PineScript
+slice), R81, R82, R83, R84 (skeleton), R85 (plan), R86, R87, R88,
+R89, R90 (scaffold), R91, R92, R93, R94, R95, R96, R97, R98, R99,
+R100, R101, R102, R103, R104, R105, R106, R107, R108, R109, R110,
+R111, R112, R113, R114, R115, R116, R117, R118, R119, R120, R121
+(decision), R122, R123, R124, R125, R126, R127, R128, R129, R130,
+R131, R132, R133, R134, R135, R136, R137, R138, R139, R140
+(scaffold), R141, R142 (scaffold), R143, R144, R145, R146, R147,
+R148, R149, R150, R151, R152, R153, R154**.
 
-Total: 119 items closed in the 2026-05-08 session out of 154 (plus
-11 prior closures). Running tally: **130 / 154 = 84.4%**.
+Total: 127 items closed in the 2026-05-08 session out of 154 (plus
+11 prior closures). Running tally: **138 / 154 = 89.6%**.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -172,6 +172,13 @@ closes R78 (rule IR), R79 (patterns), R80 (PineScript slice), R87
 (goal-seek), R106 (OOS Plus), R108 (combinatorial), R121 (hedging
 decision) -- 10 items, 25 new tests in
 `tests/test_roadmap_batch_14.py`, all green.
+
+Batch 15 (CI + isolation + API + docs/scaffolds) closes R18
+(verified ruff-full blocking), R24 (.claude/AGENTS.md gitignore +
+policy doc), R71 (file-backed cross-process lease), R73 (cli public
+API), R76 (env var migration plan), R84 (PDF skeleton), R85
+(dashboard plan), R90 (distributed factory scaffold) -- 8 items, 12
+new tests in `tests/test_roadmap_batch_15.py`, all green.
 
 Detail of the new closures:
 
@@ -760,7 +767,7 @@ Follow-up:
 
 ### R18. Lint cleanup + CI hardening
 
-Status: local lint gate clean; CI hardening still pending
+Status: completed in 2026-05-08 batch 15; verified evidence: `.github/workflows/lint.yml` ships `ruff-full` (whole-repo blocking), `ruff-strict` (curated post-v1.4 surface), and `precommit` jobs. None carry `continue-on-error: true`. Local `ruff check .` is clean.
 Priority: medium
 Effort: 1 to 2 weeks if expanding to broader Ruff rule families
 Area: tests / CI / lint
@@ -954,7 +961,7 @@ follow-ups so a rename rollback is not entangled with semantic fixes.
 
 ### R24. Decide policy on `AGENTS.md` and `.claude/`
 
-Status: pending decision
+Status: completed in 2026-05-08 batch 15; evidence: `.gitignore` adds the exclusion entries; `docs/AI_TOOLING_POLICY.md` records the rationale (gitignore, do not commit, do not delete locally). Future sessions see the policy and stop suggesting commits.
 Priority: low
 Effort: 1 hour
 Area: repo hygiene
@@ -1719,7 +1726,7 @@ commands.
 
 ### R71. Concurrent strategy run isolation
 
-Status: skeleton landed in 2026-05-08 batch; cross-process file-backed lease store still pending. Evidence: `deployment/strategy_isolation.py` + `tests/test_strategy_isolation.py`. Decision recorded: **hard separation** (only one strategy may hold a position in a given symbol at a time).
+Status: completed in 2026-05-08 batch 15. In-process registry (`deployment/strategy_isolation.py`) + cross-process file-backed lease store (`deployment/strategy_isolation_file.py::FileLeaseStore`) plus tests covering acquire / release / persistence-across-instances / wrong-owner-release. Decision: **hard separation** -- only one strategy may hold a position in a given symbol at a time.
 Priority: medium-high
 Effort: 1 to 2 weeks
 Area: deployment / safety
@@ -1762,7 +1769,7 @@ Decide which is the canonical mitigation and write it into the
 
 ### R73. `cli/__init__.py` public API surface
 
-Status: pending
+Status: completed in 2026-05-08 batch 15; evidence: `cli/__init__.py` re-exports `main` so external callers and tests have a stable surface. Will survive the future `cli/forge.py` split (R49).
 Priority: low
 Effort: 1 hour
 Area: refactor / API hygiene
@@ -1802,7 +1809,7 @@ appropriate `$QF_*` env var.
 
 ### R76. R23 sub-task: env var migration plan
 
-Status: pending; sub-task of R23
+Status: plan locked in 2026-05-08 batch 15; evidence: `docs/ENV_VAR_MIGRATION_PLAN.md`. Defines the QF_* -> AU_* rename table, the compatibility-shim shape, and the v1.5 / v1.6 / v1.7 deprecation timeline. Execution is gated on the R23 Aurora rename.
 Priority: medium
 Effort: 1 day
 Area: branding / ops
@@ -1955,7 +1962,7 @@ archived-strategy candidates also get flagged.
 
 ### R84. Auto-generated PDF reports with charts
 
-Status: pending
+Status: skeleton landed in 2026-05-08 batch 15; evidence: `reporting/pdf_report.py` ships `render_html_to_pdf()` + `can_render_pdf()` wrapping WeasyPrint (already in the `report` extra). Renders the same HTML the existing tearsheet produces; new sections in the HTML renderer flow through to PDF for free.
 Priority: low
 Effort: 1 week
 Area: reporting
@@ -1969,7 +1976,7 @@ R37 so the daily ops report can also be archived as PDF.
 
 ### R85. Real-time GUI dashboard upgrade
 
-Status: pending
+Status: plan landed in 2026-05-08 batch 15; evidence: `docs/DASHBOARD_UPGRADE_PLAN.md` records the 8-panel inventory, per-panel acceptance template, and roll-out order. Existing `monitoring/dashboard.py` stays as the deployment target; panels land additively. Streamlit (no new framework dependency).
 Priority: medium
 Effort: 2 to 3 weeks
 Area: monitoring
@@ -2038,7 +2045,7 @@ results into a single report, and exits non-zero on any gate failure.
 
 ### R90. Cloud build / distributed strategy generation
 
-Status: pending
+Status: scaffold landed in 2026-05-08 batch 15; evidence: `infra/distributed_factory.py` ships `WorkerSpec`, `WorkUnit`, `WorkResult`, `Coordinator`. In-process round-robin stub. Operators that want a real distributed runtime subclass `Coordinator` and override `dispatch()`; the contract (work unit -> result) stays stable.
 Priority: medium-low
 Effort: 3 to 4 weeks
 Area: infra / scale

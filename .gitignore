@@ -67,3 +67,10 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# R24: AI-tooling artefacts. .claude/ and AGENTS.md hold session-scoped
+# operator notes that are not project canon. They stay UNTRACKED so the
+# main branch is clean across operator setups; the policy is recorded
+# in docs/AI_TOOLING_POLICY.md.
+.claude/
+AGENTS.md
