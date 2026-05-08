@@ -123,9 +123,10 @@ Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R25, R26, R27, R28, R29, R34, R35, R36, R46, R47, R48, R53,
-R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66, R67,
-R68, R69, R70, R71 (skeleton), R72, R74, R75, R140 (scaffold)**.
+**R16, R25, R26, R27, R28, R29, R34, R35, R36, R45 (helper), R46, R47,
+R48, R53, R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66,
+R67, R68, R69, R70, R71 (skeleton), R72, R74, R75, R83, R140
+(scaffold), R148**.
 
 Detail of the new closures:
 
@@ -1217,7 +1218,7 @@ factory verifies, and the audit chain records the signing identity.
 
 ### R45. Timezone handling audit
 
-Status: pending
+Status: helper landed in 2026-05-08 batch; existing-module sweep still pending. Evidence: `core/timezone.py` + `tests/test_timezone.py`.
 Priority: medium
 Effort: 1 week
 Area: data / engine
@@ -1894,7 +1895,7 @@ parameter space tanks performance.
 
 ### R83. Equity curve similarity scoring
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `analytics/equity_similarity.py` + `tests/test_equity_similarity.py`. Pearson + period-return correlation; DTW deferred.
 Priority: medium
 Effort: 1 week
 Area: research / portfolio
@@ -2819,7 +2820,7 @@ and the session is not auditable -- regulator-relevant.
 
 ### R148. Backtest determinism contract test
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `tests/test_determinism_contract.py`. Smoke backtest twice with same seed -> byte-identical hash.
 Priority: medium
 Effort: 3 days
 Area: QA / reproducibility
