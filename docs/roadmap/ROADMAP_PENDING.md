@@ -118,7 +118,7 @@ Until R23 lands, the project name on disk and in code remains
 Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
 R31, R32, R37 through R45, R47 through R56, R71, R73, R76, R78
 through R85, R87, R90 through R93, R99 through R102, R105 through
-R109, R112, R121, R131, R132, R133, R141, R142, R144, R147, R153.
+R109, R112, R121, R142.
 R30 is superseded by R59.
 
 Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
@@ -130,16 +130,21 @@ R45 (helper), R46, R47, R48, R53, R54, R56, R57, R58, R59, R60, R61,
 R62, R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72,
 R74, R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103,
 R104, R110, R111, R113, R114, R115, R116, R117, R118, R119, R120,
-R122, R123, R124, R125, R126, R127, R128, R129, R130, R134,
-R135, R136, R137, R138, R139, R140 (scaffold), R143, R145, R146,
-R148, R149, R150, R151, R152, R154**.
+R122, R123, R124, R125, R126, R127, R128, R129, R130, R131, R132,
+R133, R134, R135, R136, R137, R138, R139, R140 (scaffold), R141,
+R143, R144, R145, R146, R147, R148, R149, R150, R151, R152, R153,
+R154**.
 
-Total: 83 items closed in the 2026-05-08 session out of 154 (plus 11
-prior closures). Running tally: **94 / 154 = 61.0%**.
+Total: 90 items closed in the 2026-05-08 session out of 154 (plus 11
+prior closures). Running tally: **101 / 154 = 65.6%**.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
 tests in `tests/test_roadmap_batch_9.py`, all green.
+
+Batch 10 (analytics + safety + provenance) closes R131, R132, R133,
+R141, R144, R147, R153 -- 7 items, 27 new tests in
+`tests/test_roadmap_batch_10.py`, all green.
 
 Detail of the new closures:
 
@@ -2620,7 +2625,7 @@ next backtest. Operators see the gap between assumed and observed.
 
 ### R131. Order book impact model evolution
 
-Status: pending
+Status: completed in 2026-05-08 batch 10; evidence: `core/rolling_kyle.py::rolling_kyle_lambda()` runs trailing-window OLS `delta_price = lambda * signed_volume` and returns a list of `KyleEstimate(end_index, lambda_bps_per_pct_volume, r_squared, n_obs)`. Caller plugs the latest into `CostModel.slippage_bps`.
 Priority: low
 Effort: 3 to 4 weeks
 Area: cost realism / microstructure
@@ -2632,7 +2637,7 @@ adapt to current liquidity regime.
 
 ### R132. Strategy capacity estimator
 
-Status: pending
+Status: completed in 2026-05-08 batch 10; evidence: `analytics/capacity.py::estimate_capacity()` sweeps an AUM grid, scales slippage with pct-of-ADV via the impact coefficient, recomputes net Sharpe, and returns the largest AUM that respects the configured Sharpe-drop threshold.
 Priority: high
 Effort: 2 to 3 weeks
 Area: scaling / market impact
@@ -2646,7 +2651,7 @@ Sharpe drops by Y%". Required before any meaningful AUM growth.
 
 ### R133. Dynamic position-size cap based on realtime liquidity
 
-Status: pending
+Status: completed in 2026-05-08 batch 10; evidence: `deployment/dynamic_caps.py::compute_dynamic_cap()` returns `DynamicCapResult(cap_notional_usd, rationale, adv_usd, is_thin)` with thin-market haircut + absolute-floor cancel route. `reject_oversized_order()` is the gateway-side guard.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: deployment / safety
@@ -2745,7 +2750,7 @@ strategies from running indefinitely.
 
 ### R141. Walk-forward refit cadence optimizer
 
-Status: pending
+Status: completed in 2026-05-08 batch 10; evidence: `research/refit_cadence.py::optimise_refit_cadence()` picks the cadence whose Sharpe-of-Sharpes (mean / std) is highest; `standard_cadence_grid()` exposes weekly / monthly / quarterly / yearly defaults.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: research / lifecycle
@@ -2781,7 +2786,7 @@ backtest unless the operator overrides with a recorded reason.
 
 ### R144. Synthetic adversarial market generator
 
-Status: pending
+Status: completed in 2026-05-08 batch 10; evidence: `validation/adversarial_markets.py::generate_adversarial_market()` greedy-perturbs the historical return path to maximise drawdown subject to a realised-vol tolerance. Returns `AdversarialResult(perturbed_returns, historical_drawdown, adversarial_drawdown, bars_perturbed, survived)`.
 Priority: medium-high
 Effort: 3 to 4 weeks
 Area: anti-overfit / robustness
@@ -2821,7 +2826,7 @@ More complete than the existing per-artifact hashes.
 
 ### R147. Audit-replay integrity test
 
-Status: pending
+Status: completed in 2026-05-08 batch 10; evidence: `validation/audit_replay.py::replay_session()` reconstructs positions / cash / realised PnL from the JSONL audit log and emits `AuditReplayDiff` entries when they diverge from a reference state. Orphan open orders (submitted without a matching fill / cancel / reject) also surface.
 Priority: medium
 Effort: 1 week
 Area: provenance / audit
@@ -2893,7 +2898,7 @@ shows live, paused, archived, and SLA-expired states.
 
 ### R153. Sealed envelope forecast ceremony
 
-Status: pending; design call
+Status: completed in 2026-05-08 batch 10; evidence: `agent_gateway/sealed_envelope.py` ships `seal_envelope()` (HMAC-SHA256 binding tag over sealed_at || opens_after || payload), `open_envelope()` (refuses early opens + tampered payloads), and JSONL persistence. Confidentiality wrapper (Fernet, etc.) is opt-in for callers that need it.
 Priority: low
 Effort: 2 to 3 weeks
 Area: integrity / forecast verifiability
