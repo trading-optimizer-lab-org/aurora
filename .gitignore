@@ -23,6 +23,14 @@ dist/
 *.egg
 wheels/
 
+# Sphinx build output (R15)
+docs/_build/
+docs/api/generated/
+
+# Mutation testing artifacts (R12)
+.mutmut-cache
+mutants/
+
 # Virtual envs
 .venv/
 venv/
