@@ -151,3 +151,31 @@ markers = [
     "integration: real network / broker tests",
 ]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+
+# --------------------------------------------------------------------------
+# mutmut (R12 -- mutation testing)
+# --------------------------------------------------------------------------
+#
+# Narrow target list: mutating ``examples/`` or ``experimental/`` produces
+# noise without signal. The runner uses the property-based tests plus the
+# matching unit tests for each target module.
+[tool.mutmut]
+paths_to_mutate = [
+    "core/engine.py",
+    "core/engine_multi.py",
+    "core/costs.py",
+    "core/metrics.py",
+    "core/data_tiers.py",
+    "core/data_layer.py",
+    "core/protocol_policy.py",
+    "validation/walk_forward.py",
+    "validation/monte_carlo.py",
+    "validation/spp.py",
+    "validation/deflated_sharpe.py",
+    "validation/lookahead_check.py",
+    "validation/pipeline.py",
+    "ga/fitness.py",
+]
+runner = "python -m pytest -x -q tests/test_property.py tests/test_property_v2.py tests/test_engine.py tests/test_costs.py tests/test_metrics.py tests/test_data_tiers.py tests/test_protocol_policy.py tests/test_walk_forward.py tests/test_monte_carlo.py tests/test_spp.py tests/test_deflated_sharpe.py tests/test_lookahead_check.py tests/test_pipeline.py tests/test_fitness.py"
+backup = false
+disable_mutation_types = "string,fstring"
