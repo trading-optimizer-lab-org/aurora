@@ -6,7 +6,6 @@ paper / live with hash-bound provenance and a 7-stage protocol spine.
 
 Project resources:
 
-- Source: https://github.com/anthropics/quantforge (placeholder)
 - Architecture overview: :doc:`ARCHITECTURE`
 - Spine reference: :doc:`SPINE`
 - Strategy authoring guide: :doc:`STRATEGY_AUTHOR`

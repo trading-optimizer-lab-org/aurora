@@ -53,6 +53,7 @@ quantforge/data_cache_qf/
 data_cache/
 data_snapshots/
 .qf/
+.qf_cache/
 .oos_lock.json
 
 # IDE

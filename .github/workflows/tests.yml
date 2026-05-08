@@ -29,8 +29,10 @@ jobs:
       - name: Run tests
         env:
           QF_DATA_DIR: ${{ runner.temp }}/qf_data
+          # Property tests run under the reproducible CI profile
+          # (max_examples=25, derandomize=True). Registered in
+          # tests/conftest.py.
+          HYPOTHESIS_PROFILE: ci
         run: |
           pytest tests/ -m "not slow and not integration" \
-            --ignore=tests/test_config.py \
-            --ignore=tests/test_property.py \
             --tb=short

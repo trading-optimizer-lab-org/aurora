@@ -103,8 +103,15 @@ class FeatureStore:
     data, indicator code, or params change.
     """
 
-    def __init__(self, root: str = "quantforge/data_cache_qf/features"):
-        self.root = Path(root)
+    def __init__(self, root: str | None = None):
+        # Default to the runtime cache dir (honours $QF_CACHE_DIR /
+        # $QF_DATA_DIR; falls back to platformdirs). Never lands inside
+        # the in-repo `quantforge/data_cache_qf/` ghost directory.
+        if root is None:
+            from quantforge.core.runtime_paths import cache_dir as _cache_dir
+            self.root = Path(_cache_dir()) / "features"
+        else:
+            self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _make_key(self, symbol: str, indicator: str, prices: pd.Series,

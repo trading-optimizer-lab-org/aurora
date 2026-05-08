@@ -8,13 +8,26 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from quantforge.core.runtime_paths import cache_dir as _runtime_cache_dir
+
+
+def _default_cache_dir() -> str:
+    """Resolve the default cache dir via runtime_paths.
+
+    Honours $QF_CACHE_DIR / $QF_DATA_DIR. Falls back to the platformdirs
+    user-data dir; never the in-repo `quantforge/data_cache_qf/` ghost
+    directory. The string-typed return shape is preserved for backward
+    compatibility with YAML / TOML configs that store this as a string.
+    """
+    return str(_runtime_cache_dir())
+
 
 class DataConfig(BaseModel):
     is_start: str = "1995-01-01"
     is_end: str = "2012-12-31"
     oos_start: str = "2013-01-01"
     oos_end: str = "2024-12-31"
-    cache_dir: str = "quantforge/data_cache_qf"
+    cache_dir: str = Field(default_factory=_default_cache_dir)
 
 
 class CostConfig(BaseModel):

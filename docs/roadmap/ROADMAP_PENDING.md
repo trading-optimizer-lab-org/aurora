@@ -20,8 +20,9 @@ documented as blockers in [`BLOCKERS.md`](BLOCKERS.md). Phase 4 stays
 gated behind benchmarking / profiling.
 
 Items closed this session (R1, R7, R8, R9, R10, R11, R12, R13, R14,
-R15) total 80 new tests across 8 commits. Items still open: R2, R3,
-R4, R5, R6, R16, R17, R18.
+R15, R22) total 80 new tests across 8 commits plus a follow-up
+honesty cleanup commit and a `data_cache_qf` ghost-dir retirement.
+Items still open: R2, R3, R4, R5, R6, R16, R17, R18, R19, R20, R21.
 
 ---
 
@@ -429,6 +430,33 @@ Definition of done:
 - All disk I/O goes via the backend.
 - Existing tests still pass; add a fake-backend test to prove the
   abstraction is real.
+
+### R22. Retire the legacy `quantforge/data_cache_qf` ghost directory
+
+Status: completed in follow-up
+Evidence: `core/config.py`, `core/features.py`, `tests/test_config.py`,
+`.gitignore` (entry retained as defence in depth)
+
+The legacy default cache path `quantforge/data_cache_qf/` was created
+as a side effect of `DataConfig` and `FeatureStore` constructors using
+that string as a hardcoded default. The empty top-level
+`quantforge/` directory it produced shadowed the real `quantforge`
+package on filesystems where Python's path resolution favoured the
+on-disk subdirectory over the installed package, breaking
+`python -m quantforge.cli.forge` and any subprocess test that imports
+`quantforge.cli`.
+
+Fix:
+
+- `core.config.DataConfig.cache_dir` now defaults to
+  `runtime_paths.cache_dir()` via a `default_factory`. Honours
+  `$QF_CACHE_DIR` / `$QF_DATA_DIR`; falls back to the platformdirs
+  user-data dir.
+- `core.features.FeatureStore.__init__(root=None)` resolves the same
+  way; explicit `root=` callers are unchanged.
+- `tests/test_config.py::test_default_config` updated to assert the
+  new contract (`cfg.data.cache_dir == str(runtime_paths.cache_dir())`).
+- The on-disk `quantforge/` ghost directory was deleted.
 
 ### R20. Docs build hygiene
 

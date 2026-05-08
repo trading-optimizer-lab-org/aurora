@@ -28,7 +28,12 @@ def test_default_config():
     assert cfg.data.is_end == "2012-12-31"
     assert cfg.data.oos_start == "2013-01-01"
     assert cfg.data.oos_end == "2024-12-31"
-    assert cfg.data.cache_dir == "quantforge/data_cache_qf"
+    # cache_dir resolves via runtime_paths (honours $QF_CACHE_DIR /
+    # $QF_DATA_DIR; falls back to platformdirs user-data dir). The legacy
+    # in-repo `quantforge/data_cache_qf` default was retired so the
+    # ghost directory it created stops shadowing the package.
+    from quantforge.core.runtime_paths import cache_dir as _cache_dir
+    assert cfg.data.cache_dir == str(_cache_dir())
     assert cfg.costs.profile == "ibkr"
     assert cfg.costs.commission_bps == 0.5
     assert cfg.costs.spread_bps == 1.0

@@ -257,8 +257,14 @@ def _marker_path(strategy_name: str, project_dir: str = ".",
         if not os.path.isabs(cache_dir):
             cache_dir = os.path.abspath(cache_dir)
         return os.path.join(cache_dir, f".validation_passed_{strategy_name}.json")
+    # No explicit cache_dir: keep the project_dir-relative marker so
+    # callers can pin the location, but route through ``.qf_cache/``
+    # rather than the legacy ``quantforge/data_cache_qf/`` subpath.
+    # The legacy subpath created an empty top-level ``quantforge/``
+    # directory in the repo root that shadowed the real package.
+    # ``.qf_cache/`` is already covered by .gitignore.
     root = _resolve_project_dir(project_dir)
-    cache = os.path.join(root, "quantforge", "data_cache_qf")
+    cache = os.path.join(root, ".qf_cache")
     return os.path.join(cache, f".validation_passed_{strategy_name}.json")
 
 
