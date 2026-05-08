@@ -123,10 +123,11 @@ Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R25, R26, R27, R28, R29, R34, R35, R36, R45 (helper), R46, R47,
-R48, R53, R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66,
-R67, R68, R69, R70, R71 (skeleton), R72, R74, R75, R83, R94, R95,
-R96, R98, R103, R104, R119, R120, R140 (scaffold), R146, R148**.
+**R16, R25, R26, R27, R28, R29, R31 (decision), R34, R35, R36, R37,
+R45 (helper), R46, R47, R48, R53, R54, R56, R57, R58, R59, R60, R61,
+R62, R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72,
+R74, R75, R83, R86, R94, R95, R96, R98, R103, R104, R119, R120,
+R134, R140 (scaffold), R143, R145, R146, R148, R152**.
 
 Detail of the new closures:
 
@@ -995,7 +996,7 @@ entries tracking the same thing.
 
 ### R31. Sphinx docs hosting
 
-Status: pending decision
+Status: decision recorded in 2026-05-08 batch (GitHub Pages). Workflow lands once R28 closes; evidence: `docs/DOCS_HOSTING.md`.
 Priority: low
 Effort: half a day for hosting; up to 2 days if also adding a
 publish workflow
@@ -1107,7 +1108,7 @@ from blobs whose content matches their filename.
 
 ### R37. Daily Ops Report delivery recipe
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `docs/DAILY_OPS_RECIPE.md`.
 Priority: low
 Effort: 2 to 3 hours
 Area: ops / docs
@@ -1938,7 +1939,7 @@ today" panel pulling from the daily ops report (R37 / Daily Ops).
 
 ### R86. Indicator block library
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `strategies/blocks/indicators.py` + `tests/test_indicator_blocks.py`. 17 indicators with `ParameterRange` + warmup. Anti-lookahead helper for tests.
 Priority: medium-high (gates R77)
 Effort: 1 to 2 weeks
 Area: strategies / building blocks
@@ -2644,7 +2645,7 @@ Surface caps in daily ops; refuse oversized orders at the gateway.
 
 ### R134. Universe rebalance gate
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `core/universe_gate.py` + tests. Diff primitive + affected-strategy lookup.
 Priority: medium
 Effort: 1 week
 Area: data integrity / safety
@@ -2757,7 +2758,7 @@ new candidates and rank.
 
 ### R143. Snapshot freshness audit
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `core/snapshot_freshness.py` + tests. 90-day default cutoff.
 Priority: low
 Effort: 3 to 4 days
 Area: data integrity
@@ -2783,7 +2784,7 @@ one that only survives Monte Carlo.
 
 ### R145. Out-of-distribution feature detector
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `ml/ood_detector.py` + tests. KL per-feature + Mahalanobis combined gate.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: ML / safety
@@ -2866,7 +2867,7 @@ the off-by-one weekend issue.
 
 ### R152. Strategy ancestry tree visualization
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `research/ancestry.py` + tests. Indented text + DOT renderers.
 Priority: low
 Effort: 2 weeks
 Area: research / observability
