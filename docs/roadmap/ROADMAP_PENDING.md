@@ -125,8 +125,8 @@ R13, R14, R15, R17, R20, R22, R30, R33.
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 **R16, R25, R26, R27, R28, R29, R34, R35, R36, R45 (helper), R46, R47,
 R48, R53, R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66,
-R67, R68, R69, R70, R71 (skeleton), R72, R74, R75, R83, R104, R140
-(scaffold), R146, R148**.
+R67, R68, R69, R70, R71 (skeleton), R72, R74, R75, R83, R94, R95,
+R96, R98, R103, R104, R119, R120, R140 (scaffold), R146, R148**.
 
 Detail of the new closures:
 
@@ -2051,7 +2051,7 @@ which strategy is up next, plus alerts on degradation.
 
 ### R94. News / event filter
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `deployment/news_filter.py` + tests in `test_deployment_filters.py`. List-driven blackout-window primitive; provider wiring is operator-side.
 Priority: medium
 Effort: 1 week
 Area: deployment / safety
@@ -2065,7 +2065,7 @@ preview so the daily ops report flags upcoming blackouts.
 
 ### R95. Volatility filter
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `deployment/vol_filter.py` + tests. Realised-vol gate + pluggable external metric (VIX / regime).
 Priority: medium
 Effort: 3 to 4 days
 Area: deployment / safety
@@ -2077,7 +2077,7 @@ existing `LiveConfig` so operators do not need new wrappers.
 
 ### R96. Custom session times per strategy
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `deployment/session_times.py` + tests. Per-strategy windows with exchange-tz resolution via `core.timezone` (R45).
 Priority: low
 Effort: 3 to 4 days
 Area: deployment
@@ -2100,7 +2100,7 @@ on average but has a fold where it loses 30%".
 
 ### R98. Consolidated stability index
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/stability_index.py` + `tests/test_stability_index.py`. Geometric-mean composite over 5 sub-scores.
 Priority: medium
 Effort: 1 week
 Area: validation / metrics
@@ -2164,7 +2164,7 @@ Pareto front and stops early on success.
 
 ### R103. Random-baseline statistical significance test
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/random_baseline.py` + `tests/test_random_baseline.py`. Weight-shuffle ensemble + one-tailed p-value.
 Priority: high
 Effort: 1 week
 Area: validation
@@ -2420,7 +2420,7 @@ ranking; the rotator does the rest. Pair with R113.
 
 ### R119. Spread protection filter
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `deployment/spread_filter.py` + tests. EMA over per-symbol historical spread; trip on multiple-over-avg.
 Priority: medium
 Effort: 3 days
 Area: deployment / safety
@@ -2433,7 +2433,7 @@ against thin-market lockups.
 
 ### R120. Account-level circuit breaker
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `deployment/circuit_breaker.py` + tests. OK / WARN / TRIPPED state machine over rolling daily + weekly DD.
 Priority: medium-high
 Effort: 1 week
 Area: deployment / safety
