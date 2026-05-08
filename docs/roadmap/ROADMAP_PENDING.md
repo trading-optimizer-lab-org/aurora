@@ -125,8 +125,8 @@ R13, R14, R15, R17, R20, R22, R30, R33.
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 **R16, R25, R26, R27, R28, R29, R34, R35, R36, R45 (helper), R46, R47,
 R48, R53, R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66,
-R67, R68, R69, R70, R71 (skeleton), R72, R74, R75, R83, R140
-(scaffold), R148**.
+R67, R68, R69, R70, R71 (skeleton), R72, R74, R75, R83, R104, R140
+(scaffold), R146, R148**.
 
 Detail of the new closures:
 
@@ -2188,7 +2188,7 @@ Definition of done:
 
 ### R104. Bootstrap confidence intervals on metrics
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `analytics/metric_cis.py` + `tests/test_metric_cis.py`. IID + stationary block bootstrap; default 95% CI on Sharpe / Sortino / Calmar / CAGR / MDD / win-rate / profit-factor.
 Priority: high
 Effort: 1 to 2 weeks
 Area: analytics / metrics
@@ -2794,7 +2794,7 @@ forest). Auto-pause when out-of-distribution; alert operator.
 
 ### R146. Reproducibility witness object
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `core/witness.py` + `tests/test_witness.py`. `WitnessRecorder` context manager + `Witness.witness_hash()` + JSONL persistence.
 Priority: medium-high
 Effort: 1 to 2 weeks
 Area: provenance / reproducibility
