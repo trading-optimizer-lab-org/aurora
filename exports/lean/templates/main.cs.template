@@ -1,0 +1,54 @@
+// =====================================================================
+// QuantForge -> Lean export
+// project_name : $project_name
+// strategy     : $strategy_name
+// spec_hash    : $spec_hash
+// policy_hash  : $policy_hash
+// qf_version   : $qf_version
+// exported_at  : $exported_at
+//
+// DO NOT TRUST IN ISOLATION.
+// This algorithm is a cross-validation skeleton. Refit on QuantForge IS
+// data; cross-validate WF on Lean. Do NOT promote to Lean live without
+// re-running the QuantForge OOS_DEV ceremony.
+//
+// QF strategy params (from spec):
+$params_comment
+// =====================================================================
+using System;
+using System.Collections.Generic;
+using QuantConnect;
+using QuantConnect.Algorithm;
+using QuantConnect.Data;
+using QuantConnect.Indicators;
+using QuantConnect.Orders;
+
+namespace QuantForge.Exports
+{
+    /// <summary>
+    /// Cross-validation skeleton for QuantForge strategy "$strategy_name".
+    /// Tier      : $tier_marker
+    /// Universe  : $universe_csv
+    /// Rebalance : $rebalance
+    /// </summary>
+    public class $class_name : QCAlgorithm
+    {
+$indicator_decls
+        public override void Initialize()
+        {
+            SetStartDate($start_year, $start_month, $start_day);
+$end_date_call
+            SetCash($cash);
+            SetBenchmark("$benchmark");
+            UniverseSettings.Resolution = Resolution.$universe_resolution;
+$add_securities
+
+$indicator_init
+        }
+
+        public override void OnData(Slice data)
+        {
+$on_data_body
+        }
+    }
+}

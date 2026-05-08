@@ -1,0 +1,29 @@
+# Research Factory configuration (P1.C).
+#
+# Default thresholds for the IS/WF/OOS_DEV gates run by
+# ``quantforge.research.factory.ResearchFactory``. Tune these per project,
+# but never lower the OOS_DEV bar below the protocol's promotion floor.
+
+# In-sample backtest gate.
+is_sharpe_min: 0.5
+is_max_drawdown: -0.30
+
+# Walk-forward gates.
+# wf_degradation_max: minimum required ratio of OOS sharpe / IS sharpe.
+# wf_instability_max: max ratio of std(fold_sharpes) / mean(fold_sharpes).
+wf_degradation_max: 0.50
+wf_instability_max: 0.40
+
+# OOS_DEV gate. The factory hard-caps data loads at OOS_DEV; OOS_LOCKED is
+# only reachable through `forge research promote` + lockbox ceremony.
+oos_dev_sharpe_min: 0.3
+
+# When the WF gate fails, skip the more expensive OOS_DEV stage.
+skip_oos_dev_if_wf_fails: true
+
+# Storage paths. JSONL append-only.
+archive_path: .qf/research_archive.jsonl
+review_queue_path: .qf/research_review_queue.jsonl
+
+# Submit-batch parallelism. 1 = sequential.
+parallel_workers: 1

@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing/coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Runtime artifacts (must live in QF_DATA_DIR outside repo)
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+audit_*.db
+audit_trail.jsonl
+research_archive.jsonl
+research_review_queue.jsonl
+review_queue.jsonl
+gateway_audit.jsonl
+gateway_audit_chain.jsonl
+data_cache_qf/
+data_cache/
+data_snapshots/
+.qf/
+.oos_lock.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local

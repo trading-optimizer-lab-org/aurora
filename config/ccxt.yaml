@@ -1,0 +1,18 @@
+# CCXT integration configuration (P3.A)
+#
+# Optional / lazy. If ccxt is not installed, the data provider and broker
+# adapter raise ProviderUnavailable / ImportError at first use; this YAML
+# is consulted by ``forge crypto`` CLI subcommands to pick sensible
+# defaults.
+
+default_exchange: binance
+sandbox_default: true
+allowed_quotes: [USDT, USDC, USD, BTC, ETH]
+api_key_env_pattern: "QF_CCXT_{EXCHANGE}_KEY"
+secret_env_pattern: "QF_CCXT_{EXCHANGE}_SECRET"
+allow_live_env_pattern: "QF_CCXT_ALLOW_LIVE_{EXCHANGE}"
+rate_limit_factor: 1.0
+# Phase that an OOSGuard must declare to satisfy the live triple-gate.
+live_ceremony_phase: ccxt_live_authorized
+# Token storage path for `forge crypto allow-live`.
+allow_live_token_dir: ~/.quantforge/ccxt_tokens

@@ -1,0 +1,14 @@
+# Default config for the QuantForge triage backend (P2.A).
+#
+# Triage is a vectorized screening layer for thousands of variants. It is
+# NOT a substitute for the official engine; promising variants must be
+# re-run on quantforge.core.engine.run_backtest under full ceremony.
+parallel: true
+max_workers: 0
+cost_bps_simple: 5.0
+slippage_bps_simple: 1.0
+min_sharpe_threshold: 0.5
+max_dd_threshold: -0.30
+min_trades: 30
+use_vectorbt: false
+triage_tier_only: IS_TRAIN

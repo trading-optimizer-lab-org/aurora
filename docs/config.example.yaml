@@ -1,0 +1,31 @@
+data:
+  is_start: "1995-01-01"
+  is_end: "2012-12-31"
+  oos_start: "2013-01-01"
+  oos_end: "2024-12-31"
+  # cache_dir is optional and override-only. By default, QF resolves an
+  # XDG-compliant cache via platformdirs; uncomment ONLY to pin a specific
+  # path (CI, shared volumes, etc.).
+  # cache_dir: "quantforge/data_cache_qf"
+
+costs:
+  profile: ibkr
+  commission_bps: 0.5
+  spread_bps: 1.0
+  slippage_bps: 2.0
+  borrow_rate_annual: 0.01
+
+validation:
+  min_wf_pass: 3
+  spp_max_cv: 0.30
+  mc_min_pct: 0.20
+  mc_max_pct: 0.80
+  min_dsr: 0.95
+
+ga:
+  population: 200
+  generations: 50
+  seed: 42
+
+seed: 42
+log_level: INFO

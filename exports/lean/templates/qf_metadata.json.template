@@ -1,0 +1,15 @@
+{
+    "qf_version": "$qf_version",
+    "exported_at": "$exported_at",
+    "project_name": "$project_name",
+    "strategy_name": "$strategy_name",
+    "strategy_class": "$strategy_class",
+    "spec_hash": "$spec_hash",
+    "policy_hash": "$policy_hash",
+    "translation_tier": "$translation_tier",
+    "universe": $universe_json,
+    "rebalance": "$rebalance",
+    "params": $params_json,
+    "validation_marker": $validation_marker_json,
+    "warning": "DO NOT TRUST IN ISOLATION. Cross-validation skeleton only."
+}

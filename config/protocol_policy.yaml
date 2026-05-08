@@ -1,0 +1,132 @@
+cost_model:
+  borrow_rate_annual: 0.01
+  commission_bps: 0.5
+  market_impact_id: linear_sqrt_volume
+  slippage_bps: 2.0
+  slippage_model_id: constant_bps
+  spread_bps: 1.0
+dca_config:
+  sma_long: 200
+  sma_short: 50
+  vol_regime_threshold: 0.2
+ga_config:
+  backend: sequential
+  crossover_prob: 0.7
+  generations: 50
+  mutation_prob: 0.2
+  n_workers: 1
+  population: 200
+  sampler: nsga2
+  seed: 42
+  seed_population_policy: random
+  tournament_size: 3
+mandatory_gates:
+- walk_forward
+- monte_carlo_bootstrap
+- monte_carlo_trade_reorder
+- spp
+- lookahead_check
+- deflated_sharpe
+- noise_injection
+- gap_simulation
+- auditor_gate
+objectives:
+- description: Calmar ratio on IS
+  direction: max
+  name: calmar_is
+  threshold: null
+- description: Sharpe ratio on IS
+  direction: max
+  name: sharpe_is
+  threshold: null
+- description: Walk-forward stability (neg-stddev of per-fold Calmar)
+  direction: max
+  name: robustness_wf
+  threshold: null
+- description: IS max-drawdown penalty
+  direction: min
+  name: mdd_penalty_is
+  threshold: null
+- description: Deflated Sharpe gate on OOS
+  direction: max
+  name: dsr_oos
+  threshold: 0.95
+- description: Min walk-forward folds passed
+  direction: max
+  name: wf_pass
+  threshold: 3.0
+- description: Max SPP Calmar CV
+  direction: min
+  name: spp_cv
+  threshold: 0.3
+oos_ceremonies:
+  explicit_unlock_forward:
+    env_flag: explicit_unlock_forward
+    purpose_pattern: forward_read
+    requires_oos_guard: true
+    requires_signed_authorization: false
+  explicit_unlock_full_tier:
+    env_flag: explicit_unlock_full_tier
+    purpose_pattern: cli_analysis_full_tier
+    requires_oos_guard: true
+    requires_signed_authorization: true
+  explicit_unlock_oos_locked:
+    env_flag: explicit_unlock_oos_locked
+    purpose_pattern: oos_locked_read
+    requires_oos_guard: true
+    requires_signed_authorization: true
+  explicit_unlock_snapshot:
+    env_flag: explicit_unlock_snapshot
+    purpose_pattern: snapshot_load
+    requires_oos_guard: true
+    requires_signed_authorization: false
+policy_hash: da6222ade2ed03a5a60ac3a068c9b85c67eb83ff910580bc6c8f42577b88841a
+risk_limits:
+  max_correlation_to_benchmark: 0.95
+  max_drawdown_promotion_threshold: 0.3
+  max_leverage: 1.0
+  max_position_concentration: 1.0
+stress_scenarios:
+- description: Global Financial Crisis
+  end: '2009-06-30'
+  name: 2008_GFC
+  start: '2007-10-01'
+- description: COVID-19 pandemic crash
+  end: '2020-04-30'
+  name: COVID_2020
+  start: '2020-02-15'
+- description: Dot-com bust
+  end: '2002-10-31'
+  name: DOTCOM_2000
+  start: '2000-03-01'
+- description: Q4 2018 volatility blow-up
+  end: '2018-12-31'
+  name: VOL_2018Q4
+  start: '2018-10-01'
+tiers:
+  FORWARD:
+    end: null
+    purpose: Paper / live trading
+    requires_ceremony: explicit_unlock_forward
+    start: '2025-01-01'
+  IS_TRAIN:
+    end: '2010-12-31'
+    purpose: Model fitting
+    requires_ceremony: null
+    start: '1995-01-01'
+  IS_VALID:
+    end: '2012-12-31'
+    purpose: In-sample walk-forward holdout
+    requires_ceremony: null
+    start: '2011-01-01'
+  OOS_DEV:
+    end: '2020-12-31'
+    purpose: Post-GA validation, may be re-touched after a research-cycle reset
+    requires_ceremony: null
+    start: '2013-01-01'
+  OOS_LOCKED:
+    end: '2024-12-31'
+    purpose: Frozen, single-look only
+    requires_ceremony: explicit_unlock_oos_locked
+    start: '2021-01-01'
+version: 1.4.0

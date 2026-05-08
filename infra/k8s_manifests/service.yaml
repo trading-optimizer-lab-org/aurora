@@ -1,0 +1,19 @@
+# QuantForge dashboard Service skeleton.
+# Documentation only; expose via Ingress / LoadBalancer in production.
+apiVersion: v1
+kind: Service
+metadata:
+  name: quantforge-dashboard
+  labels:
+    app: quantforge
+    component: dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: quantforge
+    component: dashboard
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8501
+      protocol: TCP

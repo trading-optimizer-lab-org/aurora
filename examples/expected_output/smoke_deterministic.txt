@@ -1,0 +1,6 @@
+bars=500
+sharpe=0.3577
+cagr=4.6013
+mdd=-24.7601
+calmar=0.1858
+final_nav=1.0932

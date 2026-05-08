@@ -1,0 +1,7 @@
+paper_only_default: true
+require_human_commit_for_live: true
+require_human_commit_for_paper: false
+audit_chain_verify_on_startup: true
+max_token_lifetime_days: 30
+allow_self_modify: false
+audit_path: .qf/agent_audit.jsonl

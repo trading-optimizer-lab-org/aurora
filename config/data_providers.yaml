@@ -1,0 +1,47 @@
+# Data Providers configuration (P0.B)
+#
+# Declares the providers known to ``DataProviderRegistry`` and their PIT /
+# tier-permission posture. The registry boots its built-ins from
+# ``quantforge.core.data_providers.{yahoo,snapshot,csv,openbb,synthetic}``;
+# this file is a discoverability hint for human operators and a default
+# `default_provider` for the ``forge data fetch`` CLI.
+
+default_provider: yahoo
+
+providers:
+  yahoo:
+    enabled: true
+    point_in_time: false
+    tier_permission: IS_TRAIN
+    description: >-
+      yfinance wrapper. Retroactively adjusted for splits/dividends -- not
+      PIT-correct. Default provider for the legacy ``data_layer.load_asset``
+      path.
+  snapshot:
+    enabled: true
+    point_in_time: true
+    tier_permission: ANY
+    description: >-
+      SnapshotStore lookup. Always PIT (data is hash-verified at read time)
+      and may serve any tier under any guard.
+  csv:
+    enabled: true
+    point_in_time: false
+    tier_permission: IS_TRAIN
+    description: >-
+      Local CSV reader with optional ``<file>.meta.json`` sidecar for
+      ``asof_date``. PIT flag is opt-in via the constructor.
+  openbb:
+    enabled: true
+    point_in_time: false
+    tier_permission: IS_TRAIN
+    description: >-
+      OpenBB SDK adapter (lazy-import). Raises ProviderUnavailable if the
+      ``openbb`` package is not installed.
+  synthetic:
+    enabled: true
+    point_in_time: true
+    tier_permission: ANY
+    description: >-
+      Deterministic GBM generator from a seed. Always PIT (synthetic data
+      cannot peek at the future).

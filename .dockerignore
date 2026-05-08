@@ -1,0 +1,85 @@
+# Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.benchmarks/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Data and parquet
+*.parquet
+*.feather
+*.h5
+*.hdf5
+data_cache_qf/
+data_cache/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs / outputs
+*.log
+logs/
+outputs/
+runs/
+mlruns/
+artifacts/
+reports/
+tearsheets/
+
+# Notebooks
+*.ipynb_checkpoints/
+*.ipynb
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Git / VCS
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+ENV/
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Misc
+*.tmp
+*.bak
+*.orig
+.streamlit/secrets.toml

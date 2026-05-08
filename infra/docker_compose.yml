@@ -1,0 +1,82 @@
+# QuantForge v2.0 — production docker-compose stub
+#
+# Spins up the live trading + research stack as separate services so each
+# can be scaled / restarted independently. Documentation only; the
+# Makefile / deploy scripts are responsible for wiring real images and
+# secrets at runtime.
+version: "3.9"
+
+x-common-env: &common-env
+  TZ: "UTC"
+  PYTHONUNBUFFERED: "1"
+  QUANTFORGE_ENV: "prod"
+
+services:
+  dashboard:
+    image: quantforge/dashboard:latest
+    container_name: qf_dashboard
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DASHBOARD_PORT: "8501"
+    ports:
+      - "8501:8501"
+    depends_on:
+      - journal_db
+      - redis
+    volumes:
+      - ./data_cache_qf:/app/data_cache_qf:ro
+
+  alerts:
+    image: quantforge/alerts:latest
+    container_name: qf_alerts
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      ALERTS_INTERVAL_SEC: "30"
+    depends_on:
+      - journal_db
+      - redis
+    volumes:
+      - ./data_cache_qf:/app/data_cache_qf:ro
+
+  broker_worker:
+    image: quantforge/broker_worker:latest
+    container_name: qf_broker_worker
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      BROKER: "alpaca"
+      WORKER_CONCURRENCY: "4"
+    depends_on:
+      - journal_db
+      - redis
+    volumes:
+      - ./data_cache_qf:/app/data_cache_qf
+
+  journal_db:
+    image: postgres:16-alpine
+    container_name: qf_journal_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "qf_journal"
+      POSTGRES_USER: "qf"
+      POSTGRES_PASSWORD: "qf"
+    ports:
+      - "5432:5432"
+    volumes:
+      - journal_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: qf_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  journal_data:
+  redis_data:

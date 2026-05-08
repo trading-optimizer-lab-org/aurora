@@ -1,0 +1,1 @@
+[${asof_date}] ${portfolio_id} | PnL=${daily_pnl_bps}bps | DD=${current_dd_pct}% | alerts=${alert_summary}
