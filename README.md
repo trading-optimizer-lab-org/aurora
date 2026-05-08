@@ -1,13 +1,12 @@
 # QuantForge
 
-QuantForge v1.3 - quant research engine with 13 validation gates plus a
-final OOS hold-out (see `docs/ARCHITECTURE.md` for the canonical
-enumeration). `validate_pipeline` orchestrates 8 of the 13 gates;
-purged CV, CSCV, scenarios, tail-risk, and correlation-stress run
-standalone. 12 strategies, intraday + DL/RL + dashboard + multi-broker
-+ LLM. Cumulative test coverage: 2500+ tests across v1.0 / v1.1 / v1.2
-/ v1.3 / v1.4 (count in `quantforge/tests/`; verify with
-`pytest --collect-only -q`).
+QuantForge v1.4 - standalone quant research engine with a hash-bound
+7-stage protocol spine: policy, data providers, snapshots, experiment
+registry, validation, agent gateway, and paper/live guards. The GA fitness
+path is IS-only by construction; OOS_DEV is post-selection validation, and
+OOS_LOCKED/FORWARD require explicit ceremonies. Current collection:
+2830 tests total, with 2794 collected by the fast-suite selection after
+the documented ignores and marker deselection.
 
 ## Filosofia
 
@@ -34,7 +33,7 @@ deployment with a 1% risk-per-trade cap.
 The full pipeline is reproducible from a single seed. Re-running months later
 with the same seed reproduces identical results.
 
-## Capabilities by area (v1.3)
+## Capabilities by area (v1.4)
 
 ### Core engine
 - `core/engine.py` - single-asset event-driven backtest
@@ -119,33 +118,26 @@ with the same seed reproduces identical results.
 - `deployment/brokers.py` - PaperBroker + IB / Alpaca / Coinbase / Kraken
   adapters
 
-### Monitoring (v1.3)
+### Monitoring
 - `monitoring/dashboard.py` - Streamlit live PnL, positions, alerts
 - `monitoring/alerts.py` - SMTP email + Slack / Discord webhooks, per-rule
   cooldown, env-var-only credentials
 - `monitoring/drift.py` - Page-Hinkley + ADWIN + KS, AutoRetrainController
 
-### Research (v1.3)
+### Research
 - `research/llm_assistant.py` - Anthropic API integration, mock client
   injection for offline tests
 
 ### Reporting and CLI
 - `reporting/tearsheet.py` (HTML / PDF, v2 with 8 sections + benchmark overlay)
-- `cli/forge.py` (15 subcommands)
+- `cli/forge.py` (35+ subcommands across research, policy, data,
+  agent gateway, audit, triage, ops, crypto, export, and legacy workflows)
 
 ## Quick start
 
 ```bash
-# From the repo root (the parent of quantforge/), install the editable
-# package. The setup.py / pyproject.toml lives inside quantforge/, so
-# the path argument is required -- running `pip install -e .` from the
-# repo root WITHOUT the path argument will fail because the repo root
-# itself is not a package.
-pip install -e quantforge/
-
-# Equivalent if you cd into the package directory first:
-#   cd <repo>/quantforge
-#   pip install -e .
+# From the repository root, install the editable package.
+pip install -e ".[dev,ga]"
 
 # List strategies
 forge list-strategies
@@ -183,16 +175,18 @@ result = run_backtest(prices, weights, costs=IBKR_costs)
 print(result.calmar, result.sharpe, result.mdd)
 ```
 
-## CLI subcommands (15)
+## CLI subcommands
 
 ```
 forge run                   single backtest
 forge validate              run validation pipeline
 forge search                GA candidate search
+forge search-multi          multi-asset GA search
 forge list-strategies
 forge tearsheet
 forge bench                 microbenchmark
 forge config show|init
+forge freeze                freeze hash-verified snapshots
 forge preflight             pre-trade checks
 forge label                 triple-barrier labels
 forge factor                factor / IC / quantile spread
@@ -201,6 +195,15 @@ forge purge-cv              purged K-Fold CV
 forge fracdiff
 forge cscv                  CSCV / PBO from per-strategy returns
 forge dashboard             Streamlit live monitor
+forge policy show|verify
+forge data list-providers|fetch|verify
+forge agent token-issue|token-list|token-revoke|audit-verify|stage|commit|push
+forge audit run|list-reviewers
+forge research submit|batch|review-queue|archive|lineage|generate|promote|triage
+forge triage run|list-promising|promote
+forge ops daily|alerts|summary
+forge crypto exchanges|fetch|submit-order|positions|balance|allow-live
+forge export lean|lean-list|verify
 ```
 
 ## OOS sagrado (no negotiation)
@@ -240,8 +243,8 @@ forge dashboard             Streamlit live monitor
 
 - `docs/ARCHITECTURE.md` - module dependency graph, design principles,
   extension points
-- `docs/v1_3_COMPLETION_REPORT.md` - current state, test counts, modules
-  added per batch
+- `docs/v4_0_SPINE_REPORT.md` - current v1.4 spine state, test counts,
+  modules added per batch, and production-readiness notes
 - `docs/STRATEGY_AUTHOR.md` - tutorial for writing a custom Strategy
 - `docs/GLOSSARY.md` - definitions of metrics, validation gates, and
   abbreviations

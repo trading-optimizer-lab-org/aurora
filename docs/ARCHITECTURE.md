@@ -122,7 +122,7 @@ pass `n_trials` when reporting best-of-search Sharpe.
 - Experiment tracker (`registry/experiments.py`) is MLflow-style.
 - Feature store (`core/features.py`) records provenance for every feature.
 
-## Directory layout (v1.3 state)
+## Directory layout (v1.4 state)
 
 ```
 quantforge/
@@ -228,8 +228,8 @@ quantforge/
 ├── reporting/
 │   └── tearsheet.py           HTML / PDF (v2: 8 sections + benchmark)
 ├── cli/
-│   └── forge.py               15 subcommands
-├── tests/                     60+ test files, 946 cumulative tests
+│   └── forge.py               35+ subcommands
+├── tests/                     290 test files, 2830 collected tests
 ├── examples/
 └── docs/
     ├── ARCHITECTURE.md        this file

@@ -1,4 +1,13 @@
-# Mejoras Pendientes a Implementar
+# OBSOLETO - Mejoras Pendientes a Implementar
+
+Este documento queda archivado como contexto historico. No describe el estado
+actual de QuantForge v1.4.
+
+Motivo: su tesis principal sobre filtracion de OOS en el GA fue cerrada por la
+ruta de fitness IS-only y el endurecimiento del spine v1.4. La referencia viva
+para pendientes es `C:\Users\HP\Desktop\quantforge_roadmap_pendiente.txt`.
+
+---
 
 Respuesta directa: QuantForge es un motor propio de investigación cuantitativa para crear, probar, optimizar, validar y preparar estrategias para paper/live. No es solo un backtester: intenta ser una plataforma completa anti-overfit.
 

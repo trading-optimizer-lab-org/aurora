@@ -68,7 +68,7 @@ The end-to-end behaviour described above is exercised by
 Run it with
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/test_spine_e2e.py -v
+"C:/Python314/python.exe" -m pytest tests/test_spine_e2e.py -v
 ```
 
 ## Known limitations (as of 2026-05-07)
