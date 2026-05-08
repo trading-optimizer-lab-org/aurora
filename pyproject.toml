@@ -41,6 +41,13 @@ llm = ["anthropic>=0.25"]
 portfolio = ["cvxpy>=1.4"]
 report = ["weasyprint"]
 dev = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6", "ruff>=0.5", "mypy>=1.7"]
+docs = [
+    "sphinx>=7",
+    "furo>=2024.1.29",
+    "sphinx-autodoc-typehints>=2.0",
+    "myst-parser>=3.0",
+]
+mutate = ["mutmut>=3"]
 all = ["quantforge[ml,dl,rl,ga,live,crypto,monitoring,llm,portfolio,report]"]
 
 [project.scripts]
@@ -78,6 +85,7 @@ packages = [
     "quantforge.reporting",
     "quantforge.reporting.daily_ops",
     "quantforge.research",
+    "quantforge.research.auto_loop",
     "quantforge.research.factory",
     "quantforge.risk",
     "quantforge.signals",
@@ -115,6 +123,7 @@ packages = [
 "quantforge.reporting" = "reporting"
 "quantforge.reporting.daily_ops" = "reporting/daily_ops"
 "quantforge.research" = "research"
+"quantforge.research.auto_loop" = "research/auto_loop"
 "quantforge.research.factory" = "research/factory"
 "quantforge.risk" = "risk"
 "quantforge.signals" = "signals"
@@ -133,7 +142,13 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # N999: the repo top-level dir is "QuantForge" (capitalized); rename
+    # is out of scope. The package itself is "quantforge" via package-dir
+    # remapping in [tool.setuptools.package-dir].
+    "N999",
+]
 
 [tool.mypy]
 python_version = "3.10"
@@ -176,6 +191,6 @@ paths_to_mutate = [
     "validation/pipeline.py",
     "ga/fitness.py",
 ]
-runner = "python -m pytest -x -q tests/test_property.py tests/test_property_v2.py tests/test_engine.py tests/test_costs.py tests/test_metrics.py tests/test_data_tiers.py tests/test_protocol_policy.py tests/test_walk_forward.py tests/test_monte_carlo.py tests/test_spp.py tests/test_deflated_sharpe.py tests/test_lookahead_check.py tests/test_pipeline.py tests/test_fitness.py"
+runner = "python -m pytest -x -q tests/test_property.py tests/test_property_v2.py tests/test_costs.py tests/test_metrics.py tests/test_data_tiers.py tests/test_protocol_policy.py tests/test_monte_carlo.py tests/test_spp.py tests/test_deflated_sharpe.py tests/test_pipeline.py tests/test_jit_parity.py tests/test_lookahead_scanner.py tests/test_oos_isolation.py tests/test_ga.py tests/test_integration.py"
 backup = false
 disable_mutation_types = "string,fstring"

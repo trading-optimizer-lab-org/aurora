@@ -33,21 +33,19 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional, Sequence
+from typing import Any
 
 import pandas as pd
-
 from quantforge.core.runtime_paths import base_data_dir
 from quantforge.research.factory.factory import (
     ResearchFactory,
-    ResearchPipelineConfig,
 )
 from quantforge.research.factory.generators import HypothesisGenerator
 from quantforge.research.factory.outcomes import ResearchOutcome
 from quantforge.research.factory.spec import StrategySpec
-
 
 _log = logging.getLogger("quantforge.research.auto_loop")
 
@@ -108,9 +106,9 @@ class CycleSummary:
     dry_run: bool
     seed: int
     duration_seconds: float
-    notes: List[str] = field(default_factory=list)
-    spec_ids: List[str] = field(default_factory=list)
-    archived_reasons: List[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    spec_ids: list[str] = field(default_factory=list)
+    archived_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -150,11 +148,11 @@ class AutoResearchLoop:
     factory: ResearchFactory
     generator: HypothesisGenerator
     config: AutoLoopConfig = field(default_factory=AutoLoopConfig)
-    log_path: Optional[Path] = None
+    log_path: Path | None = None
     next_cycle_index: int = 0
 
     def run_cycle(
-        self, cycle_index: Optional[int] = None
+        self, cycle_index: int | None = None
     ) -> CycleSummary:
         """Run one full generate -> submit -> log cycle."""
         idx = (
@@ -164,8 +162,8 @@ class AutoResearchLoop:
         cycle_id = f"cyc_{idx:06d}_{uuid.uuid4().hex[:8]}"
         seed = self.config.seed_base + idx
         started = time.monotonic()
-        notes: List[str] = []
-        archived_reasons: List[str] = []
+        notes: list[str] = []
+        archived_reasons: list[str] = []
 
         # 1) review-queue cap check
         try:
@@ -277,8 +275,8 @@ def run_one_cycle(
     factory: ResearchFactory,
     generator: HypothesisGenerator,
     *,
-    config: Optional[AutoLoopConfig] = None,
-    log_path: Optional[Path] = None,
+    config: AutoLoopConfig | None = None,
+    log_path: Path | None = None,
 ) -> CycleSummary:
     """Construct an :class:`AutoResearchLoop` and run a single cycle."""
     loop = AutoResearchLoop(
@@ -300,7 +298,7 @@ def _outcome_promoted(outcome: ResearchOutcome) -> bool:
     return bool(getattr(outcome, "promising", False))
 
 
-def _outcome_reason(outcome: ResearchOutcome) -> Optional[str]:
+def _outcome_reason(outcome: ResearchOutcome) -> str | None:
     cand = getattr(outcome, "candidate", None)
     if cand is None:
         return None

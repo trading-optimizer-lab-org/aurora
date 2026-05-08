@@ -2,15 +2,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
 
-import pandas as pd
 import pytest
-
 from quantforge.agents.auditor.base import (
-    LLM_MAX_SEVERITY,
     ReviewContext,
-    ReviewFinding,
     ReviewSeverity,
 )
 from quantforge.agents.auditor.llm_augmenter import (
@@ -19,7 +14,6 @@ from quantforge.agents.auditor.llm_augmenter import (
     make_augmenter,
 )
 from quantforge.core.protocol_policy import ProtocolPolicy
-
 
 # --------------------------------------------------------------------------
 # helpers

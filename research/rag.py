@@ -34,15 +34,15 @@ import json
 import logging
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any
 
 from quantforge.core.runtime_paths import (
     research_archive_path,
     review_queue_path,
 )
-
 
 _log = logging.getLogger("quantforge.research.rag")
 
@@ -56,7 +56,7 @@ _STOPWORDS = frozenset(
 )
 
 
-def _tokenize(text: str) -> List[str]:
+def _tokenize(text: str) -> list[str]:
     """Lowercase tokenize a string, dropping short stopwords."""
     if not text:
         return []
@@ -83,15 +83,15 @@ class IndexedRecord:
     candidate_id: str
     spec_name: str
     stage: str
-    rejection_reason: Optional[str]
-    rejection_detail: Optional[str]
+    rejection_reason: str | None
+    rejection_detail: str | None
     timestamp_iso: str
     source: str  # "archive" or "review_queue"
-    raw: Dict[str, Any]
+    raw: dict[str, Any]
     tokens: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
-    def from_raw(cls, raw: Mapping[str, Any], source: str) -> "IndexedRecord":
+    def from_raw(cls, raw: Mapping[str, Any], source: str) -> IndexedRecord:
         spec = raw.get("spec") or {}
         spec_name = str(spec.get("name") or raw.get("spec_name") or "unknown")
         stage = str(raw.get("stage") or "unknown")
@@ -147,12 +147,12 @@ class ResearchIndex:
     for explicit paths (tests).
     """
 
-    records: List[IndexedRecord] = field(default_factory=list)
+    records: list[IndexedRecord] = field(default_factory=list)
 
     # ---- construction ------------------------------------------------------
 
     @classmethod
-    def from_default_paths(cls) -> "ResearchIndex":
+    def from_default_paths(cls) -> ResearchIndex:
         return cls.from_paths(
             archive_path=research_archive_path(),
             review_queue_path=review_queue_path(),
@@ -161,10 +161,10 @@ class ResearchIndex:
     @classmethod
     def from_paths(
         cls,
-        archive_path: Optional[Path] = None,
-        review_queue_path: Optional[Path] = None,
-    ) -> "ResearchIndex":
-        records: List[IndexedRecord] = []
+        archive_path: Path | None = None,
+        review_queue_path: Path | None = None,
+    ) -> ResearchIndex:
+        records: list[IndexedRecord] = []
         if archive_path is not None:
             records.extend(
                 cls._load_jsonl(Path(archive_path), source="archive")
@@ -176,10 +176,10 @@ class ResearchIndex:
         return cls(records=records)
 
     @staticmethod
-    def _load_jsonl(path: Path, source: str) -> List[IndexedRecord]:
+    def _load_jsonl(path: Path, source: str) -> list[IndexedRecord]:
         if not path.exists():
             return []
-        out: List[IndexedRecord] = []
+        out: list[IndexedRecord] = []
         with path.open("r", encoding="utf-8") as fh:
             for lineno, line in enumerate(fh, start=1):
                 line = line.strip()
@@ -200,7 +200,7 @@ class ResearchIndex:
 
     # ---- retrieval ---------------------------------------------------------
 
-    def search(self, query: str, top_k: int = 10) -> List[IndexedRecord]:
+    def search(self, query: str, top_k: int = 10) -> list[IndexedRecord]:
         """Return up to ``top_k`` records ranked by token-overlap score.
 
         Score is the number of distinct query tokens present in the
@@ -213,13 +213,13 @@ class ResearchIndex:
             return []
 
         # Document frequency for IDF-ish weighting.
-        df: Dict[str, int] = {}
+        df: dict[str, int] = {}
         for r in self.records:
             for tok in set(q_tokens) & r.tokens:
                 df[tok] = df.get(tok, 0) + 1
         total = max(1, len(self.records))
 
-        scored: List[tuple[float, IndexedRecord]] = []
+        scored: list[tuple[float, IndexedRecord]] = []
         for r in self.records:
             overlap = set(q_tokens) & r.tokens
             if not overlap:
@@ -244,20 +244,20 @@ class ResearchIndex:
 
     def filter_by_rejection_reason(
         self, reason: str
-    ) -> List[IndexedRecord]:
+    ) -> list[IndexedRecord]:
         """Return all records archived under the given rejection reason."""
         return [
             r for r in self.records if r.rejection_reason == reason
         ]
 
-    def filter_by_stage(self, stage: str) -> List[IndexedRecord]:
+    def filter_by_stage(self, stage: str) -> list[IndexedRecord]:
         """Return records whose ``stage`` matches exactly."""
         return [r for r in self.records if r.stage == stage]
 
-    def failed_due_to_leak(self) -> List[IndexedRecord]:
+    def failed_due_to_leak(self) -> list[IndexedRecord]:
         """Convenience filter for lookahead / data-leak failures."""
         keys = {"data_leak", "lookahead", "leak"}
-        out: List[IndexedRecord] = []
+        out: list[IndexedRecord] = []
         for r in self.records:
             text = " ".join(
                 str(x).lower()
@@ -267,10 +267,10 @@ class ResearchIndex:
                 out.append(r)
         return out
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Aggregate counts useful for quick triage."""
-        by_stage: Dict[str, int] = {}
-        by_reason: Dict[str, int] = {}
+        by_stage: dict[str, int] = {}
+        by_reason: dict[str, int] = {}
         for r in self.records:
             by_stage[r.stage] = by_stage.get(r.stage, 0) + 1
             if r.rejection_reason:

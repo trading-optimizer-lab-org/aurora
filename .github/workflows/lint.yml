@@ -2,7 +2,11 @@ name: lint
 on: [push, pull_request]
 
 jobs:
-  ruff:
+  # Permissive sweep over the whole repo. The legacy surface still has
+  # several thousand ruff findings; cleaning them is tracked as roadmap
+  # R18. Keep continue-on-error here so the report is visible without
+  # gating every PR on legacy debt.
+  ruff-full:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,3 +16,29 @@ jobs:
       - run: pip install ruff
       - run: ruff check . --output-format=github
         continue-on-error: true
+
+  # Strict sweep over the curated post-v1.4 surface. New code MUST stay
+  # lint-clean. Adding a path here is the agreed checkpoint that says
+  # "this module is ruff-clean and we want to keep it that way".
+  ruff-strict:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: |
+          ruff check --output-format=github \
+            agents/auditor/llm_augmenter.py \
+            core/snapshots_distributed.py \
+            exports/lean/live.py \
+            research/rag.py \
+            research/auto_loop/ \
+            tests/test_property_v2.py \
+            tests/test_protocol_fuzz.py \
+            tests/test_llm_augmenter.py \
+            tests/test_rag.py \
+            tests/test_auto_loop.py \
+            tests/test_snapshots_distributed.py \
+            tests/test_lean_live.py

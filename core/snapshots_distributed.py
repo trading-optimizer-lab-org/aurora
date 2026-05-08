@@ -36,12 +36,11 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
-
+from typing import Any
 
 _log = logging.getLogger("quantforge.core.snapshots_distributed")
 
@@ -103,7 +102,7 @@ class SnapshotBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_metadata(self) -> List[Mapping[str, Any]]:
+    def list_metadata(self) -> list[Mapping[str, Any]]:
         """Return every metadata row in insertion order."""
         raise NotImplementedError
 
@@ -184,8 +183,8 @@ class LocalSnapshotBackend(SnapshotBackend):
             raise KeyError(key)
         return json.loads(p.read_text(encoding="utf-8"))
 
-    def list_metadata(self) -> List[Mapping[str, Any]]:
-        out: List[Mapping[str, Any]] = []
+    def list_metadata(self) -> list[Mapping[str, Any]]:
+        out: list[Mapping[str, Any]] = []
         meta_dir = self.root_dir / "meta"
         for p in sorted(meta_dir.glob("*.json")):
             try:
@@ -203,7 +202,7 @@ class LocalSnapshotBackend(SnapshotBackend):
 def make_backend(
     kind: str = "local",
     *,
-    root_dir: Optional[Path] = None,
+    root_dir: Path | None = None,
     **kwargs: Any,
 ) -> SnapshotBackend:
     """Return a :class:`SnapshotBackend` of the requested kind.

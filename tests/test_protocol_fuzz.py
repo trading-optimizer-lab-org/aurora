@@ -17,21 +17,20 @@ Skipped cleanly when hypothesis is not installed.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 
 import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
 
-import numpy as np
-import pandas as pd
-from hypothesis import HealthCheck, assume, given, settings, strategies as st
-
-from quantforge.core.data_layer import OOSGuard
-from quantforge.core.data_tiers import split_by_tier
-from quantforge.core.protocol_policy import ProtocolPolicy
-
+# E402 noqa: importorskip must precede dependent imports.
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from hypothesis import HealthCheck, given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+from quantforge.core.data_layer import OOSGuard  # noqa: E402
+from quantforge.core.data_tiers import split_by_tier  # noqa: E402
+from quantforge.core.protocol_policy import ProtocolPolicy  # noqa: E402
 
 _HC = [HealthCheck.too_slow, HealthCheck.function_scoped_fixture]
 
@@ -218,7 +217,6 @@ def _gateway_secret(monkeypatch, tmp_path):
 def test_token_signature_rejects_actor_tampering(_gateway_secret, actor, days):
     """Mutating ``actor`` after issue invalidates the signature."""
     from quantforge.agent_gateway.tokens import (
-        AgentToken,
         TokenScope,
         issue_token,
     )

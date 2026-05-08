@@ -18,18 +18,21 @@ import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
 
-from dataclasses import replace
+# E402 below is intentional: importing dataclasses / numpy / pandas / hypothesis
+# helpers BEFORE the importorskip would defeat the skip when hypothesis is
+# missing. Module-level reorder is therefore disabled for the rest of this file.
+from dataclasses import replace  # noqa: E402
 
-import numpy as np
-import pandas as pd
-from hypothesis import HealthCheck, assume, given, settings, strategies as st
-
-from quantforge.core.costs import IBKR_costs, ZERO_costs, apply_costs
-from quantforge.core.data_tiers import split_by_tier
-from quantforge.core.engine import run_backtest
-from quantforge.core.metrics import compute_metrics
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.strategies.library import (
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from hypothesis import HealthCheck, assume, given, settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+from quantforge.core.costs import IBKR_costs, ZERO_costs, apply_costs  # noqa: E402
+from quantforge.core.data_tiers import split_by_tier  # noqa: E402
+from quantforge.core.engine import run_backtest  # noqa: E402
+from quantforge.core.metrics import compute_metrics  # noqa: E402
+from quantforge.core.protocol_policy import ProtocolPolicy  # noqa: E402
+from quantforge.strategies.library import (  # noqa: E402
     ATRBreakout,
     BollingerMR,
     DualMomentum,
@@ -37,7 +40,6 @@ from quantforge.strategies.library import (
     StopWrapper,
     VolTargetWrapper,
 )
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -287,7 +289,7 @@ def test_split_by_tier_monotonic_ordering(n, seed):
     s = split_by_tier(prices)
 
     chain = [s.is_train, s.is_valid, s.oos_dev, s.oos_locked, s.forward]
-    for left, right in zip(chain, chain[1:]):
+    for left, right in zip(chain, chain[1:], strict=False):
         if len(left) and len(right):
             assert left.index.max() < right.index.min(), (
                 f"tier overlap: {left.index.max()} >= {right.index.min()}"

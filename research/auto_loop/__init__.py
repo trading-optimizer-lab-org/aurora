@@ -18,7 +18,6 @@ from quantforge.research.auto_loop.loop import (
     run_one_cycle,
 )
 
-
 __all__ = [
     "AutoLoopConfig",
     "AutoResearchLoop",

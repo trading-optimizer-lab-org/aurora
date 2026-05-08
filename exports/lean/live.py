@@ -24,23 +24,21 @@ Design contract
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
-
 from quantforge.exports.lean.exporter import verify_project
-
 
 _log = logging.getLogger("quantforge.exports.lean.live")
 
 
-CLIInvoker = Callable[[List[str]], Dict[str, Any]]
+CLIInvoker = Callable[[list[str]], dict[str, Any]]
 
 
 # --------------------------------------------------------------------------
@@ -70,8 +68,8 @@ class LiveDeployConfig:
     dry_run: bool = True
     require_clean_provenance: bool = True
     require_explicit_operator_flag: bool = True
-    lean_cli: Optional[str] = None
-    cloud_project_name: Optional[str] = None
+    lean_cli: str | None = None
+    cloud_project_name: str | None = None
     operator_flag_env: str = "QF_LEAN_LIVE_AUTH"
 
 
@@ -88,13 +86,13 @@ class LiveDeployResult:
     timestamp_iso: str
     dry_run: bool
     provenance_ok: bool
-    provenance_errors: List[str]
+    provenance_errors: list[str]
     deploy_attempted: bool
-    deploy_ok: Optional[bool]
-    deploy_response: Optional[Dict[str, Any]]
-    blocking_reason: Optional[str]
+    deploy_ok: bool | None
+    deploy_response: dict[str, Any] | None
+    blocking_reason: str | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "project_dir": self.project_dir,
             "timestamp_iso": self.timestamp_iso,
@@ -113,7 +111,7 @@ class LiveDeployResult:
 # --------------------------------------------------------------------------
 
 
-def _default_cli_invoker(argv: List[str]) -> Dict[str, Any]:
+def _default_cli_invoker(argv: list[str]) -> dict[str, Any]:
     """Default Lean CLI invoker.
 
     The default deliberately refuses to run. A real deployment site is
@@ -129,7 +127,7 @@ def _default_cli_invoker(argv: List[str]) -> Dict[str, Any]:
     )
 
 
-def subprocess_cli_invoker(argv: List[str]) -> Dict[str, Any]:
+def subprocess_cli_invoker(argv: list[str]) -> dict[str, Any]:
     """Reference invoker that shells out to the local ``lean`` CLI.
 
     Use this only when the operator has confirmed the Lean CLI is
@@ -161,15 +159,19 @@ def subprocess_cli_invoker(argv: List[str]) -> Dict[str, Any]:
 
 def prepare_live_deploy(
     project_dir: Path,
-    config: Optional[LiveDeployConfig] = None,
+    config: LiveDeployConfig | None = None,
 ) -> LiveDeployResult:
     """Run the provenance gate without touching Lean.
 
     Returns a :class:`LiveDeployResult` whose ``provenance_ok`` field
     reflects the gate outcome. ``deploy_attempted`` is always False and
     ``deploy_ok`` is None.
+
+    The ``config`` argument is accepted for API symmetry with
+    :func:`deploy_to_lean_cloud`; this function does not consult any
+    field on it because the gate it runs is unconditional.
     """
-    cfg = config or LiveDeployConfig()
+    del config  # symmetry-only; provenance gate ignores config knobs.
     project_dir = Path(project_dir)
     verify = verify_project(project_dir)
     return LiveDeployResult(
@@ -187,9 +189,9 @@ def prepare_live_deploy(
 
 def deploy_to_lean_cloud(
     project_dir: Path,
-    config: Optional[LiveDeployConfig] = None,
+    config: LiveDeployConfig | None = None,
     *,
-    cli_invoker: Optional[CLIInvoker] = None,
+    cli_invoker: CLIInvoker | None = None,
 ) -> LiveDeployResult:
     """Run the provenance gate and (when allowed) invoke the Lean CLI.
 
@@ -292,7 +294,7 @@ def deploy_to_lean_cloud(
     )
 
 
-def _build_argv(project_dir: Path, cfg: LiveDeployConfig) -> List[str]:
+def _build_argv(project_dir: Path, cfg: LiveDeployConfig) -> list[str]:
     """Build the Lean CLI invocation."""
     cli = cfg.lean_cli or "lean"
     argv = [cli, "live", "deploy", str(project_dir)]

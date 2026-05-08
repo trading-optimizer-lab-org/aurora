@@ -5,9 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from quantforge.research.rag import IndexedRecord, ResearchIndex
-
+from quantforge.research.rag import ResearchIndex
 
 # --------------------------------------------------------------------------
 # Fixtures

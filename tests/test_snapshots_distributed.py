@@ -5,13 +5,10 @@ import hashlib
 from pathlib import Path
 
 import pytest
-
 from quantforge.core.snapshots_distributed import (
     LocalSnapshotBackend,
-    SnapshotBackend,
     make_backend,
 )
-
 
 # --------------------------------------------------------------------------
 # LocalSnapshotBackend

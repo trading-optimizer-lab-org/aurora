@@ -3,18 +3,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
-
-import pytest
+from typing import Any
 
 from quantforge.core.protocol_policy import ProtocolPolicy
 from quantforge.exports.lean.live import (
     LiveDeployConfig,
-    LiveDeployResult,
     deploy_to_lean_cloud,
     prepare_live_deploy,
 )
-
 
 # --------------------------------------------------------------------------
 # helpers
@@ -124,7 +120,7 @@ def test_deploy_invokes_when_all_gates_passed(tmp_path: Path, monkeypatch):
 
     captured: list[list[str]] = []
 
-    def fake_invoker(argv: List[str]) -> Dict[str, Any]:
+    def fake_invoker(argv: list[str]) -> dict[str, Any]:
         captured.append(list(argv))
         return {"ok": True, "argv": argv, "response": {"deploy_id": "X1"}}
 
@@ -153,7 +149,7 @@ def test_invoker_exception_recorded(tmp_path: Path, monkeypatch):
     proj = _make_valid_project(tmp_path)
     monkeypatch.setenv("QF_LEAN_LIVE_AUTH", "1")
 
-    def boom(argv: List[str]) -> Dict[str, Any]:
+    def boom(argv: list[str]) -> dict[str, Any]:
         raise RuntimeError("simulated lean cli failure")
 
     cfg = LiveDeployConfig(dry_run=False)

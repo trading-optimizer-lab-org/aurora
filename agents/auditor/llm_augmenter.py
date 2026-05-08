@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 from quantforge.agents.auditor.base import (
     LLM_MAX_SEVERITY,
@@ -45,7 +45,6 @@ from quantforge.agents.auditor.base import (
     ReviewSeverity,
     cap_augmenter_findings,
 )
-
 
 # --------------------------------------------------------------------------
 # Provider protocol
@@ -180,7 +179,7 @@ _PROMPT_BODY = (
 
 
 def _build_prompt(reviewer_name: str, context: ReviewContext,
-                  rule_findings: List[ReviewFinding]) -> str:
+                  rule_findings: list[ReviewFinding]) -> str:
     head = _PROMPT_HEADER.format(
         reviewer=reviewer_name,
         strategy_id=context.strategy_id,
@@ -202,14 +201,14 @@ def _build_prompt(reviewer_name: str, context: ReviewContext,
     return head + "\n" + body
 
 
-def _trim_summary(d: Dict[str, Any], max_keys: int = 25) -> Dict[str, Any]:
+def _trim_summary(d: dict[str, Any], max_keys: int = 25) -> dict[str, Any]:
     """Drop large array values from the summary that goes into the prompt.
 
     Backtest results carry equity/returns arrays that would blow the
     context window. We drop any value whose JSON representation exceeds
     a small length budget, keeping scalar fields for the LLM to reason on.
     """
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for k, v in list(d.items())[:max_keys]:
         try:
             s = json.dumps(v, default=str)
@@ -222,7 +221,7 @@ def _trim_summary(d: Dict[str, Any], max_keys: int = 25) -> Dict[str, Any]:
     return out
 
 
-def _extract_reviewer_name(prompt: str) -> Optional[str]:
+def _extract_reviewer_name(prompt: str) -> str | None:
     """Read the ``REVIEWER:`` line from a prompt produced by ``_build_prompt``."""
     for line in prompt.splitlines():
         if line.startswith("REVIEWER:"):
@@ -235,7 +234,7 @@ def _extract_reviewer_name(prompt: str) -> Optional[str]:
 # --------------------------------------------------------------------------
 
 
-def _parse_response(raw: str) -> List[ReviewFinding]:
+def _parse_response(raw: str) -> list[ReviewFinding]:
     """Parse an LLM response into structured findings.
 
     Lenient: a non-JSON response yields an empty finding list rather than
@@ -252,7 +251,7 @@ def _parse_response(raw: str) -> List[ReviewFinding]:
     if not isinstance(items, list):
         return []
 
-    out: List[ReviewFinding] = []
+    out: list[ReviewFinding] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -304,9 +303,9 @@ def make_augmenter(
     """
 
     def _augmenter(
-        rule_findings: List[ReviewFinding],
+        rule_findings: list[ReviewFinding],
         context: ReviewContext,
-    ) -> List[ReviewFinding]:
+    ) -> list[ReviewFinding]:
         prompt = _build_prompt(reviewer_name, context, rule_findings)
         try:
             raw = provider.complete(prompt)

@@ -32,8 +32,10 @@ hardening layer:
 
 - ProtocolPolicy as code.
 - DataProviderRegistry with provenance and tier posture.
-- SnapshotStore with hash binding (now backed by a pluggable
-  `SnapshotBackend` interface; see R7 below).
+- SnapshotStore with hash binding. A pluggable `SnapshotBackend`
+  interface now exists alongside it (R7 landed the contract + a local
+  reference backend). Wiring the existing store to use that interface
+  is still pending; tracked as R19 below.
 - ExperimentRegistry lineage.
 - ValidationPipeline with mandatory gates.
 - AgentAuditGateway with scoped tokens and hash-chained audit.
@@ -96,11 +98,11 @@ Hypothesis profiles `dev` / `ci` / `thorough` registered in
 Findings: `compute_metrics` returns `Calmar = inf` when `MDD == 0`.
 Tracked as R16 below.
 
-### R15. API reference auto-generated
+### R15. API reference auto-generated (with warnings pending)
 
-Status: completed, committed as `064c535`
+Status: landed, build succeeds; warnings still present
 Evidence: `docs/conf.py`, `docs/index.rst`, `docs/api/index.rst`,
-`Makefile` (`make docs`)
+`Makefile` (`make docs`), `pyproject.toml` `[docs]` extra
 
 Sphinx + autodoc + autosummary + napoleon + myst-parser + furo theme.
 Optional-extras modules (`torch`, `hmmlearn`, `ccxt`, ...) are mocked
@@ -108,6 +110,19 @@ via `autodoc_mock_imports` so the build does not require the heavy
 dependency tree. Build output goes to `docs/_build/html/` (gitignored).
 Operator markdown guides surface alongside the auto-generated module
 pages.
+
+Caveat: a clean rebuild emits docstring-formatting warnings (RST
+substitution errors in `strategies/library/atr_breakout.py`,
+`strategies/library/online_learner.py`, `strategies/library/pair_trade.py`,
+`validation/purged_cv.py`, `validation/spp.py`, plus duplicate-object
+descriptions in `triage/`) and a couple of toctree warnings. The
+build still produces a usable HTML tree. Cleaning the warnings is
+tracked as R20 below.
+
+The `docs` optional extra was added to `pyproject.toml` so the build
+deps (sphinx, furo, sphinx-autodoc-typehints, myst-parser) install
+explicitly via `pip install -e ".[docs]"` rather than living off
+ad-hoc developer machine state.
 
 ### R14. Guide from zero to live
 
@@ -120,9 +135,9 @@ validation pipeline, research factory submit, review queue ceremony,
 paper, and a live checklist with explicit triple-gate envelope. Every
 command either runs offline or names the credential it requires.
 
-### R12. Mutation testing setup
+### R12. Mutation testing setup (partial)
 
-Status: completed, committed as `2a506eb`
+Status: setup landed, runner stabilised in a follow-up
 Evidence: `pyproject.toml` (`[tool.mutmut]`), `mutmut_config.py`,
 `docs/MUTATION_TESTING.md`, `Makefile` (`mutate`, `mutate-results`,
 `mutate-full`)
@@ -133,6 +148,15 @@ data_tiers, data_layer, protocol_policy}`,
 lookahead_check, pipeline}`, `ga/fitness`. String / fstring mutations
 disabled by default to keep results signal-rich. Mutation testing is
 opt-in; not in the default `make test` target.
+
+Caveat: the original commit (`2a506eb`) shipped a runner that pointed
+at test files that did not exist (`test_engine.py`, `test_walk_forward.py`,
+`test_lookahead_check.py`, `test_fitness.py`). The runner was
+realigned to the test files that do exist
+(`test_jit_parity.py`, `test_lookahead_scanner.py`, `test_oos_isolation.py`,
+`test_ga.py`, `test_integration.py`) plus the existing curated unit
+suites. Remaining work tracked as R20 below if the runner proves too
+narrow in practice.
 
 ### R13. Protocol fuzzing
 
@@ -170,8 +194,9 @@ include `filter_by_rejection_reason`, `filter_by_stage`,
 
 ### R10. Continuous auto-research loop
 
-Status: completed, committed as `9593e86`
-Evidence: `research/auto_loop/`, `tests/test_auto_loop.py` (7 tests)
+Status: completed, committed as `9593e86`; packaging fixed in follow-up
+Evidence: `research/auto_loop/`, `tests/test_auto_loop.py` (7 tests),
+`pyproject.toml` (`quantforge.research.auto_loop` registered)
 
 `AutoResearchLoop` wraps `ResearchFactory` with a `generate -> submit
 -> log` cycle. Tier guard inherited from the factory. Review-queue cap
@@ -179,6 +204,14 @@ defers submission rather than piling up. Dry-run mode for cron-bring-up.
 Per-cycle JSONL summaries land at `$QF_AUTO_LOOP_LOG` for replay /
 audit. Per-cycle generator seed = `seed_base + cycle_index` for
 reproducibility.
+
+Caveat: the original commit (`9593e86`) created
+`research/auto_loop/__init__.py` and `loop.py` but did not register
+`quantforge.research.auto_loop` in `[tool.setuptools].packages` and
+`[tool.setuptools.package-dir]`. That meant the package worked under
+editable install but would have been missing from any wheel built
+from the repo. The packaging entries were added in a follow-up; the
+wheel now ships `quantforge/research/auto_loop/loop.py`.
 
 ### R7. Distributed snapshots backend interface
 
@@ -332,22 +365,47 @@ Definition of done:
   fixed).
 - Decision recorded in `CHANGELOG.md`.
 
-### R18. Lint config cosmetic false positive
+### R18. Lint cleanup + CI hardening
 
-Status: pending
-Priority: very low
-Effort: 1 hour
-Area: tests
-Suggested path: `tests/test_lint_config.py`
+Status: scope expanded after lint audit
+Priority: medium
+Effort: 1 to 2 weeks (incremental)
+Area: tests / CI / lint
+Suggested paths: legacy modules under `core/`, `validation/`, `ga/`,
+`compliance/`, `agents/`, `analytics/`, etc; `.github/workflows/lint.yml`,
+`tests/test_lint_config.py`
 
-`test_lint_config::test_no_unmarked_live_data_loads` is documented as
-a cosmetic AST scanner false positive in `CLAUDE.md`. Either fix the
-scanner or skip the test with a comment.
+Two findings reframe the original "cosmetic false positive" item:
+
+1. `ruff check .` reports ~6500 errors across the repo on baseline.
+   Most are auto-fixable (`UP`, `I`, `B`, `E`) but the legacy surface
+   has not been swept.
+2. `.github/workflows/lint.yml` ran ruff with
+   `continue-on-error: true`, so even the new code's lint regressions
+   would not have blocked CI.
+
+The follow-up landed:
+
+- `pyproject.toml` `[tool.ruff.lint]` ignore list adds `N999` (the
+  repo top-level dir is `QuantForge`; renaming it is out of scope and
+  the package itself is `quantforge` via `package-dir` remapping).
+- `.github/workflows/lint.yml` now runs two jobs: `ruff-full`
+  (permissive sweep over the whole repo, `continue-on-error: true`)
+  and `ruff-strict` (curated post-v1.4 surface, hard-fails on any
+  finding).
 
 Definition of done:
 
-- Test either passes or is skipped with a clear reason.
-- `CLAUDE.md` known-issues list shrinks accordingly.
+- New code added in this session is ruff-clean under the strict job.
+  (Done as of this update.)
+- Each curated module from the legacy sweep is migrated into the
+  strict job after a focused cleanup pass. Track per-module migration
+  in CHANGELOG entries.
+- The `test_lint_config::test_no_unmarked_live_data_loads` scanner
+  false positive is either fixed or skipped with a documented reason.
+
+Risk: incremental migration is easy to drop. Keep one cleanup PR at
+a time; do not bundle behavior changes with lint-only sweeps.
 
 ### R19. Wire `SnapshotStore` to the new backend interface
 
@@ -371,6 +429,58 @@ Definition of done:
 - All disk I/O goes via the backend.
 - Existing tests still pass; add a fake-backend test to prove the
   abstraction is real.
+
+### R20. Docs build hygiene
+
+Status: pending
+Priority: low
+Effort: 1 to 2 days
+Area: docs
+Suggested paths: `validation/spp.py`, `validation/purged_cv.py`,
+`strategies/library/atr_breakout.py`,
+`strategies/library/online_learner.py`,
+`strategies/library/pair_trade.py`, `triage/`, `docs/SPINE.md`
+
+R15 left the Sphinx build emitting RST docstring warnings (substitution
+references `|close[i]-close[i-1]|`, `|return|`, `|z|`; "inline strong
+start-string without end-string" in spp / pipeline; "unexpected
+indentation" in purged_cv) plus a few duplicate-object descriptions in
+`triage/` and a couple of cross-reference warnings in `SPINE.md`.
+
+Definition of done:
+
+- `make docs` produces zero warnings on a clean rebuild.
+- `make docs-strict` (or equivalent) treats warnings as errors and is
+  wired into CI as a non-blocking job (then promoted to blocking once
+  the count is zero).
+- Cross-reference targets from `SPINE.md` either resolve or are
+  rewritten as plain text.
+
+### R21. Mutmut runner sanity
+
+Status: optional follow-up to R12
+Priority: low
+Effort: 1 day
+Area: QA / mutation testing
+Suggested path: `pyproject.toml` (`[tool.mutmut]`), `mutmut_config.py`
+
+The R12 runner was realigned during the post-session review (it
+originally pointed at four test files that did not exist). Before
+relying on the surviving-mutant numbers, run a full sweep and
+confirm:
+
+- The realigned test list actually exercises every targeted module's
+  semantics. If a target module has no direct test file, the mutation
+  score will look artificially low.
+- Add a missing test (preferred) or shrink the target list to the
+  modules that are actually covered.
+
+Definition of done:
+
+- One full mutation sweep documented in `docs/MUTATION_TESTING.md`
+  with the survivor count per target module.
+- Any target with zero coverage is either covered with new tests or
+  dropped from `paths_to_mutate`.
 
 ---
 
@@ -401,10 +511,14 @@ Why:
 - No external blockers.
 - Unblocks future remote backend drivers.
 
-Second choice: **R16** decide the Calmar / MAR zero-MDD contract.
+Second choice: **R20** clean up the Sphinx warning count so `make
+docs` runs warning-free, then promote `ruff-strict` to cover the
+docstrings affected.
+
+Third choice: **R16** decide the Calmar / MAR zero-MDD contract.
 Half-day effort, removes a property-test caveat.
 
-Third choice: **R17** resolve the markov switching API drift, if the
+Fourth choice: **R17** resolve the markov switching API drift, if the
 priority is shrinking the known-issues list.
 
 Phase 3 production items (R2, R3, R4) only after operator confirms

@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
-import pytest
-
 from quantforge.research.auto_loop import (
     AutoLoopConfig,
     AutoResearchLoop,
@@ -20,7 +17,6 @@ from quantforge.research.factory.outcomes import (
     ResearchStage,
 )
 from quantforge.research.factory.spec import StrategySpec
-
 
 # --------------------------------------------------------------------------
 # Fakes
