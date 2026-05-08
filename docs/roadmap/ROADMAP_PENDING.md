@@ -126,8 +126,12 @@ Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 **R16, R25, R26, R27, R28, R29, R31 (decision), R34, R35, R36, R37,
 R45 (helper), R46, R47, R48, R53, R54, R56, R57, R58, R59, R60, R61,
 R62, R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72,
-R74, R75, R83, R86, R94, R95, R96, R98, R103, R104, R119, R120,
-R134, R140 (scaffold), R143, R145, R146, R148, R152**.
+R74, R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103,
+R104, R110, R119, R120, R122, R124, R134, R140 (scaffold), R143,
+R145, R146, R148, R149, R150, R151, R152, R154**.
+
+Total: 64 items closed in the 2026-05-08 session out of 154 (plus 11
+prior closures). Running tally: **75 / 154 = 48.7%**.
 
 Detail of the new closures:
 
@@ -1781,7 +1785,7 @@ Definition of done:
 
 ### R77. Auto-discovery strategy generator from atomic blocks
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `research/auto_gen/generator.py` + tests. AtomicBlockGenerator + combinatorial_pairs.
 Priority: high
 Effort: 3 to 4 weeks
 Area: research / strategy authoring
@@ -1966,7 +1970,7 @@ a parameter cheat-sheet, and a smoke backtest expected output.
 
 ### R88. Money management library
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `deployment/money_management.py` + tests. anti-martingale, fractional-Kelly w/ shrinkage, fixed-ratio, profit-step, drawdown-scaled.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: deployment / sizing
@@ -1980,7 +1984,7 @@ asserting position never exceeds `max_leverage` from the policy.
 
 ### R89. One-click robustness preset
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/robustness_suite.py` + tests. Fast / full presets; injectable per-gate runners.
 Priority: medium
 Effort: 1 week
 Area: validation
@@ -2089,7 +2093,7 @@ not fire during US hours. Honour exchange-local timezones (R45).
 
 ### R97. Cross-validation matrices
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/cv_matrices.py` + tests. CVMatrix + summary; tearsheet rendering follow-up.
 Priority: medium-low
 Effort: 1 week
 Area: validation / reporting
@@ -2284,7 +2288,7 @@ R105 for contribution analysis and R98 for stability scoring.
 
 ### R110. Bar-by-bar backtest replay debugger
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `analytics/replay_debugger.py` + tests. ReplayFrame generator + render_frame helper.
 Priority: low
 Effort: 1 to 2 weeks
 Area: tooling / debug
@@ -2473,7 +2477,7 @@ Definition of done:
 
 ### R122. Multi-channel alerts
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `monitoring/multi_channel_alerts.py` + tests. SMS / Pushover / Telegram providers + severity-based router.
 Priority: medium
 Effort: 1 week
 Area: monitoring / ops
@@ -2503,7 +2507,7 @@ pretty-printer over the IR.
 
 ### R124. Grid trading strategy template
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `strategies/library/grid.py` + tests. Hard depth + position caps; martingale variants explicitly NOT shipped.
 Priority: low
 Effort: 1 week
 Area: strategies
@@ -2833,7 +2837,7 @@ multi-thread races) at PR time.
 
 ### R149. Survivorship-bias audit per backtest
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/survivorship_audit.py` + tests. Compares backtest universe vs historical listing windows.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: data integrity
@@ -2844,7 +2848,7 @@ into R134 universe rebalance gate.
 
 ### R150. Corporate-action correctness audit
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/corporate_actions_audit.py` + tests. Split + dividend verifiers; merger / spinoff / ticker-change shapes ready to extend.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: data integrity
@@ -2856,7 +2860,7 @@ behaviour exists but is not test-fixtured.
 
 ### R151. Holiday calendar correctness audit
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `validation/holiday_calendar_audit.py` + tests. NYSE 2026 baseline + register_calendar hook.
 Priority: low
 Effort: 3 to 4 days
 Area: data integrity / time
@@ -2903,7 +2907,7 @@ Definition of done:
 
 ### R154. Cross-strategy regime correlation alert
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `monitoring/cross_strategy_correlation.py` + tests. Common-cause analysis across factor tags / regime / data provider.
 Priority: medium
 Effort: 1 week
 Area: portfolio / monitoring
