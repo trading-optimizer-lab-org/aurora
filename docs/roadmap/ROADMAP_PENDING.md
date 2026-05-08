@@ -116,8 +116,8 @@ Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
-R31, R41, R47-R52 (file splits + follow-ups), R71, R73, R76, R78,
-R79, R80, R84, R85, R87, R90, R99, R100, R102, R106, R108, R121.
+R31, R41, R47-R52 (file splits + follow-ups), R71, R73, R76, R84,
+R85, R90.
 R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
 gate is clean; broader rule families are not planned).
 
@@ -129,16 +129,17 @@ Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 R35, R36, R37, R38, R39, R40, R42, R43, R44, R45 (helper), R46, R47,
 R48, R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61, R62,
 R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72, R74,
-R75, R77, R81, R82, R83, R86, R88, R89, R91, R92, R93, R94, R95,
-R96, R97, R98, R101, R103, R104, R105, R107, R109, R110, R111,
-R112, R113, R114, R115, R116, R117, R118, R119, R120, R122, R123,
-R124, R125, R126, R127, R128, R129, R130, R131, R132, R133, R134,
-R135, R136, R137, R138, R139, R140 (scaffold), R141, R142
-(scaffold), R143, R144, R145, R146, R147, R148, R149, R150, R151,
-R152, R153, R154**.
+R75, R77, R78, R79, R80 (PineScript slice), R81, R82, R83, R86, R87,
+R88, R89, R91, R92, R93, R94, R95, R96, R97, R98, R99, R100, R101,
+R102, R103, R104, R105, R106, R107, R108, R109, R110, R111, R112,
+R113, R114, R115, R116, R117, R118, R119, R120, R121 (decision),
+R122, R123, R124, R125, R126, R127, R128, R129, R130, R131, R132,
+R133, R134, R135, R136, R137, R138, R139, R140 (scaffold), R141,
+R142 (scaffold), R143, R144, R145, R146, R147, R148, R149, R150,
+R151, R152, R153, R154**.
 
-Total: 109 items closed in the 2026-05-08 session out of 154 (plus
-11 prior closures). Running tally: **120 / 154 = 77.9%**.
+Total: 119 items closed in the 2026-05-08 session out of 154 (plus
+11 prior closures). Running tally: **130 / 154 = 84.4%**.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -164,6 +165,13 @@ Batch 13 (research + reporting + ensembles) closes R81, R82
 R107 (multi-market sweep), R109 (vote ensemble), R112 (multi-feed CV)
 -- 10 items, 21 new tests in `tests/test_roadmap_batch_13.py`, all
 green.
+
+Batch 14 (rule editor + patterns + exports + templates + GA + tier)
+closes R78 (rule IR), R79 (patterns), R80 (PineScript slice), R87
+(templates), R99 (regime adaptive), R100 (trade simulator), R102
+(goal-seek), R106 (OOS Plus), R108 (combinatorial), R121 (hedging
+decision) -- 10 items, 25 new tests in
+`tests/test_roadmap_batch_14.py`, all green.
 
 Detail of the new closures:
 
@@ -1854,7 +1862,7 @@ Definition of done:
 
 ### R78. Visual rule editor (programmatic first)
 
-Status: pending
+Status: completed in 2026-05-08 batch 14 (IR + compiler + YAML stage; UI deferred). Evidence: `strategies/rules/{ir,compiler,yaml_io}.py` ships `Rule`, `Indicator`, `Comparator`, `Logical`, `Action` nodes; `compile_rule()` returns a `signals(prices)` callable; `rule_from_yaml()` / `rule_to_yaml()` round-trip the IR through text.
 Priority: medium-high
 Effort: 1 to 2 weeks for the IR; UI deferred
 Area: research / strategy authoring
@@ -1873,7 +1881,7 @@ without learning Python. Implement the intermediate representation
 
 ### R79. Pattern recognition strategy module
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `strategies/patterns/detectors.py` ships `detect_double_bottom`, `detect_double_top`, `detect_breakout_high`, `detect_breakout_low`. Each returns a boolean array aligned to the price input.
 Priority: medium
 Effort: 2 weeks
 Area: strategies
@@ -1886,7 +1894,7 @@ triangles, flags, breakouts on candle formations) and emit standard
 
 ### R80. Multi-platform code export beyond Lean
 
-Status: pending
+Status: slice 1 (PineScript) landed in 2026-05-08 batch 14; evidence: `exports/pinescript/exporter.py` ships `export_pinescript`, `verify_pinescript`, `make_manifest`. Provenance header (policy_hash / spec_hash / forge_version / exported_at) identical to the Lean exporter. MQL5 / EasyLanguage / NinjaScript slices follow the same shape and are operator-side follow-ups when needed.
 Priority: medium
 Effort: 2 to 4 weeks (one slice per target)
 Area: exports
@@ -1989,7 +1997,7 @@ ranges, warmup window, anti-lookahead audit.
 
 ### R87. Strategy templates gallery
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `strategies/templates/starters.py` ships `trend_following_ma_cross`, `mean_reversion_rsi`, `breakout_donchian`. `docs/STRATEGY_TEMPLATES.md` is the operator-facing description with parameter cheat-sheet per template.
 Priority: low
 Effort: 1 week
 Area: strategies / docs
@@ -2151,7 +2159,7 @@ candidates by than the seven separate ones today.
 
 ### R99. Adaptive optimization (regime-aware)
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `research/regime_adaptive.py` ships `RegimePolicy` + `adaptive_signal()`. Operator supplies a per-regime parameter dict; the primitive evaluates the template once per unique regime and stitches the per-bar output. R71 isolation guarantee carries over -- adaptive re-tune never lifts an OOSGuard because the parameters come from the policy, not the OOS read path.
 Priority: medium-low
 Effort: 3 to 4 weeks
 Area: research / regime
@@ -2163,7 +2171,7 @@ adaptive re-tuning never lifts an OOSGuard.
 
 ### R100. Trade simulator with realistic frictions
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `execution/trade_simulator.py::simulate_session()` returns a `SimulatedBookState` with per-bar `SimulatedFill` records. `FrictionConfig` knobs: `partial_fill_pct`, `spread_bps`, `latency_bars`, `reject_prob`. Wraps the existing PaperBroker behaviour for paper sessions that need to preview live execution.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: execution / paper
@@ -2188,7 +2196,7 @@ block.
 
 ### R102. Build-level goal-seeking optimisation
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `ga/goal_seeking.py::goal_seek()` wraps any GA-style runner (Protocol with `step()` + `best_so_far()`) and loops until the goal predicate fires or the wall budget expires. `make_sharpe_mdd_goal()` is the canonical convenience constructor.
 Priority: low
 Effort: 1 to 2 weeks
 Area: GA / research
@@ -2255,7 +2263,7 @@ tearsheet.
 
 ### R106. "OOS Plus" pre-construction holdout
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `core/oos_plus.py` ships the `OOS_PLUS` tier value, `OOSPlusGuard` context manager, `OOSPlusViolation` exception, and `run_final_check()` helper. Reads are blocked unless the guard is open; nested opens refuse. The factory and auto-loop never instantiate the guard, so they cannot read OOS_PLUS by construction.
 Priority: medium-high
 Effort: 1 week
 Area: validation / tier protocol
@@ -2292,7 +2300,7 @@ likely curve-fit than one that works across a basket.
 
 ### R108. Combinatorial alpha generation
 
-Status: pending
+Status: completed in 2026-05-08 batch 14; evidence: `research/auto_gen/combinatorial.py` ships `enumerate_combinations()` (size-range + max-combos cap) and `evaluate_combinations()` (sorted-by-fitness output). Caller supplies a `fitness_fn` so the primitive stays agnostic to the evaluator; pairs with R105 for per-combination contribution attribution.
 Priority: medium-high
 Effort: 1 to 2 weeks
 Area: research / strategy generation
@@ -2485,7 +2493,7 @@ audit-trail entry; restart requires explicit operator ceremony.
 
 ### R121. Hedging support
 
-Status: pending; design-call required
+Status: decision recorded 2026-05-08 batch 14; evidence: `docs/HEDGING_DECISION.md`. Engine REFUSES native hedging; operators model opposing positions on the same symbol as two separate strategies under the existing R71 isolation override. Decision can be revisited if a future strategy class genuinely requires the engine to reason about both legs simultaneously.
 Priority: low
 Effort: 2 to 3 weeks
 Area: engine / position management
