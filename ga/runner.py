@@ -1,10 +1,14 @@
 """GA runner using DEAP (multi-objective NSGA-II by default)."""
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Callable
+import logging
 import random
 import uuid
+from dataclasses import dataclass, field
+from typing import Callable, Optional
+
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 try:
     from deap import base, creator, tools, algorithms
@@ -138,7 +142,7 @@ def _detect_fitness_signature(fitness_fn) -> str:
 
 
 def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
-           config: GAConfig = None, verbose: bool = True,
+           config: Optional[GAConfig] = None, verbose: bool = True,
            seeded_pop: list | None = None):
     """Run NSGA-II GA over strategy parameter space.
 
@@ -256,11 +260,11 @@ def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
         # exception propagates out of the GA loop.
         pool_cm = Parallel(n_jobs=config.n_workers, backend="loky")
         if verbose:
-            print(f"GA: backend=joblib n_workers={config.n_workers}")
+            _log.info("GA: backend=joblib n_workers=%d", config.n_workers)
     else:
         pool_cm = nullcontext(None)
         if verbose and config.backend == "joblib":
-            print("GA: backend=joblib but n_workers<=1, falling back to serial map")
+            _log.info("GA: backend=joblib but n_workers<=1, falling back to serial map")
 
     with pool_cm as parallel_pool:
         if parallel_pool is not None:
@@ -288,7 +292,8 @@ def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
                 if len(pop) < config.population:
                     pop.extend(toolbox.population(n=config.population - len(pop)))
                 if verbose:
-                    print(f"GA: seeded {len(seeds)}/{config.population} initial individuals")
+                    _log.info("GA: seeded %d/%d initial individuals",
+                              len(seeds), config.population)
             else:
                 pop = toolbox.population(n=config.population)
             fitnesses = list(toolbox.map(toolbox.evaluate, pop))
@@ -296,7 +301,8 @@ def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
                 ind.fitness.values = fit
 
             if verbose:
-                print(f"GA: pop={config.population} gen={config.generations}")
+                _log.info("GA: pop=%d gen=%d",
+                          config.population, config.generations)
 
             # varOr requires lambda_ <= len(pop). When config.population is small but
             # would otherwise default to itself, this is a no-op. Cap at len(pop) to
@@ -331,7 +337,8 @@ def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
 
                 if verbose and gen % 5 == 0:
                     best = tools.selBest(pop, 1)[0]
-                    print(f"  gen {gen}: best fitness = {best.fitness.values}")
+                    _log.info("  gen %d: best fitness = %s",
+                              gen, best.fitness.values)
 
             pareto = tools.sortNondominated(pop, len(pop), first_front_only=True)[0]
             # Deterministic tie-breaking: NSGA-II Pareto rank + crowding distance can

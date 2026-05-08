@@ -123,8 +123,9 @@ Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R25, R26, R27, R28, R29, R34, R35, R36, R46, R57, R58, R59,
-R60, R61, R62, R63, R64, R65, R66, R67, R68, R69, R70, R72, R74, R75**.
+**R16, R25, R26, R27, R28, R29, R34, R35, R36, R46, R47, R48, R53,
+R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66, R67,
+R68, R69, R70, R71 (skeleton), R72, R74, R75, R140 (scaffold)**.
 
 Detail of the new closures:
 
@@ -1243,7 +1244,7 @@ unless an explicit `acknowledge_zero_costs=True` flag is passed.
 
 ### R47. Production-status audit for cross-asset / data / infra modules
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit pending); evidence: `docs/MODULE_STATUS.md`
 Priority: medium-high
 Effort: 1 to 2 weeks (audit) + per-module follow-ups
 Area: project hygiene / honesty
@@ -1276,7 +1277,7 @@ Definition of done:
 
 ### R48. Triage `experimental/` directory
 
-Status: pending
+Status: triage matrix landed in 2026-05-08 batch; physical archive / delete pending operator confirmation. Evidence: `experimental/STATUS.md`
 Priority: medium
 Effort: 1 to 2 days
 Area: repo hygiene
@@ -1361,7 +1362,7 @@ semantic changes.
 
 ### R53. Classify the 24 `raise NotImplementedError` sites
 
-Status: pending
+Status: completed in 2026-05-08 batch; evidence: `docs/STUBS_CLASSIFICATION.md`. All 24 sites are intentional (8 abstract, 2 reserved, 12 mock-only guards, 2 dispatch defaults).
 Priority: medium-high
 Effort: 1 to 2 days
 Area: project hygiene
@@ -1379,7 +1380,7 @@ file follow-up tasks for the genuinely unfinished ones.
 
 ### R54. Resolve the 8 TODO / FIXME markers
 
-Status: pending
+Status: completed in 2026-05-08 batch. All 8 markers are content embedded into generated Lean C# code (operator-facing scaffolds), not pending Python work. Documented in `exports/lean/exporter.py` module docstring.
 Priority: low
 Effort: half a day
 Area: project hygiene
@@ -1407,7 +1408,7 @@ broad and silently mask real failures. Walk every site and decide:
 
 ### R56. Replace `print()` calls with structured logging
 
-Status: pending
+Status: completed in 2026-05-08 batch (ga/runner.py + ga/multi_asset_runner.py converted to module logger; CLI table output intentionally untouched).
 Priority: low
 Effort: half a day
 Area: observability
@@ -1672,7 +1673,7 @@ commands.
 
 ### R71. Concurrent strategy run isolation
 
-Status: pending
+Status: skeleton landed in 2026-05-08 batch; cross-process file-backed lease store still pending. Evidence: `deployment/strategy_isolation.py` + `tests/test_strategy_isolation.py`. Decision recorded: **hard separation** (only one strategy may hold a position in a given symbol at a time).
 Priority: medium-high
 Effort: 1 to 2 weeks
 Area: deployment / safety
@@ -2718,7 +2719,7 @@ strategy is not behaving like the backtest" early.
 
 ### R140. Strategy lifecycle SLA + auto-archive
 
-Status: pending
+Status: scaffold landed in 2026-05-08 batch; auto-loop integration still pending. Evidence: `research/lifecycle.py` + `tests/test_lifecycle_sla.py`. Defaults: 365-day initial lifetime, 90-day re-validation cadence, 730-day hard ceiling.
 Priority: medium
 Effort: 1 to 2 weeks
 Area: lifecycle

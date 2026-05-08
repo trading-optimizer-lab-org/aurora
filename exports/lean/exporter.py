@@ -26,6 +26,11 @@ Translation tiers (:meth:`LeanExporter._classify_translation`):
   port.
 * ``"scaffold-only"`` -- unknown class. The Lean ``OnData`` body is a
   TODO and the original params dict is embedded as a comment.
+
+R54 note: every "TODO" / "FIXME" string in this module is content
+embedded into the *generated Lean C# code*, not pending Python work.
+The comments tell the Lean-side operator which methods need a manual
+port; no Python action is required from QuantForge maintainers.
 """
 from __future__ import annotations
 

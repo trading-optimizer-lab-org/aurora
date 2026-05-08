@@ -16,6 +16,13 @@ that every new strategy must pass before merge.
 
 Vulnerability reports: see [SECURITY.md](SECURITY.md).
 
+## Module production status
+
+Cross-asset, signal, risk, dataeng, infra, marketdata and altdata
+modules ship at varying maturity. Before depending on one, check
+[`docs/MODULE_STATUS.md`](docs/MODULE_STATUS.md) for the canonical
+`production` / `scaffold` / `mock-only` / `experimental` label.
+
 ## Filosofia
 
 Generate thousands of strategy candidates. Approve only those that survive every

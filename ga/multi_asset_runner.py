@@ -15,12 +15,16 @@ Conventions inherited from single-asset runner:
   weights = (1, 1, 1, -1)  ->  maximize first 3, minimize 4th
 """
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Callable, Optional
+import logging
 import random
 import uuid
+from dataclasses import dataclass
+from typing import Callable, Optional
+
 import numpy as np
 import pandas as pd
+
+_log = logging.getLogger(__name__)
 
 from quantforge.ga.runner import GAConfig
 from quantforge.core.engine_multi import MultiAssetEngine
@@ -491,11 +495,11 @@ def run_multi_asset_ga(
         # exception propagates out of the GA loop.
         pool_cm = Parallel(n_jobs=config.n_workers, backend="loky")
         if verbose:
-            print(f"MA-GA: backend=joblib n_workers={config.n_workers}")
+            _log.info("MA-GA: backend=joblib n_workers=%d", config.n_workers)
     else:
         pool_cm = nullcontext(None)
         if verbose and config.backend == "joblib":
-            print("MA-GA: backend=joblib but n_workers<=1, falling back to serial map")
+            _log.info("MA-GA: backend=joblib but n_workers<=1, falling back to serial map")
 
     try:
         with pool_cm as parallel_pool:
@@ -523,7 +527,8 @@ def run_multi_asset_ga(
                 if len(pop) < config.population:
                     pop.extend(toolbox.population(n=config.population - len(pop)))
                 if verbose:
-                    print(f"MA-GA: seeded {len(seeds)}/{config.population} initial individuals")
+                    _log.info("MA-GA: seeded %d/%d initial individuals",
+                              len(seeds), config.population)
             else:
                 pop = toolbox.population(n=config.population)
             fitnesses = list(toolbox.map(toolbox.evaluate, pop))
@@ -531,8 +536,11 @@ def run_multi_asset_ga(
                 ind.fitness.values = fit
 
             if verbose:
-                print(f"MA-GA: pop={config.population} gen={config.generations} "
-                      f"strategy={strategy_class.__name__} symbols={symbols}")
+                _log.info(
+                    "MA-GA: pop=%d gen=%d strategy=%s symbols=%s",
+                    config.population, config.generations,
+                    strategy_class.__name__, symbols,
+                )
 
             # varOr requires lambda_ <= len(pop). Cap at len(pop) to avoid
             # IndexError on tiny populations / edge configs. Mirrors runner.py:267.
@@ -555,7 +563,8 @@ def run_multi_asset_ga(
 
                 if verbose and gen % 5 == 0:
                     best = tools.selBest(pop, 1)[0]
-                    print(f"  gen {gen}: best fitness = {best.fitness.values}")
+                    _log.info("  gen %d: best fitness = %s",
+                              gen, best.fitness.values)
 
             pareto = tools.sortNondominated(pop, len(pop), first_front_only=True)[0]
             # Deterministic tie-breaking matches single-asset runner.run_ga so the
