@@ -1,0 +1,10 @@
+{
+  "_comment": "R40 benchmark scaffold baseline. Operators commit fresh values per machine fixture. CI compares latest run vs this baseline within +/-tolerance and flags regressions. The values below are placeholders -- run `python -m quantforge.examples.benchmarks all` once on the canonical CI runner and replace.",
+  "_machine_fixture": "TODO -- record OS / CPU / RAM the baseline was captured on",
+  "_recorded_at": "TODO",
+  "_tolerance_pct": 25,
+  "triage_10k": {"wall_seconds": null, "output_hash": null},
+  "validation_pipeline": {"wall_seconds": null, "output_hash": null},
+  "ga_loop": {"wall_seconds": null, "output_hash": null},
+  "single_asset_30y": {"wall_seconds": null, "output_hash": null}
+}

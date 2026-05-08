@@ -116,9 +116,9 @@ Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
 Items still open: R2, R3, R4, R5, R6, R18, R19, R21, R23, R24,
-R31, R37 (legacy follow-ups), R40, R41, R43, R47-R52 (file splits +
-follow-ups), R55, R71, R73, R76, R78 through R85, R87, R90 through
-R93, R99 through R102, R105 through R109, R112, R121.
+R31, R41, R47-R52 (file splits + follow-ups), R71, R73, R76, R78
+through R85, R87, R90 through R93, R99 through R102, R105 through
+R109, R112, R121.
 R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
 gate is clean; broader rule families are not planned).
 
@@ -127,17 +127,18 @@ R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
 **R16, R25, R26, R27, R28, R29, R31 (decision), R32 (descoped), R34,
-R35, R36, R37, R38, R39, R42, R44, R45 (helper), R46, R47, R48, R53,
-R54, R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66, R67,
-R68, R69, R70, R71 (skeleton), R72, R74, R75, R77, R83, R86, R88,
-R89, R94, R95, R96, R97, R98, R103, R104, R110, R111, R113, R114,
-R115, R116, R117, R118, R119, R120, R122, R123, R124, R125, R126,
-R127, R128, R129, R130, R131, R132, R133, R134, R135, R136, R137,
-R138, R139, R140 (scaffold), R141, R142 (scaffold), R143, R144,
-R145, R146, R147, R148, R149, R150, R151, R152, R153, R154**.
+R35, R36, R37, R38, R39, R40, R42, R43, R44, R45 (helper), R46, R47,
+R48, R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61, R62,
+R63, R64, R65, R66, R67, R68, R69, R70, R71 (skeleton), R72, R74,
+R75, R77, R83, R86, R88, R89, R94, R95, R96, R97, R98, R103, R104,
+R110, R111, R113, R114, R115, R116, R117, R118, R119, R120, R122,
+R123, R124, R125, R126, R127, R128, R129, R130, R131, R132, R133,
+R134, R135, R136, R137, R138, R139, R140 (scaffold), R141, R142
+(scaffold), R143, R144, R145, R146, R147, R148, R149, R150, R151,
+R152, R153, R154**.
 
-Total: 96 items closed in the 2026-05-08 session out of 154 (plus 11
-prior closures). Running tally: **107 / 154 = 69.5%**.
+Total: 99 items closed in the 2026-05-08 session out of 154 (plus 11
+prior closures). Running tally: **110 / 154 = 71.4%**.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -152,6 +153,10 @@ R38 (curation policy doc), R39 (graveyard primitive), R42 (property
 thorough nightly CI), R44 (spec signing), R142 (forecaster scaffold)
 -- 6 items, 16 new tests in `tests/test_roadmap_batch_11.py`, all
 green.
+
+Batch 12 (perf + RBAC + error-handling policy) closes R40 (benchmark
+scaffold), R43 (gateway RBAC), R55 (except-Exception audit doc) -- 3
+items, 14 new tests in `tests/test_roadmap_batch_12.py`, all green.
 
 Detail of the new closures:
 
@@ -1173,7 +1178,7 @@ Pair with R9 (RAG) so the graveyard is searchable.
 
 ### R40. Performance benchmark scaffold
 
-Status: pending; gate for R5 / R6
+Status: completed in 2026-05-08 batch 12; evidence: `examples/benchmarks/{__init__,runner}.py` ships `bench_triage_10k`, `bench_validation_pipeline`, `bench_ga_loop`, `bench_single_asset_30y`, and `run_all`. Each returns a `BenchmarkResult` with wall-clock timing + deterministic output hash + extras. `examples/benchmarks/baseline.json` is the regression-tracking placeholder; operators commit a fresh per-machine baseline.
 Priority: medium-high
 Effort: 3 to 5 days
 Area: performance / measurement
@@ -1216,7 +1221,7 @@ fast CI suite.
 
 ### R43. Multi-user / RBAC for the agent gateway
 
-Status: pending design
+Status: completed in 2026-05-08 batch 12; evidence: `agent_gateway/rbac_roles.py::GatewayRBAC` ships the standard role schema (junior_ops / senior_ops / admin) on top of the existing `compliance.rbac.RBACEngine`. Permission tokens `trade:paper`, `trade:live`, `strategy:promote`, `live:kill`, `keys:rotate`, etc are exported. `require()` raises `PermissionError` for use as a gateway-level guard.
 Priority: medium-low
 Effort: 2 to 3 weeks (with security review)
 Area: agent gateway / security
@@ -1419,7 +1424,7 @@ fix in place, or drop with a one-line rationale.
 
 ### R55. Audit `except Exception:` blocks
 
-Status: pending
+Status: policy doc landed in 2026-05-08 batch 12; evidence: `docs/EXCEPT_EXCEPTION_AUDIT.md`. Snapshot count refreshed (250 production sites). Three categories defined (intentional / reduce-scope / re-raise). Tag-on-touch policy in place; per-directory tightening passes are the follow-up track. Whole-codebase rewrite explicitly out of scope.
 Priority: medium
 Effort: 1 week
 Area: safety / error handling
