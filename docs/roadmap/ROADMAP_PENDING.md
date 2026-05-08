@@ -659,7 +659,7 @@ Area: performance/native
 
 ### R16. Calmar / MAR policy for zero-MDD inputs
 
-Status: pending, design call
+Status: completed in 2026-05-08 batch (commit `678e0cb`)
 Priority: low
 Effort: half a day
 Area: metrics/contract
@@ -919,7 +919,7 @@ future sessions stop suggesting committing them.
 
 ### R25. Refresh `CLAUDE.md` test count and known-issues block
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`)
 Priority: low
 Effort: 30 minutes
 Area: docs / project memory
@@ -931,7 +931,7 @@ ruff and mypy clean locally.
 
 ### R26. Refresh `docs/ZERO_TO_LIVE.md` test command
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`)
 Priority: low
 Effort: 15 minutes
 Area: docs
@@ -942,7 +942,7 @@ matches the live CI command.
 
 ### R27. Update `CHANGELOG.md` for the v1.4.x follow-ups
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`)
 Priority: medium
 Effort: 1 to 2 hours
 Area: docs
@@ -955,7 +955,7 @@ Cite each commit hash for traceability.
 
 ### R28. Set the canonical repository URL
 
-Status: pending
+Status: placeholder set in 2026-05-08 batch (commit `678e0cb`); awaiting real URL after R23 AURORA rename
 Priority: low
 Effort: 5 minutes once decided
 Area: docs / packaging
@@ -968,7 +968,7 @@ lives (private fork, organisation account, ...), set
 
 ### R29. Add Python 3.14 to the CI matrix
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); allow-prereleases=true
 Priority: low
 Effort: 1 hour
 Area: CI
@@ -1053,7 +1053,7 @@ Follow-up:
 
 ### R34. Audit log rotation policy
 
-Status: pending
+Status: primitive landed in 2026-05-08 batch (commit `678e0cb`); per-writer wiring still pending
 Priority: medium-low
 Effort: 1 to 2 days
 Area: ops / compliance
@@ -1073,7 +1073,7 @@ Definition of done:
 
 ### R35. HMAC key generation and rotation operator guide
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); evidence: `docs/HMAC_KEY_OPERATIONS.md`
 Priority: medium
 Effort: half a day
 Area: docs / ops
@@ -1089,7 +1089,7 @@ exposed.
 
 ### R36. Disaster recovery / snapshot restore
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); evidence: `docs/DISASTER_RECOVERY.md` + `core/snapshot_repair.py`
 Priority: medium
 Effort: 2 to 3 days
 Area: ops / data provenance
@@ -1231,7 +1231,7 @@ silently coercing.
 
 ### R46. ZERO_costs runtime warning
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`)
 Priority: low
 Effort: 1 hour
 Area: safety / engine
@@ -1423,7 +1423,7 @@ output alone unless a command-level output abstraction replaces it.
 
 ### R57. Document the environment-variable inventory
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); evidence: `docs/ENV_VARS.md`
 Priority: high (security-sensitive subset)
 Effort: half a day
 Area: docs / ops
@@ -1481,7 +1481,7 @@ Definition of done:
 
 ### R58. Resolve `QF_ALLOW_FULL_TIER` vs `QF_ALLOW_OOS_LOCKED`
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); deprecated as stale
 Priority: low
 Effort: 1 hour
 Area: protocol / docs
@@ -1505,7 +1505,7 @@ Recommended resolution:
 
 ### R59. Wire the existing pre-commit configuration
 
-Status: local suite verified; CI/docs wiring pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); make targets + CI job + CONTRIBUTING.md done
 Priority: medium (replaces R30 wording)
 Effort: 1 hour
 Area: dev tooling
@@ -1532,7 +1532,7 @@ What is missing:
 
 ### R60. Cross-platform `wheel.yml` CI
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); ubuntu/windows/macos matrix
 Priority: low
 Effort: 1 hour
 Area: CI
@@ -1545,7 +1545,7 @@ runner), it breaks. Switch to `runner.temp` or a tmp directory via
 
 ### R61. Security scanning in CI
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); evidence: `.github/workflows/security.yml`
 Priority: medium
 Effort: half a day
 Area: CI / security
@@ -1562,7 +1562,7 @@ first run produces a baseline rather than blocking every PR.
 
 ### R62. SBOM generation in CI
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); cyclonedx-py job in `wheel.yml`
 Priority: low
 Effort: 2 hours
 Area: CI / supply chain
@@ -1573,7 +1573,7 @@ operators can audit transitive deps.
 
 ### R63. mypy in CI
 
-Status: local typecheck clean; CI wiring pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); evidence: `.github/workflows/typecheck.yml`
 Priority: medium
 Effort: 1 hour for CI wiring, plus ongoing maintenance
 Area: CI / type checking
@@ -1589,7 +1589,7 @@ this layout).
 
 ### R64. Coverage gate enforced in CI
 
-Status: local coverage gate clean; CI wiring pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); --cov in tests.yml
 Priority: medium
 Effort: 1 hour
 Area: CI / QA
@@ -1601,7 +1601,7 @@ in `tests.yml` and let the `.coveragerc` threshold gate the job.
 
 ### R65. Coverage artefact / dashboard
 
-Status: pending
+Status: artefact upload landed in 2026-05-08 batch (commit `678e0cb`); external dashboard pending
 Priority: low
 Effort: half a day
 Area: observability
@@ -1612,7 +1612,7 @@ re-running locally.
 
 ### R66. Archive historical version completion reports
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); 9 files moved to `docs/archive/version_reports/`
 Priority: low
 Effort: 30 minutes
 Area: docs hygiene
@@ -1625,7 +1625,7 @@ the current spine.
 
 ### R67. Archive historical development plans
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); 4 files moved to `docs/archive/dev_plans/`
 Priority: low
 Effort: 15 minutes
 Area: docs hygiene
@@ -1636,7 +1636,7 @@ Area: docs hygiene
 
 ### R68. Decision on `docs/GITHUB_RESEARCH_v1.1.md`
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); moved to `docs/archive/orphans/`
 Priority: very low
 Effort: 15 minutes
 Area: docs hygiene
@@ -1646,7 +1646,7 @@ the operator-guides toctree or move to `docs/archive/`.
 
 ### R69. SECURITY.md vulnerability disclosure policy
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); evidence: `SECURITY.md` at repo root
 Priority: medium
 Effort: 2 hours
 Area: docs / security
@@ -1658,7 +1658,7 @@ versions are supported. Required before any public release.
 
 ### R70. README references CONTRIBUTING.md
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`); README links CONTRIBUTING.md + SECURITY.md
 Priority: very low
 Effort: 5 minutes
 Area: docs
@@ -1696,7 +1696,7 @@ Definition of done:
 
 ### R72. Numba JIT shadow-mutations workaround
 
-Status: pending; follow-up to R12 / R41
+Status: completed in 2026-05-08 batch (commit `678e0cb`); `make mutate-full` now sets `NUMBA_DISABLE_JIT=1`
 Priority: low
 Effort: half a day
 Area: QA
@@ -1727,7 +1727,7 @@ from rather than reaching into `cli.forge`.
 
 ### R74. Cosmetic Windows-incompatible path in docstring
 
-Status: pending
+Status: completed in 2026-05-08 batch (commit `678e0cb`)
 Priority: very low
 Effort: 5 minutes
 Area: docs
@@ -1740,7 +1740,7 @@ the example to use `tmp_path / ".oos_lock.json"` or
 
 ### R75. Audit hardcoded paths beyond `data_cache_qf`
 
-Status: pending; follow-up to R22
+Status: completed in 2026-05-08 batch (commit `678e0cb`); 8 modules migrated to `runtime_paths.cache_dir()`
 Priority: medium
 Effort: 1 day
 Area: portability
