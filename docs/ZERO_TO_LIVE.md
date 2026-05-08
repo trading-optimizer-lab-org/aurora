@@ -56,6 +56,21 @@ forge --version
 If `forge` is missing from PATH, the entry point did not register. Re-run the
 editable install or invoke `python -m quantforge.cli.forge` directly.
 
+> **Important: pin one interpreter.** Subprocess-launching code (mutmut,
+> the protocol-policy CLI smoke test, the live deploy gate) calls
+> `sys.executable -m quantforge.cli.forge`. If you install editable under
+> `C:/Python314/python.exe` but then run `make test` with a `python` on
+> `$PATH` that resolves to a different interpreter (e.g. system Python
+> 3.12 with no project deps), those subprocesses see
+> "No module named quantforge" and the suite fails inside otherwise
+> unrelated tests. Pin `PYTHON` in the Makefile and the install command
+> to the same path:
+>
+> ```powershell
+> make setup PYTHON="C:/Python314/python.exe"
+> make test  PYTHON="C:/Python314/python.exe"
+> ```
+
 ---
 
 ## 2. Run the fast test suite
