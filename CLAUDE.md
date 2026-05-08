@@ -1,0 +1,117 @@
+# QuantForge
+
+Standalone Python quant research engine. Backtest + GA + validation gates + paper/live with hash-bound provenance and 7-stage protocol spine.
+
+## Layout
+
+Flat layout (Layout B). `pyproject.toml` at repo root. Subpackages live as top-level dirs (`core/`, `strategies/`, `validation/`, etc) and map to `quantforge.<name>` via `[tool.setuptools.package-dir]`.
+
+```
+QuantForge/                  <- repo root + package root
+├── pyproject.toml
+├── __init__.py              <- quantforge package init
+├── core/                    <- quantforge.core
+├── strategies/              <- quantforge.strategies
+├── validation/              <- quantforge.validation
+├── ga/                      <- quantforge.ga
+├── ml/                      <- quantforge.ml
+├── agent_gateway/           <- quantforge.agent_gateway
+├── agents/auditor/          <- quantforge.agents.auditor
+├── research/factory/        <- quantforge.research.factory
+├── triage/                  <- quantforge.triage
+├── reporting/daily_ops/     <- quantforge.reporting.daily_ops
+├── exports/lean/            <- quantforge.exports.lean
+├── tests/                   <- pytest suite
+├── docs/                    <- ARCHITECTURE, RESEARCH_PROTOCOL, version reports
+├── examples/
+└── config/                  <- ships in wheel (YAML configs)
+```
+
+## Test command
+
+```
+"C:/Python314/python.exe" -m pytest tests/ -m "not slow and not integration" \
+    --ignore=tests/test_config.py --ignore=tests/test_property.py
+```
+
+Baseline: 2780 pass, 9 pre-existing fail (markov_switching statsmodels API drift).
+
+## Runtime paths
+
+ALL runtime artifacts go through `quantforge.core.runtime_paths`. Never hardcode paths.
+
+Env var overrides:
+
+| Var | Purpose | Default |
+|---|---|---|
+| `QF_DATA_DIR` | base data dir | `platformdirs.user_data_dir("quantforge")` |
+| `QF_CACHE_DIR` | price/data cache | `$QF_DATA_DIR/cache` |
+| `QF_SNAPSHOT_ROOT` | SnapshotStore root (parquet+sqlite) | `$QF_DATA_DIR/snapshots` |
+| `QF_AUDIT_LOG` | SOC2 audit JSONL | `$QF_DATA_DIR/audit_trail.jsonl` |
+| `QF_GATEWAY_AUDIT` | agent gateway chain | `$QF_DATA_DIR/gateway_audit.jsonl` |
+| `QF_OOS_LOCK` | OOSGuard lock | `$QF_DATA_DIR/.oos_lock.json` |
+| `QF_RESEARCH_ARCHIVE` | factory archive JSONL | `$QF_DATA_DIR/research_archive.jsonl` |
+| `QF_REVIEW_QUEUE` | factory review queue | `$QF_DATA_DIR/research_review_queue.jsonl` |
+
+Tests use `monkeypatch.setenv("QF_<VAR>", str(tmp_path / ...))` for isolation.
+
+## Import boundary
+
+QuantForge is a LIBRARY. Never import from consumer projects (sp500_ls_v2, naomi, jade, etc). Pure stdlib + declared `pyproject.toml` deps only.
+
+## CLI
+
+```
+forge --version
+forge policy show / verify
+forge data list-providers / fetch / verify
+forge agent token-issue / commit / push
+forge audit run
+forge research submit / batch / review-queue / promote
+forge triage run / list-promising
+forge ops daily / alerts
+forge crypto fetch / submit-order
+forge export lean / verify
+forge freeze
+```
+
+## Protocol spine (v4.0)
+
+```
+ProtocolPolicy (frozen + hashed) ->
+DataProviderRegistry (6 providers, tier-gated, PIT-aware) ->
+SnapshotStore (sha256, locked phase, policy_hash bound) ->
+ExperimentRegistry (lineage) ->
+ValidationPipeline (9 mandatory gates) ->
+AgentAuditGateway (scoped tokens, hash-chained audit, triple-gate live) ->
+Paper/Live Guard Pipeline (5 broker adapters, KillSwitch+AuditLog+RateLimiter)
+```
+
+policy_hash propagates: `spec.policy_hash == snapshot.policy_hash == validation.policy_hash == audit.policy_hash`.
+
+## Tier protocol
+
+5 tiers: `IS_TRAIN`, `IS_VALID`, `OOS_DEV`, `OOS_LOCKED`, `FORWARD`.
+
+4 ceremonies (env flag + `OOSGuard` context required):
+- `explicit_unlock_snapshot`
+- `explicit_unlock_oos_locked`
+- `explicit_unlock_forward`
+- `explicit_unlock_full_tier`
+
+## Style
+
+- Caveman mode active by default in chat (terse, drop articles, fragments OK)
+- Code/commits/security: write normal English
+- No emojis in code unless requested
+- Prefer Edit over Write for existing files
+
+## Known issues
+
+- 9 `test_markov_switching.py` failures: statsmodels API drift, pre-existing, unrelated to QF
+- 1 `test_lint_config::test_no_unmarked_live_data_loads`: cosmetic AST scanner false positive
+
+## Status
+
+v1.4.0 — extracted from MODELO SP500 on 2026-05-08.
+2780 tests passing. Hash provenance preserved.
