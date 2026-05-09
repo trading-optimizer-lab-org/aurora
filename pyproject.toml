@@ -61,12 +61,15 @@ packages = [
     "aurora.agents.auditor",
     "aurora.altdata",
     "aurora.analytics",
+    "aurora.analytics.metrics_full",
     "aurora.cli",
     "aurora.compliance",
     "aurora.core",
     "aurora.core.data_providers",
     "aurora.dataeng",
     "aurora.deployment",
+    "aurora.deployment.brokers",
+    "aurora.deployment.preflight",
     "aurora.execution",
     "aurora.experimental",
     "aurora.exports",
@@ -82,8 +85,10 @@ packages = [
     "aurora.registry",
     "aurora.reporting",
     "aurora.reporting.daily_ops",
+    "aurora.reporting.tearsheet",
     "aurora.research",
     "aurora.research.factory",
+    "aurora.research.factory.factory",
     "aurora.risk",
     "aurora.signals",
     "aurora.strategies",
@@ -101,12 +106,15 @@ packages = [
 "aurora.agents.auditor" = "agents/auditor"
 "aurora.altdata" = "altdata"
 "aurora.analytics" = "analytics"
+"aurora.analytics.metrics_full" = "analytics/metrics_full"
 "aurora.cli" = "cli"
 "aurora.compliance" = "compliance"
 "aurora.core" = "core"
 "aurora.core.data_providers" = "core/data_providers"
 "aurora.dataeng" = "dataeng"
 "aurora.deployment" = "deployment"
+"aurora.deployment.brokers" = "deployment/brokers"
+"aurora.deployment.preflight" = "deployment/preflight"
 "aurora.execution" = "execution"
 "aurora.experimental" = "experimental"
 "aurora.exports" = "exports"
@@ -122,8 +130,10 @@ packages = [
 "aurora.registry" = "registry"
 "aurora.reporting" = "reporting"
 "aurora.reporting.daily_ops" = "reporting/daily_ops"
+"aurora.reporting.tearsheet" = "reporting/tearsheet"
 "aurora.research" = "research"
 "aurora.research.factory" = "research/factory"
+"aurora.research.factory.factory" = "research/factory/factory"
 "aurora.risk" = "risk"
 "aurora.signals" = "signals"
 "aurora.strategies" = "strategies"

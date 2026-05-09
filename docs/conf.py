@@ -108,12 +108,26 @@ napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
 napoleon_include_private_with_doc = False
 
-intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
-    "numpy": ("https://numpy.org/doc/stable/", None),
-    "pandas": ("https://pandas.pydata.org/docs/", None),
-    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
-}
+# intersphinx is opt-in via the AURORA_DOCS_INTERSPHINX env flag.
+# Offline builds + CI runs without internet would otherwise turn a
+# transient network failure into a hard `-W` error. The default keeps
+# the build deterministic; operators that want cross-project links set
+# the env var when they have network access.
+import os as _os
+
+if _os.environ.get("AURORA_DOCS_INTERSPHINX") == "1":
+    intersphinx_mapping = {
+        "python": ("https://docs.python.org/3", None),
+        "numpy": ("https://numpy.org/doc/stable/", None),
+        "pandas": ("https://pandas.pydata.org/docs/", None),
+        "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    }
+    intersphinx_timeout = 5
+else:
+    intersphinx_mapping = {}
+
+intersphinx_disabled_reftypes = ["*"]
+suppress_warnings = ["intersphinx", "intersphinx.external"]
 
 # --------------------------------------------------------------------------
 # HTML output
