@@ -96,6 +96,7 @@ packages = [
     "quantforge.exports.lean",
     "quantforge.exports.lean.templates",
     "quantforge.ga",
+    "quantforge.governance",
     "quantforge.infra",
     "quantforge.marketdata",
     "quantforge.markets",
@@ -136,6 +137,7 @@ packages = [
 "quantforge.exports.lean" = "exports/lean"
 "quantforge.exports.lean.templates" = "exports/lean/templates"
 "quantforge.ga" = "ga"
+"quantforge.governance" = "governance"
 "quantforge.infra" = "infra"
 "quantforge.marketdata" = "marketdata"
 "quantforge.markets" = "markets"
