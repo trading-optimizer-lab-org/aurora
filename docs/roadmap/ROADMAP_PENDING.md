@@ -2399,7 +2399,7 @@ Priority: high
 Effort: 2 to 3 weeks
 Area: strategies / portfolio
 Source: Composer.trade
-Suggested paths: `strategies/symphony/`, `deployment/allocator.py`
+Suggested paths: `strategies/symphony.py` (consolidated), `deployment/allocator.py`
 
 A higher-level construct than the per-asset Strategy: nested
 conditional rules that allocate a portfolio. Example::
@@ -2437,7 +2437,7 @@ Priority: medium
 Effort: 1 week
 Area: strategies / portfolio
 Source: Composer.trade
-Suggested path: `strategies/symphony/`
+Suggested path: `strategies/symphony.py` (consolidated)
 
 Operators want "apply rule X to my equity bucket, rule Y to my
 fixed-income bucket". Symphony language extension: groups of assets
@@ -2478,7 +2478,7 @@ Priority: medium
 Effort: 1 week
 Area: strategies
 Source: Composer.trade
-Suggested path: `strategies/library/sector_rotation.py`
+Suggested path: `strategies/symphony.py::SectorRotator` (consolidated)
 
 Built-in rotator that selects top-N sectors by a configurable
 ranking (momentum, value, low-vol) and rebalances on cadence.
@@ -2559,7 +2559,7 @@ Priority: low
 Effort: 1 week
 Area: tooling
 Source: Molanis
-Suggested paths: `strategies/rules/codegen.py`,
+Suggested paths: `strategies/rule_codegen.py`,
 paired with R78 (rule IR)
 
 When an operator authors a strategy via R78 IR, render the
