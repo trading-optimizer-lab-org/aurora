@@ -1,7 +1,7 @@
 # QuantForge Roadmap
 
 Status: living roadmap
-Last updated: 2026-05-08 (roadmap-reorg-pass)
+Last updated: 2026-05-08 (post-roadmap-review-pass)
 Source: migrated from Desktop and normalised after v1.4 review
 Scope: post-v1.4 backlog for QA, docs, AI, data, execution, performance and production hardening
 
@@ -115,8 +115,12 @@ Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
-Items still open: R2, R3, R4, R5, R6, R19, R21, R23 (rename
-execution), R31, R41, R47-R52 (file splits + follow-ups).
+Items still open: R2, R3, R4, R5, R6, R23 (rename execution), R31
+(publishing workflow), R41 (compute-bound mutmut sweep), R49-R52
+(file splits). R47 / R48 audit and triage docs landed; any physical
+archive / delete or module cleanup that falls out of them should be
+handled as a scoped follow-up, not treated as the original audit
+being open.
 R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
 gate is clean; broader rule families are not planned).
 
@@ -124,22 +128,25 @@ Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R18, R24, R25, R26, R27, R28, R29, R31 (decision), R32
-(descoped), R34, R35, R36, R37, R38, R39, R40, R42, R43, R44, R45
-(helper), R46, R47, R48, R53, R54, R55 (policy doc), R56, R57, R58,
-R59, R60, R61, R62, R63, R64, R65, R66, R67, R68, R69, R70, R71,
-R72, R73, R74, R75, R76 (plan), R77, R78, R79, R80 (PineScript
-slice), R81, R82, R83, R84 (skeleton), R85 (plan), R86, R87, R88,
-R89, R90 (scaffold), R91, R92, R93, R94, R95, R96, R97, R98, R99,
-R100, R101, R102, R103, R104, R105, R106, R107, R108, R109, R110,
-R111, R112, R113, R114, R115, R116, R117, R118, R119, R120, R121
-(decision), R122, R123, R124, R125, R126, R127, R128, R129, R130,
-R131, R132, R133, R134, R135, R136, R137, R138, R139, R140
-(scaffold), R141, R142 (scaffold), R143, R144, R145, R146, R147,
-R148, R149, R150, R151, R152, R153, R154**.
+**R16, R18, R19, R21, R24, R25, R26, R27, R28, R29, R31 (hosting
+decision only), R32 (descoped), R34, R35, R36, R37, R38, R39, R40,
+R42, R43, R44, R45 (helper), R46, R47, R48, R53, R54, R55 (policy
+doc), R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66, R67,
+R68, R69, R70, R71, R72, R73, R74, R75, R76 (plan), R77, R78, R79,
+R80 (PineScript slice), R81, R82, R83, R84 (skeleton), R85 (plan),
+R86, R87, R88, R89, R90 (scaffold), R91, R92, R93, R94, R95, R96,
+R97, R98, R99, R100, R101, R102, R103, R104, R105, R106, R107, R108,
+R109, R110, R111, R112, R113, R114, R115, R116, R117, R118, R119,
+R120, R121 (decision), R122, R123, R124, R125, R126, R127, R128,
+R129, R130, R131, R132, R133, R134, R135, R136, R137, R138, R139,
+R140 (scaffold), R141, R142 (scaffold), R143, R144, R145, R146,
+R147, R148, R149, R150, R151, R152, R153, R154**.
 
-Total: 127 items closed in the 2026-05-08 session out of 154 (plus
-11 prior closures). Running tally: **138 / 154 = 89.6%**.
+Total: 129 items closed in the 2026-05-08 session out of 154 (plus
+11 prior closures). Running tally: **140 / 154 = 90.9%**, counting
+partial items by their accepted slice. Remaining work is mostly
+external blockers, file splits, mutation reporting and the future
+AURORA rename.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -179,6 +186,11 @@ policy doc), R71 (file-backed cross-process lease), R73 (cli public
 API), R76 (env var migration plan), R84 (PDF skeleton), R85
 (dashboard plan), R90 (distributed factory scaffold) -- 8 items, 12
 new tests in `tests/test_roadmap_batch_15.py`, all green.
+
+Batch 16 (snapshot wiring + mutmut sanity) closes R19 (SnapshotStore
+optional mirror backend) and R21 (verified mutmut runner test list)
+-- 2 items, 4 new tests in `tests/test_roadmap_batch_16.py`, all
+green. Existing `tests/test_snapshots*.py` still 28/28 green.
 
 Detail of the new closures:
 
@@ -269,7 +281,7 @@ Verification snapshot from this workspace:
   `python -m pytest --cov=quantforge --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"` ->
   80.40%, threshold 80% reached.
 - Mypy:
-  no issues found in 321 source files.
+  no issues found in 410 source files.
 - Ruff:
   `ruff check .` passed.
 - Pre-commit:
@@ -480,163 +492,51 @@ below for the full description of each R item. Do not treat the R
 number as priority; many later items are more important than earlier
 ones.
 
-Current rule: finish the roadmap-truth / CI-hardening batch before
-starting new feature families (R77+ strategy generation, R113+
-portfolio primitives, R125+ advanced analytics) unless an operator
-explicitly overrides the sequence.
+Current state: most in-repo roadmap items now have either a landed
+primitive, a documented decision, or a deliberate scaffold. The next
+work should be fewer, deeper tracks rather than more numbered tasks.
 
-### Phase 0. Truth And Contributor Basics
+### Track 1. Finish Remaining In-Repo Work
 
-Goal: make the public docs, local docs and contributor path match the
-verified state of the repo.
+Do this before starting the new candidate programmes:
 
-Do first:
+1. **R19** -- wire `SnapshotStore` to `SnapshotBackend`.
+2. **R21 + R41** -- run the first full mutation sweep and publish the
+   report.
+3. **R31** -- turn the docs-hosting decision into the actual publish
+   workflow.
+4. **R49 + R50 + R51 + R52** -- split the oversized modules without
+   changing behaviour.
+5. **R23** -- execute the AURORA rename only after the above are stable
+   and the env-var migration plan is ready to apply.
 
-1. **R25 + R26 + R27** -- refresh `CLAUDE.md`, `ZERO_TO_LIVE.md` and
-   `CHANGELOG.md` with the verified baseline.
-2. **R24 + R28** -- decide what belongs in project policy files and
-   set the canonical repository URL.
-3. **R57 + R58** -- centralise env-var docs and resolve the stale
-   OOS unlock naming.
-4. **R59 + R70 + R74** -- pre-commit install docs, README link to
-   CONTRIBUTING, and the one-line docstring path fix.
+Why first: these are the remaining local cleanup / structure tasks.
+They reduce future risk and avoid burying unfinished core work under
+another layer of features.
 
-Why first: these are small, unblock contributors, and stop stale docs
-from contradicting verified reality.
+### Track 2. Strategic Programmes To Promote Next
 
-### Phase 1. CI And Release Guardrails
+Promote these only after a pruning pass or after one of the remaining
+tracks above is closed:
 
-Goal: make GitHub enforce what already passes locally.
+1. **Candidate C -- Data integrity programme.** Data contract,
+   point-in-time / bitemporal availability, Security Master, corporate
+   actions, market calendars and lineage.
+2. **Candidate B -- Research honesty programme.** Degrees-of-freedom
+   ledger, DSR / PBO style pressure checks, purged CV, robustness
+   budget, mandatory benchmarks and graveyard / similarity checks.
+3. **Candidate A -- Execution integrity programme.** Broker-event
+   replay, reconciliation, order lifecycle state machine, realistic
+   fills and TCA.
+4. **Candidate D -- Strategy risk register.** Model-risk record,
+   maker-checker approvals, lifecycle states and live-promotion
+   refusal when evidence is stale.
 
-Recommended order:
+Recommended order: C -> B -> A -> D. Data truth comes before research
+truth; research truth comes before live execution; governance becomes
+mandatory once capital or multiple approvers enter the loop.
 
-1. **R63 + R64** -- blocking mypy and coverage gates in CI.
-2. **R18 + R59** -- make the full-repo Ruff / pre-commit policy clear
-   and blocking.
-3. **R60 + R61 + R62 + R65** -- wheel matrix, security scan, SBOM and
-   coverage artefact.
-4. **R29 + R31 + R69** -- Python 3.14 matrix, docs hosting and
-   SECURITY.md.
-
-Why before features: local quality gates are already green. Leaving
-CI weaker than local development is paying interest on a loan nobody
-remembers taking.
-
-### Phase 2. Core Integrity
-
-Goal: harden the pieces everything else depends on.
-
-Recommended order:
-
-1. **R19** -- wire `SnapshotStore` to the backend interface.
-2. **R16** -- define Calmar / MAR behaviour when drawdown is zero.
-3. **R34 + R35 + R36** -- audit rotation, key rotation and restore
-   procedure.
-4. **R40** -- benchmark scaffold. This gates R5 / R6.
-5. **R21 + R41 + R42** -- mutmut runner sanity, mutation sweep and
-   nightly thorough property run.
-6. **R43 + R44 + R71** -- RBAC, signed strategy specs and concurrent
-   strategy isolation.
-7. **R37 + R146 + R147 + R148** -- daily ops delivery,
-   reproducibility witness, audit replay and determinism contracts.
-8. **R45 + R46 + R75 + R76** -- timezone, ZERO_costs warning,
-   hardcoded-path sweep and AURORA env-var migration plan.
-
-Why here: these are boring in the productive sense. They make later
-automation and live work safer.
-
-### Phase 3. Codebase Simplification
-
-Goal: reduce maintenance drag before adding another layer of product.
-
-Recommended order:
-
-1. **R47 + R48** -- classify production status and triage
-   `experimental/`.
-2. **R49 + R50 + R51 + R52** -- split oversized files.
-3. **R32 + R53 + R54 + R55 + R56** -- optional broader Ruff cleanup,
-   classify unfinished stubs, TODOs,
-   broad catches and non-CLI `print()` calls.
-4. **R66 + R67 + R68 + R72 + R73** -- archive stale docs, decide the
-   GitHub research doc, document the numba workaround and decide the
-   CLI public API.
-
-Why before big product bets: smaller files and cleaner boundaries make
-large features cheaper and less fragile.
-
-### Phase 4. Data And Validation Quality
-
-Goal: make bad evidence harder to accept.
-
-Recommended order:
-
-1. **Candidate C** -- data contract and broken-data detector.
-2. **R112 + R143 + R149 + R150 + R151** -- feed, snapshot,
-   survivorship, corporate-action and holiday-calendar audits.
-3. **R144 + R145** -- synthetic adversarial markets and
-   out-of-distribution feature detector.
-4. **R103 + R104 + R105 + R106 + R107** -- statistical significance,
-   metric confidence, signal attribution, OOS Plus and multi-market
-   sweep.
-5. **R81 + R82 + R83 + R97 + R98 + R99** -- walk-forward, optimisation
-   maps, similarity scoring, cross-validation matrices, stability
-   index and regime-aware optimisation.
-
-Why this phase is high value: if the data or validation is wrong,
-every strategy result downstream is just confident decoration.
-
-### Phase 5. Research Factory And Strategy Lifecycle
-
-Goal: improve strategy creation without losing auditability.
-
-Recommended order:
-
-1. **Candidate B** -- research degrees-of-freedom ledger.
-2. **R38 + R39 + R140 + R152** -- curation, graveyard, lifecycle SLA
-   and ancestry tree.
-3. **R126 + R141 + R142** -- decay attribution, refit cadence and
-   degradation forecasting.
-4. **R77 + R78 + R86 + R87 + R111** -- generation primitives, rule IR,
-   block library, templates and pre-acceptance constraints.
-5. **R79 + R88 + R89 + R91 + R92 + R93** -- pattern module, money
-   management, robustness preset, bundle import / publish, DNA
-   similarity and re-optimisation scheduler.
-6. **R80 + R84 + R85 + R101 + R110 + R123** -- external code export,
-   PDF reports, dashboard, volume profile, replay debugger and code
-   preview.
-7. **R94 + R95 + R96** -- news filter, volatility filter and custom
-   session times.
-8. **R102 + R108 + R109 + R113 + R115 + R116 + R118 + R124** --
-   build-level goal seeking, generated alpha combinations, ensembles
-   and portfolio primitives.
-
-Why after data integrity: generating more strategies before measuring
-research pressure and data quality is how you manufacture false
-confidence at scale.
-
-### Phase 6. Execution, Live And Monitoring
-
-Goal: move from validated ideas to controlled operation.
-
-Recommended order:
-
-1. **Candidate A** -- broker-event execution replay.
-2. **R135 + R136 + R137** -- shadow, dry-run and pre-deploy freshness.
-3. **R119 + R120 + R122 + R138 + R139 + R154** -- spread filter,
-   account circuit breaker, alerts, data-quality pause, anomaly
-   detection and common-cause regime alert.
-4. **R100 + R114 + R117 + R121 + R127 + R128 + R129 + R130 + R131 +
-   R132 + R133 + R134** -- realistic execution simulation, tax
-   awareness, what-if replay, hedging, cost / borrow / spread /
-   slippage / impact / capacity / liquidity / universe controls.
-5. **R153** -- sealed forecast ceremony before serious live promotion.
-6. **R4** -- real broker adapters only after replay, reconciliation
-   and operator-side credentials are ready.
-
-Why late: live execution touches real money. The system should earn
-that privilege gradually.
-
-### Phase 7. External Or Gated Bets
+### Track 3. External Or Gated Bets
 
 Goal: keep expensive or blocked work visible without pretending it is
 ready.
@@ -648,8 +548,9 @@ ready.
   numba is not enough.
 - **R90** distributed strategy generation: defer until the factory
   contract and validation gates are stronger.
-- **R23** rename to AURORA: do in isolation only after R76, docs truth
-  and CI hardening are complete.
+- **R4** real execution adapters: blocked until replay,
+  reconciliation, operator credentials and funded broker-account
+  decisions are ready.
 
 ### Closed Historical Order
 
@@ -813,7 +714,7 @@ a time; do not bundle behavior changes with lint-only sweeps.
 
 ### R19. Wire `SnapshotStore` to the new backend interface
 
-Status: follow-up to R7, pending
+Status: completed in 2026-05-08 batch 16; evidence: `core/snapshots.py::SnapshotStore.__init__` accepts an optional `backend` arg defaulting to None (legacy behaviour byte-identical). When supplied, `_mirror_freeze()` forwards every successful freeze to the backend's `put_blob` + `put_metadata`. Mirror failures are swallowed so an offline backend cannot wedge the primary filesystem path. `tests/test_roadmap_batch_16.py` exercises a fake backend proving the abstraction is real.
 Priority: medium
 Effort: 2 to 3 days
 Area: data/provenance
@@ -887,7 +788,7 @@ Follow-up:
 
 ### R21. Mutmut runner sanity
 
-Status: optional follow-up to R12
+Status: verified in 2026-05-08 batch 16. All 15 test files in `[tool.mutmut].pytest_add_cli_args_test_selection` exist on disk (verified via shell test). `mutmut_config.py` TARGETS list aligns with `[tool.mutmut].paths_to_mutate`. Running the actual sweep (R41) is compute-bound and is the next step.
 Priority: low
 Effort: 1 day
 Area: QA / mutation testing
@@ -1635,7 +1536,7 @@ Suggested paths: `.github/workflows/typecheck.yml`,
 `pyproject.toml` (`[tool.mypy]`)
 
 `mypy` is in `[dev]` but not run by any CI workflow. Local
-verification now passes with no errors across 321 source files. Add a
+verification now passes with no errors across 410 source files. Add a
 blocking `typecheck` job that runs the same command used locally
 (respecting the flat Layout B package structure; do not use
 `python -m mypy quantforge/`, because there is no package subdir in
@@ -2983,12 +2884,12 @@ These are not rejected. They are too broad to start as single tasks:
 ## Candidate Features To Promote
 
 These are intentionally not numbered as R155+. Promote them only after
-a pruning pass closes, merges or demotes existing roadmap items. These
-features are worth keeping because they improve trust in live operation,
-data integrity and research honesty rather than adding more surface
-area for its own sake.
+a pruning pass closes, merges or demotes existing roadmap items. Treat
+them as four strategic programmes, not as a pile of new tickets. The
+point is to stop QuantForge / AURORA from fooling itself with bad data,
+overfit research, unrealistic execution or unowned model risk.
 
-### Candidate A. Execution replay from broker events
+### Candidate A. Execution integrity programme
 
 Why it matters: after a paper or live session, QuantForge should be
 able to rebuild what happened from broker events alone: order created,
@@ -2998,7 +2899,8 @@ from the engine's state, the system has found a real operational risk.
 
 Recommended promotion target: merge with R4 if the next broker work is
 about real exchange execution, or promote as its own execution-integrity
-item if replay is implemented before new broker adapters.
+epic if replay / reconciliation is implemented before new broker
+adapters.
 
 Definition of ready:
 
@@ -3008,14 +2910,29 @@ Definition of ready:
   from the event log.
 - A mismatch report explains engine-vs-broker differences without
   hiding them behind a generic "failed" message.
-- Tests cover partial fills, rejects, cancels, reconnects and duplicate
-  events.
+- Daily and restart reconciliation compare engine state vs broker
+  state: positions, cash, PnL, open orders, orphan orders, missing
+  fills, duplicate fills, commissions and fees.
+- An explicit order lifecycle state machine handles created,
+  submitted, acknowledged, partially-filled, filled, cancel-pending,
+  cancelled, replace-pending, replaced, rejected, expired, unknown and
+  reconciled states.
+- Fill / slippage / latency models cover partial fills, spread-aware
+  execution, volume participation, stale quotes, rejects, tick size and
+  minimum lot constraints.
+- A basic TCA report decomposes realised execution into arrival price,
+  effective spread, slippage, delay cost, opportunity cost and unfilled
+  quantity.
+- Tests cover partial fills, rejects, cancels, reconnects, duplicate
+  events, out-of-order events, restart between ack and fill, and fill
+  without a local order.
 
 Reason not to start immediately: R4 already blocks on credentials and
-operator-side decisions. Replay is high value, but it should not jump
-ahead of CI hardening unless the next practical milestone is execution.
+operator-side decisions. Replay / reconciliation is high value, but it
+should not jump ahead of the remaining local integrity work unless the
+next practical milestone is live execution.
 
-### Candidate B. Research degrees-of-freedom ledger
+### Candidate B. Research honesty programme
 
 Why it matters: every strategy has invisible "research choices" behind
 it: which universes were tried, which indicators were tested, which
@@ -3038,6 +2955,18 @@ Definition of ready:
 - Validation reports include a plain "research pressure" section that
   warns when too many choices were tried for the amount of data
   available.
+- Probabilistic / Deflated Sharpe, PBO-style overfitting checks,
+  purged / embargoed CV and mandatory benchmark comparisons are wired
+  into promotion reports where the relevant primitives exist.
+- A robustness budget records sensitivity to costs, spread, delay,
+  sizing, universe, timeframe, missing data, seed and regime.
+- Strategy graveyard and similarity checks are used before promotion
+  so the factory does not rediscover the same rejected edge under a
+  new name.
+- Every promoted strategy is compared against basic baselines: cash,
+  buy-and-hold, equal weight, simple momentum / mean reversion, random
+  entry with comparable turnover, and the currently deployed version
+  when one exists.
 - Manual overrides are recorded with author, timestamp and reason.
 - Tests prove the ledger is append-only and survives resume / retry.
 
@@ -3046,7 +2975,7 @@ touches research UX, validation reporting and the factory. Best done
 after the roadmap truth / CI batch, otherwise it becomes another big
 feature sitting on soft ground. Glamorous? No. Useful? Painfully.
 
-### Candidate C. Data contract and broken-data detector
+### Candidate C. Data integrity programme
 
 Why it matters: every backtest and validation run should prove that
 the input data is sane before the strategy sees it. Bad data can look
@@ -3065,6 +2994,24 @@ Definition of ready:
 - A versioned data contract defines required columns, index ordering,
   timezone policy, symbol identity, currency, corporate-action posture,
   volume expectations and allowed missing-data policy.
+- Point-in-time / bitemporal fields are available where the dataset
+  needs them: event time, available time, ingested time and revision
+  time. Strategies, GA and the factory cannot read a value whose
+  available time is after the decision time.
+- A small Security Master maps ticker, vendor symbol, broker symbol,
+  ISIN / FIGI / CUSIP where available, exchange, currency, active /
+  inactive state, listing window, delisting, splits, dividends,
+  mergers, spin-offs and ticker changes.
+- Corporate-action checks cover split, reverse split, cash dividend,
+  special dividend, merger, spin-off, symbol change, delisting return,
+  suspended trading and ADR-ratio style adjustments where supported by
+  the source data.
+- Market-calendar checks are per instrument / venue: holidays, early
+  closes, lunch breaks, overnight sessions, DST shifts, auctions,
+  half-days and roll windows where relevant.
+- Data lineage records input datasets, transformations, code version,
+  contract version, policy hash, snapshot hash, validator hash,
+  strategy, experiment, report and deployment evidence.
 - A validator runs before backtest, GA, validation and factory submit.
 - The detector flags duplicated timestamps, non-monotonic indexes,
   suspicious gaps, zero or negative prices, impossible returns,
@@ -3079,6 +3026,41 @@ feature after CI hardening, but it should be designed as a shared
 contract used by the whole engine. If implemented piecemeal, every
 module will invent its own definition of "valid data", and that way
 lies sadness with a nice traceback.
+
+### Candidate D. Strategy risk register and approval workflow
+
+Why it matters: a strategy can be technically valid and still be a bad
+idea to run. QuantForge / AURORA needs a simple model-risk layer that
+answers: what is this strategy for, when should it not be used, who
+owns it, what evidence promoted it, what risk limits apply, when does
+it expire, and who approved the move toward live.
+
+Recommended promotion target: merge with R38 / R39 / R140 / R152 if
+the next work is lifecycle governance, or promote as its own
+model-risk item before any serious paper-to-live workflow.
+
+Definition of ready:
+
+- Each promoted strategy has a risk record with intended use,
+  limitations, assumptions, owner, reviewer, approval status,
+  validation evidence, data contract, policy hash, snapshot hash,
+  strategy hash, risk limits and expiry / revalidation date.
+- Promotion uses a maker-checker flow: researcher proposes,
+  independent reviewer validates, risk owner approves limits, operator
+  approves deployment, and the audit chain stores the evidence.
+- Lifecycle states are explicit: draft, researching, rejected,
+  quarantined, validated, OOS-approved, shadow, paper, canary, live,
+  degraded, retired and graveyard.
+- Live promotion refuses strategies without a current risk record,
+  current validation, current data contract and unresolved warnings
+  below the operator-defined threshold.
+- Tests cover approval ordering, expired risk records, rejected
+  promotion, override evidence and audit-chain persistence.
+
+Reason not to start immediately: this is governance, not alpha. It
+becomes high priority when the project is close to paper/live capital
+or when multiple people start approving strategies. Until then, keep
+the spec sharp and avoid building bureaucracy cosplay.
 
 ---
 

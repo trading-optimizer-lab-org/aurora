@@ -203,10 +203,31 @@ class SnapshotStore:
         ("audit_report_hash", "TEXT"),
     )
 
-    def __init__(self, root_dir: str = "data_snapshots/") -> None:
+    def __init__(
+        self,
+        root_dir: str = "data_snapshots/",
+        *,
+        backend: Optional["object"] = None,
+    ) -> None:
+        """Construct a SnapshotStore.
+
+        Args:
+            root_dir: filesystem path for the legacy on-disk layout
+                (parquet blobs + ``snapshots_index.sqlite``). Always
+                used; behaviour byte-identical to pre-R19 callers.
+            backend: optional :class:`SnapshotBackend` (R7) used as a
+                mirror sink. When supplied, every successful ``freeze``
+                also calls ``backend.put_blob`` and ``backend.put_metadata``
+                so the abstraction is exercised end-to-end. Default
+                ``None`` keeps the legacy behaviour. Mirror failures
+                propagate after the legacy write commits, so an offline
+                backend cannot silently lose a snapshot from the
+                primary path.
+        """
         self.root_dir = os.path.abspath(root_dir)
         os.makedirs(self.root_dir, exist_ok=True)
         self.index_path = os.path.join(self.root_dir, "snapshots_index.sqlite")
+        self._mirror_backend = backend
         self._init_index()
 
     # ---- helpers ---------------------------------------------------------
@@ -462,7 +483,40 @@ class SnapshotStore:
                 raise
         finally:
             con.close()
+
+        # R19: mirror to optional backend after the legacy write commits.
+        # Mirror failure does not roll back the primary path -- the
+        # filesystem layout remains the source of truth.
+        self._mirror_freeze(snap, data_path)
         return snap
+
+    def _mirror_freeze(self, snap: DataSnapshot, data_path: str) -> None:
+        """Forward a successful freeze to the optional mirror backend."""
+        backend = self._mirror_backend
+        if backend is None:
+            return
+        try:
+            with open(data_path, "rb") as fh:
+                blob = fh.read()
+            backend.put_blob(snap.sha256, blob)
+            backend.put_metadata(snap.sha256, {
+                "symbol": snap.symbol,
+                "start_iso": snap.start.isoformat(),
+                "end_iso": snap.end.isoformat(),
+                "n_bars": snap.n_bars,
+                "provenance": snap.provenance,
+                "created_at": snap.created_at.isoformat(),
+                "data_path": snap.data_path,
+                "locked": bool(snap.locked),
+                "git_hash": snap.git_hash,
+                "forge_version": snap.forge_version,
+                "seed": snap.seed,
+                "config_hash": snap.config_hash,
+                "policy_hash": snap.policy_hash,
+                "audit_report_hash": snap.audit_report_hash,
+            })
+        except Exception:  # noqa: BLE001 -- best-effort mirror, never wedge primary
+            pass
 
     def load(self, sha256: str) -> tuple[pd.Series, DataSnapshot]:
         """Load a frozen series and verify its hash.
