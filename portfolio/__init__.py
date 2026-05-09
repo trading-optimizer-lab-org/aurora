@@ -15,6 +15,11 @@ optimizers
     Optional SkfolioAdapter stub: lazy import, skips cleanly if missing.
 stress
     Allocator stress testing (noise, costs, asset removal, correlation).
+analytics
+    Rolling-window portfolio analytics (volatility, Sharpe, max drawdown,
+    correlation).
+attribution
+    Per-asset return and risk attribution helpers.
 """
 from __future__ import annotations
 
@@ -24,6 +29,17 @@ from quantforge.portfolio.allocation import (
     EqualWeightAllocator,
     InverseVolAllocator,
     PortfolioOptimizer,
+)
+from quantforge.portfolio.analytics import (
+    rolling_correlation,
+    rolling_max_drawdown,
+    rolling_sharpe,
+    rolling_volatility,
+)
+from quantforge.portfolio.attribution import (
+    contribution_to_return,
+    contribution_to_risk,
+    decompose_return,
 )
 from quantforge.portfolio.constraints import PortfolioConstraints
 from quantforge.portfolio.optimizers import (
@@ -69,4 +85,13 @@ __all__ = [
     "StressScenario",
     "StressResult",
     "stress_test",
+    # analytics
+    "rolling_volatility",
+    "rolling_sharpe",
+    "rolling_max_drawdown",
+    "rolling_correlation",
+    # attribution
+    "contribution_to_return",
+    "contribution_to_risk",
+    "decompose_return",
 ]
