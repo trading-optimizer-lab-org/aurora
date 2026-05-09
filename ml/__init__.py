@@ -6,20 +6,20 @@ Implements Lopez de Prado AFML chapters 3-4, 8.
 # package's hard dependencies, so they import unconditionally. Wrapping them
 # in try/except previously hid real bugs (a typo or missing symbol would
 # silently disappear from ``__all__``).
-from quantforge.ml.labels import (
+from aurora.ml.labels import (
     TripleBarrierResult,
     daily_volatility,
     triple_barrier_labels,
     meta_labels,
     bet_size_from_proba,
 )
-from quantforge.ml.feature_importance import (
+from aurora.ml.feature_importance import (
     mean_decrease_impurity,
     mean_decrease_accuracy,
     single_feature_importance,
     plot_importance,
 )
-from quantforge.ml.microstructure import (
+from aurora.ml.microstructure import (
     corwin_schultz_spread,
     roll_spread_estimator,
     signed_volume,
@@ -28,7 +28,7 @@ from quantforge.ml.microstructure import (
     kyle_lambda,
     amihud_illiquidity,
 )
-from quantforge.ml.features_pipeline import (
+from aurora.ml.features_pipeline import (
     FeaturePipeline,
     FeaturePipelineConfig,
 )
@@ -58,14 +58,14 @@ __all__ = [
 # ``TORCH_AVAILABLE`` flag and is itself import-safe without torch, so we
 # always import the module; consumers should branch on ``TORCH_AVAILABLE``
 # at use time.
-from quantforge.ml.lstm import (  # noqa: E402  (logical group after __all__)
+from aurora.ml.lstm import (  # noqa: E402  (logical group after __all__)
     LSTMConfig,
     LSTMForecaster,
     make_sequences,
     walk_forward_train,
     TORCH_AVAILABLE,
 )
-from quantforge.ml.transformer import (  # noqa: E402
+from aurora.ml.transformer import (  # noqa: E402
     TransformerConfig,
     TimeSeriesTransformer,
     make_multi_horizon_sequences,
@@ -85,7 +85,7 @@ __all__ += [
 # Gymnasium / SB3-gated symbols. ``rl_agent`` exposes ``GYM_AVAILABLE`` and
 # ``SB3_AVAILABLE`` for runtime branching; the module itself is import-safe
 # without those extras installed.
-from quantforge.ml.rl_agent import (  # noqa: E402
+from aurora.ml.rl_agent import (  # noqa: E402
     GYM_AVAILABLE,
     SB3_AVAILABLE,
     TradingEnvConfig,
@@ -109,11 +109,11 @@ __all__ += [
 # ---------------------------------------------------------------------------
 # Batch C — advanced ML/AI modules. Each submodule handles its own optional
 # dependency probing internally; we re-export the public symbols guarded so a
-# missing heavy dep never breaks ``import quantforge.ml``.
+# missing heavy dep never breaks ``import aurora.ml``.
 # ---------------------------------------------------------------------------
 
 try:
-    from quantforge.ml.automl_features import (  # noqa: E402
+    from aurora.ml.automl_features import (  # noqa: E402
         AutoMLConfig,
         AutoMLFeatureEngineer,
     )
@@ -122,7 +122,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.genetic_programming import (  # noqa: E402
+    from aurora.ml.genetic_programming import (  # noqa: E402
         GPConfig,
         GeneticFormulaEngine,
         DEAP_AVAILABLE,
@@ -132,7 +132,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.transformer_multi_asset import (  # noqa: E402
+    from aurora.ml.transformer_multi_asset import (  # noqa: E402
         MultiAssetTransformer,
         MultiAssetTransformerConfig,
     )
@@ -141,7 +141,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.graph_neural_net import (  # noqa: E402
+    from aurora.ml.graph_neural_net import (  # noqa: E402
         CorrelationGraphNN,
         CorrelationGNNConfig,
         build_correlation_graph,
@@ -157,7 +157,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.causal_inference import (  # noqa: E402
+    from aurora.ml.causal_inference import (  # noqa: E402
         CausalFactorAnalysis,
         CausalReport,
         RefutationResult,
@@ -167,7 +167,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.bayesian_nn import (  # noqa: E402
+    from aurora.ml.bayesian_nn import (  # noqa: E402
         BayesianForecaster,
         BayesianConfig,
         PYRO_AVAILABLE,
@@ -177,7 +177,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.meta_learning import (  # noqa: E402
+    from aurora.ml.meta_learning import (  # noqa: E402
         MetaLearner,
         MetaConfig,
         Task as MetaTask,
@@ -187,7 +187,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.multi_agent_rl import (  # noqa: E402
+    from aurora.ml.multi_agent_rl import (  # noqa: E402
         MultiAgentTradingEnv,
         MultiAgentEnvConfig,
         long_only_policy,
@@ -205,7 +205,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.llm_portfolio_manager import (  # noqa: E402
+    from aurora.ml.llm_portfolio_manager import (  # noqa: E402
         LLMPortfolioManager,
         LLMPortfolioConfig,
         MockAnthropicClient,
@@ -221,7 +221,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.diffusion_scenarios import (  # noqa: E402
+    from aurora.ml.diffusion_scenarios import (  # noqa: E402
         DiffusionScenarioGenerator,
         DiffusionConfig,
     )
@@ -236,7 +236,7 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 try:
-    from quantforge.ml.mamba_ssm import (  # noqa: E402
+    from aurora.ml.mamba_ssm import (  # noqa: E402
         MambaConfig,
         MambaForecaster,
         MAMBA_AVAILABLE,
@@ -246,7 +246,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.moe import (  # noqa: E402
+    from aurora.ml.moe import (  # noqa: E402
         MoEConfig,
         MixtureOfExperts,
     )
@@ -255,7 +255,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.rag_research import (  # noqa: E402
+    from aurora.ml.rag_research import (  # noqa: E402
         RAGConfig,
         RAGResearchAssistant,
         MockLLM,
@@ -266,7 +266,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.vector_db_papers import (  # noqa: E402
+    from aurora.ml.vector_db_papers import (  # noqa: E402
         PapersVectorDB,
         PapersVectorDBConfig,
         SENTENCE_TRANSFORMERS_AVAILABLE,
@@ -280,7 +280,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.knowledge_distillation import (  # noqa: E402
+    from aurora.ml.knowledge_distillation import (  # noqa: E402
         DistillationConfig,
         KnowledgeDistiller,
     )
@@ -289,7 +289,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.active_learning import (  # noqa: E402
+    from aurora.ml.active_learning import (  # noqa: E402
         ActiveLearnerConfig,
         ActiveLearner,
     )
@@ -298,7 +298,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.curriculum_learning import (  # noqa: E402
+    from aurora.ml.curriculum_learning import (  # noqa: E402
         CurriculumConfig,
         CurriculumScheduler,
     )
@@ -307,7 +307,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.contrastive_strategy import (  # noqa: E402
+    from aurora.ml.contrastive_strategy import (  # noqa: E402
         ContrastiveConfig,
         ContrastiveStrategyEmbedder,
     )
@@ -316,7 +316,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.self_supervised_pretrain import (  # noqa: E402
+    from aurora.ml.self_supervised_pretrain import (  # noqa: E402
         SelfSupervisedConfig,
         SelfSupervisedPretrainer,
     )
@@ -325,7 +325,7 @@ except ImportError:  # pragma: no cover
     pass
 
 try:
-    from quantforge.ml.few_shot_strategy import (  # noqa: E402
+    from aurora.ml.few_shot_strategy import (  # noqa: E402
         FewShotConfig,
         FewShotStrategyAdapter,
     )

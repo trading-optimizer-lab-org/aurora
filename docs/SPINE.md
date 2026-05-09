@@ -1,4 +1,4 @@
-# QuantForge Spine
+# Aurora Spine
 
 The "spine" is the load-bearing chain of seven components that take a research
 hypothesis from raw data all the way to a paper / live order, with provenance
@@ -68,9 +68,9 @@ The end-to-end behaviour described above is exercised by
 Run it with
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/test_spine_e2e.py -v
+"C:/Python314/python.exe" -m pytest tests/test_spine_e2e.py -v
 ```
 
 ## Known limitations (as of 2026-05-07)
 
-- `quantforge.validation.pipeline.ValidationReport` does not currently carry a top-level `policy_hash` field. Provenance is preserved through the embedded `audit_report.policy_hash` when an `auditor_context` is provided. The provenance test reflects this: it asserts the audit report's hash, not the report's.
+- `aurora.validation.pipeline.ValidationReport` does not currently carry a top-level `policy_hash` field. Provenance is preserved through the embedded `audit_report.policy_hash` when an `auditor_context` is provided. The provenance test reflects this: it asserts the audit report's hash, not the report's.

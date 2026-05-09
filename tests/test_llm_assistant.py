@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from quantforge.research.llm_assistant import (
+from aurora.research.llm_assistant import (
     ANTHROPIC_AVAILABLE,
     LLMConfig,
     LLMResearchAssistant,
@@ -103,7 +103,7 @@ def test_propose_ideas_invalid_json():
 VALID_STRATEGY_CODE = '''from __future__ import annotations
 import numpy as np
 import pandas as pd
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 class DemoStrat(Strategy):
@@ -281,7 +281,7 @@ def test_propose_ideas_debug_log_sanitized(caplog: pytest.LogCaptureFixture) -> 
     # Smuggle non-ASCII control characters and a long suffix.
     leak = "\x00\x01‮malicious " + ("X" * 1000) + " not_json {"
     a = LLMResearchAssistant(LLMConfig(), client=MockAnthropicClient(leak))
-    with caplog.at_level(_logging.DEBUG, logger="quantforge.research.llm_assistant"):
+    with caplog.at_level(_logging.DEBUG, logger="aurora.research.llm_assistant"):
         with pytest.raises(ValueError):
             a.propose_ideas("ctx", n=1)
     debug_lines = [r.getMessage() for r in caplog.records if r.levelname == "DEBUG"]

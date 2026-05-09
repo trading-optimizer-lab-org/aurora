@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from quantforge.compliance.two_factor import TwoFactorAuth, TwoFactorConfig
+from aurora.compliance.two_factor import TwoFactorAuth, TwoFactorConfig
 
 
 @pytest.fixture

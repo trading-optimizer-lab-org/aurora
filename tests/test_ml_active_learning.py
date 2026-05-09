@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.ml.active_learning import (
+from aurora.ml.active_learning import (
     ActiveLearner,
     ActiveLearnerConfig,
 )

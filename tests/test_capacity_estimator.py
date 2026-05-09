@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.validation.capacity_estimator import CapacityEstimator
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library.ma_cross import MACross
+from aurora.validation.capacity_estimator import CapacityEstimator
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.lstm import (
+from aurora.ml.lstm import (
     LSTMConfig,
     LSTMForecaster,
     make_sequences,
@@ -175,7 +175,7 @@ def test_walk_forward_dataframe():
 
 def test_seed_reproducibility():
     """Same global seed -> identical predictions across two fresh fits."""
-    from quantforge.core.seed import set_global_seed
+    from aurora.core.seed import set_global_seed
 
     feats, target = _synthetic_panel(n_bars=180, n_features=4, seed=3)
     cfg = LSTMConfig(

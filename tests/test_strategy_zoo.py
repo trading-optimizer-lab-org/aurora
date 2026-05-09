@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.strategy_zoo import StrategyZoo, ZooEntry
-from quantforge.strategies.base import Strategy
+from aurora.research.strategy_zoo import StrategyZoo, ZooEntry
+from aurora.strategies.base import Strategy
 
 
 def test_zoo_has_at_least_50_strategies():

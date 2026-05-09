@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.dao_governance import DAOGovernance
+from aurora.experimental.dao_governance import DAOGovernance
 
 
 def test_create_and_list_proposal(tmp_path):

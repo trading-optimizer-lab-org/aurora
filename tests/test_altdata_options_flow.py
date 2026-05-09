@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.altdata.options_flow import (
+from aurora.altdata.options_flow import (
     OptionsFlowAdapter,
     OptionsFlowConfig,
 )

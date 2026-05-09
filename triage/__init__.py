@@ -9,7 +9,7 @@ costs, slippage, snapshots, OOSGuard, protocol enforcement.
 
 Public API::
 
-    from quantforge.triage import (
+    from aurora.triage import (
         TriageEngine, TriageResult, TriageBatch, TriageConfig,
         StrategyVariant, variant_grid, variant_random_sample,
     )
@@ -23,13 +23,13 @@ Hard guarantees:
   engine*, never *promotable*. Promotion is single-use through
   :meth:`TriageEngine.promote_to_official`.
 """
-from quantforge.triage.engine import (
+from aurora.triage.engine import (
     TriageBatch,
     TriageConfig,
     TriageEngine,
     TriageResult,
 )
-from quantforge.triage.variants import (
+from aurora.triage.variants import (
     StrategyVariant,
     variant_grid,
     variant_random_sample,

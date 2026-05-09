@@ -32,7 +32,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.sqlite_utils import _setup_sqlite
 
 
 # Phases that are allowed to load a locked snapshot. Any other phase (or no
@@ -299,29 +299,29 @@ class SnapshotStore:
             "seed": None,
         }
         try:
-            from quantforge.core.data_layer import _get_git_hash
+            from aurora.core.data_layer import _get_git_hash
             meta["git_hash"] = _get_git_hash()
         except Exception:
             pass
         try:
             import importlib.metadata as _md
-            meta["forge_version"] = _md.version("quantforge")
+            meta["forge_version"] = _md.version("aurora")
         except Exception:
             try:
                 # Fallback to a __version__ attribute if the package
                 # carries one.
-                import quantforge as _qf
+                import aurora as _qf
                 meta["forge_version"] = getattr(_qf, "__version__", None)
             except Exception:
                 meta["forge_version"] = None
         try:
-            from quantforge.core.seed import GLOBAL_SEED
+            from aurora.core.seed import GLOBAL_SEED
             meta["seed"] = int(GLOBAL_SEED) if GLOBAL_SEED is not None else None
         except Exception:
             meta["seed"] = None
         # P0.A: bind every snapshot to the protocol it was frozen under.
         try:
-            from quantforge.core.protocol_policy import get_active_policy
+            from aurora.core.protocol_policy import get_active_policy
             meta["policy_hash"] = get_active_policy().policy_hash
         except Exception:
             meta["policy_hash"] = None
@@ -498,7 +498,7 @@ class SnapshotStore:
 
         if snap.locked:
             # late import to avoid circular dependency with data_layer
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
             guard = OOSGuard.active()
             # Match the phase exactly against the allowed set; using
             # ``startswith`` previously let ``"explicit_unlock_oops"`` slip

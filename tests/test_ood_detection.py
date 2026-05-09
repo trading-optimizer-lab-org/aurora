@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.validation.ood_detection import OODDetector
+from aurora.validation.ood_detection import OODDetector
 
 
 def test_basic_inlier(seed=42):

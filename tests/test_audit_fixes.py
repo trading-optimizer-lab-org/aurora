@@ -79,21 +79,21 @@ def test_pyproject_package_data_py_typed():
 
 
 def test_monitoring_drift_importable_from_package():
-    mod = importlib.import_module("quantforge.monitoring")
+    mod = importlib.import_module("aurora.monitoring")
     for name in ("PageHinkleyDetector", "ADWINDetector", "KSDriftDetector",
                  "AutoRetrainController"):
-        assert hasattr(mod, name), f"quantforge.monitoring missing {name}"
+        assert hasattr(mod, name), f"aurora.monitoring missing {name}"
 
 
 def test_validation_re_exports():
-    mod = importlib.import_module("quantforge.validation")
+    mod = importlib.import_module("aurora.validation")
     for name in ("purged_cv", "PurgedKFold", "tail_risk", "correlation_stress",
                  "scenarios", "KNOWN_CRASHES", "stress_test_all_known"):
-        assert hasattr(mod, name), f"quantforge.validation missing {name}"
+        assert hasattr(mod, name), f"aurora.validation missing {name}"
 
 
 def test_deployment_imports_all_documented():
-    mod = importlib.import_module("quantforge.deployment")
+    mod = importlib.import_module("aurora.deployment")
     # core (always available)
     for name in ("PaperBroker", "AlpacaAdapter", "IBAdapter", "CoinbaseAdapter",
                  "KrakenAdapter", "create_broker", "Order", "Position",
@@ -103,36 +103,36 @@ def test_deployment_imports_all_documented():
                  "exponential_cov", "risk_parity", "compute_liquidity_profile",
                  "LiquidityAwarePortfolio", "run_preflight", "PreflightCheck",
                  "PreflightReport"):
-        assert hasattr(mod, name), f"quantforge.deployment missing {name}"
+        assert hasattr(mod, name), f"aurora.deployment missing {name}"
 
 
 def test_analytics_re_exports_attribution_and_factor():
-    mod = importlib.import_module("quantforge.analytics")
+    mod = importlib.import_module("aurora.analytics")
     for name in ("attribution_by_factor", "BrinsonDecomposition",
                  "quantile_spread", "information_coefficient"):
-        assert hasattr(mod, name), f"quantforge.analytics missing {name}"
+        assert hasattr(mod, name), f"aurora.analytics missing {name}"
 
 
 def test_registry_versioning_re_exports():
-    mod = importlib.import_module("quantforge.registry")
+    mod = importlib.import_module("aurora.registry")
     for name in ("StrategyVersion", "register", "hash_strategy_code"):
-        assert hasattr(mod, name), f"quantforge.registry missing {name}"
+        assert hasattr(mod, name), f"aurora.registry missing {name}"
 
 
 def test_core_run_backtest_convenience():
-    from quantforge.core import run_backtest, BacktestResult, IBKR_costs
+    from aurora.core import run_backtest, BacktestResult, IBKR_costs
     assert callable(run_backtest)
     assert BacktestResult is not None
     assert IBKR_costs is not None
 
 
 def test_top_level_convenience_exports():
-    import quantforge
+    import aurora
 
     for name in ("run_backtest", "set_global_seed"):
-        assert hasattr(quantforge, name), f"quantforge missing top-level {name}"
+        assert hasattr(aurora, name), f"aurora missing top-level {name}"
     # version comes from importlib.metadata or fallback
-    assert isinstance(quantforge.__version__, str) and quantforge.__version__
+    assert isinstance(aurora.__version__, str) and aurora.__version__
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ def test_data_cache_does_not_write_into_site_packages(monkeypatch, tmp_path):
 
     import importlib
 
-    data_layer = importlib.import_module("quantforge.core.data_layer")
+    data_layer = importlib.import_module("aurora.core.data_layer")
     monkeypatch.setattr(data_layer, "PROJ", str(fake_proj))
     resolved = data_layer._resolve_qf_cache()
     site_pkg_markers = ("site-packages", "dist-packages")

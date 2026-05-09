@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.news_entropy_regime import (
+from aurora.experimental.news_entropy_regime import (
     NewsEntropyRegime,
     SKLEARN_AVAILABLE,
 )

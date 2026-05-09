@@ -32,7 +32,7 @@ class SOC2Config:
     log_path: str = field(
         default_factory=lambda: str(
             __import__(
-                "quantforge.core.runtime_paths", fromlist=["audit_log_path"]
+                "aurora.core.runtime_paths", fromlist=["audit_log_path"]
             ).audit_log_path()
         )
     )

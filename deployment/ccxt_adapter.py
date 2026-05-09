@@ -44,8 +44,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from quantforge.core.logging import get_logger, log_event
-from quantforge.deployment.brokers import (
+from aurora.core.logging import get_logger, log_event
+from aurora.deployment.brokers import (
     AuditLog,
     Broker,
     BrokerConfig,
@@ -63,11 +63,17 @@ _log = get_logger("deployment.ccxt_adapter")
 # Constants
 # ---------------------------------------------------------------------------
 
-KILL_SWITCH_ENV = "QF_CCXT_KILL_SWITCH"
+# Aurora canonical env var patterns (R23). Legacy QF_CCXT_* names are still
+# accepted via aurora_env() with a DeprecationWarning during the shim window.
+KILL_SWITCH_ENV = "AU_CCXT_KILL_SWITCH"
+KILL_SWITCH_ENV_LEGACY = "QF_CCXT_KILL_SWITCH"
 LIVE_CEREMONY_PHASE = "ccxt_live_authorized"
-ALLOW_LIVE_TOKEN_ENV_PATTERN = "QF_CCXT_ALLOW_LIVE_{EXCHANGE}"
-DEFAULT_API_KEY_ENV_PATTERN = "QF_CCXT_{EXCHANGE}_KEY"
-DEFAULT_API_SECRET_ENV_PATTERN = "QF_CCXT_{EXCHANGE}_SECRET"
+ALLOW_LIVE_TOKEN_ENV_PATTERN = "AU_CCXT_ALLOW_LIVE_{EXCHANGE}"
+ALLOW_LIVE_TOKEN_ENV_PATTERN_LEGACY = "QF_CCXT_ALLOW_LIVE_{EXCHANGE}"
+DEFAULT_API_KEY_ENV_PATTERN = "AU_CCXT_{EXCHANGE}_KEY"
+DEFAULT_API_KEY_ENV_PATTERN_LEGACY = "QF_CCXT_{EXCHANGE}_KEY"
+DEFAULT_API_SECRET_ENV_PATTERN = "AU_CCXT_{EXCHANGE}_SECRET"
+DEFAULT_API_SECRET_ENV_PATTERN_LEGACY = "QF_CCXT_{EXCHANGE}_SECRET"
 STABLE_QUOTES = frozenset({"USDT", "USDC", "USD", "DAI", "BUSD", "TUSD", "PAX"})
 
 
@@ -134,6 +140,20 @@ class CCXTBrokerAdapter(Broker):
         self.secret_env = secret_env or DEFAULT_API_SECRET_ENV_PATTERN.format(
             EXCHANGE=self.exchange_id.upper()
         )
+        # Legacy QF_* fallbacks for the shim window (R23). Only used when the
+        # caller did not explicitly override the env name.
+        self._api_key_env_legacy = (
+            None if api_key_env
+            else DEFAULT_API_KEY_ENV_PATTERN_LEGACY.format(
+                EXCHANGE=self.exchange_id.upper()
+            )
+        )
+        self._secret_env_legacy = (
+            None if secret_env
+            else DEFAULT_API_SECRET_ENV_PATTERN_LEGACY.format(
+                EXCHANGE=self.exchange_id.upper()
+            )
+        )
         self.allowed_quotes = (
             set(allowed_quotes) if allowed_quotes is not None
             else set(STABLE_QUOTES)
@@ -158,7 +178,7 @@ class CCXTBrokerAdapter(Broker):
         # Policy-driven concentration cap.
         if max_position_concentration is None:
             try:
-                from quantforge.core.protocol_policy import ProtocolPolicy
+                from aurora.core.protocol_policy import ProtocolPolicy
                 pol = ProtocolPolicy.load()
                 max_position_concentration = float(
                     pol.risk_limits.max_position_concentration
@@ -181,9 +201,11 @@ class CCXTBrokerAdapter(Broker):
     def from_config(cls, config: BrokerConfig) -> "CCXTBrokerAdapter":
         # ``BrokerConfig`` doesn't carry an exchange_id field; fall back to
         # 'binance' but allow the caller to override via config.base_url
-        # or by setting the env var QF_CCXT_DEFAULT_EXCHANGE.
+        # or by setting the env var AU_CCXT_DEFAULT_EXCHANGE (legacy
+        # QF_CCXT_DEFAULT_EXCHANGE still honoured during the shim window).
+        from aurora.core.env_compat import aurora_env
         exchange = (
-            os.getenv("QF_CCXT_DEFAULT_EXCHANGE") or
+            aurora_env("AU_CCXT_DEFAULT_EXCHANGE", "QF_CCXT_DEFAULT_EXCHANGE") or
             (config.base_url if config.base_url else "binance")
         )
         return cls(
@@ -217,8 +239,9 @@ class CCXTBrokerAdapter(Broker):
         cls = getattr(ccxt, self.exchange_id)
         # Pull credentials from ENV once and discard the locals so they
         # don't sit on the heap any longer than the SDK instance keeps them.
-        api_key = os.getenv(self.api_key_env) or ""
-        api_secret = os.getenv(self.secret_env) or ""
+        from aurora.core.env_compat import aurora_env
+        api_key = aurora_env(self.api_key_env, self._api_key_env_legacy) or ""
+        api_secret = aurora_env(self.secret_env, self._secret_env_legacy) or ""
         cfg = dict(self._extra_config)
         cfg.setdefault("apiKey", api_key)
         cfg.setdefault("secret", api_secret)
@@ -240,11 +263,13 @@ class CCXTBrokerAdapter(Broker):
     # -----------------------------------------------------------------
 
     def _kill_switch_env_triggered(self) -> bool:
-        return os.getenv(KILL_SWITCH_ENV, "").strip() in ("1", "true", "yes", "TRUE")
+        from aurora.core.env_compat import aurora_env
+        val = (aurora_env(KILL_SWITCH_ENV, KILL_SWITCH_ENV_LEGACY) or "").strip()
+        return val in ("1", "true", "yes", "TRUE")
 
     def _has_live_oos_ceremony(self) -> bool:
         try:
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
             guard = OOSGuard.active()
             if guard is None:
                 return False
@@ -254,10 +279,14 @@ class CCXTBrokerAdapter(Broker):
             return False
 
     def _has_allow_live_token(self) -> bool:
+        from aurora.core.env_compat import aurora_env
         env_var = ALLOW_LIVE_TOKEN_ENV_PATTERN.format(
             EXCHANGE=self.exchange_id.upper()
         )
-        token = (os.getenv(env_var) or "").strip()
+        legacy_var = ALLOW_LIVE_TOKEN_ENV_PATTERN_LEGACY.format(
+            EXCHANGE=self.exchange_id.upper()
+        )
+        token = (aurora_env(env_var, legacy_var) or "").strip()
         return bool(token) and token not in ("0", "false", "FALSE")
 
     def _check_live_triple_gate(
@@ -540,7 +569,7 @@ class CCXTBrokerAdapter(Broker):
 
     def sync(self, tolerance: float = 1e-6) -> dict:
         broker_pos = self.get_positions()
-        from quantforge.deployment.brokers import _diff_positions
+        from aurora.deployment.brokers import _diff_positions
         return _diff_positions(self._local_positions, broker_pos,
                                tolerance=tolerance)
 

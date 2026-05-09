@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.deployment.allocator import (
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.deployment.allocator import (
     StrategyAllocator,
     AllocatorResult,
     equal_weight,
@@ -15,8 +15,8 @@ from quantforge.deployment.allocator import (
     risk_parity,
     rebalance_dates,
 )
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.strategies.library.rsi_meanrev import RSIMeanRev
+from aurora.strategies.library.ma_cross import MACross
+from aurora.strategies.library.rsi_meanrev import RSIMeanRev
 
 
 # --------------------------------------------------------------------------- #

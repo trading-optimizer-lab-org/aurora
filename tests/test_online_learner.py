@@ -6,8 +6,8 @@ import pytest
 
 pytest.importorskip("sklearn")
 
-from quantforge.strategies.library import OnlineLearner
-from quantforge.strategies.library.online_learner import (
+from aurora.strategies.library import OnlineLearner
+from aurora.strategies.library.online_learner import (
     OnlineLearner as OLDirect,
     default_features,
     default_classifier_factory,

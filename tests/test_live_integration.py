@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from quantforge.deployment.brokers import (
+from aurora.deployment.brokers import (
     AlpacaAdapter,
     BrokerConfig,
     Order,

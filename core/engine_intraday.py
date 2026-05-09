@@ -15,7 +15,7 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.costs import CostModel, ZERO_costs
+from aurora.core.costs import CostModel, ZERO_costs
 
 _logger = logging.getLogger(__name__)
 

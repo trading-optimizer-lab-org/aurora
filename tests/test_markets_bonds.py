@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.bonds import BondConfig, BondYieldCurve
+from aurora.markets.bonds import BondConfig, BondYieldCurve
 
 
 @pytest.fixture

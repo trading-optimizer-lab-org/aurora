@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.ml.vector_db_papers import (
+from aurora.ml.vector_db_papers import (
     PapersVectorDB,
     PapersVectorDBConfig,
 )

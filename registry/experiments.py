@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from quantforge.registry.versioning import _exclusive_file_lock
+from aurora.registry.versioning import _exclusive_file_lock
 
 
 _DEFAULT_ROOT = os.path.normpath(

@@ -34,7 +34,7 @@ from typing import Iterator, Optional
 
 import pandas as pd
 
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.sqlite_utils import _setup_sqlite
 
 
 _DEFAULT_DB_PATH = os.path.normpath(

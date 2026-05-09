@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import MACross
-from quantforge.strategies.base import StrategySpec
+from aurora.strategies.library import MACross
+from aurora.strategies.base import StrategySpec
 
 
 @pytest.fixture

@@ -472,7 +472,7 @@ class DataProviderRegistry:
     def _active_guard_phase() -> tuple[Optional[Any], Optional[str]]:
         """Return (active OOSGuard, phase) or (None, None)."""
         try:
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
         except Exception:
             return None, None
         guard = OOSGuard.active()
@@ -534,7 +534,7 @@ class DataProviderRegistry:
             f"pit={ds.metadata.point_in_time})"
         )
         try:
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
         except Exception:
             return
         if guard is not None:
@@ -588,7 +588,7 @@ def get_default_registry() -> DataProviderRegistry:
         ):
             try:
                 mod = __import__(
-                    f"quantforge.core.data_providers.{mod_name}",
+                    f"aurora.core.data_providers.{mod_name}",
                     fromlist=[cls_name],
                 )
                 cls = getattr(mod, cls_name)
@@ -598,7 +598,7 @@ def get_default_registry() -> DataProviderRegistry:
                     "failed to bootstrap provider %s: %s", mod_name, exc,
                 )
         # Optional providers: only register when their backing dep is
-        # importable. Keeps "from quantforge.core.data_providers import ..."
+        # importable. Keeps "from aurora.core.data_providers import ..."
         # cheap and avoids surfacing a stub provider that always raises.
         try:
             import ccxt  # type: ignore  # noqa: F401
@@ -606,7 +606,7 @@ def get_default_registry() -> DataProviderRegistry:
             pass
         else:
             try:
-                from quantforge.core.data_providers.ccxt_provider import (
+                from aurora.core.data_providers.ccxt_provider import (
                     CCXTProvider,
                 )
                 registry.register(CCXTProvider())
@@ -625,7 +625,7 @@ def reset_default_registry() -> None:
         _DEFAULT_REGISTRY = None
 
 
-# Re-exports kept stable for ``from quantforge.core.data_providers import ...``
+# Re-exports kept stable for ``from aurora.core.data_providers import ...``
 __all__ = [
     "BaseDataProvider",
     "DataProvider",

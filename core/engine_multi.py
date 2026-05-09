@@ -12,8 +12,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.costs import CostModel, ZERO_costs, apply_costs
-from quantforge.core.metrics import Metrics, compute_metrics
+from aurora.core.costs import CostModel, ZERO_costs, apply_costs
+from aurora.core.metrics import Metrics, compute_metrics
 
 
 @dataclass

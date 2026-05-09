@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed, get_seed, child_rng
+from aurora.core.seed import set_global_seed, get_seed, child_rng
 
 
 def test_set_global_seed_basic():
@@ -58,7 +58,7 @@ def test_child_rng_different_names_different_streams():
 def test_child_rng_requires_seed():
     """child_rng raises if global seed never set."""
     # Set then reset
-    import quantforge.core.seed as seed_mod
+    import aurora.core.seed as seed_mod
     saved = seed_mod.GLOBAL_SEED
     seed_mod.GLOBAL_SEED = None
     try:
@@ -73,9 +73,9 @@ def test_jit_rng_seeded():
     identical NAV/metrics. JIT path uses np.random.* which is seeded globally.
     """
     pytest.importorskip("numba")  # skip if numba missing — engine_jit falls back
-    from quantforge.core.engine_jit import run_backtest_jit
-    from quantforge.strategies.library import MACross
-    from quantforge.core.costs import IBKR_costs
+    from aurora.core.engine_jit import run_backtest_jit
+    from aurora.strategies.library import MACross
+    from aurora.core.costs import IBKR_costs
 
     def gen_prices():
         # Seed-driven synthetic price series. The strategy itself is deterministic,

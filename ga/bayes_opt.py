@@ -130,7 +130,7 @@ def _scalarize(fitness_tuple, weights=(0.5, 0.3, 0.2, 0.5),
                normalize: bool = False) -> float:
     """Weighted-sum scalarization for multi-objective tuple.
 
-    Convention from quantforge.ga.fitness.multi_objective_fitness_is:
+    Convention from aurora.ga.fitness.multi_objective_fitness_is:
         (calmar, sharpe, robust, mdd_penalty)
     Maximize first 3, minimize 4th. Returns score where higher = better.
 
@@ -156,7 +156,7 @@ def _scalarize(fitness_tuple, weights=(0.5, 0.3, 0.2, 0.5),
 
     if normalize:
         # Lazy import to avoid cycle at module load.
-        from quantforge.ga.fitness import _TYPICAL_SCALES as _S
+        from aurora.ga.fitness import _TYPICAL_SCALES as _S
         scales = (_S["calmar"], _S["sharpe"], _S["robust"], _S["mdd_pen"])
     else:
         scales = (1.0, 1.0, 1.0, 1.0)

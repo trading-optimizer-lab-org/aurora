@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.compliance.rbac import RBACConfig, RBACEngine
+from aurora.compliance.rbac import RBACConfig, RBACEngine
 
 
 @pytest.fixture

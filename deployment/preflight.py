@@ -21,8 +21,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.data_layer import OOSGuard, QF_CACHE, load_asset
-from quantforge.validation.lookahead_check import runtime_lookahead_check
+from aurora.core.data_layer import OOSGuard, QF_CACHE, load_asset
+from aurora.validation.lookahead_check import runtime_lookahead_check
 
 _log = logging.getLogger(__name__)
 

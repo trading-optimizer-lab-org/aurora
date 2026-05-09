@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.paper_replicator import (
+from aurora.research.paper_replicator import (
     PaperReplicator,
     PaperSpec,
     ReplicationReport,

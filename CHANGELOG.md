@@ -1,8 +1,54 @@
 # Changelog
 
-All notable changes to QuantForge are documented here. Detailed batch reports
-live in `docs/v1_COMPLETION_REPORT.md`, `docs/v1_1_COMPLETION_REPORT.md`,
+All notable changes to Aurora (renamed from QuantForge in v1.5.0)
+are documented here. Detailed batch reports live in
+`docs/v1_COMPLETION_REPORT.md`, `docs/v1_1_COMPLETION_REPORT.md`,
 `docs/v1_2_COMPLETION_REPORT.md`, and `docs/v1_3_COMPLETION_REPORT.md`.
+
+## [1.5.0] -- 2026-05-09
+
+The Aurora rename (R23). Same product, new namespace.
+
+### Renamed
+
+- Project renamed from QuantForge to Aurora. Same product; identical API.
+- Python package: `quantforge` -> `aurora`. The `quantforge` namespace
+  remains as a back-compat shim until v1.6, emitting a
+  `DeprecationWarning` when imported.
+- CLI entry point: `aurora` is the new canonical command. `forge` keeps
+  working as a deprecated alias for one shim cycle (also removed in v1.6).
+- Env vars: `QF_*` and `QFORGE_*` are read with a `DeprecationWarning`
+  via `core/env_compat.py::aurora_env()`. New canonical names use the
+  `AU_*` / `AURORA_*` prefix per `docs/ENV_VAR_MIGRATION_PLAN.md` (R76).
+- Wheel: `aurora-1.5.0-py3-none-any.whl`.
+
+### Added
+
+- `aurora/core/env_compat.py` -- single helper that reads the new env
+  var name first, falls back to the legacy name, and emits a
+  `DeprecationWarning` on the legacy path.
+- `quantforge/__init__.py` -- thin compat shim that re-exports `aurora.*`
+  and emits one `DeprecationWarning` on import.
+
+### Changed
+
+- `core/runtime_paths.py` reads `AU_DATA_DIR`, `AU_CACHE_DIR`,
+  `AU_SNAPSHOT_ROOT`, `AU_AUDIT_LOG`, `AU_GATEWAY_AUDIT`, `AU_OOS_LOCK`,
+  `AU_RESEARCH_ARCHIVE`, `AU_REVIEW_QUEUE`, `AU_CONFIG_DIR` first; falls
+  back to the legacy `QF_*` names.
+- `agent_gateway` reads `AU_GATEWAY_SECRET`, `AU_OPERATOR_KEY`,
+  `AU_AGENT_LIVE_AUTH` first.
+- `deployment.ccxt_adapter` reads `AU_CCXT_*` patterns first.
+- Logger root name flipped from `"quantforge"` to `"aurora"`.
+- Operator docs (CLAUDE.md, README.md, CONTRIBUTING.md, RESEARCH_PROTOCOL,
+  ARCHITECTURE, SPINE, plus the API/strategy/glossary references)
+  updated to Aurora. Historical `docs/v*_COMPLETION_REPORT.md` and
+  `docs/DEVELOPMENT_PLAN_v*.md` left as-is.
+- GitHub workflows reference `aurora` (tests, wheel build).
+
+### Removed
+
+- Nothing. The shim window covers all existing imports + env vars.
 
 ## [1.4.0] - 2026-05-07
 

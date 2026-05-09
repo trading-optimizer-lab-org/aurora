@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.strategy_combiner import (
+from aurora.research.strategy_combiner import (
     CombinerEntry,
     CombinerReport,
     StrategyCombiner,

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.signals import CrossListingArbSignal, CrossListingArbConfig
+from aurora.signals import CrossListingArbSignal, CrossListingArbConfig
 
 
 @pytest.fixture

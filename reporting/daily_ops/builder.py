@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from quantforge.core.protocol_policy import ProtocolPolicy
+from aurora.core.protocol_policy import ProtocolPolicy
 
 
 __all__ = [

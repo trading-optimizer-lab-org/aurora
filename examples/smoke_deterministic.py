@@ -15,10 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library import MACross
+from aurora.core.seed import set_global_seed
+from aurora.core.engine import run_backtest
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library import MACross
 
 
 def make_prices(n: int = 500, seed: int = 7) -> pd.Series:

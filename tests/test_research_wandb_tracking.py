@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.research.wandb_tracking import WandBTracker, WandBRun
+from aurora.research.wandb_tracking import WandBTracker, WandBRun
 
 
 def test_basic_run_lifecycle():

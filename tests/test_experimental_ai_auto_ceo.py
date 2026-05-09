@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.ai_auto_ceo import AIAutoCEO, _mock_llm
+from aurora.experimental.ai_auto_ceo import AIAutoCEO, _mock_llm
 
 
 def test_decide_returns_expected_keys():

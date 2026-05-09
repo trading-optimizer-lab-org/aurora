@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import BollingerMR
-from quantforge.strategies.base import StrategySpec
-from quantforge.validation.lookahead_check import runtime_lookahead_check
+from aurora.strategies.library import BollingerMR
+from aurora.strategies.base import StrategySpec
+from aurora.validation.lookahead_check import runtime_lookahead_check
 
 
 @pytest.fixture

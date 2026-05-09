@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.dbt_runner import DBTConfig, DBTRunner
+from aurora.dataeng.dbt_runner import DBTConfig, DBTRunner
 
 
 @pytest.fixture

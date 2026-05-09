@@ -32,8 +32,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment import brokers, live
-from quantforge.deployment.brokers import (
+from aurora.deployment import brokers, live
+from aurora.deployment.brokers import (
     AuditLog,
     BrokerConfig,
     KillSwitch,
@@ -43,21 +43,21 @@ from quantforge.deployment.brokers import (
     Position,
     _RateLimiter,
 )
-from quantforge.deployment.cov_shrinkage import (
+from aurora.deployment.cov_shrinkage import (
     exponential_cov,
     fix_nonpositive_semidefinite,
 )
-from quantforge.deployment.live import (
+from aurora.deployment.live import (
     LiveConfig,
     QFLiveStrategy,
     submit_with_retry,
     TransientOrderError,
 )
-from quantforge.deployment.preflight import (
+from aurora.deployment.preflight import (
     check_system_time,
 )
-from quantforge.deployment.risk_parity import _solve_sqp
-from quantforge.deployment.sizing import kelly_size
+from aurora.deployment.risk_parity import _solve_sqp
+from aurora.deployment.sizing import kelly_size
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +368,7 @@ def test_kelly_zero_when_avg_win_below_floor():
 # ---------------------------------------------------------------------------
 
 def test_check_system_time_defaults_to_fail_on_no_ntp(monkeypatch):
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     monkeypatch.setattr(pf, "_query_ntp_server",
                         lambda server, timeout: None)
     chk = check_system_time(timeout=0.01)
@@ -377,7 +377,7 @@ def test_check_system_time_defaults_to_fail_on_no_ntp(monkeypatch):
 
 
 def test_check_system_time_soft_skip_passes_on_no_ntp(monkeypatch):
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     monkeypatch.setattr(pf, "_query_ntp_server",
                         lambda server, timeout: None)
     chk = check_system_time(timeout=0.01, soft_skip=True)
@@ -508,7 +508,7 @@ def test_risk_parity_solver_still_converges():
 def test_no_pd_timestamp_utcnow_in_preflight():
     """pd.Timestamp.utcnow() is deprecated; preflight uses .now(tz='UTC')."""
     src = (
-        __import__("quantforge.deployment.preflight",
+        __import__("aurora.deployment.preflight",
                    fromlist=["__file__"]).__file__
     )
     text = open(src, encoding="utf-8").read()

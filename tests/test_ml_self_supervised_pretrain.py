@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.self_supervised_pretrain import (
+from aurora.ml.self_supervised_pretrain import (
     SelfSupervisedConfig,
     SelfSupervisedPretrainer,
 )

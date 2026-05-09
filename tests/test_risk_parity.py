@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.risk_parity import (
+from aurora.deployment.risk_parity import (
     RPResult,
     equal_risk_contribution,
     risk_budget,

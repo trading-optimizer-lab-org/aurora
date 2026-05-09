@@ -1,4 +1,4 @@
-# QuantForge — Public API Reference
+# Aurora — Public API Reference
 
 Auto-summary of the top-level public API exported from each submodule's
 `__init__.py`. For full signatures, parameters, and behavior, see the source
@@ -10,7 +10,7 @@ docstrings of the corresponding modules.
 
 ---
 
-## `quantforge.core`
+## `aurora.core`
 
 Backtest primitives: engine, costs, metrics, data layer, RNG seeding.
 
@@ -31,7 +31,7 @@ Other internal but useful classes:
 
 - `MultiAssetEngine(gross_leverage_cap=1.0, net_leverage_cap=2.0, align_calendar="intersection")` — portfolio backtester with leverage caps and per-asset attribution. Defined in `core.engine_multi`.
 
-### `quantforge.core.snapshots`
+### `aurora.core.snapshots`
 
 Frozen dataset snapshots (SHA-256 hash + provenance metadata) used to lock OOS slices and reproduce backtests deterministically.
 
@@ -42,7 +42,7 @@ Frozen dataset snapshots (SHA-256 hash + provenance metadata) used to lock OOS s
 
 ---
 
-## `quantforge.validation`
+## `aurora.validation`
 
 13 validation gates, structural break tests, MC bootstrap, CSCV/PBO.
 
@@ -70,7 +70,7 @@ Crash scenarios (in `validation.scenarios`, not re-exported by default):
 
 ---
 
-## `quantforge.ml`
+## `aurora.ml`
 
 Lopez de Prado AFML labeling, meta-labels, microstructure, sequence models.
 
@@ -82,7 +82,7 @@ Lopez de Prado AFML labeling, meta-labels, microstructure, sequence models.
 | `bet_size_from_proba` | `bet_size_from_proba(proba, num_classes=2)` | Convert classifier probabilities to bet sizes (AFML ch. 10). |
 | `mean_decrease_impurity` / `mean_decrease_accuracy` / `single_feature_importance` | feature-importance estimators (AFML ch. 8) | |
 | `corwin_schultz_spread` / `roll_spread_estimator` / `signed_volume` / `order_flow_imbalance` / `vpin` / `kyle_lambda` / `amihud_illiquidity` | microstructure estimators | |
-| `frac_diff_ffd` / `find_min_d` | `(series, d, threshold) -> Series`, `(series, ...) -> float` | Fixed-window fractional differentiation (AFML ch. 5) and the d-search helper. Live in `quantforge.ml.fracdiff`; import from there directly (not re-exported from `quantforge.ml`). |
+| `frac_diff_ffd` / `find_min_d` | `(series, d, threshold) -> Series`, `(series, ...) -> float` | Fixed-window fractional differentiation (AFML ch. 5) and the d-search helper. Live in `aurora.ml.fracdiff`; import from there directly (not re-exported from `aurora.ml`). |
 | `LSTMConfig` / `LSTMForecaster` | torch-optional LSTM wrapper | Walk-forward retrainable LSTM. |
 | `TransformerConfig` / `TimeSeriesTransformer` | torch-optional transformer | Multi-horizon transformer forecaster. |
 | `RLAgentConfig` / `RLAgent` / `TradingEnv` | RL trading components (gym + stable-baselines3 optional) | |
@@ -90,9 +90,9 @@ Lopez de Prado AFML labeling, meta-labels, microstructure, sequence models.
 
 ---
 
-## `quantforge.strategies`
+## `aurora.strategies`
 
-Base class + 12 reference strategies in `quantforge.strategies.library`.
+Base class + 12 reference strategies in `aurora.strategies.library`.
 
 Base:
 
@@ -101,7 +101,7 @@ Base:
 | `Strategy` | abstract base class | Override `signals(prices) -> Series`. |
 | `StrategySpec` | dataclass | Static metadata: param ranges, tags, references. |
 
-Library (`quantforge.strategies.library`):
+Library (`aurora.strategies.library`):
 
 | Class | Signature | Summary |
 |---|---|---|
@@ -120,7 +120,7 @@ Library (`quantforge.strategies.library`):
 
 ---
 
-## `quantforge.ga`
+## `aurora.ga`
 
 Genetic and Bayesian optimizers; multi-asset GA; seed populations.
 
@@ -140,7 +140,7 @@ Genetic and Bayesian optimizers; multi-asset GA; seed populations.
 
 ---
 
-## `quantforge.regime`
+## `aurora.regime`
 
 Regime detection: HMM, Markov switching, Hurst exponent.
 
@@ -154,13 +154,13 @@ Regime detection: HMM, Markov switching, Hurst exponent.
 | `hurst_dfa` | `hurst_dfa(series) -> HurstResult` | Detrended fluctuation analysis (Peng et al. 1994). |
 | `rolling_hurst` | `rolling_hurst(series, window) -> Series` | Rolling Hurst exponent. |
 | `hurst_regime_filter` | `hurst_regime_filter(series, ...) -> Series` | Filter signals by trending vs. mean-reverting regime. |
-| `MarkovSwitchingMean` | class | Markov regime-switching mean (Hamilton 1989); statsmodels-optional with manual EM fallback. Re-exported from `quantforge.regime`. |
+| `MarkovSwitchingMean` | class | Markov regime-switching mean (Hamilton 1989); statsmodels-optional with manual EM fallback. Re-exported from `aurora.regime`. |
 | `BayesAlphaModel` / `bayesian_rolling_alpha` | `(strategy_returns, benchmark_returns, window, ...) -> BayesAlphaResult` | Rolling Bayesian alpha estimator. `BayesAlphaModel` is an alias for `bayesian_rolling_alpha`. |
 | `BayesAlphaResult` | dataclass | Rolling posterior bands for alpha + beta. |
 
 ---
 
-## `quantforge.registry`
+## `aurora.registry`
 
 SQLite-backed result store, MLflow-style experiment tracker, trade journal.
 
@@ -177,7 +177,7 @@ SQLite-backed result store, MLflow-style experiment tracker, trade journal.
 
 ---
 
-## `quantforge.deployment`
+## `aurora.deployment`
 
 Paper / live brokers, allocators, sizing, liquidity, preflight.
 
@@ -187,13 +187,13 @@ Paper / live brokers, allocators, sizing, liquidity, preflight.
 | `AlpacaAdapter` / `IBAdapter` / `CoinbaseAdapter` / `KrakenAdapter` | broker adapters (optional deps) | |
 | `create_broker` | `create_broker(config: BrokerConfig) -> Broker` | Factory based on `BrokerConfig.kind`. |
 | `Order` / `Position` / `BrokerConfig` | dataclasses | Broker domain model. |
-| `QFPaperStrategy` / `QFLiveStrategy` | Lumibot wrappers | Drop-in Lumibot adapters for QuantForge `Strategy`. |
+| `QFPaperStrategy` / `QFLiveStrategy` | Lumibot wrappers | Drop-in Lumibot adapters for Aurora `Strategy`. |
 | `LiveConfig` | dataclass | Live trading configuration. |
 | `submit_with_retry` / `run_preflight` | helpers | Resilient order submission and pre-trade checks. `preflight_checks` is kept as a back-compat alias for `run_preflight`. |
 | `fixed_risk_size` | `fixed_risk_size(nav, entry_price, stop_price, risk_pct=0.01) -> int` | Risk-per-trade share count. |
 | `vol_target_size` | `vol_target_size(nav, asset_price, asset_vol_annual, target_vol_annual)` | Vol-target sizing. |
 | `kelly_size` | `kelly_size(nav, asset_price, win_rate, ...)` | Fractional Kelly criterion. |
-| `equal_weight` / `equal_vol` / `inverse_dd` / `risk_parity` | `(strat_returns_dict, ...) -> dict` | Allocator weight rules. All four are re-exported from `quantforge.deployment`. The canonical name `risk_parity` is also reachable as `risk_parity_allocator` (alias) and as `risk_parity_weights` from `quantforge.deployment.risk_parity`. |
+| `equal_weight` / `equal_vol` / `inverse_dd` / `risk_parity` | `(strat_returns_dict, ...) -> dict` | Allocator weight rules. All four are re-exported from `aurora.deployment`. The canonical name `risk_parity` is also reachable as `risk_parity_allocator` (alias) and as `risk_parity_weights` from `aurora.deployment.risk_parity`. |
 | `StrategyAllocator` | class | Multi-strategy allocator with rebalance schedule. |
 | `BlackLittermanModel` | class | Black-Litterman views + posterior. |
 | `hrp_allocate` | `(returns, ...) -> Series` | Hierarchical risk parity weights. |
@@ -203,7 +203,7 @@ Paper / live brokers, allocators, sizing, liquidity, preflight.
 
 ---
 
-## `quantforge.monitoring`
+## `aurora.monitoring`
 
 Streamlit dashboard, alert engine, drift detectors.
 
@@ -219,11 +219,11 @@ Streamlit dashboard, alert engine, drift detectors.
 | `default_rules` | `default_rules() -> list[AlertRule]` | Sensible default rule set (DD, drift, daily loss). |
 | `compute_daily_loss` / `compute_max_dd` / `compute_drift_metric` | pure metric helpers | |
 
-Drift detectors live in `quantforge.monitoring.drift` (Page-Hinkley, ADWIN, KS) and a higher-level `AutoRetrainController`.
+Drift detectors live in `aurora.monitoring.drift` (Page-Hinkley, ADWIN, KS) and a higher-level `AutoRetrainController`.
 
 ---
 
-## `quantforge.analytics`
+## `aurora.analytics`
 
 Comprehensive metrics + round-trip / per-trade attribution.
 
@@ -232,7 +232,7 @@ Comprehensive metrics + round-trip / per-trade attribution.
 
 ---
 
-## `quantforge.cli`
+## `aurora.cli`
 
 `forge` console entry point (defined in `pyproject.toml`).
 
@@ -244,5 +244,5 @@ Subcommands: `run`, `validate`, `search`, `list-strategies`, `tearsheet`, `bench
 
 ---
 
-_Last regenerated: see `quantforge/__version__`. Source of truth for any signature
+_Last regenerated: see `aurora/__version__`. Source of truth for any signature
 is the module docstring, not this file._

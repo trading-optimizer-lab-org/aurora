@@ -27,7 +27,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +127,8 @@ def _build_predictor(model_type: str, model_params: dict, predictor_class: Optio
 
     - ``predictor_class`` overrides everything (used in tests).
     - ``model_type='mock'`` -> :class:`MockPredictor`
-    - ``model_type='lstm'`` -> lazy import quantforge.ml.lstm.LSTMForecaster
-    - ``model_type='transformer'`` -> lazy import quantforge.ml.transformer
+    - ``model_type='lstm'`` -> lazy import aurora.ml.lstm.LSTMForecaster
+    - ``model_type='transformer'`` -> lazy import aurora.ml.transformer
     - ``model_type='rl'`` -> RL adapter built lazily; trained inside fit().
     """
     if predictor_class is not None:
@@ -139,12 +139,12 @@ def _build_predictor(model_type: str, model_params: dict, predictor_class: Optio
         return MockPredictor(**(model_params or {}))
 
     if mt == "lstm":
-        from quantforge.ml.lstm import LSTMConfig, LSTMForecaster  # lazy
+        from aurora.ml.lstm import LSTMConfig, LSTMForecaster  # lazy
         cfg = LSTMConfig(**(model_params or {}))
         return _LSTMAdapter(LSTMForecaster(cfg), cfg)
 
     if mt == "transformer":
-        from quantforge.ml.transformer import TransformerConfig, TimeSeriesTransformer  # lazy
+        from aurora.ml.transformer import TransformerConfig, TimeSeriesTransformer  # lazy
         cfg = TransformerConfig(**(model_params or {}))
         return _TransformerAdapter(TimeSeriesTransformer(cfg), cfg)
 
@@ -238,7 +238,7 @@ class _TransformerAdapter:
             self.model.reset()
         else:
             try:
-                from quantforge.ml.transformer import TimeSeriesTransformer  # lazy
+                from aurora.ml.transformer import TimeSeriesTransformer  # lazy
                 self.model = TimeSeriesTransformer(self.cfg)
             except (ImportError, TypeError, ValueError) as exc:
                 warnings.warn(

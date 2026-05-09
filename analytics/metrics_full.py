@@ -33,7 +33,7 @@ from scipy import stats
 
 # Re-export canonical implementations from core.metrics to keep both modules
 # in lockstep without duplicating logic. See module docstring "Dedup policy".
-from quantforge.core.metrics import (
+from aurora.core.metrics import (
     compute_metrics,
     deflated_sharpe,
     probabilistic_sharpe,

@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from quantforge.ml.llm_portfolio_manager import (
+from aurora.ml.llm_portfolio_manager import (
     LLMPortfolioConfig,
     LLMPortfolioManager,
     MockAnthropicClient,

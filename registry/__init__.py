@@ -15,20 +15,20 @@ Public API:
     hash_strategy_code    — deterministic hash of a strategy class
     register              — register a StrategyVersion in a VersionRegistry
 """
-from quantforge.registry.experiments import (
+from aurora.registry.experiments import (
     ExperimentMeta,
     ExperimentResult,
     ExperimentTracker,
     GenerationLog,
 )
-from quantforge.registry.journal import JournalEntry, TradeJournal
-from quantforge.registry.registry import (
+from aurora.registry.journal import JournalEntry, TradeJournal
+from aurora.registry.registry import (
     BacktestRegistry,
     hash_config,
     RegistryEntry,
     store_backtest_result,
 )
-from quantforge.registry.versioning import (
+from aurora.registry.versioning import (
     hash_strategy_code,
     StrategyVersion,
     VersionRegistry,

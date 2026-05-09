@@ -1,4 +1,4 @@
-"""QuantForge CLI entry point.
+"""Aurora CLI entry point (legacy file name ``forge.py`` retained).
 
 Quick start::
 
@@ -13,8 +13,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import IBKR_costs, ZERO_costs
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import IBKR_costs, ZERO_costs
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +55,8 @@ def _runtime_error(message: str) -> int:
 
 
 def _strategy_library() -> dict:
-    """Build name -> class map from quantforge.strategies.library.__all__."""
-    from quantforge.strategies import library as lib_mod
+    """Build name -> class map from aurora.strategies.library.__all__."""
+    from aurora.strategies import library as lib_mod
     return {name: getattr(lib_mod, name) for name in lib_mod.__all__
             if hasattr(lib_mod, name)}
 
@@ -84,7 +84,7 @@ def _resolve_strategy(name: str):
     import importlib
     import pkgutil
 
-    from quantforge.strategies import library as lib_pkg
+    from aurora.strategies import library as lib_pkg
 
     for info in pkgutil.iter_modules(lib_pkg.__path__):
         try:
@@ -125,7 +125,7 @@ def _costs_from(name: str):
 def _policy_tier_choices() -> tuple[str, ...]:
     """Return the lower-cased tier names declared by the active policy."""
     try:
-        from quantforge.core.protocol_policy import get_active_policy
+        from aurora.core.protocol_policy import get_active_policy
         names = tuple(t.lower() for t in get_active_policy().tiers.keys())
     except Exception:
         # Defensive: never block the CLI if the policy fails to load.
@@ -148,7 +148,7 @@ def _policy_ceremony_env_flag(name: str) -> str:
     parity with :func:`_policy_tier_choices`).
     """
     try:
-        from quantforge.core.protocol_policy import get_active_policy
+        from aurora.core.protocol_policy import get_active_policy
         cer = get_active_policy().oos_ceremonies.get(name)
         if cer is not None:
             return cer.env_flag
@@ -185,8 +185,8 @@ def _resolve_tier_load(asset: str, tier: str) -> "pd.Series":
     """
     import os
     import pandas as pd  # noqa: F401  (used in type hint string)
-    from quantforge.core.data_layer import load_asset
-    from quantforge.core.data_tiers import (
+    from aurora.core.data_layer import load_asset
+    from aurora.core.data_tiers import (
         load_tier,
         load_up_to_tier,
     )
@@ -199,15 +199,16 @@ def _resolve_tier_load(asset: str, tier: str) -> "pd.Series":
 
     if tier_norm == "full":
         # Ceremony: explicit env var. Without it we refuse the read.
-        if os.environ.get("QF_ALLOW_FULL_TIER") != "1":
+        from aurora.core.env_compat import aurora_env
+        if aurora_env("AU_ALLOW_FULL_TIER", "QF_ALLOW_FULL_TIER") != "1":
             _arg_error(
-                "--tier full is gated: set QF_ALLOW_FULL_TIER=1 to opt in. "
+                "--tier full is gated: set AU_ALLOW_FULL_TIER=1 to opt in. "
                 "This tier leaks OOS_LOCKED + FORWARD into the analyser."
             )
         # P2.3 round-4 audit: the env var alone is not enough. Require
         # an active OOSGuard("explicit_unlock_full_tier") so the read
         # is auditable in the lock file alongside other ceremony unlocks.
-        from quantforge.core.data_layer import OOSGuard as _OOSGuard
+        from aurora.core.data_layer import OOSGuard as _OOSGuard
         active = _OOSGuard.active()
         if active is None or active.phase != "explicit_unlock_full_tier":
             _arg_error(
@@ -327,7 +328,7 @@ def _load_global_config(args):
     run. Threading ``cfg.validation.*`` and friends into those subcommands
     is tracked separately.
     """
-    from quantforge.core.config import default_config, load_config
+    from aurora.core.config import default_config, load_config
     path = getattr(args, "config", None)
     if not path:
         return default_config()
@@ -389,9 +390,9 @@ def _dry_run_summary(args, cfg) -> None:
 
 
 def cmd_validate(args):
-    from quantforge.validation.pipeline import validate_pipeline
-    from quantforge.core.data_layer import OOSGuard
-    from quantforge.core.data_tiers import load_up_to_tier
+    from aurora.validation.pipeline import validate_pipeline
+    from aurora.core.data_layer import OOSGuard
+    from aurora.core.data_tiers import load_up_to_tier
 
     cfg = _load_global_config(args)
     if getattr(args, "dry_run", False):
@@ -484,10 +485,10 @@ def cmd_search(args):
     read is recorded in the lock file. ``OOS_LOCKED`` and ``FORWARD``
     are never touched here.
     """
-    from quantforge.ga.runner import run_ga, GAConfig
-    from quantforge.ga.fitness import multi_objective_fitness_is, validate_oos
-    from quantforge.core.data_layer import load_asset, OOSGuard
-    from quantforge.core.data_tiers import split_by_tier
+    from aurora.ga.runner import run_ga, GAConfig
+    from aurora.ga.fitness import multi_objective_fitness_is, validate_oos
+    from aurora.core.data_layer import load_asset, OOSGuard
+    from aurora.core.data_tiers import split_by_tier
 
     cfg = _load_global_config(args)
     if getattr(args, "dry_run", False):
@@ -552,7 +553,7 @@ def cmd_search(args):
     # used downstream). ``load_up_to_tier`` clamps the read so the
     # lockbox cannot leak into the search transcript.
     if not args.skip_oos:
-        from quantforge.core.data_tiers import load_up_to_tier
+        from aurora.core.data_tiers import load_up_to_tier
         with OOSGuard("post_ga_validation"):
             full_prices = load_up_to_tier(
                 args.asset, max_tier="OOS_DEV", require_snapshot=True,
@@ -574,7 +575,7 @@ def cmd_search(args):
 
 
 def cmd_run(args):
-    from quantforge.core.engine import run_backtest
+    from aurora.core.engine import run_backtest
 
     cfg = _load_global_config(args)
     if getattr(args, "dry_run", False):
@@ -641,8 +642,8 @@ def cmd_list_strategies(args):
 
 def cmd_tearsheet(args):
     """Run backtest and write HTML tearsheet."""
-    from quantforge.core.engine import run_backtest
-    from quantforge.reporting.tearsheet import generate_tearsheet
+    from aurora.core.engine import run_backtest
+    from aurora.reporting.tearsheet import generate_tearsheet
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -675,7 +676,7 @@ def cmd_bench(args):
     strat = cls()
     costs = _costs_from(args.costs)
 
-    from quantforge.core.engine import run_backtest
+    from aurora.core.engine import run_backtest
 
     # Warmup once for fairness with JIT compile.
     run_backtest(prices, strat.signals, costs=costs)
@@ -691,7 +692,7 @@ def cmd_bench(args):
 
     # JIT timing (best-effort)
     try:
-        from quantforge.core.engine_jit import run_backtest_jit, NUMBA_AVAILABLE
+        from aurora.core.engine_jit import run_backtest_jit, NUMBA_AVAILABLE
         # warmup jit compile
         run_backtest_jit(prices, strat.signals, costs=costs)
         t0 = time.perf_counter()
@@ -728,7 +729,7 @@ def cmd_config_show(args):
 
 def cmd_config_init(args):
     """Write default ForgeConfig to args.output (yaml or toml by extension)."""
-    from quantforge.core.config import default_config, save_config
+    from aurora.core.config import default_config, save_config
     from pathlib import Path
     out = Path(args.output)
     if out.exists() and not args.force:
@@ -765,7 +766,7 @@ def cmd_label(args):
     """Apply triple-barrier labeling and emit CSV / JSON / stdout summary."""
     import json
     import pandas as pd
-    from quantforge.ml.labels import triple_barrier_labels
+    from aurora.ml.labels import triple_barrier_labels
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -826,8 +827,8 @@ def cmd_label(args):
 def cmd_factor(args):
     """Compute factor analysis (IC, quantile spread, summary table)."""
     import pandas as pd
-    from quantforge.core.engine import run_backtest
-    from quantforge.analytics.factor_analysis import factor_summary_table
+    from aurora.core.engine import run_backtest
+    from aurora.analytics.factor_analysis import factor_summary_table
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -864,8 +865,8 @@ def cmd_attribute(args):
                                   : per-regime attribution from regime label CSV.
     """
     import pandas as pd
-    from quantforge.core.engine import run_backtest
-    from quantforge.analytics.attribution import (
+    from aurora.core.engine import run_backtest
+    from aurora.analytics.attribution import (
         attribution_by_factor,
         attribution_by_time,
     )
@@ -924,7 +925,7 @@ def cmd_attribute(args):
 def cmd_purge_cv(args):
     """Run purged k-fold CV; print per-fold metrics summary."""
     import pandas as pd
-    from quantforge.validation.purged_cv import cv_score
+    from aurora.validation.purged_cv import cv_score
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -978,7 +979,7 @@ def cmd_fracdiff(args):
     """Find min d for stationarity via ADF sweep."""
     import numpy as np
     import pandas as pd
-    from quantforge.ml.fracdiff import find_min_d, fracdiff_correlation
+    from aurora.ml.fracdiff import find_min_d, fracdiff_correlation
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -1037,7 +1038,7 @@ def cmd_cscv(args):
     """CSCV / PBO test from a returns matrix CSV."""
     import json
     import pandas as pd
-    from quantforge.validation.cscv_pbo import cscv
+    from aurora.validation.cscv_pbo import cscv
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -1084,7 +1085,7 @@ def cmd_cscv(args):
 
 def cmd_preflight(args):
     """Run preflight checks for a strategy/symbol."""
-    from quantforge.deployment.preflight import run_preflight
+    from aurora.deployment.preflight import run_preflight
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -1117,10 +1118,10 @@ def cmd_search_multi(args):
     the single-asset ``cmd_search``), then runs ``run_multi_asset_ga``
     with the IS-only fitness so the GA never sees OOS bars.
     """
-    from quantforge.ga.multi_asset_runner import (
+    from aurora.ga.multi_asset_runner import (
         run_multi_asset_ga, MultiAssetGAConfig, multi_asset_fitness_is,
     )
-    from quantforge.core.data_tiers import load_tier
+    from aurora.core.data_tiers import load_tier
 
     cfg = _load_global_config(args)
     set_global_seed(args.seed)
@@ -1194,8 +1195,8 @@ def cmd_freeze(args):
     # consumers carve to the tier they need via ``load_tier`` /
     # ``load_up_to_tier``. Wrap in OOSGuard("snapshot_freeze") so the
     # read is auditable.
-    from quantforge.core.data_layer import load_asset, OOSGuard
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.data_layer import load_asset, OOSGuard
+    from aurora.core.snapshots import SnapshotStore
 
     with OOSGuard("snapshot_freeze"):
         prices = load_asset(asset, source=provenance, include_oos=True)
@@ -1203,7 +1204,7 @@ def cmd_freeze(args):
     if len(prices) == 0:
         return _runtime_error(f"freeze: load_asset({asset!r}) returned 0 bars")
 
-    from quantforge.core.runtime_paths import snapshot_root as _snapshot_root
+    from aurora.core.runtime_paths import snapshot_root as _snapshot_root
     snap_root = str(_snapshot_root())
     store = SnapshotStore(snap_root)
     snap = store.freeze(
@@ -1231,7 +1232,7 @@ def cmd_dashboard(args):
     import shutil
     import subprocess
 
-    from quantforge.monitoring.dashboard import STREAMLIT_AVAILABLE
+    from aurora.monitoring.dashboard import STREAMLIT_AVAILABLE
 
     if not STREAMLIT_AVAILABLE:
         print("streamlit is not installed. Install with 'pip install streamlit'.")
@@ -1246,7 +1247,7 @@ def cmd_dashboard(args):
         cmd = [streamlit_bin, "run"]
 
     # Path to the dashboard module file.
-    from quantforge.monitoring import dashboard as _dash_mod
+    from aurora.monitoring import dashboard as _dash_mod
     script_path = _dash_mod.__file__
 
     env = os.environ.copy()
@@ -1273,7 +1274,7 @@ def cmd_dashboard(args):
 
 def cmd_data_list_providers(args):
     """Print the registered data providers + their PIT/tier posture."""
-    from quantforge.core.data_providers import get_default_registry
+    from aurora.core.data_providers import get_default_registry
     registry = get_default_registry()
     rows = registry.describe()
     if not rows:
@@ -1301,7 +1302,7 @@ def cmd_data_fetch(args):
     """Fetch a Dataset from a provider and write parquet + sidecar."""
     import json
     import os
-    from quantforge.core.data_providers import get_default_registry
+    from aurora.core.data_providers import get_default_registry
     registry = get_default_registry()
     try:
         ds = registry.fetch(
@@ -1363,7 +1364,7 @@ def cmd_data_verify(args):
 
     import pandas as pd
     df = pd.read_parquet(parquet)
-    from quantforge.core.data_providers import compute_content_hash
+    from aurora.core.data_providers import compute_content_hash
     if df.shape[1] == 1:
         recomputed = compute_content_hash(df.iloc[:, 0])
     else:
@@ -1429,7 +1430,7 @@ def cmd_crypto_fetch(args):
     import json
     import os
     try:
-        from quantforge.core.data_providers.ccxt_provider import CCXTProvider
+        from aurora.core.data_providers.ccxt_provider import CCXTProvider
     except Exception as exc:
         return _runtime_error(f"crypto fetch: {exc}")
     cfg = _ccxt_load_config()
@@ -1476,8 +1477,8 @@ def cmd_crypto_submit_order(args):
     exchange = args.exchange or cfg.get("default_exchange", "binance")
     sandbox = not getattr(args, "allow_live", False)
     try:
-        from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
-        from quantforge.deployment.brokers import Order
+        from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
+        from aurora.deployment.brokers import Order
     except Exception as exc:
         return _runtime_error(f"crypto submit-order: {exc}")
     try:
@@ -1508,7 +1509,7 @@ def cmd_crypto_positions(args):
     cfg = _ccxt_load_config()
     exchange = args.exchange or cfg.get("default_exchange", "binance")
     try:
-        from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+        from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
     except Exception as exc:
         return _runtime_error(f"crypto positions: {exc}")
     try:
@@ -1528,7 +1529,7 @@ def cmd_crypto_balance(args):
     cfg = _ccxt_load_config()
     exchange = args.exchange or cfg.get("default_exchange", "binance")
     try:
-        from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+        from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
     except Exception as exc:
         return _runtime_error(f"crypto balance: {exc}")
     try:
@@ -1556,7 +1557,7 @@ def cmd_crypto_allow_live(args):
         or "~/.quantforge/ccxt_tokens"
     )
     try:
-        from quantforge.deployment.ccxt_adapter import (
+        from aurora.deployment.ccxt_adapter import (
             ALLOW_LIVE_TOKEN_ENV_PATTERN,
             LIVE_CEREMONY_PHASE,
             write_allow_live_token,
@@ -1583,7 +1584,7 @@ def cmd_crypto_allow_live(args):
 
 def cmd_policy_show(args):
     """Print the active :class:`ProtocolPolicy` as YAML + the policy hash."""
-    from quantforge.core.protocol_policy import ProtocolPolicy
+    from aurora.core.protocol_policy import ProtocolPolicy
     path = getattr(args, "path", None)
     pol = ProtocolPolicy.load(path) if path else ProtocolPolicy.load()
     print(pol.to_yaml())
@@ -1597,7 +1598,7 @@ def cmd_policy_verify(args):
     Returns exit code 0 on match, 1 on tamper / mismatch.
     """
     import os
-    from quantforge.core.protocol_policy import ProtocolPolicy
+    from aurora.core.protocol_policy import ProtocolPolicy
     path = getattr(args, "path", None) or ProtocolPolicy.default_yaml_path()
     if not os.path.exists(path):
         return _runtime_error(
@@ -1645,9 +1646,9 @@ def _load_research_factory(args, *, with_data_loader=True):
     auditor is left as None -- the auditor (P1.B) is a separate concern.
     """
     import os
-    from quantforge.core.protocol_policy import ProtocolPolicy
-    from quantforge.registry.experiments import ExperimentTracker
-    from quantforge.research.factory import (
+    from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.registry.experiments import ExperimentTracker
+    from aurora.research.factory import (
         ResearchFactory, ResearchPipelineConfig,
     )
 
@@ -1682,7 +1683,7 @@ def _strategy_spec_from_yaml(path):
     import json
     import os
     import yaml
-    from quantforge.research.factory import StrategySpec
+    from aurora.research.factory import StrategySpec
     if not os.path.exists(path):
         _arg_error(f"spec file not found: {path}")
     with open(path, "r", encoding="utf-8") as f:
@@ -1705,7 +1706,7 @@ def _strategy_specs_from_yaml(path):
     import json
     import os
     import yaml
-    from quantforge.research.factory import StrategySpec
+    from aurora.research.factory import StrategySpec
     if not os.path.exists(path):
         _arg_error(f"specs file not found: {path}")
     with open(path, "r", encoding="utf-8") as f:
@@ -1817,7 +1818,7 @@ def cmd_research_lineage(args):
     if getattr(args, "graphviz", None):
         # Build a graph from EVERY known candidate (review + archive) so
         # the DOT shows the full DAG, not just the chain.
-        from quantforge.research.factory import LineageGraph
+        from aurora.research.factory import LineageGraph
         graph = LineageGraph()
         graph.build(factory.list_review_queue())
         graph.build(factory.list_archived())
@@ -1830,7 +1831,7 @@ def cmd_research_lineage(args):
 def cmd_research_generate(args):
     """Bulk-generate strategy specs from a generator and write to a YAML file."""
     import yaml
-    from quantforge.research.factory import (
+    from aurora.research.factory import (
         StrategySpec, TemplateHypothesisGenerator,
     )
     gen_name = (args.generator or "template").lower()
@@ -1842,13 +1843,13 @@ def cmd_research_generate(args):
         templates = [
             (
                 "macross_20_100",
-                "quantforge.strategies.library.ma_cross.MACross",
+                "aurora.strategies.library.ma_cross.MACross",
                 {"fast": 20, "slow": 100, "allow_short": False},
                 {"fast": (0.5, 1.5), "slow": (0.8, 1.5)},
             ),
             (
                 "tsmom_60",
-                "quantforge.strategies.library.tsmom.TSMomentum",
+                "aurora.strategies.library.tsmom.TSMomentum",
                 {"lookback": 60, "skip": 0},
                 {"lookback": (0.5, 2.0)},
             ),
@@ -1887,7 +1888,7 @@ def cmd_research_promote(args):
             "research promote requires --i-understand-promote-to-oos-locked. "
             "OOS_LOCKED is the protocol's single-look ceremony."
         )
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
     factory = _load_research_factory(args)
     candidates = factory.list_review_queue()
     match = next(
@@ -1944,8 +1945,8 @@ def cmd_audit_run(args):
     """
     import json
     import os
-    from quantforge.agents.auditor import AuditorOrchestrator, ReviewContext
-    from quantforge.core.protocol_policy import ProtocolPolicy
+    from aurora.agents.auditor import AuditorOrchestrator, ReviewContext
+    from aurora.core.protocol_policy import ProtocolPolicy
 
     bt_path = args.backtest
     if not bt_path or not os.path.exists(bt_path):
@@ -1996,7 +1997,7 @@ def cmd_audit_run(args):
 
 def cmd_audit_list_reviewers(args):
     """List the 6 default reviewers and their HARD_FAIL conditions."""
-    from quantforge.agents.auditor import AuditorOrchestrator
+    from aurora.agents.auditor import AuditorOrchestrator
     orch = AuditorOrchestrator.default()
     print(f"AuditorOrchestrator.default(): {len(orch.reviewers)} reviewers")
     rules = {
@@ -2046,14 +2047,14 @@ def _agent_gateway_from_args(args):
     import os as _os
     from pathlib import Path as _Path
     import yaml
-    from quantforge.agent_gateway import AgentGateway, GatewayPolicy
+    from aurora.agent_gateway import AgentGateway, GatewayPolicy
 
     cfg_path = _Path(__file__).resolve().parent.parent / "config" / "agent_gateway.yaml"
     data = {}
     if cfg_path.exists():
         with cfg_path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
-    from quantforge.core.runtime_paths import gateway_audit_path as _gw_audit_path
+    from aurora.core.runtime_paths import gateway_audit_path as _gw_audit_path
     audit_path = (
         getattr(args, "audit_path", None)
         or data.get("audit_path")
@@ -2078,7 +2079,7 @@ def _agent_gateway_from_args(args):
 
 
 def cmd_agent_token_issue(args):
-    from quantforge.agent_gateway import TokenScope, issue_token
+    from aurora.agent_gateway import TokenScope, issue_token
 
     scopes = frozenset(TokenScope(s.strip()) for s in args.scopes.split(",") if s.strip())
     allow = frozenset(s.strip() for s in (args.allowlist or "").split(",") if s.strip())
@@ -2124,7 +2125,7 @@ def cmd_agent_audit_verify(args):
 def cmd_agent_stage(args):
     """Read action JSON + token JSON, stage, print staged_id."""
     import json as _json
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, AgentToken, TokenScope,
     )
 
@@ -2185,8 +2186,8 @@ def _build_ops_report(args):
 
     import pandas as pd
 
-    from quantforge.core.protocol_policy import get_active_policy
-    from quantforge.reporting.daily_ops import (
+    from aurora.core.protocol_policy import get_active_policy
+    from aurora.reporting.daily_ops import (
         DailyOpsBuilder,
         DailyOpsConfig,
     )
@@ -2309,8 +2310,8 @@ def cmd_export_lean(args):
 
     import pandas as _pd
 
-    from quantforge.core.protocol_policy import ProtocolPolicy
-    from quantforge.exports.lean import LeanExportConfig, LeanExporter
+    from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.exports.lean import LeanExportConfig, LeanExporter
 
     spec = _strategy_spec_for_export(args.spec_path)
     target_dir = _Path(args.target_dir).resolve()
@@ -2354,7 +2355,7 @@ def cmd_export_lean(args):
 
 def cmd_export_lean_list(args):
     """Print the per-strategy translation tier (full/partial/scaffold-only)."""
-    from quantforge.exports.lean.exporter import list_translation_tiers
+    from aurora.exports.lean.exporter import list_translation_tiers
 
     rows = list_translation_tiers()
     width = max((len(n) for n, _ in rows), default=10)
@@ -2368,7 +2369,7 @@ def cmd_export_verify(args):
     import json as _json
     from pathlib import Path as _Path
 
-    from quantforge.exports.lean.exporter import verify_project
+    from aurora.exports.lean.exporter import verify_project
 
     result = verify_project(_Path(args.project_dir))
     if getattr(args, "json", False):
@@ -2396,7 +2397,7 @@ def cmd_export_verify(args):
 def _load_triage_config(args):
     """Load TriageConfig from --config-path / args overrides / bundled YAML."""
     import os
-    from quantforge.triage import TriageConfig
+    from aurora.triage import TriageConfig
 
     cfg_path = getattr(args, "config_path", None)
     if cfg_path and os.path.exists(cfg_path):
@@ -2424,7 +2425,7 @@ def _variants_from_yaml(path: str):
     import json
     import os
     import yaml
-    from quantforge.triage import StrategyVariant
+    from aurora.triage import StrategyVariant
     if not os.path.exists(path):
         _arg_error(f"variants file not found: {path}")
     with open(path, "r", encoding="utf-8") as f:
@@ -2443,15 +2444,15 @@ def _variants_from_yaml(path: str):
 
 def _load_triage_prices(symbol: str, tier: str):
     """Load a price DataFrame for the given symbol on the given tier."""
-    from quantforge.core.data_tiers import load_tier
+    from aurora.core.data_tiers import load_tier
     ser = load_tier(symbol, tier=tier.upper())
     return ser.to_frame(name=symbol)
 
 
 def cmd_triage_run(args):
     """Run a triage batch and write the result parquet to disk."""
-    from quantforge.core.protocol_policy import ProtocolPolicy
-    from quantforge.triage import TriageEngine
+    from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.triage import TriageEngine
 
     cfg = _load_triage_config(args)
     policy = ProtocolPolicy.load()
@@ -2481,7 +2482,7 @@ def cmd_triage_run(args):
 
 def cmd_triage_list_promising(args):
     """List promising variants from a saved batch parquet."""
-    from quantforge.triage import TriageBatch
+    from aurora.triage import TriageBatch
 
     batch = TriageBatch.from_parquet(args.batch)
     promising = [r for r in batch.results if r.promising]
@@ -2509,9 +2510,9 @@ def cmd_triage_list_promising(args):
 def cmd_triage_promote(args):
     """Re-run a promising variant on the official engine."""
     from dataclasses import replace as _replace
-    from quantforge.core.engine import run_backtest
-    from quantforge.core.protocol_policy import ProtocolPolicy
-    from quantforge.triage import TriageBatch, TriageEngine
+    from aurora.core.engine import run_backtest
+    from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.triage import TriageBatch, TriageEngine
 
     batch = TriageBatch.from_parquet(args.batch)
     target = next(
@@ -2556,8 +2557,8 @@ def cmd_triage_promote(args):
 def cmd_research_triage(args):
     """Run triage as a screening pass on a research specs file."""
     from dataclasses import replace as _replace
-    from quantforge.core.protocol_policy import ProtocolPolicy
-    from quantforge.triage import StrategyVariant, TriageEngine
+    from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.triage import StrategyVariant, TriageEngine
 
     cfg = _load_triage_config(args)
     threshold = getattr(args, "threshold", None)
@@ -2624,7 +2625,7 @@ def _add_global_flags(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="forge",
-        description="QuantForge CLI -- backtest, validate, search, report.",
+        description="Aurora CLI -- backtest, validate, search, report.",
         epilog=(
             "Quick start:\n"
             "  forge --help\n"
@@ -3094,7 +3095,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=("Wrap 'streamlit run' to serve the QuantForge live "
                      "dashboard against a trade journal SQLite file."),
     )
-    p_dash.add_argument("--journal", default="quantforge.db",
+    p_dash.add_argument("--journal", default="aurora.db",
                         help="Path to the trade journal SQLite database")
     p_dash.add_argument("--refresh", type=int, default=30,
                         help="Auto-refresh interval in seconds")
@@ -3557,7 +3558,7 @@ def main(argv=None):
     # Configure logging for the quantforge namespace based on --log-level.
     log_level = getattr(args, "log_level", "INFO")
     try:
-        from quantforge.core.logging import configure_logging
+        from aurora.core.logging import configure_logging
         configure_logging(level=log_level)
     except Exception:
         # Logging setup should never block command execution.

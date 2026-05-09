@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.bl_with_llm_views import (
+from aurora.deployment.bl_with_llm_views import (
     BLLLMConfig,
     BLLLMResult,
     BLLLMViews,

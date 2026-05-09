@@ -39,7 +39,7 @@ except Exception:  # pragma: no cover
 def _require_torch() -> None:
     if not TORCH_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.mamba_ssm requires torch. "
+            "aurora.ml.mamba_ssm requires torch. "
             "Install with: pip install torch"
         )
 

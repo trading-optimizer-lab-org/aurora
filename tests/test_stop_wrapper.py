@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.base import Strategy, StrategySpec
-from quantforge.strategies.library import StopWrapper, MACross, BollingerMR
-from quantforge.validation.lookahead_check import runtime_lookahead_check
+from aurora.strategies.base import Strategy, StrategySpec
+from aurora.strategies.library import StopWrapper, MACross, BollingerMR
+from aurora.validation.lookahead_check import runtime_lookahead_check
 
 
 class _AlwaysLong(Strategy):
@@ -146,8 +146,8 @@ def test_stop_runnable_via_run_ga(fake_prices):
     deep inside DEAP with a TypeError about a missing `base` positional arg.
     """
     pytest.importorskip("deap")
-    from quantforge.ga.runner import run_ga, GAConfig
-    from quantforge.ga.fitness import multi_objective_fitness_is
+    from aurora.ga.runner import run_ga, GAConfig
+    from aurora.ga.fitness import multi_objective_fitness_is
 
     cfg = GAConfig(population=4, generations=1, seed=1, backend="sequential")
     with pytest.raises(TypeError, match="is_wrapper"):

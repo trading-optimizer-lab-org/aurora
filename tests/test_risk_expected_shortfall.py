@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.expected_shortfall import ExpectedShortfall
+from aurora.risk.expected_shortfall import ExpectedShortfall
 
 
 def _seed(s: int) -> np.random.Generator:

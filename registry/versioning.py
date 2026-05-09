@@ -201,7 +201,7 @@ def hash_strategy_code(strategy_class) -> str:
 
     # walk MRO, include intermediate Strategy subclasses
     try:
-        from quantforge.strategies.base import Strategy as _Strategy  # noqa: WPS433
+        from aurora.strategies.base import Strategy as _Strategy  # noqa: WPS433
         for base in strategy_class.__mro__[1:]:
             if base is object or base is _Strategy:
                 continue

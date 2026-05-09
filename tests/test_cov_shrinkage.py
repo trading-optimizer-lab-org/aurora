@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.cov_shrinkage import (
+from aurora.deployment.cov_shrinkage import (
     sample_covariance,
     ledoit_wolf_shrinkage,
     oas_shrinkage,

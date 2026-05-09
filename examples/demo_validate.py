@@ -8,12 +8,12 @@ Run:
 """
 from __future__ import annotations
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.data_layer import load_asset, split_is_oos
-from quantforge.core.costs import IBKR_costs, ZERO_costs
-from quantforge.core.engine import run_backtest
-from quantforge.strategies.library import MACross, RSIMeanRev, TSMomentum, DonchianBreakout
-from quantforge.validation.pipeline import validate_pipeline
+from aurora.core.seed import set_global_seed
+from aurora.core.data_layer import load_asset, split_is_oos
+from aurora.core.costs import IBKR_costs, ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.strategies.library import MACross, RSIMeanRev, TSMomentum, DonchianBreakout
+from aurora.validation.pipeline import validate_pipeline
 
 
 def main():

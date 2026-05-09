@@ -4,13 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import ZERO_costs, IBKR_costs, apply_costs
-from quantforge.core.metrics import compute_metrics, deflated_sharpe
-from quantforge.strategies.library import MACross, RSIMeanRev, TSMomentum, DonchianBreakout
-from quantforge.validation.monte_carlo import monte_carlo_bootstrap
-from quantforge.validation.lookahead_check import scan_lookahead, runtime_lookahead_check
+from aurora.core.seed import set_global_seed
+from aurora.core.engine import run_backtest
+from aurora.core.costs import ZERO_costs, IBKR_costs, apply_costs
+from aurora.core.metrics import compute_metrics, deflated_sharpe
+from aurora.strategies.library import MACross, RSIMeanRev, TSMomentum, DonchianBreakout
+from aurora.validation.monte_carlo import monte_carlo_bootstrap
+from aurora.validation.lookahead_check import scan_lookahead, runtime_lookahead_check
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ def test_slippage_rejection_tracked(fake_prices, caplog):
 
     s = MACross(fast=10, slow=50)
 
-    with caplog.at_level(logging.WARNING, logger="quantforge.core.engine"):
+    with caplog.at_level(logging.WARNING, logger="aurora.core.engine"):
         res = run_backtest(
             fake_prices,
             s.signals,
@@ -207,7 +207,7 @@ def test_first_bar_zero_consistent_across_engines(fake_prices):
     silently overwriting first-bar PnL. Previously engine.py and engine_jit.py
     used `nav[0]=1.0` after cumprod, which masked any non-zero first-bar return.
     """
-    from quantforge.core.engine_jit import run_backtest_jit
+    from aurora.core.engine_jit import run_backtest_jit
 
     s = MACross(fast=10, slow=50)
     a = run_backtest(fake_prices, s.signals, costs=ZERO_costs)

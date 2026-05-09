@@ -35,9 +35,9 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.triage.variants import StrategyVariant
-from quantforge.triage.vectorized import (
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.triage.variants import StrategyVariant
+from aurora.triage.vectorized import (
     compute_metrics_batch,
     compute_pnl_batch,
     compute_signals_batch,
@@ -297,7 +297,7 @@ class TriageEngine:
 
         # vectorbt routing: emit a one-shot warning if asked but missing.
         if self.config.use_vectorbt:
-            from quantforge.triage import vectorbt_backend
+            from aurora.triage import vectorbt_backend
             if not vectorbt_backend.is_available():
                 warnings.warn(
                     "TriageConfig.use_vectorbt=True but vectorbt is not "
@@ -499,7 +499,7 @@ class TriageEngine:
         t0 = time.perf_counter()
         signals = compute_signals_batch(prices, variants)
         if self.config.use_vectorbt:
-            from quantforge.triage import vectorbt_backend
+            from aurora.triage import vectorbt_backend
             rets = vectorbt_backend.vectorbt_pnl_batch(
                 prices, signals,
                 cost_bps=self.config.cost_bps_simple,

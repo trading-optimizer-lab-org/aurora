@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 import pytest
 
-from quantforge.validation.deflated_sharpe import deflated_sharpe_check, DSRReport
+from aurora.validation.deflated_sharpe import deflated_sharpe_check, DSRReport
 
 
 def test_dsr_warns_n_trials_one():

@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.monitoring.drift import (
+from aurora.monitoring.drift import (
     ADWINDetector,
     AutoRetrainController,
     KSDriftDetector,

@@ -15,10 +15,10 @@ import numpy as np
 import pandas as pd
 from hypothesis import given, strategies as st, settings, HealthCheck, assume
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, ZERO_costs, IBKR_costs, apply_costs
-from quantforge.core.metrics import compute_metrics
-from quantforge.strategies.library import (
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, ZERO_costs, IBKR_costs, apply_costs
+from aurora.core.metrics import compute_metrics
+from aurora.strategies.library import (
     MACross, RSIMeanRev, TSMomentum, DonchianBreakout,
 )
 

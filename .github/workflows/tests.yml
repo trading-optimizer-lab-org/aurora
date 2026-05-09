@@ -28,7 +28,7 @@ jobs:
 
       - name: Run tests
         env:
-          QF_DATA_DIR: ${{ runner.temp }}/qf_data
+          AU_DATA_DIR: ${{ runner.temp }}/aurora_data
         run: |
           pytest tests/ -m "not slow and not integration" \
             --ignore=tests/test_config.py \

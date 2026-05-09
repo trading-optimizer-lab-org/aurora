@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.cdc_capture import CDCConfig, ChangeDataCapture
+from aurora.dataeng.cdc_capture import CDCConfig, ChangeDataCapture
 
 
 @pytest.fixture

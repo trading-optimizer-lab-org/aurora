@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.bars import (
+from aurora.core.bars import (
     auto_threshold,
     compute_vwap,
     dollar_bars,

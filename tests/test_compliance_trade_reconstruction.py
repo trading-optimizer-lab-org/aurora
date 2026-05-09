@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from quantforge.compliance.trade_reconstruction import (
+from aurora.compliance.trade_reconstruction import (
     ReconstructionConfig,
     TradeReconstructor,
 )

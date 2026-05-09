@@ -7,7 +7,7 @@ remains importable without optional dependencies.
 Supported names: 'paper', 'alpaca', 'ib', 'coinbase', 'kraken'.
 
 Usage:
-    from quantforge.deployment.brokers import (
+    from aurora.deployment.brokers import (
         BrokerConfig, Order, create_broker,
     )
     cfg = BrokerConfig(name='paper', paper=True)
@@ -36,8 +36,8 @@ from datetime import datetime as _dt
 from datetime import timezone
 from typing import Optional
 
-from quantforge.core.logging import get_logger, log_event
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.logging import get_logger, log_event
+from aurora.core.sqlite_utils import _setup_sqlite
 
 _log = get_logger("deployment.brokers")
 

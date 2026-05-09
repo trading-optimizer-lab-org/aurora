@@ -1,13 +1,17 @@
-# QuantForge
+# Aurora
 
-QuantForge v1.3 - quant research engine with 13 validation gates plus a
+Aurora v1.5 -- quant research engine with 13 validation gates plus a
 final OOS hold-out (see `docs/ARCHITECTURE.md` for the canonical
 enumeration). `validate_pipeline` orchestrates 8 of the 13 gates;
 purged CV, CSCV, scenarios, tail-risk, and correlation-stress run
 standalone. 12 strategies, intraday + DL/RL + dashboard + multi-broker
-+ LLM. Cumulative test coverage: 2500+ tests across v1.0 / v1.1 / v1.2
-/ v1.3 / v1.4 (count in `quantforge/tests/`; verify with
++ LLM. Cumulative test coverage: 2800+ tests across v1.0 / v1.1 / v1.2
+/ v1.3 / v1.4 / v1.5 (count in `tests/`; verify with
 `pytest --collect-only -q`).
+
+Renamed from QuantForge to Aurora in v1.5.0 (R23). The legacy
+`quantforge` namespace remains importable as a thin compat shim that
+emits a `DeprecationWarning`; the shim is removed in v1.6.
 
 ## Filosofia
 
@@ -18,8 +22,7 @@ The non-negotiable doctrine:
 
 1. **OOS sagrado** - the out-of-sample partition is sacred. The genetic algorithm
    never sees OOS prices. OOS is touched only after candidates have been chosen,
-   and only by the final OOS gate. Enforced programmatically by `OOSGuard` in
-   `quantforge/core/data_layer.py` and reaffirmed in `quantforge/ga/fitness.py`.
+   and only by the final OOS gate.
 2. **Walk-forward** - candidate must beat buy-and-hold Calmar inside multiple
    non-overlapping windows.
 3. **Monte Carlo** - block-bootstrap returns and trade-reorder MC.
@@ -27,6 +30,9 @@ The non-negotiable doctrine:
    require Calmar coefficient of variation below 30%.
 5. **Deflated Sharpe Ratio** - Bailey / Lopez de Prado correction for selection
    bias across N candidates.
+
+`OOSGuard` lives in `aurora/core/data_layer.py` and the GA fitness path
+that defends the OOS sacred boundary lives in `aurora/ga/fitness.py`.
 
 Every approved strategy then enters paper trading for 90 days minimum before live
 deployment with a 1% risk-per-trade cap.
@@ -136,44 +142,41 @@ with the same seed reproduces identical results.
 ## Quick start
 
 ```bash
-# From the repo root (the parent of quantforge/), install the editable
-# package. The setup.py / pyproject.toml lives inside quantforge/, so
-# the path argument is required -- running `pip install -e .` from the
-# repo root WITHOUT the path argument will fail because the repo root
-# itself is not a package.
-pip install -e quantforge/
-
-# Equivalent if you cd into the package directory first:
-#   cd <repo>/quantforge
-#   pip install -e .
+# pyproject.toml lives at the repo root and declares the `aurora`
+# package via [tool.setuptools.package-dir]. From the repo root:
+pip install -e .
 
 # List strategies
-forge list-strategies
+aurora list-strategies
 
 # Validate a strategy on SPY (runs the full pipeline)
-forge validate --strategy MACross --asset SPY --n-trials 5
+aurora validate --strategy MACross --asset SPY --n-trials 5
 
 # Run a single backtest
-forge run --strategy MACross --asset SPY
+aurora run --strategy MACross --asset SPY
 
 # GA search
-forge search --strategy MACross --asset SPY --population 100
+aurora search --strategy MACross --asset SPY --population 100
 
 # Tear sheet
-forge tearsheet --strategy MACross --asset SPY --output tear.html
+aurora tearsheet --strategy MACross --asset SPY --output tear.html
 
 # Live dashboard
-forge dashboard --journal quantforge.db
+aurora dashboard --journal aurora.db
 ```
+
+The legacy `forge` CLI keeps working as a deprecated alias during the
+v1.5 shim window; both `forge` and `aurora` dispatch to the same entry
+point.
 
 Programmatic basic backtest:
 
 ```python
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine import run_backtest
-from quantforge.core.data_layer import load_asset
-from quantforge.core.costs import IBKR_costs
-from quantforge.strategies.library import MACross
+from aurora.core.seed import set_global_seed
+from aurora.core.engine import run_backtest
+from aurora.core.data_layer import load_asset
+from aurora.core.costs import IBKR_costs
+from aurora.strategies.library import MACross
 
 set_global_seed(42)
 prices = load_asset("SPY")              # IS-only by default
@@ -186,32 +189,32 @@ print(result.calmar, result.sharpe, result.mdd)
 ## CLI subcommands (15)
 
 ```
-forge run                   single backtest
-forge validate              run validation pipeline
-forge search                GA candidate search
-forge list-strategies
-forge tearsheet
-forge bench                 microbenchmark
-forge config show|init
-forge preflight             pre-trade checks
-forge label                 triple-barrier labels
-forge factor                factor / IC / quantile spread
-forge attribute             performance attribution
-forge purge-cv              purged K-Fold CV
-forge fracdiff
-forge cscv                  CSCV / PBO from per-strategy returns
-forge dashboard             Streamlit live monitor
+aurora run                   single backtest
+aurora validate              run validation pipeline
+aurora search                GA candidate search
+aurora list-strategies
+aurora tearsheet
+aurora bench                 microbenchmark
+aurora config show|init
+aurora preflight             pre-trade checks
+aurora label                 triple-barrier labels
+aurora factor                factor / IC / quantile spread
+aurora attribute             performance attribution
+aurora purge-cv              purged K-Fold CV
+aurora fracdiff
+aurora cscv                  CSCV / PBO from per-strategy returns
+aurora dashboard             Streamlit live monitor
 ```
 
 ## OOS sagrado (no negotiation)
 
 - OOS partition is locked. Programmatic `OOSGuard` blocks access during
   optimization, with file lock and git-hash provenance.
-- The IS / OOS split is defined in `quantforge/core/data_layer.py` and the
+- The IS / OOS split is defined in `aurora/core/data_layer.py` and the
   formal research protocol in `docs/RESEARCH_PROTOCOL.md`.
 - The GA reads only IS-train + walk-forward folds. OOS is consulted exactly
   once, after pareto-front selection, by the final gate in
-  `quantforge/validation/pipeline.py`.
+  `aurora/validation/pipeline.py`.
 - Re-touching OOS_LOCKED requires explicit ceremony (see
   `docs/RESEARCH_PROTOCOL.md`).
 

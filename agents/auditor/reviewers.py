@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from quantforge.agents.auditor.base import (
+from aurora.agents.auditor.base import (
     LLM_MAX_SEVERITY,
     LLMAugmenter,
     ReviewContext,

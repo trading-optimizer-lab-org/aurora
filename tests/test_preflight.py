@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.preflight import (
+from aurora.deployment.preflight import (
     PreflightCheck,
     PreflightReport,
     check_anti_lookahead,
@@ -27,7 +27,7 @@ from quantforge.deployment.preflight import (
     _resolve_min_bars,
     _NTP_FALLBACK_SERVERS,
 )
-from quantforge.strategies.library import MACross
+from aurora.strategies.library import MACross
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def test_callable_check_none():
 
 def test_data_availability_pass(monkeypatch):
     """Patch load_asset to return enough bars."""
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     fake = _synth_prices(400)
     monkeypatch.setattr(pf, "load_asset", lambda symbol, include_oos=True: fake)
     chk = check_data_availability("FAKE", min_bars=200)
@@ -87,7 +87,7 @@ def test_data_availability_pass(monkeypatch):
 
 
 def test_data_availability_fail(monkeypatch):
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     fake = _synth_prices(50)
     monkeypatch.setattr(pf, "load_asset", lambda symbol, include_oos=True: fake)
     chk = check_data_availability("FAKE", min_bars=200)
@@ -96,7 +96,7 @@ def test_data_availability_fail(monkeypatch):
 
 
 def test_data_availability_load_error(monkeypatch):
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     def boom(*a, **kw):
         raise RuntimeError("network down")
@@ -236,7 +236,7 @@ def test_disk_space(tmp_path):
 
 
 def test_disk_space_mocked_low(monkeypatch):
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     class FakeUsage:
         free = 50 * 1024 * 1024  # 50 MB
@@ -296,7 +296,7 @@ def test_files_exist_empty():
 
 def test_full_preflight_runs(tmp_path, monkeypatch):
     """End-to-end: returns a PreflightReport with all 10 sub-checks."""
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     fake = _synth_prices(400)
     monkeypatch.setattr(pf, "load_asset", lambda symbol, include_oos=True: fake)
@@ -355,7 +355,7 @@ def test_full_preflight_runs(tmp_path, monkeypatch):
 
 def test_full_preflight_fails_when_marker_missing(tmp_path, monkeypatch):
     """No marker -> validation_marker fails -> all_passed False, blocker reported."""
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     fake = _synth_prices(400)
     monkeypatch.setattr(pf, "load_asset", lambda symbol, include_oos=True: fake)
@@ -376,10 +376,10 @@ def test_full_preflight_fails_when_marker_missing(tmp_path, monkeypatch):
 
 def test_pipeline_writes_marker_on_pass(tmp_path, monkeypatch):
     """validate_pipeline must drop the marker file when overall_passed=True."""
-    from quantforge.core.seed import set_global_seed
-    from quantforge.core.costs import ZERO_costs
-    from quantforge.validation.pipeline import validate_pipeline
-    from quantforge.validation.walk_forward import WFWindow
+    from aurora.core.seed import set_global_seed
+    from aurora.core.costs import ZERO_costs
+    from aurora.validation.pipeline import validate_pipeline
+    from aurora.validation.walk_forward import WFWindow
 
     set_global_seed(42)
     n = 6000
@@ -395,7 +395,7 @@ def test_pipeline_writes_marker_on_pass(tmp_path, monkeypatch):
     ]
 
     # Redirect the marker writer to tmp_path so we don't pollute the repo.
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     orig = pf.write_validation_marker
     captured = {}
 
@@ -406,10 +406,10 @@ def test_pipeline_writes_marker_on_pass(tmp_path, monkeypatch):
         return path
 
     monkeypatch.setattr(
-        "quantforge.deployment.preflight.write_validation_marker", fake_write,
+        "aurora.deployment.preflight.write_validation_marker", fake_write,
     )
     # pipeline imports inside validate_pipeline; patch the lookup site too
-    import quantforge.validation.pipeline as pipe_mod
+    import aurora.validation.pipeline as pipe_mod
     monkeypatch.setattr(
         pipe_mod, "validate_pipeline", pipe_mod.validate_pipeline, raising=False,
     )
@@ -472,7 +472,7 @@ def test_resolve_min_bars_uses_strategy_attr():
 
 def test_preflight_adapts_min_bars_to_strategy(monkeypatch):
     """check_data_availability uses strategy.min_bars when present."""
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     fake = _synth_prices(400)
     monkeypatch.setattr(pf, "load_asset", lambda symbol, include_oos=True: fake)
@@ -567,7 +567,7 @@ def test_preflight_ntp_falls_back_on_failure(monkeypatch):
     the legacy local-clock pass behavior.
     """
     import socket as _socket
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     calls: list[str] = []
 
@@ -607,7 +607,7 @@ def test_preflight_ntp_falls_back_on_failure(monkeypatch):
 
 def test_preflight_ntp_uses_first_responsive(monkeypatch):
     """First server that responds wins; later servers are not contacted."""
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
 
     # Patch the low-level NTP querier so the first server returns a valid
     # epoch and the rest are never reached.
@@ -632,7 +632,7 @@ def test_preflight_ntp_uses_first_responsive(monkeypatch):
 
 def test_preflight_ntp_skips_bad_server_then_succeeds(monkeypatch):
     """Failed first server -> falls back to second working server."""
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     import time as _time
 
     asked: list[str] = []
@@ -697,14 +697,14 @@ def test_check_market_hours_skips_when_lib_missing(monkeypatch):
     # invalidating any cached module.
     _sys.modules.pop("pandas_market_calendars", None)
     monkeypatch.setitem(_sys.modules, "pandas_market_calendars", None)
-    from quantforge.deployment.preflight import check_market_hours
+    from aurora.deployment.preflight import check_market_hours
     chk = check_market_hours("SPY", exchange="NYSE")
     assert chk.passed is True
     assert "skipped" in chk.detail.lower()
 
 
 def test_check_data_freshness_passes_when_recent():
-    from quantforge.deployment.preflight import check_data_freshness
+    from aurora.deployment.preflight import check_data_freshness
     now = pd.Timestamp.utcnow().tz_convert("UTC")
     idx = pd.date_range(end=now, periods=5, freq="h", tz="UTC")
     s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0], index=idx)
@@ -713,7 +713,7 @@ def test_check_data_freshness_passes_when_recent():
 
 
 def test_check_data_freshness_fails_when_stale():
-    from quantforge.deployment.preflight import check_data_freshness
+    from aurora.deployment.preflight import check_data_freshness
     now = pd.Timestamp("2026-05-07T12:00:00", tz="UTC")
     idx = pd.date_range(end=pd.Timestamp("2026-05-04T00:00:00", tz="UTC"),
                         periods=5, freq="h", tz="UTC")
@@ -723,7 +723,7 @@ def test_check_data_freshness_fails_when_stale():
 
 
 def test_check_buying_power_dict_account():
-    from quantforge.deployment.preflight import check_buying_power
+    from aurora.deployment.preflight import check_buying_power
 
     class _Broker:
         def get_account(self):
@@ -737,6 +737,6 @@ def test_check_buying_power_dict_account():
 
 
 def test_check_buying_power_skips_when_no_broker():
-    from quantforge.deployment.preflight import check_buying_power
+    from aurora.deployment.preflight import check_buying_power
     chk = check_buying_power(None, required_cash=1000.0)
     assert chk.passed is True

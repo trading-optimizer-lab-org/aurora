@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.core.costs import (
+from aurora.core.costs import (
     CONSERVATIVE_costs,
     CostModel,
     IBKR_costs,

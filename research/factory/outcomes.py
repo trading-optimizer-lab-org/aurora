@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from quantforge.research.factory.spec import StrategySpec
+from aurora.research.factory.spec import StrategySpec
 
 
 class ResearchStage(str, Enum):

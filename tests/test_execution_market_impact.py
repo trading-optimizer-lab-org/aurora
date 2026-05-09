@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.execution.market_impact import (
+from aurora.execution.market_impact import (
     MarketImpactConfig,
     MarketImpactModel,
 )

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.signals import VolSurfaceSignal, VolSurfaceConfig
+from aurora.signals import VolSurfaceSignal, VolSurfaceConfig
 
 
 @pytest.fixture

@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.validation.purged_cv import (
+from aurora.validation.purged_cv import (
     PurgedKFold, PurgedKFoldResult, cv_score,
 )
-from quantforge.core.seed import set_global_seed, child_rng
+from aurora.core.seed import set_global_seed, child_rng
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def fake_prices_1000():
 
 def _stateless_macross_factory():
     """No-arg factory: stateless strategy."""
-    from quantforge.strategies.library.ma_cross import MACross
+    from aurora.strategies.library.ma_cross import MACross
     return MACross(fast=10, slow=50)
 
 
@@ -234,7 +234,7 @@ def test_factory_with_train_prices(fake_prices_500):
     def factory(train_prices: pd.Series):
         captured["calls"] += 1
         captured["train_lens"].append(len(train_prices))
-        from quantforge.strategies.library.ma_cross import MACross
+        from aurora.strategies.library.ma_cross import MACross
         return MACross(fast=10, slow=50)
 
     res = cv_score(factory, fake_prices_500, n_splits=5, embargo_pct=0.01)

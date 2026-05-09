@@ -25,13 +25,13 @@ Public Markov switching API:
 """
 # Build ``__all__`` conditionally on import success, mirroring the
 # top-level ``quantforge/__init__.py`` pattern. Symbols whose backing
-# import failed are left out of ``__all__`` so ``from quantforge.regime
+# import failed are left out of ``__all__`` so ``from aurora.regime
 # import *`` does not surface ``None`` placeholders, while the names are
 # still bound at module level for ``hasattr``-style probes.
 __all__: list[str] = []
 
 try:
-    from quantforge.regime.hurst import (
+    from aurora.regime.hurst import (
         HurstResult,
         hurst_dfa,
         hurst_regime_filter,
@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
 # HMM has an optional hmmlearn dependency; import lazily so consumers that
 # only need Hurst do not require hmmlearn to be installed.
 try:
-    from quantforge.regime.hmm import (
+    from aurora.regime.hmm import (
         GaussianHMM,
         HMMResult,
         detect_regime_change,
@@ -77,7 +77,7 @@ except ImportError:  # pragma: no cover - optional dep
 # ``bayesian_rolling_alpha`` and a thin class wrapper ``BayesAlphaModel`` that
 # stores priors + window on the instance and forwards to the function.
 try:
-    from quantforge.regime.bayes_alpha import (
+    from aurora.regime.bayes_alpha import (
         BayesAlphaModel,
         BayesAlphaResult,
         bayesian_rolling_alpha,
@@ -96,7 +96,7 @@ except ImportError:  # pragma: no cover
 # falls back to a manual EM implementation, so the import itself is always
 # available.
 try:
-    from quantforge.regime.markov_switching import MarkovSwitchingMean
+    from aurora.regime.markov_switching import MarkovSwitchingMean
     __all__.append("MarkovSwitchingMean")
 except ImportError:  # pragma: no cover
     MarkovSwitchingMean = None  # type: ignore[assignment]

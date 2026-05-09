@@ -86,7 +86,7 @@ class StrategySpec:
         failure_modes: list of explicit failure-mode tags so a reviewer can
             check whether the candidate failed in a known way.
         strategy_class: fully-qualified import path
-            (e.g. ``"quantforge.strategies.library.ma_cross.MACross"``).
+            (e.g. ``"aurora.strategies.library.ma_cross.MACross"``).
             The factory imports and instantiates this with ``params``.
         params: keyword arguments passed to ``strategy_class``.
         universe: list of tickers the strategy trades (single-asset = list

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.research.blue_green_models import (
+from aurora.research.blue_green_models import (
     BlueGreenModelDeployer,
     DeploymentReport,
 )

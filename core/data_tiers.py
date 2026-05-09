@@ -16,7 +16,7 @@ from typing import Literal, Optional, Union, TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from quantforge.core.snapshots import DataSnapshot
+    from aurora.core.snapshots import DataSnapshot
 
 # P0.A: tier boundaries are now sourced from ``ProtocolPolicy``. The
 # module-level constants below remain for backwards compatibility but
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 def _resolve_tier_constants() -> dict:
     """Read the canonical tier date table from the active ``ProtocolPolicy``."""
     # Late import to avoid a circular dependency at package import time.
-    from quantforge.core.protocol_policy import get_active_policy
+    from aurora.core.protocol_policy import get_active_policy
     pol = get_active_policy()
     tiers = pol.tiers
     out = {
@@ -274,7 +274,7 @@ def load_up_to_tier(
     if required is not None:
         # Late import: data_layer imports data_tiers (split_by_tier),
         # so we must defer to break the cycle.
-        from quantforge.core.data_layer import OOSGuard
+        from aurora.core.data_layer import OOSGuard
         active = OOSGuard.active()
         if active is None or active.phase != required:
             raise RuntimeError(
@@ -284,7 +284,7 @@ def load_up_to_tier(
             )
 
     # Late import to avoid a cycle (data_layer -> snapshots -> ... -> data_tiers).
-    from quantforge.core.data_layer import load_asset
+    from aurora.core.data_layer import load_asset
     result = load_asset(
         symbol,
         source=source,

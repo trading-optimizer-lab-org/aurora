@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.research.leaderboard import LeaderboardEntry, StrategyLeaderboard
+from aurora.research.leaderboard import LeaderboardEntry, StrategyLeaderboard
 
 
 def test_submit_and_latest():

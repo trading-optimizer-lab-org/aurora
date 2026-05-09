@@ -18,20 +18,20 @@ stress
 """
 from __future__ import annotations
 
-from quantforge.portfolio.allocation import (
+from aurora.portfolio.allocation import (
     BenchmarkTrackerAllocator,
     CashAllocator,
     EqualWeightAllocator,
     InverseVolAllocator,
     PortfolioOptimizer,
 )
-from quantforge.portfolio.constraints import PortfolioConstraints
-from quantforge.portfolio.optimizers import (
+from aurora.portfolio.constraints import PortfolioConstraints
+from aurora.portfolio.optimizers import (
     MeanRiskOptimizer,
     RiskBudgetingOptimizer,
     SkfolioAdapter,
 )
-from quantforge.portfolio.risk_measures import (
+from aurora.portfolio.risk_measures import (
     avg_drawdown,
     cvar,
     max_drawdown,
@@ -39,7 +39,7 @@ from quantforge.portfolio.risk_measures import (
     turnover_aware_net_return,
     variance,
 )
-from quantforge.portfolio.stress import (
+from aurora.portfolio.stress import (
     StressResult,
     StressScenario,
     stress_test,

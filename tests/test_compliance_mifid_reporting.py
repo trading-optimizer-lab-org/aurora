@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from quantforge.compliance.mifid_reporting import (
+from aurora.compliance.mifid_reporting import (
     RTS22_FIELDS,
     MiFIDConfig,
     MiFIDIIReporter,

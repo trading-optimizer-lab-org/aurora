@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.ml.multi_agent_rl import (
+from aurora.ml.multi_agent_rl import (
     ACTIONS,
     MultiAgentEnvConfig,
     MultiAgentTradingEnv,

@@ -1,6 +1,6 @@
 # P2.A Triage Backend
 
-The triage backend (`quantforge.triage`) is a fast, vectorized screening
+The triage backend (`aurora.triage`) is a fast, vectorized screening
 layer for thousands of strategy variants. It is **not** a substitute
 for the official engine.
 
@@ -8,7 +8,7 @@ for the official engine.
 
 When a research session generates 10k+ candidate parameter combinations
 (GA sweeps, random search, bulk LLM proposals), running each through
-the full QuantForge engine -- with snapshots, OOSGuard, slippage, and
+the full Aurora engine -- with snapshots, OOSGuard, slippage, and
 the eight-gate pipeline -- is too expensive. Triage gives every
 variant a coarse score under a simplified cost model and flags the ones
 worth re-running on the official engine.
@@ -18,7 +18,7 @@ Triage answers exactly one question:
 > **Is this variant interesting enough to spend a real backtest on?**
 
 Promising variants are flagged. Anything that survives is then re-run
-on `quantforge.core.engine.run_backtest` (or whatever the official
+on `aurora.core.engine.run_backtest` (or whatever the official
 runner the caller passes). Triage **never** produces a verdict that can
 be promoted on its own.
 
@@ -61,15 +61,15 @@ be promoted on its own.
 ## Backends
 
 The default backend is the internal numpy implementation in
-`quantforge.triage.vectorized`. It computes signals per variant per
+`aurora.triage.vectorized`. It computes signals per variant per
 asset in a Python loop (strategy ctors cannot be vectorized safely)
 but runs the pnl + metric layer entirely in numpy with broadcasting.
 
 When `TriageConfig.use_vectorbt=True` and `vectorbt` is importable,
-the pipeline routes through `quantforge.triage.vectorbt_backend`
+the pipeline routes through `aurora.triage.vectorbt_backend`
 instead. If vectorbt is not installed, the engine emits a single
 `UserWarning` and falls back to the internal backend; vectorbt is
-intentionally not a hard dependency of QuantForge.
+intentionally not a hard dependency of Aurora.
 
 ## CLI
 
@@ -101,7 +101,7 @@ A typical workflow looks like:
 4. For each promotable id, the caller hands the corresponding
    `TriageResult` to `TriageEngine.promote_to_official(result, runner)`,
    where `runner` is the official `run_backtest` (with full
-   QuantForge ceremony: real costs, slippage model, snapshots,
+   Aurora ceremony: real costs, slippage model, snapshots,
    OOSGuard).
 5. The official run is the only verdict; triage is a filter, not an
    answer.

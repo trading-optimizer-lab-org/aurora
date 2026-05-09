@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.esg_filter import (
+from aurora.deployment.esg_filter import (
     ESGConfig,
     ESGFilter,
     ESGFilterResult,

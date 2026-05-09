@@ -18,7 +18,7 @@ import logging
 import random
 from typing import Any, Optional, Protocol, runtime_checkable
 
-from quantforge.research.factory.spec import StrategySpec
+from aurora.research.factory.spec import StrategySpec
 
 _log = logging.getLogger(__name__)
 

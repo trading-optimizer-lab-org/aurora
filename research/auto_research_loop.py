@@ -36,11 +36,11 @@ import logging
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library.tsmom import TSMomentum
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.strategies.library.bollinger_mr import BollingerMR
+from aurora.core.engine import run_backtest
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library.tsmom import TSMomentum
+from aurora.strategies.library.ma_cross import MACross
+from aurora.strategies.library.bollinger_mr import BollingerMR
 
 
 log = logging.getLogger(__name__)

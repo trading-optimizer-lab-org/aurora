@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover
 def _require_torch() -> None:
     if not TORCH_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.contrastive_strategy requires torch. "
+            "aurora.ml.contrastive_strategy requires torch. "
             "Install with: pip install torch"
         )
 

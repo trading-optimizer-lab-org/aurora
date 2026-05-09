@@ -9,7 +9,7 @@ ATR, future Strategy API extension to accept DataFrame would be required.
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 class ATRBreakout(Strategy):

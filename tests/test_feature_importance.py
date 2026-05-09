@@ -10,8 +10,8 @@ pytest.importorskip("sklearn")
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
 
-from quantforge.core.seed import set_global_seed
-from quantforge.ml.feature_importance import (
+from aurora.core.seed import set_global_seed
+from aurora.ml.feature_importance import (
     mean_decrease_impurity,
     mean_decrease_accuracy,
     single_feature_importance,

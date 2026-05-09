@@ -12,7 +12,7 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.seed import child_rng
+from aurora.core.seed import child_rng
 
 
 @dataclass

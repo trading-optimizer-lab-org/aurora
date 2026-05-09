@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.marketdata.survivorship_free import (
+from aurora.marketdata.survivorship_free import (
     SurvivorshipFreeUniverse,
     UniverseConfig,
 )

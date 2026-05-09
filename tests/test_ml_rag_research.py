@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.ml.rag_research import (
+from aurora.ml.rag_research import (
     RAGConfig,
     RAGResearchAssistant,
     MockLLM,

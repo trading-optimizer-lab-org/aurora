@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.research.champion_challenger import (
+from aurora.research.champion_challenger import (
     ChampionChallengerFramework,
     ChampionDecision,
 )

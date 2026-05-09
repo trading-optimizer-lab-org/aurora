@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.analytics.attribution import (
+from aurora.analytics.attribution import (
     AttributionResult,
     attribution_by_strategy,
     attribution_by_factor,

@@ -12,10 +12,10 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.data_tiers import load_tier
-from quantforge.strategies.library import PairTrade
-from quantforge.ga.multi_asset_runner import (
+from aurora.core.seed import set_global_seed
+from aurora.core.data_tiers import load_tier
+from aurora.strategies.library import PairTrade
+from aurora.ga.multi_asset_runner import (
     run_multi_asset_ga, MultiAssetGAConfig, multi_asset_fitness_is,
     multi_asset_validate_oos,
 )

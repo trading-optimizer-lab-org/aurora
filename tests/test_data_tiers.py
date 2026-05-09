@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.data_tiers import (
+from aurora.core.data_tiers import (
     FORWARD_START,
     IS_TRAIN_END,
     IS_VALID_END,

@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import TSMomentum
-from quantforge.strategies.base import StrategySpec
+from aurora.strategies.library import TSMomentum
+from aurora.strategies.base import StrategySpec
 
 
 @pytest.fixture

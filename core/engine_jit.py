@@ -42,8 +42,8 @@ except ImportError:  # pragma: no cover
         return deco
 
 
-from quantforge.core.costs import CostModel, ZERO_costs
-from quantforge.core.metrics import compute_metrics
+from aurora.core.costs import CostModel, ZERO_costs
+from aurora.core.metrics import compute_metrics
 
 
 # ---------- pure kernels (njit) ----------------------------------------------
@@ -337,7 +337,7 @@ def run_backtest_jit(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
     # Slippage model path: delegate to engine.run_backtest to avoid duplicating
     # the size-dependent slippage logic. Repackage the result.
     if slippage_model is not None:
-        from quantforge.core.engine import run_backtest
+        from aurora.core.engine import run_backtest
         res = run_backtest(
             prices, signal_fn, costs=costs, ppy=ppy,
             slippage_model=slippage_model,

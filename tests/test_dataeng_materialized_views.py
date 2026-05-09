@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from quantforge.dataeng.materialized_views import (
+from aurora.dataeng.materialized_views import (
     MVConfig,
     MaterializedViewManager,
 )

@@ -16,7 +16,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
-from quantforge.monitoring.alerts import (
+from aurora.monitoring.alerts import (
     Alert,
     AlertConfig,
     AlertEngine,

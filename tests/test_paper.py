@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.deployment.brokers import (
+from aurora.deployment.brokers import (
     BrokerConfig,
     Order,
     PaperBroker,

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.risk.stress_var import StressVaR
+from aurora.risk.stress_var import StressVaR
 
 
 def _make_returns(seed: int, start: str = "2007-01-01", n: int = 4000) -> pd.Series:

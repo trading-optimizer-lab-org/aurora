@@ -7,7 +7,7 @@ the model only on (features[i-1], label_i), where label_i = sign(price[i]/price[
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 try:
     from sklearn.linear_model import SGDClassifier, PassiveAggressiveRegressor

@@ -12,12 +12,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.snapshots import (
+from aurora.core.snapshots import (
     DataSnapshot,
     IntegrityError,
     SnapshotStore,
 )
-from quantforge.core.data_layer import OOSGuard
+from aurora.core.data_layer import OOSGuard
 
 
 def _make_series(n: int = 50, start: str = "2020-01-01", seed: int = 0) -> pd.Series:
@@ -211,7 +211,7 @@ def test_snapshot_hash_cross_platform_stable(tmp_path: Path):
     """Hash must be byte-order independent. We force little-endian inputs and
     compare the digest to a known constant for a fixed series.
     """
-    from quantforge.core.snapshots import _compute_sha256
+    from aurora.core.snapshots import _compute_sha256
 
     idx = pd.date_range("2020-01-01", periods=5, freq="B")
     vals = [100.0, 101.5, 99.25, 102.0, 100.75]
@@ -228,7 +228,7 @@ def test_snapshot_distinguishes_different_indices(tmp_path: Path):
     """Two series with identical values but different index timestamps must
     produce different hashes (the prior bug ignored the index).
     """
-    from quantforge.core.snapshots import _compute_sha256
+    from aurora.core.snapshots import _compute_sha256
 
     vals = [100.0, 101.0, 102.0, 103.0, 104.0]
     a = pd.Series(vals, index=pd.date_range("2020-01-01", periods=5, freq="B"))
@@ -301,7 +301,7 @@ def test_oosguard_thread_isolated():
     active guard.
     """
     import threading
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
 
     seen_t1: list = []
     seen_t2: list = []

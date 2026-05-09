@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.execution.liquidity_seeking import (
+from aurora.execution.liquidity_seeking import (
     LiquiditySeekingAlgo,
     LiquiditySeekingConfig,
     VenueQuote,

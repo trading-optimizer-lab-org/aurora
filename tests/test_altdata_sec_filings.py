@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.altdata.sec_filings import SECConfig, SECFilingsAdapter
+from aurora.altdata.sec_filings import SECConfig, SECFilingsAdapter
 
 
 @pytest.fixture

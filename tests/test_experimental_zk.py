@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.experimental.zk_performance_proof import ZKPerformanceProof
+from aurora.experimental.zk_performance_proof import ZKPerformanceProof
 
 
 def test_proof_round_trip_verifies():

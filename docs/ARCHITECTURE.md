@@ -1,6 +1,6 @@
-# QuantForge Architecture
+# Aurora Architecture
 
-QuantForge is layered: a deterministic core engine, a strategy library, an
+Aurora is layered: a deterministic core engine, a strategy library, an
 optimization layer (GA + Bayesian), a militant validation pipeline, an
 analytics + reporting layer, and a deployment + monitoring layer for paper /
 live trading. The OOS partition is sacred at every layer.
@@ -71,23 +71,23 @@ live trading. The OOS partition is sacred at every layer.
 
 This is the principal architectural invariant. It is enforced at three places:
 
-- `quantforge/core/data_layer.py` defines `IS_END = 2012-12-31` and
+- `aurora/core/data_layer.py` defines `IS_END = 2012-12-31` and
   `OOS_START = 2013-01-01`. `load_asset()` defaults `include_oos=False`. The
   `OOSGuard` context manager records every OOS read with a timestamp and the
   current git hash to `data_cache_qf/.oos_lock.json`.
-- `quantforge/ga/fitness.py` builds fitness using IS prices only. The legacy
+- `aurora/ga/fitness.py` builds fitness using IS prices only. The legacy
   signature that accepted `prices_oos` is retained as a deprecated alias that
   ignores its OOS argument and emits a warning on first call. Walk-forward
   robustness inside the GA fitness is computed across IS sub-windows, never
   IS-vs-OOS.
-- `quantforge/validation/pipeline.py` is the only orchestrator allowed to call
+- `aurora/validation/pipeline.py` is the only orchestrator allowed to call
   the final OOS gate, and only after the IS pipeline has selected survivors.
 
 The formal data-split policy lives in `docs/RESEARCH_PROTOCOL.md`.
 
 ### 2. Reproducibility
 
-`quantforge.core.seed.set_global_seed(N)` once at start. All randomness flows
+`aurora.core.seed.set_global_seed(N)` once at start. All randomness flows
 from this. `child_rng(name)` for per-component RNG, deterministic given the
 global seed.
 
@@ -125,7 +125,7 @@ pass `n_trials` when reporting best-of-search Sharpe.
 ## Directory layout (v1.3 state)
 
 ```
-quantforge/
+aurora/
 ├── __init__.py                # version sourced from pyproject.toml
 ├── README.md
 ├── core/
@@ -272,10 +272,10 @@ gate sequence.
 
 The contract is owned by these three call sites:
 
-1. `quantforge/core/data_layer.py` -> `OOSGuard`, `load_asset(include_oos=False)`
-2. `quantforge/ga/fitness.py` -> `multi_objective_fitness_is`,
+1. `aurora/core/data_layer.py` -> `OOSGuard`, `load_asset(include_oos=False)`
+2. `aurora/ga/fitness.py` -> `multi_objective_fitness_is`,
    `scalar_fitness_is`, `validate_oos`
-3. `quantforge/validation/pipeline.py` -> single OOS hold-out call after
+3. `aurora/validation/pipeline.py` -> single OOS hold-out call after
    selection
 
 The formal split (IS_TRAIN, IS_VALID, WF, OOS_DEV, OOS_LOCKED, FORWARD)

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.ml.automl_features import (
+from aurora.ml.automl_features import (
     AutoMLConfig,
     AutoMLFeatureEngineer,
     SKLEARN_AVAILABLE,

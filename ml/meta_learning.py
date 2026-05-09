@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover
 def _require_torch() -> None:
     if not TORCH_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.meta_learning requires torch. "
+            "aurora.ml.meta_learning requires torch. "
             "Install with: pip install torch"
         )
 

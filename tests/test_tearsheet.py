@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.metrics import compute_metrics, Metrics
-from quantforge.core.engine import BacktestResult
-from quantforge.reporting.tearsheet import (
+from aurora.core.metrics import compute_metrics, Metrics
+from aurora.core.engine import BacktestResult
+from aurora.reporting.tearsheet import (
     generate_tearsheet,
     _drawdown_periods,
     _monthly_returns_matrix,
@@ -170,7 +170,7 @@ def test_unrecovered_drawdown_marked():
 
 def test_unrecovered_drawdown_html_renders_open_status():
     """The HTML rendering should mark unrecovered DDs with an 'open' status."""
-    from quantforge.reporting.tearsheet import _top_dd_html
+    from aurora.reporting.tearsheet import _top_dd_html
     nav = np.array([1.0, 1.5, 1.2, 1.0, 0.9, 0.85])
     ts = pd.date_range("2024-01-01", periods=len(nav), freq="D")
     periods = _drawdown_periods(nav, ts.values)
@@ -187,7 +187,7 @@ def test_top_dd_html_handles_numpy_int_indexes():
     so we get the raw integer rendered (and escaped) rather than crashing
     on ``pd.Timestamp(np.int64).date()`` for an integer bar index.
     """
-    from quantforge.reporting.tearsheet import _top_dd_html
+    from aurora.reporting.tearsheet import _top_dd_html
     rows = [
         (np.int64(3), np.int64(7), -10.0, np.int64(2), False),
         # Float NaN coming through numpy must also not crash.
@@ -208,7 +208,7 @@ def test_top_dd_html_escapes_status_and_recovery():
     ``_esc`` so a malicious/odd string in start/end/rec_days/status
     cannot break out of the surrounding ``<td>`` cell.
     """
-    from quantforge.reporting.tearsheet import _top_dd_html
+    from aurora.reporting.tearsheet import _top_dd_html
     # Inject HTML metacharacters into the integer-rendered start/end
     # path by constructing a row whose start/end happen to be numpy ints
     # that would otherwise be cast to ``str`` directly.
@@ -317,7 +317,7 @@ def test_tearsheet_does_not_change_global_backend():
 def test_agg_backend_scope_restores_prior_backend():
     """The context manager itself must round-trip the current backend."""
     import matplotlib
-    from quantforge.reporting.tearsheet import agg_backend_scope
+    from aurora.reporting.tearsheet import agg_backend_scope
 
     prior = matplotlib.get_backend()
     with agg_backend_scope():

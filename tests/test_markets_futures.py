@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.markets.futures import FuturesConfig, FuturesContinuous
+from aurora.markets.futures import FuturesConfig, FuturesContinuous
 
 
 @pytest.fixture

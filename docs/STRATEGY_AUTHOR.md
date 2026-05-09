@@ -1,12 +1,12 @@
 # Writing a Custom Strategy
 
-This is a short tutorial for adding a new strategy to QuantForge. Read
+This is a short tutorial for adding a new strategy to Aurora. Read
 `docs/ARCHITECTURE.md` first for the design principles, especially the
 anti-lookahead rules.
 
 ## Strategy interface
 
-A strategy is a subclass of `quantforge.strategies.base.Strategy`. The
+A strategy is a subclass of `aurora.strategies.base.Strategy`. The
 contract is:
 
 - `signals(prices) -> np.ndarray` returns target positions, same length as
@@ -21,7 +21,7 @@ contract is:
 
 ## Step 1 - Create the file
 
-Create `quantforge/strategies/library/my_strategy.py`:
+Create `aurora/strategies/library/my_strategy.py`:
 
 ```python
 """MyStrategy - simple example.
@@ -32,7 +32,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 class MyStrategy(Strategy):
@@ -76,10 +76,10 @@ Notes:
 
 ## Step 2 - Register in the library
 
-Edit `quantforge/strategies/library/__init__.py`:
+Edit `aurora/strategies/library/__init__.py`:
 
 ```python
-from quantforge.strategies.library.my_strategy import MyStrategy
+from aurora.strategies.library.my_strategy import MyStrategy
 
 __all__ = [
     "MACross",
@@ -101,11 +101,11 @@ forge run --strategy MyStrategy --asset SPY
 Or programmatically:
 
 ```python
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine import run_backtest
-from quantforge.core.data_layer import load_asset
-from quantforge.core.costs import IBKR_costs
-from quantforge.strategies.library import MyStrategy
+from aurora.core.seed import set_global_seed
+from aurora.core.engine import run_backtest
+from aurora.core.data_layer import load_asset
+from aurora.core.costs import IBKR_costs
+from aurora.strategies.library import MyStrategy
 
 set_global_seed(42)
 prices = load_asset("SPY")              # IS-only by default
@@ -137,7 +137,7 @@ forge search --strategy MyStrategy --asset SPY --population 100
 ```
 
 The GA reads `MyStrategy.spec()` to define the search space. Fitness is
-computed on IS only by `quantforge.ga.fitness.multi_objective_fitness_is`.
+computed on IS only by `aurora.ga.fitness.multi_objective_fitness_is`.
 OOS is touched only after the pareto front is selected.
 
 ## Anti-lookahead checklist
@@ -155,20 +155,20 @@ Before running any optimization, walk through the following on your
 5. The runtime lookahead check passes:
 
    ```python
-   from quantforge.validation.lookahead_check import runtime_lookahead_check
+   from aurora.validation.lookahead_check import runtime_lookahead_check
    ok, msg = runtime_lookahead_check(MyStrategy(lookback=30), prices)
    assert ok, msg
    ```
 
 ## Tests
 
-Add a test at `quantforge/tests/test_my_strategy.py`:
+Add a test at `aurora/tests/test_my_strategy.py`:
 
 ```python
 import numpy as np
 import pandas as pd
 import pytest
-from quantforge.strategies.library import MyStrategy
+from aurora.strategies.library import MyStrategy
 
 
 def test_signals_shape_and_bounds():
@@ -180,7 +180,7 @@ def test_signals_shape_and_bounds():
 
 
 def test_no_lookahead():
-    from quantforge.validation.lookahead_check import runtime_lookahead_check
+    from aurora.validation.lookahead_check import runtime_lookahead_check
     prices = pd.Series(np.cumsum(np.random.RandomState(0).normal(size=500)) + 100)
     ok, msg = runtime_lookahead_check(MyStrategy(lookback=20), prices)
     assert ok, msg
@@ -189,14 +189,14 @@ def test_no_lookahead():
 Run:
 
 ```bash
-pytest quantforge/tests/test_my_strategy.py -q
+pytest aurora/tests/test_my_strategy.py -q
 ```
 
 ## Wrapper strategies
 
 A wrapper strategy decorates another strategy with extra logic (vol
 targeting, hard stops, regime filters). Examples in
-`quantforge/strategies/library/`: `VolTargetWrapper`, `StopWrapper`.
+`aurora/strategies/library/`: `VolTargetWrapper`, `StopWrapper`.
 
 ### Convention
 
@@ -235,7 +235,7 @@ The two pieces are:
 `run_ga` refuses to run with a wrapper directly:
 
 ```python
-from quantforge.ga.runner import run_ga
+from aurora.ga.runner import run_ga
 
 # This raises TypeError because StopWrapper.is_wrapper is True:
 # run_ga(StopWrapper, prices_is, prices_oos, fitness_fn, config)
@@ -246,7 +246,7 @@ exposes the same `Strategy` interface, then pass that synthesized class to
 `run_ga`:
 
 ```python
-from quantforge.strategies.library import MACross, StopWrapper
+from aurora.strategies.library import MACross, StopWrapper
 
 def wrapper_factory(base_cls=MACross):
     class _StopWrappedMA(StopWrapper):
@@ -269,7 +269,7 @@ underlying base.
 
 For strategies that need multiple inputs (pair trades, cross-sectional
 ranks), accept a `pd.DataFrame` instead of a `pd.Series` and return a 2D
-weights matrix. See `quantforge/strategies/library/pair_trade.py` for the
+weights matrix. See `aurora/strategies/library/pair_trade.py` for the
 canonical example. Use `core/engine_multi.py` to run the backtest.
 
 ## Tier-bypass is a protocol violation (E.3 round-4 audit)
@@ -279,7 +279,7 @@ for multi-asset). The framework enforces tier ceremony rules through
 `load_tier` / `load_up_to_tier` / `OOSGuard` before the prices ever
 reach your strategy.
 
-Reading data outside the QuantForge API — e.g. opening a parquet file
+Reading data outside the Aurora API — e.g. opening a parquet file
 directly with `pd.read_parquet`, hitting yfinance from inside a
 strategy, or shipping a hardcoded CSV path — bypasses every tier
 enforcement and is a protocol violation. A strategy that does this can
@@ -293,5 +293,5 @@ Convention:
   the unit test passes.
 - If you need additional features (volume, fundamentals, alt-data),
   pass them as explicit `signals(prices, *, features)` arguments and
-  load them through QuantForge data connectors so the tier rules
+  load them through Aurora data connectors so the tier rules
   apply.

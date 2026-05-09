@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.experimental.federated_learning import (
+from aurora.experimental.federated_learning import (
     ClientData,
     FederatedTrainer,
     TORCH_AVAILABLE,

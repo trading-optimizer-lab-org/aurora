@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from quantforge.compliance.soc2_audit import (
+from aurora.compliance.soc2_audit import (
     GENESIS_HASH,
     SOC2AuditTrail,
     SOC2Config,

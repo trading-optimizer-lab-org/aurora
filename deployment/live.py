@@ -22,8 +22,8 @@ Pre-trade risk checks layered on top of paper wrapper:
 Usage:
     from lumibot.brokers import Alpaca
     from lumibot.traders import Trader
-    from quantforge.deployment.live import QFLiveStrategy
-    from quantforge.strategies.library import MACross
+    from aurora.deployment.live import QFLiveStrategy
+    from aurora.strategies.library import MACross
 
     cls = QFLiveStrategy.bind(
         qf_strategy=MACross(20, 100),
@@ -44,8 +44,8 @@ from datetime import date as _date
 from datetime import datetime as _dt
 from datetime import timezone
 
-from quantforge.core.logging import get_logger, log_event
-from quantforge.deployment.sizing import fixed_risk_size
+from aurora.core.logging import get_logger, log_event
+from aurora.deployment.sizing import fixed_risk_size
 
 try:
     from lumibot.strategies.strategy import Strategy as LumibotStrategy
@@ -114,7 +114,7 @@ class LiveConfig:
         All other fields remain at their conservative defaults.
         """
         try:
-            from quantforge.core.protocol_policy import get_active_policy
+            from aurora.core.protocol_policy import get_active_policy
             rl = get_active_policy().risk_limits
             return cls(
                 max_notional_pct=float(rl.max_leverage),
@@ -201,7 +201,7 @@ def _verify_agent_gateway_commit(order, gateway_committed) -> None:
     if gateway_committed is None:
         return
     try:
-        from quantforge.agent_gateway import CommittedAction, TokenScope
+        from aurora.agent_gateway import CommittedAction, TokenScope
     except Exception:
         return
     if not isinstance(gateway_committed, CommittedAction):
@@ -556,7 +556,7 @@ class QFLiveStrategy(LumibotStrategy):
             return
         strategy_name = type(qf_strategy).__name__
         try:
-            from quantforge.deployment.preflight import check_validation_marker
+            from aurora.deployment.preflight import check_validation_marker
             check = check_validation_marker(
                 strategy_name,
                 project_dir=getattr(self, "qf_project_dir", "."),

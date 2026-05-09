@@ -16,7 +16,7 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.deployment.black_litterman import (
+from aurora.deployment.black_litterman import (
     BlackLittermanModel,
     market_implied_returns,
 )

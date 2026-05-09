@@ -213,7 +213,7 @@ class AgentAudit:
     def _mirror_soc2(self, entry: Dict[str, Any]) -> None:
         """Best-effort mirror of the entry to SOC2AuditTrail. Never raises."""
         try:
-            from quantforge.compliance.soc2_audit import (
+            from aurora.compliance.soc2_audit import (
                 SOC2AuditTrail, SOC2Config,
             )
             log_path = str(Path(self._path).parent / "soc2_mirror.jsonl")

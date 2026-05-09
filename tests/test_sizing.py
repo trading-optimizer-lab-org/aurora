@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.deployment.sizing import (
+from aurora.deployment.sizing import (
     fixed_risk_size,
     vol_target_size,
     kelly_size,

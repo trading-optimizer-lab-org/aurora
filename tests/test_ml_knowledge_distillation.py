@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.knowledge_distillation import (
+from aurora.ml.knowledge_distillation import (
     DistillationConfig,
     KnowledgeDistiller,
 )

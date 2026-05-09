@@ -1,7 +1,7 @@
 # Glossary
 
 Definitions of metrics, validation gates, and abbreviations used across
-QuantForge. Where a formal reference exists, it is cited.
+Aurora. Where a formal reference exists, it is cited.
 
 ## Performance metrics
 
@@ -20,13 +20,13 @@ excess returns). Penalizes drawdowns rather than total volatility.
 Reference: Sortino and Price (1994).
 
 ### Calmar ratio
-`CAGR / |maximum drawdown|`. The signature metric of the QuantForge
+`CAGR / |maximum drawdown|`. The signature metric of the Aurora
 validation pipeline because it captures both return and tail risk in a
 single scalar. Higher is better.
 
 ### MAR ratio
 Synonym of Calmar in much of the trading literature, after Managed Account
-Reports. QuantForge uses the term Calmar throughout the code.
+Reports. Aurora uses the term Calmar throughout the code.
 
 ### MDD (Maximum Drawdown)
 Largest peak-to-trough loss in equity, expressed as a positive fraction.
@@ -38,7 +38,7 @@ best Sharpe across N candidates. Accounts for the number of trials, the
 skew and kurtosis of the strategy returns, and the variance of Sharpe
 across the candidate pool. Reference: Bailey and Lopez de Prado (2014),
 "The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest
-Overfitting, and Non-Normality". Threshold used in QuantForge: DSR > 1.96
+Overfitting, and Non-Normality". Threshold used in Aurora: DSR > 1.96
 for 95% confidence. Implemented in `validation/deflated_sharpe.py`.
 
 ### PSR (Probabilistic Sharpe Ratio)
@@ -52,7 +52,7 @@ Bailey and Lopez de Prado (2012).
 The dataset is split in two on a fixed calendar date. IS is used for
 optimization (GA, parameter selection, model fitting). OOS is used only
 once, after candidates are chosen, to check whether the strategy
-generalizes. In QuantForge the split is `IS_END = 2012-12-31`,
+generalizes. In Aurora the split is `IS_END = 2012-12-31`,
 `OOS_START = 2013-01-01`. See `docs/RESEARCH_PROTOCOL.md` for the formal
 multi-tier split (IS_TRAIN / IS_VALID / WF / OOS_DEV / OOS_LOCKED /
 FORWARD).
@@ -60,12 +60,12 @@ FORWARD).
 ### WF (Walk-Forward)
 Train on a rolling, expanding, or anchored in-sample window, evaluate on
 the next out-of-sample chunk, then advance and repeat. The criterion in
-QuantForge: Calmar > buy-and-hold Calmar in each window. Implemented in
+Aurora: Calmar > buy-and-hold Calmar in each window. Implemented in
 `validation/walk_forward.py` with three modes (rolling, expanding,
 anchored).
 
 ### MC (Monte Carlo)
-Two flavors used in QuantForge:
+Two flavors used in Aurora:
 
 - **Block bootstrap on returns**: resample contiguous blocks of returns to
   preserve autocorrelation and rebuild the equity curve. Produces a
@@ -87,13 +87,13 @@ Implemented in `validation/spp.py`.
 
 Note on terminology: in some literature SPP also denotes "Single-Parameter
 Plot" - sweep one parameter while holding the rest fixed and plot the
-metric versus the parameter. QuantForge uses SPP to mean System Parameter
+metric versus the parameter. Aurora uses SPP to mean System Parameter
 Permutation throughout, since it is the stricter test. The
 single-parameter sweep is available via `forge bench` and ad-hoc
 notebooks.
 
 ### Lookahead check
-Two layers in QuantForge:
+Two layers in Aurora:
 
 - **AST** (`validation/lookahead_check.scan_lookahead`) statically scans
   the strategy source for forward-slice patterns.

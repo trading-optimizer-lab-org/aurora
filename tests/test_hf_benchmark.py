@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.hf_benchmark import (
+from aurora.research.hf_benchmark import (
     FACTOR_NAMES,
     HedgeFundBenchmark,
     StyleAttributionReport,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.max_diversification import MaxDiversificationPortfolio
+from aurora.risk.max_diversification import MaxDiversificationPortfolio
 
 
 def test_mdp_simplex():

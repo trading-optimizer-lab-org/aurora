@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from quantforge.infra.cloud_sync import CloudConfig, CloudSync
+from aurora.infra.cloud_sync import CloudConfig, CloudSync
 
 
 @pytest.fixture

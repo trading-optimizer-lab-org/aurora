@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.regime.hurst import (
+from aurora.regime.hurst import (
     HurstResult,
     hurst_dfa,
     hurst_regime_filter,
@@ -226,7 +226,7 @@ def test_regime_filter_threshold_validation():
 
 def _force_unstable_loglog(monkeypatch, slope: float):
     """Patch the internal loglog fit to return a slope outside [0, 1]."""
-    import quantforge.regime.hurst as hurst_mod
+    import aurora.regime.hurst as hurst_mod
 
     def _fake(log_x, log_y):
         return float(slope), 0.0, 0.99

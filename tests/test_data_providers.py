@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.data_providers import (
+from aurora.core.data_providers import (
     BaseDataProvider,
     Dataset,
     DataProvider,
@@ -34,11 +34,11 @@ from quantforge.core.data_providers import (
     get_default_registry,
     reset_default_registry,
 )
-from quantforge.core.data_providers.csv import CSVProvider
-from quantforge.core.data_providers.openbb import OpenBBProvider
-from quantforge.core.data_providers.snapshot import SnapshotProvider
-from quantforge.core.data_providers.synthetic import SyntheticProvider
-from quantforge.core.data_providers.yahoo import YahooProvider
+from aurora.core.data_providers.csv import CSVProvider
+from aurora.core.data_providers.openbb import OpenBBProvider
+from aurora.core.data_providers.snapshot import SnapshotProvider
+from aurora.core.data_providers.synthetic import SyntheticProvider
+from aurora.core.data_providers.yahoo import YahooProvider
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ def test_csv_provider_loads_with_metadata(tmp_path):
 def test_fetch_inside_oos_locked_without_ceremony_refuses_non_pit(tmp_path):
     """Non-PIT provider inside ``OOSGuard("explicit_unlock_oos_locked")``
     must be refused unless it declares OOS_LOCKED support."""
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
     reg = DataProviderRegistry()
     reg.register(YahooProvider())  # IS_TRAIN, not PIT
     with OOSGuard("explicit_unlock_oos_locked",
@@ -248,7 +248,7 @@ def test_fetch_inside_oos_locked_without_ceremony_refuses_non_pit(tmp_path):
 
 def test_fetch_inside_oos_locked_with_ceremony_allows_pit(tmp_path, monkeypatch):
     """A PIT provider (synthetic) is allowed under the same ceremony."""
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
     reg = DataProviderRegistry()
     reg.register(SyntheticProvider())
     with OOSGuard("explicit_unlock_oos_locked",
@@ -270,7 +270,7 @@ def test_fetch_inside_oos_locked_with_ceremony_allows_pit(tmp_path, monkeypatch)
 def test_fetch_records_in_data_layer_authorized_reads(tmp_path):
     """Inside an OOSGuard, the registry records the read on the guard's
     authorized_reads counter."""
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
     reg = DataProviderRegistry()
     reg.register(SyntheticProvider())
     lock = tmp_path / "lock.json"
@@ -302,7 +302,7 @@ def test_load_asset_backward_compat_default_yahoo(monkeypatch, tmp_path):
     parquet/yfinance path. We patch ``_download`` so the test does not
     hit the network. Using a synthetic ticker ("TEST") avoids the
     test_lint_config.py guard against unmarked SPY parquet loads."""
-    from quantforge.core import data_layer
+    from aurora.core import data_layer
     fake = _mk_is_series(40, name="TEST")
 
     def _fake_download(symbol, source="yfinance", start=None, end=None):
@@ -319,7 +319,7 @@ def test_load_asset_backward_compat_default_yahoo(monkeypatch, tmp_path):
 
 def test_load_asset_with_provider_routes_through_registry(monkeypatch, tmp_path):
     """``load_asset(provider='synthetic')`` returns data via the registry."""
-    from quantforge.core import data_layer
+    from aurora.core import data_layer
     monkeypatch.setattr(data_layer, "QF_CACHE", str(tmp_path), raising=False)
     # Use IS-window dates so the include_oos=False filter doesn't drop everything.
     s = data_layer.load_asset(
@@ -341,7 +341,7 @@ def test_preflight_uses_snapshot_provider(tmp_path, monkeypatch):
     provider via ``load_asset(provider='snapshot')``: we drop a frozen
     snapshot in a tmp store, then verify the registry can read it back
     with PIT flag set."""
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.snapshots import SnapshotStore
     store_dir = tmp_path / "snapshots"
     store = SnapshotStore(str(store_dir))
     s = _mk_series(60, name="SPY")
@@ -361,7 +361,7 @@ def test_preflight_uses_snapshot_provider(tmp_path, monkeypatch):
 
 def test_snapshot_freeze_stores_metadata(tmp_path):
     """Snapshot freeze + Provider read produces consistent metadata."""
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.snapshots import SnapshotStore
     store = SnapshotStore(str(tmp_path / "store"))
     s = _mk_series(40, name="ABC")
     snap = store.freeze(s, symbol="ABC", provenance="unit-test")
@@ -382,7 +382,7 @@ def test_snapshot_freeze_stores_metadata(tmp_path):
 
 def _run_forge(*args):
     """Run ``forge`` via the CLI module so we exercise the parser too."""
-    cmd = [sys.executable, "-m", "quantforge.cli.forge", *args]
+    cmd = [sys.executable, "-m", "aurora.cli.forge", *args]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 

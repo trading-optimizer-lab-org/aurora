@@ -8,11 +8,11 @@ Run:
 """
 from __future__ import annotations
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.data_layer import load_asset, split_is_oos
-from quantforge.strategies.library import MACross
-from quantforge.ga.runner import run_ga, GAConfig
-from quantforge.ga.fitness import multi_objective_fitness
+from aurora.core.seed import set_global_seed
+from aurora.core.data_layer import load_asset, split_is_oos
+from aurora.strategies.library import MACross
+from aurora.ga.runner import run_ga, GAConfig
+from aurora.ga.fitness import multi_objective_fitness
 
 
 def main():

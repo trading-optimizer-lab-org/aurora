@@ -5,13 +5,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.strategies.library import (
+from aurora.core.seed import set_global_seed
+from aurora.strategies.library import (
     MACross, RSIMeanRev, TSMomentum, DonchianBreakout, DualMomentum,
 )
-from quantforge.ga.runner import run_ga, GAConfig
-from quantforge.ga.fitness import multi_objective_fitness
-from quantforge.ga.seed_population import (
+from aurora.ga.runner import run_ga, GAConfig
+from aurora.ga.fitness import multi_objective_fitness
+from aurora.ga.seed_population import (
     KNOWN_CONFIGS, KnownConfig, load_known_configs,
     seed_genome_from_known, seed_initial_population,
 )
@@ -225,7 +225,7 @@ def test_seed_initial_population_rejects_wrapper():
     """Mirror runner.run_ga: refuse strategies marked is_wrapper=True so
     callers cannot accidentally seed a population for a wrapper class.
     """
-    from quantforge.strategies.library.stop_wrapper import StopWrapper
+    from aurora.strategies.library.stop_wrapper import StopWrapper
     with pytest.raises(TypeError, match="is_wrapper"):
         seed_initial_population(StopWrapper, population_size=4)
     with pytest.raises(TypeError, match="is_wrapper"):
@@ -236,7 +236,7 @@ def test_categorical_encoding_round_trip_midpoint():
     """seed_genome_from_known and StrategySpec.to_genome must agree on the
     categorical midpoint convention so encode -> decode -> encode is stable.
     """
-    from quantforge.strategies.base import StrategySpec
+    from aurora.strategies.base import StrategySpec
     spec = StrategySpec(
         name="Cat",
         params={"flag": True, "n": 5},

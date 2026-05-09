@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.risk.herc import HierarchicalEqualRiskContribution
+from aurora.risk.herc import HierarchicalEqualRiskContribution
 
 
 def _seed(s: int) -> np.random.Generator:

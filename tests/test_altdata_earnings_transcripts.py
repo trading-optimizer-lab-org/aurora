@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.altdata.earnings_transcripts import (
+from aurora.altdata.earnings_transcripts import (
     EarningsConfig,
     EarningsTranscriptAdapter,
 )

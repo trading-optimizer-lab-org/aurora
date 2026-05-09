@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass
-from quantforge.core.metrics import deflated_sharpe, probabilistic_sharpe
+from aurora.core.metrics import deflated_sharpe, probabilistic_sharpe
 
 
 @dataclass

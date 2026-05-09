@@ -11,8 +11,8 @@ from typing import Callable, Dict, List, Sequence
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, ZERO_costs
 
 
 @dataclass

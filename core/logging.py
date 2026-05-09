@@ -3,7 +3,7 @@
 Stdlib-only by default. Optional `structlog` enrichment if installed.
 
 Usage:
-    from quantforge.core.logging import get_logger, configure_logging, log_event
+    from aurora.core.logging import get_logger, configure_logging, log_event
 
     configure_logging(level="INFO", log_file="logs/forge.log", json_format=False)
     log = get_logger(__name__)
@@ -27,7 +27,7 @@ except ImportError:
     _HAS_STRUCTLOG = False
 
 _CONFIGURED = False
-_ROOT_NAME = "quantforge"
+_ROOT_NAME = "aurora"
 
 
 class _KVTextFormatter(logging.Formatter):
@@ -140,7 +140,7 @@ def configure_logging(
     _CONFIGURED = True
 
 
-def get_logger(name: str = "quantforge") -> logging.Logger:
+def get_logger(name: str = "aurora") -> logging.Logger:
     """Return configured logger. Idempotent — same name returns same instance.
 
     If configure_logging() never ran, sets a sane default (INFO, stderr, text).

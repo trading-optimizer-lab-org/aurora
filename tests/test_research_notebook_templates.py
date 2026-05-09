@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import pytest
 
-from quantforge.research.notebook_templates import (
+from aurora.research.notebook_templates import (
     NotebookTemplateEngine,
     NotebookSpec,
 )

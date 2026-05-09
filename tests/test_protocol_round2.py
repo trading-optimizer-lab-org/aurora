@@ -32,13 +32,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core import data_layer as _dl
-from quantforge.core.data_layer import (
+from aurora.core import data_layer as _dl
+from aurora.core.data_layer import (
     DEFAULT_LOCK_PATH,
     OOSGuard,
     load_asset,
 )
-from quantforge.core.data_tiers import (
+from aurora.core.data_tiers import (
     IS_TRAIN_END,
     OOS_DEV_END,
     OOS_DEV_START,
@@ -176,7 +176,7 @@ def test_cmd_search_oos_loaded_only_after_pareto(monkeypatch):
     """
     pytest.importorskip("pydantic")  # forge.cli depends on ForgeConfig
 
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     prices_full = _full_prices()
     is_only = prices_full[prices_full.index <= IS_TRAIN_END]
@@ -204,9 +204,9 @@ def test_cmd_search_oos_loaded_only_after_pareto(monkeypatch):
 
     monkeypatch.setattr(_dl, "load_asset", fake_load_asset, raising=True)
     # Patch where forge imports it from too (forge.py uses
-    # ``from quantforge.core.data_layer import load_asset`` inside the
+    # ``from aurora.core.data_layer import load_asset`` inside the
     # function body, so the monkeypatch on data_layer is enough).
-    monkeypatch.setattr("quantforge.ga.runner.run_ga", fake_run_ga)
+    monkeypatch.setattr("aurora.ga.runner.run_ga", fake_run_ga)
 
     rc = cli.main([
         "search", "--strategy", "MACross", "--asset", "FAKE",
@@ -248,11 +248,11 @@ def test_pipeline_aux_gates_see_only_carved(monkeypatch):
     ``OOS_DEV_END`` (2020-12-31) -- not a series that extends into
     OOS_LOCKED (2021+) or FORWARD (2025+).
     """
-    from quantforge.validation import pipeline as pl_mod
-    from quantforge.validation.pipeline import validate_pipeline
-    from quantforge.validation.walk_forward import WFWindow
-    from quantforge.core.costs import ZERO_costs
-    from quantforge.strategies.library import MACross
+    from aurora.validation import pipeline as pl_mod
+    from aurora.validation.pipeline import validate_pipeline
+    from aurora.validation.walk_forward import WFWindow
+    from aurora.core.costs import ZERO_costs
+    from aurora.strategies.library import MACross
 
     full_prices = _full_prices()
     # Sanity check: the synthetic series really does extend past OOS_DEV.
@@ -262,12 +262,12 @@ def test_pipeline_aux_gates_see_only_carved(monkeypatch):
 
     def spy_walk_forward(strategy_factory, prices, wf_windows, **kwargs):
         seen_in_aux["walk_forward"] = prices
-        from quantforge.validation.walk_forward import WFResult
+        from aurora.validation.walk_forward import WFResult
         return WFResult(windows=[], n_pass=0, n_total=0)
 
     def spy_lookahead(signal_fn, prices, **kwargs):
         seen_in_aux["lookahead"] = prices
-        from quantforge.validation.lookahead_check import LookaheadReport
+        from aurora.validation.lookahead_check import LookaheadReport
         return LookaheadReport(
             static_warnings=[], runtime_violation=False,
             runtime_metric_delta=0.0, passed=True,
@@ -275,7 +275,7 @@ def test_pipeline_aux_gates_see_only_carved(monkeypatch):
 
     def spy_spp(spp_factory, prices, *args, **kwargs):
         seen_in_aux["spp"] = prices
-        from quantforge.validation.spp import SPPResult
+        from aurora.validation.spp import SPPResult
         return SPPResult(
             base_calmar=0.0, base_sharpe=0.0,
             perturbed_calmars=[], perturbed_sharpes=[],
@@ -326,7 +326,7 @@ def test_preflight_oos_under_guard(monkeypatch, tmp_path: Path):
     ``authorized_read`` (audit) -- not as an unguarded RuntimeError or
     a violation.
     """
-    from quantforge.deployment import preflight as pf
+    from aurora.deployment import preflight as pf
 
     fake_lock = str(tmp_path / ".oos_lock.json")
     monkeypatch.setattr(_dl, "DEFAULT_LOCK_PATH", fake_lock, raising=False)
@@ -391,7 +391,7 @@ def test_search_requires_snapshot(monkeypatch, tmp_path: Path):
 def test_validate_requires_snapshot_in_cmd(monkeypatch, tmp_path: Path):
     """``cmd_validate`` passes ``require_snapshot=True`` to ``load_asset``."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     captured: dict = {}
 

@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.validation.structural_breaks import (
+from aurora.core.seed import set_global_seed
+from aurora.validation.structural_breaks import (
     chow_test,
     cusum_filter,
     sadf_test,

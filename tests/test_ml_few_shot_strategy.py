@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.few_shot_strategy import (
+from aurora.ml.few_shot_strategy import (
     FewShotConfig,
     FewShotStrategyAdapter,
 )

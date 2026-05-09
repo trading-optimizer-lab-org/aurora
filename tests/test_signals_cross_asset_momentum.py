@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.signals import CrossAssetMomentum, CrossAssetMomentumConfig
+from aurora.signals import CrossAssetMomentum, CrossAssetMomentumConfig
 
 
 @pytest.fixture

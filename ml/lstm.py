@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - environment dependent
 def _require_torch() -> None:
     if not TORCH_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.lstm requires torch. Install with: "
+            "aurora.ml.lstm requires torch. Install with: "
             "uv add torch  (or: pip install torch)"
         )
 
@@ -184,7 +184,7 @@ class LSTMForecaster:
         _require_torch()
         # Respect global seed if set.
         try:
-            from quantforge.core.seed import get_seed  # type: ignore
+            from aurora.core.seed import get_seed  # type: ignore
             s = get_seed()
             if s is not None:
                 torch.manual_seed(int(s))
@@ -217,7 +217,7 @@ class LSTMForecaster:
 
         # Deterministic shuffling for the DataLoader.
         try:
-            from quantforge.core.seed import get_seed  # type: ignore
+            from aurora.core.seed import get_seed  # type: ignore
             seed_val = get_seed()
         except ImportError:
             seed_val = None

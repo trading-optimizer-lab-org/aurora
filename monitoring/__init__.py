@@ -5,7 +5,7 @@ Streamlit is an optional dependency. The pure data/metric helpers in
 raise a clear error when streamlit is missing.
 """
 
-from quantforge.monitoring.alerts import (
+from aurora.monitoring.alerts import (
     Alert,
     AlertConfig,
     AlertEngine,
@@ -15,14 +15,14 @@ from quantforge.monitoring.alerts import (
     compute_max_dd,
     default_rules,
 )
-from quantforge.monitoring.dashboard import (
+from aurora.monitoring.dashboard import (
     DashboardConfig,
     STREAMLIT_AVAILABLE,
     compute_dashboard_metrics,
     fetch_dashboard_data,
     run_dashboard,
 )
-from quantforge.monitoring.drift import (
+from aurora.monitoring.drift import (
     ADWINDetector,
     AutoRetrainController,
     KSDriftDetector,

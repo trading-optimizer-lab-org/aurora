@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library import MACross
-from quantforge.validation.noise_injection import (
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library import MACross
+from aurora.validation.noise_injection import (
     noise_injection,
     NoiseInjectionResult,
 )

@@ -20,7 +20,7 @@ Design contract:
   ``qf_version``, ``exported_at``) so a Lean run can be tied back to the
   exact QuantForge configuration that produced it.
 """
-from quantforge.exports.lean.exporter import (
+from aurora.exports.lean.exporter import (
     LeanExportConfig,
     LeanExporter,
     LeanProjectArtifact,

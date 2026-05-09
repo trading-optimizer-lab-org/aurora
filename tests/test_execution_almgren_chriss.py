@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from quantforge.execution.almgren_chriss import (
+from aurora.execution.almgren_chriss import (
     AlmgrenChrissExecutor,
     AlmgrenChrissConfig,
 )

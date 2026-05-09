@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.validation.copula_tail import CopulaTailDependence
+from aurora.core.seed import set_global_seed
+from aurora.validation.copula_tail import CopulaTailDependence
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import pytest
 
-from quantforge.registry.experiments import (
+from aurora.registry.experiments import (
     ExperimentTracker,
     ExperimentMeta,
     GenerationLog,
@@ -311,7 +311,7 @@ def test_new_experiment_id_format():
     extra entropy beyond uuid alone, so two concurrent calls inside the
     same microsecond on different machines still differ.
     """
-    from quantforge.registry.experiments import _new_experiment_id
+    from aurora.registry.experiments import _new_experiment_id
 
     n = 5_000
     ids = {_new_experiment_id() for _ in range(n)}
@@ -329,7 +329,7 @@ def test_start_experiment_no_overwrite_on_collision(tmp_path, monkeypatch):
     meta.json. ``os.makedirs(exist_ok=False)`` makes the directory
     create itself the atomic check that closes the prior TOCTOU window.
     """
-    from quantforge.registry import experiments as exp_mod
+    from aurora.registry import experiments as exp_mod
 
     # First two calls return the same id; subsequent calls fall through
     # to genuine random ids. The retry loop must therefore allocate a

@@ -14,10 +14,10 @@ sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), ".."
 import numpy as np
 import pandas as pd
 
-from quantforge.core.seed import set_global_seed
-from quantforge.strategies.library import MACross
-from quantforge.ga.runner import run_ga, GAConfig
-from quantforge.ga.fitness import multi_objective_fitness
+from aurora.core.seed import set_global_seed
+from aurora.strategies.library import MACross
+from aurora.ga.runner import run_ga, GAConfig
+from aurora.ga.fitness import multi_objective_fitness
 
 
 def _synthetic_prices(n: int = 1500, seed: int = 7) -> pd.Series:

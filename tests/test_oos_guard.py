@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 import pytest
 
-from quantforge.core.data_layer import (
+from aurora.core.data_layer import (
     OOSGuard, check_oos_integrity, load_asset, _get_git_hash,
 )
 

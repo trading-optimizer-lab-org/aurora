@@ -24,7 +24,10 @@ from typing import Any, Dict, FrozenSet, Optional
 import pandas as pd
 
 
-SERVER_SECRET_ENV = "QF_GATEWAY_SECRET"
+# Aurora canonical name (R23). Legacy QF_GATEWAY_SECRET still honoured via
+# aurora_env() during the shim window (removed in v1.6).
+SERVER_SECRET_ENV = "AU_GATEWAY_SECRET"
+SERVER_SECRET_ENV_LEGACY = "QF_GATEWAY_SECRET"
 
 
 def _server_secret() -> bytes:
@@ -34,7 +37,8 @@ def _server_secret() -> bytes:
     gateway fails loud instead of silently signing tokens with an
     empty key.
     """
-    raw = os.environ.get(SERVER_SECRET_ENV, "")
+    from aurora.core.env_compat import aurora_env
+    raw = aurora_env(SERVER_SECRET_ENV, SERVER_SECRET_ENV_LEGACY) or ""
     if not raw:
         raise RuntimeError(
             f"{SERVER_SECRET_ENV} is not set. AgentGateway refuses to "
@@ -259,7 +263,9 @@ def sign_payload(payload: str, *, secret_env: str = SERVER_SECRET_ENV) -> str:
     side reuses the same primitive without depending on the dataclass
     layout.
     """
-    raw = os.environ.get(secret_env, "")
+    from aurora.core.env_compat import aurora_env
+    legacy = SERVER_SECRET_ENV_LEGACY if secret_env == SERVER_SECRET_ENV else None
+    raw = aurora_env(secret_env, legacy) or ""
     if not raw:
         raise RuntimeError(f"{secret_env} is not set")
     return hmac.new(raw.encode("utf-8"), payload.encode("utf-8"),

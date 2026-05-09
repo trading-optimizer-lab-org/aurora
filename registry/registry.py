@@ -15,7 +15,7 @@ from typing import Any, Iterator, Optional
 
 import pandas as pd
 
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.sqlite_utils import _setup_sqlite
 
 
 _DEFAULT_DB_PATH = os.path.normpath(
@@ -76,7 +76,7 @@ def _capture_git_hash() -> Optional[str]:
     but does not always reap the child cleanly on Windows.
     """
     try:
-        from quantforge.registry.versioning import _run_git_proc
+        from aurora.registry.versioning import _run_git_proc
         rc, out = _run_git_proc(["rev-parse", "HEAD"], timeout=2.0)
     except Exception:
         return None

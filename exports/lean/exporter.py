@@ -39,7 +39,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from quantforge.core.protocol_policy import ProtocolPolicy
+from aurora.core.protocol_policy import ProtocolPolicy
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ class LeanProjectArtifact:
 
 # Map of QuantForge strategy class short-name -> translation tier. The
 # short-name is the last segment of ``strategy_class`` (e.g.
-# "quantforge.strategies.library.ma_cross.MACross" -> "MACross"). Tier
+# "aurora.strategies.library.ma_cross.MACross" -> "MACross"). Tier
 # is purely informational; the actual rendered logic is decided by
 # :meth:`LeanExporter._render_indicator_decls` etc.
 TRANSLATION_TIERS: dict[str, str] = {

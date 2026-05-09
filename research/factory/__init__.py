@@ -1,6 +1,6 @@
 """Research Factory: hypothesis -> review-queue automation.
 
-Public re-exports for ``from quantforge.research.factory import ...``:
+Public re-exports for ``from aurora.research.factory import ...``:
 
 * :class:`StrategySpec` -- immutable proposal record (factory variant).
 * :class:`CandidateRun`, :class:`ResearchOutcome`,
@@ -18,24 +18,24 @@ deliberately separate types -- the GA spec describes "what shapes a
 parameter can take", while this factory spec describes "one concrete
 proposal". Import the one you need by its module path.
 """
-from quantforge.research.factory.factory import (
+from aurora.research.factory.factory import (
     ResearchFactory,
     ResearchPipelineConfig,
 )
-from quantforge.research.factory.generators import (
+from aurora.research.factory.generators import (
     GAHypothesisGenerator,
     HypothesisGenerator,
     LLMHypothesisGenerator,
     TemplateHypothesisGenerator,
 )
-from quantforge.research.factory.lineage import LineageGraph
-from quantforge.research.factory.outcomes import (
+from aurora.research.factory.lineage import LineageGraph
+from aurora.research.factory.outcomes import (
     CandidateRun,
     RejectionReason,
     ResearchOutcome,
     ResearchStage,
 )
-from quantforge.research.factory.spec import StrategySpec
+from aurora.research.factory.spec import StrategySpec
 
 __all__ = [
     "CandidateRun",

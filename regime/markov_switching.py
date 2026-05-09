@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from quantforge.core.logging import get_logger
+from aurora.core.logging import get_logger
 
 _log = get_logger("regime.markov_switching")
 

@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import ATRBreakout
-from quantforge.strategies.library.atr_breakout import ATRBreakout as ATRDirect
+from aurora.strategies.library import ATRBreakout
+from aurora.strategies.library.atr_breakout import ATRBreakout as ATRDirect
 
 
 @pytest.fixture

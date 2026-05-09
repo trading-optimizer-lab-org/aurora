@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.marketdata.corporate_actions import (
+from aurora.marketdata.corporate_actions import (
     CorporateActionsAdjuster,
     CorporateActionsConfig,
 )

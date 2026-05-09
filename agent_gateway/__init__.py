@@ -17,14 +17,14 @@ Stage / commit / push pattern:
 """
 from __future__ import annotations
 
-from quantforge.agent_gateway.tokens import (
+from aurora.agent_gateway.tokens import (
     AgentToken,
     TokenScope,
     issue_token,
     sign_payload,
 )
-from quantforge.agent_gateway.audit import AgentAudit, AgentAuditConfig
-from quantforge.agent_gateway.gateway import (
+from aurora.agent_gateway.audit import AgentAudit, AgentAuditConfig
+from aurora.agent_gateway.gateway import (
     ActionRequest,
     ActionStatus,
     AgentGateway,

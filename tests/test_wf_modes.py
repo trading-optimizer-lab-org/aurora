@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.validation.walk_forward import (
+from aurora.validation.walk_forward import (
     WFWindow, generate_wf_windows, walk_forward,
 )
 
@@ -111,7 +111,7 @@ def test_min_bars_warning():
 
 def test_walk_forward_auto_generates_windows(fake_prices_1000):
     """walk_forward(windows=None, mode=...) auto-generates and runs."""
-    from quantforge.strategies.library import MACross
+    from aurora.strategies.library import MACross
 
     def factory():
         return MACross(fast=10, slow=50)
@@ -124,7 +124,7 @@ def test_walk_forward_auto_generates_windows(fake_prices_1000):
 
 def test_walk_forward_explicit_windows_still_works(fake_prices_1000):
     """Backward compatibility: explicit windows list still works."""
-    from quantforge.strategies.library import MACross
+    from aurora.strategies.library import MACross
 
     def factory():
         return MACross(fast=10, slow=50)
@@ -139,7 +139,7 @@ def test_walk_forward_explicit_windows_still_works(fake_prices_1000):
 
 def test_walk_forward_requires_windows_or_mode(fake_prices_1000):
     """Calling walk_forward with neither windows nor mode raises."""
-    from quantforge.strategies.library import MACross
+    from aurora.strategies.library import MACross
 
     with pytest.raises(ValueError):
         walk_forward(lambda: MACross(), fake_prices_1000, windows=None)

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.ml.labels import (
+from aurora.ml.labels import (
     TripleBarrierResult,
     daily_volatility,
     triple_barrier_labels,

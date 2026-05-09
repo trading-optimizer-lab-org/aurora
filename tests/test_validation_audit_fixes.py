@@ -34,23 +34,23 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library import MACross
-from quantforge.validation import pipeline as pipe_mod
-from quantforge.validation.pipeline import validate_pipeline
-from quantforge.validation.walk_forward import WFWindow, walk_forward
-from quantforge.validation.monte_carlo import (
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library import MACross
+from aurora.validation import pipeline as pipe_mod
+from aurora.validation.pipeline import validate_pipeline
+from aurora.validation.walk_forward import WFWindow, walk_forward
+from aurora.validation.monte_carlo import (
     MCResult,
     monte_carlo_bootstrap,
     monte_carlo_trade_reorder,
 )
-from quantforge.validation.deflated_sharpe import (
+from aurora.validation.deflated_sharpe import (
     deflated_sharpe_annualized,
     deflated_sharpe_check,
 )
-from quantforge.validation.lookahead_check import runtime_lookahead_check
-from quantforge.validation.purged_cv import PurgedKFold
+from aurora.validation.lookahead_check import runtime_lookahead_check
+from aurora.validation.purged_cv import PurgedKFold
 
 
 def _prices(n: int = 1500, seed: int = 17) -> pd.Series:

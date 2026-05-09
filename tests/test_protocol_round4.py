@@ -41,9 +41,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core import data_layer as _dl
-from quantforge.core.data_layer import DEFAULT_LOCK_PATH, OOSGuard
-from quantforge.core.data_tiers import (
+from aurora.core import data_layer as _dl
+from aurora.core.data_layer import DEFAULT_LOCK_PATH, OOSGuard
+from aurora.core.data_tiers import (
     IS_TRAIN_END,
     IS_VALID_END,
     OOS_DEV_END,
@@ -81,8 +81,8 @@ def _make_qf_strategy_named(name: str):
 def test_live_halts_without_validation_marker(tmp_path: Path, monkeypatch):
     """QFLiveStrategy.initialize() halts the session permanently when
     ``check_validation_marker`` reports FAIL (no marker file)."""
-    from quantforge.deployment import live as live_mod
-    from quantforge.deployment.live import QFLiveStrategy
+    from aurora.deployment import live as live_mod
+    from aurora.deployment.live import QFLiveStrategy
 
     monkeypatch.setattr(live_mod, "HAS_LUMIBOT", True)
 
@@ -106,9 +106,9 @@ def test_live_halts_without_validation_marker(tmp_path: Path, monkeypatch):
 def test_live_proceeds_with_valid_marker(tmp_path: Path, monkeypatch):
     """When a fresh validation marker exists, the live wrapper proceeds
     (qf_halted stays False at the end of initialize)."""
-    from quantforge.deployment import live as live_mod
-    from quantforge.deployment.live import QFLiveStrategy
-    from quantforge.deployment.preflight import write_validation_marker
+    from aurora.deployment import live as live_mod
+    from aurora.deployment.live import QFLiveStrategy
+    from aurora.deployment.preflight import write_validation_marker
 
     monkeypatch.setattr(live_mod, "HAS_LUMIBOT", True)
     qf_strat = _make_qf_strategy_named("ValidatedStrat_R4")
@@ -142,8 +142,8 @@ def test_live_proceeds_with_valid_marker(tmp_path: Path, monkeypatch):
 def test_live_bypass_validation_check(tmp_path: Path, monkeypatch):
     """``bypass_validation_check=True`` allows the wrapper to skip the
     marker check (with a warning logged)."""
-    from quantforge.deployment import live as live_mod
-    from quantforge.deployment.live import QFLiveStrategy
+    from aurora.deployment import live as live_mod
+    from aurora.deployment.live import QFLiveStrategy
 
     monkeypatch.setattr(live_mod, "HAS_LUMIBOT", True)
     qf_strat = _make_qf_strategy_named("BypassStrat_R4")
@@ -164,7 +164,7 @@ def test_live_bypass_validation_check(tmp_path: Path, monkeypatch):
 
 def test_paper_halts_without_validation_marker(tmp_path: Path, monkeypatch):
     """QFPaperStrategy.initialize() also halts when no marker is present."""
-    from quantforge.deployment.paper import QFPaperStrategy
+    from aurora.deployment.paper import QFPaperStrategy
 
     qf_strat = _make_qf_strategy_named("UnvalidatedPaperStrat_R4")
     cls = QFPaperStrategy.bind(
@@ -233,7 +233,7 @@ def test_cmd_freeze_creates_snapshot(tmp_path: Path, monkeypatch):
     """``forge freeze --asset X`` calls SnapshotStore.freeze and prints
     the sha256 + data_path."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     full = _full_prices()
     full.name = "FREEZE_R4"
@@ -247,7 +247,7 @@ def test_cmd_freeze_creates_snapshot(tmp_path: Path, monkeypatch):
     # Redirect SnapshotStore root to tmp_path/data_snapshots so we don't
     # spam the real repo. cmd_freeze derives the path from the package
     # location; patch SnapshotStore class to inject the tmp root.
-    from quantforge.core import snapshots as snap_mod
+    from aurora.core import snapshots as snap_mod
     original_init = snap_mod.SnapshotStore.__init__
 
     def patched_init(self, root_dir="data_snapshots/"):
@@ -284,7 +284,7 @@ def test_oos_read_writes_both_lock_and_soc2(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(_dl, "DEFAULT_LOCK_PATH", fake_lock, raising=False)
 
     soc2_log = tmp_path / "soc2.jsonl"
-    from quantforge.compliance import soc2_audit as _soc2_mod
+    from aurora.compliance import soc2_audit as _soc2_mod
 
     # Patch the SOC2Config default log_path so a fresh SOC2AuditTrail()
     # call inside _try_soc2_record uses our tmp file rather than the
@@ -331,7 +331,7 @@ def test_validate_oos_locked_requires_ceremony_flag(monkeypatch):
     """``forge validate --tier oos_locked`` aborts with exit code 2
     unless ``--i-understand-ceremony`` is passed."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     with pytest.raises(SystemExit) as excinfo:
         cli.main([
@@ -345,7 +345,7 @@ def test_validate_default_tier_is_oos_dev(monkeypatch):
     """Default ``forge validate`` (no --tier) keeps the legacy oos_dev
     behaviour: max_tier=OOS_DEV, OOSGuard phase post_ga_validation."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     captured: dict = {}
 
@@ -355,7 +355,7 @@ def test_validate_default_tier_is_oos_dev(monkeypatch):
         return _full_prices()
 
     monkeypatch.setattr(
-        "quantforge.core.data_tiers.load_up_to_tier",
+        "aurora.core.data_tiers.load_up_to_tier",
         fake_load_up_to_tier,
     )
 
@@ -367,7 +367,7 @@ def test_validate_default_tier_is_oos_dev(monkeypatch):
             return "stub"
 
     monkeypatch.setattr(
-        "quantforge.validation.pipeline.validate_pipeline",
+        "aurora.validation.pipeline.validate_pipeline",
         lambda **kw: _Rep(),
     )
     rc = cli.main([
@@ -388,7 +388,7 @@ def test_full_tier_requires_both_env_and_guard(monkeypatch):
     """``_resolve_tier_load(asset, 'full')`` aborts when only the env
     var is set; the guard ceremony is also required."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     monkeypatch.setenv("QF_ALLOW_FULL_TIER", "1")
 
@@ -412,11 +412,11 @@ def test_full_tier_passes_under_correct_ceremony(monkeypatch):
     """Inside ``OOSGuard('explicit_unlock_full_tier')`` and with the
     env var set, the full-tier load proceeds."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     monkeypatch.setenv("QF_ALLOW_FULL_TIER", "1")
     monkeypatch.setattr(
-        "quantforge.core.data_layer.load_asset",
+        "aurora.core.data_layer.load_asset",
         lambda *a, **kw: _full_prices(),
     )
     with OOSGuard("explicit_unlock_full_tier"):
@@ -433,10 +433,10 @@ def test_multi_asset_search_uses_load_tier(monkeypatch):
     """``run_multi_asset_ga`` no longer rejects price_dict_oos=None
     when the fitness signature is is_only."""
     pytest.importorskip("deap")
-    from quantforge.ga.multi_asset_runner import (
+    from aurora.ga.multi_asset_runner import (
         run_multi_asset_ga, MultiAssetGAConfig, multi_asset_fitness_is,
     )
-    from quantforge.strategies.library.pair_trade import PairTrade
+    from aurora.strategies.library.pair_trade import PairTrade
 
     rng = np.random.default_rng(7)
     idx = pd.date_range("2000-01-01", periods=400, freq="B")
@@ -467,10 +467,10 @@ def test_multi_asset_oos_dict_deprecation():
     """Passing price_dict_oos with the IS-only fitness raises a
     DeprecationWarning."""
     pytest.importorskip("deap")
-    from quantforge.ga.multi_asset_runner import (
+    from aurora.ga.multi_asset_runner import (
         run_multi_asset_ga, MultiAssetGAConfig, multi_asset_fitness_is,
     )
-    from quantforge.strategies.library.pair_trade import PairTrade
+    from aurora.strategies.library.pair_trade import PairTrade
 
     rng = np.random.default_rng(7)
     idx = pd.date_range("2000-01-01", periods=400, freq="B")
@@ -507,7 +507,7 @@ def test_multi_asset_oos_dict_deprecation():
 def test_snapshot_records_git_hash(tmp_path: Path):
     """``SnapshotStore.freeze`` records git_hash / forge_version / seed
     on the resulting DataSnapshot when available."""
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.snapshots import SnapshotStore
 
     store = SnapshotStore(str(tmp_path / "snaps"))
     idx = pd.date_range("2020-01-01", periods=10, freq="B")
@@ -539,7 +539,7 @@ def _open_close_guards_worker(args):
     _sys.path.insert(0, _os.path.normpath(_os.path.join(
         _os.path.dirname(__file__), "..", "..",
     )))
-    from quantforge.core.data_layer import OOSGuard as _OOSGuard
+    from aurora.core.data_layer import OOSGuard as _OOSGuard
     for i in range(n):
         with _OOSGuard(f"worker_{_os.getpid()}_{i}",
                        lock_path=lock_path):

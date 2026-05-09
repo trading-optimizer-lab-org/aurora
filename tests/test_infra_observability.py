@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from quantforge.infra.observability import Observability, ObservabilityConfig
+from aurora.infra.observability import Observability, ObservabilityConfig
 
 
 @pytest.fixture

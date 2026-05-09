@@ -21,7 +21,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from quantforge.registry.registry import RegistryEntry
+from aurora.registry.registry import RegistryEntry
 
 
 @dataclass

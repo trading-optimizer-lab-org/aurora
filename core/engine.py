@@ -13,9 +13,9 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.costs import CostModel, ZERO_costs, apply_costs
-from quantforge.core.metrics import Metrics, compute_metrics
-from quantforge.core.slippage import SlippageModel
+from aurora.core.costs import CostModel, ZERO_costs, apply_costs
+from aurora.core.metrics import Metrics, compute_metrics
+from aurora.core.slippage import SlippageModel
 
 _logger = logging.getLogger(__name__)
 

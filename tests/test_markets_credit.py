@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.credit import CreditConfig, CreditMarket
+from aurora.markets.credit import CreditConfig, CreditMarket
 
 
 @pytest.fixture

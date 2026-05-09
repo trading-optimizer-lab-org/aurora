@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.base import Strategy, StrategySpec
-from quantforge.ga.bayes_opt import (
+from aurora.strategies.base import Strategy, StrategySpec
+from aurora.ga.bayes_opt import (
     bayes_optimize,
     BayesConfig,
     _build_skopt_space,
@@ -240,7 +240,7 @@ def test_is_wrapper_guard_raises():
 
 def test_fallback_space_rejects_bad_tuple_length():
     """_build_fallback_space must raise on tuple length != 2 with a clear msg."""
-    from quantforge.ga.bayes_opt import _build_fallback_space
+    from aurora.ga.bayes_opt import _build_fallback_space
     with pytest.raises(ValueError, match="must be \\(lo, hi\\)"):
         _build_fallback_space({"x": (1, 2, 3)})
     with pytest.raises(ValueError, match="must be a list"):

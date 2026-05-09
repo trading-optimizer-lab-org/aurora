@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.kafka_streams import KafkaConfig, KafkaEventStream
+from aurora.dataeng.kafka_streams import KafkaConfig, KafkaEventStream
 
 
 @pytest.fixture

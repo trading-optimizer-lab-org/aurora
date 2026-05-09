@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.commodities_physical import (
+from aurora.markets.commodities_physical import (
     CommoditiesRollAnalyzer,
     CommoditiesRollConfig,
 )

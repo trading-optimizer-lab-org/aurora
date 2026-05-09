@@ -36,9 +36,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core import data_layer as _dl
-from quantforge.core.data_layer import OOSGuard, load_asset
-from quantforge.core.data_tiers import (
+from aurora.core import data_layer as _dl
+from aurora.core.data_layer import OOSGuard, load_asset
+from aurora.core.data_tiers import (
     IS_TRAIN_END,
     IS_VALID_END,
     OOS_DEV_END,
@@ -150,7 +150,7 @@ def test_cmd_search_max_tier_oos_dev(monkeypatch):
     so the OOS read never materializes OOS_LOCKED / FORWARD bars even
     when the cache extends past 2020-12-31."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     full = _full_prices()
     is_only = full[full.index <= IS_TRAIN_END]
@@ -165,7 +165,7 @@ def test_cmd_search_max_tier_oos_dev(monkeypatch):
     monkeypatch.setattr(_dl, "load_asset", fake_load_asset, raising=True)
     # Stub the GA so the test runs in milliseconds.
     monkeypatch.setattr(
-        "quantforge.ga.runner.run_ga",
+        "aurora.ga.runner.run_ga",
         lambda cls, is_p, oos_p, fitness, cfg: [
             ({"fast": 5, "slow": 20}, (0.0, 0.0, 0.0, 0.0))
         ],
@@ -209,7 +209,7 @@ def test_cli_run_default_tier_oos_dev(monkeypatch):
     series passed in.
     """
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     full = _full_prices()
     captured: dict = {}
@@ -240,7 +240,7 @@ def test_cli_full_tier_requires_env_var(monkeypatch):
     """``forge run --tier full`` aborts with exit code 2 unless
     ``QF_ALLOW_FULL_TIER=1`` is set."""
     pytest.importorskip("pydantic")
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     monkeypatch.delenv("QF_ALLOW_FULL_TIER", raising=False)
 
@@ -296,7 +296,7 @@ def test_require_snapshot_strict_no_fallback(tmp_path: Path, monkeypatch):
 def test_require_snapshot_uses_snapshotstore_hash(tmp_path: Path, monkeypatch):
     """When a SnapshotStore entry exists, ``require_snapshot=True``
     routes through ``store.load(sha256)`` so the SHA-256 is recomputed."""
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.snapshots import SnapshotStore
 
     monkeypatch.setattr(_dl, "PROJ", str(tmp_path), raising=False)
     monkeypatch.setenv("QF_SNAPSHOT_ROOT", str(tmp_path / "data_snapshots"))
@@ -406,7 +406,7 @@ def test_ceremony_names_unified():
     """The four canonical unlock ceremony names are recognized as
     snapshot-load unlocks. Legacy ``explicit_unlock`` is also accepted
     for backward compatibility."""
-    from quantforge.core.snapshots import _ALLOWED_UNLOCK_PHASES
+    from aurora.core.snapshots import _ALLOWED_UNLOCK_PHASES
 
     assert "explicit_unlock_snapshot" in _ALLOWED_UNLOCK_PHASES
     assert "explicit_unlock_oos_locked" in _ALLOWED_UNLOCK_PHASES
@@ -419,7 +419,7 @@ def test_ceremony_names_unified():
 def test_snapshot_unlock_phase_explicit_unlock_snapshot(tmp_path: Path):
     """``OOSGuard('explicit_unlock_snapshot')`` unlocks a locked
     snapshot exactly the same way as the legacy ``'explicit_unlock'``."""
-    from quantforge.core.snapshots import SnapshotStore, IntegrityError
+    from aurora.core.snapshots import SnapshotStore, IntegrityError
 
     rng = np.random.default_rng(909)
     idx = pd.date_range("2021-01-04", periods=120, freq="B")

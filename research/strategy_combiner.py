@@ -22,8 +22,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.costs import ZERO_costs
 
 
 @dataclass

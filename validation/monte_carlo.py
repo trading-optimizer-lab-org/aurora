@@ -14,8 +14,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.metrics import compute_metrics
-from quantforge.core.seed import child_rng
+from aurora.core.metrics import compute_metrics
+from aurora.core.seed import child_rng
 
 
 def circular_block_bootstrap(returns: np.ndarray, length: int,

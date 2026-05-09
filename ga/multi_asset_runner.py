@@ -22,8 +22,8 @@ import uuid
 import numpy as np
 import pandas as pd
 
-from quantforge.ga.runner import GAConfig
-from quantforge.core.engine_multi import MultiAssetEngine
+from aurora.ga.runner import GAConfig
+from aurora.core.engine_multi import MultiAssetEngine
 
 try:
     from deap import base, creator, tools, algorithms
@@ -379,7 +379,7 @@ def run_multi_asset_ga(
     config = config or MultiAssetGAConfig()
     fitness_fn = fitness_fn or multi_asset_fitness_is
 
-    from quantforge.ga.runner import VALID_BACKENDS
+    from aurora.ga.runner import VALID_BACKENDS
     if config.backend not in VALID_BACKENDS:
         raise ValueError(
             f"invalid backend {config.backend!r}; expected one of {VALID_BACKENDS}"

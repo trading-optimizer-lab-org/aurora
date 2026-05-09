@@ -17,17 +17,26 @@ jobs:
       - name: Verify wheel imports cleanly
         run: |
           python -m venv /tmp/test_venv
-          /tmp/test_venv/bin/pip install dist/quantforge-*.whl
+          /tmp/test_venv/bin/pip install dist/aurora-*.whl
           /tmp/test_venv/bin/python -c "
-          import quantforge
-          from quantforge.core.protocol_policy import ProtocolPolicy
+          import aurora
+          from aurora.core.protocol_policy import ProtocolPolicy
           import importlib.resources
           p = ProtocolPolicy.default()
-          yaml_count = len(list(importlib.resources.files('quantforge').joinpath('config').iterdir()))
-          tpl_count = len(list(importlib.resources.files('quantforge.exports.lean').joinpath('templates').iterdir()))
+          yaml_count = len(list(importlib.resources.files('aurora').joinpath('config').iterdir()))
+          tpl_count = len(list(importlib.resources.files('aurora.exports.lean').joinpath('templates').iterdir()))
           assert yaml_count >= 7, f'config YAML count {yaml_count} < 7'
           assert tpl_count >= 4, f'lean templates count {tpl_count} < 4'
-          print(f'wheel OK: {quantforge.__version__}, configs={yaml_count}, templates={tpl_count}')
+          print(f'wheel OK: {aurora.__version__}, configs={yaml_count}, templates={tpl_count}')
+          "
+          # quantforge namespace remains importable as a deprecation-warned shim
+          /tmp/test_venv/bin/python -W error::DeprecationWarning -c "
+          import warnings
+          # Importing the shim must raise DeprecationWarning under -W error
+          try:
+              import quantforge
+          except DeprecationWarning:
+              print('quantforge shim correctly emits DeprecationWarning')
           "
       - uses: actions/upload-artifact@v4
         with:

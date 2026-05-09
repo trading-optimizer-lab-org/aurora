@@ -24,7 +24,7 @@ __all__: list[str] = []
 def _try_export(module_name: str, symbols: tuple[str, ...]) -> None:
     """Best-effort import of sibling module; failures swallowed."""
     try:
-        mod = __import__(f"quantforge.markets.{module_name}", fromlist=symbols)
+        mod = __import__(f"aurora.markets.{module_name}", fromlist=symbols)
     except Exception:  # noqa: BLE001
         return
     for sym in symbols:

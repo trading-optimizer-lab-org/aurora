@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.liquidity import (
+from aurora.deployment.liquidity import (
     LiquidityAwarePortfolio,
     LiquidityProfile,
     adv_constrained_position,

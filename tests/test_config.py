@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from quantforge.core.config import (
+from aurora.core.config import (
     ForgeConfig,
     DataConfig,
     CostConfig,

@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from quantforge.analytics import attribution, factor_analysis, metrics_full, round_trip
-from quantforge.analytics.attribution import (
+from aurora.analytics import attribution, factor_analysis, metrics_full, round_trip
+from aurora.analytics.attribution import (
     AttributionResult,
     attribution_by_factor,
     brinson_attribution,
 )
-from quantforge.analytics.factor_analysis import (
+from aurora.analytics.factor_analysis import (
     information_coefficient,
     quantile_spread,
 )

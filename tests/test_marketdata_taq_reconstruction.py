@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from quantforge.marketdata.taq_reconstruction import (
+from aurora.marketdata.taq_reconstruction import (
     TAQReconstructor,
     TAQConfig,
 )

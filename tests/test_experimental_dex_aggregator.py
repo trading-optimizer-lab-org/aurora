@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.dex_aggregator import DEXAggregator, _MockPool
+from aurora.experimental.dex_aggregator import DEXAggregator, _MockPool
 
 
 def test_quotes_for_each_pool():

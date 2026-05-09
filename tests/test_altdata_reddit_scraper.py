@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.altdata.reddit_scraper import RedditAdapter, RedditConfig
+from aurora.altdata.reddit_scraper import RedditAdapter, RedditConfig
 
 
 @pytest.fixture

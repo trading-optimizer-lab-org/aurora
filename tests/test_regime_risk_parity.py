@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.regime_risk_parity import (
+from aurora.deployment.regime_risk_parity import (
     RegimeRiskParity,
     RegimeRPConfig,
     RegimeRPResult,

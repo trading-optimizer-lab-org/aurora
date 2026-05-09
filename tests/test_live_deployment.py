@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from quantforge.deployment import live
-from quantforge.deployment.live import (
+from aurora.deployment import live
+from aurora.deployment.live import (
     LiveConfig,
     QFLiveStrategy,
     TransientOrderError,
@@ -307,7 +307,7 @@ def test_submit_with_retry_no_double_submit_on_partial_failure():
 
         def submit_order(self, order):
             type(self).submit_count += 1
-            from quantforge.deployment.live import TransientOrderError
+            from aurora.deployment.live import TransientOrderError
             raise TransientOrderError("first submit timed out")
 
     strat = _Strat()

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.signals import MicrostructureSignal, MicrostructureConfig
+from aurora.signals import MicrostructureSignal, MicrostructureConfig
 
 
 def test_mock_book_shape():

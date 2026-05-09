@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.research.bandit_allocator import (
+from aurora.research.bandit_allocator import (
     LiveBanditAllocator,
     AllocationReport,
 )

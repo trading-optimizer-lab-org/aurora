@@ -38,15 +38,15 @@ from typing import Any, Callable, Iterable, Optional
 
 import pandas as pd
 
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.research.factory.lineage import LineageGraph
-from quantforge.research.factory.outcomes import (
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.research.factory.lineage import LineageGraph
+from aurora.research.factory.outcomes import (
     CandidateRun,
     RejectionReason,
     ResearchOutcome,
     ResearchStage,
 )
-from quantforge.research.factory.spec import StrategySpec
+from aurora.research.factory.spec import StrategySpec
 
 _log = logging.getLogger(__name__)
 
@@ -73,12 +73,12 @@ class ResearchPipelineConfig:
     skip_oos_dev_if_wf_fails: bool = True
     archive_path: Path = field(
         default_factory=lambda: __import__(
-            "quantforge.core.runtime_paths", fromlist=["research_archive_path"]
+            "aurora.core.runtime_paths", fromlist=["research_archive_path"]
         ).research_archive_path()
     )
     review_queue_path: Path = field(
         default_factory=lambda: __import__(
-            "quantforge.core.runtime_paths", fromlist=["review_queue_path"]
+            "aurora.core.runtime_paths", fromlist=["review_queue_path"]
         ).review_queue_path()
     )
     parallel_workers: int = 1
@@ -135,8 +135,8 @@ def _default_backtest(
     strategy class lazily so test code can stub the import path without
     needing the strategy module on disk.
     """
-    from quantforge.core.engine import run_backtest
-    from quantforge.core.costs import IBKR_costs
+    from aurora.core.engine import run_backtest
+    from aurora.core.costs import IBKR_costs
     cls = _import_path(strategy_class_path)
     strat = cls(**params)
     res = run_backtest(prices, strat.signals, costs=IBKR_costs)
@@ -160,8 +160,8 @@ def _default_walk_forward(
     or just the IS metric the caller already has) and ``oos_sharpe``
     (mean of fold OOS sharpes) to compute degradation.
     """
-    from quantforge.validation.walk_forward import walk_forward
-    from quantforge.core.costs import IBKR_costs
+    from aurora.validation.walk_forward import walk_forward
+    from aurora.core.costs import IBKR_costs
     cls = _import_path(strategy_class_path)
 
     def factory(_is_prices=None):
@@ -321,7 +321,7 @@ class ResearchFactory:
                 "the factory is hard-capped at OOS_DEV. "
                 "Use the lockbox ceremony in `forge research promote`."
             )
-        from quantforge.core.data_tiers import load_up_to_tier
+        from aurora.core.data_tiers import load_up_to_tier
         return load_up_to_tier(symbol, max_tier=norm, source="yfinance")
 
     # ------------------------------------------------------------------
@@ -653,7 +653,7 @@ class ResearchFactory:
         if self.triage_engine is None or not specs:
             return [self.submit(s) for s in specs]
         # Build variants from specs.
-        from quantforge.triage.variants import StrategyVariant
+        from aurora.triage.variants import StrategyVariant
         variants = [
             StrategyVariant.make(
                 strategy_class=s.strategy_class,
@@ -669,7 +669,7 @@ class ResearchFactory:
             tier = getattr(
                 self.triage_engine.config, "triage_tier_only", "IS_TRAIN"
             )
-            from quantforge.core.data_tiers import load_tier
+            from aurora.core.data_tiers import load_tier
             ser = load_tier(symbol, tier=tier)
             prices = ser.to_frame(name=symbol)
         triage_batch = self.triage_engine.triage_batch(prices, variants)

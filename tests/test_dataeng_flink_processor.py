@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.flink_processor import (
+from aurora.dataeng.flink_processor import (
     FlinkConfig,
     FlinkStreamProcessor,
 )

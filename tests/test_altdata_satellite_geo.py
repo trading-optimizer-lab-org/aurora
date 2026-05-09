@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from quantforge.altdata.satellite_geo import (
+from aurora.altdata.satellite_geo import (
     AOI,
     SatelliteAdapter,
     SatelliteConfig,
