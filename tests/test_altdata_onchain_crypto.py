@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
-from quantforge.altdata.onchain_crypto import OnchainAdapter, OnchainConfig
+from aurora.altdata.onchain_crypto import OnchainAdapter, OnchainConfig
 
 
 @pytest.fixture

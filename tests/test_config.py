@@ -1,4 +1,4 @@
-"""Tests for quantforge.core.config: pydantic validation, YAML/TOML I/O, overrides."""
+"""Tests for aurora.core.config: pydantic validation, YAML/TOML I/O, overrides."""
 from __future__ import annotations
 import sys
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from quantforge.core.config import (
+from aurora.core.config import (
     ForgeConfig,
     DataConfig,
     CostConfig,
@@ -32,7 +32,7 @@ def test_default_config():
     # $QF_DATA_DIR; falls back to platformdirs user-data dir). The legacy
     # in-repo `quantforge/data_cache_qf` default was retired so the
     # ghost directory it created stops shadowing the package.
-    from quantforge.core.runtime_paths import cache_dir as _cache_dir
+    from aurora.core.runtime_paths import cache_dir as _cache_dir
     assert cfg.data.cache_dir == str(_cache_dir())
     assert cfg.costs.profile == "ibkr"
     assert cfg.costs.commission_bps == 0.5

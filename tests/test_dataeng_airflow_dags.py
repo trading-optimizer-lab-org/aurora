@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from quantforge.dataeng.airflow_dags import (
+from aurora.dataeng.airflow_dags import (
     AirflowConfig,
     AirflowDAGGenerator,
     TaskSpec,

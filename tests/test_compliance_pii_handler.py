@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.compliance.pii_handler import PIIConfig, PIIHandler
+from aurora.compliance.pii_handler import PIIConfig, PIIHandler
 
 
 @pytest.fixture

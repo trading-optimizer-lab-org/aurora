@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.regime.markov_switching import (
+from aurora.regime.markov_switching import (
     MarkovSwitchingMean,
     MarkovSwitchResult,
     regime_filter_signal,
@@ -217,7 +217,7 @@ def test_markov_retry_uses_fresh_model(monkeypatch):
     """When the first statsmodels fit raises, the retry must construct a
     fresh ``MarkovRegression`` (not reuse the half-initialized instance).
     """
-    import quantforge.regime.markov_switching as mod
+    import aurora.regime.markov_switching as mod
 
     if not mod._HAS_STATSMODELS:
         pytest.skip("statsmodels unavailable")
@@ -250,7 +250,7 @@ def test_markov_aborts_on_degenerate_regime():
     """The manual EM path must abort on a degenerate regime via
     DegenerateRegimeError (raises caught by fit; we test the helper directly).
     """
-    from quantforge.regime.markov_switching import (
+    from aurora.regime.markov_switching import (
         DegenerateRegimeError,
         _manual_em_fit,
     )

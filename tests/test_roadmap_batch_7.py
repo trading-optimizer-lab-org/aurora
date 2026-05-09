@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.analytics.replay_debugger import render_frame, replay
-from quantforge.deployment.money_management import (
+from aurora.analytics.replay_debugger import render_frame, replay
+from aurora.deployment.money_management import (
     AntiMartingaleConfig,
     anti_martingale_sizing,
     drawdown_scaled_sizing,
@@ -18,40 +18,40 @@ from quantforge.deployment.money_management import (
     fractional_kelly_with_shrinkage,
     profit_step_pyramid,
 )
-from quantforge.monitoring.cross_strategy_correlation import (
+from aurora.monitoring.cross_strategy_correlation import (
     StrategySnapshot,
     find_common_cause,
 )
-from quantforge.monitoring.multi_channel_alerts import (
+from aurora.monitoring.multi_channel_alerts import (
     AlertEvent,
     ChannelRoute,
     MultiChannelAlerter,
     PushoverProvider,
 )
-from quantforge.research.auto_gen import (
+from aurora.research.auto_gen import (
     AtomicBlockGenerator,
     Comparator,
     combinatorial_pairs,
 )
-from quantforge.strategies.blocks import STANDARD_REGISTRY
-from quantforge.strategies.library.grid import GridStrategy
-from quantforge.validation.corporate_actions_audit import (
+from aurora.strategies.blocks import STANDARD_REGISTRY
+from aurora.strategies.library.grid import GridStrategy
+from aurora.validation.corporate_actions_audit import (
     ActionKind,
     CorporateAction,
     verify_cash_dividend,
     verify_split,
 )
-from quantforge.validation.cv_matrices import build_matrix
-from quantforge.validation.holiday_calendar_audit import (
+from aurora.validation.cv_matrices import build_matrix
+from aurora.validation.holiday_calendar_audit import (
     audit_orders,
     is_market_open,
 )
-from quantforge.validation.robustness_suite import (
+from aurora.validation.robustness_suite import (
     GateResult,
     PRESET_FAST,
     run_robustness_suite,
 )
-from quantforge.validation.survivorship_audit import audit_survivorship
+from aurora.validation.survivorship_audit import audit_survivorship
 
 
 # --------------------------------------------------------------------------

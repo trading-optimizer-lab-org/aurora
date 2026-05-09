@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.validation.tail_risk import (
+from aurora.core.seed import set_global_seed
+from aurora.validation.tail_risk import (
     TailRiskResult,
     extract_tail_blocks,
     tail_aware_bootstrap,
@@ -96,7 +96,7 @@ def test_tail_risk_weights_normalized():
     Sample many blocks via the same probabilities and verify the empirical
     rate is within tolerance of p_tail.
     """
-    from quantforge.core.seed import child_rng
+    from aurora.core.seed import child_rng
 
     set_global_seed(2026)
     rng = np.random.default_rng(0)

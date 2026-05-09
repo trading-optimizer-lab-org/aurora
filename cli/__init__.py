@@ -4,7 +4,7 @@ Importers should reach into this package, not the multi-thousand-line
 `cli.forge` module directly. Lazy re-export of the entry point so
 external callers and tests have a stable surface that survives the
 future `cli/forge.py` split (R49). Lazy import avoids a runpy
-RuntimeWarning when the user runs ``python -m quantforge.cli.forge``
+RuntimeWarning when the user runs ``python -m aurora.cli.forge``
 because eager re-export populates `sys.modules` before runpy executes
 the module.
 
@@ -26,7 +26,7 @@ def __getattr__(name: str) -> Any:
     if name == "main":
         from .forge import main as _main
         return _main
-    raise AttributeError(f"module 'quantforge.cli' has no attribute {name!r}")
+    raise AttributeError(f"module 'aurora.cli' has no attribute {name!r}")
 
 
 if TYPE_CHECKING:

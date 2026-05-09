@@ -108,7 +108,7 @@ class FeatureStore:
         # $QF_DATA_DIR; falls back to platformdirs). Never lands inside
         # the in-repo `quantforge/data_cache_qf/` ghost directory.
         if root is None:
-            from quantforge.core.runtime_paths import cache_dir as _cache_dir
+            from aurora.core.runtime_paths import cache_dir as _cache_dir
             self.root = Path(_cache_dir()) / "features"
         else:
             self.root = Path(root)

@@ -27,18 +27,18 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.exports.lean import (
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.exports.lean import (
     LeanExportConfig,
     LeanExporter,
     LeanProjectArtifact,
 )
-from quantforge.exports.lean.exporter import (
+from aurora.exports.lean.exporter import (
     TRANSLATION_TIERS,
     list_translation_tiers,
     verify_project,
 )
-from quantforge.research.factory import StrategySpec
+from aurora.research.factory import StrategySpec
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ def test_lean_export_config_defaults(tmp_path):
 def test_lean_project_artifact_is_frozen(tmp_path, policy):
     cfg = _make_config(tmp_path)
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50, "allow_short": False},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -120,7 +120,7 @@ def test_lean_project_artifact_is_frozen(tmp_path, policy):
 def test_exporter_writes_required_files(tmp_path, policy):
     cfg = _make_config(tmp_path)
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -142,7 +142,7 @@ def test_exporter_writes_required_files(tmp_path, policy):
 def test_metadata_contains_provenance(tmp_path, policy):
     cfg = _make_config(tmp_path, "ProvProject")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -167,7 +167,7 @@ def test_metadata_contains_provenance(tmp_path, policy):
 def test_known_strategy_renders_ma_cross_lean_logic(tmp_path, policy):
     cfg = _make_config(tmp_path, "MAProject")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 7, "slow": 30, "allow_short": True},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -218,7 +218,7 @@ def test_unknown_strategy_falls_back_to_scaffold(tmp_path, policy):
 def test_readme_has_do_not_trust_warning(tmp_path, policy):
     cfg = _make_config(tmp_path)
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -234,7 +234,7 @@ def test_readme_has_do_not_trust_warning(tmp_path, policy):
 def test_readme_warns_without_validation_marker(tmp_path, policy):
     cfg = _make_config(tmp_path, "NoMarkerProj")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     # No validation_marker -> warning must appear.
@@ -267,7 +267,7 @@ def test_readme_warns_without_validation_marker(tmp_path, policy):
 def test_main_cs_smoke_regex(tmp_path, policy):
     cfg = _make_config(tmp_path, "SyntaxProj")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -299,7 +299,7 @@ def test_main_cs_smoke_regex(tmp_path, policy):
 def test_config_json_is_valid_json(tmp_path, policy):
     cfg = _make_config(tmp_path, "JsonProj")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50, "allow_short": False},
     )
     artifact = LeanExporter(cfg, policy).export(spec)
@@ -324,7 +324,7 @@ def test_universe_symbols_normalized(tmp_path, policy):
     spec = StrategySpec.make(
         name="MultiSym",
         hypothesis="multi-asset MA cross",
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 10, "slow": 50},
         universe=["SPY", "QQQ", "IWM"],
         rebalance="1d",
@@ -353,7 +353,7 @@ def test_universe_symbols_normalized(tmp_path, policy):
 def test_exporter_refuses_overwrite_without_force(tmp_path, policy):
     cfg = _make_config(tmp_path, "OverwriteProj")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     exporter = LeanExporter(cfg, policy)
@@ -378,7 +378,7 @@ def test_cli_export_lean_smoke(tmp_path):
     spec = StrategySpec.make(
         name="CliMA",
         hypothesis="cli smoke",
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 10, "slow": 50, "allow_short": False},
         universe=["SPY"],
         rebalance="1d",
@@ -387,7 +387,7 @@ def test_cli_export_lean_smoke(tmp_path):
 
     out_dir = tmp_path / "lean_exports"
     cmd = [
-        sys.executable, "-m", "quantforge.cli.forge", "export", "lean",
+        sys.executable, "-m", "aurora.cli.forge", "export", "lean",
         str(spec_path),
         "--target-dir", str(out_dir),
         "--project-name", "CliSmoke",
@@ -411,7 +411,7 @@ def test_cli_export_lean_smoke(tmp_path):
 def test_export_verify_detects_tamper(tmp_path, policy):
     cfg = _make_config(tmp_path, "TamperProj")
     spec = _spec(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         {"fast": 10, "slow": 50},
     )
     artifact = LeanExporter(cfg, policy).export(spec)

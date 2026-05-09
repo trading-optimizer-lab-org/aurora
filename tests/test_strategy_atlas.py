@@ -6,14 +6,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from quantforge.research._atlas_seed import SEED_ENTRIES, load_seed_atlas
-from quantforge.research.strategy_atlas import (
+from aurora.research._atlas_seed import SEED_ENTRIES, load_seed_atlas
+from aurora.research.strategy_atlas import (
     AtlasStatus,
     StrategyAtlas,
     StrategyAtlasEntry,
     query_before_promote,
 )
-from quantforge.research.strategy_benchmarks import (
+from aurora.research.strategy_benchmarks import (
     BenchmarkExpectation,
     evaluate_against_benchmark,
 )

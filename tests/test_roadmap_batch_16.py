@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Mapping
 import pandas as pd
 import pytest
 
-from quantforge.core.snapshots import SnapshotStore
-from quantforge.core.snapshots_distributed import SnapshotBackend
+from aurora.core.snapshots import SnapshotStore
+from aurora.core.snapshots_distributed import SnapshotBackend
 
 
 class _FakeBackend(SnapshotBackend):

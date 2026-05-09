@@ -1,27 +1,17 @@
-# QuantForge
+# Aurora
 
-QuantForge v1.4 - standalone quant research engine with a hash-bound
-7-stage protocol spine: policy, data providers, snapshots, experiment
-registry, validation, agent gateway, and paper/live guards. The GA fitness
-path is IS-only by construction; OOS_DEV is post-selection validation, and
-OOS_LOCKED/FORWARD require explicit ceremonies. Current verified baseline:
-2781 passed, 23 skipped, 10 deselected on the fast suite, 80.40% coverage,
-mypy clean, ruff clean, strict-Sphinx docs build clean.
+Aurora v1.5 -- quant research engine with 13 validation gates plus a
+final OOS hold-out (see `docs/ARCHITECTURE.md` for the canonical
+enumeration). `validate_pipeline` orchestrates 8 of the 13 gates;
+purged CV, CSCV, scenarios, tail-risk, and correlation-stress run
+standalone. 12 strategies, intraday + DL/RL + dashboard + multi-broker
++ LLM. Cumulative test coverage: 2800+ tests across v1.0 / v1.1 / v1.2
+/ v1.3 / v1.4 / v1.5 (count in `tests/`; verify with
+`pytest --collect-only -q`).
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit style,
-the OOS-sagrado contract for new code, and the validation-gates checklist
-that every new strategy must pass before merge.
-
-Vulnerability reports: see [SECURITY.md](SECURITY.md).
-
-## Module production status
-
-Cross-asset, signal, risk, dataeng, infra, marketdata and altdata
-modules ship at varying maturity. Before depending on one, check
-[`docs/MODULE_STATUS.md`](docs/MODULE_STATUS.md) for the canonical
-`production` / `scaffold` / `mock-only` / `experimental` label.
+Renamed from QuantForge to Aurora in v1.5.0 (R23). The legacy
+`quantforge` namespace remains importable as a thin compat shim that
+emits a `DeprecationWarning`; the shim is removed in v1.6.
 
 ## Filosofia
 
@@ -32,8 +22,7 @@ The non-negotiable doctrine:
 
 1. **OOS sagrado** - the out-of-sample partition is sacred. The genetic algorithm
    never sees OOS prices. OOS is touched only after candidates have been chosen,
-   and only by the final OOS gate. Enforced programmatically by `OOSGuard` in
-   `quantforge/core/data_layer.py` and reaffirmed in `quantforge/ga/fitness.py`.
+   and only by the final OOS gate.
 2. **Walk-forward** - candidate must beat buy-and-hold Calmar inside multiple
    non-overlapping windows.
 3. **Monte Carlo** - block-bootstrap returns and trade-reorder MC.
@@ -42,13 +31,16 @@ The non-negotiable doctrine:
 5. **Deflated Sharpe Ratio** - Bailey / Lopez de Prado correction for selection
    bias across N candidates.
 
+`OOSGuard` lives in `aurora/core/data_layer.py` and the GA fitness path
+that defends the OOS sacred boundary lives in `aurora/ga/fitness.py`.
+
 Every approved strategy then enters paper trading for 90 days minimum before live
 deployment with a 1% risk-per-trade cap.
 
 The full pipeline is reproducible from a single seed. Re-running months later
 with the same seed reproduces identical results.
 
-## Capabilities by area (v1.4)
+## Capabilities by area (v1.3)
 
 ### Core engine
 - `core/engine.py` - single-asset event-driven backtest
@@ -133,54 +125,58 @@ with the same seed reproduces identical results.
 - `deployment/brokers.py` - PaperBroker + IB / Alpaca / Coinbase / Kraken
   adapters
 
-### Monitoring
+### Monitoring (v1.3)
 - `monitoring/dashboard.py` - Streamlit live PnL, positions, alerts
 - `monitoring/alerts.py` - SMTP email + Slack / Discord webhooks, per-rule
   cooldown, env-var-only credentials
 - `monitoring/drift.py` - Page-Hinkley + ADWIN + KS, AutoRetrainController
 
-### Research
+### Research (v1.3)
 - `research/llm_assistant.py` - Anthropic API integration, mock client
   injection for offline tests
 
 ### Reporting and CLI
 - `reporting/tearsheet.py` (HTML / PDF, v2 with 8 sections + benchmark overlay)
-- `cli/forge.py` (35+ subcommands across research, policy, data,
-  agent gateway, audit, triage, ops, crypto, export, and legacy workflows)
+- `cli/forge.py` (15 subcommands)
 
 ## Quick start
 
 ```bash
-# From the repository root, install the editable package.
-python -m pip install -e ".[dev,ga,docs,mutate]"
+# pyproject.toml lives at the repo root and declares the `aurora`
+# package via [tool.setuptools.package-dir]. From the repo root:
+pip install -e .
 
 # List strategies
-forge list-strategies
+aurora list-strategies
 
 # Validate a strategy on SPY (runs the full pipeline)
-forge validate --strategy MACross --asset SPY --n-trials 5
+aurora validate --strategy MACross --asset SPY --n-trials 5
 
 # Run a single backtest
-forge run --strategy MACross --asset SPY
+aurora run --strategy MACross --asset SPY
 
 # GA search
-forge search --strategy MACross --asset SPY --population 100
+aurora search --strategy MACross --asset SPY --population 100
 
 # Tear sheet
-forge tearsheet --strategy MACross --asset SPY --output tear.html
+aurora tearsheet --strategy MACross --asset SPY --output tear.html
 
 # Live dashboard
-forge dashboard --journal quantforge.db
+aurora dashboard --journal aurora.db
 ```
+
+The legacy `forge` CLI keeps working as a deprecated alias during the
+v1.5 shim window; both `forge` and `aurora` dispatch to the same entry
+point.
 
 Programmatic basic backtest:
 
 ```python
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine import run_backtest
-from quantforge.core.data_layer import load_asset
-from quantforge.core.costs import IBKR_costs
-from quantforge.strategies.library import MACross
+from aurora.core.seed import set_global_seed
+from aurora.core.engine import run_backtest
+from aurora.core.data_layer import load_asset
+from aurora.core.costs import IBKR_costs
+from aurora.strategies.library import MACross
 
 set_global_seed(42)
 prices = load_asset("SPY")              # IS-only by default
@@ -190,46 +186,35 @@ result = run_backtest(prices, weights, costs=IBKR_costs)
 print(result.calmar, result.sharpe, result.mdd)
 ```
 
-## CLI subcommands
+## CLI subcommands (15)
 
 ```
-forge run                   single backtest
-forge validate              run validation pipeline
-forge search                GA candidate search
-forge search-multi          multi-asset GA search
-forge list-strategies
-forge tearsheet
-forge bench                 microbenchmark
-forge config show|init
-forge freeze                freeze hash-verified snapshots
-forge preflight             pre-trade checks
-forge label                 triple-barrier labels
-forge factor                factor / IC / quantile spread
-forge attribute             performance attribution
-forge purge-cv              purged K-Fold CV
-forge fracdiff
-forge cscv                  CSCV / PBO from per-strategy returns
-forge dashboard             Streamlit live monitor
-forge policy show|verify
-forge data list-providers|fetch|verify
-forge agent token-issue|token-list|token-revoke|audit-verify|stage|commit|push
-forge audit run|list-reviewers
-forge research submit|batch|review-queue|archive|lineage|generate|promote|triage
-forge triage run|list-promising|promote
-forge ops daily|alerts|summary
-forge crypto exchanges|fetch|submit-order|positions|balance|allow-live
-forge export lean|lean-list|verify
+aurora run                   single backtest
+aurora validate              run validation pipeline
+aurora search                GA candidate search
+aurora list-strategies
+aurora tearsheet
+aurora bench                 microbenchmark
+aurora config show|init
+aurora preflight             pre-trade checks
+aurora label                 triple-barrier labels
+aurora factor                factor / IC / quantile spread
+aurora attribute             performance attribution
+aurora purge-cv              purged K-Fold CV
+aurora fracdiff
+aurora cscv                  CSCV / PBO from per-strategy returns
+aurora dashboard             Streamlit live monitor
 ```
 
 ## OOS sagrado (no negotiation)
 
 - OOS partition is locked. Programmatic `OOSGuard` blocks access during
   optimization, with file lock and git-hash provenance.
-- The IS / OOS split is defined in `quantforge/core/data_layer.py` and the
+- The IS / OOS split is defined in `aurora/core/data_layer.py` and the
   formal research protocol in `docs/RESEARCH_PROTOCOL.md`.
 - The GA reads only IS-train + walk-forward folds. OOS is consulted exactly
   once, after pareto-front selection, by the final gate in
-  `quantforge/validation/pipeline.py`.
+  `aurora/validation/pipeline.py`.
 - Re-touching OOS_LOCKED requires explicit ceremony (see
   `docs/RESEARCH_PROTOCOL.md`).
 
@@ -258,8 +243,8 @@ forge export lean|lean-list|verify
 
 - `docs/ARCHITECTURE.md` - module dependency graph, design principles,
   extension points
-- `docs/v4_0_SPINE_REPORT.md` - current v1.4 spine state, test counts,
-  modules added per batch, and production-readiness notes
+- `docs/v1_3_COMPLETION_REPORT.md` - current state, test counts, modules
+  added per batch
 - `docs/STRATEGY_AUTHOR.md` - tutorial for writing a custom Strategy
 - `docs/GLOSSARY.md` - definitions of metrics, validation gates, and
   abbreviations

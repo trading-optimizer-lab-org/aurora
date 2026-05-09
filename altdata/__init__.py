@@ -14,11 +14,11 @@ def _try_export(module_name: str, symbols: tuple[str, ...]) -> None:
     """Best-effort import a sibling module and re-export selected symbols.
 
     Failures are swallowed so that a single broken optional-dep submodule does
-    not block ``import quantforge.altdata``. Importers can still target
+    not block ``import aurora.altdata``. Importers can still target
     submodules directly to surface the underlying ImportError.
     """
     try:
-        mod = __import__(f"quantforge.altdata.{module_name}", fromlist=symbols)
+        mod = __import__(f"aurora.altdata.{module_name}", fromlist=symbols)
     except Exception:  # noqa: BLE001 - optional dep failures must not crash init
         return
     for sym in symbols:

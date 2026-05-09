@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Iterable, Optional
 
-from quantforge.research.factory.outcomes import CandidateRun
+from aurora.research.factory.outcomes import CandidateRun
 
 
 class LineageGraph:

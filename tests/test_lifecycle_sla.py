@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from quantforge.research.lifecycle import (
+from aurora.research.lifecycle import (
     LifecycleStatus,
     StrategySLA,
     archive,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.cef_premium import (
+from aurora.markets.cef_premium import (
     CEFPremiumConfig,
     CEFPremiumDiscount,
 )

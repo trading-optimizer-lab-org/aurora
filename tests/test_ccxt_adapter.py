@@ -15,12 +15,12 @@ from unittest import mock
 import pandas as pd
 import pytest
 
-from quantforge.core.data_providers import (
+from aurora.core.data_providers import (
     Dataset,
     DatasetMetadata,
     ProviderUnavailable,
 )
-from quantforge.core.data_providers.ccxt_provider import CCXTProvider
+from aurora.core.data_providers.ccxt_provider import CCXTProvider
 
 
 # ---------------------------------------------------------------------------
@@ -163,8 +163,8 @@ def test_ccxt_provider_supported_tiers_restricted():
 def test_ccxt_provider_refused_under_oos_locked_unlock(fake_ccxt):
     """A non-PIT provider with no OOS_LOCKED/FORWARD support is refused
     even with an explicit unlock ceremony open."""
-    from quantforge.core.data_layer import OOSGuard
-    from quantforge.core.data_providers import (
+    from aurora.core.data_layer import OOSGuard
+    from aurora.core.data_providers import (
         DataProviderRegistry,
         TierPermissionError,
     )
@@ -186,7 +186,7 @@ def test_ccxt_provider_refused_under_oos_locked_unlock(fake_ccxt):
 
 def test_ccxt_broker_adapter_lazy_import_raises(monkeypatch):
     monkeypatch.setitem(sys.modules, "ccxt", None)
-    from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+    from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
     with pytest.raises(ImportError):
         CCXTBrokerAdapter("binance")
 
@@ -197,7 +197,7 @@ def test_ccxt_broker_adapter_lazy_import_raises(monkeypatch):
 
 
 def test_ccxt_broker_adapter_default_sandbox(fake_ccxt):
-    from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+    from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
     a = CCXTBrokerAdapter("binance")
     assert a.sandbox is True
     # When sandbox=True and the exchange supports set_sandbox_mode, it
@@ -211,8 +211,8 @@ def test_ccxt_broker_adapter_default_sandbox(fake_ccxt):
 
 
 def test_ccxt_broker_live_without_gateway_committed_refused(fake_ccxt):
-    from quantforge.deployment.brokers import Order
-    from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+    from aurora.deployment.brokers import Order
+    from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
 
     a = CCXTBrokerAdapter("binance", sandbox=False)
     order = Order(symbol="BTC/USDT", qty=0.01, side="buy",
@@ -229,8 +229,8 @@ def test_ccxt_broker_live_without_gateway_committed_refused(fake_ccxt):
 
 
 def test_ccxt_broker_live_without_oos_guard_refused(fake_ccxt, monkeypatch):
-    from quantforge.deployment.brokers import Order
-    from quantforge.deployment.ccxt_adapter import (
+    from aurora.deployment.brokers import Order
+    from aurora.deployment.ccxt_adapter import (
         ALLOW_LIVE_TOKEN_ENV_PATTERN,
         CCXTBrokerAdapter,
     )
@@ -254,8 +254,8 @@ def test_ccxt_broker_live_without_oos_guard_refused(fake_ccxt, monkeypatch):
 
 
 def test_ccxt_broker_sandbox_order_routes_to_client(fake_ccxt):
-    from quantforge.deployment.brokers import Order
-    from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+    from aurora.deployment.brokers import Order
+    from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
 
     a = CCXTBrokerAdapter("binance", sandbox=True)
     order = Order(symbol="BTC/USDT", qty=0.01, side="buy",
@@ -281,8 +281,8 @@ def test_ccxt_broker_sandbox_order_routes_to_client(fake_ccxt):
 
 
 def test_ccxt_broker_kill_switch_env_blocks(fake_ccxt, monkeypatch):
-    from quantforge.deployment.brokers import Order
-    from quantforge.deployment.ccxt_adapter import (
+    from aurora.deployment.brokers import Order
+    from aurora.deployment.ccxt_adapter import (
         CCXTBrokerAdapter,
         KILL_SWITCH_ENV,
     )
@@ -304,7 +304,7 @@ def test_ccxt_broker_kill_switch_env_blocks(fake_ccxt, monkeypatch):
 
 def test_ccxt_broker_api_keys_from_env_never_logged(fake_ccxt, monkeypatch,
                                                     caplog):
-    from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+    from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
 
     secret_key = "AKIA-supersecret-1234567890abcdef"
     secret_secret = "shh-this-is-a-very-private-secret-value-9999"
@@ -331,8 +331,8 @@ def test_ccxt_broker_api_keys_from_env_never_logged(fake_ccxt, monkeypatch,
 
 
 def test_ccxt_broker_unstable_quote_warns(fake_ccxt):
-    from quantforge.deployment.brokers import Order
-    from quantforge.deployment.ccxt_adapter import CCXTBrokerAdapter
+    from aurora.deployment.brokers import Order
+    from aurora.deployment.ccxt_adapter import CCXTBrokerAdapter
 
     a = CCXTBrokerAdapter("binance", sandbox=True,
                           allowed_quotes={"USDT", "USDC", "USD"})
@@ -354,7 +354,7 @@ def test_cli_crypto_exchanges_lazy_fails_cleanly():
     # don't pollute the in-process import cache.
     code = (
         "import sys; sys.modules['ccxt'] = None;"
-        "from quantforge.cli.forge import main;"
+        "from aurora.cli.forge import main;"
         "raise SystemExit(main(['crypto', 'exchanges']))"
     )
     res = subprocess.run(

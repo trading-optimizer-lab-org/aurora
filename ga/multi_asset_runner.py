@@ -15,19 +15,15 @@ Conventions inherited from single-asset runner:
   weights = (1, 1, 1, -1)  ->  maximize first 3, minimize 4th
 """
 from __future__ import annotations
-import logging
-import random
-import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional
-
+import random
+import uuid
 import numpy as np
 import pandas as pd
 
-_log = logging.getLogger(__name__)
-
-from quantforge.ga.runner import GAConfig
-from quantforge.core.engine_multi import MultiAssetEngine
+from aurora.ga.runner import GAConfig
+from aurora.core.engine_multi import MultiAssetEngine
 
 try:
     from deap import base, creator, tools, algorithms
@@ -383,7 +379,7 @@ def run_multi_asset_ga(
     config = config or MultiAssetGAConfig()
     fitness_fn = fitness_fn or multi_asset_fitness_is
 
-    from quantforge.ga.runner import VALID_BACKENDS
+    from aurora.ga.runner import VALID_BACKENDS
     if config.backend not in VALID_BACKENDS:
         raise ValueError(
             f"invalid backend {config.backend!r}; expected one of {VALID_BACKENDS}"
@@ -495,11 +491,11 @@ def run_multi_asset_ga(
         # exception propagates out of the GA loop.
         pool_cm = Parallel(n_jobs=config.n_workers, backend="loky")
         if verbose:
-            _log.info("MA-GA: backend=joblib n_workers=%d", config.n_workers)
+            print(f"MA-GA: backend=joblib n_workers={config.n_workers}")
     else:
         pool_cm = nullcontext(None)
         if verbose and config.backend == "joblib":
-            _log.info("MA-GA: backend=joblib but n_workers<=1, falling back to serial map")
+            print("MA-GA: backend=joblib but n_workers<=1, falling back to serial map")
 
     try:
         with pool_cm as parallel_pool:
@@ -527,8 +523,7 @@ def run_multi_asset_ga(
                 if len(pop) < config.population:
                     pop.extend(toolbox.population(n=config.population - len(pop)))
                 if verbose:
-                    _log.info("MA-GA: seeded %d/%d initial individuals",
-                              len(seeds), config.population)
+                    print(f"MA-GA: seeded {len(seeds)}/{config.population} initial individuals")
             else:
                 pop = toolbox.population(n=config.population)
             fitnesses = list(toolbox.map(toolbox.evaluate, pop))
@@ -536,11 +531,8 @@ def run_multi_asset_ga(
                 ind.fitness.values = fit
 
             if verbose:
-                _log.info(
-                    "MA-GA: pop=%d gen=%d strategy=%s symbols=%s",
-                    config.population, config.generations,
-                    strategy_class.__name__, symbols,
-                )
+                print(f"MA-GA: pop={config.population} gen={config.generations} "
+                      f"strategy={strategy_class.__name__} symbols={symbols}")
 
             # varOr requires lambda_ <= len(pop). Cap at len(pop) to avoid
             # IndexError on tiny populations / edge configs. Mirrors runner.py:267.
@@ -563,8 +555,7 @@ def run_multi_asset_ga(
 
                 if verbose and gen % 5 == 0:
                     best = tools.selBest(pop, 1)[0]
-                    _log.info("  gen %d: best fitness = %s",
-                              gen, best.fitness.values)
+                    print(f"  gen {gen}: best fitness = {best.fitness.values}")
 
             pareto = tools.sortNondominated(pop, len(pop), first_front_only=True)[0]
             # Deterministic tie-breaking matches single-asset runner.run_ga so the

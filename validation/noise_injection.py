@@ -11,9 +11,9 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, ZERO_costs
-from quantforge.core.seed import child_rng
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, ZERO_costs
+from aurora.core.seed import child_rng
 
 
 @dataclass

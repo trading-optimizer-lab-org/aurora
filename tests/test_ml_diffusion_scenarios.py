@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.diffusion_scenarios import (
+from aurora.ml.diffusion_scenarios import (
     DiffusionConfig,
     DiffusionScenarioGenerator,
     TORCH_AVAILABLE,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.validation.shap_explain import SHAPExplainer
+from aurora.validation.shap_explain import SHAPExplainer
 
 
 class _DummyModel:

@@ -6,18 +6,18 @@ from datetime import datetime, time, timedelta
 import numpy as np
 import pytest
 
-from quantforge.deployment.circuit_breaker import (
+from aurora.deployment.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerState,
 )
-from quantforge.deployment.news_filter import BlackoutWindow, NewsFilter
-from quantforge.deployment.session_times import (
+from aurora.deployment.news_filter import BlackoutWindow, NewsFilter
+from aurora.deployment.session_times import (
     SessionWindow,
     StrategySessionPolicy,
 )
-from quantforge.deployment.spread_filter import SpreadFilter, SpreadFilterConfig
-from quantforge.deployment.vol_filter import VolFilter, VolFilterConfig
+from aurora.deployment.spread_filter import SpreadFilter, SpreadFilterConfig
+from aurora.deployment.vol_filter import VolFilter, VolFilterConfig
 
 
 # --------------------------------------------------------------------------

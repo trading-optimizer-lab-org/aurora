@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.reporting.daily_ops import (
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.reporting.daily_ops import (
     DailyOpsAlert,
     DailyOpsBuilder,
     DailyOpsConfig,
@@ -531,7 +531,7 @@ def test_to_markdown_and_to_json_roundtrip(asof, policy):
 
 def test_cli_ops_smoke(tmp_path, capsys):
     """Smoke test: forge ops daily / alerts / summary all run end-to-end."""
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
 
     out_dir = tmp_path / "reports"
     rc_daily = cli.main([

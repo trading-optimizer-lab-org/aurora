@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from quantforge.altdata.news_llm_sentiment import (
+from aurora.altdata.news_llm_sentiment import (
     NewsLLMConfig,
     NewsLLMSentimentAdapter,
 )

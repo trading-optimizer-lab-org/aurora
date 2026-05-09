@@ -2,7 +2,7 @@
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 def _rsi(p: np.ndarray, n: int, smoothing: str = "wilder") -> np.ndarray:

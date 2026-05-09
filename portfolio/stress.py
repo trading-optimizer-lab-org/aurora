@@ -16,8 +16,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
-from quantforge.portfolio.allocation import PortfolioOptimizer
-from quantforge.portfolio.risk_measures import (
+from aurora.portfolio.allocation import PortfolioOptimizer
+from aurora.portfolio.risk_measures import (
     max_drawdown,
     turnover_aware_net_return,
     variance,

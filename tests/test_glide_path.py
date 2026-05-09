@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.glide_path import (
+from aurora.deployment.glide_path import (
     GlidePathConfig,
     GlidePathResult,
     RetirementGlidePath,

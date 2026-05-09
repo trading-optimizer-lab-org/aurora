@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.research.concept_drift_monitor import (
+from aurora.research.concept_drift_monitor import (
     ConceptDriftMonitor,
     DriftSignal,
 )

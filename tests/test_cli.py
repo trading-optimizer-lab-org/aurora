@@ -1,8 +1,8 @@
-"""Tests for quantforge.cli.forge.
+"""Tests for aurora.cli.forge.
 
 Use the in-process build_parser/main entrypoints rather than spawning subprocesses
 where possible: faster, no environment churn, and synthetic data injection works
-via monkeypatch on quantforge.core.data_layer.load_asset.
+via monkeypatch on aurora.core.data_layer.load_asset.
 """
 from __future__ import annotations
 import io
@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.cli import forge as cli
+from aurora.cli import forge as cli
 
 
 # ---------------------------------------------------------------------------
@@ -43,10 +43,10 @@ def _patch_load_asset(monkeypatch, prices=None):
     # forge module imports load_asset lazily inside command bodies, so patch the
     # original locations.
     monkeypatch.setattr(
-        "quantforge.core.data_layer.load_asset", fake, raising=True,
+        "aurora.core.data_layer.load_asset", fake, raising=True,
     )
     # The preflight module captured load_asset at import time (from-import).
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     monkeypatch.setattr(pf, "load_asset", fake, raising=True)
     return prices
 
@@ -98,7 +98,7 @@ def test_list_strategies(capsys):
     assert "RSIMeanRev" in out
     assert "Total:" in out
     # at least the names from library.__all__ should be listed
-    from quantforge.strategies import library as lib_mod
+    from aurora.strategies import library as lib_mod
     for n in lib_mod.__all__:
         assert n in out
 
@@ -131,7 +131,7 @@ def test_config_init_creates_file(tmp_path: Path, capsys):
     assert rc == 0
     assert out.exists()
     # Round-trip load to verify validity
-    from quantforge.core.config import load_config
+    from aurora.core.config import load_config
     cfg = load_config(out)
     assert cfg.seed == 42
     msg = capsys.readouterr().out
@@ -153,7 +153,7 @@ def test_config_init_force_overwrites(tmp_path: Path):
     out.write_text("seed: 99\n", encoding="utf-8")
     rc = cli.main(["config", "init", "--output", str(out), "--force"])
     assert rc == 0
-    from quantforge.core.config import load_config
+    from aurora.core.config import load_config
     cfg = load_config(out)
     assert cfg.seed == 42  # default re-written
 
@@ -270,7 +270,7 @@ def test_preflight_pass_with_marker(monkeypatch, tmp_path, capsys):
     """Write a valid marker so all gates pass."""
     prices = _synth_prices(n=400)
     _patch_load_asset(monkeypatch, prices)
-    from quantforge.deployment.preflight import write_validation_marker
+    from aurora.deployment.preflight import write_validation_marker
     write_validation_marker(
         "MACross", {"is": {"calmar": 1.1}}, project_dir=str(tmp_path),
     )

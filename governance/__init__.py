@@ -1,6 +1,6 @@
 """Governance package: strategy risk register, lifecycle, and approvals.
 
-Public re-exports for ``from quantforge.governance import ...``:
+Public re-exports for ``from aurora.governance import ...``:
 
 * :class:`StrategyRiskRecord`, :class:`RiskRegister`, :class:`ApprovalStatus`
   -- model-risk records and JSONL persistence.
@@ -13,20 +13,20 @@ Public re-exports for ``from quantforge.governance import ...``:
 
 This is Candidate D / Phase 6 of the QuantForge roadmap.
 """
-from quantforge.governance.approvals import (
+from aurora.governance.approvals import (
     ApprovalError,
     ApprovalEvent,
     MakerCheckerFlow,
     gate_promotion,
 )
-from quantforge.governance.lifecycle import (
+from aurora.governance.lifecycle import (
     LifecycleError,
     LifecycleState,
     LifecycleTransition,
     legal_transitions,
     transition,
 )
-from quantforge.governance.risk_register import (
+from aurora.governance.risk_register import (
     ApprovalStatus,
     RiskRegister,
     StrategyRiskRecord,

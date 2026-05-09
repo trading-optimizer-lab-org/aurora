@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from quantforge.deployment.strategy_isolation import (
+from aurora.deployment.strategy_isolation import (
     IsolationConflict,
     Lease,
 )
-from quantforge.deployment.strategy_isolation_file import FileLeaseStore
-from quantforge.infra.distributed_factory import (
+from aurora.deployment.strategy_isolation_file import FileLeaseStore
+from aurora.infra.distributed_factory import (
     Coordinator,
     WorkerSpec,
     WorkUnit,
     WorkResult,
 )
-from quantforge.reporting.pdf_report import (
+from aurora.reporting.pdf_report import (
     PdfRenderConfig,
     can_render_pdf,
     render_html_to_pdf,
@@ -90,7 +90,7 @@ def test_file_lease_store_release_wrong_owner_raises(tmp_path: Path):
 
 
 def test_cli_main_is_importable():
-    from quantforge.cli import main
+    from aurora.cli import main
     assert callable(main)
 
 

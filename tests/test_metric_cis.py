@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.analytics.metric_cis import (
+from aurora.analytics.metric_cis import (
     MetricCI,
     MetricCIBundle,
     bootstrap_metric_cis,

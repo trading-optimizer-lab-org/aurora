@@ -3,7 +3,7 @@
 Centralizes data sourcing across QuantForge. Every dataset returned by the
 registry carries provenance metadata (``DatasetMetadata``): source, version,
 asof_date, content_hash, point_in_time flag, and tier_permission. The
-registry's ``fetch`` integrates with :class:`~quantforge.core.data_layer.OOSGuard`
+registry's ``fetch`` integrates with :class:`~aurora.core.data_layer.OOSGuard`
 so a provider that is not point-in-time cannot deliver data into a locked
 OOS / FORWARD ceremony unless the caller has performed the explicit unlock.
 
@@ -37,7 +37,7 @@ import pandas as pd
 _log = logging.getLogger(__name__)
 
 
-# Tier labels mirror :mod:`quantforge.core.data_tiers`. ``ANY`` means the
+# Tier labels mirror :mod:`aurora.core.data_tiers`. ``ANY`` means the
 # provider may serve any tier (typically the snapshot provider, which is
 # point-in-time by construction).
 TIER_LABELS: tuple[str, ...] = (
@@ -51,7 +51,7 @@ TIER_LABELS: tuple[str, ...] = (
 
 # Phases that an OOSGuard must declare in order to authorize a non-PIT
 # provider into a locked tier. Mirrors the equivalent set in
-# :mod:`quantforge.core.snapshots`.
+# :mod:`aurora.core.snapshots`.
 _LOCKED_TIER_UNLOCK_PHASES: frozenset[str] = frozenset({
     "explicit_unlock",
     "explicit_unlock_snapshot",
@@ -156,7 +156,7 @@ class Dataset:
 def _series_to_canonical_bytes(s: pd.Series) -> bytes:
     """Canonical little-endian byte representation of a Series.
 
-    Matches the contract used by :func:`quantforge.core.snapshots._compute_sha256`
+    Matches the contract used by :func:`aurora.core.snapshots._compute_sha256`
     so a Series that round-trips through SnapshotStore retains the same hash.
     """
     h = hashlib.sha256()
@@ -472,7 +472,7 @@ class DataProviderRegistry:
     def _active_guard_phase() -> tuple[Optional[Any], Optional[str]]:
         """Return (active OOSGuard, phase) or (None, None)."""
         try:
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
         except Exception:
             return None, None
         guard = OOSGuard.active()
@@ -534,7 +534,7 @@ class DataProviderRegistry:
             f"pit={ds.metadata.point_in_time})"
         )
         try:
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
         except Exception:
             return
         if guard is not None:
@@ -588,7 +588,7 @@ def get_default_registry() -> DataProviderRegistry:
         ):
             try:
                 mod = __import__(
-                    f"quantforge.core.data_providers.{mod_name}",
+                    f"aurora.core.data_providers.{mod_name}",
                     fromlist=[cls_name],
                 )
                 cls = getattr(mod, cls_name)
@@ -598,7 +598,7 @@ def get_default_registry() -> DataProviderRegistry:
                     "failed to bootstrap provider %s: %s", mod_name, exc,
                 )
         # Optional providers: only register when their backing dep is
-        # importable. Keeps "from quantforge.core.data_providers import ..."
+        # importable. Keeps "from aurora.core.data_providers import ..."
         # cheap and avoids surfacing a stub provider that always raises.
         try:
             import ccxt  # noqa: F401
@@ -606,7 +606,7 @@ def get_default_registry() -> DataProviderRegistry:
             pass
         else:
             try:
-                from quantforge.core.data_providers.ccxt_provider import (
+                from aurora.core.data_providers.ccxt_provider import (
                     CCXTProvider,
                 )
                 registry.register(CCXTProvider())
@@ -625,7 +625,7 @@ def reset_default_registry() -> None:
         _DEFAULT_REGISTRY = None
 
 
-# Re-exports kept stable for ``from quantforge.core.data_providers import ...``
+# Re-exports kept stable for ``from aurora.core.data_providers import ...``
 __all__ = [
     "BaseDataProvider",
     "DataProvider",

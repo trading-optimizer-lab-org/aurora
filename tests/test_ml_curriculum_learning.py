@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.ml.curriculum_learning import (
+from aurora.ml.curriculum_learning import (
     CurriculumConfig,
     CurriculumScheduler,
 )

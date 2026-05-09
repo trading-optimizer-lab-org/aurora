@@ -14,7 +14,7 @@ import pytest
 
 torch = pytest.importorskip("torch")  # noqa: F401  -- skips entire module without torch
 
-from quantforge.ml.transformer import (  # noqa: E402
+from aurora.ml.transformer import (  # noqa: E402
     TimeSeriesTransformer,
     TransformerConfig,
     causal_mask,
@@ -273,7 +273,7 @@ def test_causal_mask_shuffle_future_invariance(small_cfg):
             # on later inputs. So we cannot use the wrapper's predict()
             # directly here. Instead, we forward-pass and read the t-th
             # encoder output before the head.
-            from quantforge.ml.transformer import causal_mask
+            from aurora.ml.transformer import causal_mask
             x_orig = torch.as_tensor(base, dtype=torch.float32, device=model.device)
             x_shuf = shuffled_t
             h_o = model.model.input_proj(x_orig)

@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import PairTrade
-from quantforge.ga.multi_asset_runner import (
+from aurora.strategies.library import PairTrade
+from aurora.ga.multi_asset_runner import (
     run_multi_asset_ga,
     multi_asset_fitness,
     MultiAssetGAConfig,
@@ -248,7 +248,7 @@ def test_multi_asset_oos_isolation():
     is the multi-asset analog of the single-asset OOS-isolation test in
     test_oos_isolation.py.
     """
-    from quantforge.ga.multi_asset_runner import multi_asset_fitness_is
+    from aurora.ga.multi_asset_runner import multi_asset_fitness_is
 
     pair = _cointegrated_pair(n=600, seed=42)
     is_p, oos_p = _split_is_oos(pair)
@@ -263,7 +263,7 @@ def test_multi_asset_oos_isolation():
                for k, v in oos_p.items()}
     # Compute again — pass mutated OOS via the deprecated alias to verify
     # the alias also drops OOS.
-    from quantforge.ga.multi_asset_runner import multi_asset_fitness
+    from aurora.ga.multi_asset_runner import multi_asset_fitness
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
@@ -276,7 +276,7 @@ def test_multi_asset_oos_isolation():
 
 def test_multi_asset_validate_oos_basic():
     """multi_asset_validate_oos returns finite metrics on healthy data."""
-    from quantforge.ga.multi_asset_runner import multi_asset_validate_oos
+    from aurora.ga.multi_asset_runner import multi_asset_validate_oos
 
     pair = _cointegrated_pair(n=600, seed=42)
     _, oos_p = _split_is_oos(pair)

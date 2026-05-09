@@ -1,6 +1,6 @@
 # Strategy atlas
 
-The strategy atlas is the first gatekeeper in QuantForge's research
+The strategy atlas is the first gatekeeper in Aurora's research
 pipeline. Every strategy idea is registered here with an explicit
 status, an asset class, a data-requirements list, an
 engine-capability list, and an explicit benchmark expectation. Ideas
@@ -9,7 +9,7 @@ reach the validation pipeline.
 
 ## Why the atlas refuses many tempting ideas
 
-QuantForge has hard constraints on what data it owns and what engine
+Aurora has hard constraints on what data it owns and what engine
 features it supports today. The atlas makes those constraints visible:
 
 - **`BLOCKED`** entries are ideas the platform cannot honestly run.
@@ -20,7 +20,7 @@ features it supports today. The atlas makes those constraints visible:
   would not be honest about what we are simulating, so they stay
   blocked until the missing piece arrives.
 - **`EXTERNAL_DATA_ONLY`** entries could run on the engine but rely
-  entirely on data that lives outside QuantForge. They are kept
+  entirely on data that lives outside Aurora. They are kept
   visible so consumers do not waste effort re-implementing them
   in-platform.
 - **`BENCHMARK_ONLY`** entries (e.g. the "151 PDF" baselines) exist

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.execution.pegged_orders import (
+from aurora.execution.pegged_orders import (
     PeggedConfig,
     PeggedOrderTypes,
     PeggedQuote,

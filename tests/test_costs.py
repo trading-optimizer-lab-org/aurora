@@ -1,4 +1,4 @@
-"""Tests for quantforge.core.costs (CostModel parameters and apply_costs).
+"""Tests for aurora.core.costs (CostModel parameters and apply_costs).
 
 Run: uv run pytest quantforge/tests/test_costs.py -v
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.core.costs import (
+from aurora.core.costs import (
     CONSERVATIVE_costs,
     CostModel,
     IBKR_costs,

@@ -22,7 +22,7 @@ Design choices
 
 Usage::
 
-    from quantforge.research.rag import ResearchIndex
+    from aurora.research.rag import ResearchIndex
 
     idx = ResearchIndex.from_default_paths()
     hits = idx.search("lookahead leakage")
@@ -39,12 +39,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from quantforge.core.runtime_paths import (
+from aurora.core.runtime_paths import (
     research_archive_path,
     review_queue_path,
 )
 
-_log = logging.getLogger("quantforge.research.rag")
+_log = logging.getLogger("aurora.research.rag")
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]+")
 _STOPWORDS = frozenset(

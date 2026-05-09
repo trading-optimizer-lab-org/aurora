@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs, IBKR_costs, apply_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.engine_jit import (
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs, IBKR_costs, apply_costs
+from aurora.core.engine import run_backtest
+from aurora.core.engine_jit import (
     NUMBA_AVAILABLE,
     apply_costs_fast,
     apply_costs_np,
@@ -23,8 +23,8 @@ from quantforge.core.engine_jit import (
     realized_vol_fast,
     run_backtest_jit,
 )
-from quantforge.strategies.library.rsi_meanrev import _rsi as _rsi_py
-from quantforge.strategies.library import MACross, RSIMeanRev
+from aurora.strategies.library.rsi_meanrev import _rsi as _rsi_py
+from aurora.strategies.library import MACross, RSIMeanRev
 
 
 TOL = 1e-9

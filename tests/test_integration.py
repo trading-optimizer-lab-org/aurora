@@ -17,31 +17,32 @@ import time
 import warnings
 
 import matplotlib
-
 # Force non-interactive backend before pyplot import (Windows-safe, headless-CI-safe)
 matplotlib.use("Agg", force=True)
 
 import numpy as np
 import pandas as pd
 import pytest
-from quantforge.core.costs import ZERO_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.engine_multi import MultiAssetEngine
-from quantforge.core.seed import set_global_seed
-from quantforge.deployment.allocator import StrategyAllocator
-from quantforge.deployment.preflight import (
+
+from aurora.core.costs import ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.engine_multi import MultiAssetEngine
+from aurora.core.seed import set_global_seed
+from aurora.deployment.allocator import StrategyAllocator
+from aurora.deployment.preflight import (
     check_validation_marker,
     run_preflight,
 )
-from quantforge.reporting.tearsheet import generate_tearsheet
-from quantforge.strategies.library import (
+from aurora.reporting.tearsheet import generate_tearsheet
+from aurora.strategies.library import (
     MACross,
     PairTrade,
     RSIMeanRev,
     TSMomentum,
 )
-from quantforge.validation.pipeline import validate_pipeline
-from quantforge.validation.walk_forward import WFWindow
+from aurora.validation.pipeline import validate_pipeline
+from aurora.validation.walk_forward import WFWindow
+
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
@@ -148,14 +149,14 @@ def test_e2e_strategy_to_paper_marker(tmp_path, monkeypatch):
 
     if rep.overall_passed:
         # Marker must exist
-        marker_path = tmp_path / ".qf_cache" / ".validation_passed_MACross.json"
+        marker_path = tmp_path / "quantforge" / "data_cache_qf" / ".validation_passed_MACross.json"
         assert marker_path.exists(), f"marker not written at {marker_path}"
         # Preflight finds it
         check = check_validation_marker("MACross", project_dir=str(tmp_path))
         assert check.passed, f"preflight marker check failed: {check.detail}"
     else:
         # If validation didn't pass (random data), force-write marker to test the read path
-        from quantforge.deployment.preflight import write_validation_marker
+        from aurora.deployment.preflight import write_validation_marker
         path = write_validation_marker(
             strategy_name="MACross",
             metrics={"is": rep.is_metrics, "oos": rep.oos_metrics},
@@ -170,8 +171,8 @@ def test_e2e_strategy_to_paper_marker(tmp_path, monkeypatch):
 def test_e2e_ga_search_then_validate(tmp_path, monkeypatch):
     """GA search returns Pareto -> take best -> run validate_pipeline -> result."""
     pytest.importorskip("deap")
-    from quantforge.ga.fitness import multi_objective_fitness
-    from quantforge.ga.runner import GAConfig, run_ga
+    from aurora.ga.fitness import multi_objective_fitness
+    from aurora.ga.runner import GAConfig, run_ga
 
     monkeypatch.chdir(tmp_path)
     prices = make_is_oos_prices()
@@ -225,8 +226,8 @@ def test_e2e_multi_strategy_allocator(tmp_path):
     res = alloc.run(ppy=252)
 
     # Shape sanity
-    n_bars = len(p1)
-    assert res.nav.shape == (n_bars,)
+    T = len(p1)
+    assert res.nav.shape == (T,)
     assert res.weights.shape[1] == 3
     assert set(res.strategy_names) == {"ma", "rsi", "tsmom"}
     # Weights at each rebalance approximately sum to 1
@@ -290,7 +291,7 @@ def test_e2e_tearsheet_generation(tmp_path):
     assert os.path.exists(written)
     size = os.path.getsize(written)
     assert size > 5000, f"tearsheet too small: {size} bytes"
-    with open(written, encoding="utf-8") as f:
+    with open(written, "r", encoding="utf-8") as f:
         html = f.read()
     # Required sections present
     assert "<html" in html.lower()
@@ -305,9 +306,9 @@ def test_e2e_tearsheet_generation(tmp_path):
 def test_e2e_full_workflow(tmp_path, monkeypatch):
     """Full chain: data -> GA -> validate -> marker -> preflight -> tearsheet."""
     pytest.importorskip("deap")
-    from quantforge.core import data_layer as _dl
-    from quantforge.ga.fitness import multi_objective_fitness
-    from quantforge.ga.runner import GAConfig, run_ga
+    from aurora.ga.fitness import multi_objective_fitness
+    from aurora.ga.runner import GAConfig, run_ga
+    from aurora.core import data_layer as _dl
 
     monkeypatch.chdir(tmp_path)
     # Redirect QF_CACHE so preflight's data-availability check (which calls
@@ -317,7 +318,7 @@ def test_e2e_full_workflow(tmp_path, monkeypatch):
     fake_cache.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_dl, "QF_CACHE", str(fake_cache))
     # Also patch the symbol QF_CACHE imported into preflight
-    from quantforge.deployment import preflight as _pf
+    from aurora.deployment import preflight as _pf
     monkeypatch.setattr(_pf, "QF_CACHE", str(fake_cache))
 
     # 1. Data
@@ -353,7 +354,7 @@ def test_e2e_full_workflow(tmp_path, monkeypatch):
 
     # 4. Marker (force-write if pipeline didn't pass; we still want to test the chain)
     if not rep.overall_passed:
-        from quantforge.deployment.preflight import write_validation_marker
+        from aurora.deployment.preflight import write_validation_marker
         write_validation_marker(
             strategy_name="MACross",
             metrics={"is": rep.is_metrics, "oos": rep.oos_metrics},

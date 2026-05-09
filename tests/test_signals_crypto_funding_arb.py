@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.signals import CryptoFundingArbSignal, CryptoFundingArbConfig
+from aurora.signals import CryptoFundingArbSignal, CryptoFundingArbConfig
 
 
 @pytest.fixture

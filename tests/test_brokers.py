@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from quantforge.deployment import brokers
-from quantforge.deployment.brokers import (
+from aurora.deployment import brokers
+from aurora.deployment.brokers import (
     AlpacaAdapter,
     AuditLog,
     Broker,
@@ -674,7 +674,7 @@ def test_kill_switch_resets_daily(monkeypatch):
                        fake_today[0].day, 12, 0, 0,
                        tzinfo=tz or timezone.utc)
 
-    monkeypatch.setattr("quantforge.deployment.brokers._dt", _FakeDT)
+    monkeypatch.setattr("aurora.deployment.brokers._dt", _FakeDT)
 
     ks = KillSwitch(max_daily_loss_pct=0.05, max_position_qty=1e9)
     # Day 1: seed at 100k, then drop 6% -> trigger.
@@ -727,7 +727,7 @@ def test_audit_log_rotates_at_midnight_utc(tmp_path, monkeypatch):
                        tzinfo=tz or timezone.utc)
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("quantforge.deployment.brokers._dt", _FakeDT)
+    monkeypatch.setattr("aurora.deployment.brokers._dt", _FakeDT)
 
     audit = AuditLog()  # default path -> audit_2026-05-07.db
     assert audit.db_path.endswith("audit_2026-05-07.db")

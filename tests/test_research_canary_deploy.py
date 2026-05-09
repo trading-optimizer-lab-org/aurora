@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.research.canary_deploy import CanaryDeployer, CanaryReport
+from aurora.research.canary_deploy import CanaryDeployer, CanaryReport
 
 
 def test_construction_validates():

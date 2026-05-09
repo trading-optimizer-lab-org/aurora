@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.core.timezone import (
+from aurora.core.timezone import (
     EXCHANGE_TIMEZONES,
     TimezoneMismatch,
     assert_compatible,

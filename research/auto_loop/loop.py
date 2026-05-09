@@ -39,15 +39,15 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from quantforge.core.runtime_paths import base_data_dir
-from quantforge.research.factory.factory import (
+from aurora.core.runtime_paths import base_data_dir
+from aurora.research.factory.factory import (
     ResearchFactory,
 )
-from quantforge.research.factory.generators import HypothesisGenerator
-from quantforge.research.factory.outcomes import ResearchOutcome
-from quantforge.research.factory.spec import StrategySpec
+from aurora.research.factory.generators import HypothesisGenerator
+from aurora.research.factory.outcomes import ResearchOutcome
+from aurora.research.factory.spec import StrategySpec
 
-_log = logging.getLogger("quantforge.research.auto_loop")
+_log = logging.getLogger("aurora.research.auto_loop")
 
 
 def _auto_loop_log_path() -> Path:

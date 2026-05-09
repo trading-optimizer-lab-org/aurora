@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.altdata.google_trends import (
+from aurora.altdata.google_trends import (
     GoogleTrendsAdapter,
     GoogleTrendsConfig,
 )

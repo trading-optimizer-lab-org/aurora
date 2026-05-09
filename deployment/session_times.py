@@ -12,7 +12,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from quantforge.core.timezone import tz_for_exchange
+from aurora.core.timezone import tz_for_exchange
 
 
 @dataclass(frozen=True)

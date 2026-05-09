@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import pytest
 
-from quantforge.research.dvc_mlflow import (
+from aurora.research.dvc_mlflow import (
     DVCMLflowIntegration,
     RunRecord,
 )

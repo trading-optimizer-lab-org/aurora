@@ -1,6 +1,6 @@
 """Distributed snapshot backend interface (R7).
 
-Today :class:`quantforge.core.snapshots.SnapshotStore` persists its parquet
+Today :class:`aurora.core.snapshots.SnapshotStore` persists its parquet
 blobs and sqlite index on the local filesystem. That is fine for one
 machine. For a team, replicas, or production data provenance, a remote
 or shared backend is needed.
@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_log = logging.getLogger("quantforge.core.snapshots_distributed")
+_log = logging.getLogger("aurora.core.snapshots_distributed")
 
 
 # ===========================================================================

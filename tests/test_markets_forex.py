@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.markets.forex import ForexConfig, ForexUniverse
+from aurora.markets.forex import ForexConfig, ForexUniverse
 
 
 @pytest.fixture

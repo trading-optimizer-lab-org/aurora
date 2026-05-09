@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.contrastive_strategy import (
+from aurora.ml.contrastive_strategy import (
     ContrastiveConfig,
     ContrastiveStrategyEmbedder,
 )

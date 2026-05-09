@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.sector_hrp import (
+from aurora.deployment.sector_hrp import (
     SectorHRP,
     SectorHRPConfig,
     SectorHRPResult,

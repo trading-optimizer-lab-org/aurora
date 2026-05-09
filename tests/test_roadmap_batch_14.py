@@ -4,45 +4,45 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.core.oos_plus import (
+from aurora.core.oos_plus import (
     FinalCheckResult,
     OOS_PLUS,
     OOSPlusGuard,
     OOSPlusViolation,
     run_final_check,
 )
-from quantforge.exports.pinescript import (
+from aurora.exports.pinescript import (
     PineScriptManifest,
     export_pinescript,
     verify_pinescript,
 )
-from quantforge.exports.pinescript.exporter import make_manifest
-from quantforge.execution.trade_simulator import (
+from aurora.exports.pinescript.exporter import make_manifest
+from aurora.execution.trade_simulator import (
     FrictionConfig,
     SimulatedBookState,
     simulate_session,
 )
-from quantforge.ga.goal_seeking import (
+from aurora.ga.goal_seeking import (
     GoalSeekResult,
     goal_seek,
     make_sharpe_mdd_goal,
 )
-from quantforge.research.auto_gen.combinatorial import (
+from aurora.research.auto_gen.combinatorial import (
     CombinatorialBudget,
     enumerate_combinations,
     evaluate_combinations,
 )
-from quantforge.research.regime_adaptive import (
+from aurora.research.regime_adaptive import (
     RegimePolicy,
     adaptive_signal,
 )
-from quantforge.strategies.patterns import (
+from aurora.strategies.patterns import (
     detect_breakout_high,
     detect_breakout_low,
     detect_double_bottom,
     detect_double_top,
 )
-from quantforge.strategies.rules import (
+from aurora.strategies.rules import (
     Action,
     ActionKind,
     Comparator,
@@ -56,7 +56,7 @@ from quantforge.strategies.rules import (
     rule_from_yaml,
     rule_to_yaml,
 )
-from quantforge.strategies.templates import (
+from aurora.strategies.templates import (
     breakout_donchian,
     mean_reversion_rsi,
     trend_following_ma_cross,

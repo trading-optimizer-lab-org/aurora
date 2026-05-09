@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.deployment.strategy_isolation import (
+from aurora.deployment.strategy_isolation import (
     IsolationConflict,
     Lease,
     StrategyIsolation,

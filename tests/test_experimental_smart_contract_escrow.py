@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.smart_contract_escrow import (
+from aurora.experimental.smart_contract_escrow import (
     PerformanceFeeEscrow,
     SOLIDITY_TEMPLATE,
 )

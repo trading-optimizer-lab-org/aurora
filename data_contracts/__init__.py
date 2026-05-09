@@ -1,4 +1,4 @@
-"""quantforge.data_contracts -- versioned dataset contracts and validators.
+"""aurora.data_contracts -- versioned dataset contracts and validators.
 
 Phase 1 of the data integrity programme (Candidate C). Provides:
 
@@ -16,7 +16,7 @@ Phase 1 of the data integrity programme (Candidate C). Provides:
 """
 from __future__ import annotations
 
-from quantforge.data_contracts.contract import (
+from aurora.data_contracts.contract import (
     CONTRACT_VERSION,
     AvailabilityPolicy,
     ContractField,
@@ -24,19 +24,19 @@ from quantforge.data_contracts.contract import (
     DataContract,
     DataValidationResult,
 )
-from quantforge.data_contracts.corporate_actions import (
+from aurora.data_contracts.corporate_actions import (
     KNOWN_ACTION_TYPES,
     AdjustmentCheck,
     CorporateActionRecord,
     verify_dividend_adjustment,
     verify_split_adjustment,
 )
-from quantforge.data_contracts.lineage import LINEAGE_VERSION, DataLineage
-from quantforge.data_contracts.security_master import (
+from aurora.data_contracts.lineage import LINEAGE_VERSION, DataLineage
+from aurora.data_contracts.security_master import (
     SecurityMaster,
     SecurityMasterRecord,
 )
-from quantforge.data_contracts.validator import (
+from aurora.data_contracts.validator import (
     UTC,
     VALIDATOR_VERSION,
     hash_dataframe,

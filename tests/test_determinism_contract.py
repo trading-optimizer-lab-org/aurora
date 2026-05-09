@@ -16,10 +16,10 @@ import json
 import numpy as np
 import pandas as pd
 
-from quantforge.core.costs import IBKR_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.seed import set_global_seed
-from quantforge.strategies.library import MACross
+from aurora.core.costs import IBKR_costs
+from aurora.core.engine import run_backtest
+from aurora.core.seed import set_global_seed
+from aurora.strategies.library import MACross
 
 
 def _hash_result(rets: np.ndarray, nav: np.ndarray, metrics_dict: dict) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.conditional_dd import ConditionalDrawdownAtRisk
+from aurora.risk.conditional_dd import ConditionalDrawdownAtRisk
 
 
 def test_cdar_positive_for_random_walk():

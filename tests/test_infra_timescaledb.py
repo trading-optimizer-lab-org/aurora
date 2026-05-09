@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.infra.timescaledb import TimescaleAdapter, TimescaleConfig
+from aurora.infra.timescaledb import TimescaleAdapter, TimescaleConfig
 
 
 @pytest.fixture

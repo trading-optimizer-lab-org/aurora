@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.realtime import (
+from aurora.core.realtime import (
     RealtimeAdapter,
     RealtimeConfig,
     StaleDataError,
@@ -362,7 +362,7 @@ def test_fetch_latest_stale_warns_or_raises(monkeypatch, caplog):
     )
     adapter = RealtimeAdapter(cfg)
     import logging
-    with caplog.at_level(logging.WARNING, logger="quantforge.core.realtime"):
+    with caplog.at_level(logging.WARNING, logger="aurora.core.realtime"):
         out = adapter.fetch_latest(_now=now)
     assert len(out) == 0  # empty frame on stale
     assert any("stale" in rec.message.lower() for rec in caplog.records)

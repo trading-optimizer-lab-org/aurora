@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.experimental.self_modifying_strategy import SelfModifyingStrategy
+from aurora.experimental.self_modifying_strategy import SelfModifyingStrategy
 
 
 def _ma_signal(window: np.ndarray, params: dict) -> float:

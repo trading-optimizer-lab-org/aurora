@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.data_lineage import (
+from aurora.dataeng.data_lineage import (
     DataLineageTracker,
     LineageConfig,
     Transformation,

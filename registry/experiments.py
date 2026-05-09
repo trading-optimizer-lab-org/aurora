@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from quantforge.registry.versioning import _exclusive_file_lock
+from aurora.registry.versioning import _exclusive_file_lock
 
 
 def _default_root() -> str:
@@ -31,7 +31,7 @@ def _default_root() -> str:
     Never lands inside the in-repo `quantforge/data_cache_qf/` ghost
     directory.
     """
-    from quantforge.core.runtime_paths import cache_dir
+    from aurora.core.runtime_paths import cache_dir
     return str(cache_dir() / "experiments")
 
 

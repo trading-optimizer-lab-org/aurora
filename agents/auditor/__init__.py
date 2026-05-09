@@ -10,7 +10,7 @@ severity-capped at MEDIUM and never approves anything single-handedly.
 """
 from __future__ import annotations
 
-from quantforge.agents.auditor.base import (
+from aurora.agents.auditor.base import (
     LLM_MAX_SEVERITY,
     LLMAugmenter,
     ReviewContext,
@@ -20,12 +20,12 @@ from quantforge.agents.auditor.base import (
     ReviewerAgent,
     cap_augmenter_findings,
 )
-from quantforge.agents.auditor.orchestrator import (
+from aurora.agents.auditor.orchestrator import (
     AuditReport,
     AuditorOrchestrator,
     GateResult,
 )
-from quantforge.agents.auditor.reviewers import (
+from aurora.agents.auditor.reviewers import (
     CostReviewer,
     DataLeakReviewer,
     DeploymentReviewer,

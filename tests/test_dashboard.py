@@ -15,13 +15,13 @@ import sqlite3
 import pandas as pd
 import pytest
 
-from quantforge.monitoring.dashboard import (
+from aurora.monitoring.dashboard import (
     DashboardConfig,
     STREAMLIT_AVAILABLE,
     compute_dashboard_metrics,
     fetch_dashboard_data,
 )
-from quantforge.registry.journal import TradeJournal
+from aurora.registry.journal import TradeJournal
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +260,14 @@ def test_streamlit_optional():
     streamlit server). Just verifies import works when streamlit is present.
     """
     pytest.importorskip("streamlit")
-    from quantforge.monitoring.dashboard import run_dashboard
+    from aurora.monitoring.dashboard import run_dashboard
     assert callable(run_dashboard)
     assert STREAMLIT_AVAILABLE is True
 
 
 def test_run_dashboard_raises_without_streamlit(monkeypatch):
     """When streamlit is unavailable the function raises a clear error."""
-    import quantforge.monitoring.dashboard as dash_mod
+    import aurora.monitoring.dashboard as dash_mod
     monkeypatch.setattr(dash_mod, "STREAMLIT_AVAILABLE", False)
     with pytest.raises(RuntimeError, match="streamlit"):
         dash_mod.run_dashboard(DashboardConfig(journal_path="x.db"))
@@ -280,7 +280,7 @@ def test_run_dashboard_raises_without_streamlit(monkeypatch):
 
 def test_dashboard_config_defaults():
     cfg = DashboardConfig()
-    assert cfg.journal_path == "quantforge.db"
+    assert cfg.journal_path == "aurora.db"
     assert cfg.refresh_seconds == 30
     assert cfg.show_alerts is True
     assert cfg.show_per_strategy is True

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.risk_budgeting import RiskBudgetingAllocator
+from aurora.risk.risk_budgeting import RiskBudgetingAllocator
 
 
 def test_rb_simplex():

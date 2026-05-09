@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from quantforge.core.runtime_paths import cache_dir as _runtime_cache_dir
+from aurora.core.runtime_paths import cache_dir as _runtime_cache_dir
 
 
 def _default_cache_dir() -> str:

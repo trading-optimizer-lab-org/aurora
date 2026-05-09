@@ -5,8 +5,8 @@ import math
 
 import pytest
 
-from quantforge.analytics.tca import TCAResult, compute_tca
-from quantforge.execution.events import (
+from aurora.analytics.tca import TCAResult, compute_tca
+from aurora.execution.events import (
     BrokerEvent,
     CancelRequested,
     CommissionReported,
@@ -17,15 +17,15 @@ from quantforge.execution.events import (
     OrderPartiallyFilled,
     OrderSubmitted,
 )
-from quantforge.execution.fill_models import (
+from aurora.execution.fill_models import (
     FillResult,
     LimitOrderFillModel,
     MarketOrderFillModel,
     StaleQuoteFillModel,
 )
-from quantforge.execution.order_state import OrderLifecycleState, transition
-from quantforge.execution.reconciliation import reconcile
-from quantforge.execution.replay import replay_events
+from aurora.execution.order_state import OrderLifecycleState, transition
+from aurora.execution.reconciliation import reconcile
+from aurora.execution.replay import replay_events
 
 
 # ---------------------------------------------------------------------------

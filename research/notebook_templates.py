@@ -97,7 +97,7 @@ class NotebookTemplateEngine:
         return [
             _md(f"# {spec.title}\n\nBacktest report for `{sym}`."),
             _md("## Setup"),
-            _code("import pandas as pd, numpy as np\nfrom quantforge.core.engine import run_backtest"),
+            _code("import pandas as pd, numpy as np\nfrom aurora.core.engine import run_backtest"),
             _md("## Metrics"),
             _code("# result = run_backtest(prices, signal_fn)\n# print(result.metrics)"),
             _md("## Equity Curve"),

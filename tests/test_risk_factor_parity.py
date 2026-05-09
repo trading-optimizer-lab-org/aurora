@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.risk_parity_factor import FactorRiskParity
+from aurora.risk.risk_parity_factor import FactorRiskParity
 
 
 def test_factor_parity_simplex():

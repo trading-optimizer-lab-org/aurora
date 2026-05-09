@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from quantforge.marketdata.auction_imbalance import (
+from aurora.marketdata.auction_imbalance import (
     AuctionImbalanceTracker,
     AuctionConfig,
 )

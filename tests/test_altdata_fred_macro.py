@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.altdata.fred_macro import (
+from aurora.altdata.fred_macro import (
     DEFAULT_SERIES,
     FREDAdapter,
     FREDConfig,

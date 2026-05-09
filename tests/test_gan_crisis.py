@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.validation.gan_crisis import CrisisGANGenerator, TORCH_AVAILABLE
+from aurora.core.seed import set_global_seed
+from aurora.validation.gan_crisis import CrisisGANGenerator, TORCH_AVAILABLE
 
 pytestmark = pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 

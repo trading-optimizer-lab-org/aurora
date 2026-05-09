@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.etf_arbitrage import (
+from aurora.markets.etf_arbitrage import (
     ETFArbitrageConfig,
     ETFArbitrageDetector,
 )

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.black_litterman import (
+from aurora.deployment.black_litterman import (
     BlackLittermanModel,
     BLResult,
     market_implied_returns,
@@ -416,7 +416,7 @@ def test_posterior_cov_psd_via_full_pipeline(four_asset_setup):
 # Issue 17: low-end confidence floor with warning
 # --------------------------------------------------------------------------- #
 def test_bl_low_confidence_clipped_with_warning(four_asset_setup):
-    from quantforge.deployment.black_litterman import _MIN_CONFIDENCE
+    from aurora.deployment.black_litterman import _MIN_CONFIDENCE
     assets, prior, cov = four_asset_setup
     # Single absolute view on asset A.
     P = pd.DataFrame([[1, 0, 0, 0]], columns=assets, index=["v1"]).astype(float)

@@ -15,12 +15,12 @@ from typing import Any, Iterator, Optional
 
 import pandas as pd
 
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.sqlite_utils import _setup_sqlite
 
 
 def _default_db_path() -> str:
     """Resolve the backtest-registry DB path via runtime_paths (R75)."""
-    from quantforge.core.runtime_paths import cache_dir
+    from aurora.core.runtime_paths import cache_dir
     return str(cache_dir() / "registry.db")
 
 
@@ -80,7 +80,7 @@ def _capture_git_hash() -> Optional[str]:
     but does not always reap the child cleanly on Windows.
     """
     try:
-        from quantforge.registry.versioning import _run_git_proc
+        from aurora.registry.versioning import _run_git_proc
         rc, out = _run_git_proc(["rev-parse", "HEAD"], timeout=2.0)
     except Exception:
         return None

@@ -6,29 +6,29 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pytest
 
-from quantforge.analytics.cost_breakdown import CostBreakdown, decompose_cost
-from quantforge.analytics.decay_attribution import (
+from aurora.analytics.cost_breakdown import CostBreakdown, decompose_cost
+from aurora.analytics.decay_attribution import (
     AttributionInput,
     DecayAttribution,
     attribute_decay,
 )
-from quantforge.core.borrow_model import (
+from aurora.core.borrow_model import (
     BorrowAvailability,
     BorrowConfig,
     apply_borrow_constraint,
 )
-from quantforge.core.costs import CostModel, ZERO_costs
-from quantforge.core.slippage_calibration import (
+from aurora.core.costs import CostModel, ZERO_costs
+from aurora.core.slippage_calibration import (
     CalibrationResult,
     FillObservation,
     calibrate_slippage,
 )
-from quantforge.core.spread_model import (
+from aurora.core.spread_model import (
     ConstantSpreadModel,
     VolDrivenSpreadModel,
     realised_vol_zscore,
 )
-from quantforge.deployment.live_modes import (
+from aurora.deployment.live_modes import (
     DataQualityMonitor,
     DryRunMode,
     LiveAnomalyDetector,

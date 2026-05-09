@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine_multi import MultiAssetEngine, MultiAssetResult
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, ZERO_costs, IBKR_costs
+from aurora.core.seed import set_global_seed
+from aurora.core.engine_multi import MultiAssetEngine, MultiAssetResult
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, ZERO_costs, IBKR_costs
 
 
 # ------------------------------------------------------------------------- #

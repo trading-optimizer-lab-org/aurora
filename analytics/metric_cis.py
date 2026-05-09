@@ -23,7 +23,7 @@ from typing import Optional
 
 import numpy as np
 
-from quantforge.core.metrics import compute_metrics
+from aurora.core.metrics import compute_metrics
 
 
 @dataclass(frozen=True)

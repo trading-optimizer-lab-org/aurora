@@ -1,4 +1,4 @@
-"""Tests for quantforge.core.bars (Batch M.2 — alternative bars per AFML Ch. 2).
+"""Tests for aurora.core.bars (Batch M.2 — alternative bars per AFML Ch. 2).
 
 Run: uv run pytest quantforge/tests/test_bars.py -v
 """
@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.bars import (
+from aurora.core.bars import (
     auto_threshold,
     compute_vwap,
     dollar_bars,

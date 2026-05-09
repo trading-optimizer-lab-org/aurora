@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.vol_target_forecast import (
+from aurora.deployment.vol_target_forecast import (
     VolTargetForecastConfig,
     VolTargetForecastResult,
     VolTargetForecaster,

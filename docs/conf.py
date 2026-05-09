@@ -92,11 +92,11 @@ autodoc_mock_imports = [
 import importlib  # noqa: E402
 
 for _mod in (
-    "quantforge.regime",
-    "quantforge.ml",
-    "quantforge.deployment",
-    "quantforge.research",
-    "quantforge.monitoring",
+    "aurora.regime",
+    "aurora.ml",
+    "aurora.deployment",
+    "aurora.research",
+    "aurora.monitoring",
 ):
     try:
         importlib.import_module(_mod)

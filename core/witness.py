@@ -64,7 +64,7 @@ class Witness:
 
 def _git_hash() -> Optional[str]:
     try:
-        from quantforge.core.data_layer import _get_git_hash
+        from aurora.core.data_layer import _get_git_hash
         return _get_git_hash()
     except Exception:
         return None

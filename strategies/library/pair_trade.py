@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from quantforge.strategies.base import StrategySpec
+from aurora.strategies.base import StrategySpec
 
 
 class PairTrade:

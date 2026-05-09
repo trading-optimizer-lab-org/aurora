@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import pytest
 
-from quantforge.registry.journal import TradeJournal, JournalEntry
+from aurora.registry.journal import TradeJournal, JournalEntry
 
 
 @pytest.fixture

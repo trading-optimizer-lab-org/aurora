@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.strategy_breeding import (
+from aurora.experimental.strategy_breeding import (
     Strategy,
     StrategyBreeder,
 )

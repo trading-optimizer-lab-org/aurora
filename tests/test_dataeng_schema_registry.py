@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.schema_registry import (
+from aurora.dataeng.schema_registry import (
     SchemaRegistry,
     SchemaRegistryConfig,
 )

@@ -239,7 +239,7 @@ def query_before_promote(
 
     # ---- R92: similarity check ------------------------------------------------
     try:
-        from quantforge.research.dna_fingerprint import (
+        from aurora.research.dna_fingerprint import (
             fingerprint,
             is_too_similar,
         )
@@ -287,7 +287,7 @@ def query_before_promote(
 
     # ---- R39: graveyard query -------------------------------------------------
     try:
-        from quantforge.research.graveyard import (
+        from aurora.research.graveyard import (
             read_graveyard,
         )
     except ImportError:

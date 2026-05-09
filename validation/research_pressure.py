@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from quantforge.research.pressure import ResearchPressureScore
+    from aurora.research.pressure import ResearchPressureScore
 
 
 # Public threshold table. Mirrors the cut-points in

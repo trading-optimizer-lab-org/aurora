@@ -8,7 +8,7 @@ Frequency-neutral; pass `ppy` (periods/year) for annualization.
 Dedup policy
 ------------
 Three symbols (`compute_metrics`, `deflated_sharpe`, `probabilistic_sharpe`) live
-in :mod:`quantforge.core.metrics` as the canonical implementation and are
+in :mod:`aurora.core.metrics` as the canonical implementation and are
 re-exported here so callers can import them from either module without code
 duplication. All other quantstats-parity helpers below are exclusive to this
 module (extended metrics not present in core).
@@ -33,7 +33,7 @@ from scipy import stats
 
 # Re-export canonical implementations from core.metrics to keep both modules
 # in lockstep without duplicating logic. See module docstring "Dedup policy".
-from quantforge.core.metrics import (
+from aurora.core.metrics import (
     compute_metrics,
     deflated_sharpe,
     probabilistic_sharpe,

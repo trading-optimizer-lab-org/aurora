@@ -8,7 +8,7 @@ academic literature. Each entry is a thin Strategy subclass wrapping one of:
 
 The zoo is INTENTIONALLY single-asset and self-contained. Multi-asset and
 factor strategies are stubbed to single-asset variants so the entire zoo
-can be backtested through quantforge.core.engine.run_backtest.
+can be backtested through aurora.core.engine.run_backtest.
 
 Public API:
     list_strategies() -> list[ZooEntry]
@@ -21,13 +21,13 @@ from typing import Any, Type
 import numpy as np
 import pandas as pd
 
-from quantforge.strategies.base import Strategy, StrategySpec
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.strategies.library.tsmom import TSMomentum
-from quantforge.strategies.library.bollinger_mr import BollingerMR
-from quantforge.strategies.library.dual_momentum import DualMomentum
-from quantforge.strategies.library.rsi_meanrev import RSIMeanRev
-from quantforge.strategies.library.donchian import DonchianBreakout
+from aurora.strategies.base import Strategy, StrategySpec
+from aurora.strategies.library.ma_cross import MACross
+from aurora.strategies.library.tsmom import TSMomentum
+from aurora.strategies.library.bollinger_mr import BollingerMR
+from aurora.strategies.library.dual_momentum import DualMomentum
+from aurora.strategies.library.rsi_meanrev import RSIMeanRev
+from aurora.strategies.library.donchian import DonchianBreakout
 
 
 # ---- Building-block helper signals ----------------------------------------

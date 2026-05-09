@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.research.strategy_marketplace import (
+from aurora.research.strategy_marketplace import (
     MarketplaceStrategy,
     StrategyMarketplace,
 )

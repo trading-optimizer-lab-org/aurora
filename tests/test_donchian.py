@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import DonchianBreakout
+from aurora.strategies.library import DonchianBreakout
 
 
 @pytest.fixture

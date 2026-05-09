@@ -11,14 +11,14 @@ import tempfile
 
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.data_layer import load_asset
-from quantforge.core.costs import IBKR_costs
-from quantforge.core.engine import run_backtest
+from aurora.core.seed import set_global_seed
+from aurora.core.data_layer import load_asset
+from aurora.core.costs import IBKR_costs
+from aurora.core.engine import run_backtest
 import numpy as np
 
-from quantforge.strategies.library import MACross
-from quantforge.reporting.tearsheet import (
+from aurora.strategies.library import MACross
+from aurora.reporting.tearsheet import (
     generate_tearsheet,
     generate_full_tearsheet,
 )

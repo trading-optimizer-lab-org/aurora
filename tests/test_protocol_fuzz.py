@@ -28,9 +28,9 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from hypothesis import HealthCheck, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
-from quantforge.core.data_layer import OOSGuard  # noqa: E402
-from quantforge.core.data_tiers import split_by_tier  # noqa: E402
-from quantforge.core.protocol_policy import ProtocolPolicy  # noqa: E402
+from aurora.core.data_layer import OOSGuard  # noqa: E402
+from aurora.core.data_tiers import split_by_tier  # noqa: E402
+from aurora.core.protocol_policy import ProtocolPolicy  # noqa: E402
 
 _HC = [HealthCheck.too_slow, HealthCheck.function_scoped_fixture]
 
@@ -216,7 +216,7 @@ def _gateway_secret(monkeypatch, tmp_path):
 @settings(max_examples=15, deadline=None, suppress_health_check=_HC)
 def test_token_signature_rejects_actor_tampering(_gateway_secret, actor, days):
     """Mutating ``actor`` after issue invalidates the signature."""
-    from quantforge.agent_gateway.tokens import (
+    from aurora.agent_gateway.tokens import (
         TokenScope,
         issue_token,
     )

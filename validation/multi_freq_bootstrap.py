@@ -12,8 +12,8 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 
-from quantforge.core.metrics import compute_metrics
-from quantforge.core.seed import child_rng
+from aurora.core.metrics import compute_metrics
+from aurora.core.seed import child_rng
 
 
 def _stationary_bootstrap(returns: np.ndarray, length: int,

@@ -33,9 +33,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from quantforge.exports.lean.exporter import verify_project
+from aurora.exports.lean.exporter import verify_project
 
-_log = logging.getLogger("quantforge.exports.lean.live")
+_log = logging.getLogger("aurora.exports.lean.live")
 
 
 CLIInvoker = Callable[[list[str]], dict[str, Any]]

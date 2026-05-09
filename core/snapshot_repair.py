@@ -1,6 +1,6 @@
 """SnapshotStore repair helper (R36).
 
-CLI helper: ``python -m quantforge.core.snapshot_repair --root <dir>``.
+CLI helper: ``python -m aurora.core.snapshot_repair --root <dir>``.
 
 Walks the blob directory, recomputes sha256 over every parquet
 content, and reports which blobs are intact vs corrupted. Optionally
@@ -32,9 +32,9 @@ import sqlite3
 import time
 from pathlib import Path
 
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.sqlite_utils import _setup_sqlite
 
-_log = logging.getLogger("quantforge.core.snapshot_repair")
+_log = logging.getLogger("aurora.core.snapshot_repair")
 
 
 def _hash_blob(path: Path, chunk_size: int = 1 << 20) -> str:

@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, FrozenSet
 
-from quantforge.agent_gateway.evidence_pack import ForbiddenAccessError
+from aurora.agent_gateway.evidence_pack import ForbiddenAccessError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from quantforge.agent_gateway.research_agents import AgentRole
+    from aurora.agent_gateway.research_agents import AgentRole
 
 
 # Tools that are ALWAYS denied, regardless of role. These map to broker
@@ -48,7 +48,7 @@ def _build_allowlist() -> "dict[AgentRole, FrozenSet[str]]":
     if cached is not None:
         return cached
 
-    from quantforge.agent_gateway.research_agents import AgentRole as _AgentRole
+    from aurora.agent_gateway.research_agents import AgentRole as _AgentRole
 
     common_read_tools: FrozenSet[str] = frozenset(
         {
@@ -107,7 +107,7 @@ def assert_tool_allowed(role: "AgentRole", tool_name: str) -> None:
 
 # Public attribute: the allowlist itself. Lazy-computed on first access via
 # ``__getattr__`` so importers can write
-# ``from quantforge.agent_gateway.agent_roles import AGENT_TOOL_ALLOWLIST``.
+# ``from aurora.agent_gateway.agent_roles import AGENT_TOOL_ALLOWLIST``.
 def __getattr__(name: str) -> object:
     if name == "AGENT_TOOL_ALLOWLIST":
         return _build_allowlist()

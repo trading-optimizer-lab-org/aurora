@@ -24,7 +24,7 @@ DEFAULT_SERIES = ("GDP", "UNRATE", "CPIAUCSL", "DFF", "T10Y2Y")
 
 def _default_fred_cache_dir() -> str:
     """Resolve the FRED cache dir via runtime_paths (R75)."""
-    from quantforge.core.runtime_paths import cache_dir
+    from aurora.core.runtime_paths import cache_dir
     return str(cache_dir() / "fred")
 
 

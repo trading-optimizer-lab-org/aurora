@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.climate_carbon_aware import (
+from aurora.experimental.climate_carbon_aware import (
     CarbonAwareAllocator,
     DEFAULT_CARBON_SCORES,
 )

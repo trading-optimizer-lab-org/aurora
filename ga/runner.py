@@ -28,7 +28,7 @@ def _ga_defaults_from_policy() -> dict:
     GA itself never refuses to construct.
     """
     try:
-        from quantforge.core.protocol_policy import get_active_policy
+        from aurora.core.protocol_policy import get_active_policy
         ga = get_active_policy().ga_config
         return {
             "population": int(ga.population),

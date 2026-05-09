@@ -18,10 +18,10 @@ This module adds an *optional* LLM observation pathway. By design:
 
 Wiring example::
 
-    from quantforge.agents.auditor.llm_augmenter import (
+    from aurora.agents.auditor.llm_augmenter import (
         MockLLMProvider, make_augmenter,
     )
-    from quantforge.agents.auditor.reviewers import RegimeReviewer
+    from aurora.agents.auditor.reviewers import RegimeReviewer
 
     aug = make_augmenter(MockLLMProvider(), reviewer_name="regime")
     rev = RegimeReviewer(llm_augmenter=aug)
@@ -37,7 +37,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from quantforge.agents.auditor.base import (
+from aurora.agents.auditor.base import (
     LLM_MAX_SEVERITY,
     LLMAugmenter,
     ReviewContext,

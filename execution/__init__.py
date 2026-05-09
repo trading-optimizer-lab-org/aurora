@@ -15,40 +15,40 @@ Ten algorithmic execution modules:
 """
 from __future__ import annotations
 
-from quantforge.execution.twap import TWAPAlgo, TWAPConfig, TWAPSchedule
-from quantforge.execution.vwap import VWAPAlgo, VWAPConfig, VWAPSchedule
-from quantforge.execution.pov import POVAlgo, POVConfig, POVSchedule
-from quantforge.execution.implementation_shortfall import (
+from aurora.execution.twap import TWAPAlgo, TWAPConfig, TWAPSchedule
+from aurora.execution.vwap import VWAPAlgo, VWAPConfig, VWAPSchedule
+from aurora.execution.pov import POVAlgo, POVConfig, POVSchedule
+from aurora.execution.implementation_shortfall import (
     ImplementationShortfallOptimizer,
     ISConfig,
     ISResult,
 )
-from quantforge.execution.almgren_chriss import (
+from aurora.execution.almgren_chriss import (
     AlmgrenChrissExecutor,
     AlmgrenChrissConfig,
     AlmgrenChrissSchedule,
 )
-from quantforge.execution.market_impact import (
+from aurora.execution.market_impact import (
     MarketImpactModel,
     MarketImpactConfig,
     MarketImpactResult,
 )
-from quantforge.execution.liquidity_seeking import (
+from aurora.execution.liquidity_seeking import (
     LiquiditySeekingAlgo,
     LiquiditySeekingConfig,
     VenueQuote,
 )
-from quantforge.execution.iceberg import (
+from aurora.execution.iceberg import (
     IcebergOrderManager,
     IcebergConfig,
     IcebergState,
 )
-from quantforge.execution.pegged_orders import (
+from aurora.execution.pegged_orders import (
     PeggedOrderTypes,
     PeggedConfig,
     PeggedQuote,
 )
-from quantforge.execution.conditional_orders import (
+from aurora.execution.conditional_orders import (
     ConditionalOrderManager,
     ConditionalConfig,
     BracketOrder,

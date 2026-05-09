@@ -5,16 +5,16 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
-from quantforge.core.snapshot_freshness import (
+from aurora.core.snapshot_freshness import (
     audit_freshness,
     stale_snapshots,
 )
-from quantforge.core.universe_gate import (
+from aurora.core.universe_gate import (
     affected_strategies,
     diff_universe,
 )
-from quantforge.ml.ood_detector import OODDetector
-from quantforge.research.ancestry import (
+from aurora.ml.ood_detector import OODDetector
+from aurora.research.ancestry import (
     AncestryEdge,
     render_dot,
     render_text,

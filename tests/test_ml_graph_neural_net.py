@@ -7,7 +7,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.graph_neural_net import (
+from aurora.ml.graph_neural_net import (
     CorrelationGNNConfig,
     CorrelationGraphNN,
     PYG_AVAILABLE,

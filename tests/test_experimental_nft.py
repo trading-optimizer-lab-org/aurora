@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from quantforge.experimental.strategy_nft import StrategyNFT
+from aurora.experimental.strategy_nft import StrategyNFT
 
 
 def test_mint_creates_metadata_record(tmp_path):

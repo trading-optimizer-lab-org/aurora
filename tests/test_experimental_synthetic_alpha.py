@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.experimental.synthetic_alpha import SyntheticAlphaGenerator
+from aurora.experimental.synthetic_alpha import SyntheticAlphaGenerator
 
 
 def test_generate_without_common():

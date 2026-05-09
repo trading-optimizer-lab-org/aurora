@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.tax_loss_harvester import (
+from aurora.deployment.tax_loss_harvester import (
     TLHConfig,
     TLHResult,
     TaxLossHarvester,

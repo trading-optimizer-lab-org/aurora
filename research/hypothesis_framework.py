@@ -23,9 +23,9 @@ from typing import Callable, Literal
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.metrics import compute_metrics
-from quantforge.core.costs import ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.metrics import compute_metrics
+from aurora.core.costs import ZERO_costs
 
 
 Alternative = Literal["greater", "less", "two-sided"]

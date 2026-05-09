@@ -15,16 +15,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core import data_layer
-from quantforge.core.data_layer import (
+from aurora.core import data_layer
+from aurora.core.data_layer import (
     OOSGuard, load_asset, load_oos, split_is_oos,
 )
-from quantforge.ga.fitness import (
+from aurora.ga.fitness import (
     multi_objective_fitness_is,
     scalar_fitness_is,
     validate_oos,
 )
-from quantforge.strategies.library import MACross
+from aurora.strategies.library import MACross
 
 
 # ---------------------------------------------------------------------------

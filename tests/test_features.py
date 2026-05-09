@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.features import (
+from aurora.core.features import (
     FeatureKey,
     FeatureStore,
     _rsi_compute,

@@ -1,11 +1,11 @@
-"""Tests for quantforge.core.engine_intraday — minute/hourly backtest engine."""
+"""Tests for aurora.core.engine_intraday — minute/hourly backtest engine."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.costs import CostModel, ZERO_costs, IBKR_costs
-from quantforge.core.engine_intraday import (
+from aurora.core.costs import CostModel, ZERO_costs, IBKR_costs
+from aurora.core.engine_intraday import (
     IntradayBacktestResult,
     run_intraday_backtest,
 )
@@ -74,7 +74,7 @@ def test_basic_run():
 
 def test_calendar_rth():
     """RTH: only 09:30-15:59 bars are in-session; mask should match."""
-    from quantforge.core.engine_intraday import _in_session_mask
+    from aurora.core.engine_intraday import _in_session_mask
     idx = pd.DatetimeIndex([
         pd.Timestamp("2024-01-08 09:00"),  # pre-market
         pd.Timestamp("2024-01-08 09:30"),  # in
@@ -89,7 +89,7 @@ def test_calendar_rth():
 
 def test_calendar_24h():
     """24h: all bars in-session, single session id for everything."""
-    from quantforge.core.engine_intraday import _in_session_mask, _session_id
+    from aurora.core.engine_intraday import _in_session_mask, _session_id
     idx = pd.date_range("2024-01-08", periods=2880, freq="1min")
     mask = _in_session_mask(idx, "24h")
     assert mask.all()
@@ -285,7 +285,7 @@ def test_calendar_rth_utc_input():
     With the 2024-01-08 winter date (EST = UTC-5), the RTH session in UTC is
     14:30-21:00. The mask must include those bars and exclude bars outside.
     """
-    from quantforge.core.engine_intraday import _in_session_mask
+    from aurora.core.engine_intraday import _in_session_mask
     idx = pd.DatetimeIndex([
         pd.Timestamp("2024-01-08 13:30", tz="UTC"),  # 08:30 ET pre-market
         pd.Timestamp("2024-01-08 14:30", tz="UTC"),  # 09:30 ET in
@@ -300,7 +300,7 @@ def test_calendar_rth_utc_input():
 
 def test_calendar_rth_naive_input():
     """Naive index assumed to be in ET; backwards-compat behavior preserved."""
-    from quantforge.core.engine_intraday import _in_session_mask
+    from aurora.core.engine_intraday import _in_session_mask
     idx = pd.DatetimeIndex([
         pd.Timestamp("2024-01-08 09:00"),  # pre-market
         pd.Timestamp("2024-01-08 09:30"),  # in

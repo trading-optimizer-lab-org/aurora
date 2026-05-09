@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from quantforge.governance import (
+from aurora.governance import (
     ApprovalError,
     ApprovalStatus,
     LifecycleError,

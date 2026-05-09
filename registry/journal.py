@@ -34,12 +34,12 @@ from typing import Iterator, Optional
 
 import pandas as pd
 
-from quantforge.core.sqlite_utils import _setup_sqlite
+from aurora.core.sqlite_utils import _setup_sqlite
 
 
 def _default_db_path() -> str:
     """Resolve the trade-journal DB path via runtime_paths (R75)."""
-    from quantforge.core.runtime_paths import cache_dir
+    from aurora.core.runtime_paths import cache_dir
     return str(cache_dir() / "trade_journal.db")
 
 

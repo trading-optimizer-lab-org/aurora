@@ -20,8 +20,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.research.factory import (
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.research.factory import (
     CandidateRun,
     GAHypothesisGenerator,
     LLMHypothesisGenerator,
@@ -113,7 +113,7 @@ def good_spec(policy: ProtocolPolicy) -> StrategySpec:
         expected_edge_bps=50.0,
         regime_dependence=["trending"],
         failure_modes=["high_vol_chop"],
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 20, "slow": 100, "allow_short": False},
         universe=["SPY"],
         rebalance="1d",
@@ -494,7 +494,7 @@ def test_ga_hypothesis_generator_emits_valid_specs():
         ({"fast": 20, "slow": 100}, (0.04, 0.7, 1.3, -0.12)),
     ]
     gen = GAHypothesisGenerator(
-        "quantforge.strategies.library.ma_cross.MACross",
+        "aurora.strategies.library.ma_cross.MACross",
         pareto,
         universe=["SPY"],
     )
@@ -509,7 +509,7 @@ def test_template_hypothesis_generator_emits_valid_specs():
     templates = [
         (
             "macross_demo",
-            "quantforge.strategies.library.ma_cross.MACross",
+            "aurora.strategies.library.ma_cross.MACross",
             {"fast": 20, "slow": 100, "allow_short": False},
             {"fast": (0.5, 1.5), "slow": (0.8, 1.5)},
         ),
@@ -537,7 +537,7 @@ def test_llm_hypothesis_generator_fails_gracefully_without_client():
 
 def test_research_promote_requires_ceremony_flag(factory, good_spec, capsys, monkeypatch):
     """Without --i-understand-..., promote returns 1 with a useful message."""
-    from quantforge.cli import forge as forge_cli
+    from aurora.cli import forge as forge_cli
     factory.submit(good_spec)
     # Patch the loader so the CLI command picks up our isolated factory.
     monkeypatch.setattr(
@@ -562,8 +562,8 @@ def test_research_promote_without_oos_guard_refuses(
     factory, good_spec, capsys, monkeypatch,
 ):
     """With ceremony flag but no active OOSGuard, the CLI refuses."""
-    from quantforge.cli import forge as forge_cli
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.cli import forge as forge_cli
+    from aurora.core.data_layer import OOSGuard
 
     factory.submit(good_spec)
     monkeypatch.setattr(
@@ -588,8 +588,8 @@ def test_research_promote_with_ceremony_and_guard_succeeds(
     factory, good_spec, capsys, monkeypatch, tmp_path,
 ):
     """With both ceremony flag AND OOSGuard active, promote returns 0."""
-    from quantforge.cli import forge as forge_cli
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.cli import forge as forge_cli
+    from aurora.core.data_layer import OOSGuard
 
     factory.submit(good_spec)
     monkeypatch.setattr(

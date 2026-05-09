@@ -48,7 +48,7 @@ def vectorbt_pnl_batch(
     is otherwise identical to calling
     :func:`quantforge.triage.vectorized.compute_pnl_batch` directly.
     """
-    from quantforge.triage.vectorized import compute_pnl_batch
+    from aurora.triage.vectorized import compute_pnl_batch
 
     if not is_available():
         warnings.warn(

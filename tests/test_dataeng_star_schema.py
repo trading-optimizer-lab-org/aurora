@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.dataeng.star_schema import (
+from aurora.dataeng.star_schema import (
     StarSchemaConfig,
     StarSchemaWarehouse,
 )

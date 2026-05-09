@@ -10,7 +10,7 @@ roughly 1e-10 of the price level, which is irrelevant for trading signals.
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 class MACross(Strategy):

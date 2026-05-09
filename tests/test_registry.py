@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.registry import (
+from aurora.registry import (
     BacktestRegistry,
     RegistryEntry,
     hash_config,
@@ -297,8 +297,8 @@ def test_hash_config_deterministic():
 
 def test_store_from_backtest_result(db_path):
     """Convenience function takes a BacktestResult-like object."""
-    from quantforge.core.engine import BacktestResult
-    from quantforge.core.metrics import compute_metrics
+    from aurora.core.engine import BacktestResult
+    from aurora.core.metrics import compute_metrics
 
     rng = np.random.default_rng(42)
     rets = rng.normal(0.0005, 0.01, 500)

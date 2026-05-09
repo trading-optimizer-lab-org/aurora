@@ -11,16 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from quantforge.research.ledger import (
+from aurora.research.ledger import (
     ResearchChoice,
     ResearchLedger,
     VALID_KINDS,
 )
-from quantforge.research.pressure import (
+from aurora.research.pressure import (
     ResearchPressureScore,
     compute_pressure,
 )
-from quantforge.validation.research_pressure import (
+from aurora.validation.research_pressure import (
     RESEARCH_PRESSURE_THRESHOLDS,
     format_pressure_warning,
 )

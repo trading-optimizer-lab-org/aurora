@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.agents.auditor import (
+from aurora.agents.auditor import (
     AuditReport,
     AuditorOrchestrator,
     CostReviewer,
@@ -35,7 +35,7 @@ from quantforge.agents.auditor import (
     RiskReviewer,
     cap_augmenter_findings,
 )
-from quantforge.core.protocol_policy import ProtocolPolicy
+from aurora.core.protocol_policy import ProtocolPolicy
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +419,7 @@ def test_cap_augmenter_findings_helper():
 
 def test_validation_pipeline_has_auditor_gate():
     """The default policy lists ``auditor_gate`` in mandatory_gates."""
-    from quantforge.validation import pipeline as vpipeline
+    from aurora.validation import pipeline as vpipeline
     gates = vpipeline.get_mandatory_gates()
     assert "auditor_gate" in gates
 
@@ -436,8 +436,8 @@ def test_validation_pipeline_runs_auditor_gate_when_context_provided(policy):
     rets = rng.normal(0.0005, 0.012, len(idx))
     prices = pd.Series(100.0 * np.cumprod(1.0 + rets), index=idx, name="SYN")
 
-    from quantforge.validation.pipeline import validate_pipeline
-    from quantforge.strategies.library.ma_cross import MACross
+    from aurora.validation.pipeline import validate_pipeline
+    from aurora.strategies.library.ma_cross import MACross
 
     spec = _good_spec()
     bt = _good_backtest(policy)
@@ -468,7 +468,7 @@ def test_validation_pipeline_runs_auditor_gate_when_context_provided(policy):
 
 
 def test_snapshot_stores_audit_report_hash(tmp_path, policy):
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.snapshots import SnapshotStore
 
     rng = np.random.default_rng(1)
     idx = pd.date_range("2020-01-01", periods=60, freq="B")
@@ -503,7 +503,7 @@ def test_snapshot_stores_audit_report_hash(tmp_path, policy):
 
 def test_cli_audit_list_reviewers(capsys):
     """`forge audit list-reviewers` lists the 6 reviewers."""
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
     rc = cli.main(["audit", "list-reviewers"])
     captured = capsys.readouterr().out
     assert rc == 0
@@ -517,7 +517,7 @@ def test_cli_audit_list_reviewers(capsys):
 
 def test_cli_audit_run_smoke(tmp_path, capsys):
     """`forge audit run <id> --backtest <json>` runs end-to-end."""
-    from quantforge.cli import forge as cli
+    from aurora.cli import forge as cli
     payload = {
         "strategy_spec": _good_spec(),
         "backtest_results": _good_backtest(ProtocolPolicy.default()),

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.auto_research_loop import (
+from aurora.research.auto_research_loop import (
     AutoResearchLoop,
     IterationRecord,
     LoopReport,

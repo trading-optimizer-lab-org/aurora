@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.hrp import (
+from aurora.deployment.hrp import (
     HRPResult,
     correlation_distance,
     hrp_allocate,
@@ -240,7 +240,7 @@ def test_hrp_aligns_with_de_prado_reference():
     can name the contract, and (c) reproduce the published intuition that
     lower-volatility assets receive more weight than higher-volatility
     ones inside the same cluster."""
-    from quantforge.deployment.hrp import (
+    from aurora.deployment.hrp import (
         hrp_allocate as _hrp_allocate,
         hrp_recursive_bisection as _hrp_recursive_bisection,
         quasi_diag_hrp,

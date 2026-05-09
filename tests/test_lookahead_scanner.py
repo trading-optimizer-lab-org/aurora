@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.validation.lookahead_check import (
+from aurora.validation.lookahead_check import (
     StaticLookaheadReport,
     scan_lookahead,
     scan_lookahead_v2,
@@ -212,7 +212,7 @@ def test_scan_lookahead_v2_returns_report():
 
 def test_runtime_check_includes_static_v2():
     """runtime_lookahead_check should attach static_v2 by default."""
-    from quantforge.validation.lookahead_check import runtime_lookahead_check
+    from aurora.validation.lookahead_check import runtime_lookahead_check
 
     prices = pd.Series(np.linspace(100.0, 110.0, 60))
     rep = runtime_lookahead_check(_clean_signal, prices)
@@ -239,7 +239,7 @@ def test_runtime_intraday_check_detects_leak():
     """Shuffling rows after k must leave a clean signal unchanged BEFORE k,
     and must reveal a leak when the strategy peeks at future bars.
     """
-    from quantforge.validation.lookahead_check import runtime_lookahead_check_intraday
+    from aurora.validation.lookahead_check import runtime_lookahead_check_intraday
 
     rng = np.random.default_rng(7)
     n = 240

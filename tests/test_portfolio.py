@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from quantforge.portfolio import (
+from aurora.portfolio import (
     BenchmarkTrackerAllocator,
     CashAllocator,
     EqualWeightAllocator,
@@ -23,7 +23,7 @@ from quantforge.portfolio import (
     turnover_aware_net_return,
     variance,
 )
-from quantforge.validation.portfolio_validation import (
+from aurora.validation.portfolio_validation import (
     purged_walk_forward_portfolio,
     walk_forward_portfolio,
 )

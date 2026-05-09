@@ -1,6 +1,6 @@
 # Research Protocol
 
-This document defines the formal data-split policy for QuantForge research.
+This document defines the formal data-split policy for Aurora research.
 The split is the foundation of the OOS sagrado doctrine. Every backtest,
 every GA run, every paper / live deployment must respect it.
 
@@ -16,14 +16,14 @@ every GA run, every paper / live deployment must respect it.
 | `FORWARD` | 2025-01-01 onward | Paper / live trading | Read at runtime, never used for fitting |
 
 The boundary `IS_END = 2012-12-31`, `OOS_START = 2013-01-01` in
-`quantforge/core/data_layer.py` is the authoritative source. The remaining
+`aurora/core/data_layer.py` is the authoritative source. The remaining
 tiers are conventions enforced by reviewer + lockbox ceremony.
 
 ## Rules
 
 ### R1 - GA fitness reads only IS_TRAIN + WF folds
-The genetic algorithm in `quantforge/ga/runner.py` calls
-`quantforge.ga.fitness.multi_objective_fitness_is`. That function builds
+The genetic algorithm in `aurora/ga/runner.py` calls
+`aurora.ga.fitness.multi_objective_fitness_is`. That function builds
 its objectives from in-sample prices and walk-forward stability across
 sub-windows of IS data. It must not read `OOS_DEV`, `OOS_LOCKED`, or
 `FORWARD`.
@@ -34,7 +34,7 @@ walk-forward gate. The last fold may extend into `IS_VALID` but must not
 enter `OOS_DEV`.
 
 ### R3 - OOS_DEV is consulted only after pareto-front selection
-The pipeline in `quantforge/validation/pipeline.py` is the only call site
+The pipeline in `aurora/validation/pipeline.py` is the only call site
 permitted to evaluate candidates on `OOS_DEV`. Re-running the GA with
 different parameter ranges and consulting `OOS_DEV` again is allowed only
 after a documented research-cycle reset (see ceremony below).
@@ -63,14 +63,14 @@ Reviewers verify the lock file before a strategy advances to paper.
 ## Snapshot freezing
 
 The `OOS_LOCKED` tier and any other dataset that must remain bit-identical
-across runs are persisted via `quantforge.core.snapshots.SnapshotStore`. A
+across runs are persisted via `aurora.core.snapshots.SnapshotStore`. A
 locked snapshot is the on-disk equivalent of the lockbox: any
 non-ceremonial code path that tries to load it raises `IntegrityError`.
 
 ### Freezing a locked snapshot
 
 ```python
-from quantforge.core.snapshots import SnapshotStore
+from aurora.core.snapshots import SnapshotStore
 
 store = SnapshotStore("data_cache_qf/snapshots.sqlite")
 snap = store.freeze(
@@ -87,13 +87,13 @@ snap = store.freeze(
 
 A locked snapshot can only be loaded inside an `OOSGuard` whose `phase`
 attribute matches an entry in
-`quantforge.core.snapshots._ALLOWED_UNLOCK_PHASES`, currently
+`aurora.core.snapshots._ALLOWED_UNLOCK_PHASES`, currently
 `{"explicit_unlock"}`. Any other phase (or no guard at all) raises
 `IntegrityError`. The startswith-trick was tightened in v1.3.1 so that
 `"explicit_unlock_oops"` no longer slips through.
 
 ```python
-from quantforge.core.data_layer import OOSGuard
+from aurora.core.data_layer import OOSGuard
 
 with OOSGuard("explicit_unlock"):
     series = store.load(snap.sha256)  # IntegrityError without the guard

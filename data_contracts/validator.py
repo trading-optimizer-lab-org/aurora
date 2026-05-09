@@ -16,7 +16,7 @@ from typing import Any, List, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.data_contracts.contract import (
+from aurora.data_contracts.contract import (
     DataContract,
     DataValidationResult,
 )

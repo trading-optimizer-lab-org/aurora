@@ -3,7 +3,7 @@
 Optional infra modules. Heavy SDKs (ray, dask, torch, boto3, psycopg2,
 redis, prometheus_client, pyarrow.dataset) are imported lazily inside
 methods. Each submodule remains importable when its underlying SDK is
-missing, so ``import quantforge.infra`` never fails because of a missing
+missing, so ``import aurora.infra`` never fails because of a missing
 optional dependency.
 """
 from __future__ import annotations
@@ -15,11 +15,11 @@ def _try_export(module_name: str, symbols: tuple[str, ...]) -> None:
     """Best-effort import a sibling module and re-export selected symbols.
 
     Failures are swallowed so that a single broken optional-dep submodule
-    does not block ``import quantforge.infra``. Importers can still target
+    does not block ``import aurora.infra``. Importers can still target
     submodules directly to surface the underlying ImportError.
     """
     try:
-        mod = __import__(f"quantforge.infra.{module_name}", fromlist=symbols)
+        mod = __import__(f"aurora.infra.{module_name}", fromlist=symbols)
     except Exception:  # noqa: BLE001 - optional dep failures must not crash init
         return
     for sym in symbols:

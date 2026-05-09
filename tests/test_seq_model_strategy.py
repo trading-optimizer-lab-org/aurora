@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import SeqModelStrategy
-from quantforge.strategies.library.seq_model import (
+from aurora.strategies.library import SeqModelStrategy
+from aurora.strategies.library.seq_model import (
     MockPredictor,
     default_feature_fn,
 )
@@ -207,7 +207,7 @@ def test_mock_predictor_round_trip() -> None:
 
 def test_lstm_integration(fake_prices: pd.Series) -> None:
     pytest.importorskip("torch")
-    from quantforge.ml.lstm import LSTMConfig, LSTMForecaster, TORCH_AVAILABLE
+    from aurora.ml.lstm import LSTMConfig, LSTMForecaster, TORCH_AVAILABLE
     if not TORCH_AVAILABLE:
         pytest.skip("torch not available at runtime")
 

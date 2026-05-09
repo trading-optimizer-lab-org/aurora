@@ -6,7 +6,7 @@ import time
 import pandas as pd
 import pytest
 
-from quantforge.infra.redis_cache import RedisCache, RedisCacheConfig
+from aurora.infra.redis_cache import RedisCache, RedisCacheConfig
 
 
 @pytest.fixture

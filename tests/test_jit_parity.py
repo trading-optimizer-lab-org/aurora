@@ -13,11 +13,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.costs import IBKR_costs, ZERO_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.engine_jit import run_backtest_jit
-from quantforge.core.seed import set_global_seed
-from quantforge.strategies.library import MACross, RSIMeanRev
+from aurora.core.costs import IBKR_costs, ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.engine_jit import run_backtest_jit
+from aurora.core.seed import set_global_seed
+from aurora.strategies.library import MACross, RSIMeanRev
 
 
 TOL = 1e-6

@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, List
 
-from quantforge.compliance.rbac import RBACConfig, RBACEngine
+from aurora.compliance.rbac import RBACConfig, RBACEngine
 
 
 # Permission tokens used by the gateway. resource:action grammar.

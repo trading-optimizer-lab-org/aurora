@@ -11,9 +11,9 @@ Design contract
   :class:`dataclasses.FrozenInstanceError`. Use :func:`dataclasses.replace`
   to derive a new policy for tests.
 * :func:`ProtocolPolicy.default` returns the current production policy with
-  the constants in :mod:`quantforge.core.data_tiers`,
+  the constants in :mod:`aurora.core.data_tiers`,
   :mod:`quantforge.validation.pipeline`, :mod:`quantforge.ga.runner`, and
-  :mod:`quantforge.core.costs` reproduced as data.
+  :mod:`aurora.core.costs` reproduced as data.
 * :func:`ProtocolPolicy.load` reads ``quantforge/config/protocol_policy.yaml``
   if it exists and otherwise falls back to :func:`default`.
 * :attr:`ProtocolPolicy.policy_hash` is a deterministic ``sha256`` digest of
@@ -175,9 +175,9 @@ class ProtocolPolicy:
         """Return the current production policy.
 
         The values mirror the existing module-level constants in
-        :mod:`quantforge.core.data_tiers`,
+        :mod:`aurora.core.data_tiers`,
         :mod:`quantforge.validation.pipeline`, :mod:`quantforge.ga.runner`
-        and :mod:`quantforge.core.costs` as of v3.0.
+        and :mod:`aurora.core.costs` as of v3.0.
         """
         tiers = {
             "IS_TRAIN": TierConfig(

@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.exports.lean.live import (
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.exports.lean.live import (
     LiveDeployConfig,
     deploy_to_lean_cloud,
     prepare_live_deploy,

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import (
+from aurora.strategies.library import (
     PairDiscoveryEngine, PairDiscoveryConfig, PairResult,
 )
 

@@ -13,8 +13,8 @@ from typing import Callable, List, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, ZERO_costs
 
 
 @dataclass
@@ -68,7 +68,7 @@ class CapacityEstimator:
         base_rets = np.asarray(base_res.rets, dtype=float)
         base_signals = np.asarray(base_res.weights, dtype=float)
 
-        from quantforge.core.metrics import compute_metrics
+        from aurora.core.metrics import compute_metrics
 
         floor = self.base_calmar * self.alpha_floor_pct \
             if self.base_calmar > 0 else self.base_calmar / self.alpha_floor_pct

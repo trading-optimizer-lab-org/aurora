@@ -30,8 +30,8 @@ Deprecated (kept as aliases for backwards compat with existing imports):
 from __future__ import annotations
 import warnings
 import numpy as np
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import IBKR_costs
+from aurora.core.engine import run_backtest
+from aurora.core.costs import IBKR_costs
 
 
 _DEPRECATION_WARNED = {"multi_objective_fitness": False, "scalar_fitness": False}

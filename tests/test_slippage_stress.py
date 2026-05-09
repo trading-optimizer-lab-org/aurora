@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import CostModel
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.validation.slippage_stress import SlippageStressTest
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import CostModel
+from aurora.strategies.library.ma_cross import MACross
+from aurora.validation.slippage_stress import SlippageStressTest
 
 
 @pytest.fixture

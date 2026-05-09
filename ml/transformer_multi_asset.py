@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - environment-dependent
 def _require_torch() -> None:
     if not TORCH_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.transformer_multi_asset requires torch. "
+            "aurora.ml.transformer_multi_asset requires torch. "
             "Install with: pip install torch"
         )
 

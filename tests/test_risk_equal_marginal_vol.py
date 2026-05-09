@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.equal_marginal_vol import EqualMarginalVolPortfolio
+from aurora.risk.equal_marginal_vol import EqualMarginalVolPortfolio
 
 
 def test_emv_simplex():

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.ml.fracdiff import (
+from aurora.ml.fracdiff import (
     find_min_d,
     frac_diff_ffd,
     fracdiff_correlation,

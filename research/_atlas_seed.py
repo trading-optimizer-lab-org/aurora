@@ -16,12 +16,12 @@ can rely on ordering for golden tests.
 """
 from __future__ import annotations
 
-from quantforge.research.strategy_atlas import (
+from aurora.research.strategy_atlas import (
     AtlasStatus,
     StrategyAtlas,
     StrategyAtlasEntry,
 )
-from quantforge.research.strategy_benchmarks import BenchmarkExpectation
+from aurora.research.strategy_benchmarks import BenchmarkExpectation
 
 # ---- Canonical entries -----------------------------------------------------
 #

@@ -23,7 +23,7 @@ class KafkaConfig:
         max_buffer: in-memory buffer size in mock mode.
     """
     bootstrap_servers: str = "localhost:9092"
-    topic: str = "quantforge.events"
+    topic: str = "aurora.events"
     group_id: str = "quantforge"
     client_id: str = "quantforge-client"
     max_buffer: int = 10_000

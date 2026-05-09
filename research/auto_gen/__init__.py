@@ -7,7 +7,7 @@ factory.
 """
 from __future__ import annotations
 
-from quantforge.research.auto_gen.generator import (
+from aurora.research.auto_gen.generator import (
     AtomicBlockGenerator,
     BlockSpec,
     Comparator,

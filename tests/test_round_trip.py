@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.analytics.round_trip import (
+from aurora.analytics.round_trip import (
     Trade,
     consecutive_streak,
     extract_trades,
@@ -260,7 +260,7 @@ def test_expectancy_unbiased_by_flat_trades() -> None:
         )
         for _ in range(8)
     ]
-    from quantforge.analytics.round_trip import trade_stats as _ts_stats
+    from aurora.analytics.round_trip import trade_stats as _ts_stats
 
     s = _ts_stats([win, loss] + flats)
     # Expectancy must equal the simple sample mean of all PnLs.

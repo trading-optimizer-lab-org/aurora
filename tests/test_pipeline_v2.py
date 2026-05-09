@@ -4,13 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library import MACross
-from quantforge.validation.pipeline import validate_pipeline, ValidationReport
-from quantforge.validation.noise_injection import NoiseInjectionResult
-from quantforge.validation.gap_sim import GapSimResult
-from quantforge.validation.walk_forward import WFWindow
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library import MACross
+from aurora.validation.pipeline import validate_pipeline, ValidationReport
+from aurora.validation.noise_injection import NoiseInjectionResult
+from aurora.validation.gap_sim import GapSimResult
+from aurora.validation.walk_forward import WFWindow
 
 
 def _synth_prices(n: int = 6000, seed: int = 42) -> pd.Series:

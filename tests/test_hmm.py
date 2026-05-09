@@ -9,7 +9,7 @@ import pytest
 # raises ImportError at module load time without it.
 pytest.importorskip("hmmlearn")
 
-from quantforge.regime.hmm import (  # noqa: E402
+from aurora.regime.hmm import (  # noqa: E402
     GaussianHMM,
     HMMResult,
     detect_regime_change,

@@ -6,17 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from quantforge.ml.degradation_forecaster import (
+from aurora.ml.degradation_forecaster import (
     DegradationForecaster,
     StrategySnapshot,
 )
-from quantforge.research.factory.spec_signing import (
+from aurora.research.factory.spec_signing import (
     SpecSignature,
     canonical_spec_hash,
     sign_spec,
     verify_spec,
 )
-from quantforge.research.graveyard import (
+from aurora.research.graveyard import (
     GraveyardEntry,
     filter_graveyard,
     format_table,

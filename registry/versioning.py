@@ -125,7 +125,7 @@ def _exclusive_file_lock(path: str):
 
 def _default_history_path() -> str:
     """Resolve the version-history JSONL path via runtime_paths (R75)."""
-    from quantforge.core.runtime_paths import cache_dir
+    from aurora.core.runtime_paths import cache_dir
     return str(cache_dir() / "version_history.jsonl")
 
 
@@ -209,7 +209,7 @@ def hash_strategy_code(strategy_class) -> str:
 
     # walk MRO, include intermediate Strategy subclasses
     try:
-        from quantforge.strategies.base import Strategy as _Strategy  # noqa: WPS433
+        from aurora.strategies.base import Strategy as _Strategy  # noqa: WPS433
         for base in strategy_class.__mro__[1:]:
             if base is object or base is _Strategy:
                 continue

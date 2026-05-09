@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from quantforge.compliance.sec_13f import Form13FConfig, Form13FFiler
+from aurora.compliance.sec_13f import Form13FConfig, Form13FFiler
 
 
 @pytest.fixture

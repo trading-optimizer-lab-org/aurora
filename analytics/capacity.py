@@ -20,8 +20,8 @@ from typing import Callable, List, Optional, Sequence
 
 import numpy as np
 
-from quantforge.core.costs import CostModel, apply_costs
-from quantforge.core.metrics import compute_metrics
+from aurora.core.costs import CostModel, apply_costs
+from aurora.core.metrics import compute_metrics
 
 
 @dataclass(frozen=True)

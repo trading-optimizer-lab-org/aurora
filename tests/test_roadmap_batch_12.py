@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.agent_gateway.rbac_roles import (
+from aurora.agent_gateway.rbac_roles import (
     GatewayRBAC,
     KILL_SWITCH,
     LIVE_TRADE,
@@ -13,7 +13,7 @@ from quantforge.agent_gateway.rbac_roles import (
     ROTATE_KEYS,
     RUN_BACKTEST,
 )
-from quantforge.examples.benchmarks import (
+from aurora.examples.benchmarks import (
     BenchmarkResult,
     bench_ga_loop,
     bench_single_asset_30y,

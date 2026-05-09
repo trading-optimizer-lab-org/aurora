@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.hypothesis_framework import (
+from aurora.research.hypothesis_framework import (
     Hypothesis,
     HypothesisResult,
     HypothesisTester,

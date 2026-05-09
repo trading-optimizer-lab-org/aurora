@@ -12,7 +12,7 @@ Loop stages:
     2. instantiate_signal -- build a signal_fn from the template using a
        small whitelist of named primitives (so the loop never executes
        arbitrary Python from the LLM output).
-    3. backtest -- run quantforge.core.engine.run_backtest on supplied prices.
+    3. backtest -- run aurora.core.engine.run_backtest on supplied prices.
     4. critique -- ask the LLM to comment on the metrics; record critique.
     5. record -- append (hypothesis, metrics, critique) to the trail.
     6. next -- repeat until n_iterations reached.
@@ -36,11 +36,11 @@ import logging
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library.tsmom import TSMomentum
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.strategies.library.bollinger_mr import BollingerMR
+from aurora.core.engine import run_backtest
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library.tsmom import TSMomentum
+from aurora.strategies.library.ma_cross import MACross
+from aurora.strategies.library.bollinger_mr import BollingerMR
 
 
 log = logging.getLogger(__name__)

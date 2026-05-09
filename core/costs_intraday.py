@@ -1,6 +1,6 @@
 """Intraday / multi-frequency cost model (Batch M.3).
 
-Composes on top of :mod:`quantforge.core.costs` and :mod:`quantforge.core.slippage`
+Composes on top of :mod:`aurora.core.costs` and :mod:`aurora.core.slippage`
 to add bar-level realism for intraday backtests:
 
 - per-bar bid-ask spread lookup (overrides ``base_bps`` when wider)

@@ -1,60 +1,26 @@
-# Contributing to QuantForge
+# Contributing to Aurora
 
-QuantForge is a quant research engine with a militant anti-overfit pipeline.
-This guide covers the rules contributors must follow.
+Aurora (renamed from QuantForge in v1.5.0 / R23) is a quant research
+engine with a militant anti-overfit pipeline. This guide covers the
+rules contributors must follow.
 
 ## Setup
 
-The repository uses a flat Layout B: `pyproject.toml` lives at the repo
-root and the package itself is the repo directory plus its top-level
-subdirectories mapped through `[tool.setuptools.package-dir]`. There is
-no nested `quantforge/` source folder.
-
-From the repo root:
+`pyproject.toml` lives at the repo root and the package is imported as
+`aurora`. From the repo root:
 
 ```bash
-pip install -e ".[dev,ga,docs,mutate]"
+pip install -e ".[dev,ml,ga]"
 ```
 
-For the full stack including optional deep-learning, RL, monitoring and
-broker integrations:
+For the full stack:
 
 ```bash
 pip install -e ".[dev,all]"
 ```
 
-If you use `make`, the same install is wrapped:
-
-```bash
-make setup PYTHON=path/to/python
-```
-
-Pin the same `PYTHON` for every subsequent `make` target so subprocess-
-launching tests (mutmut, CLI smoke tests) see the editable install on
-their `sys.executable`.
-
-## Pre-commit hooks
-
-`.pre-commit-config.yaml` is checked into the repo. Install it once:
-
-```bash
-make precommit-install PYTHON=path/to/python
-```
-
-Or, equivalent without make:
-
-```bash
-pre-commit install --hook-type pre-commit --hook-type pre-push
-```
-
-Run on demand:
-
-```bash
-make precommit-run
-```
-
-CI runs `pre-commit run --all-files` as a blocking job; matching the
-local hook prevents PR-time surprises.
+The legacy `quantforge` namespace remains importable as a thin compat
+shim that emits a `DeprecationWarning`; the shim is removed in v1.6.
 
 ## Running tests
 
@@ -63,13 +29,13 @@ local hook prevents PR-time surprises.
 pytest -v -m "not slow and not integration"
 
 # With coverage (requires `dev` extras: pytest-cov)
-pytest -v --cov=quantforge --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"
+pytest -v --cov=aurora --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"
 
 # Full suite (includes slow)
 pytest -v
 ```
 
-Coverage is configured via `quantforge/.coveragerc` (branch coverage on, 80%
+Coverage is configured via `.coveragerc` (branch coverage on, 80%
 fail-under threshold, omits tests and examples). The `--cov` flag
 is intentionally not in `addopts` in `pyproject.toml` so the test suite
 can run without pytest-cov installed; pass `--cov` explicitly when the
@@ -88,7 +54,7 @@ extras are not installed.
 ## Integration tests
 
 Live broker integration tests live in
-`quantforge/tests/test_live_integration.py`. They are skipped by default
+`tests/test_live_integration.py`. They are skipped by default
 because they hit a real broker API. To enable them:
 
 1. Install the Alpaca SDK:
@@ -109,7 +75,7 @@ because they hit a real broker API. To enable them:
 3. Run with the `integration` marker:
 
    ```bash
-   pytest -v -m integration quantforge/tests/test_live_integration.py
+   pytest -v -m integration tests/test_live_integration.py
    ```
 
 The smoke test submits a single $1 limit order on SPY (which should
@@ -142,7 +108,7 @@ Run it before opening a PR:
 pytest -k lookahead
 ```
 
-Note: `forge preflight` runs the runtime preflight gates (data, sizing,
+Note: `aurora preflight` runs the runtime preflight gates (data, sizing,
 broker, marker, ...). It does NOT execute the AST anti-lookahead scanner;
 use the `lookahead` test selection above for that check.
 
@@ -202,7 +168,10 @@ ruff check .
 ruff format .
 ```
 
-Configuration is in `pyproject.toml`. Rule set: E, F, W, I, B, UP, N.
+Configuration is in `pyproject.toml`. The release-blocking rule set is
+focused on correctness checks (`F821`, `F541`, `B008`, `B023`, `B904`);
+broader style/modernization passes can be run explicitly when doing a
+dedicated cleanup.
 Line length 100. Target Python 3.10.
 
 ## Commit style

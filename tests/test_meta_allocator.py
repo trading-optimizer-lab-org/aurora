@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.meta_allocator import (
+from aurora.deployment.meta_allocator import (
     MetaAllocator,
     MetaAllocatorConfig,
     MetaAllocatorResult,

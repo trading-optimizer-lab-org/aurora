@@ -14,28 +14,28 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.agent_gateway.agent_roles import (
+from aurora.agent_gateway.agent_roles import (
     AGENT_TOOL_ALLOWLIST,
     FORBIDDEN_TOOLS,
     assert_tool_allowed,
     is_tool_allowed,
 )
-from quantforge.agent_gateway.evidence_pack import (
+from aurora.agent_gateway.evidence_pack import (
     EvidencePack,
     ForbiddenAccessError,
     HashMismatchError,
     MissingEvidenceError,
     assert_no_oos_access,
 )
-from quantforge.agent_gateway.explanation_pack import (
+from aurora.agent_gateway.explanation_pack import (
     ExplanationPack,
     build_explanation_pack,
 )
-from quantforge.agent_gateway.prompt_injection_tests import (
+from aurora.agent_gateway.prompt_injection_tests import (
     PROMPT_INJECTION_FIXTURES,
     detect_prompt_injection,
 )
-from quantforge.agent_gateway.research_agents import (
+from aurora.agent_gateway.research_agents import (
     AgentComment,
     AgentRole,
     DataQualityAgent,

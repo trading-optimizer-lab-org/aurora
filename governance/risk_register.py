@@ -34,7 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from quantforge.core import runtime_paths
+from aurora.core import runtime_paths
 
 
 class ApprovalStatus(str, Enum):

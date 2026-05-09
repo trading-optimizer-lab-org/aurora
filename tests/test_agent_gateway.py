@@ -53,7 +53,7 @@ def audit_path(tmp_path) -> Path:
 
 @pytest.fixture
 def gateway(audit_path):
-    from quantforge.agent_gateway import AgentGateway, GatewayPolicy
+    from aurora.agent_gateway import AgentGateway, GatewayPolicy
 
     return AgentGateway(
         policy=GatewayPolicy(audit_chain_verify_on_startup=True),
@@ -65,7 +65,7 @@ def _mint(actor="bot", *, scopes=None, paper_only=True,
           allowlist=frozenset(),
           max_order=10_000.0, max_daily=50_000.0, cooldown=0,
           expires_in_days=7, issued_at=None):
-    from quantforge.agent_gateway import TokenScope, issue_token
+    from aurora.agent_gateway import TokenScope, issue_token
     if scopes is None:
         scopes = frozenset({TokenScope.READ_DATA})
     return issue_token(
@@ -86,13 +86,13 @@ def _mint(actor="bot", *, scopes=None, paper_only=True,
 
 
 def test_token_signature_verifies():
-    from quantforge.agent_gateway import TokenScope
+    from aurora.agent_gateway import TokenScope
     tok = _mint(scopes=frozenset({TokenScope.READ_DATA}))
     assert tok.verify_signature() is True
 
 
 def test_token_signature_round_trip_via_dict():
-    from quantforge.agent_gateway import AgentToken, TokenScope
+    from aurora.agent_gateway import AgentToken, TokenScope
     tok = _mint(scopes=frozenset({TokenScope.READ_DATA}))
     rebuilt = AgentToken.from_dict(tok.to_dict())
     assert rebuilt.verify_signature() is True
@@ -100,7 +100,7 @@ def test_token_signature_round_trip_via_dict():
 
 
 def test_token_signature_rejects_tampered_actor():
-    from quantforge.agent_gateway import AgentToken, TokenScope
+    from aurora.agent_gateway import AgentToken, TokenScope
     tok = _mint(scopes=frozenset({TokenScope.READ_DATA}))
     d = tok.to_dict()
     d["actor"] = "evil-bot"
@@ -114,8 +114,8 @@ def test_token_signature_rejects_tampered_actor():
 
 
 def test_expired_token_rejected_by_authenticate(gateway):
-    from quantforge.agent_gateway import TokenScope
-    from quantforge.agent_gateway.gateway import AuthenticationError
+    from aurora.agent_gateway import TokenScope
+    from aurora.agent_gateway.gateway import AuthenticationError
     issued = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=10)
     tok = _mint(scopes=frozenset({TokenScope.READ_DATA}),
                 expires_in_days=1, issued_at=issued)
@@ -129,10 +129,10 @@ def test_expired_token_rejected_by_authenticate(gateway):
 
 
 def test_paper_only_blocks_live_trade(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(scopes=frozenset({TokenScope.LIVE_TRADE}), paper_only=True,
                 max_order=100.0, max_daily=1_000.0)
     gateway.register_token(tok)
@@ -150,10 +150,10 @@ def test_paper_only_blocks_live_trade(gateway):
 
 
 def test_read_scope_cannot_paper_trade(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(scopes=frozenset({TokenScope.READ_DATA}))
     gateway.register_token(tok)
     action = ActionRequest(
@@ -165,10 +165,10 @@ def test_read_scope_cannot_paper_trade(gateway):
 
 
 def test_read_scope_cannot_propose_strategy(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(scopes=frozenset({TokenScope.READ_REPORTS}))
     gateway.register_token(tok)
     action = ActionRequest(
@@ -184,10 +184,10 @@ def test_read_scope_cannot_propose_strategy(gateway):
 
 
 def test_allowlist_blocks_off_list_symbol(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(
         scopes=frozenset({TokenScope.PAPER_TRADE}),
         allowlist=frozenset({"SPY"}),
@@ -207,10 +207,10 @@ def test_allowlist_blocks_off_list_symbol(gateway):
 
 
 def test_per_order_notional_cap(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
                 max_order=100.0, max_daily=1_000.0)
     gateway.register_token(tok)
@@ -228,10 +228,10 @@ def test_per_order_notional_cap(gateway):
 
 
 def test_daily_cap_aggregates_across_orders(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
                 max_order=100.0, max_daily=150.0, cooldown=0)
     gateway.register_token(tok)
@@ -250,10 +250,10 @@ def test_daily_cap_aggregates_across_orders(gateway):
 
 
 def test_cooldown_enforced(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthorizationError
+    from aurora.agent_gateway.gateway import AuthorizationError
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
                 max_order=100.0, max_daily=1_000.0, cooldown=60)
     gateway.register_token(tok)
@@ -272,7 +272,7 @@ def test_cooldown_enforced(gateway):
 
 
 def test_audit_chain_links_correctly(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
@@ -290,10 +290,10 @@ def test_audit_chain_links_correctly(gateway):
 
 
 def test_audit_chain_first_entry_genesis(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.audit import GENESIS_HASH
+    from aurora.agent_gateway.audit import GENESIS_HASH
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
                 max_order=100.0, max_daily=10_000.0)
     gateway.register_token(tok)
@@ -312,7 +312,7 @@ def test_audit_chain_first_entry_genesis(gateway):
 
 
 def test_audit_tamper_detected_on_payload_edit(gateway, audit_path):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
@@ -334,7 +334,7 @@ def test_audit_tamper_detected_on_payload_edit(gateway, audit_path):
 
 
 def test_audit_tamper_detected_on_dropped_entry(gateway, audit_path):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
@@ -360,7 +360,7 @@ def test_audit_tamper_detected_on_dropped_entry(gateway, audit_path):
 
 
 def test_stage_commit_push_happy_path_paper(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, ActionStatus, TokenScope,
     )
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
@@ -391,13 +391,13 @@ def test_stage_commit_push_happy_path_paper(gateway):
 
 
 def test_stage_commit_push_happy_path_live(gateway, monkeypatch):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, ActionStatus, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import (
+    from aurora.agent_gateway.gateway import (
         LIVE_AUTH_ENV, LIVE_CEREMONY_PHASE, operator_sign,
     )
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
 
     monkeypatch.setenv(LIVE_AUTH_ENV, "1")
     tok = _mint(
@@ -426,13 +426,13 @@ def test_stage_commit_push_happy_path_live(gateway, monkeypatch):
 
 
 def test_live_without_env_flag_refuses(gateway, monkeypatch):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import (
+    from aurora.agent_gateway.gateway import (
         CeremonyError, LIVE_AUTH_ENV, LIVE_CEREMONY_PHASE,
     )
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
 
     monkeypatch.delenv(LIVE_AUTH_ENV, raising=False)
     tok = _mint(
@@ -455,10 +455,10 @@ def test_live_without_env_flag_refuses(gateway, monkeypatch):
 
 
 def test_live_without_oosguard_refuses(gateway, monkeypatch):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import (
+    from aurora.agent_gateway.gateway import (
         CeremonyError, LIVE_AUTH_ENV,
     )
 
@@ -482,13 +482,13 @@ def test_live_without_oosguard_refuses(gateway, monkeypatch):
 
 
 def test_live_commit_without_signature_refuses(gateway, monkeypatch):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import (
+    from aurora.agent_gateway.gateway import (
         CeremonyError, LIVE_AUTH_ENV, LIVE_CEREMONY_PHASE,
     )
-    from quantforge.core.data_layer import OOSGuard
+    from aurora.core.data_layer import OOSGuard
 
     monkeypatch.setenv(LIVE_AUTH_ENV, "1")
     tok = _mint(
@@ -512,10 +512,10 @@ def test_live_commit_without_signature_refuses(gateway, monkeypatch):
 
 
 def test_staged_action_expires(audit_path, monkeypatch):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, AgentGateway, GatewayPolicy, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import GatewayStateError
+    from aurora.agent_gateway.gateway import GatewayStateError
 
     fake_now = [pd.Timestamp("2026-01-01T00:00:00")]
 
@@ -546,10 +546,10 @@ def test_staged_action_expires(audit_path, monkeypatch):
 
 
 def test_revoke_blocks_future_stage(gateway):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.agent_gateway.gateway import AuthenticationError
+    from aurora.agent_gateway.gateway import AuthenticationError
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
                 max_order=100.0, max_daily=10_000.0, cooldown=0)
     gateway.register_token(tok)
@@ -574,10 +574,10 @@ def test_revoke_blocks_future_stage(gateway):
 def test_deployment_live_submit_with_retry_accepts_gateway_committed(
     gateway, monkeypatch,
 ):
-    from quantforge.agent_gateway import (
+    from aurora.agent_gateway import (
         ActionRequest, TokenScope,
     )
-    from quantforge.deployment.live import submit_with_retry
+    from aurora.deployment.live import submit_with_retry
 
     tok = _mint(scopes=frozenset({TokenScope.PAPER_TRADE}),
                 max_order=100.0, max_daily=10_000.0, cooldown=0)
@@ -631,7 +631,7 @@ def test_cli_smoke_token_issue_stage_commit(tmp_path, monkeypatch):
     audit_jsonl = tmp_path / "audit.jsonl"
 
     issue_cmd = [
-        sys.executable, "-m", "quantforge.cli.forge", "agent", "token-issue",
+        sys.executable, "-m", "aurora.cli.forge", "agent", "token-issue",
         "--actor", "smoke-bot",
         "--scopes", "paper_trade",
         "--expires-days", "1",
@@ -659,7 +659,7 @@ def test_cli_smoke_token_issue_stage_commit(tmp_path, monkeypatch):
     }), encoding="utf-8")
 
     stage_cmd = [
-        sys.executable, "-m", "quantforge.cli.forge", "agent", "stage",
+        sys.executable, "-m", "aurora.cli.forge", "agent", "stage",
         str(action_path),
         "--token", str(token_path),
         "--audit-path", str(audit_jsonl),
@@ -674,7 +674,7 @@ def test_cli_smoke_token_issue_stage_commit(tmp_path, monkeypatch):
     assert "staged_id" in staged
     # Audit verify CLI: 0 (clean chain).
     audit_cmd = [
-        sys.executable, "-m", "quantforge.cli.forge", "agent",
+        sys.executable, "-m", "aurora.cli.forge", "agent",
         "audit-verify", "--audit-path", str(audit_jsonl),
     ]
     proc = subprocess.run(

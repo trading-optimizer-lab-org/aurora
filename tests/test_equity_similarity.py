@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from quantforge.analytics.equity_similarity import (
+from aurora.analytics.equity_similarity import (
     pairwise_matrix,
     pairwise_similarity,
 )

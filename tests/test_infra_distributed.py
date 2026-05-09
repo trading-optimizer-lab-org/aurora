@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from quantforge.infra.distributed import DistributedBacktester, DistributedConfig
+from aurora.infra.distributed import DistributedBacktester, DistributedConfig
 
 
 def _square(x: int) -> int:

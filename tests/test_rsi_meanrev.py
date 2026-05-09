@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import RSIMeanRev
-from quantforge.strategies.library.rsi_meanrev import _rsi
-from quantforge.strategies.base import StrategySpec
+from aurora.strategies.library import RSIMeanRev
+from aurora.strategies.library.rsi_meanrev import _rsi
+from aurora.strategies.base import StrategySpec
 
 
 @pytest.fixture

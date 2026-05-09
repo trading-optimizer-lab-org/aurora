@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.bayesian_nn import (
+from aurora.ml.bayesian_nn import (
     BayesianConfig,
     BayesianForecaster,
     PYRO_AVAILABLE,

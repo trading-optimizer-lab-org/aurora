@@ -4,7 +4,7 @@ import math
 import numpy as np
 import pytest
 
-from quantforge.risk.spectral_risk import (
+from aurora.risk.spectral_risk import (
     SpectralRiskMeasure,
     exponential_phi,
     power_phi,

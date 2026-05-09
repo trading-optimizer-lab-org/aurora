@@ -27,12 +27,12 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from hypothesis import HealthCheck, assume, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
-from quantforge.core.costs import IBKR_costs, ZERO_costs, apply_costs  # noqa: E402
-from quantforge.core.data_tiers import split_by_tier  # noqa: E402
-from quantforge.core.engine import run_backtest  # noqa: E402
-from quantforge.core.metrics import compute_metrics  # noqa: E402
-from quantforge.core.protocol_policy import ProtocolPolicy  # noqa: E402
-from quantforge.strategies.library import (  # noqa: E402
+from aurora.core.costs import IBKR_costs, ZERO_costs, apply_costs  # noqa: E402
+from aurora.core.data_tiers import split_by_tier  # noqa: E402
+from aurora.core.engine import run_backtest  # noqa: E402
+from aurora.core.metrics import compute_metrics  # noqa: E402
+from aurora.core.protocol_policy import ProtocolPolicy  # noqa: E402
+from aurora.strategies.library import (  # noqa: E402
     ATRBreakout,
     BollingerMR,
     DualMomentum,

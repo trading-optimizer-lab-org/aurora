@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - environment-dependent
 def _require_deap() -> None:
     if not DEAP_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.genetic_programming requires deap. "
+            "aurora.ml.genetic_programming requires deap. "
             "Install with: pip install deap"
         )
 

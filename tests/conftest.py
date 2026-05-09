@@ -99,12 +99,12 @@ except ImportError:
     _torch = None  # type: ignore[assignment]
 
 try:
-    from quantforge.core import seed as _qf_seed  # type: ignore
+    from aurora.core import seed as _qf_seed  # type: ignore
 except ImportError:  # pragma: no cover - core ships with the package
     _qf_seed = None  # type: ignore[assignment]
 
 try:
-    from quantforge.ga import fitness as _ga_fitness  # type: ignore
+    from aurora.ga import fitness as _ga_fitness  # type: ignore
 except ImportError:  # pragma: no cover - ga extras may be missing
     _ga_fitness = None  # type: ignore[assignment]
 
@@ -164,7 +164,7 @@ def _isolate_default_oos_lock(tmp_path_factory, monkeypatch):
     so the round-2 default writes land in a throwaway directory.
     """
     try:
-        from quantforge.core import data_layer as _dl
+        from aurora.core import data_layer as _dl
     except ImportError:  # pragma: no cover - core ships with the package
         return
     tmp_dir = tmp_path_factory.mktemp("oos_lock_iso")
@@ -179,7 +179,7 @@ def _reset_global_state():
     Prevents state pollution when tests run in suite order:
       * RNG seeds (python ``random``, numpy, torch) -> deterministic per-test.
       * ``quantforge`` logger ``propagate`` flag -> caplog can intercept records
-        even after :func:`quantforge.core.logging.configure_logging` ran.
+        even after :func:`aurora.core.logging.configure_logging` ran.
       * ``_DEPRECATION_WARNED`` flags in :mod:`quantforge.ga.fitness` -> tests
         that assert on the warning don't see "already warned".
     """
@@ -197,7 +197,7 @@ def _reset_global_state():
         _qf_seed.GLOBAL_SEED = 42
 
     # --- pre-test: ensure quantforge logger propagates so caplog sees records ---
-    qf_logger = logging.getLogger("quantforge")
+    qf_logger = logging.getLogger("aurora")
     qf_logger.propagate = True
 
     # --- pre-test: reset deprecation-warning flags ---
@@ -262,7 +262,7 @@ def synthetic_ohlcv_minute() -> pd.DataFrame:
 @pytest.fixture
 def temp_journal_db(tmp_path):
     """Yield a TradeJournal pointing at a fresh sqlite file under tmp_path."""
-    from quantforge.registry.journal import TradeJournal
+    from aurora.registry.journal import TradeJournal
 
     db = tmp_path / "test_journal.db"
     j = TradeJournal(db_path=str(db))

@@ -19,7 +19,7 @@ import pytest
 gym = pytest.importorskip("gymnasium")
 sb3 = pytest.importorskip("stable_baselines3")
 
-from quantforge.ml.rl_agent import (  # noqa: E402
+from aurora.ml.rl_agent import (  # noqa: E402
     GYM_AVAILABLE,
     SB3_AVAILABLE,
     RLAgent,

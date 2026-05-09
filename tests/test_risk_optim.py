@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.risk_optim import (
+from aurora.deployment.risk_optim import (
     OptimResult,
     min_cvar,
     min_cdar,

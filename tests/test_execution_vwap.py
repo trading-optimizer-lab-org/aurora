@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
-from quantforge.execution.vwap import VWAPAlgo, VWAPConfig
+from aurora.execution.vwap import VWAPAlgo, VWAPConfig
 
 
 class MockBroker:

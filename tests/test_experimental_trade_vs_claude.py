@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.experimental.trade_vs_claude import (
+from aurora.experimental.trade_vs_claude import (
     TradeVsClaude,
     mock_llm_signal,
 )

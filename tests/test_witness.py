@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from quantforge.core.witness import (
+from aurora.core.witness import (
     Witness,
     WitnessRecorder,
     read_witnesses,

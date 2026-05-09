@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.analytics.factor_analysis import (
+from aurora.analytics.factor_analysis import (
     ICResult,
     QuantileSpreadResult,
     factor_autocorrelation,
@@ -97,7 +97,7 @@ def test_ic_hac_collapse_returns_uninformative_pvalue(monkeypatch):
     boundary regardless of float rounding in the upstream rolling
     correlation.
     """
-    import quantforge.analytics.factor_analysis as fa
+    import aurora.analytics.factor_analysis as fa
 
     n = 400
     idx_local = pd.date_range("2010-01-01", periods=n, freq="B")

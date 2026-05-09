@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.tail_hedging import (
+from aurora.deployment.tail_hedging import (
     TailHedgeConfig,
     TailHedgeResult,
     TailHedgingOverlay,

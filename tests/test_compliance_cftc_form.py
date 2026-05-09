@@ -5,7 +5,7 @@ import csv
 
 import pytest
 
-from quantforge.compliance.cftc_form import (
+from aurora.compliance.cftc_form import (
     CTA_FIELDS,
     CTAFormConfig,
     CTAFormReporter,

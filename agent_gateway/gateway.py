@@ -39,10 +39,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
-from quantforge.agent_gateway.audit import (
+from aurora.agent_gateway.audit import (
     AgentAudit, AgentAuditConfig, request_hash,
 )
-from quantforge.agent_gateway.tokens import (
+from aurora.agent_gateway.tokens import (
     AgentToken, READ_SCOPES, TokenScope, sign_payload,
 )
 
@@ -191,14 +191,20 @@ class GatewayStateError(GatewayError):
 # ---------------------------------------------------------------------------
 
 
-OPERATOR_KEY_ENV = "QF_OPERATOR_KEY"
-LIVE_AUTH_ENV = "QF_AGENT_LIVE_AUTH"
+# Aurora canonical names (R23). Legacy QF_* names still honoured via
+# aurora_env() during the shim window (removed in v1.6).
+OPERATOR_KEY_ENV = "AU_OPERATOR_KEY"
+OPERATOR_KEY_ENV_LEGACY = "QF_OPERATOR_KEY"
+LIVE_AUTH_ENV = "AU_AGENT_LIVE_AUTH"
+LIVE_AUTH_ENV_LEGACY = "QF_AGENT_LIVE_AUTH"
 LIVE_CEREMONY_PHASE = "agent_live_authorized"
 
 
 def _commit_signature(staged_id: str, *, env: str = OPERATOR_KEY_ENV) -> str:
     """Return the expected human-commit hmac for ``staged_id``."""
-    raw = os.environ.get(env, "")
+    from aurora.core.env_compat import aurora_env
+    legacy = OPERATOR_KEY_ENV_LEGACY if env == OPERATOR_KEY_ENV else None
+    raw = aurora_env(env, legacy) or ""
     if not raw:
         raise CeremonyError(
             f"{env} is not set; commit cannot be verified"
@@ -586,13 +592,14 @@ class AgentGateway:
             raise CeremonyError(
                 "paper_only token cannot stage LIVE_TRADE actions"
             )
-        if os.environ.get(LIVE_AUTH_ENV, "") != "1":
+        from aurora.core.env_compat import aurora_env
+        if (aurora_env(LIVE_AUTH_ENV, LIVE_AUTH_ENV_LEGACY) or "") != "1":
             raise CeremonyError(
                 f"{LIVE_AUTH_ENV} must be set to '1' for live actions"
             )
         # Active OOSGuard check
         try:
-            from quantforge.core.data_layer import OOSGuard
+            from aurora.core.data_layer import OOSGuard
         except Exception as exc:
             raise CeremonyError(
                 f"cannot import OOSGuard for ceremony check: {exc}"

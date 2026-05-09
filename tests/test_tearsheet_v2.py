@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.metrics import compute_metrics
-from quantforge.core.engine import BacktestResult
-from quantforge.reporting.tearsheet import (
+from aurora.core.metrics import compute_metrics
+from aurora.core.engine import BacktestResult
+from aurora.reporting.tearsheet import (
     generate_tearsheet,
     generate_full_tearsheet,
     _extract_round_trips,

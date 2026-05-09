@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.wf_tournament import (
+from aurora.research.wf_tournament import (
     TournamentEntry,
     TournamentReport,
     WalkForwardTournament,

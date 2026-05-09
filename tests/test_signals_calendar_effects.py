@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.signals import CalendarEffectsSignal, CalendarEffectsConfig
+from aurora.signals import CalendarEffectsSignal, CalendarEffectsConfig
 
 
 def test_default_signals_shape():

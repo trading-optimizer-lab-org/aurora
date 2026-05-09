@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
-from quantforge.governance.risk_register import ApprovalStatus, StrategyRiskRecord
+from aurora.governance.risk_register import ApprovalStatus, StrategyRiskRecord
 
 
 class LifecycleState(str, Enum):

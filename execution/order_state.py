@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Dict, Tuple
 
-from quantforge.execution.events import (
+from aurora.execution.events import (
     BrokerEvent,
     CancelRequested,
     Disconnected,

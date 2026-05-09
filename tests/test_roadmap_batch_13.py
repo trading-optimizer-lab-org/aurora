@@ -8,45 +8,45 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from quantforge.analytics.signal_attribution import (
+from aurora.analytics.signal_attribution import (
     AttributionResult,
     attribute_signals,
 )
-from quantforge.analytics.volume_profile import (
+from aurora.analytics.volume_profile import (
     VolumeProfile,
     compute_volume_profile,
 )
-from quantforge.reporting.heatmaps import (
+from aurora.reporting.heatmaps import (
     HeatmapData,
     optimisation_heatmap,
     render_text,
     walk_forward_heatmap,
 )
-from quantforge.research.auto_loop.reopt_scheduler import (
+from aurora.research.auto_loop.reopt_scheduler import (
     ReoptJob,
     ScheduleConfig,
     schedule_for,
     upcoming_calendar,
 )
-from quantforge.research.bundle import (
+from aurora.research.bundle import (
     publish_bundle,
     read_bundle,
     verify_bundle,
     write_bundle,
 )
-from quantforge.research.dna_fingerprint import (
+from aurora.research.dna_fingerprint import (
     fingerprint,
     is_too_similar,
 )
-from quantforge.strategies.library.ensemble_vote import (
+from aurora.strategies.library.ensemble_vote import (
     VoteThresholdConfig,
     vote_combine,
 )
-from quantforge.validation.cross_feed import (
+from aurora.validation.cross_feed import (
     CrossFeedReport,
     cross_feed_validate,
 )
-from quantforge.validation.multi_market_sweep import (
+from aurora.validation.multi_market_sweep import (
     SweepResult,
     sweep,
 )

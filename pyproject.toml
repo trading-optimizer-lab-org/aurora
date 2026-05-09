@@ -1,16 +1,15 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "quantforge"
-version = "1.4.0"
+name = "aurora"
+version = "1.5.0"
 description = "Quant research engine: backtest + GA + validation gates + paper/live"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
-authors = [{name = "QuantForge Project"}]
-
+license = {text = "MIT"}
+authors = [{name = "Aurora Project"}]
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
@@ -22,18 +21,7 @@ dependencies = [
     "numba>=0.58",
     "pydantic>=2",
     "platformdirs>=4.0",
-    "networkx>=3.0",
 ]
-
-# R28: canonical URLs. The AURORA rename (R23) will rotate these to the
-# new namespace; until the public repository home is decided, these point
-# at a placeholder so packaging metadata is at least well-formed.
-[project.urls]
-Homepage = "https://example.invalid/quantforge"
-Source = "https://example.invalid/quantforge"
-Issues = "https://example.invalid/quantforge/issues"
-Changelog = "https://example.invalid/quantforge/blob/main/CHANGELOG.md"
-Documentation = "https://example.invalid/quantforge/docs"
 
 [project.optional-dependencies]
 ml = ["scikit-learn>=1.3", "statsmodels>=0.14", "hmmlearn>=0.3"]
@@ -52,119 +40,102 @@ monitoring = ["streamlit>=1.30"]
 llm = ["anthropic>=0.25"]
 portfolio = ["cvxpy>=1.4"]
 report = ["weasyprint"]
-dev = [
-    "pytest>=7",
-    "pytest-cov>=4",
-    "hypothesis>=6",
-    "ruff>=0.5",
-    "mypy>=1.7",
-    "statsmodels>=0.14",
-]
-docs = [
-    "sphinx>=7",
-    "furo>=2024.1.29",
-    "sphinx-autodoc-typehints>=2.0",
-    "myst-parser>=3.0",
-]
-mutate = ["mutmut>=3"]
-all = ["quantforge[ml,dl,rl,ga,live,crypto,monitoring,llm,portfolio,report]"]
+dev = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6", "ruff>=0.5", "mypy>=1.7"]
+all = ["aurora[ml,dl,rl,ga,live,crypto,monitoring,llm,portfolio,report]"]
 
 [project.scripts]
-forge = "quantforge.cli.forge:main"
+# `aurora` is the canonical entry point; `forge` is kept as a deprecated
+# alias for one shim cycle (removed in 1.6).
+aurora = "aurora.cli.forge:main"
+forge = "aurora.cli.forge:main"
 
-# Layout: pyproject.toml lives INSIDE the quantforge package dir.
-# Map `quantforge.*` packages to the local subdirectories so the wheel
-# installs as `quantforge/`, `quantforge/core/`, etc.
+# Layout: pyproject.toml lives INSIDE the on-disk package dir. The package is
+# now imported as `aurora.*`; the legacy `quantforge` namespace is also
+# packaged as a thin compat shim that re-exports `aurora.*` with a
+# DeprecationWarning. Removed in v1.6 per docs/AURORA_RENAME_CHECKLIST.md.
 [tool.setuptools]
 packages = [
+    "aurora",
+    "aurora.agent_gateway",
+    "aurora.agents",
+    "aurora.agents.auditor",
+    "aurora.altdata",
+    "aurora.analytics",
+    "aurora.cli",
+    "aurora.compliance",
+    "aurora.core",
+    "aurora.core.data_providers",
+    "aurora.dataeng",
+    "aurora.deployment",
+    "aurora.execution",
+    "aurora.experimental",
+    "aurora.exports",
+    "aurora.exports.lean",
+    "aurora.ga",
+    "aurora.infra",
+    "aurora.marketdata",
+    "aurora.markets",
+    "aurora.ml",
+    "aurora.monitoring",
+    "aurora.portfolio",
+    "aurora.regime",
+    "aurora.registry",
+    "aurora.reporting",
+    "aurora.reporting.daily_ops",
+    "aurora.research",
+    "aurora.research.factory",
+    "aurora.risk",
+    "aurora.signals",
+    "aurora.strategies",
+    "aurora.strategies.library",
+    "aurora.triage",
+    "aurora.validation",
+    # Back-compat shim package (R23). Removed in v1.6.
     "quantforge",
-    "quantforge.agent_gateway",
-    "quantforge.agents",
-    "quantforge.agents.auditor",
-    "quantforge.altdata",
-    "quantforge.analytics",
-    "quantforge.cli",
-    "quantforge.compliance",
-    "quantforge.config",
-    "quantforge.core",
-    "quantforge.core.data_providers",
-    "quantforge.data_contracts",
-    "quantforge.dataeng",
-    "quantforge.deployment",
-    "quantforge.execution",
-    "quantforge.experimental",
-    "quantforge.exports",
-    "quantforge.exports.lean",
-    "quantforge.exports.lean.templates",
-    "quantforge.ga",
-    "quantforge.governance",
-    "quantforge.infra",
-    "quantforge.marketdata",
-    "quantforge.markets",
-    "quantforge.ml",
-    "quantforge.monitoring",
-    "quantforge.portfolio",
-    "quantforge.regime",
-    "quantforge.registry",
-    "quantforge.reporting",
-    "quantforge.reporting.daily_ops",
-    "quantforge.research",
-    "quantforge.research.auto_loop",
-    "quantforge.research.factory",
-    "quantforge.risk",
-    "quantforge.signals",
-    "quantforge.strategies",
-    "quantforge.strategies.library",
-    "quantforge.triage",
-    "quantforge.validation",
 ]
 
 [tool.setuptools.package-dir]
-"quantforge" = "."
-"quantforge.agent_gateway" = "agent_gateway"
-"quantforge.agents" = "agents"
-"quantforge.agents.auditor" = "agents/auditor"
-"quantforge.altdata" = "altdata"
-"quantforge.analytics" = "analytics"
-"quantforge.cli" = "cli"
-"quantforge.compliance" = "compliance"
-"quantforge.config" = "config"
-"quantforge.core" = "core"
-"quantforge.core.data_providers" = "core/data_providers"
-"quantforge.data_contracts" = "data_contracts"
-"quantforge.dataeng" = "dataeng"
-"quantforge.deployment" = "deployment"
-"quantforge.execution" = "execution"
-"quantforge.experimental" = "experimental"
-"quantforge.exports" = "exports"
-"quantforge.exports.lean" = "exports/lean"
-"quantforge.exports.lean.templates" = "exports/lean/templates"
-"quantforge.ga" = "ga"
-"quantforge.governance" = "governance"
-"quantforge.infra" = "infra"
-"quantforge.marketdata" = "marketdata"
-"quantforge.markets" = "markets"
-"quantforge.ml" = "ml"
-"quantforge.monitoring" = "monitoring"
-"quantforge.portfolio" = "portfolio"
-"quantforge.regime" = "regime"
-"quantforge.registry" = "registry"
-"quantforge.reporting" = "reporting"
-"quantforge.reporting.daily_ops" = "reporting/daily_ops"
-"quantforge.research" = "research"
-"quantforge.research.auto_loop" = "research/auto_loop"
-"quantforge.research.factory" = "research/factory"
-"quantforge.risk" = "risk"
-"quantforge.signals" = "signals"
-"quantforge.strategies" = "strategies"
-"quantforge.strategies.library" = "strategies/library"
-"quantforge.triage" = "triage"
-"quantforge.validation" = "validation"
+"aurora" = "."
+"aurora.agent_gateway" = "agent_gateway"
+"aurora.agents" = "agents"
+"aurora.agents.auditor" = "agents/auditor"
+"aurora.altdata" = "altdata"
+"aurora.analytics" = "analytics"
+"aurora.cli" = "cli"
+"aurora.compliance" = "compliance"
+"aurora.core" = "core"
+"aurora.core.data_providers" = "core/data_providers"
+"aurora.dataeng" = "dataeng"
+"aurora.deployment" = "deployment"
+"aurora.execution" = "execution"
+"aurora.experimental" = "experimental"
+"aurora.exports" = "exports"
+"aurora.exports.lean" = "exports/lean"
+"aurora.ga" = "ga"
+"aurora.infra" = "infra"
+"aurora.marketdata" = "marketdata"
+"aurora.markets" = "markets"
+"aurora.ml" = "ml"
+"aurora.monitoring" = "monitoring"
+"aurora.portfolio" = "portfolio"
+"aurora.regime" = "regime"
+"aurora.registry" = "registry"
+"aurora.reporting" = "reporting"
+"aurora.reporting.daily_ops" = "reporting/daily_ops"
+"aurora.research" = "research"
+"aurora.research.factory" = "research/factory"
+"aurora.risk" = "risk"
+"aurora.signals" = "signals"
+"aurora.strategies" = "strategies"
+"aurora.strategies.library" = "strategies/library"
+"aurora.triage" = "triage"
+"aurora.validation" = "validation"
+"quantforge" = "quantforge"
 
 [tool.setuptools.package-data]
+"aurora" = ["py.typed", "config/*.yaml", "config/*.yml"]
+"aurora.exports.lean" = ["templates/*.template"]
 "quantforge" = ["py.typed"]
-"quantforge.config" = ["*.yaml", "*.yml"]
-"quantforge.exports.lean.templates" = ["*.template"]
 
 [tool.ruff]
 line-length = 100
@@ -177,20 +148,21 @@ extend-exclude = [
     "build",
     "docs/_build",
     "docs/api/generated",
+    "aurora.egg-info",
     "quantforge.egg-info",
 ]
 
 [tool.ruff.lint]
 # Keep the default lint gate focused on high-signal correctness checks.
 # Full style/modernization cleanup is intentionally not a release blocker for
-# this legacy-sized codebase; run broader Ruff selections explicitly when doing
-# a dedicated formatting pass.
+# this legacy-sized codebase; run broader Ruff selections explicitly when
+# doing a dedicated formatting pass.
 select = ["F821", "F541", "B008", "B023", "B904"]
 ignore = [
     "E501",
-    # N999: the repo top-level dir is "QuantForge" (capitalized); rename
-    # is out of scope. The package itself is "quantforge" via package-dir
-    # remapping in [tool.setuptools.package-dir].
+    # N999: the repo top-level dir is "QuantForge" (capitalized) until
+    # the disk-level rename ships. The package itself is "aurora" via
+    # the [tool.setuptools.package-dir] remapping.
     "N999",
 ]
 
@@ -199,10 +171,16 @@ python_version = "3.10"
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
-follow_imports = "skip"
 no_implicit_optional = true
 check_untyped_defs = false  # gradual typing — relax for now
-exclude = "^(docs/_build|build|dist|quantforge\\.egg-info|tests|examples)/"
+# R23 shim: the on-disk `quantforge/` directory exists only to emit a
+# DeprecationWarning when downstream code does `import quantforge`. mypy
+# resolves the same file under both `QuantForge.quantforge` and
+# `quantforge`, so exclude the shim directory from the type check.
+# `docs/` is excluded because `docs/conf.py` imports sphinx, which uses
+# Python 3.12+ `type` statements that mypy at python_version=3.10 cannot
+# parse. `build/` is the wheel-build artefact tree.
+exclude = ['^quantforge/', '^docs/', '^build/']
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -212,80 +190,3 @@ markers = [
     "integration: real network / broker tests",
 ]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
-
-# --------------------------------------------------------------------------
-# mutmut (R12 -- mutation testing)
-# --------------------------------------------------------------------------
-#
-# Narrow target list: mutating ``examples/`` or ``experimental/`` produces
-# noise without signal. The runner uses the property-based tests plus the
-# matching unit tests for each target module.
-[tool.mutmut]
-debug = true
-also_copy = [
-    "__init__.py",
-    "agent_gateway",
-    "agents",
-    "altdata",
-    "analytics",
-    "cli",
-    "compliance",
-    "config",
-    "core",
-    "dataeng",
-    "deployment",
-    "execution",
-    "experimental",
-    "exports",
-    "ga",
-    "infra",
-    "marketdata",
-    "markets",
-    "ml",
-    "monitoring",
-    "py.typed",
-    "regime",
-    "registry",
-    "reporting",
-    "research",
-    "risk",
-    "signals",
-    "strategies",
-    "triage",
-    "validation",
-]
-paths_to_mutate = [
-    "core/engine.py",
-    "core/engine_multi.py",
-    "core/costs.py",
-    "core/metrics.py",
-    "core/data_tiers.py",
-    "core/data_layer.py",
-    "core/protocol_policy.py",
-    "validation/walk_forward.py",
-    "validation/monte_carlo.py",
-    "validation/spp.py",
-    "validation/deflated_sharpe.py",
-    "validation/lookahead_check.py",
-    "validation/pipeline.py",
-    "ga/fitness.py",
-]
-pytest_add_cli_args_test_selection = [
-    "tests/test_property.py",
-    "tests/test_property_v2.py",
-    "tests/test_costs.py",
-    "tests/test_metrics.py",
-    "tests/test_data_tiers.py",
-    "tests/test_protocol_policy.py",
-    "tests/test_monte_carlo.py",
-    "tests/test_spp.py",
-    "tests/test_deflated_sharpe.py",
-    "tests/test_pipeline.py",
-    "tests/test_jit_parity.py",
-    "tests/test_lookahead_scanner.py",
-    "tests/test_oos_isolation.py",
-    "tests/test_ga.py",
-    "tests/test_integration.py",
-]
-backup = false
-disable_mutation_types = "string,fstring"

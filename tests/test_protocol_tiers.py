@@ -22,19 +22,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.cli import forge as cli
-from quantforge.core.costs import ZERO_costs
-from quantforge.core.data_layer import OOSGuard
+from aurora.cli import forge as cli
+from aurora.core.costs import ZERO_costs
+from aurora.core.data_layer import OOSGuard
 
 # CLI-driven tests only run when pydantic is importable; ``forge`` loads
-# ``quantforge.core.config`` (which requires pydantic) before any subcommand.
+# ``aurora.core.config`` (which requires pydantic) before any subcommand.
 _pydantic_required = pytest.importorskip.__self__ if False else None  # type: ignore
 try:
     import pydantic  # noqa: F401
     _HAVE_PYDANTIC = True
 except ImportError:
     _HAVE_PYDANTIC = False
-from quantforge.core.data_tiers import (
+from aurora.core.data_tiers import (
     FORWARD_START,
     IS_TRAIN_END,
     IS_VALID_END,
@@ -45,9 +45,9 @@ from quantforge.core.data_tiers import (
     OOS_LOCKED_START,
     split_by_tier,
 )
-from quantforge.strategies.library import MACross
-from quantforge.validation.pipeline import validate_pipeline
-from quantforge.validation.walk_forward import WFWindow
+from aurora.strategies.library import MACross
+from aurora.validation.pipeline import validate_pipeline
+from aurora.validation.walk_forward import WFWindow
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +69,9 @@ def _patch_load_asset(monkeypatch, prices: pd.Series):
     """Patch every ``load_asset`` call site used by the CLI."""
     fake = lambda *a, **kw: prices
     monkeypatch.setattr(
-        "quantforge.core.data_layer.load_asset", fake, raising=True,
+        "aurora.core.data_layer.load_asset", fake, raising=True,
     )
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     monkeypatch.setattr(pf, "load_asset", fake, raising=True)
 
 
@@ -210,7 +210,7 @@ def test_cmd_search_uses_is_train_default(monkeypatch, capsys):
         # command body completes without exercising real fitness.
         return [({"fast": 5, "slow": 20}, (0.0, 0.0, 0.0, 0.0))]
 
-    monkeypatch.setattr("quantforge.ga.runner.run_ga", fake_run_ga)
+    monkeypatch.setattr("aurora.ga.runner.run_ga", fake_run_ga)
     _patch_load_asset(monkeypatch, prices)
 
     rc = cli.main([
@@ -235,7 +235,7 @@ def test_cmd_search_is_all_with_flag(monkeypatch, capsys):
         captured["is_p"] = is_p
         return [({"fast": 5, "slow": 20}, (0.0, 0.0, 0.0, 0.0))]
 
-    monkeypatch.setattr("quantforge.ga.runner.run_ga", fake_run_ga)
+    monkeypatch.setattr("aurora.ga.runner.run_ga", fake_run_ga)
     _patch_load_asset(monkeypatch, prices)
 
     rc = cli.main([
@@ -278,16 +278,16 @@ def test_cli_run_works_with_full_prices_under_guard(monkeypatch, capsys):
 
 
 _REQUIRED_V2_V3_PACKAGES = [
-    "quantforge.altdata",
-    "quantforge.signals",
-    "quantforge.infra",
-    "quantforge.experimental",
-    "quantforge.marketdata",
-    "quantforge.markets",
-    "quantforge.risk",
-    "quantforge.execution",
-    "quantforge.compliance",
-    "quantforge.dataeng",
+    "aurora.altdata",
+    "aurora.signals",
+    "aurora.infra",
+    "aurora.experimental",
+    "aurora.marketdata",
+    "aurora.markets",
+    "aurora.risk",
+    "aurora.execution",
+    "aurora.compliance",
+    "aurora.dataeng",
 ]
 
 

@@ -6,18 +6,18 @@ from datetime import date, timedelta
 import numpy as np
 import pytest
 
-from quantforge.analytics.what_if import what_if
-from quantforge.deployment.tax_awareness import (
+from aurora.analytics.what_if import what_if
+from aurora.deployment.tax_awareness import (
     HoldingPeriod,
     Lot,
     estimate_close_impact,
 )
-from quantforge.research.factory.generator_constraints import (
+from aurora.research.factory.generator_constraints import (
     PreAcceptanceConstraints,
     evaluate,
 )
-from quantforge.strategies.rule_codegen import render_python
-from quantforge.strategies.symphony import (
+from aurora.strategies.rule_codegen import render_python
+from aurora.strategies.symphony import (
     AssetGroup,
     SectorRotator,
     Symphony,
@@ -175,7 +175,7 @@ def test_what_if_doubled_costs_reduces_returns():
     rng = np.random.default_rng(0)
     rets = rng.normal(0.0005, 0.01, 200)
     weights = np.full(200, 0.5)
-    from quantforge.core.costs import CostModel, IBKR_costs
+    from aurora.core.costs import CostModel, IBKR_costs
     rep = what_if(
         weights, rets,
         label="2x costs",

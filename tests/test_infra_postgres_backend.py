@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.infra.postgres_backend import PostgresConfig, PostgresRegistry
+from aurora.infra.postgres_backend import PostgresConfig, PostgresRegistry
 
 
 @pytest.fixture

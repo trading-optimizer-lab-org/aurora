@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
-from quantforge.core.protocol_policy import ProtocolPolicy
+from aurora.core.protocol_policy import ProtocolPolicy
 
 
 class ReviewSeverity(str, Enum):

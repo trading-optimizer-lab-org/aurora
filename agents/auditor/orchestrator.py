@@ -17,14 +17,14 @@ from typing import Iterable, List, Optional
 
 import pandas as pd
 
-from quantforge.agents.auditor.base import (
+from aurora.agents.auditor.base import (
     ReviewContext,
     ReviewFinding,
     ReviewReport,
     ReviewSeverity,
     ReviewerAgent,
 )
-from quantforge.agents.auditor.reviewers import (
+from aurora.agents.auditor.reviewers import (
     CostReviewer,
     DataLeakReviewer,
     DeploymentReviewer,

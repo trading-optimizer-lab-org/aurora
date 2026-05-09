@@ -14,8 +14,8 @@ Public API
 
 Usage::
 
-    from quantforge.core.protocol_policy import get_active_policy
-    from quantforge.reporting.daily_ops import DailyOpsBuilder, DailyOpsConfig
+    from aurora.core.protocol_policy import get_active_policy
+    from aurora.reporting.daily_ops import DailyOpsBuilder, DailyOpsConfig
     import pandas as pd
 
     cfg = DailyOpsConfig(
@@ -30,7 +30,7 @@ Usage::
 """
 from __future__ import annotations
 
-from quantforge.reporting.daily_ops.builder import (
+from aurora.reporting.daily_ops.builder import (
     DailyOpsAlert,
     DailyOpsBuilder,
     DailyOpsConfig,

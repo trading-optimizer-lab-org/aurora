@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.strategy_lending import StrategyLendingMarketplace
+from aurora.experimental.strategy_lending import StrategyLendingMarketplace
 
 
 def test_list_and_rent_accrues_royalty():

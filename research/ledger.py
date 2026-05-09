@@ -61,7 +61,7 @@ class ResearchChoice:
 def _default_ledger_path() -> Path:
     # Imported lazily so tests that monkeypatch QF_DATA_DIR pick up the
     # override even after this module has been imported.
-    from quantforge.core.runtime_paths import base_data_dir
+    from aurora.core.runtime_paths import base_data_dir
 
     return base_data_dir() / "research_ledger.jsonl"
 

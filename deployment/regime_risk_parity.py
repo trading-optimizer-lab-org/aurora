@@ -22,7 +22,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.deployment.risk_parity import risk_parity_weights
+from aurora.deployment.risk_parity import risk_parity_weights
 
 
 @dataclass

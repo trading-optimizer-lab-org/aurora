@@ -17,7 +17,7 @@ Public surface
 """
 from __future__ import annotations
 
-from quantforge.strategies.blocks.indicators import (
+from aurora.strategies.blocks.indicators import (
     STANDARD_REGISTRY,
     IndicatorBlock,
     IndicatorRegistry,

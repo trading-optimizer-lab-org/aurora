@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.trader_dna import TraderDNAProfiler
+from aurora.experimental.trader_dna import TraderDNAProfiler
 
 
 def test_empty_trades_returns_unknown():

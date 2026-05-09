@@ -17,12 +17,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-from quantforge.portfolio.allocation import (
+from aurora.portfolio.allocation import (
     PortfolioOptimizer,
     _check_returns_matrix,
 )
-from quantforge.portfolio.constraints import PortfolioConstraints
-from quantforge.portfolio.risk_measures import cvar, semi_variance, variance
+from aurora.portfolio.constraints import PortfolioConstraints
+from aurora.portfolio.risk_measures import cvar, semi_variance, variance
 from scipy.optimize import minimize
 
 _RISK_MEASURES = {"variance", "semi_variance", "cvar"}

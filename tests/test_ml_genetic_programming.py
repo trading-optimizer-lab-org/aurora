@@ -7,7 +7,7 @@ import pytest
 
 deap = pytest.importorskip("deap")
 
-from quantforge.ml.genetic_programming import (
+from aurora.ml.genetic_programming import (
     DEAP_AVAILABLE,
     GPConfig,
     GeneticFormulaEngine,

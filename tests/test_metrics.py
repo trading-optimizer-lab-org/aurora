@@ -1,9 +1,9 @@
-"""Tests for quantforge.core.metrics — compute_metrics edge cases."""
+"""Tests for aurora.core.metrics — compute_metrics edge cases."""
 from __future__ import annotations
 import math
 import numpy as np
 
-from quantforge.core.metrics import compute_metrics
+from aurora.core.metrics import compute_metrics
 
 
 def test_calmar_handles_zero_mdd():

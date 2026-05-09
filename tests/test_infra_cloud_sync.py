@@ -1,8 +1,11 @@
 """Tests for quantforge.infra.cloud_sync.CloudSync (mock mode)."""
 from __future__ import annotations
 
+import os
+
 import pytest
-from quantforge.infra.cloud_sync import CloudConfig, CloudSync
+
+from aurora.infra.cloud_sync import CloudConfig, CloudSync
 
 
 @pytest.fixture
@@ -30,9 +33,9 @@ def test_upload_download_round_trip(sync, tmp_path):
 def test_list_keys_after_upload(sync, tmp_path):
     src = tmp_path / "a.parquet"
     src.write_bytes(b"binary")
-    sync.upload(str(src), "data/2024/TEST.parquet")
+    sync.upload(str(src), "data/2024/SPY.parquet")
     keys = sync.list_keys("data/")
-    assert "qf/data/2024/TEST.parquet" in keys
+    assert "qf/data/2024/SPY.parquet" in keys
 
 
 def test_delete_returns_true_then_false(sync, tmp_path):

@@ -14,16 +14,16 @@ Modules:
 """
 from __future__ import annotations
 
-from quantforge.risk.expected_shortfall import ExpectedShortfall
-from quantforge.risk.spectral_risk import SpectralRiskMeasure
-from quantforge.risk.conditional_dd import ConditionalDrawdownAtRisk
-from quantforge.risk.risk_parity_factor import FactorRiskParity
-from quantforge.risk.herc import HierarchicalEqualRiskContribution
-from quantforge.risk.max_diversification import MaxDiversificationPortfolio
-from quantforge.risk.most_diversified import MostDiversifiedAlloc
-from quantforge.risk.equal_marginal_vol import EqualMarginalVolPortfolio
-from quantforge.risk.risk_budgeting import RiskBudgetingAllocator
-from quantforge.risk.stress_var import StressVaR
+from aurora.risk.expected_shortfall import ExpectedShortfall
+from aurora.risk.spectral_risk import SpectralRiskMeasure
+from aurora.risk.conditional_dd import ConditionalDrawdownAtRisk
+from aurora.risk.risk_parity_factor import FactorRiskParity
+from aurora.risk.herc import HierarchicalEqualRiskContribution
+from aurora.risk.max_diversification import MaxDiversificationPortfolio
+from aurora.risk.most_diversified import MostDiversifiedAlloc
+from aurora.risk.equal_marginal_vol import EqualMarginalVolPortfolio
+from aurora.risk.risk_budgeting import RiskBudgetingAllocator
+from aurora.risk.stress_var import StressVaR
 
 __all__ = [
     "ExpectedShortfall",

@@ -1,33 +1,33 @@
 """Validation gates: walk-forward, MC, SPP, lookahead, DSR, purged CV, CSCV,
 structural breaks, tail risk, correlation stress, scenarios.
 """
-from quantforge.validation import (
+from aurora.validation import (
     correlation_stress,
     purged_cv,
     scenarios,
     structural_breaks,
     tail_risk,
 )
-from quantforge.validation.cscv_pbo import (
+from aurora.validation.cscv_pbo import (
     cscv,
     CSCVResult,
     cscv_summary_table,
     plot_pbo_distribution,
 )
-from quantforge.validation.deflated_sharpe import deflated_sharpe_check
-from quantforge.validation.gap_sim import gap_sim, GapSimResult
-from quantforge.validation.lookahead_check import scan_lookahead
-from quantforge.validation.monte_carlo import (
+from aurora.validation.deflated_sharpe import deflated_sharpe_check
+from aurora.validation.gap_sim import gap_sim, GapSimResult
+from aurora.validation.lookahead_check import scan_lookahead
+from aurora.validation.monte_carlo import (
     monte_carlo_bootstrap,
     monte_carlo_trade_reorder,
 )
-from quantforge.validation.noise_injection import noise_injection, NoiseInjectionResult
-from quantforge.validation.pipeline import validate_pipeline, ValidationReport
-from quantforge.validation.purged_cv import PurgedKFold, cv_score
-from quantforge.validation.retraining import simulate_retraining, RetrainResult
-from quantforge.validation.scenarios import KNOWN_CRASHES, stress_test_all_known
-from quantforge.validation.spp import spp
-from quantforge.validation.structural_breaks import (
+from aurora.validation.noise_injection import noise_injection, NoiseInjectionResult
+from aurora.validation.pipeline import validate_pipeline, ValidationReport
+from aurora.validation.purged_cv import PurgedKFold, cv_score
+from aurora.validation.retraining import simulate_retraining, RetrainResult
+from aurora.validation.scenarios import KNOWN_CRASHES, stress_test_all_known
+from aurora.validation.spp import spp
+from aurora.validation.structural_breaks import (
     chow_test,
     ChowResult,
     cusum_filter,
@@ -35,19 +35,19 @@ from quantforge.validation.structural_breaks import (
     sadf_test,
     SADFResult,
 )
-from quantforge.validation.walk_forward import walk_forward
+from aurora.validation.walk_forward import walk_forward
 
 # Batch D advanced robustness modules
-from quantforge.validation.adversarial_backtest import AdversarialBacktester
-from quantforge.validation.copula_tail import CopulaTailDependence
-from quantforge.validation.gan_crisis import CrisisGANGenerator
-from quantforge.validation.ood_detection import OODDetector
-from quantforge.validation.capacity_estimator import CapacityEstimator
-from quantforge.validation.slippage_stress import SlippageStressTest
-from quantforge.validation.multi_freq_bootstrap import MultiFrequencyBootstrap
-from quantforge.validation.parameter_rank_stability import ParameterRankStability
-from quantforge.validation.partial_dependence import PartialDependenceAnalysis
-from quantforge.validation.shap_explain import SHAPExplainer
+from aurora.validation.adversarial_backtest import AdversarialBacktester
+from aurora.validation.copula_tail import CopulaTailDependence
+from aurora.validation.gan_crisis import CrisisGANGenerator
+from aurora.validation.ood_detection import OODDetector
+from aurora.validation.capacity_estimator import CapacityEstimator
+from aurora.validation.slippage_stress import SlippageStressTest
+from aurora.validation.multi_freq_bootstrap import MultiFrequencyBootstrap
+from aurora.validation.parameter_rank_stability import ParameterRankStability
+from aurora.validation.partial_dependence import PartialDependenceAnalysis
+from aurora.validation.shap_explain import SHAPExplainer
 
 # Submodule re-exports (kept distinct from class / function entries so
 # downstream tooling can tell apart "module" from "callable").

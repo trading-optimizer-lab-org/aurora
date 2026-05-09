@@ -11,7 +11,7 @@ from typing import Dict
 
 import numpy as np
 
-from quantforge.core.costs import CostModel
+from aurora.core.costs import CostModel
 
 
 @dataclass(frozen=True)

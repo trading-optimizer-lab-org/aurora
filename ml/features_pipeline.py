@@ -322,7 +322,7 @@ class FeaturePipeline:
         # Lazy import so missing optional deps in microstructure don't break
         # the rest of the pipeline.
         try:
-            from quantforge.ml.microstructure import (
+            from aurora.ml.microstructure import (
                 corwin_schultz_spread,
                 signed_volume,
             )

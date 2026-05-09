@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.twitter_alpha_bot import TwitterAlphaBot
+from aurora.experimental.twitter_alpha_bot import TwitterAlphaBot
 
 
 def test_default_watchlist_present():

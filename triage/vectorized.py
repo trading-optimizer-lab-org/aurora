@@ -13,7 +13,7 @@ turnover unit, both deducted from the gross return. This is NOT the
 official engine's cost model. It exists to give triage a fast,
 reproducible PnL signal that correlates well with the official engine's
 metrics on the same window. Anything that survives triage MUST be re-run
-on :func:`quantforge.core.engine.run_backtest` for promotion.
+on :func:`aurora.core.engine.run_backtest` for promotion.
 
 The math
 --------

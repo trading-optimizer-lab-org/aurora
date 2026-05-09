@@ -28,8 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from quantforge.governance.lifecycle import LifecycleState
-from quantforge.governance.risk_register import (
+from aurora.governance.lifecycle import LifecycleState
+from aurora.governance.risk_register import (
     ApprovalStatus,
     RiskRegister,
     StrategyRiskRecord,
@@ -228,7 +228,7 @@ class MakerCheckerFlow:
     def _emit_audit(self, event: ApprovalEvent) -> None:
         """Write the event to the agent gateway audit chain when available."""
         try:
-            from quantforge.agent_gateway.audit import AgentAudit, AgentAuditConfig
+            from aurora.agent_gateway.audit import AgentAudit, AgentAuditConfig
             cfg = AgentAuditConfig(log_path=str(self.audit_log_path), mirror_soc2=False)
             AgentAudit(cfg).append(
                 actor=event.actor,

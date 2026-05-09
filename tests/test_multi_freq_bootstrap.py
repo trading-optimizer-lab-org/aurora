@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.validation.multi_freq_bootstrap import MultiFrequencyBootstrap
+from aurora.core.seed import set_global_seed
+from aurora.validation.multi_freq_bootstrap import MultiFrequencyBootstrap
 
 
 @pytest.fixture

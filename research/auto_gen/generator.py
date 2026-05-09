@@ -34,8 +34,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.research.factory.spec import StrategySpec
-from quantforge.strategies.blocks.indicators import (
+from aurora.research.factory.spec import StrategySpec
+from aurora.strategies.blocks.indicators import (
     STANDARD_REGISTRY,
     IndicatorBlock,
     IndicatorRegistry,
@@ -196,7 +196,7 @@ class AtomicBlockGenerator:
                     f"{rule.comparator} "
                     f"{rule.block_b.name}({rule.block_b.params})"
                 ),
-                strategy_class="quantforge.research.auto_gen.generator.GeneratedRule",
+                strategy_class="aurora.research.auto_gen.generator.GeneratedRule",
                 params=rule.to_dict(),
                 expected_edge_bps=0.0,
                 regime_dependence=[],

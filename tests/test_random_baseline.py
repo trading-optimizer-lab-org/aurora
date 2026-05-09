@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.validation.random_baseline import random_baseline_test
+from aurora.validation.random_baseline import random_baseline_test
 
 
 def _gbm_returns(seed: int, n: int = 500) -> np.ndarray:

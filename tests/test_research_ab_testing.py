@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.research.ab_testing import ABTestFramework, ABTestResult
+from aurora.research.ab_testing import ABTestFramework, ABTestResult
 
 
 def test_welch_t_detects_difference():

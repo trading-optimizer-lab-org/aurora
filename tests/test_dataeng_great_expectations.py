@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.dataeng.great_expectations import (
+from aurora.dataeng.great_expectations import (
     DataQualityValidator,
     Expectation,
     GEConfig,

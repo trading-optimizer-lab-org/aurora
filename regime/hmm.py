@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from quantforge.core.metrics import compute_metrics
+from aurora.core.metrics import compute_metrics
 
 try:
     from hmmlearn.hmm import GaussianHMM as _SkGaussianHMM

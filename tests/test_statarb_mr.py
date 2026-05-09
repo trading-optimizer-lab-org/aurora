@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import StatArbMeanRev, StatArbMRConfig
-from quantforge.strategies.base import StrategySpec
+from aurora.strategies.library import StatArbMeanRev, StatArbMRConfig
+from aurora.strategies.base import StrategySpec
 
 
 @pytest.fixture

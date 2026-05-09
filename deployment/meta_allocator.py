@@ -31,9 +31,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.deployment.hrp import hrp_allocate
-from quantforge.deployment.risk_parity import risk_parity_weights
-from quantforge.deployment.black_litterman import (
+from aurora.deployment.hrp import hrp_allocate
+from aurora.deployment.risk_parity import risk_parity_weights
+from aurora.deployment.black_litterman import (
     BlackLittermanModel,
     market_implied_returns,
 )

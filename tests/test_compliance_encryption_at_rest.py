@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.compliance.encryption_at_rest import (
+from aurora.compliance.encryption_at_rest import (
     SQLCipherConfig,
     SQLCipherWrapper,
 )

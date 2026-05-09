@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from quantforge.core.snapshots import DataSnapshot
+    from aurora.core.snapshots import DataSnapshot
 
 PROJ = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA_CACHE = os.path.join(PROJ, "data_cache")
@@ -34,7 +34,8 @@ def _resolve_qf_cache() -> str:
     Never writes inside ``site-packages`` so the package directory stays
     read-only when installed from a wheel.
     """
-    env = os.environ.get("QF_CACHE")
+    from aurora.core.env_compat import aurora_env
+    env = aurora_env("AU_CACHE", "QF_CACHE")
     if env:
         return env
     legacy = os.path.join(PROJ, "quantforge", "data_cache_qf")
@@ -88,7 +89,7 @@ def _get_git_hash() -> Optional[str]:
     but does not always reap the child cleanly on Windows.
     """
     try:
-        from quantforge.registry.versioning import _run_git_proc
+        from aurora.registry.versioning import _run_git_proc
         rc, out = _run_git_proc(["rev-parse", "HEAD"], timeout=2.0)
     except Exception:
         return None
@@ -110,7 +111,7 @@ def _try_soc2_record(*, event_type: str, actor: str,
     callers depend on the OOS lock semantics, not on SOC2 success.
     """
     try:
-        from quantforge.compliance.soc2_audit import SOC2AuditTrail
+        from aurora.compliance.soc2_audit import SOC2AuditTrail
         SOC2AuditTrail().append(
             event_type=event_type,
             actor=actor,
@@ -289,7 +290,7 @@ class OOSGuard:
         if path is None:
             return
         # Late import to avoid potential cycles at module-load time.
-        from quantforge.registry.versioning import _exclusive_file_lock
+        from aurora.registry.versioning import _exclusive_file_lock
         with OOSGuard._lock_file_mutex:
             # Bare filenames (no directory component) yield "" from
             # dirname; skip makedirs to avoid FileNotFoundError on
@@ -464,7 +465,7 @@ class OOSGuard:
             lock_path: lock file to append to. Defaults to
                 :data:`DEFAULT_LOCK_PATH`.
         """
-        from quantforge.registry.versioning import _exclusive_file_lock
+        from aurora.registry.versioning import _exclusive_file_lock
         path = lock_path or DEFAULT_LOCK_PATH
         if path is None:
             return
@@ -526,7 +527,7 @@ class OOSGuard:
         fsync + ``os.replace`` so a kill between open() and the json
         dump never produces a zero-byte lock file.
         """
-        from quantforge.registry.versioning import _exclusive_file_lock
+        from aurora.registry.versioning import _exclusive_file_lock
         path = lock_path or DEFAULT_LOCK_PATH
         with cls._lock_file_mutex:
             if not os.path.exists(path):
@@ -656,8 +657,8 @@ def load_asset(symbol: str, source: str = "yfinance",
             # can see "process X read OOS for purpose Y at time T"
             # whether or not an OOSGuard context wrapped the call.
             try:
-                from quantforge.core.logging import get_logger
-                get_logger("quantforge.data_layer").debug(
+                from aurora.core.logging import get_logger
+                get_logger("aurora.data_layer").debug(
                     "OOS read (purpose=%s): load_asset(%s, include_oos=True)",
                     oos_purpose, symbol,
                 )
@@ -683,7 +684,7 @@ def load_asset(symbol: str, source: str = "yfinance",
     # the registry so provenance metadata gets stamped + tier-aware gating
     # is applied. ``None`` keeps every legacy caller working unchanged.
     if provider is not None:
-        from quantforge.core.data_providers import get_default_registry
+        from aurora.core.data_providers import get_default_registry
         registry = get_default_registry()
         ds = registry.fetch(provider, symbol, start=start, end=end)
         # ``ds.data`` may be a DataFrame (e.g. yahoo before column pick)
@@ -711,8 +712,8 @@ def load_asset(symbol: str, source: str = "yfinance",
         if not include_oos:
             s = s[s.index <= pd.Timestamp(IS_END)]
         if freeze:
-            from quantforge.core.snapshots import SnapshotStore
-            from quantforge.core.runtime_paths import snapshot_root as _snapshot_root
+            from aurora.core.snapshots import SnapshotStore
+            from aurora.core.runtime_paths import snapshot_root as _snapshot_root
             store = SnapshotStore(str(_snapshot_root()))
             snap = store.freeze(
                 s, symbol=symbol,
@@ -736,8 +737,8 @@ def load_asset(symbol: str, source: str = "yfinance",
     if require_snapshot_any:
         # Try SnapshotStore first. Late import to avoid module-load cycles.
         try:
-            from quantforge.core.snapshots import SnapshotStore
-            from quantforge.core.runtime_paths import snapshot_root as _snapshot_root
+            from aurora.core.snapshots import SnapshotStore
+            from aurora.core.runtime_paths import snapshot_root as _snapshot_root
             store = SnapshotStore(str(_snapshot_root()))
             snaps = store.get_by_symbol(symbol, start=start, end=end)
         except Exception:
@@ -749,7 +750,7 @@ def load_asset(symbol: str, source: str = "yfinance",
             # SHA-256 and raises ``IntegrityError`` on mismatch.
             chosen = snaps[-1]
             try:
-                from quantforge.core.snapshots import IntegrityError
+                from aurora.core.snapshots import IntegrityError
                 s, _snap = store.load(chosen.sha256)
             except IntegrityError as exc:
                 raise RuntimeError(
@@ -844,8 +845,8 @@ def load_asset(symbol: str, source: str = "yfinance",
 
     if freeze:
         # late import to avoid circular module-load order at runtime
-        from quantforge.core.snapshots import SnapshotStore
-        from quantforge.core.runtime_paths import snapshot_root as _snapshot_root
+        from aurora.core.snapshots import SnapshotStore
+        from aurora.core.runtime_paths import snapshot_root as _snapshot_root
         store = SnapshotStore(str(_snapshot_root()))
         snap = store.freeze(s, symbol=symbol,
                             provenance=provenance or source,
@@ -860,8 +861,8 @@ def load_from_snapshot(sha256: str) -> pd.Series:
     Verifies the SHA-256 hash. If the snapshot is locked (e.g. OOS slice),
     requires ``with OOSGuard("explicit_unlock"): ...`` to be active.
     """
-    from quantforge.core.snapshots import SnapshotStore
-    from quantforge.core.runtime_paths import snapshot_root as _snapshot_root
+    from aurora.core.snapshots import SnapshotStore
+    from aurora.core.runtime_paths import snapshot_root as _snapshot_root
     store = SnapshotStore(str(_snapshot_root()))
     prices, _snap = store.load(sha256)
     return prices

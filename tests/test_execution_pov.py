@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from quantforge.execution.pov import POVAlgo, POVConfig
+from aurora.execution.pov import POVAlgo, POVConfig
 
 
 class MockBroker:

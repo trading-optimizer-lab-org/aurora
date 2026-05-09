@@ -22,7 +22,7 @@ from datetime import date, datetime, timezone
 import pandas as pd
 import pytest
 
-from quantforge.data_contracts import (
+from aurora.data_contracts import (
     AvailabilityPolicy,
     ContractField,
     CorporateActionPolicy,

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from quantforge.strategies.rules.ir import (
+from aurora.strategies.rules.ir import (
     Action,
     ActionKind,
     BoolExpr,

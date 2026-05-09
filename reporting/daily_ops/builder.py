@@ -16,7 +16,7 @@ Design contract
 * Reports are deterministic given (config, inputs). No wall-clock
   side effects beyond ``asof_date`` (which the caller picks).
 * :attr:`DailyOpsReport.policy_hash` binds the report to the active
-  :class:`quantforge.core.protocol_policy.ProtocolPolicy`.
+  :class:`aurora.core.protocol_policy.ProtocolPolicy`.
 * Markdown and JSON outputs round-trip the same payload — regenerating
   ``to_markdown`` from the JSON content gives the same string.
 * Inputs (returns, positions, prices, regime, drift, etc.) are passed
@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from quantforge.core.protocol_policy import ProtocolPolicy
+from aurora.core.protocol_policy import ProtocolPolicy
 
 
 __all__ = [

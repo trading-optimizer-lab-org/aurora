@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.research.shadow_mode import ShadowModeRunner, ShadowReport
+from aurora.research.shadow_mode import ShadowModeRunner, ShadowReport
 
 
 def _flat(prices: pd.Series) -> np.ndarray:

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.regime.bayes_alpha import (
+from aurora.regime.bayes_alpha import (
     BayesAlphaResult,
     alpha_significance_test,
     bayesian_rolling_alpha,

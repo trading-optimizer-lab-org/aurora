@@ -5,18 +5,18 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from quantforge.research.auto_loop import (
+from aurora.research.auto_loop import (
     AutoLoopConfig,
     AutoResearchLoop,
     CycleSummary,
 )
-from quantforge.research.factory.outcomes import (
+from aurora.research.factory.outcomes import (
     CandidateRun,
     RejectionReason,
     ResearchOutcome,
     ResearchStage,
 )
-from quantforge.research.factory.spec import StrategySpec
+from aurora.research.factory.spec import StrategySpec
 
 # --------------------------------------------------------------------------
 # Fakes
@@ -41,7 +41,7 @@ class _FakeGenerator:
             StrategySpec.make(
                 name="MACross",
                 hypothesis="auto-loop test stub",
-                strategy_class="quantforge.strategies.library.MACross",
+                strategy_class="aurora.strategies.library.MACross",
                 params={"fast": 5 + i, "slow": 50 + i},
                 expected_edge_bps=10.0,
                 regime_dependence=["trending"],

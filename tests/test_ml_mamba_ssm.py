@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.mamba_ssm import (
+from aurora.ml.mamba_ssm import (
     MambaConfig,
     MambaForecaster,
     TORCH_AVAILABLE,

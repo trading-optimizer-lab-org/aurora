@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from quantforge.infra.gpu_runner import GPURunner, GPUConfig
+from aurora.infra.gpu_runner import GPURunner, GPUConfig
 
 
 def test_force_cpu_resolves_cpu_regardless_of_cuda():

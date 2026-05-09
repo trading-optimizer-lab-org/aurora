@@ -33,7 +33,7 @@ class QFPaperStrategy(LumibotStrategy):
     """Generic paper trading wrapper. Bind to any QF Strategy.
 
     Usage:
-        from quantforge.strategies.library import MACross
+        from aurora.strategies.library import MACross
         s = MACross(fast=20, slow=100)
         QFPaperStrategy.bind(s, symbol="SPY")
         # then deploy via Lumibot Trader
@@ -151,7 +151,7 @@ class QFPaperStrategy(LumibotStrategy):
         (with a WARNING) for tests / emergency operator overrides.
         """
         import logging
-        log = logging.getLogger("quantforge.deployment.paper")
+        log = logging.getLogger("aurora.deployment.paper")
         if getattr(self, "qf_bypass_validation_check", False):
             log.warning(
                 "validation_marker_bypassed: bypass_validation_check=True; "
@@ -163,7 +163,7 @@ class QFPaperStrategy(LumibotStrategy):
             return
         strategy_name = type(qf_strategy).__name__
         try:
-            from quantforge.deployment.preflight import check_validation_marker
+            from aurora.deployment.preflight import check_validation_marker
             check = check_validation_marker(
                 strategy_name,
                 project_dir=getattr(self, "qf_project_dir", "."),

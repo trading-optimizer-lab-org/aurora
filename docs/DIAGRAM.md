@@ -1,6 +1,6 @@
-# QuantForge Architecture Diagram
+# Aurora Architecture Diagram
 
-ASCII data-flow diagram of the QuantForge pipeline. Each layer is responsible
+ASCII data-flow diagram of the Aurora pipeline. Each layer is responsible
 for one concern; each arrow is one-way (no cross-layer leakage). The OOS data
 is locked behind `OOSGuard` until the IS-only optimization stage is complete.
 

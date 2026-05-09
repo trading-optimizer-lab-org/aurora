@@ -19,8 +19,8 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, ZERO_costs
 
 
 def _spp_worker(args):
@@ -100,7 +100,7 @@ def spp(strategy_factory_with_params: Callable, prices: pd.Series,
         raise ValueError("center_on='current' requires current_params dict")
     active_params = current_params if current_params is not None else {}
 
-    from quantforge.core.seed import child_rng
+    from aurora.core.seed import child_rng
     rng = child_rng(seed_name)
 
     # Derive a deterministic parent seed for child workers when not provided.

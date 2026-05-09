@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.cli import forge as cli
+from aurora.cli import forge as cli
 
 
 # ---------------------------------------------------------------------------
@@ -35,9 +35,9 @@ def _patch_load_asset(monkeypatch, prices=None):
     prices = prices if prices is not None else _synth_prices()
     fake = lambda *a, **kw: prices
     monkeypatch.setattr(
-        "quantforge.core.data_layer.load_asset", fake, raising=True,
+        "aurora.core.data_layer.load_asset", fake, raising=True,
     )
-    import quantforge.deployment.preflight as pf
+    import aurora.deployment.preflight as pf
     monkeypatch.setattr(pf, "load_asset", fake, raising=True)
     return prices
 

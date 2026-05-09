@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-_log = logging.getLogger("quantforge.core.audit_rotation")
+_log = logging.getLogger("aurora.core.audit_rotation")
 
 
 # --------------------------------------------------------------------------

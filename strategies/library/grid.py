@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from quantforge.strategies.base import Strategy, StrategySpec
+from aurora.strategies.base import Strategy, StrategySpec
 
 
 class GridStrategy(Strategy):
@@ -55,7 +55,7 @@ class GridStrategy(Strategy):
         return StrategySpec.make(
             name="GridStrategy",
             hypothesis="Grid trading around a rolling anchor price.",
-            strategy_class="quantforge.strategies.library.grid.GridStrategy",
+            strategy_class="aurora.strategies.library.grid.GridStrategy",
             params={
                 "lookback": 50,
                 "step_pct": 0.02,

@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.costs import ZERO_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.slippage import (
+from aurora.core.costs import ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.slippage import (
     FixedBasisPointsSlippage,
     LinearSlippage,
     SlippageModel,

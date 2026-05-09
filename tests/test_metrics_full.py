@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.analytics import metrics_full as mf
+from aurora.analytics import metrics_full as mf
 
 
 # ---------- fixtures ----------

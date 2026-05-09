@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from quantforge.portfolio import (
+from aurora.portfolio import (
     contribution_to_return,
     contribution_to_risk,
     decompose_return,

@@ -16,7 +16,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.deployment.hrp import hrp_allocate
+from aurora.deployment.hrp import hrp_allocate
 
 
 @dataclass

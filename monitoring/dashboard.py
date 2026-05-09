@@ -50,7 +50,7 @@ except Exception:  # pragma: no cover - exercised by environment
 @dataclass
 class DashboardConfig:
     """Configuration for the Streamlit dashboard."""
-    journal_path: str = "quantforge.db"
+    journal_path: str = "aurora.db"
     refresh_seconds: int = 30
     show_alerts: bool = True
     show_per_strategy: bool = True
@@ -557,9 +557,10 @@ def _streamlit_entrypoint() -> int:
     When invoked under ``streamlit run``, Streamlit imports this module as a
     script, so calling ``run_dashboard()`` here renders the page.
     """
+    from aurora.core.env_compat import aurora_env
     cfg = DashboardConfig(
-        journal_path=os.environ.get("QF_JOURNAL", "quantforge.db"),
-        refresh_seconds=int(os.environ.get("QF_REFRESH", "30")),
+        journal_path=aurora_env("AU_JOURNAL", "QF_JOURNAL", "aurora.db"),
+        refresh_seconds=int(aurora_env("AU_REFRESH", "QF_REFRESH", "30")),
     )
     run_dashboard(cfg)
     return 0

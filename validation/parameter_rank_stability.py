@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from quantforge.core.seed import child_rng
+from aurora.core.seed import child_rng
 
 
 def _bootstrap_sample(rng: np.random.Generator, sample: pd.Series) -> pd.Series:

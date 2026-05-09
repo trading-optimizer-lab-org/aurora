@@ -48,7 +48,7 @@ def _canonical_payload(d: dict) -> str:
     """Return a deterministic JSON payload for hashing.
 
     Sorted keys, no whitespace, ASCII-safe -- the exact contract used by
-    :class:`quantforge.core.protocol_policy.ProtocolPolicy.compute_hash`
+    :class:`aurora.core.protocol_policy.ProtocolPolicy.compute_hash`
     so this codebase has one canonical hashing convention.
     """
     return json.dumps(
@@ -86,7 +86,7 @@ class StrategySpec:
         failure_modes: list of explicit failure-mode tags so a reviewer can
             check whether the candidate failed in a known way.
         strategy_class: fully-qualified import path
-            (e.g. ``"quantforge.strategies.library.ma_cross.MACross"``).
+            (e.g. ``"aurora.strategies.library.ma_cross.MACross"``).
             The factory imports and instantiates this with ``params``.
         params: keyword arguments passed to ``strategy_class``.
         universe: list of tickers the strategy trades (single-asset = list
@@ -282,7 +282,7 @@ class StrategySpec:
         """Return a copy with ``policy_hash`` set to the given value.
 
         Used by the factory at submit time to bind the spec to the
-        active :class:`~quantforge.core.protocol_policy.ProtocolPolicy`.
+        active :class:`~aurora.core.protocol_policy.ProtocolPolicy`.
         Generators are forbidden from setting ``policy_hash`` themselves;
         the factory always overwrites it.
         """

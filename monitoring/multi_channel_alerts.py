@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-_log = logging.getLogger("quantforge.monitoring.multi_channel_alerts")
+_log = logging.getLogger("aurora.monitoring.multi_channel_alerts")
 
 
 # --------------------------------------------------------------------------

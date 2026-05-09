@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.transformer_multi_asset import (
+from aurora.ml.transformer_multi_asset import (
     MultiAssetTransformer,
     MultiAssetTransformerConfig,
     TORCH_AVAILABLE,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.prediction_markets import PolymarketAdapter, _mock_fetch
+from aurora.experimental.prediction_markets import PolymarketAdapter, _mock_fetch
 
 
 def test_default_uses_mock_fetcher():

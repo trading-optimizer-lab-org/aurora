@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.validation.adversarial_backtest import AdversarialBacktester
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library.ma_cross import MACross
+from aurora.validation.adversarial_backtest import AdversarialBacktester
 
 
 @pytest.fixture

@@ -30,7 +30,7 @@ _ALLOWED_IMPORTS = frozenset({
     "__future__",  # ``from __future__ import annotations`` is benign.
     "numpy",
     "pandas",
-    "quantforge.strategies.base",
+    "aurora.strategies.base",
 })
 
 # Names that must never appear at AST level - they are common sandbox-escape
@@ -179,7 +179,7 @@ SYSTEM_PROMPT = """You are a quantitative research assistant for QuantForge, a b
 
 QuantForge Strategy interface conventions:
 - Strategy subclasses live in quantforge/strategies/library/.
-- Each subclass inherits from quantforge.strategies.base.Strategy.
+- Each subclass inherits from aurora.strategies.base.Strategy.
 - Implement signals(self, prices: pd.Series) -> np.ndarray.
 - Output array length matches len(prices); values in [-1.0, 1.0]; no NaN.
 - weights[i] is the position at the close of bar i; it is applied to the

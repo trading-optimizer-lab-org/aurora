@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from quantforge.strategies.blocks import (
+from aurora.strategies.blocks import (
     STANDARD_REGISTRY,
     IndicatorBlock,
     IndicatorRegistry,
     ParameterRange,
 )
-from quantforge.strategies.blocks.indicators import require_anti_lookahead
+from aurora.strategies.blocks.indicators import require_anti_lookahead
 
 
 def _gbm_prices(n: int = 600, seed: int = 1) -> np.ndarray:

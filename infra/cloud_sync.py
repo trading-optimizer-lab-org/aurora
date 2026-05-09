@@ -148,7 +148,7 @@ class CloudSync:
         # R75: default mock root resolves through runtime_paths so it
         # never recreates the legacy in-repo `quantforge/data_cache_qf/`
         # ghost directory.
-        from quantforge.core.runtime_paths import cache_dir
+        from aurora.core.runtime_paths import cache_dir
         return str(
             cache_dir() / "_cloud_mock"
             / self.config.provider / self.config.bucket

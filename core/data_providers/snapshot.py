@@ -42,7 +42,7 @@ class SnapshotProvider(BaseDataProvider):
 
     def __init__(self, root_dir: Optional[str] = None) -> None:
         if root_dir is None:
-            from quantforge.core.runtime_paths import snapshot_root
+            from aurora.core.runtime_paths import snapshot_root
             root_dir = str(snapshot_root())
         self.root_dir = root_dir
 
@@ -53,7 +53,7 @@ class SnapshotProvider(BaseDataProvider):
         end: Optional[pd.Timestamp],
         **kwargs: Any,
     ) -> pd.Series:
-        from quantforge.core.snapshots import SnapshotStore
+        from aurora.core.snapshots import SnapshotStore
         store = SnapshotStore(self.root_dir)
 
         sha = kwargs.get("sha256")

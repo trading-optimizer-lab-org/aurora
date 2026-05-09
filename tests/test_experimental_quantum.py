@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.experimental.quantum_placeholder import (
+from aurora.experimental.quantum_placeholder import (
     QISKIT_AVAILABLE,
     QuantumPortfolioOptimizer,
 )

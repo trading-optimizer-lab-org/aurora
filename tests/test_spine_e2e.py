@@ -30,7 +30,7 @@ Known issues found while writing this test
   preserved through ``audit_report.policy_hash``. The provenance test
   (``test_e2e_full_chain_provenance``) asserts the audit report's policy_hash,
   not a non-existent ``ValidationReport.policy_hash``.
-* :class:`quantforge.core.snapshots.DataSnapshot` is frozen, so altering
+* :class:`aurora.core.snapshots.DataSnapshot` is frozen, so altering
   ``policy_hash`` post-freeze must use ``dataclasses.replace``.
 """
 from __future__ import annotations
@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.agent_gateway import (
+from aurora.agent_gateway import (
     ActionRequest,
     ActionStatus,
     AgentGateway,
@@ -53,14 +53,14 @@ from quantforge.agent_gateway import (
     TokenScope,
     issue_token,
 )
-from quantforge.agent_gateway.gateway import (
+from aurora.agent_gateway.gateway import (
     AuthorizationError,
     CeremonyError,
     LIVE_AUTH_ENV,
     LIVE_CEREMONY_PHASE,
     operator_sign,
 )
-from quantforge.agents.auditor import (
+from aurora.agents.auditor import (
     AuditReport,
     AuditorOrchestrator,
     HypothesisReviewer,
@@ -70,23 +70,23 @@ from quantforge.agents.auditor import (
     ReviewSeverity,
     ReviewerAgent,
 )
-from quantforge.core.data_layer import OOSGuard
-from quantforge.core.data_providers import (
+from aurora.core.data_layer import OOSGuard
+from aurora.core.data_providers import (
     DataProviderRegistry,
     TierPermissionError,
 )
-from quantforge.core.data_providers.synthetic import SyntheticProvider
-from quantforge.core.protocol_policy import ProtocolPolicy, set_active_policy
-from quantforge.core.snapshots import DataSnapshot, SnapshotStore
-from quantforge.deployment.brokers import (
+from aurora.core.data_providers.synthetic import SyntheticProvider
+from aurora.core.protocol_policy import ProtocolPolicy, set_active_policy
+from aurora.core.snapshots import DataSnapshot, SnapshotStore
+from aurora.deployment.brokers import (
     AuditLog,
     BrokerConfig,
     KillSwitch,
     Order,
     PaperBroker,
 )
-from quantforge.registry.experiments import ExperimentTracker
-from quantforge.validation.pipeline import validate_pipeline
+from aurora.registry.experiments import ExperimentTracker
+from aurora.validation.pipeline import validate_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ def test_e2e_full_spine_paper_happy_path(
 
 def test_e2e_oos_locked_data_refused_without_ceremony():
     """``load_up_to_tier(OOS_LOCKED)`` must refuse without an OOSGuard."""
-    from quantforge.core.data_tiers import load_up_to_tier
+    from aurora.core.data_tiers import load_up_to_tier
     # No active OOSGuard -> RuntimeError refusing the load.
     with pytest.raises(RuntimeError, match="explicit_unlock_oos_locked"):
         load_up_to_tier("SPY", max_tier="OOS_LOCKED")
@@ -714,12 +714,12 @@ def test_e2e_research_factory_full_path(
     """Submit a StrategySpec through the research factory; assert the
     factory never reads OOS_LOCKED, and a clean candidate ends in the
     review queue."""
-    from quantforge.research.factory.factory import (
+    from aurora.research.factory.factory import (
         ResearchFactory,
         ResearchPipelineConfig,
     )
-    from quantforge.research.factory.outcomes import ResearchStage
-    from quantforge.research.factory.spec import StrategySpec
+    from aurora.research.factory.outcomes import ResearchStage
+    from aurora.research.factory.spec import StrategySpec
 
     # Stub backtest + walk-forward functions: bypass the heavy engine path
     # and make sure the candidate survives every gate so it lands in the
@@ -768,7 +768,7 @@ def test_e2e_research_factory_full_path(
     spec = StrategySpec.make(
         name="SpineE2E_Strategy",
         hypothesis="A trivial buy-and-hold for spine integration tests.",
-        strategy_class="quantforge.tests.test_spine_e2e._AlwaysLongStrategy",
+        strategy_class="aurora.tests.test_spine_e2e._AlwaysLongStrategy",
         params={},
         expected_edge_bps=10.0,
         regime_dependence=["any"],
@@ -849,7 +849,7 @@ def test_e2e_full_chain_provenance(
     """End-to-end provenance: the same policy_hash thread runs from spec
     through snapshot -> audit -> gateway audit entry."""
     # 1. Spec carries the policy_hash the factory will bind.
-    from quantforge.research.factory.spec import StrategySpec
+    from aurora.research.factory.spec import StrategySpec
     spec = StrategySpec.make(
         name="ProvenanceStrategy",
         hypothesis="provenance test",
@@ -957,7 +957,7 @@ def test_e2e_full_chain_provenance(
 
 def test_e2e_negative_path_order_without_gateway_commit_refused(gateway):
     """Negative path: cannot push() without commit()."""
-    from quantforge.agent_gateway.gateway import (
+    from aurora.agent_gateway.gateway import (
         CommittedAction, GatewayStateError, StagedAction,
     )
 

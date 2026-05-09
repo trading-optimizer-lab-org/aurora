@@ -11,17 +11,17 @@ from typing import Any, Callable, Optional, cast
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import CostModel, IBKR_costs
-from quantforge.core.data_layer import IS_END, OOS_START, OOS_END, OOSGuard, split_is_oos
-from quantforge.core.data_tiers import split_by_tier
-from quantforge.validation.walk_forward import walk_forward, WFWindow
-from quantforge.validation.monte_carlo import monte_carlo_bootstrap, monte_carlo_trade_reorder
-from quantforge.validation.spp import spp
-from quantforge.validation.lookahead_check import runtime_lookahead_check
-from quantforge.validation.deflated_sharpe import deflated_sharpe_check
-from quantforge.validation.noise_injection import noise_injection, NoiseInjectionResult
-from quantforge.validation.gap_sim import gap_sim, GapSimResult
+from aurora.core.engine import run_backtest
+from aurora.core.costs import CostModel, IBKR_costs
+from aurora.core.data_layer import IS_END, OOS_START, OOS_END, OOSGuard, split_is_oos
+from aurora.core.data_tiers import split_by_tier
+from aurora.validation.walk_forward import walk_forward, WFWindow
+from aurora.validation.monte_carlo import monte_carlo_bootstrap, monte_carlo_trade_reorder
+from aurora.validation.spp import spp
+from aurora.validation.lookahead_check import runtime_lookahead_check
+from aurora.validation.deflated_sharpe import deflated_sharpe_check
+from aurora.validation.noise_injection import noise_injection, NoiseInjectionResult
+from aurora.validation.gap_sim import gap_sim, GapSimResult
 
 
 # P0.A: list of mandatory gate identifiers comes from ``ProtocolPolicy``.
@@ -30,9 +30,9 @@ from quantforge.validation.gap_sim import gap_sim, GapSimResult
 # sync with the protocol document.
 def get_mandatory_gates() -> list[str]:
     """Return the active mandatory-gate identifiers from
-    :class:`quantforge.core.protocol_policy.ProtocolPolicy`.
+    :class:`aurora.core.protocol_policy.ProtocolPolicy`.
     """
-    from quantforge.core.protocol_policy import get_active_policy
+    from aurora.core.protocol_policy import get_active_policy
     return list(get_active_policy().mandatory_gates)
 
 
@@ -151,7 +151,7 @@ def validate_pipeline(
     Tier semantics
     --------------
     Per ``RESEARCH_PROTOCOL.md`` the price history is partitioned into
-    five tiers (see :mod:`quantforge.core.data_tiers`):
+    five tiers (see :mod:`aurora.core.data_tiers`):
 
       * ``IS_TRAIN``  - 1995-01-01..2010-12-31 (model fit)
       * ``IS_VALID``  - 2011-01-01..2012-12-31 (inner WF holdout)
@@ -270,7 +270,7 @@ def validate_pipeline(
         canonical_end = pd.Timestamp(DEFAULT_WF[-1].oos_end)
         if canonical_end < idx_start or canonical_start > idx_end:
             # Carve four equal IS/OOS pairs across the actual date span.
-            from quantforge.validation.walk_forward import generate_wf_windows
+            from aurora.validation.walk_forward import generate_wf_windows
             wf_windows = generate_wf_windows(
                 prices, n_windows=4, oos_pct=0.20, mode="rolling"
             )
@@ -460,7 +460,7 @@ def validate_pipeline(
     if auditor_context is not None:
         try:
             if auditor_orchestrator is None:
-                from quantforge.agents.auditor import AuditorOrchestrator
+                from aurora.agents.auditor import AuditorOrchestrator
                 auditor_orchestrator = AuditorOrchestrator.default()
             auditor = cast(Any, auditor_orchestrator)
             gate_result = auditor.gate(auditor_context)
@@ -481,7 +481,7 @@ def validate_pipeline(
     # On overall PASS, drop a marker file so preflight can verify provenance.
     if overall:
         try:
-            from quantforge.deployment.preflight import write_validation_marker
+            from aurora.deployment.preflight import write_validation_marker
             write_validation_marker(
                 strategy_name=name,
                 metrics={

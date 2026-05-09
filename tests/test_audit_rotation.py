@@ -5,7 +5,7 @@ import gzip
 import json
 from pathlib import Path
 
-from quantforge.core.audit_rotation import (
+from aurora.core.audit_rotation import (
     RotationPolicy,
     prune_old_segments,
     rotate_if_needed,

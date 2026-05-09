@@ -14,8 +14,8 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from quantforge.core.costs import IBKR_costs
-from quantforge.core.metrics import compute_metrics
+from aurora.core.costs import IBKR_costs
+from aurora.core.metrics import compute_metrics
 
 
 @dataclass(frozen=True)
@@ -113,7 +113,7 @@ def bench_single_asset_30y(*, seed: int = 42) -> BenchmarkResult:
     rng = np.random.default_rng(seed)
     rets = rng.normal(0.0005, 0.01, size=n_bars)
     weights = (np.cumsum(rets) > 0).astype(float)
-    from quantforge.core.costs import apply_costs
+    from aurora.core.costs import apply_costs
     t0 = time.perf_counter()
     net = apply_costs(weights, rets, IBKR_costs)
     metrics = compute_metrics(net, ppy=252)

@@ -8,34 +8,34 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from quantforge.agent_gateway.sealed_envelope import (
+from aurora.agent_gateway.sealed_envelope import (
     SealedEnvelope,
     open_envelope,
     read_envelope,
     seal_envelope,
     write_envelope,
 )
-from quantforge.analytics.capacity import (
+from aurora.analytics.capacity import (
     CapacityEstimate,
     estimate_capacity,
 )
-from quantforge.core.costs import CostModel
-from quantforge.core.rolling_kyle import KyleEstimate, rolling_kyle_lambda
-from quantforge.deployment.dynamic_caps import (
+from aurora.core.costs import CostModel
+from aurora.core.rolling_kyle import KyleEstimate, rolling_kyle_lambda
+from aurora.deployment.dynamic_caps import (
     DynamicCapConfig,
     compute_dynamic_cap,
     reject_oversized_order,
 )
-from quantforge.research.refit_cadence import (
+from aurora.research.refit_cadence import (
     CadenceCandidate,
     optimise_refit_cadence,
     standard_cadence_grid,
 )
-from quantforge.validation.adversarial_markets import (
+from aurora.validation.adversarial_markets import (
     AdversarialConfig,
     generate_adversarial_market,
 )
-from quantforge.validation.audit_replay import replay_session
+from aurora.validation.audit_replay import replay_session
 
 
 # --------------------------------------------------------------------------

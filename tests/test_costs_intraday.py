@@ -1,4 +1,4 @@
-"""Tests for quantforge.core.costs_intraday (Batch M.3)."""
+"""Tests for aurora.core.costs_intraday (Batch M.3)."""
 from __future__ import annotations
 
 import math
@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.costs_intraday import (
+from aurora.core.costs_intraday import (
     IntradayCostModel,
     default_crypto_curve,
     default_us_equity_curve,

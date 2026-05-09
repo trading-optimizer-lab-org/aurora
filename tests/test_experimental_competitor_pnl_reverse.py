@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.experimental.competitor_pnl_reverse import CompetitorPnLReverseEngineer
+from aurora.experimental.competitor_pnl_reverse import CompetitorPnLReverseEngineer
 
 
 def test_recovers_known_weights_approximately():

@@ -13,7 +13,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.seed import get_seed
+from aurora.core.seed import get_seed
 
 try:
     from sklearn.model_selection import KFold, cross_val_score

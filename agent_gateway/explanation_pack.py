@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, List, Tuple
 
-from quantforge.agent_gateway.research_agents import AgentComment, AgentRole
+from aurora.agent_gateway.research_agents import AgentComment, AgentRole
 
 
 _DEFAULT_NON_AUTHORITY_WARNING = (

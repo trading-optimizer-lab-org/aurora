@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library import MACross
-from quantforge.validation.retraining import (
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library import MACross
+from aurora.validation.retraining import (
     RetrainResult,
     simulate_retraining,
 )

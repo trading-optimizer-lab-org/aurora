@@ -27,11 +27,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.costs import ZERO_costs
-from quantforge.strategies.library import MACross
-from quantforge.validation import pipeline as pipe_mod
-from quantforge.validation.pipeline import validate_pipeline
-from quantforge.validation.walk_forward import WFWindow
+from aurora.core.costs import ZERO_costs
+from aurora.strategies.library import MACross
+from aurora.validation import pipeline as pipe_mod
+from aurora.validation.pipeline import validate_pipeline
+from aurora.validation.walk_forward import WFWindow
 
 
 def _prices(n: int = 1500, seed: int = 17) -> pd.Series:

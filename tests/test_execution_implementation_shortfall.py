@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.execution.implementation_shortfall import (
+from aurora.execution.implementation_shortfall import (
     ImplementationShortfallOptimizer,
     ISConfig,
 )

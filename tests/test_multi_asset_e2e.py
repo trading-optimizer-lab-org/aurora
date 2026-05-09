@@ -14,11 +14,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine_multi import MultiAssetEngine, MultiAssetResult
-from quantforge.core.costs import ZERO_costs
-from quantforge.deployment.hrp import hrp_allocate
-from quantforge.deployment.black_litterman import (
+from aurora.core.seed import set_global_seed
+from aurora.core.engine_multi import MultiAssetEngine, MultiAssetResult
+from aurora.core.costs import ZERO_costs
+from aurora.deployment.hrp import hrp_allocate
+from aurora.deployment.black_litterman import (
     BlackLittermanModel,
     market_implied_returns,
 )
@@ -201,7 +201,7 @@ def test_e2e_pipeline_no_nan_propagation(three_asset_data):
 
 def test_e2e_with_costs_keeps_finite(three_asset_data):
     """Same pipeline but with non-zero costs. Equity must remain finite."""
-    from quantforge.core.costs import IBKR_costs
+    from aurora.core.costs import IBKR_costs
 
     price_dict, rets_df = three_asset_data
     T = len(rets_df)

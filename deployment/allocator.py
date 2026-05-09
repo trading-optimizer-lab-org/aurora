@@ -16,7 +16,7 @@ Conventions:
 - Weights are computed at rebalance bar i using returns up to and including i,
   then APPLIED starting at bar i+1 (anti-lookahead — weights at bar t consume
   returns at bar t+1 in the meta-portfolio).
-- Per-strategy returns come from quantforge.core.engine.run_backtest with the
+- Per-strategy returns come from aurora.core.engine.run_backtest with the
   user-supplied CostModel; the allocator does not double-charge costs.
 - Final weights sum to 1.0 (fully invested across strategies). Each strategy
   signal can still be in [-1, 1] internally.
@@ -28,10 +28,10 @@ import math
 import numpy as np
 import pandas as pd
 
-from quantforge.core.costs import CostModel, ZERO_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.metrics import Metrics, compute_metrics
-from quantforge.strategies.base import Strategy
+from aurora.core.costs import CostModel, ZERO_costs
+from aurora.core.engine import run_backtest
+from aurora.core.metrics import Metrics, compute_metrics
+from aurora.strategies.base import Strategy
 
 
 _VALID_METHODS = ("equal_weight", "equal_vol", "risk_parity", "inverse_dd")

@@ -12,7 +12,7 @@ __all__: list[str] = []
 
 def _try_export(module_name: str, symbols: tuple[str, ...]) -> None:
     try:
-        mod = __import__(f"quantforge.dataeng.{module_name}", fromlist=symbols)
+        mod = __import__(f"aurora.dataeng.{module_name}", fromlist=symbols)
     except Exception:  # noqa: BLE001
         return
     for sym in symbols:

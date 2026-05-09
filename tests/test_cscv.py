@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.validation.cscv_pbo import (
+from aurora.core.seed import set_global_seed
+from aurora.validation.cscv_pbo import (
     cscv,
     CSCVResult,
     cscv_summary_table,
@@ -156,7 +156,7 @@ def test_cscv_stratified_block_coverage_uniform():
     combos, the expected per-block IS count is M*half/S = M/2.
     Stratified sampling should keep max-min spread below ~10% of expected.
     """
-    from quantforge.validation.cscv_pbo import _stratified_sample_combos
+    from aurora.validation.cscv_pbo import _stratified_sample_combos
 
     set_global_seed(7)
     rng = np.random.default_rng(7)

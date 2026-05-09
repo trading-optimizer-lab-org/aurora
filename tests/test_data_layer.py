@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.data_layer import (
+from aurora.core.data_layer import (
     IS_END,
     OOS_START,
     OOSGuard,
@@ -19,7 +19,7 @@ from quantforge.core.data_layer import (
     load_from_snapshot,
     split_is_oos,
 )
-from quantforge.core.snapshots import DataSnapshot, IntegrityError, SnapshotStore
+from aurora.core.snapshots import DataSnapshot, IntegrityError, SnapshotStore
 
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "data_cache_qf")
@@ -83,7 +83,7 @@ def test_data_layer_freeze_integration(tmp_path: Path, monkeypatch):
     the repo. Marked ``integration``: requires SPY parquet cache.
     """
     _spy_required()
-    import quantforge.core.data_layer as dl
+    import aurora.core.data_layer as dl
     monkeypatch.setattr(dl, "PROJ", str(tmp_path))
 
     out = load_asset("SPY", include_oos=False, freeze=True, provenance="parquet")
@@ -111,7 +111,7 @@ def test_data_layer_freeze_oos_is_locked(tmp_path: Path, monkeypatch):
     Marked ``integration``: requires SPY parquet cache.
     """
     _spy_required()
-    import quantforge.core.data_layer as dl
+    import aurora.core.data_layer as dl
     monkeypatch.setattr(dl, "PROJ", str(tmp_path))
 
     with OOSGuard("post_ga_validation"):

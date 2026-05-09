@@ -4,16 +4,16 @@ from __future__ import annotations
 import json
 
 import pytest
-from quantforge.agents.auditor.base import (
+from aurora.agents.auditor.base import (
     ReviewContext,
     ReviewSeverity,
 )
-from quantforge.agents.auditor.llm_augmenter import (
+from aurora.agents.auditor.llm_augmenter import (
     AnthropicLLMProvider,
     MockLLMProvider,
     make_augmenter,
 )
-from quantforge.core.protocol_policy import ProtocolPolicy
+from aurora.core.protocol_policy import ProtocolPolicy
 
 # --------------------------------------------------------------------------
 # helpers

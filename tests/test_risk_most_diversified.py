@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.risk.most_diversified import MostDiversifiedAlloc
+from aurora.risk.most_diversified import MostDiversifiedAlloc
 
 
 def test_md_simplex():

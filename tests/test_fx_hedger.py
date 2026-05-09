@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.deployment.fx_hedger import (
+from aurora.deployment.fx_hedger import (
     FXHedgeResult,
     FXHedger,
     FXHedgerConfig,

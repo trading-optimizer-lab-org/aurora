@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.options_strategies import (
+from aurora.markets.options_strategies import (
     OptionsStrategyBuilder,
     OptionsStrategyConfig,
 )

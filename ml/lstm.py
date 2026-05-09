@@ -18,19 +18,19 @@ import numpy as np
 import pandas as pd
 
 try:  # lazy availability flag
-    import torch
-    import torch.nn as _nn
+    import torch  # type: ignore
+    import torch.nn as _nn  # type: ignore
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment dependent
-    torch = None
-    _nn = None
+    torch = None  # type: ignore
+    _nn = None  # type: ignore
     TORCH_AVAILABLE = False
 
 
 def _require_torch() -> None:
     if not TORCH_AVAILABLE:
         raise ImportError(
-            "quantforge.ml.lstm requires torch. Install with: "
+            "aurora.ml.lstm requires torch. Install with: "
             "uv add torch  (or: pip install torch)"
         )
 
@@ -115,7 +115,7 @@ def make_sequences(
     last_t = T - 1 - horizon
     if last_t < first_t:
         empty_X = np.empty((0, seq_len, n_features), dtype=np.float32)
-        empty_y: np.ndarray = np.empty((0,), dtype=np.float32)
+        empty_y = np.empty((0,), dtype=np.float32)
         return empty_X, empty_y, features.index[:0]
 
     n = last_t - first_t + 1
@@ -184,7 +184,7 @@ class LSTMForecaster:
         _require_torch()
         # Respect global seed if set.
         try:
-            from quantforge.core.seed import get_seed
+            from aurora.core.seed import get_seed  # type: ignore
             s = get_seed()
             if s is not None:
                 torch.manual_seed(int(s))
@@ -217,7 +217,7 @@ class LSTMForecaster:
 
         # Deterministic shuffling for the DataLoader.
         try:
-            from quantforge.core.seed import get_seed
+            from aurora.core.seed import get_seed  # type: ignore
             seed_val = get_seed()
         except ImportError:
             seed_val = None
@@ -381,7 +381,7 @@ def walk_forward_train(
         # above, but the positional path is also strictly faster.
         first_te_pos_in_features = test_lo + (seq_len - 1)
         n_te = len(idx_te)
-        pred_positions: np.ndarray = np.arange(
+        pred_positions = np.arange(
             first_te_pos_in_features + horizon,
             first_te_pos_in_features + horizon + n_te,
             dtype=int,

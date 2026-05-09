@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from quantforge.execution.twap import TWAPAlgo, TWAPConfig
+from aurora.execution.twap import TWAPAlgo, TWAPConfig
 
 
 class MockBroker:

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
-from quantforge.marketdata.dark_pool_prints import (
+from aurora.marketdata.dark_pool_prints import (
     DarkPoolDetector,
     DarkPoolConfig,
 )

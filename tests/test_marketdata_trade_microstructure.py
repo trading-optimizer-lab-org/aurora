@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.marketdata.trade_microstructure import (
+from aurora.marketdata.trade_microstructure import (
     TradeMicrostructureAnalyzer,
     MicrostructureConfig,
 )

@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from quantforge.core.seed import set_global_seed, child_rng
-from quantforge.validation.monte_carlo import (
+from aurora.core.seed import set_global_seed, child_rng
+from aurora.validation.monte_carlo import (
     MCResult,
     circular_block_bootstrap,
     monte_carlo_bootstrap,

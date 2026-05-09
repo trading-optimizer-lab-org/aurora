@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.registry.versioning import (
+from aurora.registry.versioning import (
     StrategyVersion,
     VersionRegistry,
     compute_strategy_version,
@@ -16,7 +16,7 @@ from quantforge.registry.versioning import (
     hash_strategy_code,
     is_git_dirty,
 )
-from quantforge.strategies.base import Strategy
+from aurora.strategies.base import Strategy
 
 
 class _StratA(Strategy):
@@ -207,7 +207,7 @@ def test_versioning_handles_numba_decorated_fn(monkeypatch):
 
     Simulate by monkeypatching ``inspect.getsource`` to raise OSError.
     """
-    import quantforge.registry.versioning as ver_mod
+    import aurora.registry.versioning as ver_mod
 
     def _raise_oserror(*args, **kwargs):
         raise OSError("could not get source code")
@@ -227,7 +227,7 @@ def test_versioning_handles_numba_decorated_fn(monkeypatch):
 
 def test_versioning_handles_typeerror_fallback(monkeypatch):
     """TypeError from getsource (e.g., builtin/JIT object) also falls back."""
-    import quantforge.registry.versioning as ver_mod
+    import aurora.registry.versioning as ver_mod
 
     def _raise_typeerror(*args, **kwargs):
         raise TypeError("module, class, method, function, traceback, ...")
@@ -246,7 +246,7 @@ def test_versioning_git_status_timeout(monkeypatch):
     timeout and not propagate it; ``_git_head`` returns the
     ``GIT_UNAVAILABLE`` sentinel.
     """
-    import quantforge.registry.versioning as ver_mod
+    import aurora.registry.versioning as ver_mod
 
     def _fake_timeout(args, timeout):
         # The shipped helper uses Popen+communicate; on timeout it
@@ -305,7 +305,7 @@ def test_versioning_atomic_write(tmp_path, monkeypatch):
     """_write_all must call os.fsync before the rename so a crash between
     write and rename leaves a fully-flushed file on disk.
     """
-    import quantforge.registry.versioning as ver_mod
+    import aurora.registry.versioning as ver_mod
 
     fsync_calls: list = []
     real_fsync = ver_mod.os.fsync

@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.seed import set_global_seed
-from quantforge.strategies.library import MACross
-from quantforge.ga.runner import run_ga, GAConfig
-from quantforge.ga.fitness import (
+from aurora.core.seed import set_global_seed
+from aurora.strategies.library import MACross
+from aurora.ga.runner import run_ga, GAConfig
+from aurora.ga.fitness import (
     multi_objective_fitness_is,
     scalar_fitness_is,
     validate_oos,
@@ -76,7 +76,7 @@ def test_run_ga_legacy_signature_still_works(fake_prices_is, fake_prices_oos):
     The deprecated multi_objective_fitness emits a DeprecationWarning and
     delegates to the IS-only fitness, dropping prices_oos.
     """
-    from quantforge.ga.fitness import multi_objective_fitness
+    from aurora.ga.fitness import multi_objective_fitness
 
     cfg = GAConfig(population=10, generations=2, seed=42, backend="sequential")
     with pytest.warns(DeprecationWarning):
@@ -178,7 +178,7 @@ def test_fitness_normalize_flag(fake_prices_is):
 
     Without normalization Calmar/Sharpe can dwarf MDD penalty.
     """
-    from quantforge.strategies.library import MACross as _MA
+    from aurora.strategies.library import MACross as _MA
     strat = _MA(fast=10, slow=30)
 
     raw = multi_objective_fitness_is(fake_prices_is, strat.signals, normalize=False)
@@ -201,11 +201,11 @@ def test_bayes_opt_categorical_handled():
     Without skopt: our fallback must use the mixed (Hamming + Matern) kernel
     so the categorical index isn't treated as continuous.
     """
-    from quantforge.ga.bayes_opt import (
+    from aurora.ga.bayes_opt import (
         bayes_optimize, BayesConfig, _is_categorical_dim, _categorical_mask,
         HAS_SKOPT, HAS_SKLEARN,
     )
-    from quantforge.strategies.base import Strategy, StrategySpec
+    from aurora.strategies.base import Strategy, StrategySpec
 
     if not (HAS_SKOPT or HAS_SKLEARN):
         pytest.skip("neither skopt nor sklearn available")
@@ -255,7 +255,7 @@ def test_run_ga_consecutive_calls_no_creator_collision(fake_prices_is):
     """Per-call unique creator class names: running run_ga twice on the
     same strategy_class must not raise from a stale global FitnessMulti.
     """
-    from quantforge.strategies.library import BollingerMR
+    from aurora.strategies.library import BollingerMR
     cfg = GAConfig(population=6, generations=1, seed=1, backend="sequential")
     # Two consecutive runs on different strategies — second must not
     # collide with the first's leftover creator.FitnessMulti.
@@ -275,7 +275,7 @@ def test_fitness_mdd_units_correct(fake_prices_is):
     """Verify mdd is treated as a percent: mdd_penalty must be 0 when
     |mdd_pct/100| <= max_mdd, and >0 only when it exceeds max_mdd.
     """
-    from quantforge.ga.fitness import multi_objective_fitness_is as _fit_is
+    from aurora.ga.fitness import multi_objective_fitness_is as _fit_is
     strat = MACross(fast=10, slow=30)
     # Set max_mdd very high -> penalty must be exactly 0.
     out_high = _fit_is(fake_prices_is, strat.signals, max_mdd=10.0)
@@ -289,7 +289,7 @@ def test_fitness_nan_mdd_coerced(fake_prices_is):
     """If the engine returns a NaN mdd, fitness must coerce to a worst-case
     penalty (and never propagate NaN into the GA fitness tuple).
     """
-    from quantforge.ga.fitness import multi_objective_fitness_is as _fit_is
+    from aurora.ga.fitness import multi_objective_fitness_is as _fit_is
     from unittest.mock import patch
 
     class _FakeMetrics:
@@ -307,7 +307,7 @@ def test_fitness_nan_mdd_coerced(fake_prices_is):
         cagr = 0.05
         mdd = float("nan")
 
-    with patch("quantforge.ga.fitness.run_backtest", return_value=_FakeRes()):
+    with patch("aurora.ga.fitness.run_backtest", return_value=_FakeRes()):
         out = _fit_is(fake_prices_is, MACross(fast=10, slow=30).signals, max_mdd=0.20)
     assert all(np.isfinite(x) for x in out), f"fitness leaked NaN: {out}"
 
@@ -317,8 +317,8 @@ def test_walk_forward_robustness_skips_failing_chunks(fake_prices_is):
     The robustness term should aggregate over surviving chunks rather than
     return -99 on the first failure.
     """
-    from quantforge.ga.fitness import _walk_forward_robustness
-    from quantforge.core.costs import IBKR_costs
+    from aurora.ga.fitness import _walk_forward_robustness
+    from aurora.core.costs import IBKR_costs
     from unittest.mock import patch
 
     call_count = {"n": 0}
@@ -335,7 +335,7 @@ def test_walk_forward_robustness_skips_failing_chunks(fake_prices_is):
             raise RuntimeError("simulated chunk failure")
         return _FakeRes()
 
-    with patch("quantforge.ga.fitness.run_backtest", side_effect=_flaky_backtest):
+    with patch("aurora.ga.fitness.run_backtest", side_effect=_flaky_backtest):
         rob = _walk_forward_robustness(
             fake_prices_is,
             MACross(fast=10, slow=30).signals,
@@ -351,14 +351,14 @@ def test_walk_forward_robustness_skips_failing_chunks(fake_prices_is):
 
 def test_walk_forward_robustness_all_failures_returns_sentinel(fake_prices_is):
     """If EVERY chunk fails, robustness still falls back to -99 sentinel."""
-    from quantforge.ga.fitness import _walk_forward_robustness
-    from quantforge.core.costs import IBKR_costs
+    from aurora.ga.fitness import _walk_forward_robustness
+    from aurora.core.costs import IBKR_costs
     from unittest.mock import patch
 
     def _always_fails(*args, **kwargs):
         raise RuntimeError("simulated total failure")
 
-    with patch("quantforge.ga.fitness.run_backtest", side_effect=_always_fails):
+    with patch("aurora.ga.fitness.run_backtest", side_effect=_always_fails):
         rob = _walk_forward_robustness(
             fake_prices_is,
             MACross(fast=10, slow=30).signals,

@@ -11,7 +11,7 @@ Public surface::
 """
 from __future__ import annotations
 
-from quantforge.research.auto_loop.loop import (
+from aurora.research.auto_loop.loop import (
     AutoLoopConfig,
     AutoResearchLoop,
     CycleSummary,

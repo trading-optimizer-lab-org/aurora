@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.experimental.earnings_call_live import EarningsCallLiveTrader, _mock_score
+from aurora.experimental.earnings_call_live import EarningsCallLiveTrader, _mock_score
 
 
 def test_positive_chunks_trigger_long():

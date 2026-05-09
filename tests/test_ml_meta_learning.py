@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.meta_learning import (
+from aurora.ml.meta_learning import (
     MetaConfig,
     MetaLearner,
     Task,

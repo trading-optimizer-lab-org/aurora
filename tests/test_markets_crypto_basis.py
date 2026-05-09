@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.crypto_basis import (
+from aurora.markets.crypto_basis import (
     CryptoBasisConfig,
     CryptoBasisTrader,
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from quantforge.marketdata.extended_hours import (
+from aurora.marketdata.extended_hours import (
     ExtendedHoursBars,
     ExtendedHoursConfig,
 )

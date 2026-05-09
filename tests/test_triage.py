@@ -18,11 +18,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core.engine import run_backtest
-from quantforge.core.costs import IBKR_costs
-from quantforge.core.protocol_policy import ProtocolPolicy
-from quantforge.strategies.library.ma_cross import MACross
-from quantforge.triage import (
+from aurora.core.engine import run_backtest
+from aurora.core.costs import IBKR_costs
+from aurora.core.protocol_policy import ProtocolPolicy
+from aurora.strategies.library.ma_cross import MACross
+from aurora.triage import (
     StrategyVariant,
     TriageBatch,
     TriageConfig,
@@ -31,7 +31,7 @@ from quantforge.triage import (
     variant_grid,
     variant_random_sample,
 )
-from quantforge.triage.vectorized import (
+from aurora.triage.vectorized import (
     compute_metrics_batch,
     compute_pnl_batch,
     compute_signals_batch,
@@ -62,12 +62,12 @@ def is_train_prices() -> pd.DataFrame:
 def macross_variants() -> list[StrategyVariant]:
     return [
         StrategyVariant.make(
-            strategy_class="quantforge.strategies.library.ma_cross.MACross",
+            strategy_class="aurora.strategies.library.ma_cross.MACross",
             params={"fast": 10, "slow": 50, "allow_short": True},
             universe=["SPY"],
         ),
         StrategyVariant.make(
-            strategy_class="quantforge.strategies.library.ma_cross.MACross",
+            strategy_class="aurora.strategies.library.ma_cross.MACross",
             params={"fast": 20, "slow": 80, "allow_short": False},
             universe=["SPY"],
         ),
@@ -150,7 +150,7 @@ def test_triage_batch_policy_hash_matches_active(
 
 def test_variant_grid_cartesian_product():
     variants = list(variant_grid(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_grid={"fast": [5, 10], "slow": [50, 100]},
     ))
@@ -159,7 +159,7 @@ def test_variant_grid_cartesian_product():
     assert len({v.variant_id for v in variants}) == 4
     # The same input order produces the same output order (deterministic).
     second = list(variant_grid(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_grid={"fast": [5, 10], "slow": [50, 100]},
     ))
@@ -173,13 +173,13 @@ def test_variant_grid_cartesian_product():
 
 def test_variant_random_sample_deterministic():
     a = list(variant_random_sample(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_space={"fast": (5, 30), "slow": (50, 300), "allow_short": [True, False]},
         n=10, seed=42,
     ))
     b = list(variant_random_sample(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_space={"fast": (5, 30), "slow": (50, 300), "allow_short": [True, False]},
         n=10, seed=42,
@@ -187,7 +187,7 @@ def test_variant_random_sample_deterministic():
     assert [v.variant_id for v in a] == [v.variant_id for v in b]
     # Different seed -> different IDs (almost certainly).
     c = list(variant_random_sample(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_space={"fast": (5, 30), "slow": (50, 300), "allow_short": [True, False]},
         n=10, seed=7,
@@ -225,7 +225,7 @@ def test_compute_pnl_batch_matches_scalar_engine_loosely(is_train_prices):
     """
     series = is_train_prices["SPY"]
     variant = StrategyVariant.make(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 10, "slow": 50, "allow_short": True},
         universe=["SPY"],
     )
@@ -235,7 +235,7 @@ def test_compute_pnl_batch_matches_scalar_engine_loosely(is_train_prices):
     )
     metrics = compute_metrics_batch(rets)[0]
     # Reference: official engine on the same window with ZERO costs.
-    from quantforge.core.costs import ZERO_costs
+    from aurora.core.costs import ZERO_costs
     strat = MACross(fast=10, slow=50, allow_short=True)
     res = run_backtest(series, strat.signals, costs=ZERO_costs)
     # Same sign; magnitudes within a few absolute Sharpe points.
@@ -266,7 +266,7 @@ def test_triage_engine_refuses_data_crossing_oos_locked(policy):
     idx = pd.date_range("2022-01-03", periods=10, freq="B")
     df = pd.DataFrame({"SPY": np.linspace(100, 110, 10)}, index=idx)
     v = StrategyVariant.make(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 2, "slow": 5},
         universe=["SPY"],
     )
@@ -288,7 +288,7 @@ def test_triage_engine_warns_when_vectorbt_missing(
     )
     # The fallback warning is emitted on the constructor when vectorbt is
     # absent and again inside vectorbt_pnl_batch when invoked.
-    from quantforge.triage import vectorbt_backend
+    from aurora.triage import vectorbt_backend
     if vectorbt_backend.is_available():
         pytest.skip("vectorbt is installed; fallback test does not apply")
     with pytest.warns(UserWarning, match="vectorbt"):
@@ -305,7 +305,7 @@ def test_triage_engine_warns_when_vectorbt_missing(
 
 def test_triage_batch_parallel_matches_serial(policy, is_train_prices):
     variants = list(variant_grid(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_grid={"fast": [5, 10, 15, 20], "slow": [50, 100, 150, 200]},
     ))
@@ -444,10 +444,10 @@ def test_triage_batch_parquet_roundtrip(policy, is_train_prices,
 def test_cli_triage_run_smoke(tmp_path, monkeypatch, policy, is_train_prices):
     """End-to-end: parse a variants YAML, run, write parquet, exit 0."""
     import yaml
-    from quantforge.cli.forge import main
+    from aurora.cli.forge import main
 
     variants = list(variant_grid(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         universe=["SPY"],
         param_grid={"fast": [5, 10], "slow": [50, 100]},
     ))
@@ -486,7 +486,7 @@ def test_cli_triage_list_promising_smoke(tmp_path, capsys, policy,
                                           is_train_prices, macross_variants,
                                           permissive_config):
     """Save a batch parquet, then run list-promising; exit 0 + prints rows."""
-    from quantforge.cli.forge import main
+    from aurora.cli.forge import main
 
     eng = TriageEngine(permissive_config, policy)
     batch = eng.triage_batch(is_train_prices, macross_variants)
@@ -508,18 +508,18 @@ def test_cli_triage_list_promising_smoke(tmp_path, capsys, policy,
 
 def test_variant_id_deterministic():
     a = StrategyVariant.make(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 10, "slow": 50},
         universe=["SPY"],
     )
     b = StrategyVariant.make(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"slow": 50, "fast": 10},  # different key order
         universe=["SPY"],
     )
     assert a.variant_id == b.variant_id
     c = StrategyVariant.make(
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 11, "slow": 50},
         universe=["SPY"],
     )
@@ -533,7 +533,7 @@ def test_variant_id_deterministic():
 
 def test_factory_submit_with_triage_filters(tmp_path, policy, is_train_prices):
     """When the triage engine rejects everything, submit() is never called."""
-    from quantforge.research.factory import (
+    from aurora.research.factory import (
         ResearchFactory, ResearchPipelineConfig, StrategySpec,
     )
 
@@ -546,7 +546,7 @@ def test_factory_submit_with_triage_filters(tmp_path, policy, is_train_prices):
         config = _Cfg()
 
         def triage_batch(self, prices, variants):
-            from quantforge.triage import TriageBatch, TriageResult
+            from aurora.triage import TriageBatch, TriageResult
             results = []
             for v in variants:
                 results.append(TriageResult(
@@ -594,7 +594,7 @@ def test_factory_submit_with_triage_filters(tmp_path, policy, is_train_prices):
     spec = StrategySpec.make(
         name="ma1",
         hypothesis="trend signal",
-        strategy_class="quantforge.strategies.library.ma_cross.MACross",
+        strategy_class="aurora.strategies.library.ma_cross.MACross",
         params={"fast": 10, "slow": 50, "allow_short": True},
         universe=["SPY"], rebalance="1d",
     )

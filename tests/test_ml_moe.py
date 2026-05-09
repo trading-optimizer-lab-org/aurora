@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from quantforge.ml.moe import MoEConfig, MixtureOfExperts
+from aurora.ml.moe import MoEConfig, MixtureOfExperts
 
 
 def _make_data(n: int = 80, f: int = 6, seed: int = 0):

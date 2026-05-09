@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 
-from quantforge.research.strategy_kg import StrategyKnowledgeGraph
+from aurora.research.strategy_kg import StrategyKnowledgeGraph
 
 
 def _populate(g: StrategyKnowledgeGraph) -> None:

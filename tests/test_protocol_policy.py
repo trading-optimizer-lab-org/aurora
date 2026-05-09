@@ -1,4 +1,4 @@
-"""Tests for :mod:`quantforge.core.protocol_policy` and its wire-in points.
+"""Tests for :mod:`aurora.core.protocol_policy` and its wire-in points.
 
 Covers:
   * ``default()`` builds the canonical policy.
@@ -22,8 +22,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.core import protocol_policy as pp_mod
-from quantforge.core.protocol_policy import (
+from aurora.core import protocol_policy as pp_mod
+from aurora.core.protocol_policy import (
     ProtocolPolicy,
     TierConfig,
     CeremonyConfig,
@@ -134,7 +134,7 @@ def test_policy_is_frozen():
 
 def test_data_tiers_uses_policy():
     """Custom policy dates propagate to ``core.data_tiers`` constants."""
-    from quantforge.core import data_tiers as dt
+    from aurora.core import data_tiers as dt
     base = ProtocolPolicy.default()
     new_tiers = dict(base.tiers)
     new_tiers["IS_TRAIN"] = TierConfig(
@@ -158,7 +158,7 @@ def test_data_tiers_uses_policy():
 
 def test_validation_pipeline_uses_policy():
     """``get_mandatory_gates`` reflects ``policy.mandatory_gates``."""
-    from quantforge.validation import pipeline as vpipeline
+    from aurora.validation import pipeline as vpipeline
     base = ProtocolPolicy.default()
     custom = dataclasses.replace(base,
                                   mandatory_gates=["walk_forward", "spp"],
@@ -177,7 +177,7 @@ def test_cli_validate_tier_choices_match_policy():
     """`forge validate --tier` choices come from ``policy.tiers``."""
     # Build the parser with the production policy and inspect the
     # --tier choices on the validate subparser.
-    from quantforge.cli import forge as forge_mod
+    from aurora.cli import forge as forge_mod
     parser = forge_mod.build_parser()
     sub_actions = [a for a in parser._actions
                    if isinstance(a, type(parser._subparsers._actions[1]
@@ -200,7 +200,7 @@ def test_cli_validate_tier_choices_match_policy():
 
 def test_cli_ceremony_env_flag_matches_policy():
     """``_policy_ceremony_env_flag`` round-trips ``policy.oos_ceremonies``."""
-    from quantforge.cli import forge as forge_mod
+    from aurora.cli import forge as forge_mod
     base = ProtocolPolicy.default()
     custom_cer = dict(base.oos_ceremonies)
     custom_cer["explicit_unlock_oos_locked"] = CeremonyConfig(
@@ -227,7 +227,7 @@ def test_cli_ceremony_env_flag_matches_policy():
 
 def test_snapshot_records_policy_hash(tmp_path):
     """Freezing a snapshot writes the active policy hash into its row."""
-    from quantforge.core.snapshots import SnapshotStore
+    from aurora.core.snapshots import SnapshotStore
     store = SnapshotStore(str(tmp_path))
     idx = pd.date_range("2020-01-01", periods=30, freq="D")
     series = pd.Series(np.linspace(100, 130, 30), index=idx)
@@ -255,7 +255,7 @@ def test_policy_verify_detects_tampering(tmp_path):
 
     # Invoke the CLI so the test exercises the same surface a user hits.
     proc = subprocess.run(
-        [sys.executable, "-m", "quantforge.cli.forge",
+        [sys.executable, "-m", "aurora.cli.forge",
          "policy", "verify", "--path", str(yaml_path)],
         capture_output=True, text=True,
     )
@@ -265,7 +265,7 @@ def test_policy_verify_detects_tampering(tmp_path):
 
 def test_ga_uses_policy_defaults():
     """``GAConfig`` defaults come from the active policy."""
-    from quantforge.ga.runner import GAConfig, _ga_defaults_from_policy
+    from aurora.ga.runner import GAConfig, _ga_defaults_from_policy
     g = GAConfig()
     pol = ProtocolPolicy.default()
     assert g.population == pol.ga_config.population

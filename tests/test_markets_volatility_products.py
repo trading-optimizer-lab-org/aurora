@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from quantforge.markets.volatility_products import (
+from aurora.markets.volatility_products import (
     VolatilityProductsConfig,
     VolatilityProductsTrader,
 )

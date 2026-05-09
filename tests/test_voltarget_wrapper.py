@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quantforge.strategies.library import VolTargetWrapper, MACross
-from quantforge.strategies.base import StrategySpec
+from aurora.strategies.library import VolTargetWrapper, MACross
+from aurora.strategies.base import StrategySpec
 
 
 @pytest.fixture
@@ -98,8 +98,8 @@ def test_voltarget_runnable_via_run_ga(fake_prices):
     that wrappers require a base strategy outside of spec().param_ranges.
     """
     pytest.importorskip("deap")
-    from quantforge.ga.runner import run_ga, GAConfig
-    from quantforge.ga.fitness import multi_objective_fitness_is
+    from aurora.ga.runner import run_ga, GAConfig
+    from aurora.ga.fitness import multi_objective_fitness_is
 
     cfg = GAConfig(population=4, generations=1, seed=1, backend="sequential")
     with pytest.raises(TypeError, match="is_wrapper"):

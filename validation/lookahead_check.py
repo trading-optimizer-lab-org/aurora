@@ -12,8 +12,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from quantforge.core import seed as _seed
-from quantforge.core.seed import child_rng
+from aurora.core import seed as _seed
+from aurora.core.seed import child_rng
 
 
 @dataclass

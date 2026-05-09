@@ -11,16 +11,16 @@ import time
 import numpy as np
 import pandas as pd
 
-from quantforge.core.seed import set_global_seed
-from quantforge.core.costs import IBKR_costs
-from quantforge.core.engine import run_backtest
-from quantforge.core.engine_jit import (
+from aurora.core.seed import set_global_seed
+from aurora.core.costs import IBKR_costs
+from aurora.core.engine import run_backtest
+from aurora.core.engine_jit import (
     NUMBA_AVAILABLE, run_backtest_jit, apply_costs_fast,
 )
-from quantforge.core.costs import apply_costs
-from quantforge.core.engine_jit import rsi_fast
-from quantforge.strategies.library import MACross
-from quantforge.strategies.library.rsi_meanrev import _rsi as _rsi_py
+from aurora.core.costs import apply_costs
+from aurora.core.engine_jit import rsi_fast
+from aurora.strategies.library import MACross
+from aurora.strategies.library.rsi_meanrev import _rsi as _rsi_py
 
 
 def make_prices(T: int = 10_000) -> pd.Series:

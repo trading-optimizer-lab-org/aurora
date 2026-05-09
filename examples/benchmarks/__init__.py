@@ -19,7 +19,7 @@ Run directly:
 
 or import for ad-hoc profiling:
 
-    from quantforge.examples.benchmarks import bench_single_asset_30y
+    from aurora.examples.benchmarks import bench_single_asset_30y
     res = bench_single_asset_30y(seed=42)
 """
 from __future__ import annotations

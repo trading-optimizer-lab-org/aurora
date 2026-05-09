@@ -1,7 +1,7 @@
 """Tests for validation.stability_index (R98)."""
 from __future__ import annotations
 
-from quantforge.validation.stability_index import (
+from aurora.validation.stability_index import (
     StabilityComponents,
     stability_index,
 )

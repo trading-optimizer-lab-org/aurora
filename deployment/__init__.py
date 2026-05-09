@@ -7,7 +7,7 @@ imported lazily; missing optional dependencies are tolerated.
 from __future__ import annotations
 
 # Brokers (always-available domain types + optional adapters) ---------------
-from quantforge.deployment.brokers import (
+from aurora.deployment.brokers import (
     AlpacaAdapter,
     AuditLog,
     BrokerConfig,
@@ -22,7 +22,7 @@ from quantforge.deployment.brokers import (
 )
 
 # Sizing ---------------------------------------------------------------------
-from quantforge.deployment.sizing import (
+from aurora.deployment.sizing import (
     fixed_risk_size,
     kelly_size,
     RiskBudget,
@@ -31,20 +31,20 @@ from quantforge.deployment.sizing import (
 )
 
 # Allocator + portfolio construction ----------------------------------------
-from quantforge.deployment.allocator import (
+from aurora.deployment.allocator import (
     equal_vol,
     equal_weight,
     inverse_dd,
     StrategyAllocator,
 )
-from quantforge.deployment.black_litterman import BlackLittermanModel, BLResult
-from quantforge.deployment.cov_shrinkage import (
+from aurora.deployment.black_litterman import BlackLittermanModel, BLResult
+from aurora.deployment.cov_shrinkage import (
     exponential_cov,
     ledoit_wolf_shrinkage,
     oas_shrinkage,
 )
-from quantforge.deployment.hrp import hrp_allocate, HRPResult
-from quantforge.deployment.liquidity import (
+from aurora.deployment.hrp import hrp_allocate, HRPResult
+from aurora.deployment.liquidity import (
     compute_liquidity_profile,
     LiquidityAwarePortfolio,
     LiquidityProfile,
@@ -53,30 +53,30 @@ from quantforge.deployment.liquidity import (
 # allocator-style alias ``risk_parity_allocator`` mirrors the
 # equal_weight/equal_vol/inverse_dd allocator names. ``risk_parity_weights``
 # remains importable from ``quantforge.deployment.risk_parity``.
-from quantforge.deployment.risk_parity import (
+from aurora.deployment.risk_parity import (
     risk_parity_weights as risk_parity,
     RPResult,
 )
-from quantforge.deployment.risk_parity import (
+from aurora.deployment.risk_parity import (
     risk_parity_weights as risk_parity_allocator,
 )
-from quantforge.deployment.risk_optim import OptimResult
+from aurora.deployment.risk_optim import OptimResult
 
 # Preflight ------------------------------------------------------------------
 # ``run_preflight`` is the canonical entrypoint. ``preflight_checks`` is kept
 # as an alias because earlier versions of API_REFERENCE referred to it.
-from quantforge.deployment.preflight import (
+from aurora.deployment.preflight import (
     PreflightCheck,
     PreflightReport,
     run_preflight,
 )
-from quantforge.deployment.preflight import run_preflight as preflight_checks
+from aurora.deployment.preflight import run_preflight as preflight_checks
 
 # Lumibot-dependent wrappers (paper/live). Each module guards the lumibot
 # import internally and exposes a usable class regardless of extras
 # availability, so importing here is unconditional.
-from quantforge.deployment.paper import QFPaperStrategy
-from quantforge.deployment.live import (
+from aurora.deployment.paper import QFPaperStrategy
+from aurora.deployment.live import (
     LiveConfig,
     QFLiveStrategy,
     submit_with_retry,
@@ -84,53 +84,53 @@ from quantforge.deployment.live import (
 )
 
 # Batch E: advanced portfolio modules ---------------------------------------
-from quantforge.deployment.meta_allocator import (
+from aurora.deployment.meta_allocator import (
     MetaAllocator,
     MetaAllocatorConfig,
     MetaAllocatorResult,
 )
-from quantforge.deployment.regime_risk_parity import (
+from aurora.deployment.regime_risk_parity import (
     RegimeRiskParity,
     RegimeRPConfig,
     RegimeRPResult,
 )
-from quantforge.deployment.bl_with_llm_views import (
+from aurora.deployment.bl_with_llm_views import (
     BLLLMConfig,
     BLLLMResult,
     BLLLMViews,
 )
-from quantforge.deployment.sector_hrp import (
+from aurora.deployment.sector_hrp import (
     SectorHRP,
     SectorHRPConfig,
     SectorHRPResult,
 )
-from quantforge.deployment.vol_target_forecast import (
+from aurora.deployment.vol_target_forecast import (
     VolTargetForecastConfig,
     VolTargetForecastResult,
     VolTargetForecaster,
 )
-from quantforge.deployment.tail_hedging import (
+from aurora.deployment.tail_hedging import (
     TailHedgeConfig,
     TailHedgeResult,
     TailHedgingOverlay,
     black_scholes_put,
 )
-from quantforge.deployment.fx_hedger import (
+from aurora.deployment.fx_hedger import (
     FXHedgeResult,
     FXHedger,
     FXHedgerConfig,
 )
-from quantforge.deployment.tax_loss_harvester import (
+from aurora.deployment.tax_loss_harvester import (
     TLHConfig,
     TLHResult,
     TaxLossHarvester,
 )
-from quantforge.deployment.glide_path import (
+from aurora.deployment.glide_path import (
     GlidePathConfig,
     GlidePathResult,
     RetirementGlidePath,
 )
-from quantforge.deployment.esg_filter import (
+from aurora.deployment.esg_filter import (
     ESGConfig,
     ESGFilter,
     ESGFilterResult,

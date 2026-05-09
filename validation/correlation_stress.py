@@ -29,9 +29,9 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
-from quantforge.core.engine_multi import MultiAssetEngine
-from quantforge.core.metrics import compute_metrics
-from quantforge.core.seed import child_rng
+from aurora.core.engine_multi import MultiAssetEngine
+from aurora.core.metrics import compute_metrics
+from aurora.core.seed import child_rng
 
 
 # --------------------------------------------------------------------------- #
