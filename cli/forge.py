@@ -10,11 +10,16 @@ flags. Per-subcommand documentation is generated from each parser's
 ``description=`` argument below.
 """
 from __future__ import annotations
+
 import argparse
 import sys
+from typing import TYPE_CHECKING
 
-from quantforge.core.seed import set_global_seed
 from quantforge.core.costs import IBKR_costs, ZERO_costs
+from quantforge.core.seed import set_global_seed
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +298,7 @@ def _validate_config_schema(path) -> None:
             import tomllib
         except ImportError:
             try:
-                import tomli as tomllib  # type: ignore
+                import tomli as tomllib
             except ImportError as e:
                 raise SystemExit(_runtime_error(f"tomllib not available to validate {p}: {e}")) from e
         with p.open("rb") as f:
@@ -1390,7 +1395,7 @@ def _ccxt_load_config():
     """Best-effort load of ``config/ccxt.yaml``. Returns dict or {}."""
     import os
     try:
-        import yaml  # type: ignore
+        import yaml
     except Exception:
         return {}
     candidates = [
@@ -1412,7 +1417,7 @@ def _ccxt_load_config():
 def cmd_crypto_exchanges(args):
     """List the ccxt-supported exchanges. Lazy-fails cleanly if missing."""
     try:
-        import ccxt  # type: ignore
+        import ccxt
     except Exception:
         print("ccxt not installed. Install with: pip install ccxt")
         return 1
@@ -2438,6 +2443,7 @@ def _variants_from_yaml(path: str):
         _arg_error(
             f"variants file {path!r} must have a top-level 'variants' list"
         )
+    assert isinstance(raw, list)
     return [StrategyVariant.from_dict(d) for d in raw]
 
 
@@ -2609,7 +2615,25 @@ def cmd_research_triage(args):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_package_version() -> str:
+    """Return the installed quantforge package version, or "unknown"."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # pragma: no cover - py3.7 path; not supported
+        return "unknown"
+    try:
+        return version("quantforge")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def _add_global_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"forge {_resolve_package_version()}",
+        help="Print the installed quantforge version and exit.",
+    )
     parser.add_argument(
         "--config", default=None,
         help="Path to ForgeConfig YAML/TOML. Defaults to built-in defaults.",

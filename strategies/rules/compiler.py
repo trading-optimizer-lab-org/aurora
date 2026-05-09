@@ -55,7 +55,11 @@ def _rsi(prices: np.ndarray, period: int = 14) -> np.ndarray:
         for i in range(period, len(prices)):
             avg_up[i] = (avg_up[i - 1] * (period - 1) + up[i]) / period
             avg_dn[i] = (avg_dn[i - 1] * (period - 1) + dn[i]) / period
-    rs = np.where(avg_dn > 0, avg_up / avg_dn, np.inf)
+    rs = np.divide(
+        avg_up, avg_dn,
+        out=np.full_like(avg_up, np.inf, dtype=float),
+        where=avg_dn > 0,
+    )
     rsi = 100.0 - 100.0 / (1.0 + rs)
     return rsi
 

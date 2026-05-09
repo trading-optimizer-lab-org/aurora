@@ -27,7 +27,10 @@ import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from quantforge.core.snapshots_distributed import SnapshotBackend
 
 import numpy as np
 import pandas as pd
@@ -207,7 +210,7 @@ class SnapshotStore:
         self,
         root_dir: str = "data_snapshots/",
         *,
-        backend: Optional["object"] = None,
+        backend: Optional["SnapshotBackend"] = None,
     ) -> None:
         """Construct a SnapshotStore.
 

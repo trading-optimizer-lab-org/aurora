@@ -2,4 +2,3 @@
 
 .. automodule:: {{ fullname }}
    :no-index:
-
