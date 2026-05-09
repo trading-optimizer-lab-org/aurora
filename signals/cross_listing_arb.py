@@ -60,7 +60,7 @@ class CrossListingArbSignal:
         pa = price_a.reindex(idx).astype(float).ffill().values
         pb = price_b.reindex(idx).astype(float).ffill().values
         if fx is None:
-            fx_v = np.ones(len(idx), dtype=float)
+            fx_v: np.ndarray = np.ones(len(idx), dtype=float)
         else:
             fx_v = fx.reindex(idx).astype(float).ffill().values
         if self.config.fx_inverse:

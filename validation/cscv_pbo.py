@@ -82,7 +82,7 @@ def _stratified_sample_combos(n_splits: int, half: int, n_target: int,
     """
     seen: set[tuple] = set()
     combos: list[tuple] = []
-    usage = np.zeros(n_splits, dtype=np.int64)
+    usage: np.ndarray = np.zeros(n_splits, dtype=np.int64)
 
     # Cap retries to avoid pathological loops on tiny S.
     max_attempts = n_target * 50
@@ -93,7 +93,7 @@ def _stratified_sample_combos(n_splits: int, half: int, n_target: int,
         max_u = usage.max() if usage.size > 0 else 0
         # weight = (max_u + 1 - usage_i); never zero, and strongly biases
         # toward under-represented blocks.
-        w = (max_u + 1 - usage).astype(float)
+        w: np.ndarray = (max_u + 1 - usage).astype(float)
         w = w / w.sum()
         pick = rng.choice(n_splits, size=half, replace=False, p=w)
         key = tuple(sorted(int(x) for x in pick))
@@ -181,7 +181,7 @@ def cscv(returns_matrix: pd.DataFrame, n_splits: int = 16,
 
     for k, is_set in enumerate(combos):
         is_set_arr = np.array(is_set, dtype=int)
-        oos_mask = np.ones(n_splits, dtype=bool)
+        oos_mask: np.ndarray = np.ones(n_splits, dtype=bool)
         oos_mask[is_set_arr] = False
         oos_set = np.where(oos_mask)[0]
 
@@ -215,7 +215,7 @@ def cscv(returns_matrix: pd.DataFrame, n_splits: int = 16,
 
     # Final IS-block usage tally so callers can audit the stratification
     # quality of whichever sampling mode was used.
-    block_usage = np.zeros(n_splits, dtype=np.int64)
+    block_usage: np.ndarray = np.zeros(n_splits, dtype=np.int64)
     for c in combos:
         for b in c:
             block_usage[b] += 1

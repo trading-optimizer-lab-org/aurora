@@ -1,13 +1,10 @@
 """mutmut configuration for QuantForge mutation testing (R12).
 
-mutmut 3.x reads ``[tool.mutmut]`` from ``pyproject.toml`` for paths_to_mutate
-and runner. This file exists to document the targets and to provide hooks
-that mutmut can import.
+mutmut 3.x reads ``[tool.mutmut]`` from ``pyproject.toml`` for
+``paths_to_mutate`` and pytest test-selection arguments. This file exists to
+document the targets and to provide hooks that mutmut can import.
 
 Usage::
-
-    # Fast, narrow run on core engine
-    python -m mutmut run --paths-to-mutate=core/engine.py
 
     # Targeted run on the curated core surface (see TARGETS below)
     python -m mutmut run

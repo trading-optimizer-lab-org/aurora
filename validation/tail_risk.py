@@ -54,7 +54,7 @@ def extract_tail_blocks(returns: pd.Series, percentile: float = 1.0,
     # window i covers r[i:i+block_size], for i in [0, n - block_size]
     cumsum = np.cumsum(r)
     # window_sum[i] = r[i] + ... + r[i + block_size - 1]
-    window_sum = np.empty(n - block_size + 1, dtype=float)
+    window_sum: np.ndarray = np.empty(n - block_size + 1, dtype=float)
     window_sum[0] = cumsum[block_size - 1]
     if len(window_sum) > 1:
         window_sum[1:] = cumsum[block_size:] - cumsum[:-block_size]
@@ -102,7 +102,7 @@ def tail_aware_bootstrap(returns: np.ndarray, n_paths: int = 1000,
     # candidate block starts: 0..n - block_size
     n_starts = n - block_size + 1
     cumsum = np.cumsum(r)
-    window_sum = np.empty(n_starts, dtype=float)
+    window_sum: np.ndarray = np.empty(n_starts, dtype=float)
     window_sum[0] = cumsum[block_size - 1]
     if n_starts > 1:
         window_sum[1:] = cumsum[block_size:] - cumsum[:-block_size]
@@ -135,7 +135,7 @@ def tail_aware_bootstrap(returns: np.ndarray, n_paths: int = 1000,
     # gave a degenerate "amplified" path that overstated tail risk). Non-tail
     # blocks remain replace=True since there are many of them.
     tail_start_idx = np.where(window_sum <= tail_threshold)[0]
-    paths = np.empty((n_paths, path_length), dtype=float)
+    paths: np.ndarray = np.empty((n_paths, path_length), dtype=float)
     for k in range(n_paths):
         # Decide which slots draw from the tail subset vs the full population
         # using the same probability split (probs already reflect oversample).
@@ -150,7 +150,7 @@ def tail_aware_bootstrap(returns: np.ndarray, n_paths: int = 1000,
         # the iterators below cannot run dry.
         n_tail_draw = min(n_tail_draw, len(tail_start_idx))
 
-        starts = np.empty(n_blocks, dtype=int)
+        starts: np.ndarray = np.empty(n_blocks, dtype=int)
         if n_tail_draw > 0:
             tail_picks = rng.choice(tail_start_idx, size=n_tail_draw, replace=False)
         else:
@@ -313,7 +313,7 @@ def synthetic_tail_paths(returns: pd.Series, n_paths: int = 100,
         raise ValueError("no tail blocks extracted")
 
     rng = child_rng(seed_name)
-    paths = np.empty((n_paths, n), dtype=float)
+    paths: np.ndarray = np.empty((n_paths, n), dtype=float)
     for k in range(n_paths):
         # base path: random bootstrap of returns
         base = rng.choice(r, size=n, replace=True)

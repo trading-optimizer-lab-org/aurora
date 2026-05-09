@@ -117,7 +117,7 @@ class RedditAdapter:
     ) -> list[dict]:  # pragma: no cover - network path
         import os
         try:
-            import praw  # type: ignore
+            import praw
         except ImportError as e:
             raise ImportError("praw required for live Reddit fetch") from e
         cid = os.environ.get(self.config.client_id_env, "")

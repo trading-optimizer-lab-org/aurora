@@ -29,6 +29,7 @@ For the operator-facing journey from install to live, see
    TRIAGE
    API_REFERENCE
    DIAGRAM
+   MUTATION_TESTING
 
 .. toctree::
    :maxdepth: 2

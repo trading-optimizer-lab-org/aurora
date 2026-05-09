@@ -21,7 +21,7 @@ from typing import Any
 
 # Detect optional structlog
 try:
-    import structlog  # type: ignore
+    import structlog
     _HAS_STRUCTLOG = True
 except ImportError:
     _HAS_STRUCTLOG = False

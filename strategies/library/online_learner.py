@@ -1,7 +1,7 @@
 """Online learning strategy.
 
 Sequential predict-then-update loop using sklearn online learners (SGDClassifier,
-PassiveAggressiveRegressor). Anti-lookahead by construction: at bar i we update
+SGDRegressor). Anti-lookahead by construction: at bar i we update
 the model only on (features[i-1], label_i), where label_i = sign(price[i]/price[i-1] - 1).
 """
 from __future__ import annotations
@@ -10,11 +10,11 @@ import pandas as pd
 from quantforge.strategies.base import Strategy, StrategySpec
 
 try:
-    from sklearn.linear_model import SGDClassifier, PassiveAggressiveRegressor
+    from sklearn.linear_model import SGDClassifier, SGDRegressor
     _SKLEARN_OK = True
 except ImportError:
     SGDClassifier = None
-    PassiveAggressiveRegressor = None
+    SGDRegressor = None
     _SKLEARN_OK = False
 
 
@@ -54,10 +54,17 @@ def default_classifier_factory():
 
 
 def default_regressor_factory():
-    """Default online regressor: PassiveAggressiveRegressor."""
+    """Default online regressor using sklearn's current PA-style SGD mode."""
     if not _SKLEARN_OK:
         raise ImportError("sklearn required for OnlineLearner. pip install scikit-learn")
-    return PassiveAggressiveRegressor(C=0.01, random_state=42, warm_start=True)
+    return SGDRegressor(
+        loss="epsilon_insensitive",
+        penalty=None,
+        learning_rate="pa1",
+        eta0=1.0,
+        random_state=42,
+        warm_start=True,
+    )
 
 
 class OnlineLearner(Strategy):
@@ -130,7 +137,7 @@ class OnlineLearner(Strategy):
             raise ImportError("sklearn required for OnlineLearner. pip install scikit-learn")
         p = prices.values.astype(float) if isinstance(prices, pd.Series) else np.asarray(prices, dtype=float)
         n = len(p)
-        out = np.zeros(n, dtype=float)
+        out: np.ndarray = np.zeros(n, dtype=float)
         if n <= self.warmup:
             return out
 

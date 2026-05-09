@@ -29,7 +29,7 @@ import hashlib
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol, Union, runtime_checkable
+from typing import Any, List, Optional, Protocol, Union, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -124,7 +124,7 @@ class DatasetMetadata:
     schema_version: str = "1.0"
     extra: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:  # type: ignore[override]
+    def __post_init__(self) -> None:
         # Validate tier label so a typo lands at construction time, not
         # later at gate time. ``object.__setattr__`` bypasses frozen.
         if self.tier_permission not in TIER_LABELS:
@@ -402,7 +402,7 @@ class DataProviderRegistry:
                 )
             return self._providers[name]
 
-    def list(self) -> list[str]:
+    def list(self) -> List[str]:
         """Return the sorted list of registered provider names."""
         with self._lock:
             return sorted(self._providers)
@@ -411,7 +411,7 @@ class DataProviderRegistry:
         with self._lock:
             self._providers.pop(name, None)
 
-    def describe(self) -> list[dict[str, Any]]:
+    def describe(self) -> List[dict[str, Any]]:
         """Return a list of dicts summarizing each registered provider."""
         with self._lock:
             out: list[dict[str, Any]] = []
@@ -601,7 +601,7 @@ def get_default_registry() -> DataProviderRegistry:
         # importable. Keeps "from quantforge.core.data_providers import ..."
         # cheap and avoids surfacing a stub provider that always raises.
         try:
-            import ccxt  # type: ignore  # noqa: F401
+            import ccxt  # noqa: F401
         except Exception:
             pass
         else:

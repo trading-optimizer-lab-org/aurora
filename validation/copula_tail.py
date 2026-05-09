@@ -17,10 +17,10 @@ from scipy import stats
 from scipy.optimize import minimize_scalar
 
 try:  # lazy availability flag
-    import statsmodels.api as _sm  # type: ignore
+    import statsmodels.api as _sm
     STATSMODELS_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    _sm = None  # type: ignore
+    _sm = None
     STATSMODELS_AVAILABLE = False
 
 

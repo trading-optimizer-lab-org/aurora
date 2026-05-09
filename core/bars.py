@@ -147,8 +147,8 @@ def _tick_bars_kernel(
     """
     T = prices.shape[0]
     if T == 0 or n_ticks <= 0:
-        empty_f = np.empty(0, dtype=np.float64)
-        empty_i = np.empty(0, dtype=np.int64)
+        empty_f: np.ndarray = np.empty(0, dtype=np.float64)
+        empty_i: np.ndarray = np.empty(0, dtype=np.int64)
         return empty_f, empty_f, empty_f, empty_f, empty_i, empty_i, empty_f, empty_i
 
     # full bars + possibly one trailing partial
@@ -171,21 +171,21 @@ def _tick_bars_kernel(
         end = i + n_ticks
         if end > T:
             end = T
-        o_v = prices[i]
-        h_v = prices[i]
-        l_v = prices[i]
+        o_v = float(prices[i])
+        h_v = float(prices[i])
+        l_v = float(prices[i])
         sum_pv = 0.0
-        sum_v = 0
+        sum_v = 0.0
         for k in range(i, end):
-            p = prices[k]
-            v = volumes[k]
+            p = float(prices[k])
+            v = float(volumes[k])
             if p > h_v:
                 h_v = p
             if p < l_v:
                 l_v = p
             sum_pv += p * v
             sum_v += v
-        c_v = prices[end - 1]
+        c_v = float(prices[end - 1])
         o[bar_idx] = o_v
         h[bar_idx] = h_v
         lo[bar_idx] = l_v
@@ -227,8 +227,8 @@ def _threshold_bars_kernel(
     """
     T = prices.shape[0]
     if T == 0 or threshold <= 0.0:
-        empty_f = np.empty(0, dtype=np.float64)
-        empty_i = np.empty(0, dtype=np.int64)
+        empty_f: np.ndarray = np.empty(0, dtype=np.float64)
+        empty_i: np.ndarray = np.empty(0, dtype=np.int64)
         return empty_f, empty_f, empty_f, empty_f, empty_i, empty_i, empty_f, empty_i
 
     # pass 1: count bars
@@ -248,14 +248,14 @@ def _threshold_bars_kernel(
     if has_open:
         n_bars += 1  # trailing partial bar
 
-    o = np.empty(n_bars, dtype=np.float64)
-    h = np.empty(n_bars, dtype=np.float64)
-    lo = np.empty(n_bars, dtype=np.float64)
-    c = np.empty(n_bars, dtype=np.float64)
-    vol = np.empty(n_bars, dtype=np.int64)
-    nt = np.empty(n_bars, dtype=np.int64)
-    vw = np.empty(n_bars, dtype=np.float64)
-    last_ts = np.empty(n_bars, dtype=np.int64)
+    o: np.ndarray = np.empty(n_bars, dtype=np.float64)
+    h: np.ndarray = np.empty(n_bars, dtype=np.float64)
+    lo: np.ndarray = np.empty(n_bars, dtype=np.float64)
+    c: np.ndarray = np.empty(n_bars, dtype=np.float64)
+    vol: np.ndarray = np.empty(n_bars, dtype=np.int64)
+    nt: np.ndarray = np.empty(n_bars, dtype=np.int64)
+    vw: np.ndarray = np.empty(n_bars, dtype=np.float64)
+    last_ts: np.ndarray = np.empty(n_bars, dtype=np.int64)
 
     # pass 2: fill bars
     bar_idx = 0
@@ -268,14 +268,14 @@ def _threshold_bars_kernel(
             cum += prices[k] * volumes[k]
         close_bar = (cum >= threshold) or (k == T - 1)
         if close_bar:
-            o_v = prices[start]
-            h_v = prices[start]
-            l_v = prices[start]
+            o_v = float(prices[start])
+            h_v = float(prices[start])
+            l_v = float(prices[start])
             sum_pv = 0.0
-            sum_v = 0
+            sum_v = 0.0
             for j in range(start, k + 1):
-                p = prices[j]
-                v = volumes[j]
+                p = float(prices[j])
+                v = float(volumes[j])
                 if p > h_v:
                     h_v = p
                 if p < l_v:
@@ -285,7 +285,7 @@ def _threshold_bars_kernel(
             o[bar_idx] = o_v
             h[bar_idx] = h_v
             lo[bar_idx] = l_v
-            c[bar_idx] = prices[k]
+            c[bar_idx] = float(prices[k])
             vol[bar_idx] = sum_v
             nt[bar_idx] = k - start + 1
             if sum_v > 0:

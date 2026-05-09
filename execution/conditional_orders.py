@@ -164,7 +164,7 @@ class ConditionalOrderManager:
 
     def __init__(self, config: Optional[ConditionalConfig] = None):
         self.config = config or ConditionalConfig()
-        self._registry: Dict[str, object] = {}
+        self._registry: Dict[str, StopLimit | TrailingStop | BracketOrder] = {}
         self._next_id = 1
 
     def _new_id(self, prefix: str) -> str:
@@ -190,7 +190,7 @@ class ConditionalOrderManager:
         self._registry[oid] = br
         return oid
 
-    def get(self, order_id: str):
+    def get(self, order_id: str) -> StopLimit | TrailingStop | BracketOrder | None:
         return self._registry.get(order_id)
 
     def on_tick(self, price: float) -> List[dict]:

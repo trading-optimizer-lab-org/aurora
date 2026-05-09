@@ -34,10 +34,10 @@ try:  # optional dep
     from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised when torch missing
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
-    DataLoader = None  # type: ignore[assignment]
-    TensorDataset = None  # type: ignore[assignment]
+    torch = None
+    nn = None
+    DataLoader = None
+    TensorDataset = None
     TORCH_AVAILABLE = False
 
 
@@ -144,7 +144,7 @@ def make_multi_horizon_sequences(
 
     n_samples = last_anchor - first_anchor + 1
     X = np.empty((n_samples, seq_len, feat_arr.shape[1]), dtype=np.float32)
-    y = np.full((n_samples, H), np.nan, dtype=np.float32)
+    y: np.ndarray = np.full((n_samples, H), np.nan, dtype=np.float32)
 
     for i, t in enumerate(range(first_anchor, last_anchor + 1)):
         X[i] = feat_arr[t - seq_len + 1 : t + 1]
@@ -396,7 +396,7 @@ class TimeSeriesTransformer:
             history.append(float(np.mean(losses)) if losses else float("nan"))
         return {"train_loss": history}
 
-    @torch.no_grad() if TORCH_AVAILABLE else (lambda f: f)  # type: ignore[misc]
+    @torch.no_grad() if TORCH_AVAILABLE else (lambda f: f)
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Return forecasts of shape ``(N, len(horizons))``."""
         self._validate_xy(X)

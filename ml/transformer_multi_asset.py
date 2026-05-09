@@ -22,12 +22,12 @@ from typing import Optional
 import numpy as np
 
 try:  # optional dep
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
+    torch = None
+    nn = None
     TORCH_AVAILABLE = False
 
 

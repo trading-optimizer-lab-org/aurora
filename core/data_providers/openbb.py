@@ -51,7 +51,7 @@ class OpenBBProvider(BaseDataProvider):
 
     def _import_obb(self):
         try:
-            from openbb import obb  # type: ignore
+            from openbb import obb
         except Exception as exc:  # pragma: no cover - openbb optional
             raise ProviderUnavailable(
                 "openbb provider requires the optional ``openbb`` package; "

@@ -3,6 +3,23 @@ source = quantforge
 omit =
     */tests/*
     */examples/*
+    # Optional extras not installed by the default dev/ga coverage gate.
+    */ml/bayesian_nn.py
+    */ml/contrastive_strategy.py
+    */ml/diffusion_scenarios.py
+    */ml/few_shot_strategy.py
+    */ml/graph_neural_net.py
+    */ml/knowledge_distillation.py
+    */ml/lstm.py
+    */ml/mamba_ssm.py
+    */ml/meta_learning.py
+    */ml/moe.py
+    */ml/rl_agent.py
+    */ml/self_supervised_pretrain.py
+    */ml/transformer.py
+    */ml/transformer_multi_asset.py
+    */monitoring/dashboard.py
+    */validation/gan_crisis.py
 branch = True
 
 [report]

@@ -10,6 +10,8 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
+_ADF_IMPORT_ERROR: ImportError | None
+
 try:
     from statsmodels.tsa.stattools import adfuller as _adfuller
 except ImportError as _e:  # pragma: no cover
@@ -73,7 +75,7 @@ def frac_diff_ffd(
         raise TypeError("series must be a pandas Series")
     w = get_weights_ffd(d, threshold=threshold)
     width = len(w) - 1  # number of NaN warm-up bars
-    out = np.full(len(series), np.nan, dtype=float)
+    out: np.ndarray = np.full(len(series), np.nan, dtype=float)
     values = series.to_numpy(dtype=float)
     if width >= len(series):
         return pd.Series(out, index=series.index, name=series.name)

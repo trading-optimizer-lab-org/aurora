@@ -17,13 +17,13 @@ import time
 import warnings
 
 import matplotlib
+
 # Force non-interactive backend before pyplot import (Windows-safe, headless-CI-safe)
 matplotlib.use("Agg", force=True)
 
 import numpy as np
 import pandas as pd
 import pytest
-
 from quantforge.core.costs import ZERO_costs
 from quantforge.core.engine import run_backtest
 from quantforge.core.engine_multi import MultiAssetEngine
@@ -42,7 +42,6 @@ from quantforge.strategies.library import (
 )
 from quantforge.validation.pipeline import validate_pipeline
 from quantforge.validation.walk_forward import WFWindow
-
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
@@ -149,7 +148,7 @@ def test_e2e_strategy_to_paper_marker(tmp_path, monkeypatch):
 
     if rep.overall_passed:
         # Marker must exist
-        marker_path = tmp_path / "quantforge" / "data_cache_qf" / ".validation_passed_MACross.json"
+        marker_path = tmp_path / ".qf_cache" / ".validation_passed_MACross.json"
         assert marker_path.exists(), f"marker not written at {marker_path}"
         # Preflight finds it
         check = check_validation_marker("MACross", project_dir=str(tmp_path))
@@ -226,8 +225,8 @@ def test_e2e_multi_strategy_allocator(tmp_path):
     res = alloc.run(ppy=252)
 
     # Shape sanity
-    T = len(p1)
-    assert res.nav.shape == (T,)
+    n_bars = len(p1)
+    assert res.nav.shape == (n_bars,)
     assert res.weights.shape[1] == 3
     assert set(res.strategy_names) == {"ma", "rsi", "tsmom"}
     # Weights at each rebalance approximately sum to 1
@@ -291,7 +290,7 @@ def test_e2e_tearsheet_generation(tmp_path):
     assert os.path.exists(written)
     size = os.path.getsize(written)
     assert size > 5000, f"tearsheet too small: {size} bytes"
-    with open(written, "r", encoding="utf-8") as f:
+    with open(written, encoding="utf-8") as f:
         html = f.read()
     # Required sections present
     assert "<html" in html.lower()
@@ -306,9 +305,9 @@ def test_e2e_tearsheet_generation(tmp_path):
 def test_e2e_full_workflow(tmp_path, monkeypatch):
     """Full chain: data -> GA -> validate -> marker -> preflight -> tearsheet."""
     pytest.importorskip("deap")
+    from quantforge.core import data_layer as _dl
     from quantforge.ga.fitness import multi_objective_fitness
     from quantforge.ga.runner import GAConfig, run_ga
-    from quantforge.core import data_layer as _dl
 
     monkeypatch.chdir(tmp_path)
     # Redirect QF_CACHE so preflight's data-availability check (which calls

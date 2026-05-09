@@ -125,7 +125,7 @@ class AnthropicLLMProvider:
 
     def complete(self, prompt: str) -> str:
         try:
-            import anthropic  # type: ignore
+            import anthropic
         except ImportError as exc:  # pragma: no cover - import diagnostics
             raise RuntimeError(
                 "anthropic SDK is not installed; install with `pip install "
@@ -147,7 +147,7 @@ class AnthropicLLMProvider:
         # The SDK returns a content list; we take the first text block.
         for block in msg.content:
             if getattr(block, "type", None) == "text":
-                return block.text  # type: ignore[no-any-return]
+                return block.text
         return ""
 
 

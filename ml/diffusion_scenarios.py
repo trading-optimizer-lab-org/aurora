@@ -18,12 +18,12 @@ from typing import Optional, Tuple
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
+    torch = None
+    nn = None
     TORCH_AVAILABLE = False
 
 
@@ -156,7 +156,7 @@ class DiffusionScenarioGenerator:
 
         opt = torch.optim.Adam(self._denoiser.parameters(), lr=self.config.learning_rate)
         loss_fn = nn.MSELoss()
-        history = {"loss": []}
+        history: dict[str, list[float]] = {"loss": []}
         x_all = torch.from_numpy(flat.astype(np.float32))
         alphas_cum = torch.from_numpy(self._alphas_cumprod_np)
 

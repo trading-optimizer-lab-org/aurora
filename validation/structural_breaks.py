@@ -137,7 +137,7 @@ def cusum_filter(returns: pd.Series, threshold: float = 0.05) -> CUSUMResult:
 
     s_pos = 0.0
     s_neg = 0.0
-    stats_arr = np.zeros(len(returns), dtype=float)
+    stats_arr: np.ndarray = np.zeros(len(returns), dtype=float)
     event_idx: list = []
 
     values = returns.to_numpy(dtype=float)
@@ -268,7 +268,7 @@ def sadf_test(prices: pd.Series, lags: int = 5, min_window: int = 60,
 
     y_full = prices.dropna().to_numpy(dtype=float)
     n = y_full.size
-    sadf = np.full(len(prices), np.nan, dtype=float)
+    sadf: np.ndarray = np.full(len(prices), np.nan, dtype=float)
 
     # Map dropna index back to original positions.
     valid_index = prices.dropna().index

@@ -71,6 +71,8 @@ class SurvivorshipFreeUniverse:
             self.load_listings()
         as_of = pd.Timestamp(as_of)
         df = self._listings
+        if df is None:  # pragma: no cover - defensive
+            raise RuntimeError("listings were not loaded")
         active_listed = df["listing_date"] <= as_of
         active_not_delisted = df["delisting_date"].isna() | (df["delisting_date"] >= as_of)
         out = df[active_listed & active_not_delisted].reset_index(drop=True)
@@ -87,6 +89,8 @@ class SurvivorshipFreeUniverse:
         if self._listings is None:
             self.load_listings()
         df = self._listings
+        if df is None:  # pragma: no cover - defensive
+            raise RuntimeError("listings were not loaded")
         mask = df["delisting_date"].notna() & (
             df["delisting_date"].between(pd.Timestamp(start), pd.Timestamp(end))
         )

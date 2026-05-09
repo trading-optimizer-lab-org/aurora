@@ -227,7 +227,7 @@ class DailyOpsReport:
 
     def to_json(self) -> str:
         """Render the report as JSON."""
-        payload = {
+        payload: Dict[str, Any] = {
             "asof_date": self.asof_date.date().isoformat(),
             "portfolio_id": self.portfolio_id,
             "strategies": list(self.strategies),
@@ -689,7 +689,7 @@ class DailyOpsBuilder:
 
     def _section_regime(self) -> DailyOpsSection:
         regime = self.inputs.get("regime") or {}
-        payload = {
+        payload: Dict[str, Any] = {
             "label": regime.get("label"),
             "probs": dict(regime.get("probs") or {}),
             "days_in_regime": int(regime.get("days_in_regime") or 0),
@@ -794,7 +794,7 @@ class DailyOpsBuilder:
             md_lines.append(f"- **{sid}**: did NOT trade today.")
             if not reasons:
                 md_lines.append(
-                    f"  - (no reason recorded; check upstream)"
+                    "  - (no reason recorded; check upstream)"
                 )
             for r in reasons:
                 code = r.get("code", "other")

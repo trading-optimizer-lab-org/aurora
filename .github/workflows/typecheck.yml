@@ -5,7 +5,7 @@ on:
   pull_request:
 
 # R63. mypy is in the [dev] extra but never ran in CI. Local verification
-# is clean across 321 source files; the same command runs here as a
+# is clean across 410 source files; the same command runs here as a
 # blocking gate.
 jobs:
   mypy:

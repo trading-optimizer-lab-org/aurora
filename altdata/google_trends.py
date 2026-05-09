@@ -90,7 +90,7 @@ class GoogleTrendsAdapter:
         keywords: list[str],
     ) -> pd.DataFrame:  # pragma: no cover - network
         try:
-            from pytrends.request import TrendReq  # type: ignore
+            from pytrends.request import TrendReq
         except ImportError as e:
             raise ImportError("pytrends required for live Google Trends") from e
         pt = TrendReq(timeout=self.config.timeout_s)

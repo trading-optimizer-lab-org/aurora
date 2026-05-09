@@ -64,7 +64,7 @@ def compute_volume_profile(
     bin_idx = np.clip(
         np.digitize(prices, bin_edges) - 1, 0, n_bins - 1,
     )
-    bin_volumes = np.zeros(n_bins, dtype=float)
+    bin_volumes: np.ndarray = np.zeros(n_bins, dtype=float)
     np.add.at(bin_volumes, bin_idx, volumes)
 
     poc_bin = int(np.argmax(bin_volumes))

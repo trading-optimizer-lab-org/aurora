@@ -17,17 +17,17 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import chromadb  # type: ignore
+    import chromadb
     CHROMADB_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    chromadb = None  # type: ignore[assignment]
+    chromadb = None
     CHROMADB_AVAILABLE = False
 
 try:
-    import anthropic  # type: ignore
+    import anthropic
     ANTHROPIC_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore[assignment]
+    anthropic = None
     ANTHROPIC_AVAILABLE = False
 
 
@@ -79,7 +79,7 @@ def _hash_embed(text: str, dim: int) -> np.ndarray:
     Not for production retrieval quality; sufficient to test plumbing without
     pulling sentence-transformers or its torch dependency.
     """
-    vec = np.zeros(dim, dtype=np.float32)
+    vec: np.ndarray = np.zeros(dim, dtype=np.float32)
     for tok in text.lower().split():
         idx = (hash(tok) & 0xFFFFFFFF) % dim
         vec[idx] += 1.0

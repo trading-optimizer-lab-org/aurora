@@ -8,7 +8,7 @@ scoring.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Optional
 
 import numpy as np
 
@@ -25,7 +25,7 @@ class VoteThresholdConfig:
 def vote_combine(
     signals: Dict[str, np.ndarray],
     *,
-    config: VoteThresholdConfig = VoteThresholdConfig(),
+    config: Optional[VoteThresholdConfig] = None,
 ) -> np.ndarray:
     """Combine an arbitrary set of {-1, 0, +1} signals into one vector.
 
@@ -36,6 +36,8 @@ def vote_combine(
     Returns:
         per-bar combined signal in {-1, 0, +1}.
     """
+    if config is None:
+        config = VoteThresholdConfig()
     if not signals:
         raise ValueError("signals dict is empty")
     arr = np.vstack([np.asarray(v, dtype=float) for v in signals.values()])

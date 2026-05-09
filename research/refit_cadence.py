@@ -11,7 +11,7 @@ the actual refit job at that cadence.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Sequence
 
 import numpy as np
 
@@ -94,7 +94,7 @@ def standard_cadence_grid(
     monthly_bars: int = 21,
     quarterly_bars: int = 63,
     yearly_bars: int = 252,
-) -> List[Dict[str, int]]:
+) -> List[Dict[str, Any]]:
     """Default cadence grid: weekly / monthly / quarterly / yearly."""
     return [
         {"name": "weekly", "interval_bars": weekly_bars},

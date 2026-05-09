@@ -141,7 +141,7 @@ class PairDiscoveryEngine:
         if self.config.use_statsmodels:
             try:
                 # Lazy import only when requested
-                from statsmodels.tsa.stattools import adfuller  # type: ignore
+                from statsmodels.tsa.stattools import adfuller
                 # autolag set to None for determinism
                 stat = adfuller(resid, autolag=None, maxlag=1, regression="n")
                 p_value = float(stat[1])

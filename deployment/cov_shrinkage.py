@@ -151,7 +151,7 @@ def _shrinkage_target_matrix(sample_cov: np.ndarray, target: str) -> np.ndarray:
         with np.errstate(divide="ignore", invalid="ignore"):
             corr = np.where(denom > 0, sample_cov / denom, 0.0)
         # avg off-diag corr
-        mask = ~np.eye(n, dtype=bool)
+        mask: np.ndarray = ~np.eye(n, dtype=bool)
         if mask.sum() > 0:
             avg_corr = corr[mask].mean()
         else:

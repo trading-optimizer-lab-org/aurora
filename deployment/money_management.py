@@ -45,10 +45,12 @@ class AntiMartingaleConfig:
 def anti_martingale_sizing(
     consecutive_wins: int,
     *,
-    config: AntiMartingaleConfig = AntiMartingaleConfig(),
+    config: Optional[AntiMartingaleConfig] = None,
     max_leverage: float = 1.0,
 ) -> float:
     """Scale up after wins; reset on a loss when ``loss_reset`` is True."""
+    if config is None:
+        config = AntiMartingaleConfig()
     if consecutive_wins < 0:
         raise ValueError("consecutive_wins must be >= 0")
     raw = config.base_size + config.win_step * consecutive_wins

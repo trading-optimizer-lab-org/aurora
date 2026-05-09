@@ -90,7 +90,7 @@ def estimate_spread_from_high_low(prices: pd.DataFrame) -> pd.Series:
     high = prices["high"].astype(float).to_numpy()
     low = prices["low"].astype(float).to_numpy()
     n = len(high)
-    out = np.full(n, np.nan, dtype=float)
+    out: np.ndarray = np.full(n, np.nan, dtype=float)
 
     if n < 2:
         return pd.Series(out, index=prices.index, name="spread_bps")

@@ -27,7 +27,11 @@ import textwrap
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 # Cross-platform advisory file lock used to serialize concurrent writes to
@@ -258,7 +262,7 @@ def _run_git_proc(args: list[str], timeout: float) -> tuple[Optional[int], str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        cwd=_PROJ,
+        cwd=_PROJECT_ROOT,
     )
     try:
         out, _err = proc.communicate(timeout=timeout)

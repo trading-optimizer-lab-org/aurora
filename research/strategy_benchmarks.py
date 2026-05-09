@@ -72,7 +72,7 @@ def _simple_momentum_returns(
     n = asset_returns.size
     if n == 0:
         return asset_returns.copy()
-    out = np.zeros(n, dtype=float)
+    out: np.ndarray = np.zeros(n, dtype=float)
     for i in range(lookback, n):
         window = asset_returns[i - lookback:i]
         if np.sum(window) > 0:
@@ -87,7 +87,7 @@ def _simple_mean_reversion_returns(
     n = asset_returns.size
     if n == 0:
         return asset_returns.copy()
-    out = np.zeros(n, dtype=float)
+    out: np.ndarray = np.zeros(n, dtype=float)
     for i in range(lookback, n):
         window = asset_returns[i - lookback:i]
         if np.sum(window) < 0:

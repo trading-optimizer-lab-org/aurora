@@ -7,7 +7,6 @@ excluded.
 
 .. autosummary::
    :toctree: generated
-   :recursive:
 
    quantforge.core.protocol_policy
    quantforge.core.data_tiers

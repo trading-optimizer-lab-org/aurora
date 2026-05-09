@@ -45,7 +45,7 @@ def walk_forward_heatmap(
     if not fold_metrics:
         raise ValueError("fold_metrics is empty")
     n_folds = len(fold_metrics)
-    matrix = np.zeros((len(metric_keys), n_folds), dtype=float)
+    matrix: np.ndarray = np.zeros((len(metric_keys), n_folds), dtype=float)
     for j, fold in enumerate(fold_metrics):
         for i, key in enumerate(metric_keys):
             value = fold.get(key, float("nan"))

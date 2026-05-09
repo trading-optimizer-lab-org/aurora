@@ -1,7 +1,7 @@
 # QuantForge Roadmap
 
 Status: living roadmap
-Last updated: 2026-05-08 (post-roadmap-review-pass)
+Last updated: 2026-05-09 (post-rename-status-clarification)
 Source: migrated from Desktop and normalised after v1.4 review
 Scope: post-v1.4 backlog for QA, docs, AI, data, execution, performance and production hardening
 
@@ -126,8 +126,8 @@ incomplete"):
   Remaining work waits for a benchmark / profile signal that Python
   + numba is the real bottleneck.
 - **R23** -- decision + execution checklist locked
-  (`docs/AURORA_RENAME_CHECKLIST.md`); execution is one focused
-  rename branch.
+  (`docs/AURORA_RENAME_CHECKLIST.md`); the actual rename has NOT been
+  executed in this branch. Execution is one focused rename branch.
 - **R41** -- procedure documented; the actual sweep runs on a
   Linux/macOS/WSL host because mutmut native-Windows is upstream-
   unsupported.
@@ -144,10 +144,12 @@ gate is clean; broader rule families are not planned).
 Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
-Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
+Newly closed / plan-locked in the 2026-05-08 "execute the whole
+roadmap" batch:
 **R2 (in-repo prep), R3 (in-repo prep), R4 (in-repo prep), R5
-(gate ready), R6 (gate ready), R16, R18, R19, R21, R23 (checklist
-locked), R24, R25, R26, R27, R28, R29, R31, R32 (descoped), R34,
+(gate ready), R6 (gate ready), R16, R18, R19, R21, R23 (rename
+checklist locked only; package/code rename NOT executed), R24, R25,
+R26, R27, R28, R29, R31, R32 (descoped), R34,
 R35, R36, R37, R38, R39, R40, R41 (procedure), R42, R43, R44, R45
 (helper), R46, R47, R48, R49 (plan), R50 (plan), R51 (plan), R52
 (plan), R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61,
@@ -167,7 +169,9 @@ out of 154 (plus 11 prior closures). Running tally: **all 154 items
 have landed code, a scaffold, a locked plan, or an explicit decision
 / descope.** No item remains in raw "pending" status. The 13
 explicit "remaining work" items above are recorded with their
-acceptance bar and execution path.
+acceptance bar and execution path. "Plan-locked" does not mean
+executed: R23, R41 and R49-R52 still require their dedicated execution
+branches / environments.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -331,6 +335,69 @@ Reference reports:
 - `docs/roadmap/BLOCKERS.md`
 - `CHANGELOG.md`
 - `CLAUDE.md`
+
+External research references reviewed on 2026-05-09:
+
+- `C:\Users\HP\Downloads\HFT_2024___Oxford___lecture_notes_2024.pdf`
+  -- Oxford lecture notes on market microstructure and algorithmic
+  trading. Treat as the main source reference for Candidate A:
+  realistic execution, limit-order behaviour, market impact, optimal
+  execution, market making, portfolio execution and cointegrated-asset
+  trading. It should influence execution models, replay, fills, TCA and
+  broker reconciliation before live capital.
+- `C:\Users\HP\Downloads\ssrn-3247865.pdf` -- "151 Trading
+  Strategies". Treat as a strategy catalogue, not as an implementation
+  mandate. It should feed Candidate E: strategy atlas, benchmark
+  templates, candidate triage, clone detection and the strategy
+  graveyard. No strategy should enter production merely because it
+  appears in this PDF.
+- `https://github.com/skfolio/skfolio` -- skfolio, a Python portfolio
+  optimisation and risk-management library built on top of
+  scikit-learn. Treat as the main source reference for Candidate F:
+  portfolio optimiser design, risk measures, constraints, transaction
+  costs, model selection, walk-forward and purged cross-validation.
+  Use it as a benchmark / design reference first; only consider an
+  optional dependency after licence, dependency weight and API fit are
+  reviewed.
+- `https://github.com/Y-Research-SBU/QuantAgent` -- QuantAgent, a
+  multi-agent LLM reference project for market analysis. Treat as the
+  source reference for Candidate G: agentic research support and
+  decision explanation. It must not become a live-trading authority,
+  OOS reader or broker-control path.
+- `https://github.com/nautechsystems/nautilus_trader` -- production-
+  grade event-driven trading engine. Treat as a reference for Candidate
+  A: deterministic event flow, backtest/live parity, execution reports,
+  venue/instrument modelling and replay/reconciliation boundaries.
+- `https://github.com/QuantConnect/Lean` -- modular event-driven
+  algorithmic trading engine with backtest/live workflow, data,
+  brokerage, research, optimisation and reporting modules. Treat as a
+  reference for Candidate A and Candidate C, especially engine
+  modularity, data/event abstractions and live deployment gates.
+- `https://github.com/microsoft/qlib` -- AI-oriented quant research
+  platform covering data processing, model training, backtesting,
+  risk modelling, portfolio optimisation and order execution. Treat as
+  a reference for Candidate B / F / G, but only through the research
+  ledger and data-contract gates.
+- `https://github.com/microsoft/RD-Agent` -- Microsoft's R&D-Agent
+  project, referenced by Qlib for LLM-assisted quant R&D. Treat as a
+  reference for Candidate G and automated research, with the same
+  no-OOS / no-live authority limits as QuantAgent.
+- `https://github.com/polakowo/vectorbt` -- vectorised research and
+  large parameter-sweep framework. Treat as a reference for Candidate B
+  and Candidate E: fast sweeps, broadcasting, indicator experiments and
+  the need to record every tried variant to avoid silent overfitting.
+- `https://github.com/stefan-jansen/zipline-reloaded` -- maintained
+  Zipline fork. Treat as a reference for event-driven backtesting,
+  data bundles, calendars and the user-facing research API.
+- `https://github.com/dcajasn/Riskfolio-Lib` and
+  `https://github.com/PyPortfolio/PyPortfolioOpt` -- portfolio
+  optimisation references alongside skfolio. Treat as reference
+  libraries for Candidate F, not automatic dependencies.
+- `https://github.com/freqtrade/freqtrade` -- mature open-source crypto
+  bot. Treat as a reference for dry-run/live workflow, exchange UX,
+  lookahead checks, recursive-signal checks and operator controls. GPL
+  licensing means design reference only unless legal review says
+  otherwise.
 
 ---
 
@@ -559,13 +626,27 @@ tracks above is closed:
 3. **Candidate A -- Execution integrity programme.** Broker-event
    replay, reconciliation, order lifecycle state machine, realistic
    fills and TCA.
-4. **Candidate D -- Strategy risk register.** Model-risk record,
+4. **Candidate F -- Portfolio optimisation and risk validation.**
+   skfolio-style portfolio models, constraints, risk measures,
+   transaction costs, stress tests and walk-forward / purged
+   validation.
+5. **Candidate E -- Strategy atlas and benchmark catalogue.** Curated
+   map from strategy literature to QuantForge support level, data
+   requirements, implementation difficulty, validation risk and
+   benchmark / graveyard status.
+6. **Candidate D -- Strategy risk register.** Model-risk record,
    maker-checker approvals, lifecycle states and live-promotion
    refusal when evidence is stale.
+7. **Candidate G -- Agentic research support.** QuantAgent-style
+   multi-agent analysis, source-required reasoning, explanation packs
+   and strict no-live / no-OOS authority boundaries.
 
-Recommended order: C -> B -> A -> D. Data truth comes before research
-truth; research truth comes before live execution; governance becomes
-mandatory once capital or multiple approvers enter the loop.
+Recommended order: C -> B -> A -> F -> E -> D -> G. Data truth comes
+before research truth; research truth comes before live execution;
+portfolio construction needs realistic costs; the strategy atlas is
+useful only after validation rules can reject weak ideas; governance
+should exist before autonomous-looking agents are allowed near
+promotion decisions.
 
 ### Track 3. External Or Gated Bets
 
@@ -847,7 +928,7 @@ Definition of done:
 
 ### R23. Rename project from "QuantForge" to "AURORA"
 
-Status: decision made + execution checklist locked in 2026-05-08 batch 17; evidence: `docs/AURORA_RENAME_CHECKLIST.md` plus the env var migration plan in `docs/ENV_VAR_MIGRATION_PLAN.md` (R76). Pre-flight checks (R7, R19, R16, ruff, suite, R76) all pass. Execution is one focused rename branch + one merge + one shim release; explicitly out of scope for the in-session automation that closes everything else.
+Status: decision made + execution checklist locked in 2026-05-08 batch 17; rename NOT executed in the current branch. Evidence: `docs/AURORA_RENAME_CHECKLIST.md` plus the env var migration plan in `docs/ENV_VAR_MIGRATION_PLAN.md` (R76). Pre-flight checks (R7, R19, R16, ruff, suite, R76) all pass. Execution is one focused rename branch + one merge + one shim release; explicitly out of scope for the in-session automation that closes everything else. As of the 2026-05-09 verification, `pyproject.toml` still names the package `quantforge`, `import quantforge` works, `import aurora` does not, and `QF_*` env vars remain in code.
 Priority: high
 Effort: 1 to 2 weeks (touches every file that references the project)
 Area: branding / packaging / docs
@@ -2918,9 +2999,63 @@ These are not rejected. They are too broad to start as single tasks:
 
 These are intentionally not numbered as R155+. Promote them only after
 a pruning pass closes, merges or demotes existing roadmap items. Treat
-them as four strategic programmes, not as a pile of new tickets. The
+them as seven strategic programmes, not as a pile of new tickets. The
 point is to stop QuantForge / AURORA from fooling itself with bad data,
-overfit research, unrealistic execution or unowned model risk.
+overfit research, unrealistic execution, uncurated strategy sprawl or
+unowned model risk, while also keeping portfolio optimisation and
+agentic analysis inside hard safety rails.
+
+Source references:
+
+- `C:\Users\HP\Downloads\HFT_2024___Oxford___lecture_notes_2024.pdf`
+  supports Candidate A. Use it as a design reference for limit order
+  books, market impact, optimal execution, fill probability, market
+  making, portfolio execution and cointegrated-asset trading.
+- `C:\Users\HP\Downloads\ssrn-3247865.pdf` supports Candidate E. Use
+  it as a curated strategy catalogue and benchmark source, not as a
+  blanket request to implement 151 strategies.
+- `https://github.com/skfolio/skfolio` supports Candidate F. Use it as
+  a reference for portfolio optimisation, risk measures, constraints,
+  transaction costs, stress tests, scikit-learn-style model selection,
+  walk-forward validation and purged cross-validation.
+- `https://github.com/Y-Research-SBU/QuantAgent` supports Candidate G.
+  Use it as a reference for multi-agent market-analysis UX and
+  explanation, not as a trading brain.
+- `https://github.com/nautechsystems/nautilus_trader` and
+  `https://github.com/QuantConnect/Lean` support Candidate A. Use them
+  as references for deterministic event flow, backtest/live parity,
+  modular engine boundaries, brokerage abstractions and replayable
+  execution state.
+- `https://github.com/microsoft/qlib`,
+  `https://github.com/microsoft/RD-Agent` and
+  `https://github.com/polakowo/vectorbt` support Candidate B / E / G.
+  Use them as references for ML research workflows, fast sweeps,
+  automated factor proposals and the extra audit needed when research
+  gets faster.
+- `https://github.com/stefan-jansen/zipline-reloaded` supports
+  Candidate C and Candidate A. Use it as a reference for event-driven
+  backtesting, data bundles, calendars and a researcher-friendly API.
+- `https://github.com/dcajasn/Riskfolio-Lib` and
+  `https://github.com/PyPortfolio/PyPortfolioOpt` support Candidate F
+  as portfolio-optimisation references alongside skfolio.
+- `https://github.com/freqtrade/freqtrade` supports Candidate A for
+  crypto live/dry-run operator UX, exchange capability checks and
+  lookahead / recursive-signal analysis.
+- `https://github.com/manahl/arctic` supports Candidate C as a design
+  reference for local / institutional time-series storage. Use the
+  storage ideas, not necessarily the dependency.
+- `https://github.com/quantopian/alphalens` and
+  `https://github.com/quantopian/pyfolio` support reporting /
+  validation follow-ups: factor tear sheets, IC decay, turnover,
+  quantile returns, drawdown and benchmark comparison.
+- R-Finance `PerformanceAnalytics`, `PortfolioAnalytics` and
+  `PortfolioAttribution` support Candidate F as references for
+  portfolio analytics: contribution, rolling risk, attribution and
+  reporting tables.
+- `https://www.quantpedia.com/`, QuantStart, Ernie Chan / EpChan and
+  similar curated strategy sources support Candidate E as idea sources
+  for the strategy atlas. Treat them as references requiring
+  independent validation, not as truth.
 
 ### Candidate A. Execution integrity programme
 
@@ -2956,6 +3091,35 @@ Definition of ready:
 - A basic TCA report decomposes realised execution into arrival price,
   effective spread, slippage, delay cost, opportunity cost and unfilled
   quantity.
+- Limit-order simulation has an explicit fill-probability model that
+  accounts for price improvement, queue position, available liquidity
+  and time-to-fill.
+- Market-impact modelling distinguishes at least temporary execution
+  cost from longer-lived price impact, even if the first version uses a
+  conservative simplified model.
+- Execution algorithms expose a small set of calibrated baselines:
+  TWAP / VWAP / POV, Almgren-Chriss-style schedule, implementation
+  shortfall and a cautious limit-order schedule.
+- Market-making work remains gated until inventory risk, quote
+  cancellation, fill uncertainty and live kill-switch controls are
+  covered by tests.
+- Portfolio execution handles cross-asset orders as a portfolio-level
+  problem, not as independent single-symbol orders when correlation or
+  shared liquidity risk matters.
+- Cointegrated / pairs execution is treated as a specialist extension:
+  it must prove spread construction, mean-reversion assumptions and
+  joint execution costs before promotion.
+- NautilusTrader-style backtest/live parity is evaluated as a design
+  reference: the same strategy intent should produce comparable event
+  streams in backtest, paper and live, with explicit differences
+  recorded instead of hidden.
+- LEAN-style modular engine boundaries are reviewed before changing
+  core execution: data feed, transaction handler, brokerage adapter,
+  result handler, realtime handler and algorithm surface should remain
+  separable.
+- Freqtrade-style dry-run and live controls are reviewed for crypto
+  flows: operator status, exchange capability checks, pair whitelist /
+  blacklist, lookahead checks and recursive-signal checks.
 - Tests cover partial fills, rejects, cancels, reconnects, duplicate
   events, out-of-order events, restart between ack and fill, and fill
   without a local order.
@@ -3000,6 +3164,15 @@ Definition of ready:
   buy-and-hold, equal weight, simple momentum / mean reversion, random
   entry with comparable turnover, and the currently deployed version
   when one exists.
+- Qlib-style automated research workflows are allowed only if every
+  generated factor, model, dataset, seed, parameter choice and rejection
+  enters the research ledger.
+- Vectorbt-style large parameter sweeps must record the full explored
+  search space, not just the winner. Fast experimentation increases the
+  need for audit, not the right to skip it.
+- RD-Agent / LLM-assisted factor mining must operate through locked
+  evidence packs and append-only logs. Agent-generated hypotheses are
+  research inputs, not validation evidence by themselves.
 - Manual overrides are recorded with author, timestamp and reason.
 - Tests prove the ledger is append-only and survives resume / retry.
 
@@ -3007,6 +3180,62 @@ Reason not to start immediately: it is strategically important but
 touches research UX, validation reporting and the factory. Best done
 after the roadmap truth / CI batch, otherwise it becomes another big
 feature sitting on soft ground. Glamorous? No. Useful? Painfully.
+
+### Candidate E. Strategy atlas and benchmark catalogue
+
+Why it matters: the "151 Trading Strategies" PDF is useful because it
+maps a wide strategy universe across options, equities, ETFs, fixed
+income, futures, FX, volatility, crypto, macro and more. It is dangerous
+if treated as a shopping list. QuantForge / AURORA should turn it into
+a curated atlas that says what each idea needs, what the engine already
+supports, what is out of scope, and which benchmarks or graveyard
+entries should exist before anyone promotes a new strategy.
+
+Recommended promotion target: merge with R38 / R39 / R87 / R92 / R103
+/ R104 if the next work is strategy lifecycle, templates or similarity
+checks. Promote as its own item only if the project starts systematic
+strategy-catalogue work.
+
+Definition of ready:
+
+- A `StrategyAtlas` record exists for each curated idea: name, asset
+  class, data requirements, required engine capabilities, cost
+  sensitivity, likely overfit risk, implementation difficulty,
+  validation gates and owner.
+- The atlas classifies each idea as supported, candidate, blocked,
+  rejected, benchmark-only or external-data-only.
+- The first curated slice covers only strategies QuantForge can test
+  honestly today: ETF momentum rotation, dual momentum, multi-asset
+  trend following, volatility targeting, ETF mean reversion, simple
+  stat-arb / pairs, KNN single-stock as an ML example, and controlled
+  alpha-combo ensembles.
+- Options-heavy, convertibles, structured-credit, tax-arbitrage,
+  exotic fixed-income and legal / regulatory strategies are marked as
+  blocked unless data, pricing, execution and compliance support exists.
+- Every atlas entry links to a benchmark expectation: cash,
+  buy-and-hold, equal weight, simple momentum / mean reversion, random
+  strategy with comparable turnover, or an existing approved strategy.
+- Before a strategy template is implemented, similarity checks and the
+  strategy graveyard are queried so the project does not rebuild a
+  rejected edge under a new name.
+- Strategy templates generated from the atlas cannot bypass data
+  contracts, OOSGuard, realistic costs, benchmark comparison or the
+  research ledger.
+- Vectorbt-style fast strategy sweeps are classified as atlas input
+  only when the full sweep config, rejected variants and parameter
+  ranges are recorded.
+- Curated idea sources such as Quantpedia, QuantStart, Ernie Chan /
+  EpChan and EliteQuant links are ingested as idea metadata only:
+  source, claim, asset class, required data, assumptions, testability
+  and status. No source claim is accepted as validation evidence.
+- Tests prove that blocked / rejected / benchmark-only entries cannot
+  be promoted as production strategies without an explicit audited
+  override.
+
+Reason not to start immediately: the atlas is high leverage but only
+after the data and research honesty layers are firm. Otherwise the PDF
+becomes a menu of tempting backtests. Tempting backtests are cheap;
+trustworthy ones are not.
 
 ### Candidate C. Data integrity programme
 
@@ -3045,6 +3274,15 @@ Definition of ready:
 - Data lineage records input datasets, transformations, code version,
   contract version, policy hash, snapshot hash, validator hash,
   strategy, experiment, report and deployment evidence.
+- Zipline-style data bundles and LEAN-style data abstractions are
+  reviewed as references for separating raw vendor data, adjusted data,
+  asset metadata, calendars and ingestion history.
+- An Arctic-style time-series store design is evaluated for local
+  research storage: versioned symbols, library / namespace separation,
+  chunked reads, metadata, fast date-range access and deterministic
+  snapshot hashes. The first implementation may use existing local
+  storage; Arctic is a design reference unless a dependency decision
+  approves it.
 - A validator runs before backtest, GA, validation and factory submit.
 - The detector flags duplicated timestamps, non-monotonic indexes,
   suspicious gaps, zero or negative prices, impossible returns,
@@ -3052,13 +3290,122 @@ Definition of ready:
 - Failures are classified as hard fail, warning or operator-approved
   exception, with the decision written into the run provenance.
 - Tests cover clean data, common vendor quirks, split-like jumps,
-  holiday gaps, duplicate rows, stale snapshots and timezone mismatch.
+  holiday gaps, duplicate rows, stale snapshots, timezone mismatch and
+  time-series-store round trips.
 
 Reason not to start immediately: this is probably the strongest next
 feature after CI hardening, but it should be designed as a shared
 contract used by the whole engine. If implemented piecemeal, every
 module will invent its own definition of "valid data", and that way
 lies sadness with a nice traceback.
+
+### Candidate F. Portfolio optimisation and risk validation
+
+Why it matters: strategy selection is only half the problem. The other
+half is deciding how much capital each strategy or asset receives under
+real constraints: turnover, transaction costs, drawdown, tail risk,
+concentration, sector / group exposure, leverage, cash, liquidity and
+out-of-sample decay. skfolio is useful because it shows a mature shape
+for portfolio optimisation with a scikit-learn-style API, model
+selection, risk measures, stress testing, constraints and purged /
+walk-forward validation. QuantForge should learn from that shape before
+inventing another half-optimizer that looks clever until costs arrive.
+
+Recommended promotion target: merge with the portfolio / monitoring
+cluster around R113, R115, R118, R132, R133 and R154 if the next work
+is portfolio construction, capacity or common-cause risk. Promote as a
+standalone item only if portfolio allocation becomes the next product
+surface.
+
+Definition of ready:
+
+- A portfolio-allocation interface accepts expected returns, realised
+  returns, covariance / risk estimates, costs, constraints and
+  benchmark references without depending on one concrete optimiser.
+- Baseline allocators are available and tested: equal weight, inverse
+  volatility, risk parity / risk budgeting, maximum diversification,
+  mean-risk and benchmark tracking.
+- Risk measures include at least variance, semi-variance, CVaR, maximum
+  drawdown, average drawdown and turnover-aware net performance.
+- Constraints cover min / max weights, long-only / long-short, gross
+  and net exposure, group exposure, turnover, cash, leverage,
+  concentration and per-strategy capital caps.
+- Transaction costs and management / borrow fees are part of the
+  optimisation objective or validation report, not an afterthought
+  applied only after the chosen portfolio looks good.
+- Model selection supports walk-forward and purged / embargoed
+  validation where the data shape requires it.
+- Stress tests compare allocation behaviour under bad covariance
+  estimates, noisy returns, missing assets, liquidity shocks,
+  correlated drawdowns and higher costs.
+- The first implementation may wrap internal primitives only. A
+  skfolio adapter or optional dependency is allowed only after licence,
+  dependency weight, Python compatibility and API stability are
+  reviewed.
+- Riskfolio-Lib is reviewed for richer risk-measure coverage, risk
+  contribution reports, factor-risk constraints and drawdown-aware
+  allocation.
+- PyPortfolioOpt is reviewed for a simpler classical baseline:
+  efficient frontier, Black-Litterman, covariance shrinkage and
+  hierarchical risk parity.
+- R-Finance-style portfolio analytics are reviewed for reporting:
+  rolling returns, rolling volatility, rolling Sharpe, drawdown tables,
+  contribution to return, contribution to risk, exposure tables,
+  benchmark-relative attribution and monthly / yearly summaries.
+- skfolio remains the main API-shape reference because its model
+  selection, walk-forward, purged CV and sklearn-compatible interface
+  match QuantForge's validation direction better than a pure optimiser.
+- Reports compare every optimiser against simple baselines: equal
+  weight, inverse volatility, cash / no-trade and the previous
+  production allocation.
+- Tests prove that an optimiser cannot silently violate constraints,
+  leak future data through validation, or improve headline Sharpe by
+  ignoring transaction costs.
+
+Reason not to start immediately: QuantForge already has useful
+portfolio pieces, but a serious optimiser should sit on top of data
+contracts, research honesty and realistic execution costs. Otherwise it
+will allocate capital beautifully to evidence that should have been
+rejected earlier. Elegant nonsense is still nonsense.
+
+### Candidate H. Factor tear sheets and analytics reporting
+
+Why it matters: a strategy can pass headline metrics while hiding that
+its signal has weak information content, high turnover, unstable
+quantiles, regime-specific decay or benchmark-relative
+underperformance. Alphalens and pyfolio are useful references because
+they separate factor quality, portfolio behaviour and benchmark
+comparison into operator-readable reports. QuantForge already has many
+validation primitives; Candidate H turns them into consistent research
+reports.
+
+Recommended promotion target: merge with reporting / validation work
+around R81, R82, R84, R98, R104, R105, R126, R127 and Candidate F.
+Promote as a standalone item only when strategy research reports become
+the next user-facing surface.
+
+Definition of ready:
+
+- A `FactorTearSheet` can report forward returns by quantile,
+  Information Coefficient, IC decay, turnover, rank autocorrelation,
+  long / short spread, drawdowns, monthly returns and
+  benchmark-relative performance.
+- A `PortfolioAnalyticsReport` can report rolling returns, rolling
+  volatility, rolling Sharpe, drawdown table, contribution to return,
+  contribution to risk, exposure by group and benchmark attribution.
+- Reports accept plain arrays / DataFrames and do not require a
+  strategy object. That keeps them useful for factors, strategies and
+  portfolio allocators.
+- Reports include data-contract hash, policy hash, snapshot hash,
+  factor / strategy hash and cost assumptions.
+- Reports refuse to run when forward-return labels overlap forbidden
+  OOS tiers or when index alignment is ambiguous.
+- HTML / text renderers are deterministic so report output can be
+  tested and archived.
+
+Reason not to start immediately: reporting is most valuable after the
+data contract, ledger and portfolio primitives exist. Building pretty
+reports over weak evidence is just arts and crafts with Sharpe ratios.
 
 ### Candidate D. Strategy risk register and approval workflow
 
@@ -3095,7 +3442,554 @@ becomes high priority when the project is close to paper/live capital
 or when multiple people start approving strategies. Until then, keep
 the spec sharp and avoid building bureaucracy cosplay.
 
+### Candidate G. Agentic research support and explanation layer
+
+Why it matters: QuantAgent is interesting because it presents market
+analysis as a coordinated set of specialist agents instead of a single
+chat box. That is useful for research triage, explanation and
+operator-facing summaries. It is also risky if copied literally:
+financial agents can sound confident while quietly mixing weak sources,
+stale data, prompt injection and unvalidated reasoning. QuantForge /
+AURORA should use this pattern only as a controlled support layer above
+the existing protocol spine, never as an authority that can inspect
+locked OOS data or submit orders.
+
+Recommended promotion target: merge with R8 / R9 / R10 / R43 / R44
+and Candidate D if the next work is agent gateway, auditor UX or
+research automation. Promote as its own item only after data contracts,
+research ledger and approval workflow are strong enough to constrain
+the agents.
+
+Definition of ready:
+
+- Agent roles are explicit and limited: data-quality reviewer,
+  strategy-summary reviewer, risk reviewer, execution-cost reviewer,
+  regime reviewer and report explainer.
+- Agents consume evidence packs, validation reports, audit trails and
+  approved snapshots; they do not fetch arbitrary market data as truth
+  unless the source passes the data-contract gate.
+- Agents cannot read OOS_LOCKED / FORWARD data without the same
+  ceremony and audit controls as any other caller.
+- Agents cannot submit, cancel, modify or approve broker orders. They
+  can propose questions, risks and explanations only.
+- Every agent output cites the evidence it used: snapshot hash, policy
+  hash, validation hash, strategy hash, data contract and source file /
+  report where applicable.
+- Disagreements between agents are preserved in the report instead of
+  being collapsed into false consensus.
+- The final output is an operator-facing explanation pack: thesis,
+  evidence, objections, risks, missing data, required follow-up and
+  explicit non-authority warning.
+- Prompt-injection tests cover malicious strategy descriptions,
+  poisoned research notes, hostile web text and attempts to reveal
+  secrets or bypass OOSGuard.
+- Qlib / RD-Agent-style automated quant R&D is permitted only as a
+  proposal engine. It may suggest factors, model variants or research
+  questions, but the normal validation pipeline decides whether
+  anything is credible.
+- QuantAgent-style specialist agents can be used for separate market,
+  technical, risk and execution commentary, but they must preserve
+  disagreement and cite evidence instead of producing one polished
+  answer with hidden uncertainty.
+- Tool access is allowlisted. Destructive filesystem actions, secret
+  reads, broker actions and direct roadmap edits require an audited
+  human-approved path.
+- Tests prove that agents fail closed when evidence is missing,
+  hashes mismatch, OOS access is attempted, or the report tries to
+  promote a strategy without the required validation gates.
+
+Reason not to start immediately: agentic analysis is useful only when
+the evidence layer is trustworthy. Before that, it mostly creates
+well-written uncertainty. The prose gets better; the truth does not.
+
 ---
+
+## Implementation Playbook For AI Agents
+
+This section is for the next AI agent that turns the candidate
+programmes into code. Follow it as an execution order. Do not implement
+everything at once. Each phase must land tests, update docs and pass
+the local verification gates before the next phase starts.
+
+Global rules for every phase:
+
+- Keep the existing flat package layout and import boundary.
+- Prefer small new modules over expanding already-large files.
+- Use internal primitives first. External projects are design
+  references, not code to copy.
+- Do not add a new dependency until there is a short written decision:
+  licence, maintenance status, dependency size, Python compatibility,
+  API stability and fallback if removed.
+- Every new persistent artifact must use `quantforge.core.runtime_paths`
+  or an existing runtime-path helper. No hardcoded user paths.
+- Every feature that can affect strategy promotion must preserve
+  `policy_hash`, `snapshot_hash`, `strategy_hash` and audit evidence.
+- A feature is not done until at least one negative test proves it
+  refuses unsafe input.
+- Run, at minimum:
+  `python -m ruff check .`,
+  `python -m mypy .`, and the focused pytest files touched by the
+  phase. Run the full fast suite before claiming the whole programme is
+  complete.
+
+### Phase 1 -- Data integrity gate (Candidate C)
+
+Goal: make bad data fail before backtest, GA, validation or factory
+submit can use it.
+
+Suggested modules:
+
+- `data_contracts/contract.py`
+- `data_contracts/validator.py`
+- `data_contracts/security_master.py`
+- `data_contracts/corporate_actions.py`
+- `data_contracts/lineage.py`
+- `data_contracts/timeseries_store.py`
+- CLI wiring in `cli/forge.py` only through a thin subcommand module if
+  the CLI split has landed.
+
+Implementation steps:
+
+1. Add immutable dataclasses for `DataContract`, `ContractField`,
+   `AvailabilityPolicy`, `CorporateActionPolicy` and
+   `DataValidationResult`.
+2. Add a validator that checks required columns, monotonic timestamps,
+   duplicate rows, timezone policy, null policy, zero / negative prices,
+   impossible returns, stale snapshots and suspicious split-like jumps.
+3. Add optional point-in-time columns: `event_time`, `available_time`,
+   `ingested_time`, `revision_time`. Fail if a caller asks for data
+   whose `available_time` is later than the decision time.
+4. Add a minimal Security Master record mapping internal symbol, vendor
+   symbol, broker symbol, exchange, currency, listing window and active
+   state.
+5. Add lineage output that records contract version, input hash,
+   snapshot hash, policy hash, validator version and decision outcome.
+6. Add a local time-series store abstraction with:
+   namespace / library name;
+   symbol;
+   version;
+   date-range read;
+   metadata;
+   content hash;
+   append / replace policy;
+   deterministic snapshot export.
+7. Start with an internal filesystem / parquet / sqlite implementation
+   if it fits existing dependencies. Add an Arctic adapter only after a
+   dependency decision.
+8. Add CLI commands only after the library API is tested:
+   `forge data validate`, `forge data contract-show`,
+   `forge data lineage`, `forge data store-put`,
+   `forge data store-read`.
+
+Reference usage:
+
+- Use Zipline data bundles as inspiration for separating raw data,
+  adjusted data, asset metadata and calendars.
+- Use LEAN data abstractions as inspiration for keeping vendor data,
+  engine data and algorithm-facing data separate.
+- Use Arctic as inspiration for library / symbol organisation,
+  metadata, fast date-range reads and versioned time-series storage.
+
+Tests:
+
+- Clean data passes.
+- Missing required column fails.
+- Duplicate timestamp fails.
+- Non-monotonic timestamp fails.
+- Mixed timezone input fails.
+- Zero / negative price fails.
+- Split-like jump warns or fails according to contract severity.
+- `available_time > decision_time` fails.
+- Validator result preserves policy and snapshot hashes.
+- Time-series store round-trip preserves index, columns, metadata and
+  content hash.
+- Date-range read returns only the requested range.
+- Replacing a series changes the version / hash.
+
+### Phase 2 -- Research honesty ledger (Candidate B)
+
+Goal: make every research choice visible, especially failed variants.
+
+Suggested modules:
+
+- `research/ledger.py`
+- `research/pressure.py`
+- `validation/research_pressure.py`
+- `research/factory/` integration points
+
+Implementation steps:
+
+1. Add append-only `ResearchLedger` records for universe, features,
+   parameters, filters, cost model, validation windows, seed, data
+   contract, strategy hash, rejection reason and user override.
+2. Add a small JSONL-backed writer using runtime paths. Include replay
+   / resume safety: retrying a run must not corrupt previous records.
+3. Add `ResearchPressureScore`: number of variants, parameter count,
+   data length, number of manual interventions and OOS touches.
+4. Wire the ledger into factory submit / batch / promote paths without
+   changing strategy semantics.
+5. Add validation-report text that explains research pressure in plain
+   language.
+6. Add optional hooks for PBO / Deflated Sharpe / purged CV only where
+   existing primitives support them. Do not fake advanced statistics.
+
+Reference usage:
+
+- Use Qlib as a reference for end-to-end research workflow shape.
+- Use vectorbt as a warning and reference: fast sweeps are powerful
+  only if every tried variant is recorded.
+- Use RD-Agent only as a proposal-engine pattern. Agent-generated
+  factors are hypotheses, not evidence.
+
+Tests:
+
+- Ledger is append-only.
+- Retry does not overwrite previous records.
+- Rejected candidates are recorded.
+- Manual override requires author and reason.
+- Promotion report includes research pressure.
+- Large parameter sweep records all tried parameter ranges.
+- Missing ledger blocks promotion when policy requires it.
+
+### Phase 3 -- Execution event replay and reconciliation (Candidate A)
+
+Goal: rebuild a paper/live session from broker events alone.
+
+Suggested modules:
+
+- `execution/events.py`
+- `execution/order_state.py`
+- `execution/replay.py`
+- `execution/reconciliation.py`
+- `execution/fill_models.py`
+- `analytics/tca.py`
+- integration with `deployment/brokers.py` or the split broker package
+
+Implementation steps:
+
+1. Add canonical broker event dataclasses:
+   `OrderCreated`, `OrderSubmitted`, `OrderAcknowledged`,
+   `OrderPartiallyFilled`, `OrderFilled`, `CancelRequested`,
+   `OrderCancelled`, `ReplaceRequested`, `OrderReplaced`,
+   `OrderRejected`, `OrderExpired`, `CommissionReported`,
+   `CashUpdated`, `PositionUpdated`, `Disconnected`,
+   `Reconnected`.
+2. Add `OrderLifecycleState` and a transition function. Unknown,
+   duplicate and out-of-order events must produce explicit warnings or
+   reconciliation diffs, not silent success.
+3. Add replay that reconstructs order state, positions, cash, realised
+   PnL, commissions and open orders.
+4. Add reconciliation that compares replayed state against engine /
+   broker state and reports positions, cash, PnL, open orders, orphan
+   fills and missing commissions.
+5. Add realistic fill models:
+   market order with spread and depth;
+   limit order with fill probability;
+   partial fill;
+   latency;
+   rejection;
+   stale quote refusal;
+   min lot / tick size checks.
+6. Add a basic TCA report: arrival price, average fill price,
+   effective spread, slippage, delay cost, opportunity cost and
+   unfilled quantity.
+7. Keep live broker integration behind existing triple gates. Do not
+   connect new real brokers in this phase.
+
+Reference usage:
+
+- Use NautilusTrader as a reference for deterministic event-driven
+  architecture and backtest/live parity.
+- Use LEAN as a reference for modular engine boundaries.
+- Use Freqtrade as a reference for dry-run operator UX and crypto
+  exchange capability checks.
+- Use the Oxford HFT notes as a reference for limit-order fills,
+  market impact, execution cost and market making.
+
+Tests:
+
+- Full fill rebuilds final position and cash.
+- Partial fill then cancel leaves correct residual quantity.
+- Duplicate fill is detected.
+- Out-of-order event is detected.
+- Restart between ack and fill replays correctly.
+- Fill without local order creates an orphan diff.
+- Missing commission creates a reconciliation diff.
+- Limit order can remain unfilled.
+- Stale quote refuses fill.
+- TCA values are finite and sign-consistent.
+
+### Phase 4 -- Portfolio optimisation and risk validation (Candidate F)
+
+Goal: allocate capital under constraints, costs and validation, not by
+headline Sharpe alone.
+
+Suggested modules:
+
+- `portfolio/allocation.py`
+- `portfolio/constraints.py`
+- `portfolio/risk_measures.py`
+- `portfolio/optimizers.py`
+- `portfolio/analytics.py`
+- `portfolio/attribution.py`
+- `portfolio/stress.py`
+- `validation/portfolio_validation.py`
+
+Implementation steps:
+
+1. Add a common `PortfolioOptimizer` interface with `fit`, `predict`
+   and `summary` methods. Keep it internal and lightweight.
+2. Implement simple baselines first: equal weight, inverse volatility,
+   cash / no-trade and benchmark tracker.
+3. Add risk measures: variance, semi-variance, CVaR, maximum drawdown,
+   average drawdown and turnover-aware net return.
+4. Add constraints: min / max weights, long-only / long-short, gross
+   exposure, net exposure, group exposure, cash floor, turnover and
+   per-strategy capital cap.
+5. Add one classical optimiser only after baselines pass. Prefer a
+   small internal mean-risk or risk-budgeting implementation before
+   optional dependency adapters.
+6. Add walk-forward validation. Add purged / embargoed validation only
+   if labels or windows overlap.
+7. Add stress tests for noisy covariance, higher costs, missing assets,
+   correlated drawdowns and liquidity shocks.
+8. Add portfolio analytics reports:
+   rolling returns;
+   rolling volatility;
+   rolling Sharpe;
+   drawdown table;
+   contribution to return;
+   contribution to risk;
+   exposure by group;
+   benchmark-relative attribution;
+   monthly / yearly summary.
+9. Add optional adapters later:
+   `SkfolioAdapter`, `RiskfolioAdapter`, `PyPortfolioOptAdapter`.
+   Each adapter must be optional and skipped cleanly when dependency is
+   absent.
+
+Reference usage:
+
+- skfolio is the main API-shape reference.
+- Riskfolio-Lib is the reference for broad risk measures and risk
+  contribution reporting.
+- PyPortfolioOpt is the reference for classical efficient frontier,
+  Black-Litterman, shrinkage and HRP baselines.
+- R-Finance PerformanceAnalytics / PortfolioAnalytics /
+  PortfolioAttribution are references for report shape, rolling risk,
+  contribution tables and attribution terminology.
+
+Tests:
+
+- Weights sum to expected budget.
+- Constraints cannot be violated silently.
+- Costs reduce or preserve net performance; they never improve it.
+- Walk-forward split does not use future data.
+- Missing asset is handled according to policy.
+- Equal weight and inverse volatility baselines are reproducible.
+- Rolling analytics return finite values or documented NaN warmup.
+- Contribution to return sums to portfolio return within tolerance.
+- Contribution to risk sums to total risk within tolerance for the
+  supported risk model.
+- Optional adapters skip cleanly when dependency is not installed.
+
+### Phase 4b -- Factor tear sheets and analytics reporting (Candidate H)
+
+Goal: turn factor and strategy outputs into operator-readable reports
+that reveal signal quality, turnover, decay and benchmark-relative
+behaviour.
+
+Suggested modules:
+
+- `reporting/factor_tearsheet.py`
+- `reporting/portfolio_analytics.py`
+- `reporting/report_renderers.py`
+- `validation/factor_diagnostics.py`
+
+Implementation steps:
+
+1. Add factor alignment helpers that accept factor values, forward
+   returns, groups / sectors, costs and benchmark returns.
+2. Add Information Coefficient, IC decay, rank autocorrelation,
+   quantile returns, long / short spread, turnover and factor drawdown.
+3. Add portfolio analytics report output: rolling returns, rolling
+   volatility, rolling Sharpe, drawdown table, benchmark attribution
+   and monthly / yearly summary.
+4. Add deterministic text renderer first. HTML/PDF can come later
+   through existing reporting infrastructure.
+5. Include provenance in every report: policy hash, snapshot hash,
+   data contract hash, factor / strategy hash and cost assumptions.
+6. Refuse ambiguous index alignment, future-labelled data and forbidden
+   OOS tier overlap.
+
+Reference usage:
+
+- Use Alphalens for factor tear-sheet structure.
+- Use pyfolio for return / drawdown / benchmark report structure.
+- Use R-Finance reporting packages as terminology references for
+  performance and attribution tables.
+
+Tests:
+
+- IC sign matches a synthetic predictive factor.
+- Random factor has near-zero IC within tolerance.
+- Quantile report orders buckets correctly.
+- Turnover is zero for constant ranks.
+- Report refuses misaligned indexes.
+- Report refuses forward returns that overlap forbidden OOS tiers.
+- Text renderer output is deterministic.
+
+### Phase 5 -- Strategy atlas and benchmark catalogue (Candidate E)
+
+Goal: turn strategy references into a curated map, not a strategy
+dump.
+
+Suggested modules:
+
+- `research/strategy_atlas.py`
+- `research/strategy_benchmarks.py`
+- `research/idea_sources.py`
+- `research/strategy_graveyard.py` integration
+- docs page under `docs/`
+
+Implementation steps:
+
+1. Add `StrategyAtlasEntry` with name, asset class, data needs,
+   required engine support, cost sensitivity, overfit risk,
+   implementation difficulty, benchmark expectation, status and owner.
+2. Add statuses: `SUPPORTED`, `CANDIDATE`, `BLOCKED`, `REJECTED`,
+   `BENCHMARK_ONLY`, `EXTERNAL_DATA_ONLY`.
+3. Seed the first atlas slice with only testable ideas:
+   ETF momentum rotation, dual momentum, multi-asset trend following,
+   volatility targeting, ETF mean reversion, simple pairs, simple
+   stat-arb, KNN single-stock example and controlled alpha combo.
+4. Mark options-heavy, structured-credit, convertibles, tax-arbitrage
+   and compliance-sensitive ideas as blocked until data, pricing,
+   execution and legal review exist.
+5. Add benchmark mapping for each entry: cash, buy-and-hold, equal
+   weight, simple momentum / mean reversion, random comparable
+   turnover or current production strategy.
+6. Before implementing any template, query similarity and graveyard.
+7. Add `IdeaSource` records for Quantpedia, QuantStart, Ernie Chan /
+   EpChan, EliteQuant and future curated sources. Store source name,
+   URL, claim summary, asset class, data needs, assumptions,
+   testability and confidence.
+8. Add docs that explain why the atlas refuses many tempting ideas.
+
+Reference usage:
+
+- Use the "151 Trading Strategies" PDF as the catalogue source.
+- Use vectorbt-style sweeps only as atlas input when the full sweep
+  config and rejected variants are recorded.
+- Use Quantpedia / QuantStart / Ernie Chan-style sources only as idea
+  discovery. Their claims must be re-tested under QuantForge data
+  contracts and validation gates.
+
+Tests:
+
+- Blocked entry cannot be promoted.
+- Benchmark-only entry cannot become production.
+- Entry without data requirements fails validation.
+- Entry without benchmark expectation fails validation.
+- Similar-to-graveyard entry is flagged.
+- Source claim without independent validation cannot be promoted.
+- Idea source loads deterministically and preserves URL / assumption
+  metadata.
+- Seed atlas loads deterministically.
+
+### Phase 6 -- Strategy risk register and approval workflow (Candidate D)
+
+Goal: require ownership and approval before paper/live promotion.
+
+Suggested modules:
+
+- `governance/risk_register.py`
+- `governance/approvals.py`
+- `governance/lifecycle.py`
+- integration with `agent_gateway/` and `research/factory/`
+
+Implementation steps:
+
+1. Add `StrategyRiskRecord` with intended use, limitations,
+   assumptions, owner, reviewer, approval status, evidence hashes, risk
+   limits, expiry and revalidation date.
+2. Add lifecycle states: draft, researching, rejected, quarantined,
+   validated, OOS-approved, shadow, paper, canary, live, degraded,
+   retired, graveyard.
+3. Add maker-checker approval flow: researcher proposes, reviewer
+   validates, risk owner approves limits, operator approves deployment.
+4. Add promotion gate: refuse promotion if risk record is missing,
+   expired, unapproved, hash-mismatched or warning threshold exceeded.
+5. Store approval events in the audit chain.
+
+Tests:
+
+- Promotion without risk record fails.
+- Expired risk record fails.
+- Approval out of order fails.
+- Hash mismatch fails.
+- Override requires author, reason and audit event.
+- Retired strategy cannot be promoted without new record.
+
+### Phase 7 -- Agentic research support (Candidate G)
+
+Goal: let agents explain and challenge evidence, not create authority.
+
+Suggested modules:
+
+- `agent_gateway/research_agents.py`
+- `agent_gateway/evidence_pack.py`
+- `agent_gateway/agent_roles.py`
+- `agent_gateway/prompt_injection_tests.py`
+- reporting integration for explanation packs
+
+Implementation steps:
+
+1. Add explicit agent roles: data-quality reviewer, strategy-summary
+   reviewer, risk reviewer, execution-cost reviewer, regime reviewer
+   and report explainer.
+2. Add an `EvidencePack` object containing only approved inputs:
+   snapshot hash, policy hash, validation hash, strategy hash, data
+   contract, audit references and source report paths.
+3. Agents may read evidence packs and produce comments. They may not
+   read locked OOS / FORWARD data, submit orders, approve promotions,
+   read secrets or modify code.
+4. Add disagreement-preserving report output. Do not collapse agent
+   disagreement into a fake consensus.
+5. Add source-required mode: every material claim must point to an
+   evidence item.
+6. Add prompt-injection fixtures: malicious strategy text, hostile web
+   snippet, poisoned research note, secret-exfiltration request and
+   OOS-bypass request.
+7. Add hard fail-closed behaviour when evidence is missing, hash
+   verification fails or the agent asks for a forbidden tool.
+
+Reference usage:
+
+- Use QuantAgent as a UX/reference for specialist market-analysis
+  agents.
+- Use Qlib / RD-Agent as references for automated research proposal
+  flow.
+- Keep all agent suggestions downstream of data contracts, research
+  ledger, validation reports and approval workflow.
+
+Tests:
+
+- Agent cannot access locked OOS evidence.
+- Agent cannot request broker action.
+- Agent output without source fails in source-required mode.
+- Prompt-injection fixture is refused.
+- Missing evidence pack fails closed.
+- Disagreement appears in final explanation pack.
+
+Final programme stop condition:
+
+- All seven phases either landed or have an explicit written blocker.
+- `ruff`, `mypy`, focused tests and full fast pytest pass.
+- Roadmap entries are updated with evidence paths.
+- No new dependency was added without a dependency decision note.
+- No feature can promote a strategy without data contract, research
+  ledger, validation evidence and risk approval.
 
 ## Commit Plan
 

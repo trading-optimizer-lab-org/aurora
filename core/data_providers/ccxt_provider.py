@@ -101,7 +101,7 @@ class CCXTProvider(BaseDataProvider):
 
     def _import_ccxt(self) -> Any:
         try:
-            import ccxt  # type: ignore
+            import ccxt
         except Exception as exc:  # pragma: no cover - ccxt is optional
             raise ProviderUnavailable(
                 "ccxt provider requires the optional ``ccxt`` package; "

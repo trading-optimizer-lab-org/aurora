@@ -16,7 +16,7 @@ from __future__ import annotations
 import inspect
 import logging
 import random
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 from quantforge.research.factory.spec import StrategySpec
 
@@ -197,7 +197,7 @@ class LLMHypothesisGenerator:
         self,
         client: Any = None,
         *,
-        prompt_builder: Optional[callable] = None,
+        prompt_builder: Optional[Callable[..., Any]] = None,
         universe: Optional[list[str]] = None,
         rebalance: str = "1d",
     ) -> None:

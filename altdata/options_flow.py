@@ -92,7 +92,7 @@ class OptionsFlowAdapter:
     # ------------------------------------------------------------------
     def _fetch_chain(self, symbol: str) -> pd.DataFrame:  # pragma: no cover - network
         try:
-            import yfinance as yf  # type: ignore
+            import yfinance as yf
         except ImportError as e:
             raise ImportError("yfinance required for live options chain") from e
         tk = yf.Ticker(symbol)
@@ -121,7 +121,7 @@ class OptionsFlowAdapter:
         rng = np.random.default_rng(
             abs(hash(("opt", symbol, as_of.date().toordinal()))) % (2**32)
         )
-        strikes = np.arange(80, 130, 5, dtype=float)
+        strikes: np.ndarray = np.arange(80, 130, 5, dtype=float)
         rows = []
         exp = pd.Timestamp(as_of) + pd.Timedelta(days=21)
         for k in strikes:

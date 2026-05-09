@@ -57,7 +57,7 @@ def circular_block_bootstrap(returns: np.ndarray, length: int,
         block_len = int(rng.geometric(p))
         take = min(block_len, length - filled)
         # circular wrap via modulo indexing
-        idx = (start + np.arange(take)) % T
+        idx: np.ndarray = (start + np.arange(take)) % T
         out[filled:filled + take] = returns[idx]
         filled += take
     return out

@@ -35,7 +35,7 @@ def detect_double_bottom(
     other, separated by at least ``min_separation`` bars.
     """
     prices = np.asarray(prices, dtype=float)
-    out = np.zeros(len(prices), dtype=bool)
+    out: np.ndarray = np.zeros(len(prices), dtype=bool)
     pivots = _local_min_indices(prices, pivot_window)
     for i in range(len(pivots) - 1):
         a, b = pivots[i], pivots[i + 1]
@@ -56,7 +56,7 @@ def detect_double_top(
 ) -> np.ndarray:
     """Mark bars where a double top completes."""
     prices = np.asarray(prices, dtype=float)
-    out = np.zeros(len(prices), dtype=bool)
+    out: np.ndarray = np.zeros(len(prices), dtype=bool)
     pivots = _local_max_indices(prices, pivot_window)
     for i in range(len(pivots) - 1):
         a, b = pivots[i], pivots[i + 1]
@@ -75,7 +75,7 @@ def detect_breakout_high(
 ) -> np.ndarray:
     """Mark bars whose close is the highest in the trailing ``lookback`` window."""
     prices = np.asarray(prices, dtype=float)
-    out = np.zeros(len(prices), dtype=bool)
+    out: np.ndarray = np.zeros(len(prices), dtype=bool)
     for i in range(lookback, len(prices)):
         window = prices[i - lookback: i]
         if prices[i] > window.max():
@@ -90,7 +90,7 @@ def detect_breakout_low(
 ) -> np.ndarray:
     """Mark bars whose close is the lowest in the trailing ``lookback`` window."""
     prices = np.asarray(prices, dtype=float)
-    out = np.zeros(len(prices), dtype=bool)
+    out: np.ndarray = np.zeros(len(prices), dtype=bool)
     for i in range(lookback, len(prices)):
         window = prices[i - lookback: i]
         if prices[i] < window.min():

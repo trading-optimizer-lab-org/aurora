@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -68,7 +68,7 @@ class PartitionedParquetStore:
 
     def list_partitions(self) -> list[dict]:
         """Enumerate all on-disk Hive-style partitions as dicts."""
-        out = []
+        out: list[dict[str, Any]] = []
         root = self.config.root
         if not os.path.isdir(root):
             return out
@@ -103,8 +103,8 @@ class PartitionedParquetStore:
         return df
 
     def _write_pyarrow(self, df: pd.DataFrame) -> int:
-        import pyarrow as pa  # type: ignore
-        import pyarrow.dataset as ds  # type: ignore
+        import pyarrow as pa
+        import pyarrow.dataset as ds
 
         table = pa.Table.from_pandas(df, preserve_index=False)
         ds.write_dataset(
@@ -118,7 +118,7 @@ class PartitionedParquetStore:
         return int(len(df))
 
     def _read_pyarrow(self, symbol: Optional[str], year: Optional[int]) -> pd.DataFrame:
-        import pyarrow.dataset as ds  # type: ignore
+        import pyarrow.dataset as ds
 
         if not os.path.isdir(self.config.root) or not os.listdir(self.config.root):
             return pd.DataFrame()

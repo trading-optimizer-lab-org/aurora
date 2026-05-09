@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-
 from quantforge.core.logging import get_logger
 
 _log = get_logger("regime.markov_switching")
@@ -27,7 +26,7 @@ try:
     )
     _HAS_STATSMODELS = True
 except ImportError:  # pragma: no cover
-    _SmMarkovRegression = None  # type: ignore
+    _SmMarkovRegression = None
     _HAS_STATSMODELS = False
 
 
@@ -67,6 +66,27 @@ def _prices_to_returns(prices: pd.Series) -> pd.Series:
     return np.log(p / p.shift(1))
 
 
+def _statsmodels_params_by_name(res) -> dict[str, float]:
+    """Return statsmodels result params as a name -> value mapping.
+
+    statsmodels has returned both pandas-like named params and plain numpy
+    arrays across versions. QuantForge only needs a few named parameters, so
+    normalize once at the boundary.
+    """
+    params = res.params
+    if hasattr(params, "get"):
+        return {str(k): float(params.get(k)) for k in params.keys()}
+    names = getattr(res, "param_names", None)
+    if names is None:
+        names = getattr(getattr(res, "model", None), "param_names", None)
+    if names is None:
+        raise RuntimeError("statsmodels MarkovRegression did not expose param names")
+    return {
+        str(name): float(value)
+        for name, value in zip(names, np.asarray(params, dtype=float), strict=False)
+    }
+
+
 # --------------------- manual EM fallback -----------------------------------
 
 
@@ -98,24 +118,24 @@ def _manual_em_fit(
       ``min_effective_sample_size`` (default 1%).
     """
     rng = np.random.default_rng(seed)
-    T = len(obs)
-    K = int(n_regimes)
+    n_obs = len(obs)
+    n_states = int(n_regimes)
 
     # init: spread means across data quantiles, common variance
-    qs = np.linspace(0.1, 0.9, K)
+    qs = np.linspace(0.1, 0.9, n_states)
     means = np.quantile(obs, qs).astype(float)
     var_global = float(np.var(obs))
     if var_global <= 0.0:
         var_global = 1e-8
     if switching_variance:
-        variances = np.full(K, var_global, dtype=float) * (
-            1.0 + 0.1 * rng.standard_normal(K)
+        variances = np.full(n_states, var_global, dtype=float) * (
+            1.0 + 0.1 * rng.standard_normal(n_states)
         )
         variances = np.clip(variances, 1e-12, None)
     else:
-        variances = np.full(K, var_global, dtype=float)
-    P = np.full((K, K), 1.0 / K)
-    pi = np.full(K, 1.0 / K)
+        variances = np.full(n_states, var_global, dtype=float)
+    transition = np.full((n_states, n_states), 1.0 / n_states)
+    pi = np.full(n_states, 1.0 / n_states)
 
     def _gauss_density(x: np.ndarray, mu: np.ndarray, var: np.ndarray) -> np.ndarray:
         z = (x[:, None] - mu[None, :]) ** 2 / var[None, :]
@@ -124,21 +144,21 @@ def _manual_em_fit(
     log_lik_old = -np.inf
     log_lik_trajectory: list[float] = []
     for _ in range(int(n_iter)):
-        dens = _gauss_density(obs, means, variances)  # (T, K)
+        dens = _gauss_density(obs, means, variances)  # (n_obs, n_states)
         dens = np.clip(dens, 1e-300, None)
 
         # Hamilton filter (forward)
-        filt = np.zeros((T, K))
-        scale = np.zeros(T)
+        filt = np.zeros((n_obs, n_states))
+        scale = np.zeros(n_obs)
         pred = pi.copy()
-        for t in range(T):
+        for t in range(n_obs):
             num = pred * dens[t]
             s = num.sum()
             if s <= 0.0:
                 s = 1e-300
             filt[t] = num / s
             scale[t] = s
-            pred = filt[t] @ P
+            pred = filt[t] @ transition
 
         log_lik = float(np.sum(np.log(np.clip(scale, 1e-300, None))))
         # Track trajectory for monotonicity check below. EM is guaranteed to
@@ -154,24 +174,24 @@ def _manual_em_fit(
         log_lik_trajectory.append(log_lik)
 
         # Kim smoother (backward)
-        smooth = np.zeros((T, K))
+        smooth = np.zeros((n_obs, n_states))
         smooth[-1] = filt[-1]
-        for t in range(T - 2, -1, -1):
-            pred_next = filt[t] @ P
+        for t in range(n_obs - 2, -1, -1):
+            pred_next = filt[t] @ transition
             pred_next = np.clip(pred_next, 1e-300, None)
             ratio = smooth[t + 1] / pred_next
-            smooth[t] = filt[t] * (P @ ratio)
+            smooth[t] = filt[t] * (transition @ ratio)
             ssum = smooth[t].sum()
             if ssum > 0:
                 smooth[t] /= ssum
 
         # joint p(S_t=i, S_{t+1}=j | data) for transition update
-        joint = np.zeros((T - 1, K, K))
-        for t in range(T - 1):
-            pred_next = filt[t] @ P
+        joint = np.zeros((n_obs - 1, n_states, n_states))
+        for t in range(n_obs - 1):
+            pred_next = filt[t] @ transition
             pred_next = np.clip(pred_next, 1e-300, None)
             ratio = smooth[t + 1] / pred_next
-            num = filt[t][:, None] * P * ratio[None, :]
+            num = filt[t][:, None] * transition * ratio[None, :]
             denom = num.sum()
             if denom > 0:
                 joint[t] = num / denom
@@ -180,7 +200,7 @@ def _manual_em_fit(
         weights = smooth.sum(axis=0)  # (K,)
         # Effective sample size guard: a regime with vanishing weight has
         # collapsed and its mean/variance estimates are uninformative.
-        ess_ratio = float(weights.min() / max(T, 1))
+        ess_ratio = float(weights.min() / max(n_obs, 1))
         if ess_ratio < float(min_effective_sample_size):
             raise DegenerateRegimeError(
                 f"effective sample size for weakest regime "
@@ -195,15 +215,20 @@ def _manual_em_fit(
         else:
             sq = (obs[:, None] - new_means[None, :]) ** 2
             pooled = float((smooth * sq).sum() / weights.sum())
-            new_var = np.full(K, pooled, dtype=float)
+            new_var = np.full(n_states, pooled, dtype=float)
         new_var = np.clip(new_var, 1e-12, None)
         trans_num = joint.sum(axis=0)
         trans_den = trans_num.sum(axis=1, keepdims=True)
         trans_den = np.clip(trans_den, 1e-12, None)
-        new_P = trans_num / trans_den
+        new_transition = trans_num / trans_den
         new_pi = smooth[0]
 
-        means, variances, P, pi = new_means, new_var, new_P, new_pi
+        means, variances, transition, pi = (
+            new_means,
+            new_var,
+            new_transition,
+            new_pi,
+        )
 
         if abs(log_lik - log_lik_old) < 1e-6:
             break
@@ -212,7 +237,7 @@ def _manual_em_fit(
     return {
         "means": means,
         "vars": variances,
-        "transition": P,
+        "transition": transition,
         "filtered": filt,
         "smoothed": smooth,
         "log_likelihood": log_lik,
@@ -306,15 +331,16 @@ class MarkovSwitchingMean:
             np.random.set_state(_rng_state)
 
         # extract regime means (constants) and variances
-        K = self.n_regimes
-        raw_means = np.zeros(K, dtype=float)
-        raw_vars = np.zeros(K, dtype=float)
-        for k in range(K):
-            raw_means[k] = float(res.params.get(f"const[{k}]", 0.0))
+        n_states = self.n_regimes
+        params = _statsmodels_params_by_name(res)
+        raw_means: np.ndarray = np.zeros(n_states, dtype=float)
+        raw_vars: np.ndarray = np.zeros(n_states, dtype=float)
+        for k in range(n_states):
+            raw_means[k] = float(params.get(f"const[{k}]", 0.0))
             if self.switching_variance:
-                raw_vars[k] = float(res.params.get(f"sigma2[{k}]", 1e-8))
+                raw_vars[k] = float(params.get(f"sigma2[{k}]", 1e-8))
             else:
-                raw_vars[k] = float(res.params.get("sigma2", 1e-8))
+                raw_vars[k] = float(params.get("sigma2", 1e-8))
         raw_vars = np.clip(raw_vars, 1e-12, None)
         raw_vols = np.sqrt(raw_vars)
 
@@ -381,7 +407,7 @@ class MarkovSwitchingMean:
 
     # ---- public API ---------------------------------------------------------
 
-    def fit(self, returns: pd.Series) -> "MarkovSwitchingMean":
+    def fit(self, returns: pd.Series) -> MarkovSwitchingMean:
         """Fit Markov-switching model. Sorts regimes by mean ascending.
 
         statsmodels failures fall back to the manual EM implementation, but
@@ -445,14 +471,14 @@ class MarkovSwitchingMean:
             and self._means is not None
             and self._vols is not None
         )
-        K = self.n_regimes
-        if last_filtered.shape != (K,):
+        n_states = self.n_regimes
+        if last_filtered.shape != (n_states,):
             raise ValueError(
-                f"last_filtered must have shape ({K},), got {last_filtered.shape}"
+                f"last_filtered must have shape ({n_states},), got {last_filtered.shape}"
             )
         # Predict one step: pi_pred = last @ P
         pred = last_filtered @ self._transition
-        var = (self._vols ** 2)
+        var: np.ndarray = (self._vols ** 2)
         var = np.clip(var, 1e-12, None)
         # Gaussian likelihood per regime
         z = (obs - self._means) ** 2 / var
@@ -471,7 +497,7 @@ class MarkovSwitchingMean:
             pred_sum = float(pred.sum())
             if pred_sum > 0.0 and np.isfinite(pred_sum):
                 return pred / pred_sum
-            return np.full(K, 1.0 / K, dtype=float)
+            return np.full(n_states, 1.0 / n_states, dtype=float)
         return num / s
 
     def result(self) -> MarkovSwitchResult:
@@ -591,13 +617,13 @@ def regime_switching_strategy(
         np.ndarray of length len(prices), values in {0.0, 1.0}.
     """
     p = pd.Series(prices).astype(float)
-    N = len(p)
-    out = np.zeros(N, dtype=float)
+    n_prices = len(p)
+    out: np.ndarray = np.zeros(n_prices, dtype=float)
     refit = max(int(refit_every), 20)
 
     # need at least ~60 returns to fit reliably
     min_warmup = max(60, refit)
-    if N <= min_warmup + 1:
+    if n_prices <= min_warmup + 1:
         return out
 
     last_model: MarkovSwitchingMean | None = None
@@ -605,7 +631,7 @@ def regime_switching_strategy(
     last_filtered: np.ndarray | None = None  # last bar's filtered prob vector
     bullish_regime = n_regimes - 1
 
-    for i in range(min_warmup, N):
+    for i in range(min_warmup, n_prices):
         # refit when due (or first time)
         if last_model is None or (i - last_fit_at) >= refit:
             past_prices = p.iloc[:i]  # strictly past — anti-lookahead

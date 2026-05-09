@@ -85,6 +85,8 @@ class OODDetector:
         self.n_test = int(X_test.shape[0])
 
         self._fit(X_train)
+        if self.iso_forest is None:  # pragma: no cover - defensive
+            raise RuntimeError("IsolationForest model was not fitted")
 
         m = self._mahalanobis(X_test)
         # IsolationForest: predict returns -1 for anomaly, 1 for inlier;

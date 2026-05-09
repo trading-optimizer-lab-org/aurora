@@ -50,7 +50,7 @@ def simulate_session(
     *,
     prices: np.ndarray,
     desired_weights: np.ndarray,
-    config: FrictionConfig = FrictionConfig(),
+    config: Optional[FrictionConfig] = None,
 ) -> SimulatedBookState:
     """Walk the bar series, attempting to track ``desired_weights``.
 
@@ -63,6 +63,8 @@ def simulate_session(
     Returns:
         :class:`SimulatedBookState` with the per-bar fills + rejects.
     """
+    if config is None:
+        config = FrictionConfig()
     prices = np.asarray(prices, dtype=float)
     desired = np.asarray(desired_weights, dtype=float)
     if len(prices) != len(desired):

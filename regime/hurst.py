@@ -280,7 +280,7 @@ def hurst_dfa(
         # Both forward and reverse segmentation (Peng et al. recommendation).
         segs_fwd = profile[: n_segs * s].reshape(n_segs, s)
         segs_bwd = profile[-n_segs * s:].reshape(n_segs, s)
-        x = np.arange(s, dtype=float)
+        x: np.ndarray = np.arange(s, dtype=float)
         seg_var = []
         for seg in np.vstack([segs_fwd, segs_bwd]):
             coeffs = np.polyfit(x, seg, order)
@@ -428,7 +428,7 @@ def hurst_regime_filter(series, window: int = 252,
     # - unstable per-window fits inside the populated region: emit the
     #   distinct ``"unknown"`` sentinel so callers can tell a failed fit
     #   apart from a successful "random" classification.
-    warmup_mask = np.zeros(len(h), dtype=bool)
+    warmup_mask: np.ndarray = np.zeros(len(h), dtype=bool)
     warmup_mask[: max(0, window - 1)] = True
 
     def _label_finite(x: float) -> str:

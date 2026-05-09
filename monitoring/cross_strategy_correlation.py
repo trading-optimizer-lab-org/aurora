@@ -87,7 +87,7 @@ def find_common_cause(
                 s.recent_returns[-min_len:] for s in underperformers
             ])
             corr = np.corrcoef(stack)
-            mask = ~np.eye(len(underperformers), dtype=bool)
+            mask: np.ndarray = ~np.eye(len(underperformers), dtype=bool)
             pair_max = float(np.nanmax(corr[mask]))
 
     # Common factor tags by majority vote.

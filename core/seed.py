@@ -30,7 +30,7 @@ def set_global_seed(seed: int) -> None:
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     try:
-        import torch  # type: ignore
+        import torch
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
     except ImportError:
@@ -39,7 +39,7 @@ def set_global_seed(seed: int) -> None:
     # we already seeded above. Some numba versions also expose a separate
     # numba.random module with its own seed(); call defensively if present.
     try:
-        import numba  # type: ignore
+        import numba
         nb_random = getattr(numba, "random", None)
         if nb_random is not None and hasattr(nb_random, "seed"):
             nb_random.seed(int(seed))  # pragma: no cover - version dependent

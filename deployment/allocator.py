@@ -168,7 +168,7 @@ def rebalance_dates(index: pd.DatetimeIndex, schedule: str) -> np.ndarray:
     if schedule not in _VALID_REBALANCE:
         raise ValueError(f"unknown rebalance schedule: {schedule}")
     n = len(index)
-    mask = np.zeros(n, dtype=bool)
+    mask: np.ndarray = np.zeros(n, dtype=bool)
     if n == 0:
         return mask
 
@@ -346,7 +346,7 @@ class StrategyAllocator:
         N = len(self.names)
 
         # Re-index per-strategy returns onto the common index.
-        rets_mat = np.zeros((T, N), dtype=float)
+        rets_mat: np.ndarray = np.zeros((T, N), dtype=float)
         for j, name in enumerate(self.names):
             r_full = pd.Series(per_strat_rets_full[name], index=per_strat_index[name])
             r_aligned = r_full.reindex(common_idx).fillna(0.0).values.astype(float)
@@ -358,8 +358,8 @@ class StrategyAllocator:
         # 4. Walk forward: at each rebalance bar t, recompute weights from
         #    prior-window returns (rets_mat[max(0, t-lookback):t+1]) and APPLY
         #    those weights starting at bar t+1.
-        weights_mat = np.zeros((T, N), dtype=float)
-        rebalance_costs = np.zeros(T, dtype=float)  # cost charged at bar t (return-space)
+        weights_mat: np.ndarray = np.zeros((T, N), dtype=float)
+        rebalance_costs: np.ndarray = np.zeros(T, dtype=float)  # cost charged at bar t (return-space)
         cur_w = np.full(N, 1.0 / N)  # start equal-weight before first rebalance
         cost_factor = self.rebalance_cost_bps / 10_000.0
         total_rebalance_cost = 0.0
@@ -395,7 +395,7 @@ class StrategyAllocator:
 
         # 5. Apply weights to next-bar returns: portfolio_ret[t] = sum_i w_i[t-1] * r_i[t]
         #    Rebalance cost is charged at the bar of the rebalance (return-space).
-        port_rets = np.zeros(T, dtype=float)
+        port_rets: np.ndarray = np.zeros(T, dtype=float)
         port_rets[1:] = np.einsum("tn,tn->t",
                                   weights_mat[:-1, :], rets_mat[1:, :])
         port_rets = port_rets - rebalance_costs
@@ -403,7 +403,7 @@ class StrategyAllocator:
         nav[0] = 1.0
 
         # 6. Per-strategy contributions (additive in continuously-rebalanced port).
-        per_strat_contrib = np.zeros((T, N), dtype=float)
+        per_strat_contrib: np.ndarray = np.zeros((T, N), dtype=float)
         per_strat_contrib[1:, :] = weights_mat[:-1, :] * rets_mat[1:, :]
         per_strategy_returns = {self.names[j]: per_strat_contrib[:, j]
                                 for j in range(N)}

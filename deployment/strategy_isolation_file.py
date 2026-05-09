@@ -178,7 +178,7 @@ class _FileLockContext:
                     raise IsolationConflict(
                         f"timed out waiting {self.wait_timeout_seconds}s "
                         f"for lock {self.lock_path}"
-                    )
+                    ) from None
                 time.sleep(0.05)
 
     def __exit__(self, exc_type, exc_val, exc_tb):

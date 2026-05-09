@@ -6,6 +6,11 @@ Plan locked. Execution gated on a dedicated rename branch + a clean
 session that does NOT bundle other work. Roughly 1-2 weeks of focused
 mechanical changes plus shim-window release planning.
 
+Current repo status: the rename has NOT been executed in the current
+branch. `pyproject.toml` still names the package `quantforge`,
+`import quantforge` works, `import aurora` does not, and `QF_*` env
+vars remain the active code path until the rename branch lands.
+
 ## Why the rename is its own track
 
 The rename touches every file that references the project name. Done
@@ -124,7 +129,7 @@ Update every operator-facing doc:
 
 ## Definition of done
 
-- [x] `import aurora` resolves to the rename branch's package.
+- [ ] `import aurora` resolves to the rename branch's package.
 - [ ] `import quantforge` works AND emits a `DeprecationWarning`
       during the shim window.
 - [ ] `aurora --version` returns the new package version.

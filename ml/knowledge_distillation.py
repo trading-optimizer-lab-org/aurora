@@ -15,15 +15,15 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
-    from torch.utils.data import DataLoader, TensorDataset  # type: ignore
+    import torch
+    from torch import nn
+    from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
-    DataLoader = None  # type: ignore[assignment]
-    TensorDataset = None  # type: ignore[assignment]
+    torch = None
+    nn = None
+    DataLoader = None
+    TensorDataset = None
     TORCH_AVAILABLE = False
 
 
@@ -141,7 +141,7 @@ class KnowledgeDistiller:
         if not isinstance(t_pred, np.ndarray):
             raise TypeError("teacher must return a numpy ndarray")
         t_pred = t_pred.reshape(-1, self.config.out_dim).astype(np.float32)
-        y2 = y.reshape(-1, self.config.out_dim).astype(np.float32)
+        y2: np.ndarray = y.reshape(-1, self.config.out_dim).astype(np.float32)
         # Apply temperature (soften targets)
         t_soft = t_pred / float(self.config.temperature)
 

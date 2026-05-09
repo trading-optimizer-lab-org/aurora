@@ -278,13 +278,13 @@ class _RLAdapter:
     def fit(self, X: np.ndarray, y: np.ndarray) -> "_RLAdapter":
         # Lazy import keeps the module loadable without sb3.
         try:
-            from stable_baselines3 import PPO, DQN  # type: ignore
+            from stable_baselines3 import PPO, DQN
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 "model_type='rl' requires stable_baselines3. "
                 "Install with: pip install stable-baselines3"
             ) from e
-        from gymnasium import Env, spaces  # type: ignore
+        from gymnasium import Env, spaces
 
         X_arr = np.asarray(X, dtype=np.float32)
         y_arr = np.asarray(y, dtype=np.float32)
@@ -292,7 +292,7 @@ class _RLAdapter:
         n_features = flat.shape[1]
 
         class _MiniTradingEnv(Env):  # local class avoids cross-imports
-            metadata = {"render_modes": []}
+            metadata: dict[str, list[str]] = {"render_modes": []}
 
             def __init__(self) -> None:
                 super().__init__()
@@ -477,7 +477,7 @@ class SeqModelStrategy(Strategy):
         """
         p = np.asarray(prices.values, dtype=float)
         n = len(p)
-        y = np.zeros(n, dtype=float)
+        y: np.ndarray = np.zeros(n, dtype=float)
         # ctor enforces horizon >= 1, so no guard needed.
         h = self.horizon
         for i in range(n - h):
@@ -544,7 +544,7 @@ class SeqModelStrategy(Strategy):
                 raise ValueError("SeqModelStrategy expects a Series or single-column frame")
             prices = prices.iloc[:, 0]
         n = len(prices)
-        out = np.zeros(n, dtype=float)
+        out: np.ndarray = np.zeros(n, dtype=float)
         if n <= self.warmup_bars:
             return out
 

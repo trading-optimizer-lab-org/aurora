@@ -139,6 +139,7 @@ def extract_trades(
         holding_bars = int(e - s) + 1
         holding_secs = float("nan")
         if has_ts:
+            assert timestamps is not None
             t_entry = pd.Timestamp(timestamps[s])
             t_exit = pd.Timestamp(timestamps[e])
             try:

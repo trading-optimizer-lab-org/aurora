@@ -90,7 +90,7 @@ class NewsLLMSentimentAdapter:
 
     def _score_llm(self, text: str) -> Optional[float]:  # pragma: no cover - network
         try:
-            import anthropic  # type: ignore  # noqa: F401
+            import anthropic  # noqa: F401
         except ImportError:
             return None
         # Real implementation would call anthropic.Messages with a
@@ -104,7 +104,7 @@ class NewsLLMSentimentAdapter:
         end: datetime,
     ) -> list[dict]:  # pragma: no cover - network
         try:
-            import feedparser  # type: ignore  # noqa: F401
+            import feedparser  # noqa: F401
         except ImportError as e:
             raise ImportError("feedparser required for live RSS fetch") from e
         return []

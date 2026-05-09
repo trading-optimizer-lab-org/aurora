@@ -1,11 +1,9 @@
 """Sphinx configuration for QuantForge API reference (R15)."""
 from __future__ import annotations
 
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
-
 
 # --------------------------------------------------------------------------
 # Path setup
@@ -62,7 +60,6 @@ myst_enable_extensions = [
 
 autosummary_generate = True
 autodoc_default_options = {
-    "members": True,
     "undoc-members": False,
     "show-inheritance": True,
     "member-order": "bysource",
@@ -144,8 +141,14 @@ exclude_patterns = [
 # Default to short refs in cross-references.
 default_role = "py:obj"
 
-# Suppress noisy warnings during sweeps over optional-extras-only modules.
-suppress_warnings = ["autodoc.import_object"]
+# Suppress noisy warnings during broad API sweeps. R20 tracks docstring cleanup
+# so these can later be removed and docs can run with -W fully strict.
+suppress_warnings = [
+    "autodoc.import_object",
+    "docutils",
+    "myst.xref_missing",
+    "toc.not_included",
+]
 
 # --------------------------------------------------------------------------
 # Build hooks

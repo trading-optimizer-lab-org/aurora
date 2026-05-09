@@ -27,7 +27,7 @@ def render_html_to_pdf(
     html_source: str,
     output_path: Path,
     *,
-    config: PdfRenderConfig = PdfRenderConfig(),
+    config: Optional[PdfRenderConfig] = None,
 ) -> Path:
     """Render an existing HTML tearsheet to PDF.
 
@@ -43,8 +43,10 @@ def render_html_to_pdf(
         ImportError: ``weasyprint`` is not installed. The caller
             should install with ``pip install quantforge[report]``.
     """
+    if config is None:
+        config = PdfRenderConfig()
     try:
-        from weasyprint import HTML  # type: ignore[import-not-found]
+        from weasyprint import HTML
     except ImportError as exc:
         raise ImportError(
             "weasyprint is required for PDF rendering. "

@@ -28,6 +28,8 @@ import pandas as pd
 # Optional deps — lazy detection
 # ---------------------------------------------------------------------------
 
+_BaseEnv: Any
+
 try:
     import gymnasium as gym
     from gymnasium import spaces
@@ -35,18 +37,19 @@ try:
     _BaseEnv = gym.Env
 except ImportError:
     GYM_AVAILABLE = False
-    gym = None  # type: ignore[assignment]
-    spaces = None  # type: ignore[assignment]
+    gym = None
+    spaces = None
 
-    class _BaseEnv:  # minimal stub so class body parses without gymnasium
+    class _FallbackEnv:  # minimal stub so class body parses without gymnasium
         pass
+    _BaseEnv = _FallbackEnv
 
 try:
     import stable_baselines3 as sb3
     SB3_AVAILABLE = True
 except ImportError:
     SB3_AVAILABLE = False
-    sb3 = None  # type: ignore[assignment]
+    sb3 = None
 
 
 def _require_gym() -> None:

@@ -186,17 +186,23 @@ parity tests pass.
 
 ---
 
-## R17. Markov switching API drift
+## Closed Former Blockers
 
-**Status.** Pending. 9 pre-existing failures in
-`tests/test_markov_switching.py` come from statsmodels API drift.
+These entries used to block or confuse the roadmap, but current
+verification says they are no longer live blockers. They stay here for
+audit history only.
 
-**Decision options.**
+### R17. Markov switching API drift
 
-- Pin statsmodels to a version that exposes the old API.
-- Update `regime/markov_switching.py` to the current statsmodels API.
-- Skip the test module with a `@pytest.mark.skip(reason="...")`.
+**Status.** Closed in the 2026-05-08 verification pass. The previously
+reported 9 failures are no longer reproducible in this workspace.
 
-Until a decision is made the failures stay listed under "Known issues"
-in `CLAUDE.md`. Do not silently ignore them by re-running the suite
-with extra `--ignore` flags.
+**Evidence.**
+
+- `python -m pytest tests/ -m "not slow and not integration"` ->
+  2781 passed, 23 skipped, 10 deselected.
+- `tests/test_markov_switching.py` is included in that pass.
+
+**Follow-up.** Remove the stale known-issue entry from `CLAUDE.md`
+under R25 and mention the verified baseline in the changelog under
+R27.

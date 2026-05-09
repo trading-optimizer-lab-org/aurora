@@ -79,7 +79,7 @@ class PIIHandler:
     def encrypt_bytes(self, plaintext: bytes) -> bytes:
         """Encrypt ``plaintext`` using a Fernet key from env. Lazy import."""
         try:
-            from cryptography.fernet import Fernet  # type: ignore
+            from cryptography.fernet import Fernet
         except ImportError as e:  # pragma: no cover - optional dep
             raise ImportError(
                 "cryptography>=41 required for PIIHandler.encrypt_bytes"
@@ -95,7 +95,7 @@ class PIIHandler:
     def decrypt_bytes(self, ciphertext: bytes) -> bytes:
         """Decrypt ``ciphertext`` using a Fernet key from env. Lazy import."""
         try:
-            from cryptography.fernet import Fernet  # type: ignore
+            from cryptography.fernet import Fernet
         except ImportError as e:  # pragma: no cover - optional dep
             raise ImportError(
                 "cryptography>=41 required for PIIHandler.decrypt_bytes"

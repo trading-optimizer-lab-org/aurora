@@ -148,7 +148,7 @@ class PairTrade:
         # vs pb[i-lookback+1 : i+1]. The ratio used for spread[i] only depends
         # on pb[:i+1].
         if self.recompute_hedge_ratio_every > 0:
-            hedge = np.full(n, self.hedge_ratio, dtype=float)
+            hedge: np.ndarray = np.full(n, self.hedge_ratio, dtype=float)
             step = self.recompute_hedge_ratio_every
             # Wait until we have a full lookback window before first refit.
             # Between refits, carry the most recent ratio forward.
@@ -172,12 +172,12 @@ class PairTrade:
         std = s.rolling(self.lookback, min_periods=self.lookback).std(ddof=self.ddof).values
 
         # Avoid div-by-zero: if std==0 -> z=0 -> no signal
-        z = np.zeros(n, dtype=float)
+        z: np.ndarray = np.zeros(n, dtype=float)
         valid = ~np.isnan(mean) & ~np.isnan(std) & (std > 0)
         z[valid] = (spread[valid] - mean[valid]) / std[valid]
 
         # State machine for position over time
-        pos = np.zeros(n, dtype=float)
+        pos: np.ndarray = np.zeros(n, dtype=float)
         cur = 0.0
         for i in range(n):
             if not valid[i]:

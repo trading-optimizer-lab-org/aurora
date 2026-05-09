@@ -16,15 +16,15 @@ from typing import Dict, List, Optional
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
-    from torch.utils.data import DataLoader, TensorDataset  # type: ignore
+    import torch
+    from torch import nn
+    from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
-    DataLoader = None  # type: ignore[assignment]
-    TensorDataset = None  # type: ignore[assignment]
+    torch = None
+    nn = None
+    DataLoader = None
+    TensorDataset = None
     TORCH_AVAILABLE = False
 
 
@@ -147,7 +147,7 @@ class MixtureOfExperts:
             raise TypeError("y must be a numpy ndarray")
         if y.shape[0] != X.shape[0]:
             raise ValueError("X and y must have matching first dim")
-        y2 = y.reshape(-1, self.config.out_dim).astype(np.float32)
+        y2: np.ndarray = y.reshape(-1, self.config.out_dim).astype(np.float32)
         Xt = torch.tensor(X, dtype=torch.float32)
         yt = torch.tensor(y2, dtype=torch.float32)
         ds = TensorDataset(Xt, yt)

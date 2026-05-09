@@ -47,7 +47,7 @@ class BorrowAvailability:
     def simulate(self, n_bars: int) -> np.ndarray:
         """Return a boolean array: True iff borrow is available at bar i."""
         rng = np.random.default_rng(self.seed)
-        out = np.ones(n_bars, dtype=bool)
+        out: np.ndarray = np.ones(n_bars, dtype=bool)
         i = 0
         while i < n_bars:
             available = rng.random() < self.config.availability_rate
@@ -73,7 +73,7 @@ def apply_borrow_constraint(
     mask = np.asarray(borrow_available, dtype=bool)
     if len(weights) != len(mask):
         raise ValueError("weights and borrow_available length mismatch")
-    out = weights.copy()
+    out: np.ndarray = weights.copy()
     short_mask = (out < 0) & ~mask
     out[short_mask] = 0.0
     return out

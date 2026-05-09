@@ -40,17 +40,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import pandas as pd
 import pytest
-
 from quantforge.core import data_layer as _dl
-from quantforge.core.data_layer import DEFAULT_LOCK_PATH, OOSGuard
+from quantforge.core.data_layer import OOSGuard
 from quantforge.core.data_tiers import (
-    IS_TRAIN_END,
-    IS_VALID_END,
-    OOS_DEV_END,
-    OOS_LOCKED_END,
     split_by_tier,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,17 +107,12 @@ def test_live_proceeds_with_valid_marker(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(live_mod, "HAS_LUMIBOT", True)
     qf_strat = _make_qf_strategy_named("ValidatedStrat_R4")
 
-    # Write a fresh marker into the tmp project_dir's quantforge/data_cache_qf
-    cache = tmp_path / "quantforge" / "data_cache_qf"
-    cache.mkdir(parents=True, exist_ok=True)
-    # ``write_validation_marker`` requires the report; we synthesize a minimal
-    # JSON payload manually to stay independent of the report shape.
-    marker = cache / ".validation_passed_ValidatedStrat_R4.json"
-    marker.write_text(json.dumps({
-        "strategy": "ValidatedStrat_R4",
-        "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
-        "overall_passed": True,
-    }))
+    # Write a fresh marker into the tmp project_dir's .qf_cache directory.
+    write_validation_marker(
+        strategy_name="ValidatedStrat_R4",
+        metrics={"overall_passed": True},
+        project_dir=str(tmp_path),
+    )
     # Make sure the marker resolves to this tmp project_dir, not the
     # real repo root: we point project_dir directly at tmp_path.
     cls = QFLiveStrategy.bind(
@@ -311,7 +300,7 @@ def test_oos_read_writes_both_lock_and_soc2(tmp_path: Path, monkeypatch):
     )
     # Lock file got the authorized_read.
     assert os.path.exists(fake_lock)
-    with open(fake_lock, "r", encoding="utf-8") as f:
+    with open(fake_lock, encoding="utf-8") as f:
         lock = json.load(f)
     assert any("round4_test" in str(rec)
                for rec in lock.get("authorized_reads", []))
@@ -434,7 +423,9 @@ def test_multi_asset_search_uses_load_tier(monkeypatch):
     when the fitness signature is is_only."""
     pytest.importorskip("deap")
     from quantforge.ga.multi_asset_runner import (
-        run_multi_asset_ga, MultiAssetGAConfig, multi_asset_fitness_is,
+        MultiAssetGAConfig,
+        multi_asset_fitness_is,
+        run_multi_asset_ga,
     )
     from quantforge.strategies.library.pair_trade import PairTrade
 
@@ -468,7 +459,9 @@ def test_multi_asset_oos_dict_deprecation():
     DeprecationWarning."""
     pytest.importorskip("deap")
     from quantforge.ga.multi_asset_runner import (
-        run_multi_asset_ga, MultiAssetGAConfig, multi_asset_fitness_is,
+        MultiAssetGAConfig,
+        multi_asset_fitness_is,
+        run_multi_asset_ga,
     )
     from quantforge.strategies.library.pair_trade import PairTrade
 
@@ -563,7 +556,7 @@ def test_oosguard_multiprocess_lock_corruption(tmp_path: Path):
         pool.map(_open_close_guards_worker, args)
     # File must exist and parse as a dict with a violations list.
     assert os.path.exists(lock_path)
-    with open(lock_path, "r", encoding="utf-8") as f:
+    with open(lock_path, encoding="utf-8") as f:
         data = json.load(f)
     assert isinstance(data, dict)
     assert isinstance(data.get("violations", []), list)

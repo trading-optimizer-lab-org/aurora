@@ -219,6 +219,7 @@ def _drawdown_periods(nav: np.ndarray, timestamps=None) -> List[Tuple]:
                     end_date = int(idx[-1])
                     rec_days = int((n - 1) - trough_idx)
                 else:
+                    assert recovery_idx is not None
                     end_date = int(idx[recovery_idx])
                     rec_days = int(recovery_idx - trough_idx)
             periods.append(
@@ -1283,7 +1284,7 @@ def generate_pdf(result, output_path: str, title: str = "QuantForge Tearsheet",
     # genuine runtime failures (corrupt HTML, font issues, OS write errors,
     # MemoryError) propagate up instead of silently falling through to pdfkit.
     try:
-        from weasyprint import HTML  # type: ignore
+        from weasyprint import HTML
     except (ImportError, ModuleNotFoundError):
         weasy_available = False
     else:
@@ -1293,7 +1294,7 @@ def generate_pdf(result, output_path: str, title: str = "QuantForge Tearsheet",
 
     # Then pdfkit (wraps wkhtmltopdf). Same rule: only the import is wrapped.
     try:
-        import pdfkit  # type: ignore
+        import pdfkit
     except (ImportError, ModuleNotFoundError):
         pdfkit_available = False
     else:

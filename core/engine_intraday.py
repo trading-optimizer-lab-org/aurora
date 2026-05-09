@@ -112,7 +112,7 @@ def _is_session_close_bar(session_ids: np.ndarray) -> np.ndarray:
     True at index t when session_ids[t+1] != session_ids[t] (and also last bar).
     """
     n = len(session_ids)
-    out = np.zeros(n, dtype=bool)
+    out: np.ndarray = np.zeros(n, dtype=bool)
     if n == 0:
         return out
     out[-1] = True
@@ -280,7 +280,7 @@ def run_intraday_backtest(
     overnight_cost = np.zeros(n)
     if not flat_eod and overnight_cost_bps > 0 and n > 1:
         bps = overnight_cost_bps / 1e4
-        new_session = np.zeros(n, dtype=bool)
+        new_session: np.ndarray = np.zeros(n, dtype=bool)
         new_session[1:] = session_ids[1:] != session_ids[:-1]
         carried = np.zeros(n)
         carried[1:] = np.abs(weights[:-1])

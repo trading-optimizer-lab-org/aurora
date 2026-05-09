@@ -14,12 +14,12 @@ import numpy as np
 import pandas as pd
 
 try:
-    import torch  # type: ignore
-    import torch.nn as _nn  # type: ignore
+    import torch
+    import torch.nn as _nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None  # type: ignore
-    _nn = None  # type: ignore
+    torch = None
+    _nn = None
     TORCH_AVAILABLE = False
 
 

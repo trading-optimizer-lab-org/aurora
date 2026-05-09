@@ -29,7 +29,7 @@ def _stationary_bootstrap(returns: np.ndarray, length: int,
         start = int(rng.integers(0, T))
         block_len = int(rng.geometric(p))
         take = min(block_len, length - filled)
-        idx = (start + np.arange(take)) % T
+        idx: np.ndarray = (start + np.arange(take)) % T
         out[filled:filled + take] = returns[idx]
         filled += take
     return out

@@ -46,7 +46,7 @@ class YahooProvider(BaseDataProvider):
         **kwargs: Any,
     ) -> pd.Series:
         try:
-            import yfinance as yf  # type: ignore
+            import yfinance as yf
         except ImportError as exc:  # pragma: no cover - yfinance is a dep
             from . import ProviderUnavailable
             raise ProviderUnavailable(

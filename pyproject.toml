@@ -88,6 +88,7 @@ packages = [
     "quantforge.config",
     "quantforge.core",
     "quantforge.core.data_providers",
+    "quantforge.data_contracts",
     "quantforge.dataeng",
     "quantforge.deployment",
     "quantforge.execution",
@@ -130,6 +131,7 @@ packages = [
 "quantforge.config" = "config"
 "quantforge.core" = "core"
 "quantforge.core.data_providers" = "core/data_providers"
+"quantforge.data_contracts" = "data_contracts"
 "quantforge.dataeng" = "dataeng"
 "quantforge.deployment" = "deployment"
 "quantforge.execution" = "execution"
@@ -200,6 +202,7 @@ ignore_missing_imports = true
 follow_imports = "skip"
 no_implicit_optional = true
 check_untyped_defs = false  # gradual typing — relax for now
+exclude = "^(docs/_build|build|dist|quantforge\\.egg-info|tests|examples)/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

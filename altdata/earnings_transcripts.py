@@ -103,7 +103,7 @@ class EarningsTranscriptAdapter:
 
     def _score_llm(self, text: str) -> Optional[float]:  # pragma: no cover - network
         try:
-            import anthropic  # type: ignore  # noqa: F401
+            import anthropic  # noqa: F401
         except ImportError:
             return None
         # Real implementation: call anthropic.Messages with a JSON-only

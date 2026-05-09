@@ -129,10 +129,10 @@ def hrp_recursive_bisection(cov: pd.DataFrame, sorted_idx: list) -> pd.Series:
     n = len(names)
 
     # Iterative bisection (de Prado, 2016): work on integer positions in sorted order.
-    w = np.ones(n, dtype=float)
-    clusters = [np.arange(n, dtype=int)]
+    w: np.ndarray = np.ones(n, dtype=float)
+    clusters: list[np.ndarray] = [np.arange(n, dtype=int)]
     while clusters:
-        new_clusters = []
+        new_clusters: list[np.ndarray] = []
         for c in clusters:
             if len(c) <= 1:
                 continue

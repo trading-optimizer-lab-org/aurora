@@ -67,7 +67,7 @@ class CalendarEffectsSignal:
                 dates = pd.DatetimeIndex(dates)
             except Exception as e:
                 raise TypeError("dates must be DatetimeIndex-compatible") from e
-        out = np.zeros(len(dates), dtype=int)
+        out: np.ndarray = np.zeros(len(dates), dtype=int)
         for i, ts in enumerate(dates):
             s = 0
             for rule in self.config.rules:

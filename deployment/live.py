@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from datetime import date as _date
 from datetime import datetime as _dt
 from datetime import timezone
+from typing import Any
 
 from quantforge.core.logging import get_logger, log_event
 from quantforge.deployment.sizing import fixed_risk_size
@@ -244,7 +245,7 @@ def submit_with_retry(strategy, order, max_attempts: int = 3,
         raise ValueError("max_attempts must be >= 1")
     _verify_agent_gateway_commit(order, gateway_committed)
     cid = _order_client_id(order)
-    last_err: Exception | None = None
+    last_err: BaseException | None = None
     for attempt in range(1, max_attempts + 1):
         # On retries, check whether the broker already accepted the order.
         if attempt > 1 and cid is not None and _broker_has_order(strategy, cid):
@@ -317,9 +318,9 @@ def preflight_checks(strategy, qf_config: LiveConfig) -> list[str]:
     # attribute for compatibility with existing fixtures and fall back to
     # the new per-instance attribute. Coerce to float so mocks / proxies
     # that return non-numeric placeholders are ignored.
-    nav_start = None
+    nav_start: float | None = None
     for attr in ("_qf_session_start_nav", "qf_session_start_nav"):
-        raw = getattr(strategy, attr, _SENTINEL)
+        raw: Any = getattr(strategy, attr, _SENTINEL)
         if raw is _SENTINEL or raw is None:
             continue
         try:

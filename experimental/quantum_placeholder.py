@@ -24,10 +24,10 @@ from typing import Optional
 import numpy as np
 
 try:  # pragma: no cover - exercised only when qiskit is installed
-    import qiskit  # type: ignore
+    import qiskit
     QISKIT_AVAILABLE = True
 except ImportError:
-    qiskit = None  # type: ignore[assignment]
+    qiskit = None
     QISKIT_AVAILABLE = False
 
 

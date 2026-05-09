@@ -14,7 +14,7 @@ import pandas as pd
 from quantforge.core.metrics import compute_metrics
 
 try:
-    from hmmlearn.hmm import GaussianHMM as _SkGaussianHMM  # type: ignore
+    from hmmlearn.hmm import GaussianHMM as _SkGaussianHMM
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "hmmlearn is required for quantforge.regime.hmm. "

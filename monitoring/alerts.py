@@ -32,7 +32,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from email.message import EmailMessage
+from email.message import EmailMessage, Message
 from typing import Callable, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -518,10 +518,12 @@ class AlertEngine:
                         status = 200
                     # 30x means a redirect was followed silently. Refuse.
                     if 300 <= status < 400:
+                        headers = getattr(resp, "headers", None)
                         raise urllib.error.HTTPError(
                             url, status,
                             "webhook returned a redirect; refusing to follow",
-                            getattr(resp, "headers", None), None,
+                            headers if isinstance(headers, Message) else Message(),
+                            None,
                         )
                     if 200 <= status < 300:
                         return
@@ -533,9 +535,11 @@ class AlertEngine:
                         if backoff > 0:
                             time.sleep(backoff)
                         continue
+                    headers = getattr(resp, "headers", None)
                     raise urllib.error.HTTPError(
                         url, status, f"unexpected webhook status {status}",
-                        getattr(resp, "headers", None), None,
+                        headers if isinstance(headers, Message) else Message(),
+                        None,
                     )
             except urllib.error.HTTPError as e:
                 last_exc = e

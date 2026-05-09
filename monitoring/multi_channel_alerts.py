@@ -64,7 +64,7 @@ class SMSProvider:
         if not (sid and token and from_n and to_n):
             return {"ok": False, "error": "twilio env vars not set"}
         try:
-            from twilio.rest import Client  # type: ignore
+            from twilio.rest import Client
         except ImportError:
             return {"ok": False, "error": "twilio package not installed"}
         client = Client(sid, token)
@@ -99,7 +99,7 @@ class PushoverProvider:
         post = self._http_post
         if post is None:
             try:
-                import requests  # type: ignore
+                import requests
                 post = requests.post
             except ImportError:
                 return {"ok": False, "error": "requests package not installed"}
@@ -146,7 +146,7 @@ class TelegramProvider:
         post = self._http_post
         if post is None:
             try:
-                import requests  # type: ignore
+                import requests
                 post = requests.post
             except ImportError:
                 return {"ok": False, "error": "requests package not installed"}

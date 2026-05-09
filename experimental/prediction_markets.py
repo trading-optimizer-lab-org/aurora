@@ -44,7 +44,7 @@ class PolymarketAdapter:
                 self.fetcher = self._live_fetch
 
     def _live_fetch(self, market_id: str) -> dict:  # pragma: no cover
-        import requests  # type: ignore
+        import requests
 
         url = f"https://clob.polymarket.com/markets/{market_id}"
         resp = requests.get(url, timeout=5)

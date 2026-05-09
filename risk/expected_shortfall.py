@@ -35,7 +35,7 @@ class ExpectedShortfall:
             if not (0.0 < a < 1.0):
                 raise ValueError(f"alpha must be in (0,1), got {a}")
         if self.interpolation not in ("linear", "lower"):
-            raise ValueError(f"interpolation must be 'linear' or 'lower'")
+            raise ValueError("interpolation must be 'linear' or 'lower'")
 
     def compute(self, returns) -> dict:
         """Return dict {alpha: ES} where ES is reported as a positive loss.

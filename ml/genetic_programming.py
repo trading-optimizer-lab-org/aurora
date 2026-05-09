@@ -25,10 +25,10 @@ import numpy as np
 import pandas as pd
 
 try:  # optional dep
-    from deap import algorithms, base, creator, gp, tools  # type: ignore
+    from deap import algorithms, base, creator, gp, tools
     DEAP_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
-    algorithms = base = creator = gp = tools = None  # type: ignore[assignment]
+    algorithms = base = creator = gp = tools = None
     DEAP_AVAILABLE = False
 
 
@@ -59,6 +59,10 @@ def _protected_log(a: float) -> float:
 
 def _protected_sqrt(a: float) -> float:
     return math.sqrt(abs(a))
+
+
+def _random_ephemeral_constant() -> float:
+    return random.uniform(-1.0, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +117,7 @@ class GeneticFormulaEngine:
         pset.addPrimitive(_protected_log, 1)
         pset.addPrimitive(_protected_sqrt, 1)
         pset.addPrimitive(operator.neg, 1)
-        pset.addEphemeralConstant(
-            f"rand_const_{id(self)}", lambda: random.uniform(-1.0, 1.0)
-        )
+        pset.addEphemeralConstant(f"rand_const_{id(self)}", _random_ephemeral_constant)
         return pset
 
     def _build_toolbox(self, pset: Any, target: np.ndarray, prices: np.ndarray) -> Any:

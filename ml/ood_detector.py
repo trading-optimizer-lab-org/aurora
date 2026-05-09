@@ -14,7 +14,7 @@ follow-ups. Today's job is to flag obvious drift loud and early.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -47,8 +47,8 @@ class OODDetector:
     kl_threshold: float = 0.5
     mahalanobis_threshold: float = 5.0
     bins: int = 20
-    _ref_mean: np.ndarray = field(init=False, default=None)  # type: ignore[assignment]
-    _ref_cov_inv: np.ndarray = field(init=False, default=None)  # type: ignore[assignment]
+    _ref_mean: Optional[np.ndarray] = field(init=False, default=None)
+    _ref_cov_inv: Optional[np.ndarray] = field(init=False, default=None)
     _ref_hists: List[np.ndarray] = field(init=False, default_factory=list)
     _ref_edges: List[np.ndarray] = field(init=False, default_factory=list)
 
@@ -82,6 +82,8 @@ class OODDetector:
             kls.append(kl)
         max_kl = max(kls) if kls else 0.0
         # Mahalanobis on the batch mean.
+        assert self._ref_mean is not None
+        assert self._ref_cov_inv is not None
         delta = b.mean(axis=0) - self._ref_mean
         mahal = float(np.sqrt(max(0.0, delta @ self._ref_cov_inv @ delta)))
         is_drift = max_kl > self.kl_threshold or mahal > self.mahalanobis_threshold

@@ -34,11 +34,59 @@ When a test genuinely needs live SPY parquet, follow this pattern::
 """
 from __future__ import annotations
 
+import importlib.util
 import logging
+import multiprocessing
+import os
 import random
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+
+def _prime_mutmut_runtime() -> None:
+    """Import mutmut safely before generated trampolines need it."""
+    if not os.environ.get("MUTANT_UNDER_TEST"):
+        return
+    original = multiprocessing.set_start_method
+
+    def safe_set_start_method(method, *args, **kwargs):
+        try:
+            return original(method, *args, **kwargs)
+        except RuntimeError as exc:
+            if "context has already been set" in str(exc):
+                return None
+            raise
+
+    multiprocessing.set_start_method = safe_set_start_method
+    try:
+        import mutmut.__main__  # noqa: F401
+    finally:
+        multiprocessing.set_start_method = original
+
+
+def _bootstrap_layout_b_mutmut() -> None:
+    """Make the mutmut copy importable for QuantForge's flat package layout."""
+    root = Path(__file__).resolve().parents[1]
+    init_file = root / "__init__.py"
+    if root.name != "mutants" or "quantforge" in sys.modules or not init_file.exists():
+        return
+    spec = importlib.util.spec_from_file_location(
+        "quantforge",
+        init_file,
+        submodule_search_locations=[str(root)],
+    )
+    if spec is None or spec.loader is None:
+        return
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["quantforge"] = module
+    spec.loader.exec_module(module)
+
+
+_prime_mutmut_runtime()
+_bootstrap_layout_b_mutmut()
 import pytest
 
 

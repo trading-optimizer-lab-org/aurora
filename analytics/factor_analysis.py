@@ -150,7 +150,7 @@ def information_coefficient(factor: pd.Series,
             f_arr = f.values.astype(float)
             r_arr = r.values.astype(float)
             n_obs = len(f_arr)
-            ic_vals = np.full(n_obs, np.nan, dtype=float)
+            ic_vals: np.ndarray = np.full(n_obs, np.nan, dtype=float)
             for end in range(w - 1, n_obs):
                 fw = f_arr[end - w + 1: end + 1]
                 rw = r_arr[end - w + 1: end + 1]
@@ -192,9 +192,9 @@ def information_coefficient(factor: pd.Series,
         gamma0 = float(np.dot(ic, ic) / n)
         var_hac = gamma0
         for k in range(1, min(L, n - 1) + 1):
-            w = 1.0 - k / (L + 1.0)
+            kernel_w = 1.0 - k / (L + 1.0)
             gamma_k = float(np.dot(ic[:-k], ic[k:]) / n)
-            var_hac += 2.0 * w * gamma_k
+            var_hac += 2.0 * kernel_w * gamma_k
         var_hac = max(var_hac, 0.0)
         # Std-error of the mean under HAC: sqrt(var_hac / n).
         se_mean = float(np.sqrt(var_hac / n)) if var_hac > 0.0 else 0.0

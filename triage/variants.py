@@ -206,6 +206,7 @@ def variant_random_sample(
         params: dict[str, Any] = {}
         for k in keys:
             spec = param_space[k]
+            val: Any
             if isinstance(spec, tuple) and len(spec) == 2:
                 lo, hi = spec
                 if isinstance(lo, int) and isinstance(hi, int) \

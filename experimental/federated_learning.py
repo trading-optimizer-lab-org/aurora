@@ -14,10 +14,10 @@ from typing import Callable, List, Optional
 import numpy as np
 
 try:  # pragma: no cover - torch not required for the default backend
-    import torch  # type: ignore
+    import torch
     TORCH_AVAILABLE = True
 except ImportError:
-    torch = None  # type: ignore[assignment]
+    torch = None
     TORCH_AVAILABLE = False
 
 
@@ -92,7 +92,7 @@ class FederatedTrainer:
 
         for _ in range(self.rounds):
             local_weights = [self._local_fit(c) for c in clients]
-            agg = np.zeros(self.n_features, dtype=float)
+            agg: np.ndarray = np.zeros(self.n_features, dtype=float)
             for c, w in zip(clients, local_weights):
                 agg += (c.n_samples() / total_n) * w
             # Damped update toward the FedAvg mean.

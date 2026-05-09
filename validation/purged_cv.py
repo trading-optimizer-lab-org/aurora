@@ -154,7 +154,7 @@ class PurgedKFold:
             test_end_ts = idx_array[test_hi]
 
             # candidate train mask: everything outside test
-            train_mask = np.ones(n, dtype=bool)
+            train_mask: np.ndarray = np.ones(n, dtype=bool)
             train_mask[test_lo:test_hi + 1] = False
 
             # PURGE: drop train samples whose label period [idx, t1] strictly
@@ -326,7 +326,7 @@ def _build_strategy(factory: Callable, train_prices: pd.Series,
     import inspect
     try:
         sig = inspect.signature(factory)
-        params = sig.parameters
+        params = dict(sig.parameters)
     except (TypeError, ValueError):
         params = {}
 

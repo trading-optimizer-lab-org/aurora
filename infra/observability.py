@@ -108,7 +108,7 @@ class Observability:
     def start_http_server(self, port: Optional[int] = None) -> bool:  # pragma: no cover
         """Start the prometheus_client HTTP server. No-op when SDK missing."""
         try:
-            from prometheus_client import start_http_server  # type: ignore
+            from prometheus_client import start_http_server
         except ImportError:
             return False
         if self._http_started:
@@ -189,7 +189,7 @@ class Observability:
     def _init_client_metrics(self) -> None:
         """Best-effort prometheus_client metric registration."""
         try:
-            from prometheus_client import (  # type: ignore
+            from prometheus_client import (
                 Counter, Gauge,
             )
         except ImportError:

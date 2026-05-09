@@ -17,22 +17,22 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
-    from torch.utils.data import DataLoader, TensorDataset  # type: ignore
+    import torch
+    from torch import nn
+    from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
-    DataLoader = None  # type: ignore[assignment]
-    TensorDataset = None  # type: ignore[assignment]
+    torch = None
+    nn = None
+    DataLoader = None
+    TensorDataset = None
     TORCH_AVAILABLE = False
 
 try:  # pragma: no cover - exercised only when mamba-ssm is installed
-    from mamba_ssm import Mamba  # type: ignore
+    from mamba_ssm import Mamba
     MAMBA_AVAILABLE = True
 except Exception:  # pragma: no cover
-    Mamba = None  # type: ignore[assignment]
+    Mamba = None
     MAMBA_AVAILABLE = False
 
 

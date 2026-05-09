@@ -121,8 +121,8 @@ class MultiAssetEngine:
 
         T = len(common_idx)
         N = len(symbols)
-        prices_mat = np.zeros((T, N), dtype=float)
-        weights_mat = np.zeros((T, N), dtype=float)
+        prices_mat: np.ndarray = np.zeros((T, N), dtype=float)
+        weights_mat: np.ndarray = np.zeros((T, N), dtype=float)
 
         for j, s in enumerate(symbols):
             p_series = price_dict[s].reindex(common_idx)
@@ -172,7 +172,7 @@ class MultiAssetEngine:
 
         if self.align_calendar == "us_equity":
             try:
-                import pandas_market_calendars as mcal  # type: ignore
+                import pandas_market_calendars as mcal
             except ImportError:
                 # fall back to intersection if pandas_market_calendars missing
                 common_idx = None

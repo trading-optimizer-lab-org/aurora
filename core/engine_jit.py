@@ -88,11 +88,11 @@ def apply_costs_jit(weights: np.ndarray, returns: np.ndarray,
         if dw < 0.0:
             dw = -dw
         net[t] -= dw * per_trade
-        prev = weights[t]
+        prev = float(weights[t])
 
     # short borrow on position CARRIED INTO each bar (weights[t-1])
     for t in range(1, T):
-        w_prev = weights[t - 1]
+        w_prev = float(weights[t - 1])
         if w_prev < 0.0:
             net[t] -= (-w_prev) * daily_borrow
 

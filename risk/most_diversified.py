@@ -50,7 +50,7 @@ class MostDiversifiedAlloc:
                 # Hold y_j (j!=i) fixed; analytic minimiser of quadratic in y_i
                 grad_i = float(C[i] @ y)
                 # Optimal step: y_i_new = y_i - grad_i / C[i,i]; project to >= 0
-                step = grad_i / max(C[i, i], 1e-12)
+                step = grad_i / max(float(C[i, i]), 1e-12)
                 y_i_new = y[i] - 0.5 * step
                 if self.long_only:
                     y_i_new = max(y_i_new, 0.0)

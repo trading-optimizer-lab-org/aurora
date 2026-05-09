@@ -98,7 +98,7 @@ class DistributedBacktester:
     @staticmethod
     def _has_ray() -> bool:
         try:
-            import ray  # type: ignore  # noqa: F401
+            import ray  # noqa: F401
         except ImportError:
             return False
         return True
@@ -106,7 +106,7 @@ class DistributedBacktester:
     @staticmethod
     def _has_dask() -> bool:
         try:
-            import dask  # type: ignore  # noqa: F401
+            import dask  # noqa: F401
         except ImportError:
             return False
         return True
@@ -123,7 +123,7 @@ class DistributedBacktester:
         fn: Callable[[Any], Any],
         params_list: list,
     ) -> list:  # pragma: no cover - integration path
-        import ray  # type: ignore
+        import ray
 
         if not ray.is_initialized():
             kwargs: dict[str, Any] = {}
@@ -141,7 +141,7 @@ class DistributedBacktester:
         fn: Callable[[Any], Any],
         params_list: list,
     ) -> list:  # pragma: no cover - integration path
-        from dask import compute, delayed  # type: ignore
+        from dask import compute, delayed
 
         tasks = [delayed(fn)(p) for p in params_list]
         return list(compute(*tasks))

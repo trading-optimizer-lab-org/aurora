@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class GeneratedCombination:
 def enumerate_combinations(
     signal_names: Sequence[str],
     *,
-    budget: CombinatorialBudget = CombinatorialBudget(),
+    budget: Optional[CombinatorialBudget] = None,
 ) -> List[List[str]]:
     """Yield every M-of-K combination within the budget.
 
@@ -46,6 +46,8 @@ def enumerate_combinations(
         list of name-lists. The list is truncated when ``max_combos``
         is reached.
     """
+    if budget is None:
+        budget = CombinatorialBudget()
     out: List[List[str]] = []
     for m in range(budget.min_signals_per_combo,
                    budget.max_signals_per_combo + 1):

@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import date as _date
 from datetime import datetime as _dt
 from datetime import timezone
-from typing import Optional
+from typing import Any, Optional
 
 from quantforge.core.logging import get_logger, log_event
 from quantforge.core.sqlite_utils import _setup_sqlite
@@ -1018,6 +1018,7 @@ class PaperBroker(Broker):
         }
 
     def _open_limit(self, order: Order) -> dict:
+        assert order.client_order_id is not None
         rec = {
             "id": order.client_order_id,
             "status": "open",
@@ -1748,6 +1749,7 @@ class KrakenAdapter(Broker):
                         qty=float(order.qty), status="rejected",
                         reason=str(exc))
             raise
+        out: dict[str, Any]
         if resp.get("error"):
             out = {"id": order.client_order_id, "status": "rejected",
                    "reason": "; ".join(resp["error"])}
@@ -1758,9 +1760,12 @@ class KrakenAdapter(Broker):
             self._record_idempotent(order.client_order_id, out)
             return out
         txid = (resp.get("result") or {}).get("txid", [None])
-        out = {"id": txid[0] or order.client_order_id, "status": "submitted",
-               "client_order_id": order.client_order_id,
-               "userref": userref}
+        out = {
+            "id": txid[0] or order.client_order_id,
+            "status": "submitted",
+            "client_order_id": order.client_order_id,
+            "userref": userref,
+        }
         # Gate local position tracking on broker-acknowledged states (see
         # AlpacaAdapter.submit_order for the rationale). Skip on rejected;
         # the explicit Kraken rejection path returned earlier already
@@ -1832,7 +1837,7 @@ class KrakenAdapter(Broker):
 # Factory
 # ---------------------------------------------------------------------------
 
-_REGISTRY: dict[str, type[Broker]] = {
+_REGISTRY: dict[str, Any] = {
     "paper": PaperBroker,
     "alpaca": AlpacaAdapter,
     "ib": IBAdapter,

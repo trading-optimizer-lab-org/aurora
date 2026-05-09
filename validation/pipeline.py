@@ -7,7 +7,7 @@ strategy before paper or live deployment.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, cast
 import numpy as np
 import pandas as pd
 
@@ -220,7 +220,7 @@ def validate_pipeline(
                 "Locked tiers are gated by a single-look ceremony."
             )
 
-    failures = []
+    failures: list[str] = []
 
     tiers = split_by_tier(prices)
     if is_tier_norm == "IS_TRAIN":
@@ -462,7 +462,8 @@ def validate_pipeline(
             if auditor_orchestrator is None:
                 from quantforge.agents.auditor import AuditorOrchestrator
                 auditor_orchestrator = AuditorOrchestrator.default()
-            gate_result = auditor_orchestrator.gate(auditor_context)
+            auditor = cast(Any, auditor_orchestrator)
+            gate_result = auditor.gate(auditor_context)
             audit_report = gate_result.audit_report
             audit_passed = bool(gate_result.passed)
             if not gate_result.passed:

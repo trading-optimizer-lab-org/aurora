@@ -77,7 +77,7 @@ def generate_adversarial_market(
     historical_returns: np.ndarray,
     *,
     strategy: Callable[[np.ndarray], np.ndarray],
-    config: AdversarialConfig = AdversarialConfig(),
+    config: Optional[AdversarialConfig] = None,
     survival_drawdown_threshold: float = -0.30,
 ) -> AdversarialResult:
     """Generate an adversarial path that maximises drawdown.
@@ -95,6 +95,8 @@ def generate_adversarial_market(
         :class:`AdversarialResult` with the perturbed path, drawdown
         comparison, and survival flag.
     """
+    if config is None:
+        config = AdversarialConfig()
     rng = np.random.default_rng(config.seed)
     arr = np.asarray(historical_returns, dtype=float).copy()
     if len(arr) < 10:

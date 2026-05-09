@@ -57,7 +57,7 @@ class TwoFactorAuth:
         generation works in offline environments.
         """
         try:
-            import pyotp  # type: ignore
+            import pyotp
             return str(pyotp.random_base32())
         except ImportError:  # pragma: no cover - optional dep
             raw = os.urandom(20)
@@ -67,7 +67,7 @@ class TwoFactorAuth:
         """Return otpauth:// URI for QR code provisioning. Lazy pyotp."""
         s = secret or self._secret()
         try:
-            import pyotp  # type: ignore
+            import pyotp
             return str(
                 pyotp.TOTP(s, digits=self.config.digits, interval=self.config.period_seconds)
                 .provisioning_uri(
@@ -87,7 +87,7 @@ class TwoFactorAuth:
         """Return the current OTP. Uses pyotp when available."""
         s = secret or self._secret()
         try:
-            import pyotp  # type: ignore
+            import pyotp
             return str(
                 pyotp.TOTP(s, digits=self.config.digits, interval=self.config.period_seconds).now()
             )
@@ -98,7 +98,7 @@ class TwoFactorAuth:
         """Return True if ``code`` is valid for current step or windowed steps."""
         s = secret or self._secret()
         try:
-            import pyotp  # type: ignore
+            import pyotp
             totp = pyotp.TOTP(
                 s, digits=self.config.digits, interval=self.config.period_seconds
             )

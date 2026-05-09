@@ -13,17 +13,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import sentence_transformers  # type: ignore
+    import sentence_transformers
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    sentence_transformers = None  # type: ignore[assignment]
+    sentence_transformers = None
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 try:
-    import chromadb  # type: ignore
+    import chromadb
     CHROMADB_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    chromadb = None  # type: ignore[assignment]
+    chromadb = None
     CHROMADB_AVAILABLE = False
 
 
@@ -45,7 +45,7 @@ class PapersVectorDBConfig:
 
 
 def _hash_embed(text: str, dim: int) -> np.ndarray:
-    vec = np.zeros(dim, dtype=np.float32)
+    vec: np.ndarray = np.zeros(dim, dtype=np.float32)
     for tok in text.lower().split():
         idx = (hash(tok) & 0xFFFFFFFF) % dim
         vec[idx] += 1.0
@@ -89,7 +89,7 @@ class PapersVectorDB:
             self.config.use_sentence_transformers
             and SENTENCE_TRANSFORMERS_AVAILABLE
         ):  # pragma: no cover - integration only
-            from sentence_transformers import SentenceTransformer  # type: ignore
+            from sentence_transformers import SentenceTransformer
             self._st_model = SentenceTransformer(self.config.model_name)
 
     # ------------------------------------------------------------------ embed

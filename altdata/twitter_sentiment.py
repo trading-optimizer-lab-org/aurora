@@ -139,7 +139,7 @@ class TwitterSentimentAdapter:
     def _get_scorer(self, backend: str):
         if backend == "vader":
             try:
-                from vaderSentiment.vaderSentiment import (  # type: ignore
+                from vaderSentiment.vaderSentiment import (
                     SentimentIntensityAnalyzer,
                 )
             except ImportError:  # pragma: no cover - optional dep
@@ -148,7 +148,7 @@ class TwitterSentimentAdapter:
             return lambda txt: float(sia.polarity_scores(txt)["compound"])
         if backend == "llm":  # pragma: no cover - network path
             try:
-                import anthropic  # type: ignore  # noqa: F401
+                import anthropic  # noqa: F401
             except ImportError:
                 return lambda txt: 0.0
             return lambda txt: 0.0
