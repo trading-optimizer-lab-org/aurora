@@ -34,10 +34,10 @@ try:  # optional dep
     from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised when torch missing
-    torch = None
-    nn = None
-    DataLoader = None
-    TensorDataset = None
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    DataLoader = None  # type: ignore[assignment,misc]
+    TensorDataset = None  # type: ignore[assignment,misc]
     TORCH_AVAILABLE = False
 
 
@@ -201,7 +201,7 @@ if TORCH_AVAILABLE:
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             seq_len = x.size(1)
-            return x + self.pe[:, :seq_len, :]
+            return x + self.pe[:, :seq_len, :]  # type: ignore[index]
 
 
     def causal_mask(seq_len: int, device=None) -> "torch.Tensor":

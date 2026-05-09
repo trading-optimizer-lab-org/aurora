@@ -109,7 +109,7 @@ def test_lean_project_artifact_is_frozen(tmp_path, policy):
     artifact = LeanExporter(cfg, policy).export(spec)
     assert isinstance(artifact, LeanProjectArtifact)
     with pytest.raises(FrozenInstanceError):
-        artifact.project_name = "mutated"  # type: ignore[misc]
+        artifact.project_name = "mutated"
 
 
 # ---------------------------------------------------------------------------

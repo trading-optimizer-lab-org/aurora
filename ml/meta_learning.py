@@ -29,8 +29,8 @@ try:
     from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None
-    nn = None
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
     TORCH_AVAILABLE = False
 
 

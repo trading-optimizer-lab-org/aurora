@@ -180,7 +180,12 @@ check_untyped_defs = false  # gradual typing — relax for now
 # `docs/` is excluded because `docs/conf.py` imports sphinx, which uses
 # Python 3.12+ `type` statements that mypy at python_version=3.10 cannot
 # parse. `build/` is the wheel-build artefact tree.
-exclude = ['^quantforge/', '^docs/', '^build/']
+exclude = '(?x)(quantforge/|docs/|build/|\.claude/|\.venv/|\.eggs/)'
+
+[[tool.mypy.overrides]]
+module = ["sphinx", "sphinx.*"]
+follow_imports = "skip"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

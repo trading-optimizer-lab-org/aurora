@@ -37,8 +37,8 @@ def _fake_ccxt_module(*, version: str = "4.5.0",
     ``set_sandbox_mode`` configured to deterministic responses.
     """
     fake = types.ModuleType("ccxt")
-    fake.__version__ = version
-    fake.exchanges = ["binance", "kraken", "coinbase"]
+    fake.__version__ = version  # type: ignore[attr-defined]
+    fake.exchanges = ["binance", "kraken", "coinbase"]  # type: ignore[attr-defined]
 
     class _ExchangeFactory:
         """Holds the latest constructed exchange so tests can inspect."""
@@ -75,7 +75,7 @@ def _fake_ccxt_module(*, version: str = "4.5.0",
 
     for ex in ("binance", "kraken", "coinbase"):
         setattr(fake, ex, _make_exchange_class(ex))
-    fake._factory = _ExchangeFactory
+    fake._factory = _ExchangeFactory  # type: ignore[attr-defined]
     return fake
 
 

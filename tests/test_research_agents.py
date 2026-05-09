@@ -221,7 +221,7 @@ def test_detector_returns_empty_for_benign_text() -> None:
 
 
 def test_detector_handles_non_string_input() -> None:
-    assert detect_prompt_injection(None) == []  # type: ignore[arg-type]
+    assert detect_prompt_injection(None) == []
 
 
 def test_detector_finds_oos_bypass() -> None:
@@ -398,13 +398,13 @@ def test_each_concrete_agent_returns_an_agent_comment() -> None:
 def test_agent_comment_is_frozen() -> None:
     comment = AgentComment(role=AgentRole.RISK, claim="x", confidence=0.1)
     with pytest.raises(Exception):
-        comment.claim = "mutated"  # type: ignore[misc]
+        comment.claim = "mutated"
 
 
 def test_evidence_pack_is_frozen() -> None:
     pack = EvidencePack(snapshot_hash="s")
     with pytest.raises(Exception):
-        pack.snapshot_hash = "other"  # type: ignore[misc]
+        pack.snapshot_hash = "other"
 
 
 def test_explanation_pack_is_frozen() -> None:
@@ -417,7 +417,7 @@ def test_explanation_pack_is_frozen() -> None:
         )
     ])
     with pytest.raises(Exception):
-        inner.thesis = "mutated"  # type: ignore[misc]
+        inner.thesis = "mutated"
 
 
 # Touch all imports we don't explicitly re-test elsewhere.

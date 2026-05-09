@@ -31,7 +31,7 @@ def test_negative_chunks_trigger_short():
 
 def test_empty_chunks_skipped():
     trader = EarningsCallLiveTrader()
-    out = trader.trade(["", None, "Strong growth"])  # type: ignore[list-item]
+    out = trader.trade(["", None, "Strong growth"])
     assert len(out) == 1
 
 

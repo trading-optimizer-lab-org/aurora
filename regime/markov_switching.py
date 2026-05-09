@@ -27,7 +27,7 @@ try:
     )
     _HAS_STATSMODELS = True
 except ImportError:  # pragma: no cover
-    _SmMarkovRegression = None  # type: ignore
+    _SmMarkovRegression = None
     _HAS_STATSMODELS = False
 
 
@@ -305,16 +305,23 @@ class MarkovSwitchingMean:
         finally:
             np.random.set_state(_rng_state)
 
-        # extract regime means (constants) and variances
+        # extract regime means (constants) and variances.
+        # statsmodels >=0.14 returns ``res.params`` as a numpy ndarray; older
+        # versions returned a pandas Series with named index. Rebuild the
+        # name-indexed map from ``res.model.param_names`` so the lookup
+        # works under both shapes.
+        param_names = list(res.model.param_names)
+        param_array = np.asarray(res.params, dtype=float)
+        params_by_name = dict(zip(param_names, param_array))
         K = self.n_regimes
         raw_means = np.zeros(K, dtype=float)
         raw_vars = np.zeros(K, dtype=float)
         for k in range(K):
-            raw_means[k] = float(res.params.get(f"const[{k}]", 0.0))
+            raw_means[k] = float(params_by_name.get(f"const[{k}]", 0.0))
             if self.switching_variance:
-                raw_vars[k] = float(res.params.get(f"sigma2[{k}]", 1e-8))
+                raw_vars[k] = float(params_by_name.get(f"sigma2[{k}]", 1e-8))
             else:
-                raw_vars[k] = float(res.params.get("sigma2", 1e-8))
+                raw_vars[k] = float(params_by_name.get("sigma2", 1e-8))
         raw_vars = np.clip(raw_vars, 1e-12, None)
         raw_vols = np.sqrt(raw_vars)
 

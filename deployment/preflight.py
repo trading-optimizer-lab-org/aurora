@@ -382,7 +382,7 @@ def check_market_hours(symbol: str, exchange: str = "NYSE",
     paper deployments without that optional dep keep working.
     """
     try:
-        import pandas_market_calendars as mcal  # type: ignore
+        import pandas_market_calendars as mcal
     except Exception:
         return PreflightCheck(
             "market_hours", True,
@@ -480,7 +480,7 @@ def check_buying_power(broker, required_cash: float) -> PreflightCheck:
         if hasattr(broker, "get_account"):
             acct = broker.get_account()
             if isinstance(acct, dict):
-                bp = float(acct.get("buying_power", acct.get("cash", 0.0)))
+                bp = float(acct.get("buying_power", acct.get("cash", 0.0)) or 0.0)
             else:
                 bp = float(getattr(acct, "buying_power",
                                    getattr(acct, "cash", 0.0)))

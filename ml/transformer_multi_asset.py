@@ -26,8 +26,8 @@ try:  # optional dep
     from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
-    torch = None
-    nn = None
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
     TORCH_AVAILABLE = False
 
 
@@ -123,7 +123,7 @@ def _build_transformer(cfg: MultiAssetTransformerConfig):
                 )
             asset_ids = torch.arange(N, device=x.device)
             asset_emb = self.asset_embed(asset_ids)        # (N, d_model)
-            pos = self.pos_enc[:T]                          # (T, d_model)
+            pos = self.pos_enc[:T]  # type: ignore[index]  # (T, d_model)
 
             h = self.input_proj(x)                          # (T, N, d_model)
             h = h + asset_emb.unsqueeze(0)                  # broadcast over T

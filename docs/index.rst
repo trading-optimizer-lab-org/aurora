@@ -12,7 +12,7 @@ Project resources:
 - Research protocol: :doc:`RESEARCH_PROTOCOL`
 - Glossary: :doc:`GLOSSARY`
 
-This site is auto-generated from the docstrings under ``quantforge/``.
+This site is auto-generated from the docstrings under ``aurora/``.
 For the operator-facing journey from install to live, see
 :doc:`ZERO_TO_LIVE`.
 

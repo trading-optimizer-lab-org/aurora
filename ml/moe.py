@@ -21,10 +21,10 @@ try:
     from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None
-    nn = None
-    DataLoader = None
-    TensorDataset = None
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    DataLoader = None  # type: ignore[assignment,misc]
+    TensorDataset = None  # type: ignore[assignment,misc]
     TORCH_AVAILABLE = False
 
 

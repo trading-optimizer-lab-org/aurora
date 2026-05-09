@@ -180,7 +180,7 @@ def test_candidate_run_immutable(good_spec):
         stage=ResearchStage.PROPOSED,
     )
     with pytest.raises(FrozenInstanceError):
-        cand.candidate_id = "other"  # type: ignore[misc]
+        cand.candidate_id = "other"
 
 
 def test_research_pipeline_config_defaults():

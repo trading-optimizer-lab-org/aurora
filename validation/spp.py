@@ -138,7 +138,7 @@ def spp(strategy_factory_with_params: Callable, prices: pd.Series,
             vals = np.linspace(mid - step, mid + step, n_steps)
             # cast to int if range bounds are ints
             if isinstance(lo, int) and isinstance(hi, int):
-                vals = [int(round(v)) for v in vals]
+                vals = np.asarray([int(round(v)) for v in vals])
             grids.append(list(vals))
 
     combos = list(product(*grids))

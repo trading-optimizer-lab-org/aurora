@@ -124,7 +124,7 @@ def test_triage_result_immutable():
         promotion_token="tok",
     )
     with pytest.raises(FrozenInstanceError):
-        r.sharpe = 9.9  # type: ignore[misc]
+        r.sharpe = 9.9
 
 
 # ---------------------------------------------------------------------------

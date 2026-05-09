@@ -104,9 +104,9 @@ def test_dataset_metadata_immutable():
         tier_permission="ANY",
     )
     with pytest.raises(FrozenInstanceError):
-        m.point_in_time = False  # type: ignore[misc]
+        m.point_in_time = False
     with pytest.raises(FrozenInstanceError):
-        m.content_hash = "1" * 64  # type: ignore[misc]
+        m.content_hash = "1" * 64
 
 
 def test_dataset_metadata_invalid_tier_raises():
@@ -194,7 +194,7 @@ def test_openbb_provider_lazy_import_unavailable(monkeypatch):
     # Block the openbb module so the lazy import inside ``_import_obb``
     # fails. Save/restore the prior value so other tests see a stable env.
     prev_openbb = sys.modules.get("openbb")
-    sys.modules["openbb"] = None  # type: ignore[assignment]
+    sys.modules["openbb"] = None
     try:
         with pytest.raises(ProviderUnavailable):
             p.fetch("AAPL", pd.Timestamp("2020-01-01"), pd.Timestamp("2020-06-30"))

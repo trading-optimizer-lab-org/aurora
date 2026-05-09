@@ -17,7 +17,7 @@ def _load_pyproject() -> dict:
     try:
         import tomllib  # 3.11+
     except ImportError:
-        import tomli as tomllib  # type: ignore
+        import tomli as tomllib
     with _PYPROJECT.open("rb") as f:
         return tomllib.load(f)
 
@@ -87,6 +87,9 @@ def test_no_unmarked_live_data_loads():
         ("test_lint_config.py", "test_no_unmarked_live_data_loads"),
         # asserts load_oos("SPY") raises before touching the disk
         ("test_oos_isolation.py", "test_oosguard_blocks_unauth_access"),
+        # uploads the literal "data/2024/SPY.parquet" key to a fake S3
+        # backend; never reads cached vendor data
+        ("test_infra_cloud_sync.py", "test_list_keys_after_upload"),
     }
 
     def _has_integration_marker(fn: ast.FunctionDef) -> bool:

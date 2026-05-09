@@ -122,9 +122,9 @@ def test_policy_is_frozen():
     """Direct mutation raises ``FrozenInstanceError``."""
     pol = ProtocolPolicy.default()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        pol.version = "0.0.0"  # type: ignore[misc]
+        pol.version = "0.0.0"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        pol.tiers["IS_TRAIN"].start = "1900-01-01"  # type: ignore[misc]
+        pol.tiers["IS_TRAIN"].start = "1900-01-01"
 
 
 # ---------------------------------------------------------------------------

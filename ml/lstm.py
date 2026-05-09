@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 
 try:  # lazy availability flag
-    import torch  # type: ignore
-    import torch.nn as _nn  # type: ignore
+    import torch
+    import torch.nn as _nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment dependent
     torch = None  # type: ignore
@@ -184,7 +184,7 @@ class LSTMForecaster:
         _require_torch()
         # Respect global seed if set.
         try:
-            from aurora.core.seed import get_seed  # type: ignore
+            from aurora.core.seed import get_seed
             s = get_seed()
             if s is not None:
                 torch.manual_seed(int(s))
@@ -217,7 +217,7 @@ class LSTMForecaster:
 
         # Deterministic shuffling for the DataLoader.
         try:
-            from aurora.core.seed import get_seed  # type: ignore
+            from aurora.core.seed import get_seed
             seed_val = get_seed()
         except ImportError:
             seed_val = None

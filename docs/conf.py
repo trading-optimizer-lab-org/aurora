@@ -10,7 +10,7 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 
 # Repo root is one level above docs/. Adding it to sys.path lets autodoc
-# resolve `import quantforge` without requiring an editable install on the
+# resolve `import aurora` without requiring an editable install on the
 # build machine.
 _DOCS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _DOCS_DIR.parent
@@ -26,7 +26,7 @@ author = "QuantForge Project"
 copyright = f"{datetime.now().year}, {author}"
 
 try:
-    from quantforge import __version__ as _qf_version
+    from aurora import __version__ as _qf_version
 except Exception:  # pragma: no cover - import diagnostics
     _qf_version = "0.0.0+unknown"
 
@@ -87,7 +87,7 @@ autodoc_mock_imports = [
 ]
 
 # Bring submodules with optional deps into autodoc mock space too -- some
-# modules (e.g. quantforge.regime.hmm) only attribute-bind when their
+# modules (e.g. aurora.regime.hmm) only attribute-bind when their
 # extras are installed, which makes autosummary attribute access fail.
 import importlib  # noqa: E402
 

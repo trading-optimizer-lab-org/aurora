@@ -189,7 +189,7 @@ def test_engine_slippage_volume_share_cap_skipped():
 def test_subclass_must_implement_impact_bps():
     """ABC enforcement."""
     with pytest.raises(TypeError):
-        SlippageModel()  # type: ignore[abstract]
+        SlippageModel()
 
 
 # ----------------------- intraday volume curve ------------------------------

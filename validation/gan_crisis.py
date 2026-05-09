@@ -18,8 +18,8 @@ try:
     import torch.nn as _nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch = None
-    _nn = None
+    torch = None  # type: ignore[assignment]
+    _nn = None  # type: ignore[assignment]
     TORCH_AVAILABLE = False
 
 

@@ -165,7 +165,7 @@ def test_daily_ops_alert_immutable():
         suggested_action="act",
     )
     with pytest.raises(FrozenInstanceError):
-        a.severity = "critical"  # type: ignore[misc]
+        a.severity = "critical"
 
 
 def test_daily_ops_alert_invalid_severity():
