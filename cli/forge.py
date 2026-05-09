@@ -2614,7 +2614,25 @@ def cmd_research_triage(args):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_package_version() -> str:
+    """Return the installed aurora package version, or "unknown"."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # pragma: no cover - py3.7 path; not supported
+        return "unknown"
+    try:
+        return version("aurora")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def _add_global_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"aurora {_resolve_package_version()}",
+        help="Print the installed aurora version and exit.",
+    )
     parser.add_argument(
         "--config", default=None,
         help="Path to ForgeConfig YAML/TOML. Defaults to built-in defaults.",
@@ -2622,7 +2640,7 @@ def _add_global_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logger level for the quantforge namespace [default: INFO].",
+        help="Logger level for the aurora namespace [default: INFO].",
     )
 
 
