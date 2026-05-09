@@ -2,14 +2,21 @@
 
 ## Status
 
-Plan locked. Execution gated on a dedicated rename branch + a clean
-session that does NOT bundle other work. Roughly 1-2 weeks of focused
-mechanical changes plus shim-window release planning.
+**Executed 2026-05-09 (commit `cf41bc2`).** `pyproject.toml`
+`name = "aurora"`; package-dir map re-routes `aurora.*` to the
+on-disk dirs; CLI entry `aurora`; `forge` kept as deprecated alias.
+`quantforge/__init__.py` shim re-exports aurora and emits
+`DeprecationWarning`. `core/env_compat.py::aurora_env(new, old)`
+reads `AU_*` first, falls back to `QF_*` with `DeprecationWarning`.
 
-Current repo status: the rename has NOT been executed in the current
-branch. `pyproject.toml` still names the package `quantforge`,
-`import quantforge` works, `import aurora` does not, and `QF_*` env
-vars remain the active code path until the rename branch lands.
+Wheel builds as `aurora-1.5.0-py3-none-any.whl`. Both `import aurora`
+(no warning) and `import quantforge` (DeprecationWarning) work.
+`aurora --version` -> `aurora 1.5.0`.
+
+The text below is the original checklist, kept for historical
+reference and as the playbook the next major-version rename should
+follow. The shim is removed in v1.6 per the deprecation timeline in
+`docs/ENV_VAR_MIGRATION_PLAN.md`.
 
 ## Why the rename is its own track
 
@@ -129,13 +136,14 @@ Update every operator-facing doc:
 
 ## Definition of done
 
-- [ ] `import aurora` resolves to the rename branch's package.
-- [ ] `import quantforge` works AND emits a `DeprecationWarning`
+- [x] `import aurora` resolves to the rename branch's package.
+- [x] `import quantforge` works AND emits a `DeprecationWarning`
       during the shim window.
-- [ ] `aurora --version` returns the new package version.
-- [ ] All operator docs reference Aurora consistently.
-- [ ] Tests green under the new import path.
-- [ ] Wheel builds as `aurora-X.Y.Z`.
+- [x] `aurora --version` returns the new package version.
+- [x] All operator docs reference Aurora consistently.
+- [x] Tests green under the new import path (3370 fast suite + 3
+      slow/integration).
+- [x] Wheel builds as `aurora-X.Y.Z` (`aurora-1.5.0-py3-none-any.whl`).
 
 ## Rollback plan
 

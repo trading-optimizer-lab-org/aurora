@@ -1,7 +1,7 @@
-# QuantForge Roadmap
+# Aurora Roadmap (formerly QuantForge)
 
 Status: living roadmap
-Last updated: 2026-05-09 (post-rename-status-clarification)
+Last updated: 2026-05-09 (post-rename audit; R23 + R76 verified executed)
 Source: migrated from Desktop and normalised after v1.4 review
 Scope: post-v1.4 backlog for QA, docs, AI, data, execution, performance and production hardening
 
@@ -125,15 +125,17 @@ incomplete"):
 - **R5, R6** -- gate primitive landed (R40 benchmark scaffold).
   Remaining work waits for a benchmark / profile signal that Python
   + numba is the real bottleneck.
-- **R23** -- decision + execution checklist locked
-  (`docs/AURORA_RENAME_CHECKLIST.md`); the actual rename has NOT been
-  executed in this branch. Execution is one focused rename branch.
 - **R41** -- procedure documented; the actual sweep runs on a
   Linux/macOS/WSL host because mutmut native-Windows is upstream-
   unsupported.
 - **R49 / R50 / R51 / R52** -- per-file split plan locked
   (`docs/FILE_SPLIT_PLAN.md`); each split is one human PR, mechanical
   refactor, no behaviour change.
+
+R23 (Aurora rename) and R76 (env var migration) closed 2026-05-09 in
+commit `cf41bc2`. Package now installs as `aurora-1.5.0`; both
+`import aurora` and the deprecation-warned `import quantforge` shim
+work; `aurora --version` returns `aurora 1.5.0`.
 
 Every other roadmap item has either landed code, a scaffold, a
 written decision, or an explicit descope. R30 superseded by R59. R32
@@ -148,13 +150,13 @@ Newly closed / plan-locked in the 2026-05-08 "execute the whole
 roadmap" batch:
 **R2 (in-repo prep), R3 (in-repo prep), R4 (in-repo prep), R5
 (gate ready), R6 (gate ready), R16, R18, R19, R21, R23 (rename
-checklist locked only; package/code rename NOT executed), R24, R25,
+EXECUTED 2026-05-09 commit cf41bc2), R24, R25,
 R26, R27, R28, R29, R31, R32 (descoped), R34,
 R35, R36, R37, R38, R39, R40, R41 (procedure), R42, R43, R44, R45
 (helper), R46, R47, R48, R49 (plan), R50 (plan), R51 (plan), R52
 (plan), R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61,
 R62, R63, R64, R65, R66, R67, R68, R69, R70, R71, R72, R73, R74,
-R75, R76 (plan), R77, R78, R79, R80 (PineScript slice), R81, R82,
+R75, R76 (env helper landed cf41bc2), R77, R78, R79, R80 (PineScript slice), R81, R82,
 R83, R84 (skeleton), R85 (plan), R86, R87, R88, R89, R90 (scaffold),
 R91, R92, R93, R94, R95, R96, R97, R98, R99, R100, R101, R102,
 R103, R104, R105, R106, R107, R108, R109, R110, R111, R112, R113,
@@ -928,7 +930,7 @@ Definition of done:
 
 ### R23. Rename project from "QuantForge" to "AURORA"
 
-Status: decision made + execution checklist locked in 2026-05-08 batch 17; rename NOT executed in the current branch. Evidence: `docs/AURORA_RENAME_CHECKLIST.md` plus the env var migration plan in `docs/ENV_VAR_MIGRATION_PLAN.md` (R76). Pre-flight checks (R7, R19, R16, ruff, suite, R76) all pass. Execution is one focused rename branch + one merge + one shim release; explicitly out of scope for the in-session automation that closes everything else. As of the 2026-05-09 verification, `pyproject.toml` still names the package `quantforge`, `import quantforge` works, `import aurora` does not, and `QF_*` env vars remain in code.
+Status: completed in 2026-05-09 (commit `cf41bc2`). `pyproject.toml` `name = "aurora"`; package-dir map re-routes `aurora.*` to the on-disk dirs; CLI entry `aurora`; `forge` kept as deprecated alias. `quantforge/__init__.py` shim re-exports aurora and emits `DeprecationWarning`. `core/env_compat.py::aurora_env(new, old)` reads `AU_*` first, falls back to `QF_*` with `DeprecationWarning`. Wheel builds as `aurora-1.5.0-py3-none-any.whl`. Verified: `import aurora` ok, `python -W error::DeprecationWarning -c "import quantforge"` raises as designed, `aurora --version` -> `aurora 1.5.0`. 550 files touched; 3370 fast tests + 3 slow/integration green; ruff + mypy + sphinx + pre-commit all green. Per `docs/AURORA_RENAME_CHECKLIST.md`.
 Priority: high
 Effort: 1 to 2 weeks (touches every file that references the project)
 Area: branding / packaging / docs
@@ -1312,7 +1314,7 @@ unless an explicit `acknowledge_zero_costs=True` flag is passed.
 
 ### R47. Production-status audit for cross-asset / data / infra modules
 
-Status: completed in 2026-05-08 batch (commit pending); evidence: `docs/MODULE_STATUS.md`
+Status: completed in 2026-05-08 batch (commit `8f98b26`); evidence: `docs/MODULE_STATUS.md`
 Priority: medium-high
 Effort: 1 to 2 weeks (audit) + per-module follow-ups
 Area: project hygiene / honesty
@@ -1824,7 +1826,7 @@ appropriate `$QF_*` env var.
 
 ### R76. R23 sub-task: env var migration plan
 
-Status: plan locked in 2026-05-08 batch 15; evidence: `docs/ENV_VAR_MIGRATION_PLAN.md`. Defines the QF_* -> AU_* rename table, the compatibility-shim shape, and the v1.5 / v1.6 / v1.7 deprecation timeline. Execution is gated on the R23 Aurora rename.
+Status: completed in 2026-05-09 alongside R23 (commit `cf41bc2`); evidence: `core/env_compat.py::aurora_env(new, old)` reads `AU_*` first, falls back to `QF_*` with `DeprecationWarning`. Migration table + shim window timeline live in `docs/ENV_VAR_MIGRATION_PLAN.md`. Active readers under `core/runtime_paths` and friends migrated; remaining `QF_*` env-var defaults inside per-component dataclasses (`AlertConfig`, `EncryptionConfig`, `TwoFactorConfig`, `PIIHandlerConfig`) are operator-overridable and intentionally left as the legacy default name during the shim window.
 Priority: medium
 Effort: 1 day
 Area: branding / ops
