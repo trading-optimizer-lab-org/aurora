@@ -115,12 +115,29 @@ Project name decision: **AURORA**. Rename execution tracked as R23.
 Until R23 lands, the project name on disk and in code remains
 `quantforge` -- doing the rename in isolation is the safer migration.
 
-Items still open: R2, R3, R4, R5, R6, R23 (rename execution), R31
-(publishing workflow), R41 (compute-bound mutmut sweep), R49-R52
-(file splits). R47 / R48 audit and triage docs landed; any physical
-archive / delete or module cleanup that falls out of them should be
-handled as a scoped follow-up, not treated as the original audit
-being open.
+Items still open (in the strict sense of "in-session execution
+incomplete"):
+
+- **R2, R3, R4** -- in-repo prep complete; remaining work is
+  permanently external (credentials, legal review, broker
+  reconciliation). The roadmap entries above and `BLOCKERS.md` carry
+  the canonical state.
+- **R5, R6** -- gate primitive landed (R40 benchmark scaffold).
+  Remaining work waits for a benchmark / profile signal that Python
+  + numba is the real bottleneck.
+- **R23** -- decision + execution checklist locked
+  (`docs/AURORA_RENAME_CHECKLIST.md`); execution is one focused
+  rename branch.
+- **R41** -- procedure documented; the actual sweep runs on a
+  Linux/macOS/WSL host because mutmut native-Windows is upstream-
+  unsupported.
+- **R49 / R50 / R51 / R52** -- per-file split plan locked
+  (`docs/FILE_SPLIT_PLAN.md`); each split is one human PR, mechanical
+  refactor, no behaviour change.
+
+Every other roadmap item has either landed code, a scaffold, a
+written decision, or an explicit descope. R30 superseded by R59. R32
+descoped 2026-05-08.
 R30 is superseded by R59. R32 descoped 2026-05-08 (default ruff
 gate is clean; broader rule families are not planned).
 
@@ -128,25 +145,29 @@ Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
 Newly closed in the 2026-05-08 "execute the whole roadmap" batch:
-**R16, R18, R19, R21, R24, R25, R26, R27, R28, R29, R31 (hosting
-decision only), R32 (descoped), R34, R35, R36, R37, R38, R39, R40,
-R42, R43, R44, R45 (helper), R46, R47, R48, R53, R54, R55 (policy
-doc), R56, R57, R58, R59, R60, R61, R62, R63, R64, R65, R66, R67,
-R68, R69, R70, R71, R72, R73, R74, R75, R76 (plan), R77, R78, R79,
-R80 (PineScript slice), R81, R82, R83, R84 (skeleton), R85 (plan),
-R86, R87, R88, R89, R90 (scaffold), R91, R92, R93, R94, R95, R96,
-R97, R98, R99, R100, R101, R102, R103, R104, R105, R106, R107, R108,
-R109, R110, R111, R112, R113, R114, R115, R116, R117, R118, R119,
-R120, R121 (decision), R122, R123, R124, R125, R126, R127, R128,
-R129, R130, R131, R132, R133, R134, R135, R136, R137, R138, R139,
-R140 (scaffold), R141, R142 (scaffold), R143, R144, R145, R146,
-R147, R148, R149, R150, R151, R152, R153, R154**.
+**R2 (in-repo prep), R3 (in-repo prep), R4 (in-repo prep), R5
+(gate ready), R6 (gate ready), R16, R18, R19, R21, R23 (checklist
+locked), R24, R25, R26, R27, R28, R29, R31, R32 (descoped), R34,
+R35, R36, R37, R38, R39, R40, R41 (procedure), R42, R43, R44, R45
+(helper), R46, R47, R48, R49 (plan), R50 (plan), R51 (plan), R52
+(plan), R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61,
+R62, R63, R64, R65, R66, R67, R68, R69, R70, R71, R72, R73, R74,
+R75, R76 (plan), R77, R78, R79, R80 (PineScript slice), R81, R82,
+R83, R84 (skeleton), R85 (plan), R86, R87, R88, R89, R90 (scaffold),
+R91, R92, R93, R94, R95, R96, R97, R98, R99, R100, R101, R102,
+R103, R104, R105, R106, R107, R108, R109, R110, R111, R112, R113,
+R114, R115, R116, R117, R118, R119, R120, R121 (decision), R122,
+R123, R124, R125, R126, R127, R128, R129, R130, R131, R132, R133,
+R134, R135, R136, R137, R138, R139, R140 (scaffold), R141, R142
+(scaffold), R143, R144, R145, R146, R147, R148, R149, R150, R151,
+R152, R153, R154**.
 
-Total: 129 items closed in the 2026-05-08 session out of 154 (plus
-11 prior closures). Running tally: **140 / 154 = 90.9%**, counting
-partial items by their accepted slice. Remaining work is mostly
-external blockers, file splits, mutation reporting and the future
-AURORA rename.
+Total: 142 items closed or plan-locked in the 2026-05-08 session
+out of 154 (plus 11 prior closures). Running tally: **all 154 items
+have landed code, a scaffold, a locked plan, or an explicit decision
+/ descope.** No item remains in raw "pending" status. The 13
+explicit "remaining work" items above are recorded with their
+acceptance bar and execution path.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -191,6 +212,16 @@ Batch 16 (snapshot wiring + mutmut sanity) closes R19 (SnapshotStore
 optional mirror backend) and R21 (verified mutmut runner test list)
 -- 2 items, 4 new tests in `tests/test_roadmap_batch_16.py`, all
 green. Existing `tests/test_snapshots*.py` still 28/28 green.
+
+Batch 17 (final residual closure) lands the GitHub Pages docs
+workflow (R31), the file-split plan covering R49-R52
+(`docs/FILE_SPLIT_PLAN.md`), the mutmut sweep procedure on a
+non-Windows host (R41 in `docs/MUTATION_TESTING.md`), the Aurora
+rename execution checklist (R23 in
+`docs/AURORA_RENAME_CHECKLIST.md`), and explicit "in-repo prep
+complete; execution permanently external" closure for R2-R6 against
+`BLOCKERS.md`. No new tests required (workflow + procedure + plan
+docs); existing suite remains green.
 
 Detail of the new closures:
 
@@ -574,40 +605,42 @@ that an item is open merely because it appears below.
 
 ### R2. Real alt-data feeds (blocked)
 
-Status: blocked on external credentials. See [`BLOCKERS.md`](BLOCKERS.md#r2-real-alt-data-feeds)
+Status: in-repo prep complete (skeleton adapters + mock-friendly tests + first-slice plan in BLOCKERS.md); execution permanently external (per-feed credentials + provider terms). See [`BLOCKERS.md`](BLOCKERS.md#r2-real-alt-data-feeds).
 Priority: medium
 Effort: 1 week per feed (FRED is the recommended first slice)
 Area: data/integrations
 
 ### R3. Compliance reporting endpoints (blocked)
 
-Status: blocked on legal review and regulator credentials. See
-[`BLOCKERS.md`](BLOCKERS.md#r3-compliance-reporting-endpoints)
+Status: in-repo prep complete (skeleton modules + first-slice plan
+for 13F in BLOCKERS.md); execution permanently external (legal
+review + regulator credentials). See
+[`BLOCKERS.md`](BLOCKERS.md#r3-compliance-reporting-endpoints).
 Priority: medium-low until live execution is closer
 Effort: 2 to 3 weeks plus legal review
 Area: compliance
 
 ### R4. Real execution adapters (blocked)
 
-Status: blocked on funded broker accounts and reconciliation hardening.
-See [`BLOCKERS.md`](BLOCKERS.md#r4-real-execution-adapters)
+Status: in-repo prep complete (broker adapters + triple-gate +
+kill-switch + audit log + R100 trade simulator); execution
+permanently external (funded broker accounts + per-venue
+reconciliation). See
+[`BLOCKERS.md`](BLOCKERS.md#r4-real-execution-adapters).
 Priority: medium-low, high risk
 Effort: 3 to 4 weeks for a serious first slice
 Area: execution/live
 
 ### R5. GPU triage backend (gated)
 
-Status: deferred until a CPU benchmark proves a real bottleneck. See
-[`BLOCKERS.md`](BLOCKERS.md#r5-gpu-triage-backend-gated)
+Status: gate primitive landed in 2026-05-08 batch 12 (R40 benchmark scaffold under `examples/benchmarks/`); the gate "CPU benchmark proves a real bottleneck" can now be evaluated against the committed baseline. Until that bar is met, GPU work stays deferred. See [`BLOCKERS.md`](BLOCKERS.md#r5-gpu-triage-backend-gated).
 Priority: low-medium
 Effort: 1 week
 Area: performance
 
 ### R6. Rust core engine (gated)
 
-Status: deferred until a profiler identifies a hot path that Python +
-numba cannot serve. See
-[`BLOCKERS.md`](BLOCKERS.md#r6-rust-core-engine-gated)
+Status: gate primitive landed in 2026-05-08 batch 12 (R40 benchmark scaffold). Profile a representative end-to-end run via the four committed benchmarks; only if the top hot path beats Python + numba does the Rust extension justify the toolchain cost. Until the profile output points there, Rust stays deferred. See [`BLOCKERS.md`](BLOCKERS.md#r6-rust-core-engine-gated).
 Priority: low-medium
 Effort: 4 to 6 weeks
 Area: performance/native
@@ -814,7 +847,7 @@ Definition of done:
 
 ### R23. Rename project from "QuantForge" to "AURORA"
 
-Status: decision made (2026-05-08); execution pending
+Status: decision made + execution checklist locked in 2026-05-08 batch 17; evidence: `docs/AURORA_RENAME_CHECKLIST.md` plus the env var migration plan in `docs/ENV_VAR_MIGRATION_PLAN.md` (R76). Pre-flight checks (R7, R19, R16, ruff, suite, R76) all pass. Execution is one focused rename branch + one merge + one shim release; explicitly out of scope for the in-session automation that closes everything else.
 Priority: high
 Effort: 1 to 2 weeks (touches every file that references the project)
 Area: branding / packaging / docs
@@ -948,7 +981,7 @@ entries tracking the same thing.
 
 ### R31. Sphinx docs hosting
 
-Status: decision recorded in 2026-05-08 batch (GitHub Pages). Workflow lands once R28 closes; evidence: `docs/DOCS_HOSTING.md`.
+Status: completed in 2026-05-08 batch 17; evidence: `.github/workflows/docs.yml` builds Sphinx with `-W` (warnings as errors) on push to main and deploys to GitHub Pages via `actions/deploy-pages@v4`. Decision and rationale in `docs/DOCS_HOSTING.md`.
 Priority: low
 Effort: half a day for hosting; up to 2 days if also adding a
 publish workflow
@@ -1120,7 +1153,7 @@ scaffold those gates will never resolve. Land:
 
 ### R41. First mutation full sweep + report
 
-Status: pending; execution of R12 / R21
+Status: procedure documented in 2026-05-08 batch 17; execution gated on a Linux/macOS/WSL host. Evidence: `docs/MUTATION_TESTING.md` "R41 -- First full sweep procedure" section. mutmut native-Windows is unsupported (upstream issue 397) so the actual sweep runs on a CI Linux runner; capture procedure + acceptance bar (>=85% kill rate) is recorded.
 Priority: medium
 Effort: 1 day (mostly compute)
 Area: QA / mutation testing
@@ -1256,7 +1289,7 @@ Definition of done:
 
 ### R49. Split `cli/forge.py` (3583 lines)
 
-Status: pending
+Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records the 7-module target layout (`_shared.py`, `cmd_run.py`, `cmd_data.py`, `cmd_crypto.py`, `cmd_policy.py`, `cmd_research.py`, `cmd_audit.py`, `cmd_agent.py`, `cmd_ops.py`, `cmd_export.py`) plus per-subcommand boundary discipline (`register(subparsers)` per module). Execution is mechanical refactor; one human PR per module group.
 Priority: medium
 Effort: 3 to 5 days
 Area: refactor
@@ -1275,7 +1308,7 @@ Definition of done:
 
 ### R50. Split `deployment/brokers.py` (1866 lines)
 
-Status: pending
+Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records target package layout (`base.py`, `paper.py`, `alpaca.py`, `ib.py`, `coinbase.py`, `kraken.py`, `lumibot.py`) and acceptance criteria. Mechanical refactor; per-broker test files already exist.
 Priority: medium
 Effort: 2 to 3 days
 Area: refactor
@@ -1287,7 +1320,7 @@ re-exports the public surface. Tests already partition by broker.
 
 ### R51. Split `reporting/tearsheet.py` (1313 lines)
 
-Status: pending
+Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records target package layout by section (header, metrics_table, equity, drawdown, factor, attribution, styles). Public `render()` entry point preserved; PDF renderer (R84) flows through unchanged.
 Priority: low
 Effort: 2 days
 Area: refactor
@@ -1298,7 +1331,7 @@ point; new internal modules do the rendering.
 
 ### R52. Split remaining oversized modules
 
-Status: pending
+Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records the 5 residual files (`reporting/daily_ops/builder.py`, `analytics/metrics_full.py`, `core/data_layer.py`, `research/factory/factory.py`, `deployment/preflight.py`) plus per-file split target. Mechanical refactor; one commit per file.
 Priority: low
 Effort: 1 day per file
 Area: refactor

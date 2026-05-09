@@ -133,3 +133,47 @@ testing.
   validating survivors in JIT modules.
 - Mutation testing is not a substitute for property tests, integration
   tests, or code review. It is one extra signal.
+- mutmut native Windows is unsupported (upstream issue 397). Run the
+  full sweep on Linux / macOS / WSL only.
+
+## R41 -- First full sweep procedure
+
+The first full sweep establishes the baseline survivor table. Procedure
+(must run on Linux / macOS / WSL because of the Windows limit above):
+
+```bash
+# 1. Clean previous mutation state.
+rm -rf .mutmut-cache mutants/
+
+# 2. Run the curated sweep with JIT disabled.
+NUMBA_DISABLE_JIT=1 make mutate-full
+
+# 3. Capture the result table.
+python -m mutmut results > docs/mutation_baseline_$(date -u +%Y%m%d).txt
+
+# 4. Inspect each survivor.
+for id in $(python -m mutmut results | grep "^[0-9]" | awk '{print $1}'); do
+    python -m mutmut show "$id" >> docs/mutation_survivors_$(date -u +%Y%m%d).txt
+    echo "----" >> docs/mutation_survivors_$(date -u +%Y%m%d).txt
+done
+
+# 5. Treat survivors per the workflow above (add test or mark
+#    `# no-mutate` if equivalent).
+```
+
+### Acceptance for R41
+
+- `docs/mutation_baseline_<YYYYMMDD>.txt` exists with the killed /
+  survived / skipped / timeout / suspicious counts.
+- `docs/mutation_survivors_<YYYYMMDD>.txt` exists with one entry per
+  survivor, ready for the workflow above.
+- Mutation score on the curated targets >= 85% (working bar from the
+  "Reading results" section).
+
+### Why the baseline is captured manually rather than in CI
+
+A full curated sweep takes hours. Wiring it into a per-PR CI gate is a
+separate cost / value decision (R42 already runs the property
+`thorough` profile on a daily cron; mutmut on the same cadence would
+double CI compute spend). Treat the manual baseline as the canonical
+reference; rerun monthly or before each release.
