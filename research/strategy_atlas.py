@@ -445,7 +445,7 @@ def query_graveyard_before_promote(
                     f"query_graveyard_before_promote: entry {entry.name!r} "
                     f"appears in graveyard archive ({reason!r}); cannot "
                     "re-promote without explicit override"
-                )
+                ) from None
         return
 
     from pathlib import Path

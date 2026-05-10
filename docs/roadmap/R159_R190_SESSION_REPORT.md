@@ -113,10 +113,26 @@ the time of writing.
 
 ### R162 - Point-in-time fundamentals dataset
 
-Blocker: requires real SEC EDGAR HTTP ingestion + a User-Agent string the
-operator owns. Cleanest as its own focused PR with a tiny committed
-fixture (3-5 large-cap company facts) and the network path opt-in via env
-var. No fake fundamentals were generated in this session.
+Status correction (post-merge audit 2026-05-10): raw SEC EDGAR
+companyfacts JSON files for 20 symbols (AAPL, AMD, AMZN, AVGO, BRK-B,
+COST, GOOGL, JNJ, JPM, LLY, etc) **are already on disk** under
+`$AU_DATA_DIR/fundamentals_sec/`, persisted by the R157/R158 ingestion
+pass. Real network ingestion happened. CIK and entityName fields verify
+the files are authentic SEC EDGAR responses, not fixtures.
+
+What is **still pending** for R162 acceptance:
+
+- normalised PIT fundamentals schema with available_time / accepted_at
+  per row (currently the raw JSON is per-symbol, not row-indexed by tag)
+- curated first field map (revenue, net income, FCF, EPS, etc) extracted
+  from the companyfacts blob
+- `fundamentals_at(symbol, decision_time)` API that refuses future
+  filings
+- coverage report for missing tags / amendments / restated facts
+
+So R162 stays Status: open, but the blocker reason is "PIT
+normalisation layer + derived ratio API not built", not "needs network
+credentials". Network is done.
 
 ### R183 - Futures engine + continuous-contract handling
 

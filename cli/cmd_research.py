@@ -452,7 +452,7 @@ def cmd_research_atlas_link_source(args):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_papers_registry_path(args) -> "Path":
+def _resolve_papers_registry_path(args):
     """Return the JSONL path used by ``research papers`` commands.
 
     The path is taken from ``--registry-path`` if provided, otherwise
