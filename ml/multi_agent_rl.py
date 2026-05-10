@@ -20,19 +20,19 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import gymnasium as gym  # type: ignore
-    from gymnasium import spaces  # type: ignore
+    import gymnasium as gym
+    from gymnasium import spaces
     GYM_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    gym = None  # type: ignore[assignment]
-    spaces = None  # type: ignore[assignment]
+    gym = None
+    spaces = None
     GYM_AVAILABLE = False
 
 try:
-    import stable_baselines3 as sb3  # type: ignore
+    import stable_baselines3 as sb3
     SB3_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    sb3 = None  # type: ignore[assignment]
+    sb3 = None
     SB3_AVAILABLE = False
 
 

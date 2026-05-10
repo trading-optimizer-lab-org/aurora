@@ -146,7 +146,7 @@ class RedisCache:
         if self._client is not None:
             return self._client
         try:
-            import redis  # type: ignore
+            import redis
         except ImportError as e:
             raise ImportError("redis-py required for RedisCache mock=False") from e
         url = self._resolve_url()

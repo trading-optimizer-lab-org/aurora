@@ -37,8 +37,8 @@ class KafkaEventStream:
         self.config = config or KafkaConfig()
         self.mock = bool(mock)
         self._buffer: deque = deque(maxlen=self.config.max_buffer)
-        self._producer = None
-        self._consumer = None
+        self._producer: Any = None
+        self._consumer: Any = None
 
     # ------------------------------------------------------------------
     # Public
@@ -77,7 +77,7 @@ class KafkaEventStream:
     # ------------------------------------------------------------------
     def _producer_send(self, topic: str, payload: str) -> bool:  # pragma: no cover
         try:
-            from confluent_kafka import Producer  # type: ignore
+            from confluent_kafka import Producer
         except ImportError as e:
             raise ImportError("confluent-kafka required for live mode") from e
         if self._producer is None:
@@ -92,7 +92,7 @@ class KafkaEventStream:
     def _consumer_poll(self, max_events: int,
                        timeout_s: float) -> list[dict]:  # pragma: no cover
         try:
-            from confluent_kafka import Consumer  # type: ignore
+            from confluent_kafka import Consumer
         except ImportError as e:
             raise ImportError("confluent-kafka required for live mode") from e
         if self._consumer is None:

@@ -14,7 +14,7 @@ from typing import Callable, List, Optional
 import numpy as np
 
 try:  # pragma: no cover - torch not required for the default backend
-    import torch  # type: ignore
+    import torch
     TORCH_AVAILABLE = True
 except ImportError:
     torch = None  # type: ignore[assignment]

@@ -28,7 +28,7 @@ from aurora.core.data_layer import OOSGuard
 
 # CLI-driven tests only run when pydantic is importable; ``forge`` loads
 # ``quantforge.core.config`` (which requires pydantic) before any subcommand.
-_pydantic_required = pytest.importorskip.__self__ if False else None  # type: ignore
+_pydantic_required = pytest.importorskip.__self__ if False else None
 try:
     import pydantic  # noqa: F401
     _HAVE_PYDANTIC = True

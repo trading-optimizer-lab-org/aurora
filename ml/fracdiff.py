@@ -10,13 +10,12 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
+_ADF_IMPORT_ERROR: ImportError | None = None
 try:
     from statsmodels.tsa.stattools import adfuller as _adfuller
 except ImportError as _e:  # pragma: no cover
     _adfuller = None
     _ADF_IMPORT_ERROR = _e
-else:
-    _ADF_IMPORT_ERROR = None
 
 
 def _require_statsmodels() -> None:

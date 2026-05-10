@@ -89,6 +89,8 @@ class OODDetector:
         m = self._mahalanobis(X_test)
         # IsolationForest: predict returns -1 for anomaly, 1 for inlier;
         # decision_function: higher = more normal.
+        # ``_fit`` (called above) populated self.iso_forest.
+        assert self.iso_forest is not None
         iso_pred = self.iso_forest.predict(X_test)
         iso_score = self.iso_forest.decision_function(X_test)
 

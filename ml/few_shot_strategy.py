@@ -19,8 +19,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]

@@ -50,10 +50,12 @@ def policy() -> ProtocolPolicy:
     return ProtocolPolicy.default()
 
 
-def _make_returns(n: int = 250, asof: pd.Timestamp = pd.Timestamp("2026-01-15"),
+def _make_returns(n: int = 250, asof: pd.Timestamp | None = None,
                   seed: int = 42, mu: float = 0.0005,
                   sigma: float = 0.012) -> pd.Series:
     """Synthetic GBM-style daily returns ending at ``asof``."""
+    if asof is None:
+        asof = pd.Timestamp("2026-01-15")
     rng = np.random.default_rng(seed)
     r = rng.normal(mu, sigma, size=n)
     idx = pd.date_range(end=asof, periods=n, freq="B")
@@ -162,7 +164,7 @@ def test_daily_ops_alert_immutable():
         suggested_action="act",
     )
     with pytest.raises(FrozenInstanceError):
-        a.severity = "critical"  # type: ignore[misc]
+        a.severity = "critical"
 
 
 def test_daily_ops_alert_invalid_severity():

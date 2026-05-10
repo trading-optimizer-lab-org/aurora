@@ -46,7 +46,7 @@ class GPURunner:
     def is_cuda_available() -> bool:
         """True if torch is importable and reports a CUDA device."""
         try:
-            import torch  # type: ignore
+            import torch
         except ImportError:
             return False
         try:
@@ -73,20 +73,20 @@ class GPURunner:
         """
         device = self._resolve_device()
         try:
-            import torch  # type: ignore
+            import torch
         except ImportError:
             return fn(*args, **kwargs)
         prev_dtype = torch.get_default_dtype()
         target_dtype = getattr(torch, self.config.dtype, torch.float32)
         torch.set_default_dtype(target_dtype)
         try:
-            with torch.device(device):  # type: ignore[attr-defined]
+            with torch.device(device):
                 return fn(*args, **kwargs)
         except (TypeError, AttributeError):  # pragma: no cover - older torch
             # ``torch.device`` context manager added in 1.13. Fall back to
             # set_default_device when context manager not supported.
             try:
-                torch.set_default_device(device)  # type: ignore[attr-defined]
+                torch.set_default_device(device)
             except AttributeError:
                 pass
             return fn(*args, **kwargs)
@@ -96,7 +96,7 @@ class GPURunner:
     def to_device(self, tensor_like: Any) -> Any:
         """Move ``tensor_like`` to the resolved device when torch is present."""
         try:
-            import torch  # type: ignore
+            import torch
         except ImportError:
             return tensor_like
         device = self._resolve_device()

@@ -172,7 +172,7 @@ class MultiAssetEngine:
 
         if self.align_calendar == "us_equity":
             try:
-                import pandas_market_calendars as mcal  # type: ignore
+                import pandas_market_calendars as mcal
             except ImportError:
                 # fall back to intersection if pandas_market_calendars missing
                 common_idx = None

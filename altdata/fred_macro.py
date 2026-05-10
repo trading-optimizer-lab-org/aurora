@@ -94,7 +94,7 @@ class FREDAdapter:
     def _fetch_remote(self, series_id: str) -> pd.Series:  # pragma: no cover
         import os
         try:
-            from fredapi import Fred  # type: ignore
+            from fredapi import Fred
         except ImportError as e:
             raise ImportError("fredapi required for live FRED fetch") from e
         key = os.environ.get(self.config.api_key_env, "")

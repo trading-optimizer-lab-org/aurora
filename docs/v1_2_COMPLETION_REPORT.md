@@ -125,7 +125,7 @@ forge cscv --returns-csv strategies.csv --n-splits 16
 
 ```
 quantforge/
-├── core/        engine + multi + jit + costs + slippage + metrics + 
+├── core/        engine + multi + jit + costs + slippage + metrics +
 │                seed + data_layer + config + logging + features + taxes
 ├── strategies/  base + library (11 strategies)
 ├── ga/          NSGA-II + joblib + bayes_opt + seed_pop + multi_asset
@@ -136,8 +136,8 @@ quantforge/
 ├── analytics/   metrics_full + factor_analysis + attribution + round_trip
 ├── regime/      hmm + bayes_alpha + markov_switching + hurst              NEW
 ├── registry/    registry + versioning + journal + experiments              NEW
-├── deployment/  paper + live + sizing + allocator + preflight + 
-│                hrp + risk_optim + black_litterman + cov_shrinkage + 
+├── deployment/  paper + live + sizing + allocator + preflight +
+│                hrp + risk_optim + black_litterman + cov_shrinkage +
 │                risk_parity + liquidity                                    +liquidity
 ├── reporting/   tearsheet + tearsheet v2
 ├── cli/         forge (14 subcommands)

@@ -12,10 +12,10 @@ import numpy as np
 import pandas as pd
 
 try:
-    import shap as _shap  # type: ignore
+    import shap as _shap
     SHAP_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    _shap = None  # type: ignore
+    _shap = None
     SHAP_AVAILABLE = False
 
 

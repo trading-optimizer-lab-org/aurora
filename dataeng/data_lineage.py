@@ -39,7 +39,7 @@ class DataLineageTracker:
         self._nx_graph = None
         if self.config.prefer_networkx:
             try:
-                import networkx as nx  # type: ignore
+                import networkx as nx
                 self._nx_graph = nx.DiGraph()
             except ImportError:
                 self._nx_graph = None

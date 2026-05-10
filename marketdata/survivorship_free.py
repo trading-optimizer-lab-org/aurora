@@ -70,6 +70,7 @@ class SurvivorshipFreeUniverse:
         if self._listings is None:
             self.load_listings()
         as_of = pd.Timestamp(as_of)
+        assert self._listings is not None
         df = self._listings
         active_listed = df["listing_date"] <= as_of
         active_not_delisted = df["delisting_date"].isna() | (df["delisting_date"] >= as_of)
@@ -86,6 +87,7 @@ class SurvivorshipFreeUniverse:
         """Symbols delisted within ``[start, end]`` (inclusive)."""
         if self._listings is None:
             self.load_listings()
+        assert self._listings is not None
         df = self._listings
         mask = df["delisting_date"].notna() & (
             df["delisting_date"].between(pd.Timestamp(start), pd.Timestamp(end))

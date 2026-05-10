@@ -25,17 +25,17 @@ import numpy as np
 import pandas as pd
 
 try:  # optional dep, only used when method='shap' or 'mi'
-    import sklearn  # type: ignore
+    import sklearn
     SKLEARN_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
-    sklearn = None  # type: ignore[assignment]
+    sklearn = None
     SKLEARN_AVAILABLE = False
 
 try:  # optional dep, only used when method='shap'
-    import shap  # type: ignore
+    import shap
     SHAP_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
-    shap = None  # type: ignore[assignment]
+    shap = None
     SHAP_AVAILABLE = False
 
 

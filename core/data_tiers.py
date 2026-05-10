@@ -295,9 +295,9 @@ def load_up_to_tier(
         require_snapshot=require_snapshot,
     )
     if freeze:
-        prices, snap = result  # type: ignore[misc]
+        prices, snap = result
     else:
-        prices = result  # type: ignore[assignment]
+        prices = result
     # Cap at the tier upper bound. ``end_ts`` is ``Timestamp.max`` for
     # FORWARD, which is effectively a no-op cap. P1.2: compare against
     # the date component so intraday bars on the boundary date are
@@ -305,7 +305,7 @@ def load_up_to_tier(
     if end_ts != pd.Timestamp.max:
         prices = prices[pd.to_datetime(prices.index).normalize() <= end_ts]
     if freeze:
-        return prices, snap  # type: ignore[return-value]
+        return prices, snap
     return prices
 
 
@@ -363,11 +363,11 @@ def load_tier(
         oos_purpose=oos_purpose,
     )
     if freeze:
-        prices, snap = result  # type: ignore[misc]
+        prices, snap = result
     else:
-        prices = result  # type: ignore[assignment]
+        prices = result
     tiers = split_by_tier(prices)
     sliced: pd.Series = getattr(tiers, norm.lower())
     if freeze:
-        return sliced, snap  # type: ignore[return-value]
+        return sliced, snap
     return sliced

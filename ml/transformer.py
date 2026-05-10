@@ -36,8 +36,8 @@ try:  # optional dep
 except Exception:  # pragma: no cover - exercised when torch missing
     torch = None  # type: ignore[assignment]
     nn = None  # type: ignore[assignment]
-    DataLoader = None  # type: ignore[assignment]
-    TensorDataset = None  # type: ignore[assignment]
+    DataLoader = None  # type: ignore[assignment,misc]
+    TensorDataset = None  # type: ignore[assignment,misc]
     TORCH_AVAILABLE = False
 
 
@@ -201,7 +201,8 @@ if TORCH_AVAILABLE:
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             seq_len = x.size(1)
-            return x + self.pe[:, :seq_len, :]
+            pe: "torch.Tensor" = self.pe  # type: ignore[assignment]
+            return x + pe[:, :seq_len, :]
 
 
     def causal_mask(seq_len: int, device=None) -> "torch.Tensor":
@@ -396,7 +397,7 @@ class TimeSeriesTransformer:
             history.append(float(np.mean(losses)) if losses else float("nan"))
         return {"train_loss": history}
 
-    @torch.no_grad() if TORCH_AVAILABLE else (lambda f: f)  # type: ignore[misc]
+    @torch.no_grad() if TORCH_AVAILABLE else (lambda f: f)
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Return forecasts of shape ``(N, len(horizons))``."""
         self._validate_xy(X)

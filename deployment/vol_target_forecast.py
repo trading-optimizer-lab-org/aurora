@@ -52,7 +52,7 @@ def _ewma_annual_vol(rets: pd.Series, lam: float, ppy: int) -> float:
 def _garch_annual_vol(rets: pd.Series, p: int, q: int, ppy: int) -> Optional[float]:
     """One-step-ahead GARCH(p,q) annualised vol; ``None`` if arch missing."""
     try:
-        from arch import arch_model  # type: ignore
+        from arch import arch_model
     except ImportError:
         return None
     r = np.asarray(rets, dtype=float)

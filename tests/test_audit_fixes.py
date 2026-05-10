@@ -24,7 +24,7 @@ def _load_pyproject() -> dict:
     try:
         import tomllib  # 3.11+
     except ImportError:  # pragma: no cover - 3.10 fallback
-        import tomli as tomllib  # type: ignore
+        import tomli as tomllib
     with PYPROJECT.open("rb") as f:
         return tomllib.load(f)
 

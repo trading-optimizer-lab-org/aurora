@@ -138,7 +138,7 @@ def extract_trades(
         # was on the book" and ``bars`` is "how many bar boundaries elapsed".
         holding_bars = int(e - s) + 1
         holding_secs = float("nan")
-        if has_ts:
+        if timestamps is not None:
             t_entry = pd.Timestamp(timestamps[s])
             t_exit = pd.Timestamp(timestamps[e])
             try:

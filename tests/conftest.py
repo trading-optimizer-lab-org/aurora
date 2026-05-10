@@ -46,19 +46,19 @@ import pytest
 # ``import torch`` per-test pays the import cost on every fixture invocation
 # (and torch is not cheap). Cache None when missing.
 try:
-    import torch as _torch  # type: ignore
+    import torch as _torch
 except ImportError:
     _torch = None  # type: ignore[assignment]
 
 try:
-    from aurora.core import seed as _qf_seed  # type: ignore
+    from aurora.core import seed as _qf_seed
 except ImportError:  # pragma: no cover - core ships with the package
-    _qf_seed = None  # type: ignore[assignment]
+    _qf_seed = None
 
 try:
-    from aurora.ga import fitness as _ga_fitness  # type: ignore
+    from aurora.ga import fitness as _ga_fitness
 except ImportError:  # pragma: no cover - ga extras may be missing
-    _ga_fitness = None  # type: ignore[assignment]
+    _ga_fitness = None
 
 
 @pytest.fixture(autouse=True)

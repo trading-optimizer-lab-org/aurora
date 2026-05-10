@@ -30,7 +30,7 @@ class FlinkStreamProcessor:
                  mock: bool = True) -> None:
         self.config = config or FlinkConfig()
         self.mock = bool(mock)
-        self._ops: list[tuple[str, Callable]] = []
+        self._ops: list[tuple[str, Any]] = []
         self._env = None
 
     # ------------------------------------------------------------------
@@ -79,7 +79,7 @@ class FlinkStreamProcessor:
 
     def _run_flink(self, source: list) -> Any:  # pragma: no cover
         try:
-            from pyflink.datastream import StreamExecutionEnvironment  # type: ignore
+            from pyflink.datastream import StreamExecutionEnvironment
         except ImportError as e:
             raise ImportError("pyflink required for live mode") from e
         env = StreamExecutionEnvironment.get_execution_environment()

@@ -92,7 +92,7 @@ class OptionsFlowAdapter:
     # ------------------------------------------------------------------
     def _fetch_chain(self, symbol: str) -> pd.DataFrame:  # pragma: no cover - network
         try:
-            import yfinance as yf  # type: ignore
+            import yfinance as yf
         except ImportError as e:
             raise ImportError("yfinance required for live options chain") from e
         tk = yf.Ticker(symbol)

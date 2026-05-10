@@ -244,7 +244,7 @@ def submit_with_retry(strategy, order, max_attempts: int = 3,
         raise ValueError("max_attempts must be >= 1")
     _verify_agent_gateway_commit(order, gateway_committed)
     cid = _order_client_id(order)
-    last_err: Exception | None = None
+    last_err: BaseException | None = None
     for attempt in range(1, max_attempts + 1):
         # On retries, check whether the broker already accepted the order.
         if attempt > 1 and cid is not None and _broker_has_order(strategy, cid):
@@ -323,7 +323,7 @@ def preflight_checks(strategy, qf_config: LiveConfig) -> list[str]:
         if raw is _SENTINEL or raw is None:
             continue
         try:
-            nav_start = float(raw)
+            nav_start = float(raw)  # type: ignore[arg-type]
             break
         except (TypeError, ValueError):
             continue

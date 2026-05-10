@@ -168,10 +168,10 @@ def _validate_drafted_code_ast(code: str) -> None:
 
 
 try:
-    import anthropic  # type: ignore
+    import anthropic
     ANTHROPIC_AVAILABLE = True
 except Exception:
-    anthropic = None  # type: ignore
+    anthropic = None
     ANTHROPIC_AVAILABLE = False
 
 

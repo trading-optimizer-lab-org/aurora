@@ -246,7 +246,12 @@ class TradeJournal:
                     status, order_id, note,
                 ),
             )
-            return int(cur.lastrowid)
+            last_id = cur.lastrowid
+            if last_id is None:  # pragma: no cover - defensive
+                raise RuntimeError(
+                    "sqlite cursor.lastrowid is None after fresh INSERT"
+                )
+            return int(last_id)
 
     def update_status(self, entry_id: int, status: str,
                       fill_price: Optional[float] = None) -> bool:

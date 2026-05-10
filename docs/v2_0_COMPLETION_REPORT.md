@@ -139,8 +139,8 @@ quantforge/
 ├── analytics/   metrics_full + factor_analysis + attribution + round_trip
 ├── regime/      hmm + bayes_alpha + markov_switching + hurst
 ├── registry/    registry + versioning + journal + experiments
-├── deployment/  paper + live + sizing + allocator + preflight + 
-│                hrp + risk_optim + black_litterman + cov_shrinkage + 
+├── deployment/  paper + live + sizing + allocator + preflight +
+│                hrp + risk_optim + black_litterman + cov_shrinkage +
 │                risk_parity + liquidity + brokers + 10 v2 portfolio modules
 ├── monitoring/  dashboard + alerts + drift
 ├── research/    llm_assistant + 10 v2 research modules

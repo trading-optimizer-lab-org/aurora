@@ -7,7 +7,17 @@ active conditional orders and surfaces triggered child orders.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
+
+
+class _ConditionalOrder(Protocol):
+    """Structural type for any object handled by ``ConditionalOrderManager``.
+
+    The registry holds StopLimit / TrailingStop / BracketOrder instances,
+    each of which exposes ``on_tick``.
+    """
+
+    def on_tick(self, price: float) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -164,7 +174,7 @@ class ConditionalOrderManager:
 
     def __init__(self, config: Optional[ConditionalConfig] = None):
         self.config = config or ConditionalConfig()
-        self._registry: Dict[str, object] = {}
+        self._registry: Dict[str, _ConditionalOrder] = {}
         self._next_id = 1
 
     def _new_id(self, prefix: str) -> str:

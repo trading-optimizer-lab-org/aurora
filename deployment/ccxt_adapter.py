@@ -221,7 +221,7 @@ class CCXTBrokerAdapter(Broker):
 
     def _import_ccxt(self) -> Any:
         try:
-            import ccxt  # type: ignore
+            import ccxt
         except Exception as exc:  # pragma: no cover - ccxt optional
             raise ImportError(
                 "ccxt broker adapter requires the optional ``ccxt`` package; "

@@ -27,7 +27,7 @@ try:
     )
     _HAS_STATSMODELS = True
 except ImportError:  # pragma: no cover
-    _SmMarkovRegression = None  # type: ignore
+    _SmMarkovRegression = None
     _HAS_STATSMODELS = False
 
 

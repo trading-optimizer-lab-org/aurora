@@ -95,9 +95,14 @@ class DBTRunner:
                 check=False,
             )
         except subprocess.TimeoutExpired as e:
+            # subprocess.TimeoutExpired.stdout/stderr are typed as
+            # ``bytes | str | None``. We requested ``text=True`` so any
+            # captured output is ``str``; coerce defensively for type safety.
+            stdout = e.stdout if isinstance(e.stdout, str) else ""
+            stderr = e.stderr if isinstance(e.stderr, str) else "timeout"
             return DBTRunResult(
                 command=cmd, returncode=124,
-                stdout=e.stdout or "", stderr=e.stderr or "timeout",
+                stdout=stdout, stderr=stderr,
                 duration_s=time.monotonic() - t0,
             )
         return DBTRunResult(

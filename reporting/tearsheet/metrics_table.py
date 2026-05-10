@@ -1,0 +1,177 @@
+"""Headline + risk metrics tables and the basic-tearsheet HTML template."""
+from __future__ import annotations
+
+from typing import List, Tuple
+
+import numpy as np
+import pandas as pd
+
+from .header import _esc
+from .styles import _CSS
+
+
+def _html_template(title: str,
+                   metrics_dict: dict,
+                   eq_b64: str,
+                   dd_b64: str,
+                   heatmap_b64: str,
+                   hist_b64: str,
+                   rolling_b64: str,
+                   uw_b64: str,
+                   top_dd_rows: List[Tuple],
+                   monthly_pivot: pd.DataFrame) -> str:
+    """Compose final HTML with all sections embedded (basic tearsheet)."""
+
+    def fmt(v, pct=False):
+        if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+            return "NaN"
+        if pct:
+            return f"{v:.2f}%"
+        if isinstance(v, float):
+            return f"{v:.4f}"
+        return str(v)
+
+    def _pct_value(key, v):
+        # cagr/mdd come pre-multiplied by 100 from compute_metrics; win_rate
+        # is in [0,1] and must be scaled before percent rendering.
+        if key == "win_rate" and isinstance(v, (int, float)) and v is not None:
+            try:
+                if not (np.isnan(v) or np.isinf(v)):
+                    return float(v) * 100.0
+            except (TypeError, ValueError):
+                pass
+        return v
+
+    # 1) stats grid + full table
+    grid_keys = [
+        ("CAGR", "cagr", True), ("Max Drawdown", "mdd", True),
+        ("Calmar", "calmar", False), ("Sharpe", "sharpe", False),
+        ("Sortino", "sortino", False), ("MAR", "mar", False),
+        ("Win Rate", "win_rate", True), ("Profit Factor", "profit_factor", False),
+    ]
+    stat_cards = ""
+    for label, key, pct in grid_keys:
+        v = metrics_dict.get(key)
+        if pct:
+            v = _pct_value(key, v)
+        stat_cards += (
+            f'<div class="stat"><div class="label">{_esc(label)}</div>'
+            f'<div class="value">{_esc(fmt(v, pct=pct))}</div></div>'
+        )
+
+    full_table = "<table><tr><th>Metric</th><th>Value</th></tr>"
+    for k, v in metrics_dict.items():
+        is_pct = k in ("cagr", "mdd", "win_rate")
+        if is_pct:
+            v = _pct_value(k, v)
+        full_table += (
+            f'<tr><td class="label">{_esc(k)}</td>'
+            f'<td>{_esc(fmt(v, pct=is_pct))}</td></tr>'
+        )
+    full_table += "</table>"
+
+    # 2) top drawdown table
+    if top_dd_rows:
+        dd_table = ("<table><tr><th>#</th><th>Start</th><th>End</th>"
+                    "<th>Depth (%)</th><th>Recovery (days)</th>"
+                    "<th>Status</th></tr>")
+        for i, row in enumerate(top_dd_rows[:5], 1):
+            # Support legacy 4-tuples and new 5-tuples (with unrecovered flag).
+            s, e, dpct, rec = row[0], row[1], row[2], row[3]
+            unrec = bool(row[4]) if len(row) > 4 else False
+            s_str = pd.Timestamp(s).date() if not isinstance(s, (int, np.integer)) else str(s)
+            e_str = pd.Timestamp(e).date() if not isinstance(e, (int, np.integer)) else str(e)
+            if isinstance(rec, (float, np.floating)) and np.isnan(rec):
+                rec_str = "NaN"
+            else:
+                rec_str = f"{int(rec)}"
+                if unrec:
+                    rec_str += "+"
+            status = "open" if unrec else "recovered"
+            dd_table += (
+                f"<tr><td>{i}</td><td>{_esc(s_str)}</td><td>{_esc(e_str)}</td>"
+                f"<td>{dpct:.2f}</td><td>{_esc(rec_str)}</td>"
+                f"<td>{_esc(status)}</td></tr>"
+            )
+        dd_table += "</table>"
+    else:
+        dd_table = '<p class="muted">No drawdown periods detected.</p>'
+
+    # 3) monthly statistics table
+    if not monthly_pivot.empty:
+        flat = monthly_pivot.values.flatten()
+        flat = flat[~np.isnan(flat)]
+        if len(flat) > 0:
+            mstats = (
+                f"<table><tr><th>Stat</th><th>Value</th></tr>"
+                f"<tr><td class='label'>Mean monthly</td><td>{flat.mean():.2f}%</td></tr>"
+                f"<tr><td class='label'>Std monthly</td><td>{flat.std():.2f}%</td></tr>"
+                f"<tr><td class='label'>Best month</td><td>{flat.max():.2f}%</td></tr>"
+                f"<tr><td class='label'>Worst month</td><td>{flat.min():.2f}%</td></tr>"
+                f"<tr><td class='label'>Positive months</td>"
+                f"<td>{int((flat > 0).sum())} / {len(flat)}</td></tr>"
+                f"</table>"
+            )
+        else:
+            mstats = '<p class="muted">No monthly data.</p>'
+    else:
+        mstats = '<p class="muted">No monthly data.</p>'
+
+    safe_title = _esc(title)
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<title>{safe_title}</title>
+<style>{_CSS}</style>
+</head><body>
+<h1>{safe_title}</h1>
+<p class="muted">Generated by QuantForge tearsheet.py</p>
+
+<div class="section">
+  <h2>1. Key Statistics</h2>
+  <div class="stats-grid">{stat_cards}</div>
+  {full_table}
+</div>
+
+<div class="section">
+  <h2>2. Equity Curve</h2>
+  <img src="data:image/png;base64,{eq_b64}" alt="Equity curve">
+</div>
+
+<div class="section">
+  <h2>3. Drawdown</h2>
+  <img src="data:image/png;base64,{dd_b64}" alt="Drawdown">
+</div>
+
+<div class="section">
+  <h2>4. Monthly Returns Heatmap</h2>
+  <img src="data:image/png;base64,{heatmap_b64}" alt="Heatmap">
+</div>
+
+<div class="section">
+  <h2>5. Returns Distribution</h2>
+  <img src="data:image/png;base64,{hist_b64}" alt="Returns distribution">
+</div>
+
+<div class="section">
+  <h2>6. Rolling Sharpe</h2>
+  <img src="data:image/png;base64,{rolling_b64}" alt="Rolling Sharpe">
+</div>
+
+<div class="section">
+  <h2>7. Top 5 Drawdown Periods</h2>
+  {dd_table}
+</div>
+
+<div class="section">
+  <h2>8. Monthly Statistics</h2>
+  {mstats}
+</div>
+
+<div class="section">
+  <h2>9. Underwater Plot</h2>
+  <img src="data:image/png;base64,{uw_b64}" alt="Underwater">
+</div>
+
+</body></html>"""
+    return html

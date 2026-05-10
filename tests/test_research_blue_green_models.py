@@ -72,7 +72,7 @@ def test_predict_staging():
 def test_invalid_color_rejected():
     d = BlueGreenModelDeployer()
     with pytest.raises(ValueError):
-        d.deploy("red", "v1", lambda x: x)  # type: ignore[arg-type]
+        d.deploy("red", "v1", lambda x: x)
 
 
 def test_empty_version_rejected():
@@ -84,4 +84,4 @@ def test_empty_version_rejected():
 def test_non_callable_predict_fn_rejected():
     d = BlueGreenModelDeployer()
     with pytest.raises(TypeError):
-        d.deploy("blue", "v1", 42)  # type: ignore[arg-type]
+        d.deploy("blue", "v1", 42)

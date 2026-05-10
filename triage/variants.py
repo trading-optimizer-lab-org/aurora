@@ -208,6 +208,7 @@ def variant_random_sample(
             spec = param_space[k]
             if isinstance(spec, tuple) and len(spec) == 2:
                 lo, hi = spec
+                val: Any
                 if isinstance(lo, int) and isinstance(hi, int) \
                         and not isinstance(lo, bool) \
                         and not isinstance(hi, bool):

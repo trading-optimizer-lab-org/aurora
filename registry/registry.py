@@ -244,7 +244,12 @@ class BacktestRegistry:
                         )
                     result_id = int(row["id"])
                 else:
-                    result_id = int(cur.lastrowid)
+                    last_id = cur.lastrowid
+                    if last_id is None:  # pragma: no cover - defensive
+                        raise RuntimeError(
+                            "sqlite cursor.lastrowid is None after fresh INSERT"
+                        )
+                    result_id = int(last_id)
             except Exception:
                 c.execute("ROLLBACK")
                 raise

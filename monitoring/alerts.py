@@ -521,7 +521,8 @@ class AlertEngine:
                         raise urllib.error.HTTPError(
                             url, status,
                             "webhook returned a redirect; refusing to follow",
-                            getattr(resp, "headers", None), None,
+                            getattr(resp, "headers", None),  # type: ignore[arg-type]
+                            None,
                         )
                     if 200 <= status < 300:
                         return
@@ -535,7 +536,8 @@ class AlertEngine:
                         continue
                     raise urllib.error.HTTPError(
                         url, status, f"unexpected webhook status {status}",
-                        getattr(resp, "headers", None), None,
+                        getattr(resp, "headers", None),  # type: ignore[arg-type]
+                        None,
                     )
             except urllib.error.HTTPError as e:
                 last_exc = e

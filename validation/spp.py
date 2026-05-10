@@ -13,7 +13,7 @@ Approach:
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 from itertools import product
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
@@ -98,6 +98,10 @@ def spp(strategy_factory_with_params: Callable, prices: pd.Series,
         raise ValueError(f"center_on must be 'midpoint' or 'current' (got {center_on!r})")
     if center_on == "current" and not current_params:
         raise ValueError("center_on='current' requires current_params dict")
+    # Narrow current_params to dict for the rest of the function. The check
+    # above already raises when it is missing under center_on='current'; for
+    # 'midpoint' it is unused so an empty dict is a safe default.
+    cp: dict = current_params if current_params is not None else {}
 
     from aurora.core.seed import child_rng
     rng = child_rng(seed_name)
@@ -126,19 +130,20 @@ def spp(strategy_factory_with_params: Callable, prices: pd.Series,
         else:
             lo, hi = rng_k
             if center_on == "current":
-                if k not in current_params:
+                if k not in cp:
                     raise ValueError(
                         f"center_on='current' but key {k!r} missing from current_params"
                     )
-                mid = current_params[k]
+                mid = cp[k]
             else:
                 mid = (lo + hi) / 2
             step = (hi - lo) / 2 * perturb
-            vals = np.linspace(mid - step, mid + step, n_steps)
+            vals_arr = np.linspace(mid - step, mid + step, n_steps)
             # cast to int if range bounds are ints
             if isinstance(lo, int) and isinstance(hi, int):
-                vals = [int(round(v)) for v in vals]
-            grids.append(list(vals))
+                grids.append([int(round(v)) for v in vals_arr])
+            else:
+                grids.append(list(vals_arr))
 
     combos = list(product(*grids))
     if len(combos) > max_combinations:
@@ -155,13 +160,14 @@ def spp(strategy_factory_with_params: Callable, prices: pd.Series,
             (strategy_factory_with_params, keys, c, prices, costs, ppy)
             for c in combos
         ]
+        results: list[Any] | None
         try:
             with ProcessPoolExecutor(max_workers=n_w) as ex:
                 results = list(ex.map(_spp_worker, worker_args))
         except Exception:
             results = None
             use_parallel = False
-        else:
+        if results is not None:
             for r in results:
                 if r is None:
                     continue
@@ -191,7 +197,7 @@ def spp(strategy_factory_with_params: Callable, prices: pd.Series,
     # falls between grid points). For 'midpoint' centering the grid median is
     # the desired centre, so the legacy choice is preserved.
     if center_on == "current":
-        base_combo = tuple(current_params[k] for k in keys)
+        base_combo = tuple(cp[k] for k in keys)
     else:
         base_combo = tuple((g[len(g)//2] if len(g) > 0 else None) for g in grids)
     try:

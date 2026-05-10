@@ -195,7 +195,7 @@ def _detect_bayes_fitness_signature(fitness_fn) -> str:
 
 
 def bayes_optimize(strategy_class, prices_is, prices_oos=None,
-                   fitness_fn=None, config: BayesConfig = None,
+                   fitness_fn=None, config: BayesConfig | None = None,
                    scalar: bool = True) -> dict:
     """Bayesian optimization over StrategySpec param space.
 
@@ -270,6 +270,7 @@ def bayes_optimize(strategy_class, prices_is, prices_oos=None,
             convergence.append(best_so_far)
             return -score
 
+        raw: Any
         if scalar and isinstance(out, (int, float, np.floating)):
             score = float(out)
             raw = float(out)
@@ -328,7 +329,7 @@ def _build_fallback_space(param_ranges: dict[str, Any]):
             of silently mis-sampling.
     """
     keys = sorted(param_ranges.keys())
-    dims = []
+    dims: list[Any] = []
     for k in keys:
         dim = param_ranges[k]
         if isinstance(dim, list):

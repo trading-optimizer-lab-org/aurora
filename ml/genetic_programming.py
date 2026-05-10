@@ -25,10 +25,10 @@ import numpy as np
 import pandas as pd
 
 try:  # optional dep
-    from deap import algorithms, base, creator, gp, tools  # type: ignore
+    from deap import algorithms, base, creator, gp, tools
     DEAP_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
-    algorithms = base = creator = gp = tools = None  # type: ignore[assignment]
+    algorithms = base = creator = gp = tools = None
     DEAP_AVAILABLE = False
 
 

@@ -279,7 +279,7 @@ def _cvar_scipy(R: np.ndarray, alpha: float,
 # Public CVaR API                                                             #
 # --------------------------------------------------------------------------- #
 def min_cvar(returns: pd.DataFrame, alpha: float = 0.05,
-             target_return: float = None,
+             target_return: float | None = None,
              weight_bounds: tuple = (0.0, 1.0)) -> OptimResult:
     """Minimize Conditional Value-at-Risk (Expected Shortfall) at level alpha.
 
@@ -495,7 +495,7 @@ def _cdar_scipy(R: np.ndarray, alpha: float,
 # Public CDaR API                                                             #
 # --------------------------------------------------------------------------- #
 def min_cdar(returns: pd.DataFrame, alpha: float = 0.05,
-             target_return: float = None,
+             target_return: float | None = None,
              weight_bounds: tuple = (0.0, 1.0)) -> OptimResult:
     """Minimize Conditional Drawdown-at-Risk.
 

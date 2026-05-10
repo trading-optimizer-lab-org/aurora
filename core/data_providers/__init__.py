@@ -3,7 +3,7 @@
 Centralizes data sourcing across QuantForge. Every dataset returned by the
 registry carries provenance metadata (``DatasetMetadata``): source, version,
 asof_date, content_hash, point_in_time flag, and tier_permission. The
-registry's ``fetch`` integrates with :class:`~quantforge.core.data_layer.OOSGuard`
+registry's ``fetch`` integrates with :class:`~aurora.core.data_layer.OOSGuard`
 so a provider that is not point-in-time cannot deliver data into a locked
 OOS / FORWARD ceremony unless the caller has performed the explicit unlock.
 
@@ -29,7 +29,8 @@ import hashlib
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol, Union, runtime_checkable
+from enum import Enum
+from typing import Any, List, Literal, Optional, Protocol, Tuple, Union, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,70 @@ import pandas as pd
 _log = logging.getLogger(__name__)
 
 
-# Tier labels mirror :mod:`quantforge.core.data_tiers`. ``ANY`` means the
+# ---------------------------------------------------------------------------
+# Provider role policy (R155 -- free bulk daily market-data programme)
+# ---------------------------------------------------------------------------
+
+
+class ProviderRole(str, Enum):
+    """Functional role a provider fills in the data programme.
+
+    Roles are explicit so the registry can answer questions like "give me
+    the universe sources" or "which provider is the price primary" without
+    hard-coding provider names.
+    """
+
+    UNIVERSE = "UNIVERSE"
+    PRICE_PRIMARY = "PRICE_PRIMARY"
+    PRICE_FALLBACK = "PRICE_FALLBACK"
+    CRYPTO_PRIMARY = "CRYPTO_PRIMARY"
+    CRYPTO_METADATA = "CRYPTO_METADATA"
+    CRYPTO_MULTI = "CRYPTO_MULTI"
+    MACRO = "MACRO"
+    EXPERIMENTAL = "EXPERIMENTAL"
+    # R156 complementary provider roles
+    IDENTITY_MAPPING = "IDENTITY_MAPPING"
+    FUNDAMENTALS = "FUNDAMENTALS"
+    MACRO_MULTI_SOURCE = "MACRO_MULTI_SOURCE"
+    CRYPTO_METRICS = "CRYPTO_METRICS"
+    FX_REFERENCE = "FX_REFERENCE"
+    OPTIONAL_PRICE_FALLBACK = "OPTIONAL_PRICE_FALLBACK"
+    FX_TICK_RESEARCH = "FX_TICK_RESEARCH"
+    OPTIONS_LIMITED = "OPTIONS_LIMITED"
+
+
+ReliabilityLiteral = Literal["OFFICIAL", "COMMUNITY", "EXPERIMENTAL"]
+AdjustmentLiteral = Literal["ADJUSTED", "RAW", "MIXED"]
+
+
+@dataclass(frozen=True)
+class ProviderDescriptor:
+    """Static metadata describing a provider's role and licensing terms."""
+
+    name: str
+    role: ProviderRole
+    licence_terms_url: str
+    rate_limits: str
+    auth_required: bool
+    asset_classes: Tuple[str, ...]
+    intervals: Tuple[str, ...]
+    adjustment_posture: AdjustmentLiteral
+    reliability: ReliabilityLiteral
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role, ProviderRole):
+            raise TypeError(
+                f"role must be ProviderRole, got {type(self.role).__name__}"
+            )
+        if self.adjustment_posture not in ("ADJUSTED", "RAW", "MIXED"):
+            raise ValueError(
+                f"adjustment_posture={self.adjustment_posture!r} invalid"
+            )
+        if self.reliability not in ("OFFICIAL", "COMMUNITY", "EXPERIMENTAL"):
+            raise ValueError(f"reliability={self.reliability!r} invalid")
+
+
+# Tier labels mirror :mod:`aurora.core.data_tiers`. ``ANY`` means the
 # provider may serve any tier (typically the snapshot provider, which is
 # point-in-time by construction).
 TIER_LABELS: tuple[str, ...] = (
@@ -51,7 +115,7 @@ TIER_LABELS: tuple[str, ...] = (
 
 # Phases that an OOSGuard must declare in order to authorize a non-PIT
 # provider into a locked tier. Mirrors the equivalent set in
-# :mod:`quantforge.core.snapshots`.
+# :mod:`aurora.core.snapshots`.
 _LOCKED_TIER_UNLOCK_PHASES: frozenset[str] = frozenset({
     "explicit_unlock",
     "explicit_unlock_snapshot",
@@ -124,7 +188,7 @@ class DatasetMetadata:
     schema_version: str = "1.0"
     extra: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:  # type: ignore[override]
+    def __post_init__(self) -> None:
         # Validate tier label so a typo lands at construction time, not
         # later at gate time. ``object.__setattr__`` bypasses frozen.
         if self.tier_permission not in TIER_LABELS:
@@ -156,7 +220,7 @@ class Dataset:
 def _series_to_canonical_bytes(s: pd.Series) -> bytes:
     """Canonical little-endian byte representation of a Series.
 
-    Matches the contract used by :func:`quantforge.core.snapshots._compute_sha256`
+    Matches the contract used by :func:`aurora.core.snapshots._compute_sha256`
     so a Series that round-trips through SnapshotStore retains the same hash.
     """
     h = hashlib.sha256()
@@ -370,20 +434,36 @@ class DataProviderRegistry:
 
     def __init__(self) -> None:
         self._providers: dict[str, DataProvider] = {}
+        self._descriptors: dict[str, ProviderDescriptor] = {}
+        self._last_success: dict[str, str] = {}
         self._lock = threading.Lock()
 
     # -- public API ---------------------------------------------------------
 
-    def register(self, provider: DataProvider, *, replace: bool = False) -> None:
+    def register(
+        self,
+        provider: DataProvider,
+        *,
+        descriptor: Optional[ProviderDescriptor] = None,
+        replace: bool = False,
+    ) -> None:
         """Register a provider by its ``name``.
 
         Args:
             provider: any object that satisfies :class:`DataProvider`.
+            descriptor: optional :class:`ProviderDescriptor` recording the
+                provider's role, licensing posture and reliability label.
+                Required for the R155 role-aware CLI surface.
             replace: when False (default), re-registering the same name
                 raises :class:`ValueError`. Pass True to overwrite.
         """
         if not hasattr(provider, "name") or not isinstance(provider.name, str):
             raise TypeError("provider must expose a string ``name`` attribute")
+        if descriptor is not None and descriptor.name != provider.name:
+            raise ValueError(
+                f"descriptor name {descriptor.name!r} != provider name "
+                f"{provider.name!r}"
+            )
         with self._lock:
             if not replace and provider.name in self._providers:
                 raise ValueError(
@@ -391,6 +471,8 @@ class DataProviderRegistry:
                     "pass replace=True to overwrite"
                 )
             self._providers[provider.name] = provider
+            if descriptor is not None:
+                self._descriptors[provider.name] = descriptor
 
     def get(self, name: str) -> DataProvider:
         """Return a registered provider by name."""
@@ -402,7 +484,7 @@ class DataProviderRegistry:
                 )
             return self._providers[name]
 
-    def list(self) -> list[str]:
+    def list(self) -> List[str]:
         """Return the sorted list of registered provider names."""
         with self._lock:
             return sorted(self._providers)
@@ -410,8 +492,55 @@ class DataProviderRegistry:
     def unregister(self, name: str) -> None:
         with self._lock:
             self._providers.pop(name, None)
+            self._descriptors.pop(name, None)
+            self._last_success.pop(name, None)
 
-    def describe(self) -> list[dict[str, Any]]:
+    def descriptor_for(self, name: str) -> Optional[ProviderDescriptor]:
+        """Return the :class:`ProviderDescriptor` for ``name``, or ``None``."""
+        with self._lock:
+            return self._descriptors.get(name)
+
+    def list_by_role(self, role: ProviderRole) -> List[str]:
+        """Return registered provider names matching ``role``, sorted."""
+        with self._lock:
+            return sorted(
+                n for n, d in self._descriptors.items() if d.role == role
+            )
+
+    def role_status(self) -> List[dict[str, Any]]:
+        """Return the role-aware status table used by ``provider-status``."""
+        with self._lock:
+            out: list[dict[str, Any]] = []
+            for name in sorted(self._providers):
+                p = self._providers[name]
+                d = self._descriptors.get(name)
+                out.append({
+                    "name": name,
+                    "version": getattr(p, "version", "?"),
+                    "role": d.role.value if d is not None else "unknown",
+                    "reliability": d.reliability if d is not None else "unknown",
+                    "auth_required": d.auth_required if d is not None else False,
+                    "adjustment_posture": (
+                        d.adjustment_posture if d is not None else "unknown"
+                    ),
+                    "licence_terms_url": (
+                        d.licence_terms_url if d is not None else ""
+                    ),
+                    "rate_limits": d.rate_limits if d is not None else "",
+                    "asset_classes": list(d.asset_classes) if d is not None else [],
+                    "intervals": list(d.intervals) if d is not None else [],
+                    "last_success": self._last_success.get(name, ""),
+                    "point_in_time": p.is_point_in_time(),
+                })
+            return out
+
+    def record_success(self, name: str, when_iso: str) -> None:
+        """Stamp the last successful fetch timestamp for ``name``."""
+        with self._lock:
+            if name in self._providers:
+                self._last_success[name] = when_iso
+
+    def describe(self) -> List[dict[str, Any]]:
         """Return a list of dicts summarizing each registered provider."""
         with self._lock:
             out: list[dict[str, Any]] = []
@@ -564,6 +693,39 @@ _DEFAULT_REGISTRY: Optional[DataProviderRegistry] = None
 _DEFAULT_REGISTRY_LOCK = threading.Lock()
 
 
+class _DeferredScaffoldStub:
+    """Stub provider for env-gated R156 deferred scaffolds.
+
+    Advertises its descriptor to the registry (so ``provider-status``
+    surfaces the role and licence terms) but raises
+    :class:`ProviderUnavailable` on any actual fetch. Real fetches go
+    through the dedicated client classes (``DukascopyClient``,
+    ``MarketDataAppClient``), which trip their own env-var gate at
+    construction time.
+    """
+
+    point_in_time: bool = False
+    tier_permission: str = "IS_TRAIN"
+
+    def __init__(self, descriptor: ProviderDescriptor) -> None:
+        self.name = descriptor.name
+        self.version = f"{descriptor.name}:scaffold"
+        self._descriptor = descriptor
+
+    def is_point_in_time(self) -> bool:
+        return False
+
+    def supported_tiers(self) -> set[str]:
+        return {"IS_TRAIN"}
+
+    def fetch(self, *args: Any, **kwargs: Any) -> Dataset:
+        raise ProviderUnavailable(
+            f"provider {self.name!r} is a deferred R156 scaffold; "
+            "use the dedicated client class directly after setting the "
+            "gate env var."
+        )
+
+
 def get_default_registry() -> DataProviderRegistry:
     """Return the module-level singleton :class:`DataProviderRegistry`.
 
@@ -601,7 +763,7 @@ def get_default_registry() -> DataProviderRegistry:
         # importable. Keeps "from aurora.core.data_providers import ..."
         # cheap and avoids surfacing a stub provider that always raises.
         try:
-            import ccxt  # type: ignore  # noqa: F401
+            import ccxt  # noqa: F401
         except Exception:
             pass
         else:
@@ -613,6 +775,54 @@ def get_default_registry() -> DataProviderRegistry:
             except Exception as exc:  # pragma: no cover - defensive
                 _log.warning(
                     "failed to bootstrap provider ccxt: %s", exc,
+                )
+        # R156 deferred env-gated providers. We always advertise their
+        # descriptors so ``provider-status`` can list them, but the
+        # provider instance is a stub that refuses to fetch unless the
+        # relevant gate env var is set. The static descriptors are
+        # imported lazily so the gate (which lives in the module body
+        # for some providers) is not tripped at registry boot.
+        for stub_mod, stub_attr, descriptor_attr in (
+            (
+                "aurora.core.data_providers.dukascopy_fx_history",
+                "DukascopyClient",
+                "DUKASCOPY_DESCRIPTOR",
+            ),
+            (
+                "aurora.core.data_providers.marketdata_app_limited",
+                "MarketDataAppClient",
+                "MARKETDATA_APP_DESCRIPTOR",
+            ),
+            (
+                "aurora.core.data_providers.sec_edgar_companyfacts",
+                "SECEdgarClient",
+                "SEC_EDGAR_DESCRIPTOR",
+            ),
+            # R156 priority 3 + 5 macro/context providers. The registry
+            # surfaces their descriptors so ``provider-status`` can list
+            # them and the role-aware CLI can find the right name; real
+            # fetches require constructing the client directly with a
+            # caller-supplied http_get to avoid silent network calls.
+            (
+                "aurora.core.data_providers.dbnomics_macro",
+                "DBnomicsClient",
+                "DBNOMICS_DESCRIPTOR",
+            ),
+            (
+                "aurora.core.data_providers.ecb_data_portal",
+                "ECBClient",
+                "ECB_DESCRIPTOR",
+            ),
+        ):
+            try:
+                mod = __import__(stub_mod, fromlist=[descriptor_attr])
+                desc = getattr(mod, descriptor_attr)
+                stub = _DeferredScaffoldStub(desc)
+                registry.register(stub, descriptor=desc)
+            except Exception as exc:  # pragma: no cover - defensive
+                _log.warning(
+                    "failed to register deferred provider %s: %s",
+                    stub_mod, exc,
                 )
         _DEFAULT_REGISTRY = registry
         return registry
@@ -627,17 +837,44 @@ def reset_default_registry() -> None:
 
 # Re-exports kept stable for ``from aurora.core.data_providers import ...``
 __all__ = [
+    "AdjustmentLiteral",
     "BaseDataProvider",
     "DataProvider",
     "DataProviderRegistry",
     "Dataset",
     "DatasetMetadata",
+    "DBNOMICS_DESCRIPTOR",
+    "ECB_DESCRIPTOR",
+    "ProviderDescriptor",
     "ProviderError",
     "ProviderNotRegistered",
+    "ProviderRole",
     "ProviderUnavailable",
+    "ReliabilityLiteral",
     "TIER_LABELS",
     "TierPermissionError",
     "compute_content_hash",
     "get_default_registry",
     "reset_default_registry",
 ]
+
+
+def __getattr__(attr_name: str) -> Any:
+    """Lazy re-export of R156 macro provider descriptor singletons.
+
+    Keeps the package import light: pulling the descriptor only triggers
+    the provider module's import on first access.
+    """
+    if attr_name == "DBNOMICS_DESCRIPTOR":
+        from aurora.core.data_providers.dbnomics_macro import (
+            DBNOMICS_DESCRIPTOR as _D,
+        )
+        return _D
+    if attr_name == "ECB_DESCRIPTOR":
+        from aurora.core.data_providers.ecb_data_portal import (
+            ECB_DESCRIPTOR as _E,
+        )
+        return _E
+    raise AttributeError(
+        f"module 'aurora.core.data_providers' has no attribute {attr_name!r}"
+    )

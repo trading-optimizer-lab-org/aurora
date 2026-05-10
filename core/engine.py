@@ -9,7 +9,7 @@ at engine level by shifting signals forward in apply_costs().
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
@@ -106,6 +106,10 @@ def run_backtest(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
     # accept the kwarg are called without it.
     rejections = 0
     if slippage_model is not None:
+        # Validation at line 76 already ensured daily_volume is non-None
+        # whenever slippage_model is supplied; narrow for type-checkers.
+        assert daily_volume is not None
+        dv = float(daily_volume)
         delta_w = np.abs(np.diff(weights, prepend=0.0))
         extra = np.zeros(len(weights))
         ts_index = prices.index
@@ -119,11 +123,11 @@ def run_backtest(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
             try:
                 try:
                     bps = slippage_model.impact_bps(
-                        order_dollars, float(daily_volume), time_of_day=tod,
+                        order_dollars, dv, time_of_day=tod,
                     )
                 except TypeError:
                     # Model does not accept time_of_day; fall back to positional call.
-                    bps = slippage_model.impact_bps(order_dollars, float(daily_volume))
+                    bps = slippage_model.impact_bps(order_dollars, dv)
             except (ValueError, ArithmeticError, OverflowError) as exc:
                 rejections += 1
                 _logger.warning(
@@ -203,11 +207,14 @@ def run_multi_asset(price_dict, weight_fn, costs_dict=None, ppy=252,
     """
     weights = weight_fn(price_dict)
     syms = list(price_dict.keys())
+    if not syms:
+        raise ValueError("price_dict is empty")
     # align all to common index
-    common_idx = None
+    common_idx: Any = None
     for s in syms:
         idx = price_dict[s].index
         common_idx = idx if common_idx is None else common_idx.intersection(idx)
+    assert common_idx is not None  # ensured by ``if not syms`` guard above
     if len(common_idx) < 20:
         raise ValueError(f"insufficient overlapping bars: {len(common_idx)}")
 

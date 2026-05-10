@@ -20,15 +20,15 @@ from typing import Dict, List, Optional
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
-    from torch.utils.data import DataLoader, TensorDataset  # type: ignore
+    import torch
+    from torch import nn
+    from torch.utils.data import DataLoader, TensorDataset
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]
     nn = None  # type: ignore[assignment]
-    DataLoader = None  # type: ignore[assignment]
-    TensorDataset = None  # type: ignore[assignment]
+    DataLoader = None  # type: ignore[assignment,misc]
+    TensorDataset = None  # type: ignore[assignment,misc]
     TORCH_AVAILABLE = False
 
 

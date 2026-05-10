@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 try:
-    import anthropic  # type: ignore
+    import anthropic
     ANTHROPIC_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore[assignment]
+    anthropic = None
     ANTHROPIC_AVAILABLE = False
 
 
@@ -61,7 +61,7 @@ class MockAnthropicClient:
         self.reply_text = reply_text
         self.call_log: List[Dict[str, Any]] = []
         # Mimic ``client.messages.create``
-        self.messages = self  # type: ignore[assignment]
+        self.messages = self
 
     def create(self, **kwargs) -> _MockMessage:
         self.call_log.append(kwargs)
@@ -253,7 +253,7 @@ class _NumpyShim:
         return value
 
 
-np = _NumpyShim()  # type: ignore[assignment]
+np = _NumpyShim()
 
 
 __all__ = [

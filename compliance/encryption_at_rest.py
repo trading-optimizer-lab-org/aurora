@@ -82,12 +82,12 @@ class SQLCipherWrapper:
     @staticmethod
     def _import_driver() -> Optional[Any]:
         try:
-            import pysqlcipher3.dbapi2 as driver  # type: ignore
+            import pysqlcipher3.dbapi2 as driver
             return driver
         except ImportError:
             pass
         try:
-            import sqlcipher3 as driver  # type: ignore
+            import sqlcipher3 as driver
             return driver
         except ImportError:
             return None

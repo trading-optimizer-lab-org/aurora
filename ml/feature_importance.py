@@ -132,7 +132,7 @@ def _resolve_cv(
                     f"{cv} cannot be honored. Pass an instance pre-configured "
                     "with the desired number of splits, or use a class that "
                     "accepts 'n_splits'."
-                )
+                ) from None
     if callable(cv_class) and not hasattr(cv_class, "split"):
         # A zero-argument factory: same problem as the class-no-n_splits case.
         # The factory cannot accept ``cv`` so honor that contract by raising.
@@ -290,11 +290,11 @@ def plot_importance(
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "matplotlib required for plot_importance. "
             "Install with: pip install matplotlib"
-        )
+        ) from exc
 
     df = importance_df.sort_values("mean", ascending=True)
     fig, ax = plt.subplots(figsize=(8, max(3, 0.35 * len(df) + 1)))

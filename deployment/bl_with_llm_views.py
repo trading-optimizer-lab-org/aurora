@@ -45,7 +45,7 @@ def _default_llm_view_generator(
     if not api_key:
         return None, None
     try:
-        import anthropic  # type: ignore
+        import anthropic
     except ImportError:
         return None, None
 

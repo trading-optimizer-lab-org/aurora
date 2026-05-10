@@ -603,7 +603,7 @@ class AgentGateway:
         except Exception as exc:
             raise CeremonyError(
                 f"cannot import OOSGuard for ceremony check: {exc}"
-            )
+            ) from exc
         stack = OOSGuard._stack_for_thread()
         if not stack:
             raise CeremonyError(

@@ -314,7 +314,7 @@ def _prices_from_returns(prices_dict: dict, returns_matrix: pd.DataFrame) -> dic
 
 def stress_correlation_breakdown(strategy_factory: Callable,
                                  prices_dict: dict[str, pd.Series],
-                                 weights_dict: dict[str, np.ndarray] = None,
+                                 weights_dict: dict[str, np.ndarray] | None = None,
                                  ppy: int = 252,
                                  custom_target: Optional[pd.DataFrame] = None,
                                  seed_name: str = "corr_stress",

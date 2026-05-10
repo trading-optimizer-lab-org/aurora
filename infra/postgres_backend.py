@@ -81,7 +81,7 @@ class PostgresRegistry:
         self.config = config or PostgresConfig()
         self.mock = bool(mock)
         # Mock mode: in-memory rows keyed by config_hash for dedup.
-        self._rows: dict[str, dict] = {}
+        self._rows: dict[str, dict[str, Any]] = {}
         self._next_id: int = 1
         if not self.mock:  # pragma: no cover - real DB path
             self._init_schema()
@@ -115,7 +115,7 @@ class PostgresRegistry:
             }
             self._rows[cfg_hash] = row
             self._next_id += 1
-            return int(row["id"])
+            return int(row["id"])  # type: ignore[call-overload]
         return self._db_store(strategy_class, strategy_params, asset,
                               period_start, period_end, metrics, tags,
                               cfg_hash, ts)
@@ -189,7 +189,7 @@ class PostgresRegistry:
 
     def _connect(self):  # pragma: no cover - real DB path
         try:
-            import psycopg2  # type: ignore
+            import psycopg2
         except ImportError as e:
             raise ImportError("psycopg2 required for PostgresRegistry mock=False") from e
         dsn = self._resolve_dsn()
@@ -238,7 +238,8 @@ class PostgresRegistry:
 
     def _db_query(self, strategy_class: Optional[str], asset: Optional[str],
                   tags: Optional[list], limit: int) -> list[RegistryEntry]:  # pragma: no cover
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[Any] = []
         if strategy_class is not None:
             clauses.append("strategy_class = %s")
             params.append(strategy_class)

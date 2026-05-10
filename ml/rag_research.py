@@ -17,17 +17,17 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import chromadb  # type: ignore
+    import chromadb
     CHROMADB_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    chromadb = None  # type: ignore[assignment]
+    chromadb = None
     CHROMADB_AVAILABLE = False
 
 try:
-    import anthropic  # type: ignore
+    import anthropic
     ANTHROPIC_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore[assignment]
+    anthropic = None
     ANTHROPIC_AVAILABLE = False
 
 

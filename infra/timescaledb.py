@@ -164,7 +164,7 @@ class TimescaleAdapter:
 
     def _connect(self):  # pragma: no cover - real DB path
         try:
-            import psycopg2  # type: ignore
+            import psycopg2
         except ImportError as e:
             raise ImportError("psycopg2 required for TimescaleAdapter mock=False") from e
         dsn = self._resolve_dsn()
@@ -188,7 +188,7 @@ class TimescaleAdapter:
                     cur.execute(
                         "SELECT create_hypertable(%s, 'timestamp',"
                         " if_not_exists => TRUE,"
-                        f" chunk_time_interval => INTERVAL %s)",
+                        " chunk_time_interval => INTERVAL %s)",
                         (f"{self.config.schema}.{tbl}",
                          self.config.chunk_time_interval),
                     )

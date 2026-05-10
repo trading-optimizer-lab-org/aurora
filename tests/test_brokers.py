@@ -176,7 +176,7 @@ def test_create_broker_unknown():
 def test_create_broker_bad_input():
     """Non-BrokerConfig argument raises ValueError."""
     with pytest.raises(ValueError):
-        create_broker("paper")  # type: ignore[arg-type]
+        create_broker("paper")
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +347,7 @@ def _install_fake_alpaca(monkeypatch) -> dict:
         def get_account(self):
             return MagicMock(cash="100", equity="100", buying_power="100")
 
-    fake_client_mod.TradingClient = FakeTradingClient
+    fake_client_mod.TradingClient = FakeTradingClient  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "alpaca", fake_alpaca)
     monkeypatch.setitem(sys.modules, "alpaca.trading", fake_trading)
     monkeypatch.setitem(sys.modules, "alpaca.trading.client", fake_client_mod)
@@ -887,15 +887,15 @@ def _install_full_fake_alpaca(monkeypatch) -> dict:
         GTC = "GTC"
         IOC = "IOC"
 
-    fake_enums_mod.OrderSide = _Side
-    fake_enums_mod.TimeInForce = _TIF
+    fake_enums_mod.OrderSide = _Side  # type: ignore[attr-defined]
+    fake_enums_mod.TimeInForce = _TIF  # type: ignore[attr-defined]
 
     class _Req:
         def __init__(self, **kw):
             self.kwargs = kw
 
-    fake_requests_mod.MarketOrderRequest = _Req
-    fake_requests_mod.LimitOrderRequest = _Req
+    fake_requests_mod.MarketOrderRequest = _Req  # type: ignore[attr-defined]
+    fake_requests_mod.LimitOrderRequest = _Req  # type: ignore[attr-defined]
 
     class FakeTradingClient:
         def __init__(self, api_key, api_secret, paper=True):
@@ -918,11 +918,11 @@ def _install_full_fake_alpaca(monkeypatch) -> dict:
         def get_account(self):
             return MagicMock(cash="100", equity="100", buying_power="100")
 
-    fake_client_mod.TradingClient = FakeTradingClient
-    fake_trading.client = fake_client_mod
-    fake_trading.enums = fake_enums_mod
-    fake_trading.requests = fake_requests_mod
-    fake_alpaca.trading = fake_trading
+    fake_client_mod.TradingClient = FakeTradingClient  # type: ignore[attr-defined]
+    fake_trading.client = fake_client_mod  # type: ignore[attr-defined]
+    fake_trading.enums = fake_enums_mod  # type: ignore[attr-defined]
+    fake_trading.requests = fake_requests_mod  # type: ignore[attr-defined]
+    fake_alpaca.trading = fake_trading  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "alpaca", fake_alpaca)
     monkeypatch.setitem(sys.modules, "alpaca.trading", fake_trading)
     monkeypatch.setitem(sys.modules, "alpaca.trading.client", fake_client_mod)

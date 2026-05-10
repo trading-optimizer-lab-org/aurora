@@ -17,7 +17,7 @@ def _load_pyproject() -> dict:
     try:
         import tomllib  # 3.11+
     except ImportError:
-        import tomli as tomllib  # type: ignore
+        import tomli as tomllib
     with _PYPROJECT.open("rb") as f:
         return tomllib.load(f)
 

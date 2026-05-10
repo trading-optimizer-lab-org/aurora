@@ -25,8 +25,8 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]
@@ -163,7 +163,7 @@ class MetaLearner:
             if not isinstance(t, Task):
                 raise TypeError("tasks must be Task instances")
 
-        history = {"meta_loss": []}
+        history: dict[str, list[float]] = {"meta_loss": []}
         meta_opt = torch.optim.Adam(self._params, lr=self.config.meta_lr)
         for _ in range(self.config.meta_steps):
             meta_opt.zero_grad()

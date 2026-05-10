@@ -105,7 +105,7 @@ def _load_toml(path: Path) -> dict[str, Any]:
     try:
         import tomllib  # 3.11+
     except ImportError:
-        import tomli as tomllib  # type: ignore
+        import tomli as tomllib
     with path.open("rb") as f:
         return tomllib.load(f)
 

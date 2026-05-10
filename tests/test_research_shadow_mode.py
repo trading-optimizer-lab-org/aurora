@@ -58,9 +58,9 @@ def test_too_few_observations():
 
 def test_non_callable_signal():
     with pytest.raises(TypeError):
-        ShadowModeRunner(live_signal_fn=None, shadow_signal_fn=_long)  # type: ignore[arg-type]
+        ShadowModeRunner(live_signal_fn=None, shadow_signal_fn=_long)
     with pytest.raises(TypeError):
-        ShadowModeRunner(live_signal_fn=_long, shadow_signal_fn=42)  # type: ignore[arg-type]
+        ShadowModeRunner(live_signal_fn=_long, shadow_signal_fn=42)
 
 
 def test_correlation_finite(synthetic_prices_daily):

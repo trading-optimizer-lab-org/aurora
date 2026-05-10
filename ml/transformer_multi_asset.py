@@ -22,8 +22,8 @@ from typing import Optional
 import numpy as np
 
 try:  # optional dep
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment-dependent
     torch = None  # type: ignore[assignment]
@@ -123,7 +123,8 @@ def _build_transformer(cfg: MultiAssetTransformerConfig):
                 )
             asset_ids = torch.arange(N, device=x.device)
             asset_emb = self.asset_embed(asset_ids)        # (N, d_model)
-            pos = self.pos_enc[:T]                          # (T, d_model)
+            pos_enc: "torch.Tensor" = self.pos_enc  # type: ignore[assignment]
+            pos = pos_enc[:T]                               # (T, d_model)
 
             h = self.input_proj(x)                          # (T, N, d_model)
             h = h + asset_emb.unsqueeze(0)                  # broadcast over T

@@ -25,11 +25,25 @@ from aurora.portfolio.allocation import (
     InverseVolAllocator,
     PortfolioOptimizer,
 )
+from aurora.portfolio.attribution import (
+    benchmark_relative_alpha,
+    contribution_to_return,
+    contribution_to_risk,
+    exposure_by_group,
+)
 from aurora.portfolio.constraints import PortfolioConstraints
+from aurora.portfolio.cost_aware import (
+    ConstraintViolation,
+    optimise_cost_aware,
+)
 from aurora.portfolio.optimizers import (
     MeanRiskOptimizer,
     RiskBudgetingOptimizer,
     SkfolioAdapter,
+)
+from aurora.portfolio.problem import (
+    PortfolioProblem,
+    PortfolioSolution,
 )
 from aurora.portfolio.risk_measures import (
     avg_drawdown,
@@ -42,6 +56,12 @@ from aurora.portfolio.risk_measures import (
 from aurora.portfolio.stress import (
     StressResult,
     StressScenario,
+    concentration_shock_scenario,
+    correlated_drawdown_scenario,
+    higher_cost_scenario,
+    liquidity_shock_scenario,
+    missing_asset_scenario,
+    noisy_covariance_scenario,
     stress_test,
 )
 
@@ -54,6 +74,17 @@ __all__ = [
     "BenchmarkTrackerAllocator",
     # constraints
     "PortfolioConstraints",
+    # problem / solution shapes
+    "PortfolioProblem",
+    "PortfolioSolution",
+    # cost-aware wrapper
+    "ConstraintViolation",
+    "optimise_cost_aware",
+    # attribution
+    "contribution_to_return",
+    "contribution_to_risk",
+    "benchmark_relative_alpha",
+    "exposure_by_group",
     # risk measures
     "variance",
     "semi_variance",
@@ -69,4 +100,10 @@ __all__ = [
     "StressScenario",
     "StressResult",
     "stress_test",
+    "noisy_covariance_scenario",
+    "higher_cost_scenario",
+    "missing_asset_scenario",
+    "correlated_drawdown_scenario",
+    "liquidity_shock_scenario",
+    "concentration_shock_scenario",
 ]

@@ -36,7 +36,11 @@ from typing import Any
 
 
 class AtlasStatus(Enum):
-    """Lifecycle / policy status of a strategy entry in the atlas."""
+    """Lifecycle / policy status of a strategy entry in the atlas.
+
+    Aliased as :class:`StrategyAtlasStatus` for callers that want the
+    fully-qualified name. The two are the same enum.
+    """
 
     SUPPORTED = "supported"
     """Engine + data + costs are sufficient. Eligible for promotion."""
@@ -56,8 +60,39 @@ class AtlasStatus(Enum):
     EXTERNAL_DATA_ONLY = "external_data_only"
     """Engine could run it, but required data lives outside QuantForge."""
 
+    NEEDS_ENGINE_SUPPORT = "needs_engine_support"
+    """Engine capability missing (e.g. tick fills, FX margin, options
+    Greeks). Different from BLOCKED in that the data is or could be
+    available; only the execution / pricing engine is the gap."""
+
+
+# Public alias. ``StrategyAtlasStatus`` is the canonical name used in
+# documentation; ``AtlasStatus`` is kept as the short form for the
+# original Candidate E surface.
+StrategyAtlasStatus = AtlasStatus
+
 
 _PROMOTABLE = frozenset({AtlasStatus.SUPPORTED})
+
+
+def _all_status_values_unique() -> None:
+    """Defensive: guarantee status enum values are pairwise distinct.
+
+    Run at import so a developer cannot accidentally collide two values
+    when adding a new status.
+    """
+    seen: dict[str, str] = {}
+    for member in AtlasStatus:
+        if member.value in seen:
+            raise RuntimeError(
+                "AtlasStatus values must be unique; collision between "
+                f"{seen[member.value]!r} and {member.name!r} "
+                f"on value {member.value!r}"
+            )
+        seen[member.value] = member.name
+
+
+_all_status_values_unique()
 
 _VALID_COST_SENSITIVITY = frozenset({"low", "medium", "high"})
 _VALID_DIFFICULTY = frozenset({"easy", "medium", "hard"})
@@ -131,6 +166,24 @@ class StrategyAtlasEntry:
                 "must be non-empty -- every entry must declare what it is "
                 "expected to beat (or 'none' explicitly)"
             )
+        # Cross-check benchmark_expectation against the canonical enum so
+        # a typo cannot slip through. Lazy import keeps strategy_atlas
+        # importable even if strategy_benchmarks is being edited.
+        try:
+            from aurora.research.strategy_benchmarks import (
+                BenchmarkExpectation as _BE,
+            )
+        except ImportError:  # pragma: no cover - defensive
+            _BE = None  # type: ignore[assignment]
+        if _BE is not None:
+            valid_be = {member.value for member in _BE}
+            if self.benchmark_expectation not in valid_be:
+                raise ValueError(
+                    f"StrategyAtlasEntry({self.name!r}): "
+                    f"benchmark_expectation {self.benchmark_expectation!r} "
+                    f"is not one of {sorted(valid_be)} -- update or use "
+                    "an explicit BenchmarkExpectation value"
+                )
         if not isinstance(self.status, AtlasStatus):
             raise TypeError(
                 f"StrategyAtlasEntry({self.name!r}): status must be an "
@@ -324,9 +377,102 @@ def query_before_promote(
     return warnings
 
 
+def query_graveyard_before_promote(
+    entry: StrategyAtlasEntry,
+    *,
+    atlas: StrategyAtlas | None = None,
+    archive_path: Any = None,
+) -> None:
+    """Refuse promotion if a similar entry was rejected previously.
+
+    Checks two graveyards:
+
+    1. The atlas itself: any entry already in the registry with status
+       :attr:`AtlasStatus.REJECTED` and the same ``name`` triggers a
+       ``ValueError`` -- a rejected idea cannot quietly come back.
+    2. The on-disk research archive (R39 graveyard) if ``archive_path``
+       is provided. Any matching ``strategy_id`` triggers a
+       ``ValueError``.
+
+    The function returns ``None`` on success and raises ``ValueError``
+    on collision so callers can wire it into a hard gate.
+    """
+    if atlas is not None and atlas.has(entry.name):
+        existing = atlas.get(entry.name)
+        if existing.status is AtlasStatus.REJECTED:
+            raise ValueError(
+                f"query_graveyard_before_promote: entry {entry.name!r} "
+                "already rejected in the atlas; cannot re-promote"
+            )
+
+    if archive_path is None:
+        return
+
+    try:
+        from aurora.research.graveyard import (  # type: ignore[import-not-found]
+            read_graveyard,
+        )
+    except ImportError:
+        # On-disk graveyard reader not available in this deployment.
+        # Best-effort: parse the JSONL ourselves so we still honour a
+        # real rejection record. The archive format used elsewhere is
+        # one JSON object per line with ``strategy_id`` and
+        # ``event``/``rejection_reason`` keys.
+        from pathlib import Path
+        import json as _json
+        try:
+            text = Path(archive_path).read_text(encoding="utf-8")
+        except OSError:
+            return
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            sid = row.get("strategy_id") or row.get("name") or ""
+            if sid and sid == entry.name:
+                reason = (
+                    row.get("rejection_reason")
+                    or row.get("reason")
+                    or "previous rejection"
+                )
+                raise ValueError(
+                    f"query_graveyard_before_promote: entry {entry.name!r} "
+                    f"appears in graveyard archive ({reason!r}); cannot "
+                    "re-promote without explicit override"
+                )
+        return
+
+    from pathlib import Path
+    try:
+        rows = read_graveyard(Path(archive_path))
+    except Exception:  # pragma: no cover - defensive
+        return
+    for row in rows:
+        sid = getattr(row, "strategy_id", "") or getattr(row, "name", "")
+        if sid and sid == entry.name:
+            reason = (
+                getattr(row, "rejection_reason", None)
+                or getattr(row, "reason", None)
+                or "previous rejection"
+            )
+            raise ValueError(
+                f"query_graveyard_before_promote: entry {entry.name!r} "
+                f"appears in graveyard archive ({reason!r}); cannot "
+                "re-promote without explicit override"
+            )
+
+
 __all__ = [
     "AtlasStatus",
     "StrategyAtlas",
     "StrategyAtlasEntry",
+    "StrategyAtlasStatus",
     "query_before_promote",
+    "query_graveyard_before_promote",
 ]

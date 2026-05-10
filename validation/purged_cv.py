@@ -19,7 +19,7 @@ slice with the train slice already optimized away (caller provides a factory).
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 import numpy as np
 import pandas as pd
 
@@ -324,6 +324,7 @@ def _build_strategy(factory: Callable, train_prices: pd.Series,
       3) factory()
     """
     import inspect
+    params: Mapping[str, Any]
     try:
         sig = inspect.signature(factory)
         params = sig.parameters

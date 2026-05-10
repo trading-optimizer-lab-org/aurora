@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 
 try:  # core torch
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]
@@ -28,12 +28,12 @@ except ImportError:  # pragma: no cover
     TORCH_AVAILABLE = False
 
 try:  # optional pyg
-    import torch_geometric  # type: ignore
-    from torch_geometric.nn import GCNConv  # type: ignore
+    import torch_geometric
+    from torch_geometric.nn import GCNConv
     PYG_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    torch_geometric = None  # type: ignore[assignment]
-    GCNConv = None  # type: ignore[assignment]
+    torch_geometric = None
+    GCNConv = None
     PYG_AVAILABLE = False
 
 

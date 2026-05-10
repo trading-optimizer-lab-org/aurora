@@ -101,7 +101,7 @@ def test_review_finding_is_immutable():
         code="X", title="t", detail="d", evidence={"k": 1},
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        f.code = "Y"  # type: ignore
+        f.code = "Y"
 
 
 # ---------------------------------------------------------------------------

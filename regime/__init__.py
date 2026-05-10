@@ -46,11 +46,11 @@ try:
         "rolling_hurst",
     ])
 except ImportError:  # pragma: no cover
-    HurstResult = None  # type: ignore[assignment]
-    hurst_dfa = None  # type: ignore[assignment]
-    hurst_regime_filter = None  # type: ignore[assignment]
-    hurst_rs = None  # type: ignore[assignment]
-    rolling_hurst = None  # type: ignore[assignment]
+    HurstResult = None
+    hurst_dfa = None
+    hurst_regime_filter = None
+    hurst_rs = None
+    rolling_hurst = None
 
 # HMM has an optional hmmlearn dependency; import lazily so consumers that
 # only need Hurst do not require hmmlearn to be installed.
@@ -68,10 +68,10 @@ try:
         "regime_conditional_metrics",
     ])
 except ImportError:  # pragma: no cover - optional dep
-    GaussianHMM = None  # type: ignore[assignment]
-    HMMResult = None  # type: ignore[assignment]
-    detect_regime_change = None  # type: ignore[assignment]
-    regime_conditional_metrics = None  # type: ignore[assignment]
+    GaussianHMM = None
+    HMMResult = None
+    detect_regime_change = None
+    regime_conditional_metrics = None
 
 # Bayesian rolling alpha. The module exposes both the function-style entrypoint
 # ``bayesian_rolling_alpha`` and a thin class wrapper ``BayesAlphaModel`` that
@@ -88,9 +88,9 @@ try:
         "bayesian_rolling_alpha",
     ])
 except ImportError:  # pragma: no cover
-    BayesAlphaModel = None  # type: ignore[assignment]
-    BayesAlphaResult = None  # type: ignore[assignment]
-    bayesian_rolling_alpha = None  # type: ignore[assignment]
+    BayesAlphaModel = None
+    BayesAlphaResult = None
+    bayesian_rolling_alpha = None
 
 # Markov switching: MarkovSwitchingMean has an optional statsmodels dep but
 # falls back to a manual EM implementation, so the import itself is always
@@ -99,4 +99,4 @@ try:
     from aurora.regime.markov_switching import MarkovSwitchingMean
     __all__.append("MarkovSwitchingMean")
 except ImportError:  # pragma: no cover
-    MarkovSwitchingMean = None  # type: ignore[assignment]
+    MarkovSwitchingMean = None

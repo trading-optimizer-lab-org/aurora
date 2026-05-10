@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import date as _date
 from datetime import datetime as _dt
 from datetime import timezone
-from typing import Optional
+from typing import Any, Optional
 
 from aurora.core.logging import get_logger, log_event
 from aurora.core.sqlite_utils import _setup_sqlite
@@ -592,6 +592,12 @@ class Broker(ABC):
     audit_log: Optional["AuditLog"] = None
     _rate_limiter: Optional[_RateLimiter] = None
 
+    def __init__(self, config: "BrokerConfig", *args: Any, **kwargs: Any) -> None:
+        # Concrete subclasses define their own __init__(self, config, ...).
+        # The signature here exists so the factory ``cls(config)`` call
+        # type-checks against ``type[Broker]``.
+        ...
+
     @abstractmethod
     def submit_order(self, order: Order) -> dict:
         """Submit an order. Returns broker response (id, status, ...)."""
@@ -1018,6 +1024,10 @@ class PaperBroker(Broker):
         }
 
     def _open_limit(self, order: Order) -> dict:
+        # ``order`` has already passed ``validate_order`` which guarantees a
+        # non-None client_order_id. Assert keeps mypy on side without weakening
+        # behavior.
+        assert order.client_order_id is not None
         rec = {
             "id": order.client_order_id,
             "status": "open",
@@ -1749,18 +1759,24 @@ class KrakenAdapter(Broker):
                         reason=str(exc))
             raise
         if resp.get("error"):
-            out = {"id": order.client_order_id, "status": "rejected",
-                   "reason": "; ".join(resp["error"])}
-            self._audit("reject", order_id=out["id"],
+            rej: dict[str, Any] = {
+                "id": order.client_order_id,
+                "status": "rejected",
+                "reason": "; ".join(resp["error"]),
+            }
+            self._audit("reject", order_id=rej["id"],
                         symbol=order.symbol, side=order.side,
                         qty=float(order.qty), status="rejected",
-                        reason=out.get("reason"))
-            self._record_idempotent(order.client_order_id, out)
-            return out
+                        reason=rej.get("reason"))
+            self._record_idempotent(order.client_order_id, rej)
+            return rej
         txid = (resp.get("result") or {}).get("txid", [None])
-        out = {"id": txid[0] or order.client_order_id, "status": "submitted",
-               "client_order_id": order.client_order_id,
-               "userref": userref}
+        out: dict[str, Any] = {
+            "id": txid[0] or order.client_order_id,
+            "status": "submitted",
+            "client_order_id": order.client_order_id,
+            "userref": userref,
+        }
         # Gate local position tracking on broker-acknowledged states (see
         # AlpacaAdapter.submit_order for the rationale). Skip on rejected;
         # the explicit Kraken rejection path returned earlier already

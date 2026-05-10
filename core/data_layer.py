@@ -44,7 +44,7 @@ def _resolve_qf_cache() -> str:
     ):
         return legacy
     try:
-        from platformdirs import user_cache_dir  # type: ignore
+        from platformdirs import user_cache_dir
 
         return user_cache_dir("quantforge")
     except ImportError:
@@ -692,7 +692,7 @@ def load_asset(symbol: str, source: str = "yfinance",
             else:
                 s = raw.iloc[:, 0]
         else:
-            s = raw  # type: ignore[assignment]
+            s = raw
         # Drop down to the same downstream filter pipeline below.
         idx = pd.to_datetime(s.index)
         if idx.tz is not None:

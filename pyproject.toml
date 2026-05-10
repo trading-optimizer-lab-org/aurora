@@ -61,17 +61,21 @@ packages = [
     "aurora.agents.auditor",
     "aurora.altdata",
     "aurora.analytics",
+    "aurora.analytics.metrics_full",
     "aurora.cli",
     "aurora.compliance",
     "aurora.core",
     "aurora.core.data_providers",
+    "aurora.data_contracts",
     "aurora.dataeng",
     "aurora.deployment",
+    "aurora.deployment.preflight",
     "aurora.execution",
     "aurora.experimental",
     "aurora.exports",
     "aurora.exports.lean",
     "aurora.ga",
+    "aurora.governance",
     "aurora.infra",
     "aurora.marketdata",
     "aurora.markets",
@@ -82,8 +86,11 @@ packages = [
     "aurora.registry",
     "aurora.reporting",
     "aurora.reporting.daily_ops",
+    "aurora.reporting.tearsheet",
     "aurora.research",
     "aurora.research.factory",
+    "aurora.research.factory.factory",
+    "aurora.research.literature",
     "aurora.risk",
     "aurora.signals",
     "aurora.strategies",
@@ -101,17 +108,21 @@ packages = [
 "aurora.agents.auditor" = "agents/auditor"
 "aurora.altdata" = "altdata"
 "aurora.analytics" = "analytics"
+"aurora.analytics.metrics_full" = "analytics/metrics_full"
 "aurora.cli" = "cli"
 "aurora.compliance" = "compliance"
 "aurora.core" = "core"
 "aurora.core.data_providers" = "core/data_providers"
+"aurora.data_contracts" = "data_contracts"
 "aurora.dataeng" = "dataeng"
 "aurora.deployment" = "deployment"
+"aurora.deployment.preflight" = "deployment/preflight"
 "aurora.execution" = "execution"
 "aurora.experimental" = "experimental"
 "aurora.exports" = "exports"
 "aurora.exports.lean" = "exports/lean"
 "aurora.ga" = "ga"
+"aurora.governance" = "governance"
 "aurora.infra" = "infra"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
@@ -122,8 +133,11 @@ packages = [
 "aurora.registry" = "registry"
 "aurora.reporting" = "reporting"
 "aurora.reporting.daily_ops" = "reporting/daily_ops"
+"aurora.reporting.tearsheet" = "reporting/tearsheet"
 "aurora.research" = "research"
 "aurora.research.factory" = "research/factory"
+"aurora.research.factory.factory" = "research/factory/factory"
+"aurora.research.literature" = "research/literature"
 "aurora.risk" = "risk"
 "aurora.signals" = "signals"
 "aurora.strategies" = "strategies"
@@ -173,6 +187,20 @@ warn_redundant_casts = true
 ignore_missing_imports = true
 no_implicit_optional = true
 check_untyped_defs = false  # gradual typing — relax for now
+explicit_package_bases = true
+# R23 shim: the on-disk `quantforge/` directory exists only to emit a
+# DeprecationWarning when downstream code does `import quantforge`. mypy
+# resolves the same file under both `QuantForge.quantforge` and
+# `quantforge`, so exclude the shim directory from the type check.
+# `docs/` is excluded because `docs/conf.py` imports sphinx, which uses
+# Python 3.12+ `type` statements that mypy at python_version=3.10 cannot
+# parse. `build/` is the wheel-build artefact tree.
+exclude = '(?x)(quantforge/|docs/|build/|\.claude/|\.venv/|\.eggs/)'
+
+[[tool.mypy.overrides]]
+module = ["sphinx", "sphinx.*"]
+follow_imports = "skip"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

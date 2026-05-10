@@ -19,8 +19,8 @@ from typing import Optional, Tuple
 import numpy as np
 
 try:
-    import torch  # type: ignore
-    from torch import nn  # type: ignore
+    import torch
+    from torch import nn
     TORCH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]
@@ -28,10 +28,10 @@ except ImportError:  # pragma: no cover
     TORCH_AVAILABLE = False
 
 try:
-    import pyro  # type: ignore
+    import pyro
     PYRO_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    pyro = None  # type: ignore[assignment]
+    pyro = None
     PYRO_AVAILABLE = False
 
 
@@ -143,7 +143,7 @@ class BayesianForecaster:
         opt = torch.optim.Adam(self._net.parameters(), lr=self.config.learning_rate)
         t_x = torch.from_numpy(X.astype(np.float32))
         t_y = torch.from_numpy(y.astype(np.float32))
-        history = {"loss": []}
+        history: dict[str, list[float]] = {"loss": []}
         self._net.train()
         for _ in range(self.config.epochs):
             opt.zero_grad()

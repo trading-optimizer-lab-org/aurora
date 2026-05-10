@@ -18,10 +18,10 @@ from typing import Iterable, Optional
 import numpy as np
 
 try:
-    from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+    from sklearn.feature_extraction.text import TfidfVectorizer
     SKLEARN_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised when sklearn is missing
-    TfidfVectorizer = None  # type: ignore[assignment]
+    TfidfVectorizer = None
     SKLEARN_AVAILABLE = False
 
 

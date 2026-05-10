@@ -125,7 +125,7 @@ class VolSurfaceSignal:
         Use compute_skew_from_chain directly for offline tests.
         """
         try:
-            import yfinance as yf  # type: ignore
+            import yfinance as yf
         except ImportError:
             return pd.Series(np.nan, index=dates)
         try:

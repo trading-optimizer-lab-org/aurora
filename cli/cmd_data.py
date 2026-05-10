@@ -1,0 +1,690 @@
+"""``forge data`` subcommand group (R49 split).
+
+DataProviderRegistry CLI surface (P0.B): list-providers, fetch, verify.
+R155 free bulk daily-data programme: universe, backfill,
+provider-status, coverage-report.
+"""
+from __future__ import annotations
+
+import json
+import os
+
+from ._shared import _runtime_error
+
+
+# ---------------------------------------------------------------------------
+# data subcommands (P0.B DataProviderRegistry)
+# ---------------------------------------------------------------------------
+
+
+def cmd_data_list_providers(args):
+    """Print the registered data providers + their PIT/tier posture."""
+    from aurora.core.data_providers import get_default_registry
+    registry = get_default_registry()
+    rows = registry.describe()
+    if not rows:
+        print("(no providers registered)")
+        return 0
+    name_w = max(len(r["name"]) for r in rows)
+    ver_w = max(len(str(r["version"])) for r in rows)
+    print(
+        f"{'NAME':<{name_w}}  "
+        f"{'VERSION':<{ver_w}}  "
+        f"{'PIT':<5}  TIER_PERMISSION  SUPPORTED_TIERS"
+    )
+    for r in rows:
+        pit = "yes" if r["point_in_time"] else "no"
+        print(
+            f"{r['name']:<{name_w}}  "
+            f"{str(r['version']):<{ver_w}}  "
+            f"{pit:<5}  {r['tier_permission']:<15}  "
+            f"{','.join(r['supported_tiers'])}"
+        )
+    return 0
+
+
+def cmd_data_fetch(args):
+    """Fetch a Dataset from a provider and write parquet + sidecar."""
+    import json
+    import os
+    from aurora.core.data_providers import get_default_registry
+    registry = get_default_registry()
+    try:
+        ds = registry.fetch(
+            args.provider, args.symbol, start=args.start, end=args.end,
+        )
+    except Exception as exc:
+        return _runtime_error(f"data fetch: {exc}")
+    out = args.output
+    out_dir = os.path.dirname(out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    raw = ds.data
+    try:
+        import pandas as pd
+        if isinstance(raw, pd.Series):
+            raw.to_frame(raw.name or "value").to_parquet(out)
+        else:
+            raw.to_parquet(out)
+    except Exception as exc:
+        return _runtime_error(f"data fetch: parquet write failed: {exc}")
+    sidecar_path = out + ".meta.json"
+    meta_payload = {
+        "name": ds.metadata.name,
+        "source": ds.metadata.source,
+        "source_version": ds.metadata.source_version,
+        "asof_date": ds.metadata.asof_date.isoformat(),
+        "point_in_time": ds.metadata.point_in_time,
+        "content_hash": ds.metadata.content_hash,
+        "tier_permission": ds.metadata.tier_permission,
+        "schema_version": ds.metadata.schema_version,
+        "extra": ds.metadata.extra,
+    }
+    with open(sidecar_path, "w", encoding="utf-8") as f:
+        json.dump(meta_payload, f, indent=2, default=str)
+    print(f"Wrote {out} ({len(raw)} rows)")
+    print(f"Sidecar metadata: {sidecar_path}")
+    print(f"  content_hash: {ds.metadata.content_hash}")
+    print(f"  asof_date:    {ds.metadata.asof_date.isoformat()}")
+    print(f"  point_in_time:{ds.metadata.point_in_time}")
+    print(f"  tier_permission:{ds.metadata.tier_permission}")
+    return 0
+
+
+def cmd_data_verify(args):
+    """Recompute content_hash and check tier permission of a fetched parquet."""
+    import json
+    import os
+    parquet = args.parquet
+    sidecar = parquet + ".meta.json"
+    if not os.path.exists(parquet):
+        return _runtime_error(f"data verify: file not found: {parquet}")
+    if not os.path.exists(sidecar):
+        return _runtime_error(f"data verify: sidecar not found: {sidecar}")
+    try:
+        with open(sidecar, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as exc:
+        return _runtime_error(f"data verify: sidecar read failed: {exc}")
+
+    import pandas as pd
+    df = pd.read_parquet(parquet)
+    from aurora.core.data_providers import compute_content_hash
+    if df.shape[1] == 1:
+        recomputed = compute_content_hash(df.iloc[:, 0])
+    else:
+        recomputed = compute_content_hash(df)
+    expected = meta.get("content_hash")
+    print(f"file:           {parquet}")
+    print(f"expected hash:  {expected}")
+    print(f"recomputed hash:{recomputed}")
+    if recomputed != expected:
+        print("VERIFY: FAIL (content_hash mismatch -- file tampered)")
+        return 1
+    print("VERIFY: PASS (content_hash matches)")
+    print(f"tier_permission: {meta.get('tier_permission')}")
+    print(f"point_in_time:   {meta.get('point_in_time')}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# R155 free-bulk daily-data programme
+# ---------------------------------------------------------------------------
+
+
+def _build_r155_registry():
+    """Build a role-aware registry of the R155 free-bulk providers.
+
+    Returns ``(registry, errors)``. Module imports that fail (e.g.
+    AKShare without env opt-in) are recorded in ``errors`` rather than
+    raised so the CLI continues to list the providers that ARE
+    available.
+    """
+    from aurora.core.data_providers import DataProviderRegistry
+
+    registry = DataProviderRegistry()
+    errors: list[str] = []
+
+    try:
+        from aurora.core.data_providers.finance_database_universe import (
+            FinanceDatabaseUniverseProvider,
+            descriptor as fd_descriptor,
+        )
+        registry.register(
+            FinanceDatabaseUniverseProvider(client=lambda _ac: []),
+            descriptor=fd_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"finance_database: {exc}")
+    try:
+        from aurora.core.data_providers.nasdaq_trader_universe import (
+            NasdaqTraderUniverseProvider,
+            descriptor as nt_descriptor,
+        )
+        registry.register(
+            NasdaqTraderUniverseProvider(client=lambda _f: ""),
+            descriptor=nt_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"nasdaq_trader: {exc}")
+    try:
+        from aurora.core.data_providers.stooq_daily import (
+            StooqDailyProvider,
+            descriptor as st_descriptor,
+        )
+        registry.register(
+            StooqDailyProvider(client=lambda _s, _a, _b: ""),
+            descriptor=st_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"stooq: {exc}")
+    try:
+        import pandas as _pd
+        from aurora.core.data_providers.yfinance_daily import (
+            YFinanceDailyProvider,
+            descriptor as yf_descriptor,
+        )
+        registry.register(
+            YFinanceDailyProvider(
+                client=lambda _s, _a, _b, _k: _pd.DataFrame()
+            ),
+            descriptor=yf_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"yfinance_daily: {exc}")
+    try:
+        import pandas as _pd
+        from aurora.core.data_providers.yahooquery_daily import (
+            YahooQueryDailyProvider,
+            descriptor as yq_descriptor,
+        )
+        registry.register(
+            YahooQueryDailyProvider(
+                client=lambda _s, _a, _b, _k: _pd.DataFrame()
+            ),
+            descriptor=yq_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"yahooquery_daily: {exc}")
+    try:
+        from aurora.core.data_providers.binance_public_data_daily import (
+            BinancePublicDataDailyProvider,
+            descriptor as bn_descriptor,
+        )
+        registry.register(
+            BinancePublicDataDailyProvider(
+                client=lambda _s, _i, _y, _m: (b"", None)
+            ),
+            descriptor=bn_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"binance_public_data: {exc}")
+    try:
+        from aurora.core.data_providers.coingecko_daily import (
+            CoinGeckoDailyProvider,
+            descriptor as cg_descriptor,
+        )
+        registry.register(
+            CoinGeckoDailyProvider(client=lambda _c, _v, _d: {}),
+            descriptor=cg_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"coingecko: {exc}")
+    try:
+        from aurora.core.data_providers.ccxt_daily import (
+            CCXTDailyProvider,
+            descriptor as cc_descriptor,
+            is_ccxt_available,
+        )
+        if is_ccxt_available():
+            registry.register(CCXTDailyProvider(), descriptor=cc_descriptor())
+    except Exception as exc:
+        errors.append(f"ccxt_daily: {exc}")
+    try:
+        import pandas as _pd
+        from aurora.core.data_providers.fred_daily import (
+            FREDDailyProvider,
+            descriptor as fd_macro_descriptor,
+        )
+        registry.register(
+            FREDDailyProvider(
+                client=lambda _s, _k: _pd.Series(dtype="float64")
+            ),
+            descriptor=fd_macro_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"fred_macro: {exc}")
+    if os.environ.get("AU_ENABLE_AKSHARE") == "1":
+        try:
+            import pandas as _pd
+            from aurora.core.data_providers.akshare_experimental_daily import (
+                AKShareExperimentalDailyProvider,
+                descriptor as ak_descriptor,
+            )
+            registry.register(
+                AKShareExperimentalDailyProvider(
+                    client=lambda _s, _a, _b: _pd.DataFrame()
+                ),
+                descriptor=ak_descriptor(),
+            )
+        except Exception as exc:
+            errors.append(f"akshare_experimental: {exc}")
+    # R156 priority 1: OpenFIGI identifier-mapping. Registered with a
+    # stub http_post so listing the registry does not require live
+    # credentials. Real callers construct OpenFIGIClient(http_post=...)
+    # directly when they need to issue lookups.
+    try:
+        from aurora.core.data_providers.openfigi_mapper import (
+            OpenFIGIClient,
+            descriptor as openfigi_descriptor,
+        )
+        registry.register(
+            OpenFIGIClient(http_post=lambda _u, _p, _h: []),
+            descriptor=openfigi_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"openfigi_mapper: {exc}")
+    # R156 priority 3: DBnomics multi-source macro. Registered with a
+    # stub http_get so listing the registry never calls out. Real
+    # callers construct DBnomicsClient(http_get=...) directly.
+    try:
+        from aurora.core.data_providers.dbnomics_macro import (
+            DBnomicsClient,
+            descriptor as dbnomics_descriptor,
+        )
+        registry.register(
+            DBnomicsClient(http_get=lambda _u, _p=None: ""),
+            descriptor=dbnomics_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"dbnomics_macro: {exc}")
+    # R156 priority 4: Coin Metrics community (CRYPTO_METRICS).
+    try:
+        from aurora.core.data_providers.coinmetrics_community import (
+            CoinMetricsCommunityProvider,
+            descriptor as cm_descriptor,
+        )
+        registry.register(
+            CoinMetricsCommunityProvider(),
+            descriptor=cm_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"coinmetrics_community: {exc}")
+    # R156 priority 5: ECB Data Portal (FX reference rates + euro-area
+    # macro series via SDMX-JSON). Registered with a stub http_get for
+    # the same reason; real callers inject a live transport.
+    try:
+        from aurora.core.data_providers.ecb_data_portal import (
+            ECBClient,
+            descriptor as ecb_descriptor,
+        )
+        registry.register(
+            ECBClient(http_get=lambda _u, _p=None, _h=None: ""),
+            descriptor=ecb_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"ecb_data_portal: {exc}")
+    # R156 priority 6: Tiingo daily (OPTIONAL_PRICE_FALLBACK, env-gated).
+    if os.environ.get("AU_TIINGO_API_TOKEN"):
+        try:
+            from aurora.core.data_providers.tiingo_daily import (
+                TiingoDailyProvider,
+                descriptor as tg_descriptor,
+            )
+            registry.register(
+                TiingoDailyProvider(),
+                descriptor=tg_descriptor(),
+            )
+        except Exception as exc:
+            errors.append(f"tiingo_daily: {exc}")
+    return registry, errors
+
+
+def cmd_data_universe_fetch(args):
+    """Fetch a universe snapshot from a registered universe provider."""
+    source = (args.source or "finance_database").lower()
+    if source == "finance_database":
+        from aurora.core.data_providers.finance_database_universe import (
+            FinanceDatabaseUniverseProvider,
+        )
+        provider = FinanceDatabaseUniverseProvider()
+        try:
+            df, lineage = provider.fetch_universe(asset_class=args.asset_class)
+        except Exception as exc:
+            return _runtime_error(f"universe fetch: {exc}")
+    elif source == "nasdaq_trader":
+        from aurora.core.data_providers.nasdaq_trader_universe import (
+            NasdaqTraderUniverseProvider,
+        )
+        provider = NasdaqTraderUniverseProvider()
+        try:
+            df, lineage = provider.fetch_universe()
+        except Exception as exc:
+            return _runtime_error(f"universe fetch: {exc}")
+    else:
+        return _runtime_error(
+            f"universe fetch: unknown source {source!r} "
+            "(use finance_database or nasdaq_trader)"
+        )
+
+    if args.output:
+        try:
+            df.to_parquet(args.output)
+        except Exception as exc:
+            return _runtime_error(
+                f"universe fetch: parquet write failed: {exc}"
+            )
+        sidecar = args.output + ".meta.json"
+        with open(sidecar, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "provider_name": lineage.provider_name,
+                    "provider_url": lineage.provider_url,
+                    "retrieved_at_iso": lineage.retrieved_at_iso,
+                    "row_count": lineage.row_count,
+                    "symbol_count": lineage.symbol_count,
+                    "snapshot_hash": lineage.lineage.snapshot_hash,
+                    "contract_hash": lineage.lineage.contract_hash,
+                    "extra": dict(lineage.extra),
+                },
+                f,
+                indent=2,
+                default=str,
+            )
+        print(
+            f"Wrote {args.output} ({len(df)} rows, "
+            f"{lineage.symbol_count} symbols)"
+        )
+        print(f"Sidecar: {sidecar}")
+    else:
+        print(f"shape: {df.shape}")
+        print(f"symbols: {lineage.symbol_count}")
+        print(f"provider: {lineage.provider_name}")
+        print(f"snapshot_hash: {lineage.lineage.snapshot_hash}")
+        print(df.head(10).to_string())
+    return 0
+
+
+def cmd_data_universe_diff(args):
+    """Diff two universe snapshots (added / removed canonical symbols)."""
+    import pandas as pd
+    if not os.path.exists(args.prev):
+        return _runtime_error(f"universe diff: file not found: {args.prev}")
+    if not os.path.exists(args.new):
+        return _runtime_error(f"universe diff: file not found: {args.new}")
+    try:
+        prev = pd.read_parquet(args.prev)
+        new = pd.read_parquet(args.new)
+    except Exception as exc:
+        return _runtime_error(f"universe diff: parquet read failed: {exc}")
+    prev_syms = set(
+        prev.get("canonical_symbol", pd.Series(dtype="object")).astype(str)
+    )
+    new_syms = set(
+        new.get("canonical_symbol", pd.Series(dtype="object")).astype(str)
+    )
+    added = sorted(new_syms - prev_syms)
+    removed = sorted(prev_syms - new_syms)
+    print(f"prev rows: {len(prev)}    new rows: {len(new)}")
+    print(f"added: {len(added)}")
+    for s in added[:50]:
+        print(f"  + {s}")
+    if len(added) > 50:
+        print(f"  (+{len(added) - 50} more)")
+    print(f"removed: {len(removed)}")
+    for s in removed[:50]:
+        print(f"  - {s}")
+    if len(removed) > 50:
+        print(f"  (-{len(removed) - 50} more)")
+    return 0
+
+
+def cmd_data_backfill(args):
+    """Run a backfill against a named provider for a given asset class."""
+    asset_class = args.asset_class.lower()
+    if asset_class not in ("equities", "crypto", "macro"):
+        return _runtime_error(
+            f"backfill: unknown asset_class {asset_class!r} "
+            "(equities|crypto|macro)"
+        )
+    print(
+        f"backfill: asset_class={asset_class} provider={args.provider} "
+        f"symbols={args.symbols} start={args.start} end={args.end}"
+    )
+    print("(no-op without explicit ingestion runner; see provider-status)")
+    return 0
+
+
+def cmd_data_provider_terms(args):
+    """Print provider terms registry (R178)."""
+    from aurora.data_contracts.provider_terms import (
+        UsageLabel,
+        default_registry,
+        render_provider_detail,
+        render_table,
+    )
+
+    registry = default_registry()
+    if getattr(args, "json", False):
+        payload = {
+            name: registry.require(name).to_dict()
+            for name in registry.providers()
+        }
+        if getattr(args, "provider", None):
+            payload = {args.provider: payload[args.provider]}
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    if getattr(args, "provider", None):
+        print(render_provider_detail(registry, args.provider))
+        return 0
+    if getattr(args, "check_usage", None):
+        try:
+            usage = UsageLabel(args.check_usage)
+        except ValueError:
+            return _runtime_error(
+                f"unknown usage {args.check_usage!r}; valid: "
+                f"{','.join(u.value for u in UsageLabel)}"
+            )
+        for name in registry.providers():
+            terms = registry.require(name)
+            verdict = "ALLOW" if terms.permits(usage) else "BLOCK"
+            print(f"{verdict}  {name:<18}  {terms.explain(usage)}")
+        return 0
+    print(render_table(registry))
+    return 0
+
+
+def cmd_data_provider_status(args):
+    """Print the registered providers + their last successful fetch + role."""
+    registry, errors = _build_r155_registry()
+    rows = registry.role_status()
+    if not rows:
+        print("(no providers registered)")
+        return 0
+    print(
+        f"{'NAME':<26}  {'ROLE':<18}  {'RELIABILITY':<13}  "
+        f"{'AUTH':<5}  {'POSTURE':<10}  LAST_SUCCESS"
+    )
+    for r in rows:
+        auth = "yes" if r["auth_required"] else "no"
+        last = r.get("last_success") or "(never)"
+        print(
+            f"{r['name']:<26}  {r['role']:<18}  {r['reliability']:<13}  "
+            f"{auth:<5}  {r['adjustment_posture']:<10}  {last}"
+        )
+    if errors:
+        print("\nbootstrap errors (provider not registered):")
+        for e in errors:
+            print(f"  - {e}")
+    return 0
+
+
+def cmd_data_coverage_report(args):
+    """Print a coverage report -- requested vs found vs usable."""
+    requested = (
+        [s.strip() for s in args.symbols.split(",") if s.strip()]
+        if args.symbols
+        else []
+    )
+    if not requested:
+        print("requested: 0    found: 0    usable: 0")
+        print("(supply --symbols A,B,C to compute a real report)")
+        return 0
+    print(f"requested: {len(requested)}    found: 0    usable: 0")
+    for s in requested:
+        print(f"  - {s}: missing (run backfill to populate)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subparser registration
+# ---------------------------------------------------------------------------
+
+
+def register(subparsers, parent_parser=None) -> None:
+    """Register the ``data`` subcommand group on the top-level subparsers."""
+    p_data = subparsers.add_parser(
+        "data",
+        help="Data provider registry (list-providers, fetch, verify)",
+        description=(
+            "Manage the DataProviderRegistry: list registered providers, "
+            "fetch a dataset to parquet (with sidecar metadata), or "
+            "verify the content_hash of a previously-fetched file."
+        ),
+    )
+    data_sub = p_data.add_subparsers(dest="data_cmd", required=True)
+
+    p_data_ls = data_sub.add_parser(
+        "list-providers",
+        help="List registered providers and their PIT/tier posture",
+    )
+    p_data_ls.set_defaults(func=cmd_data_list_providers)
+
+    p_data_fetch = data_sub.add_parser(
+        "fetch", help="Fetch a Dataset and write parquet + sidecar metadata",
+    )
+    p_data_fetch.add_argument("provider", help="Registered provider name")
+    p_data_fetch.add_argument("symbol", help="Ticker symbol")
+    p_data_fetch.add_argument("--start", default=None, help="ISO start date")
+    p_data_fetch.add_argument("--end", default=None, help="ISO end date")
+    p_data_fetch.add_argument(
+        "--output", required=True,
+        help="Path to write the parquet file (sidecar gets .meta.json suffix)",
+    )
+    p_data_fetch.set_defaults(func=cmd_data_fetch)
+
+    p_data_verify = data_sub.add_parser(
+        "verify", help="Recompute content_hash and check tier permission",
+    )
+    p_data_verify.add_argument("parquet", help="Path to a parquet emitted by ``data fetch``")
+    p_data_verify.set_defaults(func=cmd_data_verify)
+
+    # R155 free-bulk daily-data programme
+    p_universe = data_sub.add_parser(
+        "universe",
+        help="Universe sources (fetch / diff)",
+    )
+    universe_sub = p_universe.add_subparsers(dest="universe_cmd", required=True)
+    p_universe_fetch = universe_sub.add_parser(
+        "fetch",
+        help="Fetch a universe snapshot from a registered universe provider",
+    )
+    p_universe_fetch.add_argument(
+        "--source",
+        default="finance_database",
+        choices=["finance_database", "nasdaq_trader"],
+        help="Universe provider (default: finance_database)",
+    )
+    p_universe_fetch.add_argument(
+        "--asset-class",
+        dest="asset_class",
+        default="equities",
+        help="Asset class (only used by finance_database)",
+    )
+    p_universe_fetch.add_argument(
+        "--output",
+        default=None,
+        help="Optional parquet path to write the universe snapshot",
+    )
+    p_universe_fetch.set_defaults(func=cmd_data_universe_fetch)
+
+    p_universe_diff = universe_sub.add_parser(
+        "diff",
+        help="Diff two universe snapshots (added / removed canonical symbols)",
+    )
+    p_universe_diff.add_argument("prev", help="Previous universe snapshot parquet")
+    p_universe_diff.add_argument("new", help="New universe snapshot parquet")
+    p_universe_diff.set_defaults(func=cmd_data_universe_diff)
+
+    p_backfill = data_sub.add_parser(
+        "backfill",
+        help="Backfill daily history for a provider + asset class",
+    )
+    backfill_sub = p_backfill.add_subparsers(dest="backfill_cmd", required=True)
+    p_backfill_daily = backfill_sub.add_parser(
+        "daily",
+        help="Daily backfill (equities / crypto / macro)",
+    )
+    p_backfill_daily.add_argument(
+        "--asset-class",
+        dest="asset_class",
+        required=True,
+        choices=["equities", "crypto", "macro"],
+        help="Asset class to backfill",
+    )
+    p_backfill_daily.add_argument(
+        "--provider",
+        required=True,
+        help="Provider name (matching aurora data provider-status)",
+    )
+    p_backfill_daily.add_argument(
+        "--symbols", default="",
+        help="Comma-separated list of symbols",
+    )
+    p_backfill_daily.add_argument("--start", default=None, help="ISO start date")
+    p_backfill_daily.add_argument("--end", default=None, help="ISO end date")
+    p_backfill_daily.set_defaults(func=cmd_data_backfill)
+
+    p_provider_status = data_sub.add_parser(
+        "provider-status",
+        help="List R155 providers + roles + last successful fetch",
+    )
+    p_provider_status.set_defaults(func=cmd_data_provider_status)
+
+    p_coverage = data_sub.add_parser(
+        "coverage-report",
+        help="Symbols requested vs found vs usable",
+    )
+    p_coverage.add_argument(
+        "--symbols", default="",
+        help="Comma-separated list of symbols requested",
+    )
+    p_coverage.set_defaults(func=cmd_data_coverage_report)
+
+    # R178 provider terms registry
+    p_terms = data_sub.add_parser(
+        "provider-terms",
+        help="Show licence and allowed-usage posture for each provider",
+        description=(
+            "Print the licence summary, cost tier and allowed-usage labels "
+            "for each registered provider. Use --provider to drill in or "
+            "--check-usage to test a specific usage label."
+        ),
+    )
+    p_terms.add_argument(
+        "--provider", default=None,
+        help="Show detail for a single provider",
+    )
+    p_terms.add_argument(
+        "--check-usage", dest="check_usage", default=None,
+        help=(
+            "Print ALLOW/BLOCK for each provider against this usage label. "
+            "Valid labels: smoke_test, personal_research, internal_research, "
+            "redistribution, paper_trading, live_trading, report_export"
+        ),
+    )
+    p_terms.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON instead of a table",
+    )
+    p_terms.set_defaults(func=cmd_data_provider_terms)

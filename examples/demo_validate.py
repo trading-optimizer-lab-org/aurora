@@ -35,8 +35,8 @@ def main():
         def factory(_p=params, _c=cls):
             return _c(**_p)
 
-        def factory_w(_c=cls, **kw):
-            merged = dict(params); merged.update(kw)
+        def factory_w(_c=cls, _p=params, **kw):
+            merged = dict(_p); merged.update(kw)
             return _c(**merged)
 
         rep = validate_pipeline(

@@ -138,7 +138,7 @@ def _detect_fitness_signature(fitness_fn) -> str:
 
 
 def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
-           config: GAConfig = None, verbose: bool = True,
+           config: GAConfig | None = None, verbose: bool = True,
            seeded_pop: list | None = None):
     """Run NSGA-II GA over strategy parameter space.
 

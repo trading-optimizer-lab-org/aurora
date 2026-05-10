@@ -7,7 +7,7 @@ strategy before paper or live deployment.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
@@ -143,8 +143,8 @@ def validate_pipeline(
     fail_fast: bool = False,
     is_tier: str = "IS_ALL",
     oos_tier: str = "OOS_DEV",
-    auditor_context: Optional[object] = None,
-    auditor_orchestrator: Optional[object] = None,
+    auditor_context: Optional[Any] = None,
+    auditor_orchestrator: Optional[Any] = None,
 ) -> ValidationReport:
     """Run full validation. Returns report with overall pass/fail.
 
@@ -220,7 +220,7 @@ def validate_pipeline(
                 "Locked tiers are gated by a single-look ceremony."
             )
 
-    failures = []
+    failures: list[str] = []
 
     tiers = split_by_tier(prices)
     if is_tier_norm == "IS_TRAIN":
