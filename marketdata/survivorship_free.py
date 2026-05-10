@@ -70,6 +70,7 @@ class SurvivorshipFreeUniverse:
         if self._listings is None:
             self.load_listings()
         as_of = pd.Timestamp(as_of)
+        assert self._listings is not None
         df = self._listings
         if df is None:  # pragma: no cover - defensive
             raise RuntimeError("listings were not loaded")
@@ -88,6 +89,7 @@ class SurvivorshipFreeUniverse:
         """Symbols delisted within ``[start, end]`` (inclusive)."""
         if self._listings is None:
             self.load_listings()
+        assert self._listings is not None
         df = self._listings
         if df is None:  # pragma: no cover - defensive
             raise RuntimeError("listings were not loaded")

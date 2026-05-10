@@ -11,20 +11,6 @@ from aurora.deployment.preflight._models import PreflightCheck
 from aurora.validation.lookahead_check import runtime_lookahead_check
 
 
-def _load_asset(symbol: str, *, include_oos: bool = True):
-    """Resolve ``load_asset`` through the package so test monkey-patches
-    on ``aurora.deployment.preflight.load_asset`` take effect.
-
-    The package ``__init__.py`` exposes ``load_asset`` as a module-level
-    attribute (re-exported from ``aurora.core.data_layer``); tests replace
-    that attribute via ``monkeypatch.setattr(pf, "load_asset", ...)``.
-    Indirecting through ``sys.modules`` keeps the patch reachable instead
-    of binding to the original function at import time.
-    """
-    import aurora.deployment.preflight as _pkg
-    return _pkg.load_asset(symbol, include_oos=include_oos)
-
-
 def check_strategy_callable(strategy) -> PreflightCheck:
     """Strategy must expose a callable signals() method."""
     if strategy is None:
@@ -80,7 +66,10 @@ def check_data_availability(symbol: str, min_bars: int = 200,
         # authorized_read in the lock file (per round-2 schema) so the
         # access is auditable without tripping check_lock_clean.
         with OOSGuard("preflight_check"):
-            prices = _load_asset(symbol, include_oos=True)
+            # Resolve through the package so test monkey-patches of
+            # ``aurora.deployment.preflight.load_asset`` are honoured.
+            import aurora.deployment.preflight as _pkg
+            prices = _pkg.load_asset(symbol, include_oos=True)
     except Exception as e:
         return PreflightCheck("data_availability", False, f"load failed: {e}")
     n = len(prices)

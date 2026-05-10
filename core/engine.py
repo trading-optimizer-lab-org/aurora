@@ -8,9 +8,8 @@ at engine level by shifting signals forward in apply_costs().
 """
 from __future__ import annotations
 import logging
-import warnings
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
@@ -19,54 +18,6 @@ from aurora.core.metrics import Metrics, compute_metrics
 from aurora.core.slippage import SlippageModel
 
 _logger = logging.getLogger(__name__)
-
-# R46: one-shot warning so an operator does not silently backtest under
-# unrealistic ZERO_costs and then run live with the same expectations.
-_ZERO_COSTS_WARNED = False
-
-
-def _maybe_warn_zero_costs(costs: CostModel,
-                           acknowledge_zero_costs: bool) -> None:
-    """Emit a one-shot UserWarning when ZERO_costs is the active cost model.
-
-    Suppressed when:
-    - ``acknowledge_zero_costs=True`` is passed explicitly (caller knows).
-    - The active cost model is anything other than the singleton
-      ``ZERO_costs`` (e.g. a custom CostModel with all zeros still
-      warns -- see below).
-
-    The check uses identity (``is``) against the canonical ``ZERO_costs``
-    singleton AND a value check on every component, so a user who builds
-    ``CostModel()`` from scratch (all defaults zero) ALSO trips the
-    warning. The intent is "you have no costs in this run", not "you
-    used the literal ZERO_costs name".
-    """
-    global _ZERO_COSTS_WARNED
-    if acknowledge_zero_costs or _ZERO_COSTS_WARNED:
-        return
-    is_zero = (
-        costs is ZERO_costs
-        or (
-            costs.commission_bps == 0.0
-            and costs.spread_bps == 0.0
-            and costs.slippage_bps == 0.0
-            and costs.borrow_rate_annual == 0.0
-            and costs.min_commission_usd == 0.0
-            and costs.fixed_per_trade_usd == 0.0
-        )
-    )
-    if not is_zero:
-        return
-    _ZERO_COSTS_WARNED = True
-    warnings.warn(
-        "run_backtest invoked with a zero-cost model. Backtest results "
-        "will be unrealistically optimistic. Pass a real CostModel for "
-        "any decision that influences live trading, or pass "
-        "acknowledge_zero_costs=True to suppress this warning. "
-        "(R46: one-shot per process.)",
-        UserWarning,
-        stacklevel=3,
-    )
 
 
 @dataclass
@@ -93,7 +44,6 @@ def run_backtest(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
                  daily_volume: Optional[float] = None,
                  portfolio_value: float = 1.0,
                  partial_fill_factor: float = 1.0,
-                 acknowledge_zero_costs: bool = False,
                  **strategy_kwargs) -> BacktestResult:
     """Run a single-asset backtest.
 
@@ -126,8 +76,6 @@ def run_backtest(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
     if slippage_model is not None and (daily_volume is None or daily_volume <= 0):
         raise ValueError("slippage_model requires positive daily_volume")
 
-    _maybe_warn_zero_costs(costs, acknowledge_zero_costs)
-
     p = prices.values.astype(float)
     weights = np.asarray(signal_fn(prices, **strategy_kwargs), dtype=float)
     if len(weights) != len(p):
@@ -158,8 +106,10 @@ def run_backtest(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
     # accept the kwarg are called without it.
     rejections = 0
     if slippage_model is not None:
+        # Validation at line 76 already ensured daily_volume is non-None
+        # whenever slippage_model is supplied; narrow for type-checkers.
         assert daily_volume is not None
-        adv = float(daily_volume)
+        dv = float(daily_volume)
         delta_w = np.abs(np.diff(weights, prepend=0.0))
         extra = np.zeros(len(weights))
         ts_index = prices.index
@@ -173,11 +123,11 @@ def run_backtest(prices, signal_fn: Callable, costs: CostModel = ZERO_costs,
             try:
                 try:
                     bps = slippage_model.impact_bps(
-                        order_dollars, adv, time_of_day=tod,
+                        order_dollars, dv, time_of_day=tod,
                     )
                 except TypeError:
                     # Model does not accept time_of_day; fall back to positional call.
-                    bps = slippage_model.impact_bps(order_dollars, adv)
+                    bps = slippage_model.impact_bps(order_dollars, dv)
             except (ValueError, ArithmeticError, OverflowError) as exc:
                 rejections += 1
                 _logger.warning(
@@ -257,13 +207,14 @@ def run_multi_asset(price_dict, weight_fn, costs_dict=None, ppy=252,
     """
     weights = weight_fn(price_dict)
     syms = list(price_dict.keys())
+    if not syms:
+        raise ValueError("price_dict is empty")
     # align all to common index
-    common_idx = None
+    common_idx: Any = None
     for s in syms:
         idx = price_dict[s].index
         common_idx = idx if common_idx is None else common_idx.intersection(idx)
-    if common_idx is None:
-        raise ValueError("price_dict must contain at least one symbol")
+    assert common_idx is not None  # ensured by ``if not syms`` guard above
     if len(common_idx) < 20:
         raise ValueError(f"insufficient overlapping bars: {len(common_idx)}")
 

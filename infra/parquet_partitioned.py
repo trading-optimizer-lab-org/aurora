@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import pandas as pd
 
@@ -68,7 +68,7 @@ class PartitionedParquetStore:
 
     def list_partitions(self) -> list[dict]:
         """Enumerate all on-disk Hive-style partitions as dicts."""
-        out: list[dict[str, Any]] = []
+        out: list[dict] = []
         root = self.config.root
         if not os.path.isdir(root):
             return out

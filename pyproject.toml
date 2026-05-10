@@ -66,15 +66,16 @@ packages = [
     "aurora.compliance",
     "aurora.core",
     "aurora.core.data_providers",
+    "aurora.data_contracts",
     "aurora.dataeng",
     "aurora.deployment",
-    "aurora.deployment.brokers",
     "aurora.deployment.preflight",
     "aurora.execution",
     "aurora.experimental",
     "aurora.exports",
     "aurora.exports.lean",
     "aurora.ga",
+    "aurora.governance",
     "aurora.infra",
     "aurora.marketdata",
     "aurora.markets",
@@ -89,6 +90,7 @@ packages = [
     "aurora.research",
     "aurora.research.factory",
     "aurora.research.factory.factory",
+    "aurora.research.literature",
     "aurora.risk",
     "aurora.signals",
     "aurora.strategies",
@@ -111,15 +113,16 @@ packages = [
 "aurora.compliance" = "compliance"
 "aurora.core" = "core"
 "aurora.core.data_providers" = "core/data_providers"
+"aurora.data_contracts" = "data_contracts"
 "aurora.dataeng" = "dataeng"
 "aurora.deployment" = "deployment"
-"aurora.deployment.brokers" = "deployment/brokers"
 "aurora.deployment.preflight" = "deployment/preflight"
 "aurora.execution" = "execution"
 "aurora.experimental" = "experimental"
 "aurora.exports" = "exports"
 "aurora.exports.lean" = "exports/lean"
 "aurora.ga" = "ga"
+"aurora.governance" = "governance"
 "aurora.infra" = "infra"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
@@ -134,6 +137,7 @@ packages = [
 "aurora.research" = "research"
 "aurora.research.factory" = "research/factory"
 "aurora.research.factory.factory" = "research/factory/factory"
+"aurora.research.literature" = "research/literature"
 "aurora.risk" = "risk"
 "aurora.signals" = "signals"
 "aurora.strategies" = "strategies"
@@ -183,6 +187,7 @@ warn_redundant_casts = true
 ignore_missing_imports = true
 no_implicit_optional = true
 check_untyped_defs = false  # gradual typing — relax for now
+explicit_package_bases = true
 # R23 shim: the on-disk `quantforge/` directory exists only to emit a
 # DeprecationWarning when downstream code does `import quantforge`. mypy
 # resolves the same file under both `QuantForge.quantforge` and

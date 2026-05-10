@@ -1,7 +1,7 @@
 # Aurora Roadmap (formerly QuantForge)
 
 Status: living roadmap
-Last updated: 2026-05-09 (post-rename audit; R23 + R76 verified executed)
+Last updated: 2026-05-10 (solo-operator posture applied to R158-R190)
 Source: migrated from Desktop and normalised after v1.4 review
 Scope: post-v1.4 backlog for QA, docs, AI, data, execution, performance and production hardening
 
@@ -11,9 +11,9 @@ the most expensive incident.
 
 Roadmap hygiene rules:
 
-- Do not add R155+ until at least one pruning pass closes, merges or
-  demotes existing items. The roadmap is already large enough to hide
-  real priorities.
+- New R155+ items are allowed when they are concrete, sourced and
+  implementable. Avoid vague wish-list entries, but do not block useful
+  roadmap expansion merely because the number is high.
 - Keep external blockers in `BLOCKERS.md`; keep in-repo actionable work
   here.
 - A roadmap item should stay only if it has a clear next action,
@@ -22,6 +22,25 @@ Roadmap hygiene rules:
   mark the older entry as superseded instead of tracking both.
 - Verification beats memory. If tests / lint / docs / build contradict
   an old note, update the roadmap immediately.
+
+Solo-operator posture:
+
+- AURORA is assumed to be used by one operator unless a future note
+  explicitly changes that. Design for disciplined solo research, not
+  institutional bureaucracy.
+- Keep the strong parts: data contracts, point-in-time safety,
+  reproducibility, audit hashes, evidence packs, realistic costs,
+  preflight checks, local diagnostics and clear failure messages.
+- Keep approvals local and lightweight: one operator may approve,
+  override or retire a strategy, but the reason, timestamp, hashes and
+  affected artefacts must be recorded.
+- Prefer local-first tools: JSONL logs, local reports, local dashboard,
+  CLI checks and files under runtime paths. External observability,
+  multi-user workflow, public plugin systems and signed public releases
+  are optional expansions, not default requirements.
+- Do not build committee workflow unless real multi-user operation
+  appears. A single human with a good evidence trail beats five fake
+  approval roles. Glamour saved, complexity murdered.
 
 ---
 
@@ -111,12 +130,12 @@ holiday calendar audits, strategy ancestry tree visualisation, sealed
 envelope forecast ceremony, and cross-strategy regime correlation
 alerts.
 
-Project name decision: **AURORA**. Rename execution tracked as R23.
-Until R23 lands, the project name on disk and in code remains
-`quantforge` -- doing the rename in isolation is the safer migration.
+Project name decision: **AURORA**. R23 has executed: package metadata,
+CLI entry point and primary imports use `aurora`. The legacy
+`quantforge` namespace remains only as the planned compatibility shim.
 
-Items still open (in the strict sense of "in-session execution
-incomplete"):
+Current strict open items, external blockers and recently reconciled
+state notes:
 
 - **R2, R3, R4** -- in-repo prep complete; remaining work is
   permanently external (credentials, legal review, broker
@@ -125,12 +144,59 @@ incomplete"):
 - **R5, R6** -- gate primitive landed (R40 benchmark scaffold).
   Remaining work waits for a benchmark / profile signal that Python
   + numba is the real bottleneck.
+- **R34** -- closed 2026-05-10. 7 writers wired to rotation policy.
+- **R39** -- closed 2026-05-10. CLI subcommands + opt-in dashboard tile.
 - **R41** -- procedure documented; the actual sweep runs on a
   Linux/macOS/WSL host because mutmut native-Windows is upstream-
   unsupported.
-- **R49 / R50 / R51 / R52** -- per-file split plan locked
-  (`docs/FILE_SPLIT_PLAN.md`); each split is one human PR, mechanical
-  refactor, no behaviour change.
+- **R45** -- closed 2026-05-10. 43 tz idioms migrated across 17 files.
+- **R48** -- closed 2026-05-10. 8 keep / 9 archive (.py.txt) / 3 delete.
+- **R49** -- closed 2026-05-10. `cli/cmd_run.py` split into shim + 4
+  siblings; all `cli/cmd_*.py` modules ≤800 lines.
+- **R52** -- closed 2026-05-10. `reporting/daily_ops/builder.py` and
+  `core/data_layer.py` split into sub-packages; all production files
+  ≤800 lines.
+- **R65** -- closed 2026-05-10. Self-hosted HTML coverage artefact
+  in CI workflow; external service dependency rejected.
+- **R90** -- distributed generation scaffold exists; real distributed
+  runtime remains deferred until factory contracts and validation gates
+  are stronger.
+- **R140** -- closed 2026-05-10. Auto-loop runs SLA evaluator at
+  cycle step 0; default archive, opt-in revalidate.
+- **R155** -- closed 2026-05-10. 12 provider connectors + ProviderRole
+  registry + 5 CLI subcommands + 27 tests; live ops still operator follow-up.
+- **R156** -- closed 2026-05-10. 8 providers shipped (openfigi, sec_edgar,
+  dbnomics, ecb, coinmetrics, tiingo, dukascopy, marketdata_app) + 8 new
+  ProviderRole entries + 5 CLI subcommands + 91 tests. PIT-safe SEC facts.
+- **R157** -- closed 2026-05-10. Manifest-driven first-dataset
+  orchestrator (`config/first_dataset.yaml` +
+  `core/data_providers/first_dataset/` package, 7 modules max 285 lines);
+  3 new CLI subcommands
+  (`bootstrap-first-dataset`, `freeze`, `coverage-report --dataset
+  first`); 17 unit tests with no live network; at least one approved
+  SnapshotStore freeze from local persisted data.
+- **R158** -- completed 2026-05-10. Diversified seed manifest at
+  `config/diversified_seed_dataset.yaml` covers 10 sections (133
+  symbols), with trust levels, FX section + library, symbol
+  normalisation table (BRK-B / FX majors / DXY), strict persistence
+  contract gates (extreme-return spike, calendar-gap, OHLC bands),
+  multi-symbol freeze, requested-vs-persisted summary, plus 16 unit
+  tests + 4 smoke research tests with no live network.
+- **R159-R167** -- open. Post-R158 data trust layer: instrument
+  identity, corporate actions / calendars, quality quarantine,
+  point-in-time fundamentals, liquidity / costs / capacity, mandatory
+  benchmarks, research ledger enforcement, reproducible evidence packs
+  and incremental data refresh / diff.
+- **R168-R177** -- open. Execution integrity, portfolio construction,
+  strategy atlas, literature ingestion, solo-operator risk approval and
+  agentic explanation layer. These items should start only after the
+  data trust layer has a usable first slice.
+- **R178-R190** -- open. Local-first platform-hardening layer: data
+  licence registry, local telemetry, lightweight incident notes,
+  feature store, model registry, futures, options, crypto derivatives,
+  optional extension API, `aurora doctor`, solo cockpit and performance
+  / memory budget. Public release signing and external observability
+  are optional, not default.
 
 R23 (Aurora rename) and R76 (env var migration) closed 2026-05-09 in
 commit `cf41bc2`. Package now installs as `aurora-1.5.0`; both
@@ -146,15 +212,15 @@ gate is clean; broader rule families are not planned).
 Closed-but-kept-for-history entries: R1, R7, R8, R9, R10, R11, R12,
 R13, R14, R15, R17, R20, R22, R30, R33.
 
-Newly closed / plan-locked in the 2026-05-08 "execute the whole
-roadmap" batch:
+Newly closed / scaffolded / plan-locked in the 2026-05-08 "execute
+the whole roadmap" batch, reconciled with the 2026-05-09 truth pass:
 **R2 (in-repo prep), R3 (in-repo prep), R4 (in-repo prep), R5
 (gate ready), R6 (gate ready), R16, R18, R19, R21, R23 (rename
 EXECUTED 2026-05-09 commit cf41bc2), R24, R25,
 R26, R27, R28, R29, R31, R32 (descoped), R34,
 R35, R36, R37, R38, R39, R40, R41 (procedure), R42, R43, R44, R45
-(helper), R46, R47, R48, R49 (plan), R50 (plan), R51 (plan), R52
-(plan), R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61,
+(helper), R46, R47, R48, R49 (partial), R50 (done), R51 (done), R52
+(partial), R53, R54, R55 (policy doc), R56, R57, R58, R59, R60, R61,
 R62, R63, R64, R65, R66, R67, R68, R69, R70, R71, R72, R73, R74,
 R75, R76 (env helper landed cf41bc2), R77, R78, R79, R80 (PineScript slice), R81, R82,
 R83, R84 (skeleton), R85 (plan), R86, R87, R88, R89, R90 (scaffold),
@@ -166,14 +232,20 @@ R134, R135, R136, R137, R138, R139, R140 (scaffold), R141, R142
 (scaffold), R143, R144, R145, R146, R147, R148, R149, R150, R151,
 R152, R153, R154**.
 
-Total: 142 items closed or plan-locked in the 2026-05-08 session
-out of 154 (plus 11 prior closures). Running tally: **all 154 items
-have landed code, a scaffold, a locked plan, or an explicit decision
-/ descope.** No item remains in raw "pending" status. The 13
-explicit "remaining work" items above are recorded with their
-acceptance bar and execution path. "Plan-locked" does not mean
-executed: R23, R41 and R49-R52 still require their dedicated execution
-branches / environments.
+Total: all 154 original numbered items have been triaged; R155 has
+landed as the free bulk data-acquisition programme; R156 has landed as
+the complementary-provider programme; R157 has landed as the first
+dataset ingestion machinery; R158 is the diversified seed-universe
+execution programme; R159-R167 are the post-ingestion trust layer;
+R168-R177 are the next execution / portfolio / solo-governance layer;
+R178-R190 are the local-first platform-hardening layer. That does
+**not**
+mean all are fully implemented. Current truth: most items have landed
+code, a scaffold, a locked plan, an external blocker, or an explicit
+descope; the state list above is the canonical "still needs work or
+needs clear status visibility" set. "Plan-locked" and "scaffold
+landed" are not synonyms for "done". Future updates must keep that
+distinction visible.
 
 Batch 9 (cost realism + live discipline) closes R125, R126, R127,
 R128, R129, R130, R135, R136, R137, R138, R139 -- 11 items, 31 new
@@ -290,15 +362,14 @@ Detail of the new closures:
 
 ## Current State
 
-QuantForge v1.4 has a working protocol spine plus the new in-repo
+AURORA v1.5 has a working protocol spine plus the new in-repo
 hardening layer:
 
 - ProtocolPolicy as code.
 - DataProviderRegistry with provenance and tier posture.
 - SnapshotStore with hash binding. A pluggable `SnapshotBackend`
-  interface now exists alongside it (R7 landed the contract + a local
-  reference backend). Wiring the existing store to use that interface
-  is still pending; tracked as R19 below.
+  interface exists and R19 wires successful freezes through the backend
+  mirror path.
 - ExperimentRegistry lineage.
 - ValidationPipeline with mandatory gates.
 - AgentAuditGateway with scoped tokens and hash-chained audit.
@@ -309,27 +380,22 @@ hardening layer:
 - RAG over research history (R9) + auto-research loop (R10).
 - Lean live deploy gate with provenance + operator-flag triple-gate (R1).
 
-Verification snapshot from this workspace:
+Latest verified snapshot from this workspace:
 
 - Full fast suite:
-  `python -m pytest tests/ -m "not slow and not integration"` ->
-  2781 passed, 23 skipped, 10 deselected.
-- Coverage:
-  `python -m pytest --cov=quantforge --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"` ->
-  80.40%, threshold 80% reached.
-- Mypy:
-  no issues found in 410 source files.
+  `python -m pytest tests/ -m "not slow and not integration" --ignore=tests/test_config.py --ignore=tests/test_property.py -q`
+  -> 3368 passed, 23 skipped, 10 deselected.
 - Ruff:
   `ruff check .` passed.
-- Pre-commit:
-  `pre-commit run --all-files` passed.
 - Build:
-  `python -m build` produced sdist + wheel.
+  `python -m build --wheel` produced `aurora-1.5.0-py3-none-any.whl`
+  with no build warnings.
 - CLI:
-  `python -m quantforge.cli.forge --help` passed.
-- Docs:
-  `sphinx -b html -W docs docs/_build/html-strict` passed with warnings
-  treated as errors.
+  wheel import smoke passed for the renamed `aurora.*` modules.
+
+Earlier audit snapshots also recorded coverage, mypy, pre-commit and
+strict Sphinx docs as green. Re-run those before cutting a release if
+they matter to the release gate.
 
 Reference reports:
 
@@ -592,23 +658,28 @@ below for the full description of each R item. Do not treat the R
 number as priority; many later items are more important than earlier
 ones.
 
-Current state: most in-repo roadmap items now have either a landed
-primitive, a documented decision, or a deliberate scaffold. The next
-work should be fewer, deeper tracks rather than more numbered tasks.
+Current state: the roadmap is triaged, but not empty. Most in-repo
+items now have either landed code, a documented decision, or a
+deliberate scaffold. The next work should be fewer, deeper tracks
+rather than more numbered tasks.
 
 ### Track 1. Finish Remaining In-Repo Work
 
 Do this before starting the new candidate programmes:
 
-1. **R19** -- wire `SnapshotStore` to `SnapshotBackend`.
-2. **R21 + R41** -- run the first full mutation sweep and publish the
+1. **R49 + R52** -- finish the remaining oversized-module splits:
+   `cli/cmd_run.py`, `reporting/daily_ops/builder.py` and
+   `core/data_layer.py`. R50 and R51 are already structurally closed.
+2. **R34 + R45** -- finish the two codebase-wide sweeps: audit-log
+   rotation wiring and timezone helper adoption.
+3. **R39 + R140** -- surface the graveyard in CLI/dashboard and connect
+   lifecycle SLA decisions to the auto-research loop.
+4. **R21 + R41** -- run the first full mutation sweep and publish the
    report.
-3. **R31** -- turn the docs-hosting decision into the actual publish
-   workflow.
-4. **R49 + R50 + R51 + R52** -- split the oversized modules without
-   changing behaviour.
-5. **R23** -- execute the AURORA rename only after the above are stable
-   and the env-var migration plan is ready to apply.
+5. **R48** -- make the operator decision for `experimental/`: keep,
+   archive or delete each speculative module.
+6. **R65** -- decide whether an external coverage dashboard is worth
+   the extra service dependency.
 
 Why first: these are the remaining local cleanup / structure tasks.
 They reduce future risk and avoid burying unfinished core work under
@@ -616,8 +687,9 @@ another layer of features.
 
 ### Track 2. Strategic Programmes To Promote Next
 
-Promote these only after a pruning pass or after one of the remaining
-tracks above is closed:
+Promote these only after the Track 1 list is reduced again. Some code
+slices already exist, but the programmes should not be marked complete
+until their acceptance bars are explicitly checked:
 
 1. **Candidate C -- Data integrity programme.** Data contract,
    point-in-time / bitemporal availability, Security Master, corporate
@@ -637,7 +709,7 @@ tracks above is closed:
    requirements, implementation difficulty, validation risk and
    benchmark / graveyard status.
 6. **Candidate D -- Strategy risk register.** Model-risk record,
-   maker-checker approvals, lifecycle states and live-promotion
+   single-operator approval, lifecycle states and live-promotion
    refusal when evidence is stale.
 7. **Candidate G -- Agentic research support.** QuantAgent-style
    multi-agent analysis, source-required reasoning, explanation packs
@@ -811,8 +883,9 @@ The remaining work is CI policy and optional broader cleanup:
 The follow-up landed:
 
 - `pyproject.toml` `[tool.ruff.lint]` ignore list adds `N999` (the
-  repo top-level dir is `QuantForge`; renaming it is out of scope and
-  the package itself is `quantforge` via `package-dir` remapping).
+  repo top-level dir is still `QuantForge`; the package itself is now
+  `aurora` via `package-dir` remapping, with `quantforge` kept as a
+  compatibility shim).
 - `.github/workflows/lint.yml` now runs two jobs: `ruff-full`
   (permissive sweep over the whole repo, `continue-on-error: true`)
   and `ruff-strict` (curated post-v1.4 surface, hard-fails on any
@@ -862,9 +935,9 @@ as a side effect of `DataConfig` and `FeatureStore` constructors using
 that string as a hardcoded default. The empty top-level
 `quantforge/` directory it produced shadowed the real `quantforge`
 package on filesystems where Python's path resolution favoured the
-on-disk subdirectory over the installed package, breaking
-`python -m quantforge.cli.forge` and any subprocess test that imports
-`quantforge.cli`.
+on-disk subdirectory over the installed package, breaking the
+pre-rename `python -m quantforge.cli.forge` path and any subprocess
+test that imported `quantforge.cli`.
 
 Fix:
 
@@ -973,8 +1046,8 @@ Definition of done:
 - Tests green under the new import path.
 - Wheel build produces `aurora-X.Y.Z-py3-none-any.whl`.
 
-Risk: the rename touches everything. Do it AFTER the open R19 and R16
-follow-ups so a rename rollback is not entangled with semantic fixes.
+Risk note retained for history: the rename touched almost everything,
+so future namespace cleanup should remain isolated from semantic fixes.
 
 ### R24. Decide policy on `AGENTS.md` and `.claude/`
 
@@ -1026,7 +1099,9 @@ Cite each commit hash for traceability.
 
 ### R28. Set the canonical repository URL
 
-Status: placeholder set in 2026-05-08 batch (commit `678e0cb`); awaiting real URL after R23 AURORA rename
+Status: placeholder set in 2026-05-08 batch (commit `678e0cb`);
+R23 rename is complete, but the real canonical repository URL is still
+an operator decision.
 Priority: low
 Effort: 5 minutes once decided
 Area: docs / packaging
@@ -1124,7 +1199,7 @@ Follow-up:
 
 ### R34. Audit log rotation policy
 
-Status: primitive landed in 2026-05-08 batch (commit `678e0cb`); per-writer wiring still pending
+Status: completed 2026-05-10. Per-writer wiring landed: `compliance/soc2_audit.py`, `agent_gateway/audit.py`, `governance/approvals.py`, `research/auto_loop/loop.py`, `research/factory/factory.py`, `research/ledger.py`, `core/witness.py` all route appends through `aurora.core.audit_rotation.append_with_rotation` with `RotationPolicy.from_env()` honour for `AU_AUDIT_ROTATE_*` env vars. Hash chain preserved via `prior_chain_hash` rotation_anchor rows. Tests: `tests/test_audit_rotation.py` + `tests/test_audit_rotation_wiring.py` (5 tests).
 Priority: medium-low
 Effort: 1 to 2 days
 Area: ops / compliance
@@ -1167,12 +1242,13 @@ Area: ops / data provenance
 Suggested paths: `docs/DISASTER_RECOVERY.md`, helper CLI under
 `cli/forge.py`
 
-R7 covered the backend interface; R19 will wire the store. Neither
-addresses what to do if `snapshots_index.sqlite` is corrupted or a
-parquet blob's hash no longer matches its declared `sha256`. Write
-the recovery runbook plus a `forge data repair` CLI helper that
-walks the blob directory, recomputes hashes, and rebuilds the index
-from blobs whose content matches their filename.
+R7 covered the backend interface and R19 wired successful freezes to
+the backend mirror path. Neither addresses what to do if
+`snapshots_index.sqlite` is corrupted or a parquet blob's hash no
+longer matches its declared `sha256`. Write the recovery runbook plus
+a `forge data repair` CLI helper that walks the blob directory,
+recomputes hashes, and rebuilds the index from blobs whose content
+matches their filename.
 
 ### R37. Daily Ops Report delivery recipe
 
@@ -1204,7 +1280,7 @@ gets retained (spec + final report + audit hash) vs garbage-collected
 
 ### R39. Strategy graveyard page / CLI
 
-Status: primitive landed in 2026-05-08 batch 11; evidence: `research/graveyard.py` (`read_graveyard`, `filter_graveyard`, `format_table`). Standalone primitive deliberately separate from `cli/forge.py` (3583 lines) so the read path is testable; `forge research graveyard` CLI subcommand wiring is the small follow-up.
+Status: completed 2026-05-10. CLI subcommands shipped under `forge research graveyard`: `list` / `show <strategy_id>` / `filter --reason --asset-class --since`. JSON output deterministic (sort_keys + sorted entries). Optional dashboard tile added in `reporting/daily_ops/_sections_meta.py::_section_graveyard` (opt-in via `DailyOpsConfig.include_graveyard=True`). Tests: `tests/test_cli_graveyard.py` (10 tests).
 Priority: low
 Effort: 2 days
 Area: research / observability
@@ -1287,7 +1363,7 @@ factory verifies, and the audit chain records the signing identity.
 
 ### R45. Timezone handling audit
 
-Status: helper landed in 2026-05-08 batch; existing-module sweep still pending. Evidence: `core/timezone.py` + `tests/test_timezone.py`.
+Status: completed 2026-05-10. Sweep migrated 43 ad-hoc tz idioms across 17 production files (agent_gateway/{gateway,tokens}, triage/engine, research/factory/{factory,outcomes}, core/{data_providers/*,data_layer,snapshots,realtime}, deployment/preflight, marketdata/{taq_reconstruction,auction_imbalance,dark_pool_prints}). Helper extended with `to_utc(Timestamp|Series)`, `to_utc_naive`, `utc_now_naive`, `ensure_utc`. Tests: `tests/test_timezone.py` + `tests/test_tz_helper_adoption.py` (13 tests).
 Priority: medium
 Effort: 1 week
 Area: data / engine
@@ -1372,7 +1448,11 @@ Definition of done:
 
 ### R49. Split `cli/forge.py` (3583 lines)
 
-Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records the 7-module target layout (`_shared.py`, `cmd_run.py`, `cmd_data.py`, `cmd_crypto.py`, `cmd_policy.py`, `cmd_research.py`, `cmd_audit.py`, `cmd_agent.py`, `cmd_ops.py`, `cmd_export.py`) plus per-subcommand boundary discipline (`register(subparsers)` per module). Execution is mechanical refactor; one human PR per module group.
+Status: completed 2026-05-10. `cli/cmd_run.py` (1239 lines) split into
+71-line shim re-exporting from 4 sibling modules:
+`_cmd_run_analytical.py` (196), `_cmd_run_research.py` (503),
+`_cmd_run_misc.py` (145), `_cmd_run_register.py` (313). Public surface
+preserved at `aurora.cli.cmd_run`. All `cli/cmd_*.py` now ≤800 lines.
 Priority: medium
 Effort: 3 to 5 days
 Area: refactor
@@ -1391,7 +1471,13 @@ Definition of done:
 
 ### R50. Split `deployment/brokers.py` (1866 lines)
 
-Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records target package layout (`base.py`, `paper.py`, `alpaca.py`, `ib.py`, `coinbase.py`, `kraken.py`, `lumibot.py`) and acceptance criteria. Mechanical refactor; per-broker test files already exist.
+Status: completed structurally. `deployment/brokers.py` has been
+replaced by the `deployment/brokers/` package with per-broker modules
+and a public re-export surface. `deployment/brokers/base.py` is now 772
+lines, below the project limit. Verification on 2026-05-09: ruff
+passed, fast suite passed, package build passed, and wheel imports
+passed. Future broker work belongs under R4 / Candidate A, not this
+mechanical split.
 Priority: medium
 Effort: 2 to 3 days
 Area: refactor
@@ -1403,7 +1489,12 @@ re-exports the public surface. Tests already partition by broker.
 
 ### R51. Split `reporting/tearsheet.py` (1313 lines)
 
-Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records target package layout by section (header, metrics_table, equity, drawdown, factor, attribution, styles). Public `render()` entry point preserved; PDF renderer (R84) flows through unchanged.
+Status: completed structurally. `reporting/tearsheet.py` has been
+replaced by the `reporting/tearsheet/` package split by report section,
+with the public render surface preserved. Verification on 2026-05-09:
+ruff passed, fast suite passed, package build passed, and wheel imports
+passed. Future reporting features belong to the reporting candidates,
+not this mechanical split.
 Priority: low
 Effort: 2 days
 Area: refactor
@@ -1414,18 +1505,22 @@ point; new internal modules do the rendering.
 
 ### R52. Split remaining oversized modules
 
-Status: plan locked in 2026-05-08 batch 17; evidence: `docs/FILE_SPLIT_PLAN.md` records the 5 residual files (`reporting/daily_ops/builder.py`, `analytics/metrics_full.py`, `core/data_layer.py`, `research/factory/factory.py`, `deployment/preflight.py`) plus per-file split target. Mechanical refactor; one commit per file.
+Status: completed 2026-05-10. Splits landed:
+`reporting/daily_ops/builder.py` 994 → 166-line module composing existing
+`_PerfPanelsMixin` / `_MetaPanelsMixin` / `_AlertChecksMixin`.
+`core/data_layer.py` 933 → 67-line shim + `_data_layer_constants.py` (114),
+`_data_layer_oos_guard.py` (272), `_data_layer_loaders.py` (265). Earlier:
+`analytics/metrics_full.py` → package, `research/factory/factory.py` →
+package (split landed 2026-05-10), `deployment/preflight.py` → package.
+Public surfaces preserved. All production files now ≤800 lines.
 Priority: low
 Effort: 1 day per file
 Area: refactor
 
-Files still over 800 lines after R49 / R50 / R51:
+Production files still over 800 lines after the partial split:
 
-- `reporting/daily_ops/builder.py` (994).
-- `analytics/metrics_full.py` (924).
-- `core/data_layer.py` (925).
-- `research/factory/factory.py` (882).
-- `deployment/preflight.py` (822).
+- `reporting/daily_ops/builder.py` (900).
+- `core/data_layer.py` (841).
 
 One commit per split. Keep behaviour identical. No bundling with
 semantic changes.
@@ -1655,8 +1750,8 @@ Suggested paths: `.github/workflows/typecheck.yml`,
 verification now passes with no errors across 410 source files. Add a
 blocking `typecheck` job that runs the same command used locally
 (respecting the flat Layout B package structure; do not use
-`python -m mypy quantforge/`, because there is no package subdir in
-this layout).
+`python -m mypy quantforge/`, because the canonical package is now
+`aurora` and the repo still uses the flat Layout B source layout).
 
 ### R64. Coverage gate enforced in CI
 
@@ -2789,7 +2884,7 @@ strategy is not behaving like the backtest" early.
 
 ### R140. Strategy lifecycle SLA + auto-archive
 
-Status: scaffold landed in 2026-05-08 batch; auto-loop integration still pending. Evidence: `research/lifecycle.py` + `tests/test_lifecycle_sla.py`. Defaults: 365-day initial lifetime, 90-day re-validation cadence, 730-day hard ceiling.
+Status: completed 2026-05-10. Auto-loop integration: `research/auto_loop/loop.py::AutoResearchLoop.run_cycle()` runs `_evaluate_slas()` at step 0. Default action: archives expired strategies via `lifecycle.archive(sla)`. Opt-in via `AU_LIFECYCLE_REVALIDATE_ON_EXPIRY=1`: queue for revalidation instead. `CycleSummary` now reports `sla_evaluated`, `sla_archived`, `sla_revalidate_queued`. Tests: `tests/test_lifecycle_sla.py` + `tests/test_lifecycle_sla_auto_loop.py` (5 tests).
 Priority: medium
 Effort: 1 to 2 weeks
 Area: lifecycle
@@ -2981,6 +3076,2333 @@ common-cause analysis: are they all long the same regime? Same
 factor exposure? Same data dependency? Output a single-page
 "common cause" report with the suspected shared driver.
 
+### R155. Free bulk daily market-data programme
+
+Status: scaffold + tests landed 2026-05-10. Provider connectors implemented under `core/data_providers/` with mock-friendly injectable HTTP clients (no live network in tests): `finance_database_universe.py`, `nasdaq_trader_universe.py`, `stooq_daily.py`, `yfinance_daily.py`, `yahooquery_daily.py`, `binance_public_data_daily.py`, `coingecko_daily.py`, `ccxt_daily.py`, `fred_daily.py`, `akshare_experimental_daily.py`, `fallback_chain.py`, `_free_bulk_common.py`. `ProviderRole` enum + `ProviderDescriptor` extend `DataProviderRegistry`. CLI subcommands: `aurora data universe fetch/diff`, `aurora data backfill daily`, `aurora data provider-status`, `aurora data coverage-report`. Storage via `data_contracts/timeseries_store` libraries `universe`/`prices_daily`/`crypto_daily`/`macro_daily`/`experimental_daily`. AKShare gated behind `AU_ENABLE_AKSHARE=1`. Tests: `tests/test_data_providers_free_bulk.py` (27 tests). Live network ops + per-provider hardening (auth flows, rate-limit calibration, vendor terms review) remain operator follow-up.
+Priority: high
+Effort: 2 to 4 weeks for first usable version; longer for full
+provider hardening
+Area: data / ingestion / provider registry
+Source: 2026-05-09 provider review; checked against public docs,
+GitHub repositories and live endpoint probes
+Suggested paths: `core/data_providers/`, `data_contracts/`,
+`cli/cmd_data.py`, `tests/test_data_providers_free_bulk.py`
+
+Goal: give AURORA the largest practical free daily-market-data surface
+without pretending that free data is institutional quality. The system
+should maximise ticker coverage, but every downloaded dataset must pass
+contracts, provenance, calendar checks and source-specific warnings
+before it can feed backtests, GA, validation or research factory jobs.
+
+Provider policy:
+
+- Use `FinanceDatabase` as the broad global symbol universe source. It
+  provides a large catalogue of equities, ETFs, funds, indices,
+  currencies, cryptocurrencies and money-market symbols, but it is not
+  a price source.
+- Use `Nasdaq Trader` as the official current US listed-symbol source.
+  It is useful for NASDAQ / NYSE / NYSE American style universe
+  construction and for cross-checking active US symbols.
+- Use `Stooq` as the preferred free daily OHLCV price source for broad
+  public-market coverage where available. Live probing showed that some
+  CSV download paths now require an API key / CAPTCHA flow, so the
+  implementation must support a configured key and must fail with a
+  clear operator message when unauthenticated downloads are blocked.
+- Use `yfinance` / `yahooquery` only as fallback global providers.
+  They are useful because Yahoo coverage is broad, but the interface is
+  unofficial, fragile and suitable for personal / research use rather
+  than production truth.
+- Use `Binance Public Data` as the primary free crypto OHLCV source for
+  Binance spot and futures. Prefer official ZIP archives for historical
+  backfills and verify symbol / interval / checksum where available.
+- Use `CoinGecko` for broad crypto universe metadata and non-Binance
+  crypto coverage. Respect free-plan limits and record rate-limit /
+  freshness warnings in provenance.
+- Use `CCXT` as the optional multi-exchange crypto adapter for OHLCV
+  where public exchange APIs permit it. Treat exchange-specific gaps,
+  symbol formats and rate limits as first-class provider metadata.
+- Use `FRED` for macro, rates, yields and economic series. These are
+  not ticker prices, but they are important context features for
+  strategy filters, regimes and risk reports.
+- Use `AKShare` as an experimental Asia / China provider. It is useful
+  for extra coverage, but should stay behind an explicit experimental
+  provider flag until stability, licensing, data semantics and tests are
+  reviewed.
+
+Do not use these as the bulk free base:
+
+- `Alpha Vantage` free tier: too few requests for large-scale daily
+  ticker backfills.
+- `EODHD` free tier: too few calls and too little free history for this
+  goal.
+- `Financial Modeling Prep` free tier: useful for small tests, not for
+  mass historical ingestion.
+- `Marketstack` free tier: too limited for the target use case.
+- `OpenBB`: useful as a future integration layer, but not itself a
+  free bulk historical-data source.
+
+Implementation plan for another AI agent:
+
+1. Add a `FreeBulkProviderRegistry` or extend the existing
+   `DataProviderRegistry` with explicit provider roles: universe
+   source, price source, crypto source, macro source and experimental
+   source.
+2. Add provider descriptors with licence / terms notes, rate-limit
+   notes, auth requirements, supported asset classes, supported
+   intervals, adjustment posture and reliability warning level.
+3. Implement universe downloaders first:
+   `finance_database_universe` and `nasdaq_trader_universe`.
+   Output a normalised symbol table with provider symbol, canonical
+   symbol, exchange, asset class, currency where available, active flag
+   and source timestamp.
+4. Implement daily OHLCV backfill providers in this order:
+   `stooq_daily`, `yfinance_daily`, `yahooquery_daily`. Stooq should be
+   tried first; Yahoo providers fill missing symbols and must mark
+   themselves as unofficial fallback evidence.
+5. Implement crypto providers:
+   `binance_public_data_daily` for official ZIP archive backfills,
+   `coingecko_daily` for broad crypto series / metadata, and
+   `ccxt_daily` for optional exchange-specific OHLCV.
+6. Implement `fred_daily` for macro / rates / yield series. Keep macro
+   identifiers separate from tradeable tickers so strategies do not
+   confuse context series with assets that can be bought.
+7. Add `akshare_experimental_daily` behind an explicit opt-in flag such
+   as `--experimental-provider akshare`; never include it silently in
+   default production datasets.
+8. Store raw downloads, normalised bars and provenance separately.
+   Provenance must include provider name, provider URL / endpoint,
+   retrieved_at, source timestamp if available, auth mode, provider
+   version / package version, query parameters, row count, date range,
+   symbol count and data-contract hash.
+9. Run Candidate C data contracts before any snapshot is approved:
+   required columns, monotonic dates, duplicate rows, zero / negative
+   prices, impossible returns, missing bars, timezone policy, adjustment
+   posture and calendar gaps.
+10. Add provider fallback logic that records exactly what happened:
+    source selected, sources rejected, missing symbols, symbols
+    substituted, data differences and warnings. Never silently merge
+    conflicting bars from multiple providers.
+11. Add CLI commands:
+    `aurora data universe fetch`,
+    `aurora data universe diff`,
+    `aurora data backfill daily`,
+    `aurora data provider-status`,
+    `aurora data coverage-report`.
+12. Add a coverage report that answers in plain terms: how many
+    symbols were requested, how many were found, how many have usable
+    daily history, date-range coverage, provider split, failure reasons
+    and warnings.
+
+Acceptance criteria:
+
+- AURORA can build a free global candidate universe from
+  FinanceDatabase plus US-listed symbols from Nasdaq Trader.
+- AURORA can backfill daily bars from Stooq where configured /
+  available, then fallback to Yahoo-based providers with clear
+  unofficial-source warnings.
+- AURORA can ingest Binance daily crypto archives and FRED macro daily
+  series through the same provenance and contract path.
+- Every provider output is normalised into the same daily-bar schema:
+  symbol, date, open, high, low, close, volume, currency where known,
+  provider, adjusted/raw posture and retrieval metadata.
+- No provider can write an approved snapshot unless the data contract
+  passes or an audited operator exception is recorded.
+- Tests use local fixtures and mocked HTTP responses. They must not
+  depend on live network availability.
+- Tests cover Stooq auth-required response, Nasdaq Trader symbol file,
+  Yahoo fallback warning, Binance ZIP parsing, FRED macro series,
+  duplicate dates, impossible prices, missing bars, provider mismatch
+  and coverage-report counts.
+
+Risk notes:
+
+- Free data maximises coverage, not correctness. The whole point of
+  this item is to get many symbols cheaply while making data weakness
+  visible.
+- Stooq is the best free bulk candidate, but automation can require an
+  API key / CAPTCHA-derived download link. Treat that as an operator
+  setup requirement, not a bug.
+- Yahoo-based sources are broad but unofficial. They are acceptable for
+  research fallback, not as silent production truth.
+- Crypto coverage should prefer official exchange archives when
+  possible because generic exchange APIs can revise, limit or throttle
+  history.
+- This item depends heavily on Candidate C. If the data-contract gate
+  is weak, R155 will simply download bad evidence faster.
+
+### R156. Complementary free provider programme
+
+Status: completed 2026-05-10. All 8 providers shipped under `core/data_providers/`: openfigi_mapper.py, sec_edgar_companyfacts.py, dbnomics_macro.py, ecb_data_portal.py, coinmetrics_community.py, tiingo_daily.py (env-gated), dukascopy_fx_history.py (env-gated), marketdata_app_limited.py (env-gated). Eight new ProviderRole entries: IDENTITY_MAPPING, FUNDAMENTALS, MACRO_MULTI_SOURCE, CRYPTO_METRICS, FX_REFERENCE, OPTIONAL_PRICE_FALLBACK, FX_TICK_RESEARCH, OPTIONS_LIMITED. Default registry registers all eight as deferred scaffold stubs so `aurora data provider-status --include-complementary` lists them. CLI subcommands: `aurora data identity map`, `data fundamentals fetch`, `data macro search`, `data macro fetch`, `data crypto-metrics fetch`. SEC EDGAR carries point-in-time gate via `assert_pit_safe`/`filter_pit_safe`. Coin Metrics provenance always carries `community_non_commercial_licence` warning unless `AU_COINMETRICS_LICENCE_OVERRIDE=1`. Tests: `tests/test_openfigi_mapper.py` (12), `tests/test_sec_edgar_companyfacts.py` (16), `tests/test_dbnomics_macro.py` (10), `tests/test_ecb_data_portal.py` (10), `tests/test_coinmetrics_community.py` (9), `tests/test_tiingo_daily.py` (9), `tests/test_dukascopy_fx_history.py` (6), `tests/test_marketdata_app_limited.py` (9), `tests/test_cli_data_r156.py` (10) — 91 new tests, all green. Live network operations + per-provider hardening (auth flows, real .bi5 LZMA decompression for Dukascopy, vendor-terms review) remain operator follow-up.
+Priority: high for SEC EDGAR / OpenFIGI / DBnomics / Coin Metrics;
+medium for ECB / Tiingo; low-deferred for Dukascopy / MarketData.app
+Effort: 2 to 4 weeks for the first four providers; 1 to 2 extra weeks
+for the optional providers
+Area: data / identity / fundamentals / macro / crypto / FX
+Source: 2026-05-10 provider review; checked against public docs and
+provider terms / limits where available
+Suggested paths: `core/data_providers/`, `data_contracts/`,
+`marketdata/`, `altdata/`, `cli/cmd_data.py`,
+`tests/test_data_providers_complementary.py`
+
+Goal: extend R155 with free providers that add missing evidence, not
+just more OHLCV. R155 covers broad daily prices, universes, crypto
+OHLCV and FRED macro. R156 should add official fundamentals, reliable
+identifier mapping, wider macro, better crypto metrics and optional
+FX/tick research data. Do not duplicate R155 with another pile of
+thin price wrappers.
+
+Providers to add:
+
+- `sec_edgar_companyfacts`: official SEC EDGAR provider for U.S.
+  company facts, XBRL concepts, submissions metadata and CIK / ticker
+  mapping. Use the nightly bulk archives where possible:
+  `companyfacts.zip` and `submissions.zip`. This is fundamentals and
+  filings evidence, not OHLCV.
+- `openfigi_mapper`: free identifier-mapping provider for FIGI, ticker,
+  ISIN, CUSIP, SEDOL, exchange code and related metadata. This belongs
+  in the Security Master / instrument identity layer, not the price
+  layer.
+- `dbnomics_macro`: free macro provider aggregating many public
+  statistical sources. Use it as a broader macro complement to FRED.
+  Preserve original provider, dataset code, series code and licence in
+  provenance because DBnomics redistributes upstream data.
+- `coinmetrics_community`: crypto metrics provider using the Community
+  API. Treat it as non-commercial / community-licensed evidence for
+  crypto network metrics, asset reference data and selected market
+  data. It complements Binance and CoinGecko; it does not replace
+  exchange-grade OHLCV.
+- `ecb_data_portal`: official ECB provider for euro-area macro,
+  interest rates and EUR FX reference rates through the ECB Data Portal
+  / SDMX API. Add after DBnomics unless a strategy specifically needs
+  ECB-native series.
+- `tiingo_daily`: optional EOD fallback provider requiring an operator
+  API token. Use for daily equities / ETFs / mutual funds / crypto
+  where available. Do not make it a default bulk provider until free
+  limits and terms are calibrated.
+- `dukascopy_fx_history`: optional FX / tick / bars provider. Useful
+  for intraday FX research, execution simulation and tick-derived bars.
+  Defer if the current product focus remains daily equities.
+- `marketdata_app_limited`: optional small-scope provider for delayed
+  stocks / options with a free credit budget and one-year history. Use
+  only for options experiments or smoke tests, not for mass ingestion.
+
+Do not add as new providers for now:
+
+- `Alpha Vantage`: 25 requests / day free tier is too small for
+  AURORA's provider goals. Keep it out unless a future item wants a
+  toy/demo provider.
+- `EODHD free`: 20 requests / day and one-year free history are too
+  limited for bulk research.
+- `Financial Modeling Prep free`: useful for small demos, but not a
+  strong free bulk source.
+- `Marketstack`: broad marketing coverage, but the free plan is too
+  small for AURORA's use case.
+- `Twelve Data free`, `Polygon free`, `Finnhub free`: potentially
+  useful for narrow experiments, but not better than the current R155
+  stack plus R156 priorities.
+- `Nasdaq Data Link`: keep as a reference / paid or mixed-free dataset
+  discovery surface, not a default free provider.
+- `Kaggle`: useful for manual experiments, not a reproducible provider
+  unless a specific dataset licence and version pin are reviewed.
+
+Implementation order:
+
+1. Implement `openfigi_mapper` first because it improves every other
+   provider by making symbols less ambiguous. Add bulk mapping,
+   warning-vs-error handling, optional API key, rate-limit metadata and
+   Security Master integration.
+2. Implement `sec_edgar_companyfacts` second. Start with ticker/CIK
+   mapping, submissions metadata and companyfacts bulk ZIP ingestion.
+   Store facts with filing date, period, form, accession number,
+   taxonomy tag, unit, value, frame and source URL.
+3. Implement `dbnomics_macro` third. It should expose provider /
+   dataset / series discovery plus series fetch. Store upstream
+   provider and licence in provenance.
+4. Implement `coinmetrics_community` fourth. Add asset discovery,
+   reference-data fetch and selected community metrics. Store usage
+   as community / non-commercial unless legal review says otherwise.
+5. Implement `ecb_data_portal` after DBnomics if native ECB series
+   are needed. Focus on EUR FX reference rates and policy / money
+   market series first.
+6. Implement `tiingo_daily` only after the default free stack is
+   stable. Require `AU_TIINGO_API_TOKEN`; never silently assume a token
+   exists.
+7. Defer `dukascopy_fx_history` until AURORA has a clear FX / intraday
+   testing need. If implemented, keep it out of daily-equity default
+   workflows.
+8. Defer `marketdata_app_limited` until options workflows need a cheap
+   delayed-data smoke provider.
+
+Data model requirements:
+
+- Add provider roles if needed:
+  `IDENTITY_MAPPING`, `FUNDAMENTALS`, `MACRO_MULTI_SOURCE`,
+  `CRYPTO_METRICS`, `FX_REFERENCE`, `OPTIONAL_PRICE_FALLBACK`,
+  `FX_TICK_RESEARCH`, `OPTIONS_LIMITED`.
+- Every provider descriptor must include free-tier posture, auth
+  requirement, rate-limit notes, licence / terms URL, default enabled
+  flag and whether the provider may be used for production evidence.
+- All outputs must carry provenance: provider, endpoint / URL, query
+  params, retrieved_at, source timestamp, package version if any,
+  licence note, auth mode, row count, date range and source-specific
+  identifiers.
+- SEC facts must be point-in-time aware. Strategies cannot use a fact
+  before its filing / accepted / available timestamp.
+- OpenFIGI mappings must preserve ambiguity: if multiple mappings are
+  returned, store all candidates or require an explicit exchange /
+  market filter. Never silently pick the first match.
+- DBnomics and ECB series must be marked macro/context, not tradeable
+  assets.
+- Coin Metrics data must be labelled community / non-commercial unless
+  operator configuration explicitly allows a different licence posture.
+
+CLI additions:
+
+- `aurora data identity map --source openfigi --symbol AAPL --exchange US`
+- `aurora data fundamentals fetch --source sec-edgar --ticker AAPL`
+- `aurora data macro search --source dbnomics --query inflation`
+- `aurora data macro fetch --source ecb --series <series-key>`
+- `aurora data crypto-metrics fetch --source coinmetrics --asset btc`
+- `aurora data provider-status --include-complementary`
+
+Acceptance criteria:
+
+- OpenFIGI maps at least ticker + exchange to one or more candidate
+  identifiers and preserves warnings / no-match responses.
+- SEC EDGAR ingests ticker/CIK mapping and at least one companyfacts
+  fixture with point-in-time metadata.
+- DBnomics ingests one macro fixture with provider / dataset / series
+  provenance.
+- Coin Metrics ingests one asset reference fixture and one metrics
+  fixture, with community licence warning.
+- ECB ingests one EUR FX reference-rate fixture or SDMX fixture.
+- Tiingo, Dukascopy and MarketData.app are either implemented behind
+  explicit env-gated optional providers or left as documented deferred
+  sub-items.
+- No tests make live network calls. Use local fixtures and injected
+  HTTP clients.
+- Provider status clearly separates R155 bulk providers from R156
+  complementary providers.
+- Documentation explains in plain language what each source is good
+  for and what it must not be used for.
+
+Risk notes:
+
+- More providers can make AURORA less trustworthy if they create silent
+  conflicts. Add source comparison and warnings, not blind merging.
+- SEC data is official but not simple. Facts can be amended, tagged
+  inconsistently or reported under different units. Treat parsing as a
+  data-contract problem.
+- Identifier mapping is not truth by itself. OpenFIGI improves symbol
+  hygiene, but exchange, currency, listing window and corporate actions
+  still matter.
+- Free crypto community data may be unsuitable for commercial use. Keep
+  licence flags visible.
+- Tiingo may be useful, but requiring a token means it should be an
+  operator-configured fallback, not a default assumption.
+- Dukascopy is valuable for FX / tick research, but adding it before
+  AURORA needs intraday FX would create complexity without immediate
+  payoff. Classic trap: more machinery, same coffee.
+
+### R157. First real data ingestion and approved snapshot
+
+Status: completed 2026-05-10. Manifest-driven first-dataset
+orchestrator (`core/data_providers/first_dataset/` package: `_manifest`,
+`_results`, `_walker`, `_persist`, `_freeze`, `_adapters`, `__init__`;
+all ≤285 lines), contract-gated TimeSeriesStore persistence, and at
+least one approved SnapshotStore freeze, all covered by 17 unit
+tests with no live network.
+Priority: high
+Effort: 3 to 5 days for a small audited dataset; longer only if live
+provider limits / auth flows fight back
+Area: data / ingestion / snapshots / validation / reproducibility
+Source: 2026-05-10 post-R155/R156 review. AURORA has provider
+connectors, but local runtime inspection found zero approved snapshots
+and no persisted OHLCV dataset.
+Suggested paths: `cli/cmd_data.py`, `core/data_providers/`,
+`data_contracts/timeseries_store.py`, `data_contracts/validator.py`,
+`core/snapshots.py`, `tests/test_first_real_ingestion.py`,
+`docs/FIRST_DATASET.md`
+
+Why it matters: R155 and R156 prove AURORA can talk to many free
+providers in a testable way. They do not prove AURORA has any real
+local market history. The current runtime truth is still: no approved
+snapshots, no persisted daily OHLCV cache, and only test / research
+symbols such as `SPY`, `SPY_SYN` and `XYZ` appearing in logs. R157 is
+the bridge from "provider layer exists" to "AURORA has fuel".
+
+Scope decision:
+
+- Start deliberately small. Do not attempt a global bulk download in
+  this item.
+- Use a canonical seed universe that exercises multiple provider roles
+  without creating data sprawl.
+- Prefer official / primary providers first, then fallbacks with loud
+  provenance warnings.
+- Persist data before using it. Printing fetched rows to the terminal
+  is not a dataset.
+- The first dataset is an operational smoke dataset, not production
+  research truth.
+
+Canonical seed universe:
+
+- US ETFs / equities daily prices:
+  `SPY`, `QQQ`, `DIA`, `IWM`, `TLT`, `GLD`, `AAPL`, `MSFT`.
+- Crypto daily prices:
+  `BTCUSDT`, `ETHUSDT` from Binance Public Data.
+- Macro / rates context:
+  `DGS10`, `T10Y2Y`, `UNRATE` from FRED if available through the
+  configured macro provider; otherwise use one DBnomics or ECB fixture
+  only after recording the fallback.
+- Identity / fundamentals:
+  OpenFIGI mapping for `SPY`, `AAPL`, `MSFT`; SEC EDGAR company facts
+  for `AAPL` and `MSFT`.
+
+Provider order:
+
+1. For daily ETF/equity prices, try `stooq` first if configured and not
+   blocked by API-key / CAPTCHA requirements.
+2. If Stooq is blocked, use `yfinance_daily` or `yahooquery_daily` as
+   fallback and mark the data as unofficial / community reliability.
+3. For crypto, use `binance_public_data` first. Do not use CoinGecko
+   as the primary OHLCV source for BTC/ETH if Binance archive data is
+   available.
+4. For macro, use `fred_macro` first for U.S. series. Use `dbnomics`
+   or `ecb_data_portal` only as a clearly labelled macro-context
+   fallback or complement.
+5. For identity, use `openfigi_mapper`. Preserve ambiguity; do not
+   silently select the first mapping if multiple instruments match.
+6. For fundamentals, use `sec_edgar_companyfacts` with point-in-time
+   metadata. Do not allow facts to be read before their available time.
+
+Implementation steps:
+
+1. Add a first-dataset manifest format, for example
+   `config/first_dataset.yaml`, containing symbols, provider order,
+   start/end date, frequency, asset class, expected storage library and
+   whether fallbacks are allowed.
+2. Add a CLI command such as:
+   `aurora data bootstrap-first-dataset --manifest config/first_dataset.yaml`.
+3. The command must fetch raw provider output, normalise it, validate it
+   with data contracts, then write it to `timeseries_store` libraries:
+   `prices_daily`, `crypto_daily`, `macro_daily`, `identity`,
+   `fundamentals`.
+4. Store raw-response metadata and normalised rows separately enough
+   that provenance can answer: provider, URL / endpoint, retrieved_at,
+   source timestamp, query params, auth mode, package version, row
+   count, date range, warning flags and data-contract hash.
+5. Add a coverage report:
+   symbols requested, symbols fetched, symbols failed, provider used,
+   fallback used, rows per symbol, date coverage, missing bars and
+   warnings.
+6. Freeze at least one approved snapshot from persisted local data,
+   not from an ad-hoc network call. The snapshot index must move from
+   zero rows to at least one row in a controlled test / local run.
+7. Add a minimal strategy smoke run that loads `SPY` from the local
+   persisted dataset and runs a simple moving-average or buy-and-hold
+   backtest without calling any live provider.
+8. Add `docs/FIRST_DATASET.md` explaining how to bootstrap, verify,
+   inspect and delete / rebuild the first dataset.
+
+Acceptance criteria:
+
+- `aurora data provider-status --include-complementary` lists the
+  providers needed for the first dataset and reports missing auth /
+  env-gated providers clearly.
+- The first-dataset command can run in dry-run mode and show exactly
+  what it would fetch without writing data.
+- The first-dataset command can run with mocked providers in tests and
+  write deterministic rows into `timeseries_store`.
+- The persisted dataset includes at least:
+  one ETF/equity daily series, one crypto daily series, one macro
+  series, one OpenFIGI identity mapping and one SEC EDGAR facts record.
+- Data-contract validation runs before persistence is marked approved.
+- No approved snapshot is created if prices contain duplicate dates,
+  non-monotonic dates, zero / negative prices, impossible OHLC order,
+  missing required fields or missing provenance.
+- At least one approved snapshot is created from local persisted data
+  in a controlled test path.
+- A strategy smoke test proves AURORA can run from local persisted data
+  without hitting the network.
+- The coverage report explains failures in plain language.
+- Live-network tests are optional and marked integration. Unit tests
+  use fixtures / injected clients only.
+
+Suggested commands for the operator:
+
+```bash
+aurora data provider-status --include-complementary
+aurora data bootstrap-first-dataset --manifest config/first_dataset.yaml --dry-run
+aurora data bootstrap-first-dataset --manifest config/first_dataset.yaml
+aurora data coverage-report --dataset first
+aurora data freeze --dataset first --symbol SPY
+aurora run --symbol SPY --source snapshot --strategy ma_cross
+```
+
+Definition of done:
+
+- `snapshots_index.sqlite` has at least one approved local snapshot for
+  the first dataset after the operator command runs.
+- The first dataset can be inspected and rebuilt without manual file
+  surgery.
+- `ruff` passes.
+- Focused tests for R157 pass.
+- The fast suite passes or any unrelated known failures are documented
+  with exact file / test names.
+- Documentation states which data came from official sources, which
+  came from fallbacks, and which data is not production-grade.
+
+Out of scope:
+
+- Downloading every symbol from every provider.
+- Deciding paid provider strategy.
+- Running live trading from this dataset.
+- Treating Yahoo fallback data as institutional truth.
+- Solving all corporate actions and survivorship bias in one pass.
+
+Risk notes:
+
+- The danger is not failing to download data; the danger is downloading
+  data and trusting it too much. Keep warnings visible.
+- A tiny audited dataset is more valuable than a huge unverified one.
+- If Stooq requires API-key / CAPTCHA setup, do not block R157. Use a
+  labelled fallback and record the operator action needed for Stooq.
+- If external providers change response formats, fail closed and keep
+  the fixture-based tests deterministic.
+
+### R158. Diversified seed universe and first real persisted dataset
+
+Status: completed 2026-05-10. Diversified seed manifest with 10
+sections (133 symbols) covering broad US ETFs, sector ETFs, large
+caps, international ETFs, bonds, commodities, FX, crypto, macro and
+SEC fundamentals. Adds trust levels, symbol normalisation, FX
+section + `fx_daily` library, strict persistence gates, multi-symbol
+freeze and a `manifest-summary` CLI; 16 unit tests + 4 smoke research
+tests, all hermetic.
+Priority: high
+Effort: 3 to 7 days for the first usable version; longer only if live
+provider limits, symbol mapping or auth flows fight back
+Area: data / universe design / ingestion / validation / local evidence
+Source: 2026-05-10 operator request after verifying that R157 created
+the ingestion machinery but the local runtime still had zero persisted
+timeseries rows and zero approved snapshots.
+Suggested paths: `config/first_dataset.yaml`,
+`config/diversified_seed_dataset.yaml`,
+`core/data_providers/first_dataset/`, `cli/cmd_data.py`,
+`data_contracts/timeseries_store.py`, `data_contracts/validator.py`,
+`data_contracts/security_master.py`, `docs/FIRST_DATASET.md`,
+`tests/test_first_real_ingestion.py`
+
+Goal: turn R157 from a small smoke dataset into a genuinely useful
+free seed universe. The result should be broad enough to test market
+regimes, sector rotation, risk-off/risk-on behaviour, bonds,
+commodities, FX, crypto, macro filters and basic fundamentals, while
+remaining small enough that a human can inspect failures.
+
+Core design decision:
+
+- Do not start by downloading "everything". Start with a diversified
+  canonical universe of roughly 90 symbols / series.
+- Keep this as a seed universe, not as production truth.
+- Prefer boring, liquid and recognisable assets over exotic coverage.
+- Every symbol must declare its asset group, intended provider chain,
+  storage library, expected fields, fallback policy and trust warning.
+- The command must produce a local evidence report saying what was
+  actually downloaded. A manifest alone is not evidence.
+- AURORA must distinguish requested symbols from persisted symbols.
+  This is the main lesson from R157.
+
+Recommended manifest structure:
+
+```yaml
+name: diversified_seed
+start: "2015-01-01"
+end: null
+frequency: "1d"
+sections:
+  us_market:
+    library: prices_daily
+    symbols: [...]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  us_sectors:
+    library: prices_daily
+    symbols: [...]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  us_large_caps:
+    library: prices_daily
+    symbols: [...]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  international:
+    library: prices_daily
+    symbols: [...]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  bonds_rates_etfs:
+    library: prices_daily
+    symbols: [...]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  commodities:
+    library: prices_daily
+    symbols: [...]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  fx:
+    library: fx_daily
+    symbols: [...]
+    providers: [stooq, yahooquery_daily, dukascopy_fx_history]
+    allow_fallback: true
+    trust_level: reference_seed
+  crypto:
+    library: crypto_daily
+    symbols: [...]
+    providers: [binance_public_data, ccxt_daily, coingecko_daily]
+    allow_fallback: true
+    trust_level: research_seed
+  macro:
+    library: macro_daily
+    symbols: [...]
+    providers: [fred_macro, dbnomics_macro, ecb_data_portal]
+    allow_fallback: true
+    trust_level: context_seed
+  fundamentals:
+    library: fundamentals
+    symbols: [...]
+    providers: [sec_edgar_companyfacts]
+    allow_fallback: false
+    trust_level: official_pit
+```
+
+Canonical diversified seed universe:
+
+1. Broad US market ETFs:
+   `SPY`, `QQQ`, `DIA`, `IWM`, `VTI`, `RSP`.
+
+2. US sector ETFs:
+   `XLE`, `XLF`, `XLK`, `XLV`, `XLI`, `XLY`, `XLP`, `XLU`,
+   `XLB`, `XLRE`, `XLC`.
+
+3. US large caps:
+   `AAPL`, `MSFT`, `NVDA`, `AMZN`, `GOOGL`, `META`, `TSLA`,
+   `BRK-B`, `JPM`, `V`, `MA`, `UNH`, `LLY`, `XOM`, `CVX`,
+   `WMT`, `COST`, `HD`, `PG`, `KO`, `PEP`, `MCD`, `JNJ`,
+   `PFE`, `AVGO`, `AMD`, `NFLX`, `ADBE`, `CRM`, `ORCL`.
+
+4. International ETFs:
+   `EFA`, `EEM`, `VEA`, `VWO`, `EWJ`, `EWU`, `EWG`, `EWQ`,
+   `EWC`, `EWA`, `INDA`, `FXI`, `MCHI`, `EWZ`, `EWW`.
+
+5. Bonds and rates ETFs:
+   `TLT`, `IEF`, `SHY`, `BIL`, `HYG`, `LQD`, `TIP`, `AGG`,
+   `BND`.
+
+6. Commodities:
+   `GLD`, `SLV`, `USO`, `UNG`, `DBC`, `DBA`, `CPER`, `PPLT`,
+   `PALL`.
+
+7. FX references:
+   `EURUSD`, `GBPUSD`, `USDJPY`, `USDCHF`, `USDCAD`, `AUDUSD`,
+   `NZDUSD`, `DXY`.
+
+8. Crypto:
+   `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, `XRPUSDT`,
+   `ADAUSDT`, `DOGEUSDT`, `LINKUSDT`, `AVAXUSDT`, `DOTUSDT`.
+
+9. Macro / rates / risk context:
+   `DGS1`, `DGS2`, `DGS5`, `DGS10`, `DGS30`, `T10Y2Y`,
+   `T10Y3M`, `FEDFUNDS`, `SOFR`, `UNRATE`, `CPIAUCSL`,
+   `CORESTICKM159SFRBATL`, `PAYEMS`, `VIXCLS`, `BAMLH0A0HYM2`.
+
+10. SEC fundamentals:
+    `AAPL`, `MSFT`, `NVDA`, `AMZN`, `GOOGL`, `META`, `TSLA`,
+    `BRK-B`, `JPM`, `V`, `UNH`, `LLY`, `XOM`, `WMT`, `COST`,
+    `PG`, `JNJ`, `AVGO`, `AMD`, `NFLX`.
+
+Fundamental fields to attempt:
+
+- revenue
+- net_income
+- operating_income
+- free_cash_flow
+- total_assets
+- total_liabilities
+- shareholders_equity
+- shares_outstanding
+- eps
+- gross_margin
+- operating_margin
+- return_on_equity
+- debt_to_equity
+
+Implementation plan for another AI agent:
+
+1. Add `config/diversified_seed_dataset.yaml`.
+   Keep `config/first_dataset.yaml` as the tiny smoke manifest from
+   R157. Do not overwrite it unless the docs say both manifests are
+   intentionally merged.
+
+2. Extend the first-dataset manifest parser only if needed.
+   It must support:
+   section name, symbols, providers, library, allow_fallback, start,
+   end, frequency, trust_level, asset_group, expected_fields and
+   notes.
+
+3. Add a plain inspection command:
+   `aurora data manifest-summary --manifest config/diversified_seed_dataset.yaml`.
+   It should print requested symbols by section and total requested
+   count. This avoids confusing "planned" with "downloaded".
+
+4. Reuse the R157 bootstrap path:
+   `aurora data bootstrap-first-dataset --manifest config/diversified_seed_dataset.yaml`.
+   If the current command name is too specific to `first`, rename or
+   alias it to a more general command such as
+   `aurora data bootstrap-manifest`, while keeping the old command as a
+   compatibility alias.
+
+5. Add per-section provider adapters where gaps exist:
+   equities / ETFs through Stooq first, then yfinance/yahooquery;
+   crypto through Binance Public Data first, then CCXT/CoinGecko;
+   macro through FRED first, then DBnomics/ECB; fundamentals through
+   SEC EDGAR only.
+
+6. Add a symbol-normalisation layer for provider-specific symbols.
+   Examples:
+   `BRK-B` may need provider-specific spelling.
+   FX pairs may need `EURUSD`, `EURUSD=X`, `EUR/USD` or Stooq-specific
+   names depending on provider.
+   `DXY` may be an index, ETF proxy or provider-specific symbol.
+   The mapping must be explicit and recorded in provenance.
+
+7. Add a `requested_vs_persisted` report.
+   It must include:
+   requested symbols, attempted symbols, persisted symbols, failed
+   symbols, selected provider, rejected providers, fallback used,
+   row count, first date, last date, warnings, contract errors and
+   local storage path / content hash.
+
+8. Persist successful data to TimeSeriesStore libraries:
+   `prices_daily`, `crypto_daily`, `macro_daily`, `fx_daily`,
+   `fundamentals`, and `identity` if identifier mapping is included.
+
+9. Apply strict data-contract gates before marking any symbol usable:
+   required columns, date monotonicity, duplicate dates, impossible
+   OHLC order, zero / negative prices, empty frames, missing
+   provenance, extreme return spikes, timezone policy, calendar gaps
+   and adjustment posture.
+
+10. Freeze approved snapshots only after persistence.
+    Add support for freezing a whole manifest or at least freezing one
+    symbol per major section:
+    `SPY`, `QQQ`, `TLT`, `GLD`, `EFA`, `BTCUSDT`, `DGS10`.
+
+11. Add a smoke research run from local data only:
+    one broad-market test on `SPY`, one sector-relative test using
+    `XLK` versus `XLF`, one risk-regime test using `SPY`, `TLT`,
+    `DGS10` and `VIXCLS`, and one crypto test using `BTCUSDT`.
+    These tests are not to prove alpha. They prove the dataset is
+    actually usable by AURORA without live network calls.
+
+12. Update `docs/FIRST_DATASET.md` or add
+    `docs/DIVERSIFIED_SEED_DATASET.md`.
+    The doc must explain:
+    what is requested, what was downloaded, how to rebuild it, how to
+    delete it, which providers were used, which fallbacks are unofficial
+    and why this dataset is not institutional truth.
+
+13. Add tests with injected clients / fixtures.
+    Unit tests must not use live network. Live download tests may exist
+    only as integration tests and must be opt-in.
+
+Suggested operator commands:
+
+```bash
+aurora data provider-status --include-complementary
+aurora data manifest-summary --manifest config/diversified_seed_dataset.yaml
+aurora data bootstrap-first-dataset --manifest config/diversified_seed_dataset.yaml --dry-run
+aurora data bootstrap-first-dataset --manifest config/diversified_seed_dataset.yaml
+aurora data coverage-report --dataset diversified_seed
+aurora data freeze --dataset diversified_seed --symbol SPY --library prices_daily
+aurora data freeze --dataset diversified_seed --symbol BTCUSDT --library crypto_daily
+aurora data freeze --dataset diversified_seed --symbol DGS10 --library macro_daily
+```
+
+Acceptance criteria:
+
+- The repo contains a diversified seed manifest with the sections and
+  symbols listed above, or a documented smaller subset if a provider
+  limitation blocks live ingestion.
+- The system can tell the user, in plain language, the difference
+  between requested symbols and actually persisted symbols.
+- A dry run shows provider order, fallback policy and expected storage
+  library without writing files.
+- A mocked-provider test persists at least one successful symbol per
+  major section:
+  US market, sectors, large caps, international, bonds, commodities,
+  FX, crypto, macro and fundamentals.
+- A real operator run writes at least:
+  20 daily price series, 2 crypto daily series, 5 macro series and 5
+  fundamentals records, unless external providers block the run. Any
+  block must be reported with exact provider and reason.
+- The coverage report names failures by symbol and reason. "Failed" is
+  not enough.
+- Fallback data is labelled. Yahoo-based data must never appear as
+  official institutional truth.
+- At least three approved snapshots are created from local persisted
+  data:
+  one equity / ETF snapshot, one crypto snapshot and one macro
+  snapshot.
+- The local runtime check after the run shows non-zero rows in
+  `timeseries_index.sqlite` and non-zero rows in
+  `snapshots_index.sqlite`.
+- A local-data-only smoke run proves the data can feed AURORA without
+  hitting live providers.
+- `ruff` passes.
+- Focused R158 tests pass.
+- The fast suite passes or unrelated known failures are documented with
+  exact test names.
+
+Out of scope:
+
+- Downloading thousands of symbols.
+- Building a survivorship-free institutional equity master.
+- Claiming corporate-action completeness.
+- Treating free provider data as live-trading grade.
+- Adding paid providers.
+- Optimising strategies from this dataset before the data report is
+  inspected.
+
+Risk notes:
+
+- The biggest risk is silent false confidence. The output must say
+  exactly what exists locally.
+- FX and index symbols are provider-fragile. Build explicit mappings
+  instead of guessing.
+- `BRK-B` and other special symbols often differ by provider. Test
+  those paths directly.
+- Macro series are context data, not tradeable tickers. Keep their
+  library separate from prices.
+- Fundamentals must keep point-in-time availability metadata. A fact
+  reported later must not be visible earlier.
+- If live providers block access, do not fake success. Persist nothing,
+  write the failure report and leave clear operator instructions.
+
+### R159. Instrument Master and symbol identity layer
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 1 to 2 weeks
+Area: data / identity / security master / symbol hygiene
+Source: post-R158 data trust review. A diversified dataset is not safe
+until every ticker is tied to a real instrument identity.
+Suggested paths: `data_contracts/security_master.py`,
+`core/data_providers/openfigi_mapper.py`,
+`core/data_providers/nasdaq_trader_universe.py`,
+`core/data_providers/finance_database_universe.py`,
+`data_contracts/timeseries_store.py`, `cli/cmd_data.py`,
+`tests/test_security_master.py`
+
+Goal: make AURORA understand what each symbol actually represents.
+`AAPL` is not just a string. It is a listed equity, on an exchange, in
+a currency, with identifiers, sector metadata, listing dates and
+provider-specific aliases.
+
+Why this comes first: almost every later data-quality check depends on
+knowing the asset identity. Without this, corporate actions,
+fundamentals, calendar rules, provider fallbacks and delisting checks
+can silently attach to the wrong thing.
+
+Implementation plan:
+
+1. Define a canonical `InstrumentRecord` model with:
+   canonical_symbol, provider_symbol, asset_class, exchange, country,
+   currency, company_name, sector, industry, CIK, FIGI, ISIN, CUSIP
+   where available, active flag, first_seen, last_seen, listing_start,
+   listing_end and source provenance.
+2. Add explicit alias mapping for provider-specific symbols.
+   Examples: `BRK-B`, `BRK.B`, Yahoo-specific suffixes, Stooq-specific
+   suffixes, FX pair spellings and index proxy symbols.
+3. Create `aurora data identity build` from FinanceDatabase, Nasdaq
+   Trader, OpenFIGI and SEC CIK mapping where available.
+4. Create `aurora data identity resolve SYMBOL` so operators can see
+   the exact identity AURORA will use before downloading prices or
+   fundamentals.
+5. Refuse ambiguous automatic mapping unless the manifest provides an
+   explicit override.
+6. Store identity records in TimeSeriesStore or a dedicated lightweight
+   identity store with content hash and provider provenance.
+7. Wire R158 bootstrap so every persisted symbol links to one identity
+   record or carries a loud `identity_unresolved` warning.
+
+Acceptance criteria:
+
+- R158 symbols resolve to identity records or explicit unresolved
+  warnings.
+- `BRK-B` and at least one FX pair have provider-specific mapping tests.
+- Identity records include provenance, retrieval time and source.
+- Ambiguous OpenFIGI results do not silently choose the first match.
+- Coverage report shows identity status per symbol.
+- Unit tests use fixtures, not live provider calls.
+
+### R160. Corporate actions and market calendars layer
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 2 to 4 weeks
+Area: data / corporate actions / calendars / survivorship controls
+Source: post-R158 data trust review. Price history without corporate
+actions and calendars can make backtests look correct while being
+structurally wrong.
+Suggested paths: `data_contracts/corporate_actions.py`,
+`data_contracts/calendars.py`, `data_contracts/security_master.py`,
+`data_contracts/validator.py`, `core/snapshots.py`,
+`tests/test_marketdata_corporate_actions.py`, `tests/test_calendars.py`
+
+Goal: attach real-world trading context to each stored price series:
+splits, dividends, ticker changes, delistings, holidays, early closes
+and asset-specific trading sessions.
+
+Implementation plan:
+
+1. Extend corporate-action models to cover at least:
+   split, reverse split, cash dividend, special dividend, ticker change,
+   merger, spin-off, delisting and trading suspension.
+2. Store action date, announcement date if known, effective date,
+   available time, source, adjustment factor and affected instrument id.
+3. Add market-calendar records by asset group:
+   NYSE-style equities, ETF calendar, FRED macro calendar, crypto
+   always-on calendar and FX weekday calendar.
+4. Validate daily price series against their calendar:
+   expected sessions, allowed missing sessions, holiday gaps, duplicate
+   sessions and weekend bars.
+5. Add an adjustment-status field to price provenance:
+   raw, split-adjusted, dividend-adjusted, total-return or unknown.
+6. Block approved snapshots when adjustment status is unknown for
+   equities / ETFs unless the manifest explicitly marks the series as
+   reference-only.
+7. Add a `corporate-actions report` command that explains which events
+   were found and whether the price series appears compatible with them.
+
+Acceptance criteria:
+
+- At least one split and one dividend fixture are validated end to end.
+- Calendar validation distinguishes closed-market gaps from missing
+  data.
+- Crypto daily data is not falsely flagged for weekend sessions.
+- Equity data with unknown adjustment posture cannot become approved
+  production truth.
+- Snapshot provenance records calendar id and adjustment posture.
+
+### R161. Data quality score, quarantine and coverage dashboard
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: very high
+Effort: 1 to 2 weeks
+Area: data / validation / dashboard / quarantine
+Source: post-R158 data trust review. The system must tell the operator
+which downloaded data is usable, suspicious or rejected.
+Suggested paths: `data_contracts/validator.py`,
+`data_contracts/timeseries_store.py`,
+`core/data_providers/first_dataset/_results.py`, `cli/cmd_data.py`,
+`reporting/daily_ops/`, `tests/test_data_contracts.py`
+
+Goal: every downloaded symbol gets a visible quality decision:
+approved, warning, quarantined or rejected.
+
+Implementation plan:
+
+1. Define a `DataQualityReport` model with row count, date range,
+   missing sessions, duplicate dates, non-monotonic dates, impossible
+   OHLC, zero / negative prices, extreme returns, volume anomalies,
+   provider fallback, cross-provider disagreement and provenance
+   completeness.
+2. Convert validator output into a numeric score plus plain-language
+   reasons. Do not hide hard failures behind a score.
+3. Add quarantine metadata to stored timeseries records. Quarantined
+   data may be inspected but cannot feed GA, validation, promotion or
+   approved snapshots.
+4. Add `aurora data quality-report --dataset NAME`.
+5. Add `aurora data quarantine --library LIB --symbol SYMBOL --reason TEXT`.
+6. Add `aurora data approve --library LIB --symbol SYMBOL --version VERSION`
+   gated by successful validation.
+7. Show quality status in daily ops reporting.
+
+Acceptance criteria:
+
+- Bad fixtures are rejected for duplicate dates, impossible OHLC and
+  missing provenance.
+- Warning fixtures can persist but are labelled warning-only.
+- Quarantined series cannot be frozen into approved snapshots.
+- Coverage report separates requested, persisted, approved,
+  quarantined and rejected.
+- The user can see why a symbol failed without reading logs.
+
+### R162. Point-in-time fundamentals dataset
+
+Status: open
+Priority: high
+Effort: 2 to 4 weeks
+Area: data / fundamentals / point-in-time / SEC
+Source: post-R158 data trust review. Fundamentals are valuable only if
+AURORA knows when the market could have known them.
+Suggested paths: `core/data_providers/sec_edgar_companyfacts.py`,
+`data_contracts/timeseries_store.py`, `data_contracts/validator.py`,
+`validation/`, `tests/test_sec_edgar_companyfacts.py`
+
+Goal: ingest basic SEC company facts with point-in-time availability,
+not just final reported numbers.
+
+Implementation plan:
+
+1. Define a normalised fundamentals schema:
+   company id, canonical symbol, CIK, fiscal period, period end,
+   filing date, accepted timestamp, available time, tag, unit, value,
+   source filing id and amendment flag.
+2. Build a curated first field map:
+   revenue, net income, operating income, free cash flow, total assets,
+   total liabilities, equity, shares outstanding, EPS, gross margin,
+   operating margin, ROE and debt-to-equity.
+3. Store raw SEC facts separately from derived ratios.
+4. Derive ratios only from facts whose available time is at or before
+   the decision time.
+5. Add a point-in-time read API:
+   `fundamentals_at(symbol, decision_time)`.
+6. Add tests proving future filings are invisible before their accepted
+   timestamp.
+7. Add coverage output for missing tags, inconsistent units and
+   restated / amended facts.
+
+Acceptance criteria:
+
+- At least five R158 large caps have persisted fundamentals fixtures.
+- A future filing cannot leak into an earlier strategy date.
+- Derived ratios record which raw facts produced them.
+- Missing fields are reported as missing, not filled with fake zeros.
+- Fundamentals carry SEC provenance and point-in-time metadata.
+
+### R163. Liquidity, cost and capacity dataset
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 2 to 3 weeks
+Area: data / execution realism / capacity / costs
+Source: post-R158 data trust review plus existing R125-R133 cost and
+capacity primitives.
+Suggested paths: `core/spread_model.py`, `core/slippage_calibration.py`,
+`analytics/capacity.py`, `deployment/dynamic_caps.py`,
+`data_contracts/timeseries_store.py`, `validation/robustness_suite.py`
+
+Goal: give every tradable symbol practical trading constraints:
+volume, estimated spread, estimated slippage, expected impact and
+capacity warnings.
+
+Implementation plan:
+
+1. Compute rolling ADV, dollar volume, volatility and turnover from
+   persisted daily prices.
+2. Estimate a default spread proxy for assets without direct spread
+   data. Record it as estimated, not observed.
+3. Use existing cost / slippage / capacity primitives to produce
+   capacity bands by symbol.
+4. Add optional observed cost inputs later from broker fills or TCA.
+5. Store liquidity features in a separate library such as
+   `liquidity_daily`.
+6. Add validation gates:
+   reject strategies whose average order size exceeds configured ADV
+   participation, whose capacity-adjusted Sharpe collapses or whose
+   turnover makes costs dominate gross edge.
+7. Add a `aurora data liquidity-report --dataset NAME` command.
+
+Acceptance criteria:
+
+- R158 price data produces liquidity records for ETFs / equities.
+- Thin or low-volume symbols are flagged.
+- Strategies can request capacity-adjusted metrics.
+- Estimated spread / slippage is labelled as estimated.
+- No strategy promotion may ignore liquidity warnings without an
+  explicit override in the audit log.
+
+### R164. Mandatory benchmark comparison pack
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 1 to 2 weeks
+Area: validation / reporting / anti-self-deception
+Source: post-R158 data trust review. Strategy metrics are weak without
+simple comparison baselines.
+Suggested paths: `research/strategy_benchmarks.py`,
+`validation/pipeline.py`, `reporting/`, `tests/test_random_baseline.py`
+
+Goal: every strategy report must compare against simple baselines
+before it can be promoted.
+
+Mandatory baseline set:
+
+- cash
+- buy and hold on the main asset
+- equal weight where a basket exists
+- 60/40 proxy for equity / bond strategies
+- simple momentum
+- simple mean reversion
+- random entries with comparable turnover
+- previous approved production version where available
+
+Implementation plan:
+
+1. Add a `BenchmarkPack` model and deterministic runner.
+2. Wire it into ValidationPipeline as a required reporting gate.
+3. Store benchmark result hashes alongside validation reports.
+4. Add a plain-language result:
+   beats baseline, ties baseline, fails baseline or inconclusive.
+5. Require an explicit justification when promoting a strategy that
+   does not beat the relevant naive baseline.
+
+Acceptance criteria:
+
+- A strategy validation report cannot omit benchmark results.
+- Random baseline uses fixed seeds and records the seed.
+- Reports show absolute metrics and excess-over-benchmark metrics.
+- Promotion gate can block strategies that fail required baselines.
+
+### R165. Research degrees-of-freedom ledger enforcement
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: very high
+Effort: 2 to 3 weeks
+Area: research / audit / anti-overfit / governance
+Source: Candidate B promoted after R158. AURORA already has research
+ledger pieces, but the ledger must become mandatory for generated,
+tested and rejected ideas.
+Suggested paths: `research/ledger.py`, `research/factory/`,
+`research/auto_loop/`, `ga/`, `validation/`, `tests/test_research_factory.py`
+
+Goal: record the true amount of searching AURORA did before showing a
+winner.
+
+Implementation plan:
+
+1. Define required ledger events:
+   universe selected, provider set, date range, feature set, parameter
+   grid, random seed, generated candidate, rejected candidate,
+   modified candidate, validation run, override, OOS unlock, promotion
+   and retirement.
+2. Add a `trial_pressure_score` based on number of candidates,
+   parameter choices, filters, data revisions and rejected variants.
+3. Wire GA, research factory and auto-loop so a candidate cannot reach
+   validation without a ledger trail.
+4. Add graveyard linkage so rejected strategies are searchable and not
+   rediscovered as "new".
+5. Add report text that says how much search pressure preceded the
+   chosen result.
+6. Keep the ledger append-only and hash-linked where practical.
+
+Acceptance criteria:
+
+- Generated candidates create ledger events automatically.
+- Rejected candidates are counted, not discarded silently.
+- Validation reports include trial pressure.
+- Promotion is blocked if required ledger events are missing.
+- OOS unlock events are recorded with actor, reason and timestamp.
+
+### R166. Reproducible evidence pack for datasets and strategies
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 2 to 3 weeks
+Area: reporting / reproducibility / audit / export
+Source: post-R158 data trust review. AURORA should be able to explain
+exactly what data and decisions produced a result.
+Suggested paths: `reporting/`, `data_contracts/lineage.py`,
+`data_contracts/lineage_producer.py`, `core/witness.py`,
+`research/bundle.py`, `core/snapshots.py`
+
+Goal: produce a self-contained evidence pack for a dataset, snapshot or
+strategy validation.
+
+Evidence pack contents:
+
+- manifest used
+- requested versus persisted report
+- provider provenance
+- data-contract results
+- quality / quarantine decisions
+- identity records
+- corporate-action and calendar status
+- snapshots and content hashes
+- policy hash
+- validation report
+- benchmark pack
+- research ledger excerpt
+- warnings and manual overrides
+- exact commands to reproduce
+
+Implementation plan:
+
+1. Add `aurora report evidence-pack --dataset NAME` and
+   `aurora report evidence-pack --validation VALIDATION_ID`.
+2. Export JSON plus human-readable HTML or Markdown.
+3. Include hashes for every included artefact.
+4. Add `aurora report reproduce --evidence-pack PATH` as a verification
+   command that checks hashes and reruns lightweight validations.
+5. Keep large raw data out of the report by default, but include
+   content hashes and storage locations.
+
+Acceptance criteria:
+
+- Evidence pack generation works for the diversified seed dataset.
+- Hash verification fails if an included artefact changes.
+- A human can read the pack and see what data was trusted, rejected or
+  warned.
+- Strategy evidence pack includes benchmarks and ledger pressure.
+- The pack is deterministic enough for tests to compare stable fields.
+
+### R167. Incremental data refresh, versioning and diff
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: very high
+Effort: 2 to 4 weeks
+Area: data / refresh / versioning / reproducibility
+Source: post-R158 improvement. Downloading once is not enough;
+providers revise histories, add bars, remove rows and change formats.
+Suggested paths: `data_contracts/timeseries_store.py`,
+`core/data_providers/first_dataset/`, `cli/cmd_data.py`,
+`core/universe_gate.py`, `validation/pipeline.py`
+
+Goal: make data updates explicit and auditable. AURORA must know what
+changed between yesterday's dataset and today's dataset.
+
+Implementation plan:
+
+1. Add `aurora data refresh --manifest PATH` to fetch only the needed
+   incremental range where possible.
+2. Add `aurora data diff --library LIB --symbol SYMBOL --old OLD --new NEW`.
+3. Detect:
+   new rows, removed rows, changed historical rows, changed metadata,
+   changed provider, changed adjustment posture, changed quality score
+   and changed content hash.
+4. Add dataset-level diff summaries:
+   symbols added, symbols removed, symbols changed, symbols unchanged,
+   symbols newly quarantined and symbols newly approved.
+5. Mark affected snapshots and validation reports as stale when their
+   underlying data changes.
+6. Add `aurora data stale-report` to list strategies / reports that
+   should be rerun after data refresh.
+7. Keep old versions readable. Never overwrite historical versions
+   without an explicit replace flag and audit record.
+
+Acceptance criteria:
+
+- A second fetch of the same fixture creates either no new version or a
+  version marked unchanged.
+- A changed historical bar is detected and reported.
+- A new bar extends the date range and updates coverage.
+- Changed data marks dependent snapshots / validations as stale.
+- Old versions remain loadable.
+- Diff output is readable in table and JSON forms.
+
+Recommended execution order for R159-R167:
+
+1. R159 identity.
+2. R161 quality / quarantine.
+3. R167 refresh / diff.
+4. R160 corporate actions / calendars.
+5. R162 point-in-time fundamentals.
+6. R163 liquidity / costs / capacity.
+7. R164 benchmarks.
+8. R165 research ledger enforcement.
+9. R166 evidence packs.
+
+Reason: first know what each asset is, then decide whether downloaded
+data is usable, then make updates auditable. Only after that does it
+make sense to build richer fundamentals, execution realism, benchmark
+gates, ledger pressure and evidence packaging.
+
+### R168. Canonical execution event schema and order state machine
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 1 to 2 weeks
+Area: execution / broker events / replay foundation
+Source: Candidate A promoted after R159-R167 planning. HFT lecture
+notes, NautilusTrader, LEAN and FIX-style order-state references all
+point to the same need: broker activity must be represented as events,
+not as ad-hoc status strings.
+Suggested paths: `execution/events.py`, `execution/order_state.py`,
+`deployment/brokers/`, `deployment/brokers/base.py`,
+`tests/test_paper_events.py`, `tests/test_execution_reconnect_reject.py`
+
+Goal: define one canonical event language for order lifecycle events
+so paper, backtest and live adapters can be compared and replayed.
+
+Event types to model:
+
+- order created
+- submitted
+- broker acknowledged
+- partially filled
+- filled
+- cancel requested
+- cancelled
+- replace requested
+- replaced
+- rejected
+- expired
+- commission / fee
+- financing / borrow fee
+- position update
+- cash update
+- margin update
+- reconnect / disconnect
+- unknown external fill
+
+State machine:
+
+- created
+- submitted
+- acknowledged
+- partially filled
+- filled
+- cancel pending
+- cancelled
+- replace pending
+- replaced
+- rejected
+- expired
+- unknown
+- reconciled
+
+Implementation plan:
+
+1. Add immutable `ExecutionEvent` and `OrderStateTransition` models.
+2. Add a deterministic state reducer:
+   `reduce_order_state(current_state, event)`.
+3. Validate impossible transitions. Example: filled order cannot later
+   become submitted again.
+4. Allow duplicate broker events to be recognised and ignored when
+   their event id and payload match.
+5. Preserve out-of-order events in a warning stream rather than
+   silently discarding them.
+6. Wire the paper broker first. Real adapters can follow later.
+7. Add JSON serialisation with stable field ordering for audit logs.
+
+Acceptance criteria:
+
+- Paper broker emits canonical execution events.
+- State reducer handles partial fill, cancel pending, reject, replace
+  reject, duplicate event and out-of-order event fixtures.
+- Event logs are deterministic and hashable.
+- Unknown external fills are represented instead of crashing the
+  replay path.
+
+### R169. Execution replay and broker reconciliation engine
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 2 to 4 weeks
+Area: execution / reconciliation / paper-live parity
+Source: Candidate A promoted. R168 provides the event language; R169
+uses it to rebuild session state and compare it with broker / engine
+state.
+Suggested paths: `execution/replay.py`, `execution/reconciliation.py`,
+`execution/reconciliation_driver.py`, `deployment/brokers/`,
+`reporting/daily_ops/`, `tests/test_reconciliation_driver.py`
+
+Goal: rebuild orders, fills, positions, cash and realised PnL from
+event logs alone, then explain mismatches.
+
+Implementation plan:
+
+1. Add `ExecutionReplayState` with orders, fills, positions, cash,
+   fees, realised PnL, open orders and warnings.
+2. Add `replay_execution_events(events)` returning final state plus
+   replay diagnostics.
+3. Add `reconcile_engine_vs_replay(engine_state, replay_state)`.
+4. Add `reconcile_broker_vs_engine(broker_snapshot, engine_state)`.
+5. Classify mismatches:
+   missing fill, duplicate fill, orphan order, stale order, cash
+   mismatch, position mismatch, commission mismatch, unknown broker
+   event and replay gap.
+6. Add CLI:
+   `aurora live reconcile --events PATH`
+   and `aurora live replay-events --events PATH`.
+7. Add daily ops section for reconciliation status.
+
+Acceptance criteria:
+
+- Replay from paper events reconstructs expected positions and cash.
+- Duplicate fills and missing commissions are detected.
+- Restart between acknowledge and fill is covered by tests.
+- Reconciliation output names the specific mismatch, not just fail.
+- Live adapters are not required for completion; paper and fixtures are
+  enough for the first implementation.
+
+### R170. Realistic execution models and TCA report
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 2 to 4 weeks
+Area: execution / fills / slippage / transaction cost analysis
+Source: Candidate A promoted. HFT lecture notes support modelling
+spread, queue, impact, latency and execution costs before trusting
+paper/live results.
+Suggested paths: `execution/fill_models.py`,
+`execution/market_impact.py`, `execution/cautious_limit.py`,
+`execution/portfolio_execution.py`, `analytics/cost_breakdown.py`,
+`core/slippage_calibration.py`, `tests/test_fill_models_constraints.py`
+
+Goal: make execution simulation less naive and produce a clear TCA
+report after paper/live sessions.
+
+Implementation plan:
+
+1. Add fill-model interfaces for market, limit, stop and stop-limit
+   orders.
+2. Model spread-aware fills, partial fills, latency, stale quotes,
+   reject probability, tick size, minimum lot and volume participation.
+3. Add conservative queue-position approximation for limit orders.
+4. Add market-impact estimate with temporary cost and longer-lived
+   impact split.
+5. Add simple execution algorithms:
+   TWAP, VWAP, POV, cautious limit and implementation shortfall
+   baseline.
+6. Add TCA report fields:
+   arrival price, execution price, effective spread, realised spread,
+   slippage, delay cost, opportunity cost, unfilled quantity,
+   commissions and fees.
+7. Wire TCA into daily ops and evidence packs when executions exist.
+
+Acceptance criteria:
+
+- Fill models produce deterministic output under a fixed seed.
+- Partial fills, rejects and latency are covered by tests.
+- TCA decomposes at least one paper session fixture.
+- Strategies cannot report net performance without naming execution
+  cost assumptions.
+
+### R171. Portfolio allocation core inspired by skfolio
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 2 to 4 weeks
+Area: portfolio / optimisation / allocation
+Source: Candidate F promoted. skfolio, Riskfolio-Lib and
+PyPortfolioOpt are references for API shape and risk measures, not
+automatic dependencies.
+Suggested paths: `portfolio/allocation.py`,
+`portfolio/constraints.py`, `portfolio/risk_measures.py`,
+`portfolio/optimizers.py`, `validation/portfolio_validation.py`,
+`tests/test_portfolio_execution.py`
+
+Goal: add a clean portfolio-allocation interface with simple reliable
+allocators before adding clever optimisation.
+
+First allocators:
+
+- equal weight
+- inverse volatility
+- risk parity / risk budgeting
+- maximum diversification
+- minimum variance
+- mean-risk baseline
+- benchmark tracking baseline
+
+Constraints:
+
+- long-only / long-short
+- minimum and maximum weights
+- gross and net exposure
+- group exposure
+- turnover
+- cash
+- leverage
+- concentration
+- per-strategy capital caps
+
+Implementation plan:
+
+1. Define `PortfolioProblem`, `PortfolioConstraints` and
+   `PortfolioSolution`.
+2. Keep optimisers behind a common interface.
+3. Include costs and turnover in the objective or validation summary.
+4. Add deterministic fallback allocators that do not require heavy
+   dependencies.
+5. Add optional dependency review before wrapping skfolio or another
+   optimiser.
+6. Make constraint violations hard failures, not warnings.
+
+Acceptance criteria:
+
+- Equal weight, inverse volatility and minimum variance pass tests.
+- Constraint violations are detected.
+- Optimiser output includes weights, expected risk, realised risk,
+  turnover, costs and warnings.
+- No optimiser may ignore transaction costs silently.
+
+### R172. Portfolio stress, attribution and reporting
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium-high
+Effort: 2 to 3 weeks
+Area: portfolio / risk / reporting
+Source: Candidate F and Candidate H promoted. R171 chooses weights;
+R172 explains whether those weights are robust and what drove returns.
+Suggested paths: `portfolio/stress.py`, `portfolio/attribution.py`,
+`reporting/portfolio_analytics.py`, `reporting/factor_tearsheet.py`,
+`tests/test_portfolio_analytics_report.py`
+
+Goal: turn portfolio allocation from a weight vector into an
+operator-readable risk report.
+
+Implementation plan:
+
+1. Add stress tests for noisy covariance, higher costs, missing assets,
+   correlated drawdown, liquidity shock and concentration shock.
+2. Add contribution to return and contribution to risk.
+3. Add benchmark-relative attribution.
+4. Add rolling return, rolling volatility, rolling Sharpe and drawdown
+   tables.
+5. Add exposure by sector, asset class, country and strategy family
+   where metadata exists.
+6. Wire reports to evidence packs.
+
+Acceptance criteria:
+
+- Portfolio report works with R158-style seed data fixtures.
+- Contributions sum to portfolio return within tolerance.
+- Stress scenarios are deterministic.
+- Report includes policy hash, snapshot hash and data-quality status.
+
+### R173. Strategy atlas and curated idea catalogue
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium-high
+Effort: 2 to 4 weeks
+Area: research / strategy catalogue / idea governance
+Source: Candidate E promoted. The 151-strategy paper and curated
+sources are useful as idea metadata, not as proof that a strategy
+works.
+Suggested paths: `research/strategy_atlas.py`,
+`research/idea_sources.py`, `research/strategy_benchmarks.py`,
+`research/graveyard.py`, `tests/test_idea_sources.py`
+
+Goal: create a controlled atlas of strategies AURORA can understand,
+classify and validate honestly.
+
+Atlas status values:
+
+- supported
+- candidate
+- blocked
+- rejected
+- benchmark-only
+- external-data-only
+- needs-engine-support
+
+Implementation plan:
+
+1. Define `StrategyAtlasEntry` with name, source, asset class, required
+   data, required engine capabilities, cost sensitivity, overfit risk,
+   implementation difficulty, benchmark expectation and status.
+2. Ingest curated sources as metadata only:
+   source title, claim, data needs, assumptions and testability.
+3. Add the first supported slice:
+   ETF momentum rotation, dual momentum, multi-asset trend following,
+   volatility targeting, ETF mean reversion, simple pairs,
+   KNN single-stock example and controlled alpha-combo ensemble.
+4. Mark options-heavy, structured-credit, tax, exotic fixed-income and
+   legal / regulatory strategies as blocked unless data and engine
+   support exist.
+5. Query graveyard and similarity before allowing a new template from
+   the atlas.
+6. Add CLI:
+   `aurora research atlas list`, `show`, `classify`, `link-source`.
+
+Acceptance criteria:
+
+- Blocked atlas entries cannot be promoted without audited override.
+- Each supported entry has a benchmark expectation.
+- Source claims are not treated as validation evidence.
+- Atlas status appears in strategy evidence packs.
+
+### R174. Literature scout and full-paper ingestion pipeline
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium-high
+Effort: 2 to 4 weeks
+Area: research / papers / evidence extraction
+Source: operator request for AURORA to search papers and read them
+reliably. This item turns papers into structured research inputs
+without letting them bypass validation.
+Suggested paths: `research/literature/`, `research/idea_sources.py`,
+`research/strategy_atlas.py`, `docs/`, `tests/test_idea_sources.py`
+
+Goal: let AURORA discover, ingest, summarise and extract structured
+claims from papers in a reproducible way.
+
+Implementation plan:
+
+1. Add `PaperRecord` with title, authors, year, source, URL or local
+   path, DOI / SSRN id where available, license note, ingestion time,
+   content hash and extraction status.
+2. Add paper ingestion from local PDFs first. Web search can come
+   later through explicit operator action.
+3. Extract structured fields:
+   strategy idea, asset class, sample period, universe, data frequency,
+   reported metrics, transaction costs, assumptions, limitations,
+   replication requirements and red flags.
+4. Add quote limits and page references for extracted claims.
+5. Link paper claims to StrategyAtlas entries as unvalidated source
+   evidence.
+6. Add `aurora research papers ingest PATH`,
+   `aurora research papers list`,
+   `aurora research papers claims PAPER_ID`.
+7. Add a reliability score:
+   reproducible data available, costs included, OOS included,
+   multiple-testing addressed, survivorship handled, code available,
+   sample size adequate.
+
+Acceptance criteria:
+
+- Local PDF ingestion stores content hash and extracted metadata.
+- Extracted claims keep page references where possible.
+- A paper claim cannot promote a strategy by itself.
+- StrategyAtlas can link to one or more paper claims.
+- Tests use small fixture documents, not live web calls.
+
+### R175. Solo-operator risk record and approval
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high before serious paper/live capital
+Effort: 1 to 2 weeks
+Area: governance / approval / model risk / solo operator
+Source: Candidate D promoted, adapted for single-user AURORA. A
+technically valid strategy still needs intended use, limits, expiry and
+explicit approval before paper/live promotion, but it does not need
+fake committee roles.
+Suggested paths: `governance/approvals.py`, `research/lifecycle.py`,
+`agent_gateway/`, `validation/pipeline.py`, `tests/test_lifecycle_sla.py`
+
+Goal: require a current local risk record and a deliberate
+single-operator approval before a strategy can move toward paper,
+canary or live.
+
+Implementation plan:
+
+1. Add `StrategyRiskRecord` with intended use, limitations,
+   assumptions, operator name / id, risk limits, validation evidence,
+   data contract, policy hash, snapshot hash, strategy hash, expiry and
+   revalidation date.
+2. Add solo states:
+   drafted, reviewed_by_operator, approved_for_shadow,
+   approved_for_paper, approved_for_canary, approved_for_live,
+   retired.
+3. Block promotion if risk record is missing, expired or inconsistent
+   with validation evidence.
+4. Record overrides with reason, timestamp, operator id, affected
+   hashes and audit hash.
+5. Surface risk status in daily ops, preflight and evidence packs.
+6. Keep optional multi-reviewer fields out of the critical path unless
+   a future multi-user mode is explicitly enabled.
+
+Acceptance criteria:
+
+- Promotion fails without a current risk record.
+- Solo approval state is enforced.
+- Expired records trigger revalidation or archive.
+- Overrides are visible in audit and evidence pack output.
+- No second-human approval is required by default.
+
+### R176. Agentic evidence review and explanation layer
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium
+Effort: 2 to 4 weeks
+Area: agents / explanation / operator UX / safety
+Source: Candidate G promoted. QuantAgent-style specialist roles are
+useful only as reviewers of evidence, not as trading authorities.
+Suggested paths: `agent_gateway/`, `research/llm_assistant.py`,
+`reporting/`, `tests/test_agent_gateway.py`
+
+Goal: add bounded specialist agents that read evidence packs and
+produce operator-facing explanations, objections and follow-up
+questions.
+
+Agent roles:
+
+- data-quality reviewer
+- strategy-summary reviewer
+- risk reviewer
+- execution-cost reviewer
+- regime reviewer
+- report explainer
+
+Implementation plan:
+
+1. Agents may consume evidence packs, validation reports, audit trails
+   and approved snapshots only.
+2. Agents may not read locked OOS / FORWARD data without the normal
+   ceremony.
+3. Agents may not submit, cancel, modify or approve broker orders.
+4. Every agent output must cite evidence ids:
+   policy hash, snapshot hash, validation hash, strategy hash and
+   source report.
+5. Preserve disagreements between agents instead of forcing one
+   polished answer.
+6. Add prompt-injection tests for malicious strategy descriptions,
+   poisoned research notes, hostile web text, secret requests and
+   OOSGuard bypass attempts.
+
+Acceptance criteria:
+
+- Agents fail closed when evidence is missing or hashes mismatch.
+- Agent output cannot promote a strategy.
+- Prompt-injection fixtures cannot reveal secrets or bypass OOSGuard.
+- Explanation pack includes thesis, evidence, objections, risks,
+  missing data and next checks.
+
+### R177. Research-to-live preflight bundle
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high before paper/live
+Effort: 2 to 3 weeks
+Area: deployment / live readiness / safety gates
+Source: synthesis item after R168-R176. AURORA needs one final bundle
+that proves data, validation, execution and governance are ready before
+paper or live.
+Suggested paths: `deployment/preflight/`, `validation/pipeline.py`,
+`execution/reconciliation.py`, `governance/approvals.py`,
+`reporting/daily_ops/`, `docs/ZERO_TO_LIVE.md`
+
+Goal: combine the required gates into one operator-readable preflight
+before paper, canary or live deployment.
+
+Required checks:
+
+- data quality approved
+- identity resolved
+- corporate-action / calendar status acceptable
+- latest data refresh reviewed
+- validation current
+- benchmark pack current
+- research ledger complete
+- evidence pack reproducible
+- risk record approved
+- execution model named
+- kill switch armed
+- broker / paper adapter healthy
+- reconciliation clean or explained
+- capital limits set
+- rollback plan present
+
+Implementation plan:
+
+1. Add `aurora live preflight --strategy STRATEGY_ID`.
+2. Return pass, warn or fail per gate.
+3. Fail closed for missing evidence.
+4. Allow operator overrides only with reason and audit hash.
+5. Export preflight bundle into evidence pack and daily ops.
+
+Acceptance criteria:
+
+- A strategy cannot enter paper/live when required evidence is missing.
+- Preflight output is readable in table and JSON.
+- Override path is audited.
+- Tests cover missing data, stale validation, failed reconciliation and
+  expired approval.
+
+Recommended execution order for R168-R177:
+
+1. R168 execution events.
+2. R169 replay / reconciliation.
+3. R170 execution models / TCA.
+4. R171 portfolio allocation core.
+5. R172 portfolio stress / attribution.
+6. R173 strategy atlas.
+7. R174 literature ingestion.
+8. R175 risk register.
+9. R176 agentic evidence review.
+10. R177 research-to-live preflight.
+
+Reason: execution event truth should precede live-readiness claims;
+portfolio construction should wait for data and cost realism; strategy
+ideas and papers should feed the atlas, not bypass validation; agents
+should explain evidence only after evidence exists.
+
+### R178. Data licence, provider terms and usage-policy registry
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high
+Effort: 1 to 2 weeks
+Area: data / governance / compliance / provider policy
+Source: final platform-hardening pass. R155-R158 add many free and
+fallback providers; AURORA must know what each source permits before
+using it in research, redistribution, reports or live workflows.
+Suggested paths: `core/data_providers/`, `data_contracts/lineage.py`,
+`docs/`, `cli/cmd_data.py`, `tests/test_data_providers_free_bulk.py`
+
+Goal: store provider terms, licence posture and allowed usage in a
+machine-readable way.
+
+Implementation plan:
+
+1. Add `ProviderTermsRecord` with provider, source URL, licence URL,
+   free / paid / token-gated status, personal-use warning,
+   redistribution policy, commercial-use warning, attribution
+   requirement, rate-limit policy and reviewed_at timestamp.
+2. Add allowed usage labels:
+   smoke_test, personal_research, internal_research, redistribution,
+   paper_trading, live_trading and report_export.
+3. Attach terms records to provider descriptors and provenance.
+4. Add `aurora data provider-terms` to print allowed and blocked uses.
+5. Make evidence packs include provider terms for all data used.
+6. Add policy gates so a dataset with personal-use-only warnings cannot
+   be silently used in live or exported reports without an audited
+   override.
+
+Acceptance criteria:
+
+- Yahoo-style fallback providers carry an unofficial / personal-use
+  warning.
+- CoinMetrics community-style data carries non-commercial warning by
+  default.
+- Provider terms appear in coverage reports and evidence packs.
+- A blocked usage produces a plain-language failure.
+
+### R179. Local telemetry and metrics contract
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium before live
+Effort: 1 to 2 weeks
+Area: observability / local monitoring / operations
+Source: final platform-hardening pass, adapted for solo use. Daily ops
+exists, but AURORA needs consistent run ids, metrics and local logs.
+It does not need Prometheus, Grafana or OpenTelemetry as a default.
+Suggested paths: `monitoring/`, `reporting/daily_ops/`,
+`core/witness.py`, `agent_gateway/audit.py`, `deployment/`,
+`tests/test_infra_redis_cache.py`
+
+Goal: make every important run locally observable with shared
+identifiers, structured events and simple metrics.
+
+Required correlation ids:
+
+- run_id
+- dataset_id
+- snapshot_hash
+- policy_hash
+- strategy_id
+- validation_id
+- broker_order_id
+- internal_order_id
+- evidence_pack_id
+
+Implementation plan:
+
+1. Define a small internal telemetry interface first:
+   emit_metric and emit_event. Span-style tracing is optional.
+2. Use JSONL local telemetry as the default sink.
+3. Emit metrics for data freshness, provider failures, validation gate
+   failures, order latency, fill latency, rejected orders, open-order
+   age, reconciliation diffs, drawdown, exposure and kill-switch state.
+4. Add optional OpenTelemetry / Prometheus bridge only if live use
+   proves local files are not enough.
+5. Add `aurora ops metrics-tail` or equivalent local inspection.
+6. Document metric names and labels.
+
+Acceptance criteria:
+
+- Local telemetry sink records deterministic test events.
+- Data bootstrap, validation and paper execution emit core metrics.
+- Metrics include correlation ids where available.
+- Missing telemetry sink never breaks core execution.
+- No external monitoring service is required.
+
+### R180. Local incident notes and lightweight postmortems
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium before live
+Effort: 1 to 2 weeks
+Area: operations / local incident notes / postmortems
+Source: final platform-hardening pass, adapted for solo operation.
+Disaster recovery and daily ops exist, but failures need a structured
+local note instead of an enterprise incident platform.
+Suggested paths: `monitoring/`, `reporting/daily_ops/`,
+`docs/DISASTER_RECOVERY.md`, `docs/ZERO_TO_LIVE.md`,
+`execution/reconciliation.py`
+
+Goal: turn live, data-quality or validation failures into local
+incident notes with timeline, impact and corrective actions.
+
+Incident types:
+
+- stale data
+- bad tick / bad bar
+- provider outage
+- broker disconnected
+- missing fill
+- duplicate fill
+- rejected order spike
+- margin warning
+- drawdown breach
+- kill switch fired
+- reconciliation mismatch
+- OOS leak attempt
+- evidence hash mismatch
+
+Implementation plan:
+
+1. Add `IncidentRecord` with id, severity, opened_at, closed_at,
+   affected strategies, affected symbols, evidence hashes, timeline,
+   root cause, impact and action items.
+2. Add `aurora ops note open`, `append`, `close`, `postmortem`.
+   Keep `incident` as an alias if already implemented.
+3. Auto-suggest incident notes for severe reconciliation, data-quality
+   and kill-switch events, but do not spam-create records for every
+   warning.
+4. Generate postmortem Markdown from incident records.
+5. Link incidents to evidence packs and daily ops.
+
+Acceptance criteria:
+
+- Incidents can be opened and closed deterministically in tests.
+- Severe preflight / reconciliation failure can suggest or create a
+  local incident note.
+- Postmortem includes timeline, impact, root cause and follow-ups.
+- Closed incident is immutable except for audited append-only notes.
+
+### R181. Point-in-time feature store and signal cache
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high for ML / factor research
+Effort: 2 to 4 weeks
+Area: features / ML / point-in-time / caching
+Source: final platform-hardening pass plus qlib / Feast-style feature
+store references. R162 stores fundamentals; R181 stores reusable
+features and signals safely.
+Suggested paths: `core/features.py`, `data_contracts/timeseries_store.py`,
+`ml/`, `research/auto_gen/`, `validation/`
+
+Goal: compute and store features with point-in-time availability,
+owner, lineage, tests and reproducible hashes.
+
+Implementation plan:
+
+1. Define `FeatureDefinition` with name, version, inputs, lookback,
+   owner, frequency, point-in-time policy, null policy and code hash.
+2. Add `FeatureStore` backed by TimeSeriesStore libraries.
+3. Add `feature_at(symbol, decision_time)` that refuses future
+   availability.
+4. Store signal outputs separately from raw features.
+5. Add cache keys based on input hashes, feature version and policy
+   hash.
+6. Add feature drift / missingness report.
+7. Add CLI:
+   `aurora features build`, `features list`, `features validate`.
+
+Acceptance criteria:
+
+- Future feature values cannot leak into earlier decision times.
+- Recomputing the same feature from the same inputs gives the same
+  content hash.
+- Missingness and drift are reported.
+- Feature store entries link back to dataset and code lineage.
+
+### R182. Strategy, model and feature registry
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high for research-to-live
+Effort: 2 to 3 weeks
+Area: registry / lifecycle / ML / strategy governance
+Source: final platform-hardening pass. R175 covers risk approval;
+R182 covers the technical registry of versions, aliases and artefacts.
+Suggested paths: `registry/`, `research/bundle.py`,
+`research/lifecycle.py`, `ml/`, `data_contracts/lineage.py`
+
+Goal: keep strategies, models, features and bundles versioned with
+clear lifecycle stages and aliases.
+
+Implementation plan:
+
+1. Add registry records for:
+   strategy_version, model_version, feature_set_version,
+   data_contract_version, validation_id, evidence_pack_id,
+   lifecycle_stage and aliases.
+2. Support aliases such as latest, candidate, paper, canary, live and
+   retired.
+3. Ensure aliases cannot move without audit evidence.
+4. Link registry records to risk records, evidence packs and ledger
+   pressure.
+5. Add CLI:
+   `aurora registry list`, `show`, `promote`, `alias`, `retire`.
+
+Acceptance criteria:
+
+- Registry can answer which exact model / strategy is live.
+- Alias movement is audited.
+- Retired versions remain inspectable.
+- Promotion refuses missing validation or evidence pack.
+
+### R183. Futures engine and continuous-contract handling
+
+Status: open
+Priority: medium
+Effort: 3 to 6 weeks
+Area: multi-asset / futures / data / execution
+Source: final platform-hardening pass. Futures appear in strategy
+sources and crypto providers, but continuous futures need explicit
+contract handling before serious use.
+Suggested paths: `markets/futures.py`, `data_contracts/security_master.py`,
+`data_contracts/calendars.py`, `core/data_providers/`, `execution/`
+
+Goal: support futures contracts without pretending an ETF-like price
+series is the same thing as a tradable futures chain.
+
+Implementation plan:
+
+1. Add `FuturesContract` with root, exchange, expiry, first notice
+   date, last trade date, multiplier, tick size, margin, currency and
+   settlement type.
+2. Add roll rules:
+   volume roll, open-interest roll, calendar roll and fixed-days-before
+   expiry roll.
+3. Add continuous contract construction with adjustment mode:
+   raw, back-adjusted, ratio-adjusted and Panama-style where supported.
+4. Store mapping from continuous symbol to actual contract over time.
+5. Add futures-specific cost, margin and session handling.
+6. Keep live futures trading out of scope until broker support and
+   risk approval exist.
+
+Acceptance criteria:
+
+- Continuous series records its roll schedule.
+- Backtest can recover which real contract was active on a date.
+- Roll yield / roll gap is visible in report.
+- No futures strategy can run without contract specs and roll rule.
+
+### R184. Options chain, Greeks and assignment engine
+
+Status: open
+Priority: medium
+Effort: 4 to 8 weeks
+Area: multi-asset / options / pricing / risk
+Source: final platform-hardening pass. Options appear in alt-data and
+strategy sources, but should stay blocked until chains, Greeks and
+assignment are explicit.
+Suggested paths: `markets/options_strategies.py`,
+`altdata/options_flow.py`, `data_contracts/security_master.py`,
+`validation/`, `execution/`
+
+Goal: represent options as actual contracts with expiry, strike, right,
+multiplier, implied volatility, Greeks, exercise and assignment risk.
+
+Implementation plan:
+
+1. Add `OptionContract` with underlying, expiry, strike, right,
+   style, multiplier, exchange, currency and settlement.
+2. Add option chain store with quote timestamp and availability time.
+3. Add Greeks and implied-volatility fields with source provenance.
+4. Add simple pricing / validation checks:
+   no negative option prices, intrinsic value sanity, expiry handling.
+5. Add assignment / exercise event models.
+6. Add multi-leg strategy representation.
+7. Keep production options trading out of scope until data and broker
+   support are reviewed.
+
+Acceptance criteria:
+
+- Fixture option chain stores and loads with point-in-time timestamps.
+- Expired options are handled explicitly.
+- Multi-leg payoff fixture is correct.
+- Assignment / exercise events can be represented in execution replay.
+
+### R185. Crypto derivatives, funding and exchange capability matrix
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium
+Effort: 2 to 4 weeks
+Area: crypto / derivatives / exchange capability / risk
+Source: final platform-hardening pass. Binance public data and CCXT
+exist, but crypto spot, futures, perpetuals and funding are different
+instruments.
+Suggested paths: `core/data_providers/binance_public_data_daily.py`,
+`core/data_providers/ccxt_daily.py`, `deployment/brokers/`,
+`data_contracts/security_master.py`, `execution/`
+
+Goal: model crypto spot, futures and perpetuals separately with
+funding, margin mode and exchange capability checks.
+
+Implementation plan:
+
+1. Add instrument records for crypto spot, dated futures and perpetuals.
+2. Store funding rates and funding timestamps for perpetuals.
+3. Add exchange capability matrix:
+   spot supported, futures supported, margin supported, order types,
+   min size, tick size, rate limits and sandbox availability.
+4. Add risk checks for leverage, funding drag, exchange downtime and
+   symbol delisting.
+5. Add dry-run capability checks before any crypto paper/live session.
+
+Acceptance criteria:
+
+- BTC spot and BTC perpetual are distinct instruments.
+- Funding can be applied to a simple perpetual PnL fixture.
+- Unsupported exchange capability blocks order submission.
+- Evidence pack states spot / futures / perpetual assumptions.
+
+### R186. Local extension API and optional plugin contract
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: low-medium
+Effort: 1 to 3 weeks
+Area: developer experience / local extensions / optional plugins
+Source: final platform-hardening pass, adapted for solo use. AURORA
+needs clean local extension points before it needs a public plugin
+ecosystem.
+Suggested paths: `core/data_providers/`, `strategies/`, `validation/`,
+`deployment/brokers/`, `reporting/`, `docs/`
+
+Goal: define versioned interfaces for local providers, strategies,
+validators, broker adapters and report renderers, with public plugin
+support explicitly optional.
+
+Interfaces:
+
+- DataProvider
+- Strategy
+- Signal
+- Feature
+- Validator
+- BrokerAdapter
+- ExecutionModel
+- RiskModel
+- ReportRenderer
+- AuditSink
+
+Implementation plan:
+
+1. Add explicit `interface_version` fields.
+2. Add compatibility policy:
+   deprecated_after, removed_after and migration notes.
+3. Add local extension discovery from configured safe directories only.
+4. Add allowlist / denylist for plugin loading.
+5. Add `aurora extensions list`, `validate`, `explain`. Keep
+   `plugins` as an alias only if already exposed.
+6. Add docs with one minimal local provider and one minimal local
+   strategy extension.
+
+Acceptance criteria:
+
+- Example local extension loads in tests.
+- Incompatible interface version fails with clear message.
+- Extension cannot bypass OOSGuard, validation gates or audit sinks.
+- Extension loading is opt-in, not automatic from arbitrary paths.
+- No marketplace or public plugin registry is required.
+
+### R187. Operator doctor, health checks and environment diagnosis
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: high for usability
+Effort: 1 to 2 weeks
+Area: CLI / developer experience / operations
+Source: final platform-hardening pass. The project has many moving
+parts; operators need one command that says what is healthy and what is
+missing.
+Suggested paths: `cli/cmd_data.py`, `deployment/preflight/`,
+`core/runtime_paths.py`, `docs/ZERO_TO_LIVE.md`
+
+Goal: add `aurora doctor` as the first command an operator runs when
+something feels broken.
+
+Checks:
+
+- package import and version
+- runtime paths
+- writable data / cache / snapshot dirs
+- Python version
+- optional dependencies
+- provider credentials / env vars
+- provider terms reviewed
+- first dataset present
+- snapshots present
+- ruff / tests availability
+- broker sandbox config
+- audit log writable
+- OOS lock status
+
+Implementation plan:
+
+1. Add health-check registry with individual check objects.
+2. Add table and JSON output.
+3. Classify pass, warn, fail and skipped.
+4. Link each failure to a doc or suggested command.
+5. Keep checks read-only by default.
+
+Acceptance criteria:
+
+- `aurora doctor` runs without network by default.
+- Missing first dataset is reported clearly.
+- Runtime-path permission failures are detected.
+- JSON output is stable enough for tests.
+
+### R188. Local release, provenance and compatibility hardening
+
+Status: completed (2026-05-10 session; see docs/roadmap/R159_R190_SESSION_REPORT.md)
+Priority: medium; high only before public release
+Effort: 1 to 3 weeks
+Area: local release / reproducibility / compatibility
+Source: final platform-hardening pass, adapted for solo use. AURORA
+still needs reproducible local wheels and compatibility discipline, but
+public signing is optional unless the project is published.
+Suggested paths: `.github/workflows/`, `pyproject.toml`,
+`docs/AURORA_RENAME_CHECKLIST.md`, `docs/ENV_VAR_MIGRATION_PLAN.md`,
+`CHANGELOG.md`
+
+Goal: make local release artefacts traceable and compatibility-safe.
+Add public signing only if AURORA is distributed outside the operator's
+machine.
+
+Implementation plan:
+
+1. Add release checklist:
+   full tests, typecheck, ruff, docs, build, SBOM, vulnerability scan,
+   evidence pack, changelog and tag.
+2. Add clean local wheel verification first.
+3. Add PyPI Trusted Publishing plan only if publishing to PyPI.
+4. Add Sigstore / keyless signing decision only before public
+   distribution.
+5. Add lightweight build provenance:
+   commit, Python version, dependency lock / freeze, wheel hash and
+   build timestamp.
+6. Define retirement date for `quantforge` import shim and `QF_*`
+   environment variable fallback.
+7. Add release verification command:
+   install wheel in clean env, import `aurora`, CLI smoke, legacy shim
+   warning check.
+
+Acceptance criteria:
+
+- Release checklist exists and is referenced from docs.
+- Wheel smoke test runs from built artefact.
+- Shim retirement plan has dates / versions.
+- Public artefact signing is documented as optional until distribution.
+
+### R189. Solo-operator research/live cockpit
+
+Status: open
+Priority: medium
+Effort: 3 to 6 weeks
+Area: local dashboard / UX / operations
+Source: final platform-hardening pass. R85 has a dashboard upgrade
+plan; R189 turns the mature evidence, data and execution layers into
+one local operator cockpit.
+Suggested paths: `monitoring/dashboard.py`,
+`reporting/daily_ops/`, `reporting/`, `docs/DASHBOARD_UPGRADE_PLAN.md`
+
+Goal: provide one local UI for research state, data quality,
+strategies, evidence, paper/live status and local incident notes.
+
+Panels:
+
+- data coverage and quality
+- provider status and terms warnings
+- snapshots and stale reports
+- strategy lifecycle
+- validation results
+- benchmark comparison
+- evidence packs
+- portfolio exposure
+- execution / reconciliation
+- incident notes and runbooks
+- preflight status
+
+Implementation plan:
+
+1. Keep Streamlit as the default unless a separate dependency decision
+   approves a new UI.
+2. Make each panel pure-data first, UI second.
+3. Add tests for panel data builders without launching UI.
+4. Link UI actions to CLI commands rather than duplicating logic.
+5. Keep live controls read-only by default. Any action button that can
+   affect paper/live state must call the same audited CLI/library path
+   used outside the dashboard.
+
+Acceptance criteria:
+
+- Dashboard can run with local fixture data.
+- Missing data appears as a warning, not a crash.
+- Panels do not bypass CLI / library permission checks.
+- Data builders have deterministic tests.
+- No hosted dashboard, auth system or multi-user permissions are
+  required by default.
+
+### R190. Performance, memory and scaling budget
+
+Status: open
+Priority: medium-high before large universes
+Effort: 2 to 4 weeks
+Area: performance / memory / scalability
+Source: final platform-hardening pass. R40 created benchmarks and R5 /
+R6 gate Rust / GPU. R190 defines practical performance budgets before
+R158 expands toward larger datasets.
+Suggested paths: `examples/benchmarks/`, `data_contracts/timeseries_store.py`,
+`core/snapshots.py`, `validation/`, `research/auto_gen/`
+
+Goal: know when AURORA is slow, why it is slow and what budget a
+dataset or strategy run must respect.
+
+Implementation plan:
+
+1. Define benchmark scenarios:
+   single asset, 100 assets, 1,000 assets, 10,000 parameter sets,
+   snapshot load, validation pipeline, feature build, evidence pack,
+   execution replay and portfolio allocation.
+2. Track wall time, peak memory, output hash and row count.
+3. Add memory-budget warnings for large TimeSeriesStore reads.
+4. Add chunked / streaming path design for large datasets.
+5. Add regression thresholds stored per-machine or per-CI profile.
+6. Keep Rust / GPU / distributed work blocked until this report proves
+   the bottleneck.
+
+Acceptance criteria:
+
+- Benchmark runner emits JSON with time, memory and output hash.
+- At least three R158-related scenarios are benchmarked.
+- Performance regression is detectable in CI or local comparison.
+- Scaling recommendation says: optimise Python, chunk data, use numba,
+  distribute, Rust, GPU or do nothing.
+
+Recommended execution order for R178-R190:
+
+1. R187 operator doctor.
+2. R178 provider terms registry.
+3. R190 performance budget.
+4. R181 feature store.
+5. R182 registry.
+6. R179 local telemetry.
+7. R180 local incident notes.
+8. R188 local release hardening.
+9. R189 solo cockpit.
+10. R183 futures.
+11. R184 options.
+12. R185 crypto derivatives.
+13. R186 local extension API.
+
+Reason: operator diagnosis and provider policy should come before more
+complex data use; performance budget should happen before large
+universes; feature / model registries come before serious ML; local
+telemetry and incident notes are enough until real live pressure proves
+otherwise; futures, options and crypto derivatives need the data trust
+and execution layers already in place; UI should surface mature state,
+not invent it.
+
 ---
 
 ## Deferred Or Split Items
@@ -2999,13 +5421,37 @@ These are not rejected. They are too broad to start as single tasks:
 
 ## Candidate Features To Promote
 
-These are intentionally not numbered as R155+. Promote them only after
-a pruning pass closes, merges or demotes existing roadmap items. Treat
-them as seven strategic programmes, not as a pile of new tickets. The
-point is to stop QuantForge / AURORA from fooling itself with bad data,
-overfit research, unrealistic execution, uncurated strategy sprawl or
-unowned model risk, while also keeping portfolio optimisation and
-agentic analysis inside hard safety rails.
+These may be promoted into numbered R155+ items when they are concrete
+enough to implement. Treat them as seven strategic programmes, not as a
+pile of loose wishes. The point is to stop QuantForge / AURORA from
+fooling itself with bad data, overfit research, unrealistic execution,
+uncurated strategy sprawl or unowned model risk, while also keeping
+portfolio optimisation and agentic analysis inside hard safety rails.
+
+Promotion note: the first concrete post-R158 slices have already been
+promoted into R159-R167. Do not add duplicate new items for Instrument
+Master, corporate actions / calendars, data-quality quarantine,
+point-in-time fundamentals, liquidity / capacity, mandatory
+benchmarks, research ledger enforcement, evidence packs or data
+refresh / diff. Future candidate promotion should either implement the
+remaining unpromoted parts of these programmes or explicitly supersede
+the relevant R159-R167 item.
+
+Second promotion note: the first concrete execution / portfolio /
+research-governance slices have been promoted into R168-R177. Do not
+duplicate canonical execution events, execution replay,
+realistic execution / TCA, portfolio allocation, portfolio reporting,
+strategy atlas, paper ingestion, solo-operator approval, agentic
+evidence review or research-to-live preflight as new candidate items.
+Extend or supersede the relevant R168-R177 entry instead.
+
+Final promotion note: solo-operator platform hardening has been
+promoted into R178-R190. Do not add duplicate items for provider terms,
+local telemetry, local incident notes, feature store, model / strategy
+registry, futures, options, crypto derivatives, local extension API,
+doctor command, local release hardening, solo cockpit or performance
+budgets. If a future idea fits those areas, attach it to the relevant
+R178-R190 item.
 
 Source references:
 
@@ -3424,25 +5870,25 @@ model-risk item before any serious paper-to-live workflow.
 Definition of ready:
 
 - Each promoted strategy has a risk record with intended use,
-  limitations, assumptions, owner, reviewer, approval status,
+  limitations, assumptions, operator id, optional reviewer, approval status,
   validation evidence, data contract, policy hash, snapshot hash,
   strategy hash, risk limits and expiry / revalidation date.
-- Promotion uses a maker-checker flow: researcher proposes,
-  independent reviewer validates, risk owner approves limits, operator
-  approves deployment, and the audit chain stores the evidence.
+- Promotion uses a single-operator approval flow by default: the
+  operator reviews the evidence, records limits, records the approval
+  state and the audit chain stores the evidence. Optional reviewer /
+  risk-owner fields may exist, but they are not required in solo mode.
 - Lifecycle states are explicit: draft, researching, rejected,
   quarantined, validated, OOS-approved, shadow, paper, canary, live,
   degraded, retired and graveyard.
 - Live promotion refuses strategies without a current risk record,
   current validation, current data contract and unresolved warnings
   below the operator-defined threshold.
-- Tests cover approval ordering, expired risk records, rejected
-  promotion, override evidence and audit-chain persistence.
+- Tests cover approval state, expired risk records, rejected promotion,
+  override evidence and audit-chain persistence.
 
-Reason not to start immediately: this is governance, not alpha. It
-becomes high priority when the project is close to paper/live capital
-or when multiple people start approving strategies. Until then, keep
-the spec sharp and avoid building bureaucracy cosplay.
+Reason not to start immediately: this is governance, not alpha. In
+solo mode it should stay small: one explicit approval, one reason, one
+audit trail. No bureaucracy cosplay required.
 
 ### Candidate G. Agentic research support and explanation layer
 
@@ -3913,13 +6359,15 @@ Suggested modules:
 Implementation steps:
 
 1. Add `StrategyRiskRecord` with intended use, limitations,
-   assumptions, owner, reviewer, approval status, evidence hashes, risk
-   limits, expiry and revalidation date.
+   assumptions, operator id, optional reviewer, approval status,
+   evidence hashes, risk limits, expiry and revalidation date.
 2. Add lifecycle states: draft, researching, rejected, quarantined,
    validated, OOS-approved, shadow, paper, canary, live, degraded,
    retired, graveyard.
-3. Add maker-checker approval flow: researcher proposes, reviewer
-   validates, risk owner approves limits, operator approves deployment.
+3. Add single-operator approval flow: operator reviews evidence,
+   records limits, chooses approval state and signs the decision into
+   the audit chain. Optional reviewer fields stay non-blocking unless
+   multi-user mode is explicitly enabled.
 4. Add promotion gate: refuse promotion if risk record is missing,
    expired, unapproved, hash-mismatched or warning threshold exceeded.
 5. Store approval events in the audit chain.
@@ -3928,7 +6376,7 @@ Tests:
 
 - Promotion without risk record fails.
 - Expired risk record fails.
-- Approval out of order fails.
+- Invalid approval state transition fails.
 - Hash mismatch fails.
 - Override requires author, reason and audit event.
 - Retired strategy cannot be promoted without new record.

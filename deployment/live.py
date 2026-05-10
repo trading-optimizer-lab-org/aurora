@@ -324,7 +324,7 @@ def preflight_checks(strategy, qf_config: LiveConfig) -> list[str]:
         if raw is _SENTINEL or raw is None:
             continue
         try:
-            nav_start = float(raw)
+            nav_start = float(raw)  # type: ignore[arg-type]
             break
         except (TypeError, ValueError):
             continue

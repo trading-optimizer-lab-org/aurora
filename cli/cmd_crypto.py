@@ -173,6 +173,106 @@ def cmd_crypto_balance(args):
     return 0
 
 
+def cmd_crypto_capability(args):
+    """Print the capability matrix entry for an exchange (R185)."""
+    try:
+        from aurora.markets.exchange_capability import default_registry
+    except Exception as exc:  # noqa: BLE001  -- defensive import
+        return _runtime_error(f"crypto capability: {exc}")
+    reg = default_registry()
+    cap = reg.get(args.exchange)
+    if cap is None:
+        print(
+            f"unknown exchange {args.exchange!r}; "
+            f"known: {list(reg.names())}"
+        )
+        return 1
+    print(f"exchange:                   {cap.name}")
+    print(f"  spot_supported:           {cap.spot_supported}")
+    print(f"  futures_supported:        {cap.futures_supported}")
+    print(f"  perpetual_supported:      {cap.perpetual_supported}")
+    print(f"  margin_supported:         {cap.margin_supported}")
+    print(
+        f"  order_types:              "
+        f"{', '.join(sorted(cap.supported_order_types))}"
+    )
+    print(
+        f"  time_in_force:            "
+        f"{', '.join(sorted(cap.supported_time_in_force))}"
+    )
+    print(f"  min_size_per_kind:        {dict(cap.min_size_per_kind)}")
+    print(f"  tick_size_per_kind:       {dict(cap.tick_size_per_kind)}")
+    print(f"  rate_limit_calls/min:     {cap.rate_limit_calls_per_minute}")
+    print(f"  sandbox_supported:        {cap.sandbox_supported}")
+    return 0
+
+
+def cmd_crypto_funding_history(args):
+    """Print a stub funding-rate history for a perpetual (R185).
+
+    Pure offline command -- it does NOT make a network call. It prints
+    the FundingRateRecord schema and a small synthetic example so an
+    operator can confirm the contract before piping live data into the
+    engine.
+    """
+    try:
+        from aurora.markets.crypto_derivatives import FundingRateRecord
+    except Exception as exc:  # noqa: BLE001
+        return _runtime_error(f"crypto funding-history: {exc}")
+    import pandas as pd  # noqa: WPS433  -- localised import
+
+    print(f"symbol: {args.symbol}")
+    print(
+        "schema: instrument_symbol, exchange, ts, rate, "
+        "interval_seconds, source"
+    )
+    base = pd.Timestamp("2026-01-01T00:00:00Z")
+    examples = []
+    for i in range(3):
+        rec = FundingRateRecord(
+            instrument_symbol=args.symbol,
+            exchange=args.exchange or "binance_perpetual",
+            ts=base + pd.Timedelta(hours=8 * i),
+            rate=0.0001 * (1 if i % 2 == 0 else -1),
+            interval_seconds=28800,
+            source="cli_stub",
+        )
+        examples.append(rec)
+        print(
+            f"  ts={rec.ts.isoformat()}  rate={rec.rate:+.6f}  "
+            f"annualised={rec.annualised():+.4%}"
+        )
+    return 0
+
+
+def cmd_crypto_preflight(args):
+    """Run the R185 capability + downtime preflight for one order spec."""
+    try:
+        from aurora.markets.crypto_derivatives import CryptoInstrumentKind
+        from aurora.markets.exchange_capability import (
+            UnsupportedCapability,
+            assert_exchange_supports,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _runtime_error(f"crypto preflight: {exc}")
+    kind = args.kind or "spot"
+    order_type = args.order_type or "market"
+    try:
+        parsed_kind = CryptoInstrumentKind.parse(kind)
+    except ValueError as exc:
+        return _runtime_error(f"crypto preflight: {exc}")
+    try:
+        assert_exchange_supports(args.exchange, parsed_kind, order_type)
+    except UnsupportedCapability as exc:
+        print(f"REFUSED: {exc}")
+        return 1
+    print(
+        f"OK: exchange={args.exchange} symbol={args.symbol} "
+        f"kind={parsed_kind.value} order_type={order_type}"
+    )
+    return 0
+
+
 def cmd_crypto_allow_live(args):
     """Write a one-time allow-live consent token for an exchange."""
     cfg = _ccxt_load_config()
@@ -277,3 +377,47 @@ def register(subparsers, parent_parser=None) -> None:
     p_cx_allow.add_argument("--token-dir", default=None, dest="token_dir",
                             help="Override token storage directory")
     p_cx_allow.set_defaults(func=cmd_crypto_allow_live)
+
+    # ----- R185 capability / funding-history / preflight -----
+    p_cx_cap = crypto_sub.add_parser(
+        "capability",
+        help="Show the hand-curated capability matrix entry for EXCHANGE",
+    )
+    p_cx_cap.add_argument(
+        "exchange",
+        help="Capability registry key, e.g. binance_perpetual",
+    )
+    p_cx_cap.set_defaults(func=cmd_crypto_capability)
+
+    p_cx_fund = crypto_sub.add_parser(
+        "funding-history",
+        help="Print stub FundingRateRecord schema/examples for SYMBOL",
+    )
+    p_cx_fund.add_argument("symbol", help="Perpetual symbol e.g. BTC-PERP")
+    p_cx_fund.add_argument(
+        "--exchange", default=None,
+        help="Capability registry key (default: binance_perpetual)",
+    )
+    p_cx_fund.set_defaults(func=cmd_crypto_funding_history)
+
+    p_cx_pre = crypto_sub.add_parser(
+        "preflight",
+        help="Refusal-gate preflight for an EXCHANGE / SYMBOL / kind / type",
+    )
+    p_cx_pre.add_argument("exchange", help="Capability registry key")
+    p_cx_pre.add_argument("symbol", help="Instrument symbol")
+    p_cx_pre.add_argument(
+        "--kind",
+        choices=["spot", "future", "dated_future", "perpetual"],
+        default="spot",
+        help="Instrument kind (default: spot)",
+    )
+    p_cx_pre.add_argument(
+        "--order-type",
+        dest="order_type",
+        choices=["market", "limit", "stop", "stop_limit",
+                 "post_only", "ioc", "fok"],
+        default="market",
+        help="Order type (default: market)",
+    )
+    p_cx_pre.set_defaults(func=cmd_crypto_preflight)

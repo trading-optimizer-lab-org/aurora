@@ -50,13 +50,12 @@ def policy() -> ProtocolPolicy:
     return ProtocolPolicy.default()
 
 
-DEFAULT_ASOF = pd.Timestamp("2026-01-15")
-
-
-def _make_returns(n: int = 250, asof: pd.Timestamp = DEFAULT_ASOF,
+def _make_returns(n: int = 250, asof: pd.Timestamp | None = None,
                   seed: int = 42, mu: float = 0.0005,
                   sigma: float = 0.012) -> pd.Series:
     """Synthetic GBM-style daily returns ending at ``asof``."""
+    if asof is None:
+        asof = pd.Timestamp("2026-01-15")
     rng = np.random.default_rng(seed)
     r = rng.normal(mu, sigma, size=n)
     idx = pd.date_range(end=asof, periods=n, freq="B")
