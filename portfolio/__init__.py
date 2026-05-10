@@ -25,10 +25,17 @@ from aurora.portfolio.allocation import (
     InverseVolAllocator,
     PortfolioOptimizer,
 )
+from aurora.portfolio.analytics import (
+    rolling_correlation,
+    rolling_max_drawdown,
+    rolling_sharpe,
+    rolling_volatility,
+)
 from aurora.portfolio.attribution import (
     benchmark_relative_alpha,
     contribution_to_return,
     contribution_to_risk,
+    decompose_return,
     exposure_by_group,
 )
 from aurora.portfolio.constraints import PortfolioConstraints
@@ -72,6 +79,11 @@ __all__ = [
     "InverseVolAllocator",
     "CashAllocator",
     "BenchmarkTrackerAllocator",
+    # rolling analytics
+    "rolling_volatility",
+    "rolling_sharpe",
+    "rolling_max_drawdown",
+    "rolling_correlation",
     # constraints
     "PortfolioConstraints",
     # problem / solution shapes
@@ -83,6 +95,7 @@ __all__ = [
     # attribution
     "contribution_to_return",
     "contribution_to_risk",
+    "decompose_return",
     "benchmark_relative_alpha",
     "exposure_by_group",
     # risk measures

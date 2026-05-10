@@ -18,9 +18,70 @@ from collections.abc import Sequence
 
 import numpy as np
 
+def _as_1d(x: Sequence[float]) -> np.ndarray:
+    return np.asarray(x, dtype=float).ravel()
+
+def _check_same_length(a: np.ndarray, b: np.ndarray, names: tuple[str, str]) -> None:
+    if a.size != b.size:
+        raise ValueError(
+            f"length mismatch: len({names[0]})={a.size}, len({names[1]})={b.size}"
+        )
+
+def decompose_return(
+    weights: Sequence[float], asset_returns: Sequence[float]
+) -> dict[str, object]:
+    """Decompose a portfolio period return into headline + ranked contributions.
+
+    Returns a dict with:
+
+    - ``portfolio_return``: float, sum of per-asset contributions.
+    - ``contributions``: tuple of ``(name, value)`` pairs in input order.
+    - ``top_contributors``: tuple of the 3 largest ``(name, value)`` pairs.
+    - ``bottom_contributors``: tuple of the 3 smallest ``(name, value)`` pairs.
+
+    Asset names are synthesised as ``"asset_<i>"`` because no labels are
+    provided. ``top`` and ``bottom`` are always length 3; if there are
+    fewer than 3 assets the lists pad with the available entries (so a
+    2-asset portfolio yields a length-2 tuple).
+    """
+    w = _as_1d(weights)
+    r = _as_1d(asset_returns)
+    _check_same_length(w, r, ("weights", "asset_returns"))
+
+    contribs = w * r
+    pairs = tuple(
+        (f"asset_{i}", float(contribs[i])) for i in range(contribs.size)
+    )
+    portfolio_return = float(np.sum(contribs))
+
+    # Sort by contribution value. Stable sort keeps original index order
+    # on ties so the output is deterministic.
+    sorted_desc = sorted(pairs, key=lambda p: p[1], reverse=True)
+    sorted_asc = sorted(pairs, key=lambda p: p[1])
+
+    top = tuple(sorted_desc[: min(3, len(pairs))])
+    bottom = tuple(sorted_asc[: min(3, len(pairs))])
+
+    return {
+        "portfolio_return": portfolio_return,
+        "contributions": pairs,
+        "top_contributors": top,
+        "bottom_contributors": bottom,
+    }
+
+
+__all__ = [
+    "contribution_to_return",
+    "decompose_return",
+    "contribution_to_risk",
+    "decompose_return",
+]
+
+
 __all__ = [
     "benchmark_relative_alpha",
     "contribution_to_return",
+    "decompose_return",
     "contribution_to_risk",
     "exposure_by_group",
 ]

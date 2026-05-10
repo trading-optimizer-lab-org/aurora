@@ -1,22 +1,35 @@
 """Tests for ``quantforge.governance`` (Phase 6 / Candidate D).
 
-Coverage:
+DEPRECATED: superseded by R175 solo-operator risk record (see
+``tests/test_risk_record.py``). The Phase 6 maker-checker symbols
+(``ApprovalError``, ``MakerCheckerFlow``, ``RiskRegister``,
+``LifecycleState``, ``transition``, ``gate_promotion``) are no longer
+exposed from ``aurora.governance`` because R175 explicitly replaced the
+Candidate D model with the simpler single-operator workflow.
 
-* Promotion gate: missing record, expired record, hash mismatch,
-  wrong approval status, warning threshold breach.
-* Maker-checker order: out-of-order calls raise ``ApprovalError``.
-* Override: requires non-empty actor + reason; emits an audit event;
-  records a REJECTED tail entry.
-* Retired strategy cannot be promoted to live without a fresh record.
-* Lifecycle transitions: illegal direct DRAFT -> LIVE; legal full path
-  DRAFT -> RESEARCHING -> ... -> LIVE through the maker-checker flow.
-* Persistence: write + read round-trip, multi-version lookup, latest().
+This file is skipped during collection until the deprecation cycle
+removes the imports cleanly. Do not rewrite to call the new R175 API
+here -- ``tests/test_risk_record.py`` already covers the new surface.
+
+Coverage that this module attempted (now exercised by R175):
+
+* Promotion gate: missing record, expired record, hash mismatch
+* Override: requires non-empty actor + reason
+* Retired strategy cannot be promoted to live
+* Lifecycle transitions: illegal direct DRAFT -> LIVE
+* Persistence: write + read round-trip, multi-version lookup, latest()
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
+
+pytest.skip(
+    "Phase 6 / Candidate D governance API replaced by R175. "
+    "See tests/test_risk_record.py for the replacement coverage.",
+    allow_module_level=True,
+)
+
+from pathlib import Path  # noqa: E402  (kept so a reviewer can see the original imports)
 
 from aurora.governance import (
     ApprovalError,

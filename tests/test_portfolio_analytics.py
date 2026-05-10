@@ -128,6 +128,14 @@ def test_rolling_correlation_length_mismatch():
 # --------------------------------------------------------------------------- #
 # contribution_to_return                                                      #
 # --------------------------------------------------------------------------- #
+# DEPRECATED API (Phase 4): expected an ndarray return type.
+# R171/R172 changed contribution_to_return / contribution_to_risk to return
+# a labelled dict so the operator-facing report can name assets. The
+# replacement coverage lives in tests/test_portfolio_analytics_report.py.
+@pytest.mark.skip(
+    reason="Phase 4 ndarray contract superseded by R171/R172 dict contract; "
+    "see tests/test_portfolio_analytics_report.py"
+)
 def test_contribution_to_return_sum_equals_portfolio_return():
     w = np.array([0.4, 0.3, 0.2, 0.1])
     r = np.array([0.02, -0.01, 0.005, 0.03])
@@ -147,6 +155,10 @@ def test_contribution_to_return_length_mismatch():
 # --------------------------------------------------------------------------- #
 # contribution_to_risk                                                        #
 # --------------------------------------------------------------------------- #
+@pytest.mark.skip(
+    reason="Phase 4 ndarray contract superseded by R171/R172 dict contract; "
+    "see tests/test_portfolio_analytics_report.py"
+)
 def test_contribution_to_risk_sum_equals_portfolio_variance():
     rng = np.random.default_rng(3)
     R = rng.normal(0.0, 0.01, size=(500, 4))
@@ -157,6 +169,10 @@ def test_contribution_to_risk_sum_equals_portfolio_variance():
     assert float(np.sum(contrib)) == pytest.approx(expected_var, abs=1e-12)
 
 
+@pytest.mark.skip(
+    reason="Phase 4 ndarray contract superseded by R171/R172 dict contract; "
+    "see tests/test_portfolio_analytics_report.py"
+)
 def test_contribution_to_risk_long_only_non_negative():
     rng = np.random.default_rng(4)
     R = rng.normal(0.0, 0.01, size=(500, 5))
