@@ -11,7 +11,7 @@ selection signal.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Callable, Any
 import inspect
 import random
 import numpy as np
@@ -195,7 +195,7 @@ def _detect_bayes_fitness_signature(fitness_fn) -> str:
 
 
 def bayes_optimize(strategy_class, prices_is, prices_oos=None,
-                   fitness_fn=None, config: Optional[BayesConfig] = None,
+                   fitness_fn=None, config: BayesConfig | None = None,
                    scalar: bool = True) -> dict:
     """Bayesian optimization over StrategySpec param space.
 
@@ -270,9 +270,10 @@ def bayes_optimize(strategy_class, prices_is, prices_oos=None,
             convergence.append(best_so_far)
             return -score
 
+        raw: Any
         if scalar and isinstance(out, (int, float, np.floating)):
             score = float(out)
-            raw: Any = float(out)
+            raw = float(out)
         elif scalar and isinstance(out, tuple):
             # caller said scalar but returned tuple → take first elem
             score = float(out[0])
@@ -420,8 +421,8 @@ def _build_mixed_kernel(cat_mask: np.ndarray):
     if not cat_mask.any():
         return ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5)
 
-    cat_idx: np.ndarray = np.flatnonzero(cat_mask).astype(int)
-    real_idx: np.ndarray = np.flatnonzero(~cat_mask).astype(int)
+    cat_idx = np.flatnonzero(cat_mask).astype(int)
+    real_idx = np.flatnonzero(~cat_mask).astype(int)
 
     class _MixedKernel(Kernel):
         def __init__(self, length_scale=1.0, hamming_scale=1.0):
@@ -539,7 +540,7 @@ def _fallback_bo(eval_neg, dims, keys, param_ranges, config: BayesConfig):
         cand_enc = np.vstack([_encode_fallback(c, dims) for c in cand_raw])
         mu, sigma = gp.predict(cand_enc, return_std=True)
         sigma = np.maximum(sigma, 1e-9)
-        f_best: np.ndarray = np.min(ya)  # we are minimizing neg_score
+        f_best = np.min(ya)  # we are minimizing neg_score
         improvement = f_best - mu
         z = improvement / sigma
         ei = improvement * norm.cdf(z) + sigma * norm.pdf(z)

@@ -1,356 +1,420 @@
-"""Maker-checker approval flow + promotion gate.
+"""R175 - Solo-operator risk record + approval gates.
 
-The flow enforces this order, one role per call:
+A strategy cannot be promoted toward shadow / paper / canary / live
+without a current :class:`StrategyRiskRecord` whose hashes match the
+underlying validation evidence. Overrides are explicit and audited.
 
-    1. ``researcher`` proposes.
-    2. ``reviewer`` validates evidence.
-    3. ``risk_owner`` approves limits.
-    4. ``operator`` approves deployment.
+The state machine is:
 
-Each step appends an :class:`ApprovalEvent` to the audit chain
-(``agent_gateway.audit.AgentAudit`` when available; best-effort JSONL
-otherwise) and produces an updated :class:`StrategyRiskRecord` whose
-``approval_status`` advances along the maker-checker scale.
+    drafted -> reviewed_by_operator -> approved_for_shadow ->
+    approved_for_paper -> approved_for_canary -> approved_for_live ->
+    retired
 
-Hash provenance:
-    The promotion gate refuses promotion when the supplied current
-    hashes (``policy_hash``, ``snapshot_hash``, ``strategy_hash``,
-    ``validation_evidence_hash``, ``data_contract_hash``) disagree with
-    the values pinned at approval time. This is the v4.0 protocol-spine
-    contract: nothing live without matching hashes.
+Backward jumps (paper -> shadow) are allowed for de-escalation. Forward
+jumps must be one stage at a time. Expired records cannot promote.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date as _date_type, datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from aurora.governance.lifecycle import LifecycleState
-from aurora.governance.risk_register import (
-    ApprovalStatus,
-    RiskRegister,
-    StrategyRiskRecord,
+
+class LifecycleStage(str, Enum):
+    """Where the strategy lives in the promotion pipeline."""
+
+    DRAFTED = "drafted"
+    REVIEWED = "reviewed_by_operator"
+    SHADOW = "approved_for_shadow"
+    PAPER = "approved_for_paper"
+    CANARY = "approved_for_canary"
+    LIVE = "approved_for_live"
+    RETIRED = "retired"
+
+
+_FORWARD_ORDER: Tuple[LifecycleStage, ...] = (
+    LifecycleStage.DRAFTED,
+    LifecycleStage.REVIEWED,
+    LifecycleStage.SHADOW,
+    LifecycleStage.PAPER,
+    LifecycleStage.CANARY,
+    LifecycleStage.LIVE,
 )
 
 
-# Lifecycle states that count as "live" for gating purposes.
-_LIVE_STATES = frozenset(
-    {LifecycleState.CANARY, LifecycleState.LIVE, LifecycleState.PAPER}
-)
-
-
-class ApprovalError(ValueError):
-    """Raised when the maker-checker order is violated."""
+class PromotionBlocked(RuntimeError):
+    """Raised when a promotion attempt fails a governance gate."""
 
 
 @dataclass(frozen=True)
-class ApprovalEvent:
-    """One step in the maker-checker workflow.
-
-    ``audit_hash`` is sha256 over the canonical JSON of all other
-    fields. It chains to whatever audit log the caller writes the event
-    into.
-    """
+class StrategyOverride:
+    """Audit-grade record of a manual override."""
 
     strategy_id: str
-    version: str
-    role: str
     actor: str
-    timestamp_iso: str
-    action: str
-    audit_hash: str = ""
+    reason: str
+    affected_field: str
+    previous_value: Any
+    new_value: Any
+    created_at: str
 
-    def with_hash(self) -> "ApprovalEvent":
-        """Return a copy whose ``audit_hash`` is the canonical sha256."""
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class StrategyRiskRecord:
+    """Per-strategy risk record bound to validation evidence by hash."""
+
+    strategy_id: str
+    intended_use: str
+    limitations: str
+    assumptions: str
+    operator: str
+    risk_limits: Dict[str, float]
+    validation_id: str
+    policy_hash: str
+    snapshot_hash: str
+    strategy_hash: str
+    benchmark_pack_hash: str = ""
+    evidence_pack_id: str = ""
+    expires_at: Optional[_date_type] = None
+    revalidate_at: Optional[_date_type] = None
+    stage: LifecycleStage = LifecycleStage.DRAFTED
+    overrides: Tuple[StrategyOverride, ...] = field(default_factory=tuple)
+    created_at: str = ""
+    updated_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.strategy_id:
+            raise ValueError("strategy_id must be non-empty")
+        if not self.operator:
+            raise ValueError("operator must be non-empty")
+        if not isinstance(self.stage, LifecycleStage):
+            object.__setattr__(self, "stage", LifecycleStage(self.stage))
+        if self.expires_at is not None and not isinstance(self.expires_at, _date_type):
+            raise TypeError("expires_at must be a date or None")
+        if self.revalidate_at is not None and not isinstance(self.revalidate_at, _date_type):
+            raise TypeError("revalidate_at must be a date or None")
+
+    def is_expired(self, *, today: Optional[_date_type] = None) -> bool:
+        if self.expires_at is None:
+            return False
+        from datetime import date as _d
+
+        ref = today if today is not None else _d.today()
+        return self.expires_at < ref
+
+    def hashes_match(
+        self,
+        *,
+        policy_hash: str,
+        snapshot_hash: str,
+        strategy_hash: str,
+    ) -> bool:
+        return (
+            self.policy_hash == policy_hash
+            and self.snapshot_hash == snapshot_hash
+            and self.strategy_hash == strategy_hash
+        )
+
+    def content_hash(self) -> str:
+        """Stable sha256 over content fields (excludes overrides + timestamps)."""
         payload = {
             "strategy_id": self.strategy_id,
-            "version": self.version,
-            "role": self.role,
-            "actor": self.actor,
-            "timestamp_iso": self.timestamp_iso,
-            "action": self.action,
+            "intended_use": self.intended_use,
+            "limitations": self.limitations,
+            "assumptions": self.assumptions,
+            "operator": self.operator,
+            "risk_limits": self.risk_limits,
+            "validation_id": self.validation_id,
+            "policy_hash": self.policy_hash,
+            "snapshot_hash": self.snapshot_hash,
+            "strategy_hash": self.strategy_hash,
+            "benchmark_pack_hash": self.benchmark_pack_hash,
+            "evidence_pack_id": self.evidence_pack_id,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "revalidate_at": (
+                self.revalidate_at.isoformat() if self.revalidate_at else None
+            ),
+            "stage": self.stage.value,
         }
-        blob = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-        ).encode("utf-8")
-        digest = hashlib.sha256(blob).hexdigest()
-        return ApprovalEvent(**{**asdict(self), "audit_hash": digest})
+        blob = json.dumps(payload, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
+    def to_dict(self) -> dict:
+        d = {
+            "strategy_id": self.strategy_id,
+            "intended_use": self.intended_use,
+            "limitations": self.limitations,
+            "assumptions": self.assumptions,
+            "operator": self.operator,
+            "risk_limits": dict(self.risk_limits),
+            "validation_id": self.validation_id,
+            "policy_hash": self.policy_hash,
+            "snapshot_hash": self.snapshot_hash,
+            "strategy_hash": self.strategy_hash,
+            "benchmark_pack_hash": self.benchmark_pack_hash,
+            "evidence_pack_id": self.evidence_pack_id,
+            "expires_at": (
+                self.expires_at.isoformat() if self.expires_at else None
+            ),
+            "revalidate_at": (
+                self.revalidate_at.isoformat() if self.revalidate_at else None
+            ),
+            "stage": self.stage.value,
+            "overrides": [o.to_dict() for o in self.overrides],
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "content_hash": self.content_hash(),
+        }
+        return d
 
 
-# Maker-checker order. Each role advances ``approval_status`` to the
-# matching value if and only if the *previous* role has signed off.
-_ROLE_ORDER = ("researcher", "reviewer", "risk_owner", "operator")
-_ROLE_TARGET_STATUS = {
-    "researcher": ApprovalStatus.PROPOSED,
-    "reviewer": ApprovalStatus.REVIEWED,
-    "risk_owner": ApprovalStatus.RISK_APPROVED,
-    "operator": ApprovalStatus.OPERATOR_APPROVED,
-}
-_ROLE_PRECONDITION = {
-    "researcher": (ApprovalStatus.DRAFT,),
-    "reviewer": (ApprovalStatus.PROPOSED,),
-    "risk_owner": (ApprovalStatus.REVIEWED,),
-    "operator": (ApprovalStatus.RISK_APPROVED,),
-}
+# ---------------------------------------------------------------------------
+# Promotion logic
+# ---------------------------------------------------------------------------
+
+
+def can_promote(
+    record: StrategyRiskRecord,
+    target: LifecycleStage,
+    *,
+    today: Optional[_date_type] = None,
+    allow_backwards: bool = True,
+) -> Tuple[bool, str]:
+    """Return ``(allowed, reason)`` for advancing ``record`` to ``target``."""
+    if target is LifecycleStage.RETIRED:
+        return True, "retire is always allowed"
+    if record.stage is LifecycleStage.RETIRED:
+        return False, "retired strategy cannot be promoted; create a new record"
+    if record.is_expired(today=today):
+        return False, f"record expired on {record.expires_at!s}"
+    try:
+        cur_idx = _FORWARD_ORDER.index(record.stage)
+        tgt_idx = _FORWARD_ORDER.index(target)
+    except ValueError:
+        return False, f"unknown stage {record.stage!r} or {target!r}"
+    if tgt_idx == cur_idx:
+        return False, "already at requested stage"
+    if tgt_idx < cur_idx:
+        if allow_backwards:
+            return True, "de-escalation allowed"
+        return False, "backward promotion not allowed"
+    if tgt_idx - cur_idx > 1:
+        return False, (
+            f"cannot skip stages: {record.stage.value} -> {target.value}"
+        )
+    return True, "ok"
+
+
+def promote(
+    record: StrategyRiskRecord,
+    target: LifecycleStage,
+    *,
+    today: Optional[_date_type] = None,
+    allow_backwards: bool = True,
+) -> StrategyRiskRecord:
+    """Return a new record at ``target`` if the promotion is allowed."""
+    allowed, reason = can_promote(
+        record, target, today=today, allow_backwards=allow_backwards,
+    )
+    if not allowed:
+        raise PromotionBlocked(reason)
+    now = datetime.now(timezone.utc).isoformat()
+    return _replace_record(record, stage=target, updated_at=now)
+
+
+def assert_can_run(
+    record: StrategyRiskRecord,
+    *,
+    expected_policy_hash: str,
+    expected_snapshot_hash: str,
+    expected_strategy_hash: str,
+    minimum_stage: LifecycleStage,
+    today: Optional[_date_type] = None,
+) -> None:
+    """Raise :class:`PromotionBlocked` unless the record permits ``minimum_stage``.
+
+    This is the gate paper / canary / live runners call before submitting
+    orders for a strategy.
+    """
+    if record.is_expired(today=today):
+        raise PromotionBlocked(
+            f"record expired on {record.expires_at!s}; revalidate first"
+        )
+    if not record.hashes_match(
+        policy_hash=expected_policy_hash,
+        snapshot_hash=expected_snapshot_hash,
+        strategy_hash=expected_strategy_hash,
+    ):
+        raise PromotionBlocked(
+            "validation evidence hash mismatch; risk record is stale"
+        )
+    try:
+        rec_idx = _FORWARD_ORDER.index(record.stage)
+        min_idx = _FORWARD_ORDER.index(minimum_stage)
+    except ValueError as exc:
+        raise PromotionBlocked(f"unknown stage: {exc}") from exc
+    if rec_idx < min_idx:
+        raise PromotionBlocked(
+            f"current stage {record.stage.value} below required "
+            f"{minimum_stage.value}"
+        )
+
+
+def add_override(
+    record: StrategyRiskRecord,
+    *,
+    actor: str,
+    reason: str,
+    affected_field: str,
+    previous_value: Any,
+    new_value: Any,
+) -> StrategyRiskRecord:
+    """Append an audited override to ``record`` and return the new record."""
+    if not actor or not reason:
+        raise ValueError("override requires actor and reason")
+    override = StrategyOverride(
+        strategy_id=record.strategy_id,
+        actor=actor,
+        reason=reason,
+        affected_field=affected_field,
+        previous_value=previous_value,
+        new_value=new_value,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    return _replace_record(
+        record,
+        overrides=record.overrides + (override,),
+        updated_at=override.created_at,
+    )
+
+
+def _replace_record(record: StrategyRiskRecord, **overrides) -> StrategyRiskRecord:
+    payload = {
+        "strategy_id": record.strategy_id,
+        "intended_use": record.intended_use,
+        "limitations": record.limitations,
+        "assumptions": record.assumptions,
+        "operator": record.operator,
+        "risk_limits": dict(record.risk_limits),
+        "validation_id": record.validation_id,
+        "policy_hash": record.policy_hash,
+        "snapshot_hash": record.snapshot_hash,
+        "strategy_hash": record.strategy_hash,
+        "benchmark_pack_hash": record.benchmark_pack_hash,
+        "evidence_pack_id": record.evidence_pack_id,
+        "expires_at": record.expires_at,
+        "revalidate_at": record.revalidate_at,
+        "stage": record.stage,
+        "overrides": record.overrides,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+    payload.update(overrides)
+    return StrategyRiskRecord(**payload)
+
+
+# ---------------------------------------------------------------------------
+# Persistent registry
+# ---------------------------------------------------------------------------
 
 
 @dataclass
-class MakerCheckerFlow:
-    """Drives the maker-checker workflow for one risk register.
+class StrategyRiskRegistry:
+    """JSONL-backed registry of :class:`StrategyRiskRecord` objects.
 
-    The flow is stateless beyond its bound :class:`RiskRegister` and
-    audit log; all state lives on the records themselves.
-
-    Attributes:
-        register: the JSONL-backed register that holds risk records.
-        audit_log_path: optional fallback JSONL path for approval events
-            when :class:`agent_gateway.audit.AgentAudit` is unavailable.
-            Defaults to ``register.path.parent / 'governance_audit.jsonl'``.
+    The latest record per ``strategy_id`` wins; the file is append-only
+    so the operator (or auditor) can replay history.
     """
 
-    register: RiskRegister
-    audit_log_path: Optional[Path] = None
-    events: List[ApprovalEvent] = field(default_factory=list)
+    path: Path
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.audit_log_path is None:
-            self.audit_log_path = self.register.path.parent / "governance_audit.jsonl"
+        self.path = Path(self.path)
 
-    # ------------------------------------------------------------------
-    # Public step API
-    # ------------------------------------------------------------------
-    def propose(self, record: StrategyRiskRecord, actor: str) -> StrategyRiskRecord:
-        """Researcher proposes a fresh record (DRAFT -> PROPOSED)."""
-        return self._advance(record, role="researcher", actor=actor, action="propose")
+    def append(self, record: StrategyRiskRecord) -> None:
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
 
-    def review(self, record: StrategyRiskRecord, actor: str) -> StrategyRiskRecord:
-        """Independent reviewer signs off (PROPOSED -> REVIEWED)."""
-        return self._advance(record, role="reviewer", actor=actor, action="review")
+    def latest(self, strategy_id: str) -> Optional[StrategyRiskRecord]:
+        latest: Optional[StrategyRiskRecord] = None
+        if not self.path.exists():
+            return None
+        with self.path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                if payload.get("strategy_id") != strategy_id:
+                    continue
+                latest = _record_from_payload(payload)
+        return latest
 
-    def approve_risk(self, record: StrategyRiskRecord, actor: str) -> StrategyRiskRecord:
-        """Risk owner approves limits (REVIEWED -> RISK_APPROVED)."""
-        return self._advance(record, role="risk_owner", actor=actor, action="approve_risk")
-
-    def approve_operator(
-        self, record: StrategyRiskRecord, actor: str,
-    ) -> StrategyRiskRecord:
-        """Operator approves deployment (RISK_APPROVED -> OPERATOR_APPROVED)."""
-        return self._advance(record, role="operator", actor=actor, action="approve_operator")
-
-    # ------------------------------------------------------------------
-    # Override (reject + reason)
-    # ------------------------------------------------------------------
-    def override(
-        self, record: StrategyRiskRecord, actor: str, reason: str,
-    ) -> StrategyRiskRecord:
-        """Reject the record. Requires a non-empty reason; emits an event.
-
-        Used by the operator to refuse a strategy mid-flow. Persists a
-        new ``REJECTED`` record so the register's tail reflects the
-        decision.
-        """
-        if not actor:
-            raise ApprovalError("override requires a non-empty actor")
-        if not reason or not reason.strip():
-            raise ApprovalError("override requires a non-empty reason")
-        now = _now_iso()
-        new_record = StrategyRiskRecord(
-            **{
-                **asdict(record),
-                "approval_status": ApprovalStatus.REJECTED,
-                "limitations": tuple(record.limitations) + (f"override: {reason}",),
-                "last_updated_iso": now,
-            }
-        )
-        self.register.register(new_record)
-        event = ApprovalEvent(
-            strategy_id=record.strategy_id,
-            version=record.version,
-            role="operator",
-            actor=actor,
-            timestamp_iso=now,
-            action=f"override: {reason}",
-        ).with_hash()
-        self.events.append(event)
-        self._emit_audit(event)
-        return new_record
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-    def _advance(
-        self,
-        record: StrategyRiskRecord,
-        *,
-        role: str,
-        actor: str,
-        action: str,
-    ) -> StrategyRiskRecord:
-        if role not in _ROLE_ORDER:
-            raise ApprovalError(f"unknown role: {role}")
-        if not actor:
-            raise ApprovalError(f"role={role} requires a non-empty actor")
-        allowed = _ROLE_PRECONDITION[role]
-        if record.approval_status not in allowed:
-            raise ApprovalError(
-                f"role={role} cannot act on a record in status "
-                f"{record.approval_status.value}; expected one of "
-                f"{[s.value for s in allowed]}"
-            )
-        target_status = _ROLE_TARGET_STATUS[role]
-        now = _now_iso()
-        updated = StrategyRiskRecord(
-            **{
-                **asdict(record),
-                "approval_status": target_status,
-                "reviewer": actor if role == "reviewer" else record.reviewer,
-                "risk_owner": actor if role == "risk_owner" else record.risk_owner,
-                "operator": actor if role == "operator" else record.operator,
-                "last_updated_iso": now,
-            }
-        )
-        self.register.register(updated)
-        event = ApprovalEvent(
-            strategy_id=record.strategy_id,
-            version=record.version,
-            role=role,
-            actor=actor,
-            timestamp_iso=now,
-            action=action,
-        ).with_hash()
-        self.events.append(event)
-        self._emit_audit(event)
-        return updated
-
-    def _emit_audit(self, event: ApprovalEvent) -> None:
-        """Write the event to the agent gateway audit chain when available."""
-        try:
-            from aurora.agent_gateway.audit import AgentAudit, AgentAuditConfig
-            cfg = AgentAuditConfig(log_path=str(self.audit_log_path), mirror_soc2=False)
-            AgentAudit(cfg).append(
-                actor=event.actor,
-                token_id=f"governance:{event.role}",
-                action=f"governance.{event.action}",
-                scope=event.role,
-                request_hash=event.audit_hash,
-                outcome="ok",
-                details={
-                    "strategy_id": event.strategy_id,
-                    "version": event.version,
-                    "timestamp_iso": event.timestamp_iso,
-                },
-            )
-        except Exception:
-            self._fallback_audit(event)
-
-    def _fallback_audit(self, event: ApprovalEvent) -> None:
-        """Append a JSONL line if the gateway audit chain is unavailable."""
-        if self.audit_log_path is None:
-            return
-        path = Path(self.audit_log_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(asdict(event), sort_keys=True, default=str) + "\n")
+    def all_strategies(self) -> List[str]:
+        if not self.path.exists():
+            return []
+        seen: set[str] = set()
+        with self.path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                seen.add(payload["strategy_id"])
+        return sorted(seen)
 
 
-def _now_iso() -> str:
-    """Tz-aware UTC timestamp in ISO format."""
-    return datetime.now(timezone.utc).isoformat()
+def _record_from_payload(payload: Dict[str, Any]) -> StrategyRiskRecord:
+    overrides_raw = payload.get("overrides") or []
+    overrides = tuple(
+        StrategyOverride(**{k: v for k, v in o.items()})
+        for o in overrides_raw
+    )
+    expires_at = payload.get("expires_at")
+    revalidate_at = payload.get("revalidate_at")
+    from datetime import date as _d
 
-
-# ---------------------------------------------------------------------------
-# Promotion gate
-# ---------------------------------------------------------------------------
-def gate_promotion(
-    strategy_id: str,
-    version: str,
-    target_state: LifecycleState,
-    register: RiskRegister,
-    today: str,
-    *,
-    current_policy_hash: Optional[str] = None,
-    current_snapshot_hash: Optional[str] = None,
-    current_strategy_hash: Optional[str] = None,
-    current_validation_evidence_hash: Optional[str] = None,
-    current_data_contract_hash: Optional[str] = None,
-    open_warnings: int = 0,
-    warning_threshold: int = 0,
-) -> List[str]:
-    """Return refusal reasons. Empty list = OK to promote.
-
-    Refuses when:
-
-    * No risk record exists for ``(strategy_id, version)``.
-    * The record is past its expiry (``today`` lexicographically greater
-      than ``expiry_iso``).
-    * The target state is a "live" state (``PAPER``, ``CANARY``,
-      ``LIVE``) but the record is not ``OPERATOR_APPROVED``.
-    * Any supplied current hash disagrees with the record's pinned
-      hash. Hashes that are not supplied (``None``) are not checked.
-    * The number of open warnings exceeds ``warning_threshold``.
-    """
-    reasons: List[str] = []
-    record = register.get(strategy_id, version)
-    if record is None:
-        reasons.append("missing risk record")
-        return reasons
-    if record.expiry_iso and today > record.expiry_iso:
-        reasons.append("risk record expired")
-    if target_state in _LIVE_STATES:
-        if record.approval_status != ApprovalStatus.OPERATOR_APPROVED:
-            reasons.append(
-                f"approval_status={record.approval_status.value}, "
-                f"requires operator_approved for live targets"
-            )
-    reasons.extend(_hash_mismatches(
-        record,
-        current_policy_hash=current_policy_hash,
-        current_snapshot_hash=current_snapshot_hash,
-        current_strategy_hash=current_strategy_hash,
-        current_validation_evidence_hash=current_validation_evidence_hash,
-        current_data_contract_hash=current_data_contract_hash,
-    ))
-    if open_warnings > warning_threshold:
-        reasons.append(
-            f"open_warnings={open_warnings} exceeds threshold {warning_threshold}"
-        )
-    return reasons
-
-
-def _hash_mismatches(
-    record: StrategyRiskRecord,
-    *,
-    current_policy_hash: Optional[str],
-    current_snapshot_hash: Optional[str],
-    current_strategy_hash: Optional[str],
-    current_validation_evidence_hash: Optional[str],
-    current_data_contract_hash: Optional[str],
-) -> List[str]:
-    """Return one reason per mismatched hash."""
-    out: List[str] = []
-    pairs: Dict[str, Any] = {
-        "policy_hash": (current_policy_hash, record.policy_hash),
-        "snapshot_hash": (current_snapshot_hash, record.snapshot_hash),
-        "strategy_hash": (current_strategy_hash, record.strategy_hash),
-        "validation_evidence_hash": (
-            current_validation_evidence_hash, record.validation_evidence_hash,
-        ),
-        "data_contract_hash": (current_data_contract_hash, record.data_contract_hash),
-    }
-    for label, (current, pinned) in pairs.items():
-        if current is None:
-            continue
-        if current != pinned:
-            out.append(f"{label} mismatch: current={current!r} pinned={pinned!r}")
-    return out
+    return StrategyRiskRecord(
+        strategy_id=payload["strategy_id"],
+        intended_use=payload["intended_use"],
+        limitations=payload["limitations"],
+        assumptions=payload["assumptions"],
+        operator=payload["operator"],
+        risk_limits=dict(payload.get("risk_limits", {})),
+        validation_id=payload["validation_id"],
+        policy_hash=payload["policy_hash"],
+        snapshot_hash=payload["snapshot_hash"],
+        strategy_hash=payload["strategy_hash"],
+        benchmark_pack_hash=payload.get("benchmark_pack_hash", ""),
+        evidence_pack_id=payload.get("evidence_pack_id", ""),
+        expires_at=_d.fromisoformat(expires_at) if expires_at else None,
+        revalidate_at=_d.fromisoformat(revalidate_at) if revalidate_at else None,
+        stage=LifecycleStage(payload.get("stage", LifecycleStage.DRAFTED.value)),
+        overrides=overrides,
+        created_at=payload.get("created_at", ""),
+        updated_at=payload.get("updated_at", ""),
+    )
 
 
 __all__ = [
-    "ApprovalError",
-    "ApprovalEvent",
-    "MakerCheckerFlow",
-    "gate_promotion",
+    "LifecycleStage",
+    "PromotionBlocked",
+    "StrategyOverride",
+    "StrategyRiskRecord",
+    "StrategyRiskRegistry",
+    "add_override",
+    "assert_can_run",
+    "can_promote",
+    "promote",
 ]

@@ -1,266 +1,440 @@
-"""Fill models for paper / simulation execution.
+"""R170 -- Realistic fill models for paper / backtest sims.
 
-Phase 3 -- Candidate A. The :class:`FillModel` ABC enforces a single
-``simulate_fill(order, market) -> FillResult`` surface so any algorithm
-in :mod:`quantforge.execution` can swap between simple and adversarial
-fill behaviours without touching its scheduling logic.
+The :class:`FillModel` protocol turns an idealised ``OrderRequest``
+into a deterministic stream of :class:`ExecutionEvent` records that
+respect spread, latency, partial fills, rejects, tick size, minimum lot
+size and a maximum participation cap on bar volume.
 
-Concrete models cover the cases called out in the playbook:
+All randomness is controlled by an explicit ``seed``; the same seed and
+the same ``FillModelInput`` always produce the same ``FillModelOutput``.
 
-* :class:`MarketOrderFillModel` -- mid +/- half-spread; refuses fill on
-  zero-depth markets.
-* :class:`LimitOrderFillModel` -- explicit fill probability based on
-  price improvement, queue position and depth.
-* :class:`PartialFillModel` -- slices the parent into ``n`` pieces
-  governed by a participation rate.
-* :class:`LatencyFillModel` -- delays the resulting fill by ``n`` bars.
-* :class:`RejectingFillModel` -- rejects with probability ``p``.
-* :class:`StaleQuoteFillModel` -- refuses to fill when the quote age is
-  over ``max_quote_age_seconds``.
-
-``order`` and ``market`` are loose dicts here: the broker / paper
-simulator already speaks dicts, and the alternative (importing every
-order-shape dataclass into this module) would create circular imports
-with the existing schedulers.
+The model intentionally does NOT replace the existing execution algos
+under :mod:`aurora.execution` (TWAP, VWAP, POV, Almgren-Chriss, etc).
+It sits one layer below: an algo decides how to slice an order and the
+fill model decides what events the broker would have emitted for each
+slice.
 """
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+import hashlib
+import math
+import random
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Iterable, List, Mapping, Optional, Protocol, Tuple
 
-import numpy as np
+from aurora.execution.events import EventType, ExecutionEvent
+
+
+# ---------------------------------------------------------------------------
+# Public types
+# ---------------------------------------------------------------------------
+
+
+class OrderType(str, Enum):
+    MARKET = "market"
+    LIMIT = "limit"
+    STOP = "stop"
+    STOP_LIMIT = "stop_limit"
 
 
 @dataclass(frozen=True)
-class FillResult:
-    """Outcome of a single ``simulate_fill`` call."""
+class FillModelInput:
+    """Idealised order request the model is asked to simulate."""
 
+    order_id: str
+    symbol: str
+    side: str
     qty: float
-    price: float
-    accepted: bool
-    reason: str = ""
+    order_type: OrderType
+    timestamp: str
+    bid: float
+    ask: float
+    last_price: Optional[float] = None
+    bar_volume: float = 0.0
+    limit_price: Optional[float] = None
+    stop_price: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if not self.order_id:
+            raise ValueError("order_id must be non-empty")
+        if not self.symbol:
+            raise ValueError("symbol must be non-empty")
+        if self.side.lower() not in {"buy", "sell"}:
+            raise ValueError(f"side must be 'buy' or 'sell', got {self.side!r}")
+        if self.qty <= 0:
+            raise ValueError(f"qty must be positive, got {self.qty}")
+        if self.bid < 0 or self.ask < 0:
+            raise ValueError("bid/ask must be non-negative")
+        if self.ask < self.bid:
+            raise ValueError("ask must be >= bid")
+        if not isinstance(self.order_type, OrderType):
+            object.__setattr__(self, "order_type", OrderType(self.order_type))
 
 
-def fill_probability(
-    limit_price: float,
-    mid: float,
-    depth: float,
-    queue_pos: float,
-    side: str = "buy",
-) -> float:
-    """Return a probability in ``[0, 1]`` that a limit order fills.
+@dataclass(frozen=True)
+class FillModelOutput:
+    """Deterministic outcome produced by a :class:`FillModel`."""
 
-    Heuristic:
+    events: Tuple[ExecutionEvent, ...]
+    filled_qty: float
+    avg_fill_price: float
+    rejected: bool
+    rejection_reason: str = ""
+    seed: int = 0
+    model_name: str = ""
+    notes: Tuple[str, ...] = field(default_factory=tuple)
 
-    * Marketable orders (buy >= mid, sell <= mid) get full probability
-      modulated by queue position.
-    * Non-marketable orders fall off as the price gap grows; a deeper
-      book and a closer queue position both raise the probability.
+
+class FillModel(Protocol):
+    """Pure simulator: ``simulate(input)`` -> ``FillModelOutput``."""
+
+    def simulate(self, input: FillModelInput) -> FillModelOutput: ...
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _stable_seed(model_seed: int, order_id: str) -> int:
+    """Mix a model-level seed with the order id so each order gets a
+    stable but distinct PRNG stream. Pure, deterministic."""
+    h = hashlib.sha256(f"{model_seed}|{order_id}".encode("utf-8")).digest()
+    return int.from_bytes(h[:8], "big", signed=False)
+
+
+def _round_to_tick(price: float, tick_size: float, *, round_up: bool) -> float:
+    if tick_size <= 0:
+        return price
+    n = price / tick_size
+    rounded = math.ceil(n) if round_up else math.floor(n)
+    return rounded * tick_size
+
+
+def _round_qty_to_lot(qty: float, min_lot: float) -> float:
+    if min_lot <= 0:
+        return qty
+    n = math.floor(qty / min_lot)
+    return n * min_lot
+
+
+# ---------------------------------------------------------------------------
+# SpreadAwareFillModel
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SpreadAwareFillModel:
+    """Simple but realistic fill model.
+
+    * Market orders cross the spread; buys hit ask, sells hit bid.
+    * Limit orders only fill if the market touches the limit (ask <=
+      limit for buys, bid >= limit for sells).
+    * Partial fills happen with probability ``partial_fill_prob``; the
+      filled fraction is drawn uniformly from ``[0.3, 0.95]``.
+    * Rejects happen with probability ``reject_prob``.
+    * Latency, tick size, minimum lot and max volume participation are
+      enforced.
     """
-    mid = float(mid)
-    limit_price = float(limit_price)
-    depth = max(float(depth), 0.0)
-    queue_pos = max(float(queue_pos), 0.0)
-    if mid <= 0:
-        return 0.0
-    if side == "buy":
-        gap = (mid - limit_price) / mid
-    elif side == "sell":
-        gap = (limit_price - mid) / mid
-    else:
-        return 0.0
-    # Marketable: gap <= 0 means the price crosses the spread.
-    if gap <= 0:
-        base = 1.0
-    else:
-        # Exponential decay scaled by depth. Larger depth -> faster decay
-        # (more competition ahead of you).
-        base = float(np.exp(-gap * (1.0 + depth)))
-    queue_penalty = 1.0 / (1.0 + queue_pos)
-    return float(max(0.0, min(1.0, base * queue_penalty)))
 
+    spread: float = 0.0
+    latency_ms: float = 0.0
+    partial_fill_prob: float = 0.0
+    reject_prob: float = 0.0
+    tick_size: float = 0.0
+    min_lot: float = 0.0
+    max_volume_participation: float = 1.0
+    seed: int = 0
+    model_name: str = "SpreadAwareFillModel"
 
-class FillModel(ABC):
-    """Base class for all fill models."""
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.partial_fill_prob <= 1.0):
+            raise ValueError("partial_fill_prob must be in [0,1]")
+        if not (0.0 <= self.reject_prob <= 1.0):
+            raise ValueError("reject_prob must be in [0,1]")
+        if not (0.0 <= self.max_volume_participation <= 1.0):
+            raise ValueError("max_volume_participation must be in [0,1]")
+        if self.spread < 0:
+            raise ValueError("spread must be non-negative")
+        if self.tick_size < 0 or self.min_lot < 0 or self.latency_ms < 0:
+            raise ValueError("tick_size / min_lot / latency_ms must be non-negative")
 
-    @abstractmethod
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        """Return a :class:`FillResult` for ``order`` against ``market``."""
+    def simulate(self, input: FillModelInput) -> FillModelOutput:
+        rng = random.Random(_stable_seed(self.seed, input.order_id))
+        notes: List[str] = []
+        events: List[ExecutionEvent] = []
+        side = input.side.lower()
 
-
-class MarketOrderFillModel(FillModel):
-    """Crosses the spread; refuses if depth is zero."""
-
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        bid = float(market.get("bid", 0.0))
-        ask = float(market.get("ask", 0.0))
-        depth = float(market.get("depth", 0.0))
-        side = str(order.get("side", "buy"))
-        qty = float(order.get("qty", 0.0))
-        if depth <= 0 or bid <= 0 or ask <= 0:
-            return FillResult(qty=0.0, price=0.0, accepted=False, reason="no_liquidity")
-        mid = 0.5 * (bid + ask)
-        half_spread = 0.5 * (ask - bid)
-        price = mid + half_spread if side == "buy" else mid - half_spread
-        return FillResult(qty=qty, price=price, accepted=True, reason="market_full_fill")
-
-
-class LimitOrderFillModel(FillModel):
-    """Probabilistic limit fill; rejects when probability is below threshold."""
-
-    def __init__(self, fill_threshold: float = 0.5) -> None:
-        if not 0.0 <= fill_threshold <= 1.0:
-            raise ValueError("fill_threshold must be in [0, 1]")
-        self.fill_threshold = fill_threshold
-
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        bid = float(market.get("bid", 0.0))
-        ask = float(market.get("ask", 0.0))
-        depth = float(market.get("depth", 0.0))
-        queue_pos = float(market.get("queue_pos", 0.0))
-        side = str(order.get("side", "buy"))
-        qty = float(order.get("qty", 0.0))
-        limit_price = float(order.get("limit_price", 0.0))
-        if bid <= 0 or ask <= 0 or limit_price <= 0:
-            return FillResult(qty=0.0, price=0.0, accepted=False, reason="bad_quote")
-        mid = 0.5 * (bid + ask)
-        prob = fill_probability(limit_price, mid, depth, queue_pos, side)
-        if prob < self.fill_threshold:
-            return FillResult(
-                qty=0.0,
-                price=0.0,
-                accepted=False,
-                reason=f"low_fill_probability={prob:.3f}",
+        # Lot size gate -- before any randomness so the test surface is
+        # easy to reason about.
+        target_qty = _round_qty_to_lot(input.qty, self.min_lot)
+        if target_qty <= 0:
+            return _reject(
+                input,
+                seed=self.seed,
+                model_name=self.model_name,
+                reason=f"qty {input.qty} below min_lot {self.min_lot}",
+                events=tuple(events),
             )
-        # Marketable side fills at the touch; non-marketable at limit.
-        if side == "buy":
-            price = ask if limit_price >= ask else limit_price
+
+        # Volume participation cap -- also pre-randomness.
+        if input.bar_volume > 0 and self.max_volume_participation > 0:
+            cap = input.bar_volume * self.max_volume_participation
+            if cap <= 0:
+                return _reject(
+                    input,
+                    seed=self.seed,
+                    model_name=self.model_name,
+                    reason="max_volume_participation produces zero cap",
+                    events=tuple(events),
+                )
+            if target_qty > cap:
+                notes.append(
+                    f"qty capped from {target_qty} to {cap} by participation"
+                )
+                target_qty = _round_qty_to_lot(cap, self.min_lot)
+                if target_qty <= 0:
+                    return _reject(
+                        input,
+                        seed=self.seed,
+                        model_name=self.model_name,
+                        reason="participation cap rounded qty to 0",
+                        events=tuple(events),
+                    )
+
+        # Reject sample.
+        if self.reject_prob > 0 and rng.random() < self.reject_prob:
+            return _reject(
+                input,
+                seed=self.seed,
+                model_name=self.model_name,
+                reason="random reject sample",
+                events=tuple(events),
+            )
+
+        # Effective quote with model spread overlay.
+        bid = input.bid
+        ask = input.ask
+        if self.spread > 0:
+            mid = (bid + ask) / 2 if (bid + ask) > 0 else max(bid, ask)
+            bid = max(0.0, mid - self.spread / 2)
+            ask = mid + self.spread / 2
+
+        # Resolve fill price by order type.
+        ref_price, can_fill, reject_reason = _resolve_price(
+            input, bid=bid, ask=ask,
+        )
+        if not can_fill:
+            return _reject(
+                input,
+                seed=self.seed,
+                model_name=self.model_name,
+                reason=reject_reason or "limit/stop did not trigger",
+                events=tuple(events),
+            )
+
+        round_up = side == "buy"
+        fill_price = _round_to_tick(ref_price, self.tick_size, round_up=round_up)
+
+        # Decide partial vs full.
+        do_partial = (
+            self.partial_fill_prob > 0 and rng.random() < self.partial_fill_prob
+        )
+        filled_qty = target_qty
+        if do_partial:
+            frac = rng.uniform(0.3, 0.95)
+            partial_qty = _round_qty_to_lot(target_qty * frac, self.min_lot)
+            if partial_qty <= 0:
+                # Partial would round to zero -- fall back to full fill.
+                do_partial = False
+            else:
+                filled_qty = partial_qty
+
+        # Build events.
+        ack_ts = _shift_iso(input.timestamp, self.latency_ms)
+        events.append(ExecutionEvent(
+            event_id=f"{input.order_id}-ack",
+            event_type=EventType.BROKER_ACK,
+            order_id=input.order_id,
+            timestamp=ack_ts,
+            payload={
+                "side": side,
+                "requested_qty": input.qty,
+                "latency_ms": self.latency_ms,
+            },
+            broker=self.model_name,
+            symbol=input.symbol,
+        ))
+
+        fill_ts = _shift_iso(input.timestamp, self.latency_ms + 1.0)
+        if do_partial:
+            events.append(ExecutionEvent(
+                event_id=f"{input.order_id}-partial",
+                event_type=EventType.PARTIAL_FILL,
+                order_id=input.order_id,
+                timestamp=fill_ts,
+                payload={
+                    "side": side,
+                    "qty": filled_qty,
+                    "price": fill_price,
+                    "requested_qty": input.qty,
+                },
+                broker=self.model_name,
+                symbol=input.symbol,
+            ))
         else:
-            price = bid if limit_price <= bid else limit_price
-        return FillResult(qty=qty, price=price, accepted=True, reason="limit_fill")
+            events.append(ExecutionEvent(
+                event_id=f"{input.order_id}-fill",
+                event_type=EventType.FILL,
+                order_id=input.order_id,
+                timestamp=fill_ts,
+                payload={
+                    "side": side,
+                    "qty": filled_qty,
+                    "price": fill_price,
+                    "requested_qty": input.qty,
+                },
+                broker=self.model_name,
+                symbol=input.symbol,
+            ))
 
-
-class PartialFillModel(FillModel):
-    """Splits the parent qty into ``slices`` chunks governed by participation."""
-
-    def __init__(self, slices: int = 4, participation_rate: float = 0.1) -> None:
-        if slices <= 0:
-            raise ValueError("slices must be > 0")
-        if not 0.0 < participation_rate <= 1.0:
-            raise ValueError("participation_rate must be in (0, 1]")
-        self.slices = slices
-        self.participation_rate = participation_rate
-
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        qty = float(order.get("qty", 0.0))
-        bar_volume = float(market.get("bar_volume", 0.0))
-        bid = float(market.get("bid", 0.0))
-        ask = float(market.get("ask", 0.0))
-        side = str(order.get("side", "buy"))
-        if qty <= 0 or bar_volume <= 0 or bid <= 0 or ask <= 0:
-            return FillResult(qty=0.0, price=0.0, accepted=False, reason="no_liquidity")
-        max_per_slice = bar_volume * self.participation_rate
-        slice_qty = min(qty / self.slices, max_per_slice)
-        mid = 0.5 * (bid + ask)
-        half_spread = 0.5 * (ask - bid)
-        price = mid + half_spread if side == "buy" else mid - half_spread
-        return FillResult(
-            qty=slice_qty, price=price, accepted=True, reason="partial_slice"
+        return FillModelOutput(
+            events=tuple(events),
+            filled_qty=filled_qty,
+            avg_fill_price=fill_price,
+            rejected=False,
+            seed=self.seed,
+            model_name=self.model_name,
+            notes=tuple(notes),
         )
 
 
-class LatencyFillModel(FillModel):
-    """Wraps another model and tags the result with a delay in bars."""
+def _resolve_price(
+    input: FillModelInput, *, bid: float, ask: float,
+) -> Tuple[float, bool, str]:
+    side = input.side.lower()
+    ot = input.order_type
+    if ot is OrderType.MARKET:
+        return (ask if side == "buy" else bid), True, ""
 
-    def __init__(self, inner: FillModel, delay_bars: int = 1) -> None:
-        if delay_bars < 0:
-            raise ValueError("delay_bars must be >= 0")
-        self.inner = inner
-        self.delay_bars = delay_bars
+    if ot is OrderType.LIMIT:
+        if input.limit_price is None:
+            return 0.0, False, "limit order requires limit_price"
+        if side == "buy" and ask <= input.limit_price:
+            return min(ask, input.limit_price), True, ""
+        if side == "sell" and bid >= input.limit_price:
+            return max(bid, input.limit_price), True, ""
+        return 0.0, False, "limit not crossed"
 
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        result = self.inner.simulate_fill(order, market)
-        if not result.accepted:
-            return result
-        # Replace reason to encode the delay; downstream replay can use
-        # this reason string to schedule the fill on a later bar.
-        return FillResult(
-            qty=result.qty,
-            price=result.price,
-            accepted=True,
-            reason=f"delayed_by={self.delay_bars}",
+    if ot is OrderType.STOP:
+        if input.stop_price is None:
+            return 0.0, False, "stop order requires stop_price"
+        last = input.last_price if input.last_price is not None else (
+            ask if side == "buy" else bid
         )
+        triggered = (
+            (side == "buy" and last >= input.stop_price)
+            or (side == "sell" and last <= input.stop_price)
+        )
+        if not triggered:
+            return 0.0, False, "stop not triggered"
+        return (ask if side == "buy" else bid), True, ""
+
+    if ot is OrderType.STOP_LIMIT:
+        if input.stop_price is None or input.limit_price is None:
+            return 0.0, False, "stop_limit order requires stop_price and limit_price"
+        last = input.last_price if input.last_price is not None else (
+            ask if side == "buy" else bid
+        )
+        triggered = (
+            (side == "buy" and last >= input.stop_price)
+            or (side == "sell" and last <= input.stop_price)
+        )
+        if not triggered:
+            return 0.0, False, "stop_limit not triggered"
+        if side == "buy" and ask <= input.limit_price:
+            return min(ask, input.limit_price), True, ""
+        if side == "sell" and bid >= input.limit_price:
+            return max(bid, input.limit_price), True, ""
+        return 0.0, False, "stop_limit triggered but limit not crossed"
+
+    return 0.0, False, f"unsupported order_type {ot!r}"
 
 
-class RejectingFillModel(FillModel):
-    """Rejects ``p`` of the time; otherwise defers to ``inner``."""
+def _reject(
+    input: FillModelInput,
+    *,
+    seed: int,
+    model_name: str,
+    reason: str,
+    events: Tuple[ExecutionEvent, ...],
+) -> FillModelOutput:
+    rejected_event = ExecutionEvent(
+        event_id=f"{input.order_id}-reject",
+        event_type=EventType.REJECTED,
+        order_id=input.order_id,
+        timestamp=input.timestamp,
+        payload={
+            "side": input.side.lower(),
+            "requested_qty": input.qty,
+            "reason": reason,
+        },
+        broker=model_name,
+        symbol=input.symbol,
+    )
+    return FillModelOutput(
+        events=events + (rejected_event,),
+        filled_qty=0.0,
+        avg_fill_price=0.0,
+        rejected=True,
+        rejection_reason=reason,
+        seed=seed,
+        model_name=model_name,
+    )
 
-    def __init__(
-        self,
-        inner: FillModel,
-        reject_rate: float = 0.0,
-        rng: Optional[np.random.Generator] = None,
-    ) -> None:
-        if not 0.0 <= reject_rate <= 1.0:
-            raise ValueError("reject_rate must be in [0, 1]")
-        self.inner = inner
-        self.reject_rate = reject_rate
-        self.rng = rng if rng is not None else np.random.default_rng(0)
 
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        if self.rng.random() < self.reject_rate:
-            return FillResult(
-                qty=0.0, price=0.0, accepted=False, reason="rejected_by_venue"
+def _shift_iso(timestamp: str, ms: float) -> str:
+    """Shift an ISO timestamp by ``ms`` milliseconds, best-effort.
+
+    If parsing fails we fall back to ``f"{timestamp}+{ms}ms"`` so the
+    caller still gets a deterministic, distinguishable string.
+    """
+    try:
+        from datetime import datetime, timedelta
+        ts = datetime.fromisoformat(timestamp)
+        shifted = ts + timedelta(milliseconds=ms)
+        return shifted.isoformat()
+    except (ValueError, TypeError):
+        return f"{timestamp}+{ms}ms"
+
+
+# ---------------------------------------------------------------------------
+# Helper: drive a sequence of orders through a model
+# ---------------------------------------------------------------------------
+
+
+def apply_fill_model(
+    orders: Iterable[FillModelInput],
+    model: FillModel,
+) -> List[ExecutionEvent]:
+    """Run each order through ``model.simulate`` and concatenate events."""
+    out: List[ExecutionEvent] = []
+    for order in orders:
+        if not isinstance(order, FillModelInput):
+            raise ValueError(
+                f"apply_fill_model expects FillModelInput, got {type(order)!r}"
             )
-        return self.inner.simulate_fill(order, market)
-
-
-class StaleQuoteFillModel(FillModel):
-    """Refuses the fill if the market quote is older than the threshold."""
-
-    def __init__(
-        self, inner: FillModel, max_quote_age_seconds: float = 1.0
-    ) -> None:
-        if max_quote_age_seconds < 0:
-            raise ValueError("max_quote_age_seconds must be >= 0")
-        self.inner = inner
-        self.max_quote_age_seconds = max_quote_age_seconds
-
-    def simulate_fill(
-        self, order: Dict[str, Any], market: Dict[str, Any]
-    ) -> FillResult:
-        age = float(market.get("quote_age_seconds", 0.0))
-        if age > self.max_quote_age_seconds:
-            return FillResult(
-                qty=0.0,
-                price=0.0,
-                accepted=False,
-                reason=f"stale_quote age={age:.2f}s",
-            )
-        return self.inner.simulate_fill(order, market)
+        result = model.simulate(order)
+        out.extend(result.events)
+    return out
 
 
 __all__ = [
-    "FillResult",
     "FillModel",
-    "MarketOrderFillModel",
-    "LimitOrderFillModel",
-    "PartialFillModel",
-    "LatencyFillModel",
-    "RejectingFillModel",
-    "StaleQuoteFillModel",
-    "fill_probability",
+    "FillModelInput",
+    "FillModelOutput",
+    "OrderType",
+    "SpreadAwareFillModel",
+    "apply_fill_model",
 ]

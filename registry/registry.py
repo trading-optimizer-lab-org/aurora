@@ -18,13 +18,9 @@ import pandas as pd
 from aurora.core.sqlite_utils import _setup_sqlite
 
 
-def _default_db_path() -> str:
-    """Resolve the backtest-registry DB path via runtime_paths (R75)."""
-    from aurora.core.runtime_paths import cache_dir
-    return str(cache_dir() / "registry.db")
-
-
-_DEFAULT_DB_PATH = _default_db_path()
+_DEFAULT_DB_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "data_cache_qf", "registry.db")
+)
 
 # Whitelist of metric names allowed in BacktestRegistry.best_by(metric=...)
 # (interpolated into a json_extract path, so a strict whitelist closes the
@@ -248,9 +244,12 @@ class BacktestRegistry:
                         )
                     result_id = int(row["id"])
                 else:
-                    if cur.lastrowid is None:  # pragma: no cover - sqlite defensive
-                        raise RuntimeError("insert succeeded but sqlite did not return row id")
-                    result_id = int(cur.lastrowid)
+                    last_id = cur.lastrowid
+                    if last_id is None:  # pragma: no cover - defensive
+                        raise RuntimeError(
+                            "sqlite cursor.lastrowid is None after fresh INSERT"
+                        )
+                    result_id = int(last_id)
             except Exception:
                 c.execute("ROLLBACK")
                 raise

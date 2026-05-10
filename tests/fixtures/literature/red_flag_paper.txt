@@ -1,0 +1,7 @@
+Suspicious strategy claims.
+
+This paper claims a strategy that delivers guaranteed returns of 50.0%
+annually with no drawdown across all market regimes. Backtest covers
+2018-2020. The hit rate is reported at 99.0%. No transaction costs are
+included. Out-of-sample testing is limited to the in-sample period
+itself, which the authors acknowledge is unusual.

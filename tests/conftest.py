@@ -34,59 +34,11 @@ When a test genuinely needs live SPY parquet, follow this pattern::
 """
 from __future__ import annotations
 
-import importlib.util
 import logging
-import multiprocessing
-import os
 import random
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-
-def _prime_mutmut_runtime() -> None:
-    """Import mutmut safely before generated trampolines need it."""
-    if not os.environ.get("MUTANT_UNDER_TEST"):
-        return
-    original = multiprocessing.set_start_method
-
-    def safe_set_start_method(method, *args, **kwargs):
-        try:
-            return original(method, *args, **kwargs)
-        except RuntimeError as exc:
-            if "context has already been set" in str(exc):
-                return None
-            raise
-
-    multiprocessing.set_start_method = safe_set_start_method
-    try:
-        import mutmut.__main__  # noqa: F401
-    finally:
-        multiprocessing.set_start_method = original
-
-
-def _bootstrap_layout_b_mutmut() -> None:
-    """Make the mutmut copy importable for QuantForge's flat package layout."""
-    root = Path(__file__).resolve().parents[1]
-    init_file = root / "__init__.py"
-    if root.name != "mutants" or "quantforge" in sys.modules or not init_file.exists():
-        return
-    spec = importlib.util.spec_from_file_location(
-        "quantforge",
-        init_file,
-        submodule_search_locations=[str(root)],
-    )
-    if spec is None or spec.loader is None:
-        return
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["quantforge"] = module
-    spec.loader.exec_module(module)
-
-
-_prime_mutmut_runtime()
-_bootstrap_layout_b_mutmut()
 import pytest
 
 
@@ -107,47 +59,6 @@ try:
     from aurora.ga import fitness as _ga_fitness
 except ImportError:  # pragma: no cover - ga extras may be missing
     _ga_fitness = None
-
-
-# --------------------------------------------------------------------------
-# Hypothesis profiles (roadmap item #11 -- property-based testing)
-# --------------------------------------------------------------------------
-#
-# Three profiles. Per-test ``@settings(max_examples=...)`` decorators OVERRIDE
-# the profile, so this only kicks in for tests that don't set their own.
-#
-#   - ``dev`` (default): max_examples=15, no deadline. Fast local feedback.
-#   - ``ci``: max_examples=25, derandomize=True, fixed database. Reproducible.
-#   - ``thorough``: max_examples=200, no deadline. Stress sweep for nightly.
-#
-# Select with: ``pytest --hypothesis-profile=ci`` or ``HYPOTHESIS_PROFILE=ci``.
-try:
-    from hypothesis import HealthCheck as _HC, settings as _hyp_settings
-
-    _hyp_settings.register_profile(
-        "dev",
-        max_examples=15,
-        deadline=None,
-        suppress_health_check=[_HC.too_slow, _HC.function_scoped_fixture],
-    )
-    _hyp_settings.register_profile(
-        "ci",
-        max_examples=25,
-        deadline=None,
-        derandomize=True,
-        suppress_health_check=[_HC.too_slow, _HC.function_scoped_fixture],
-    )
-    _hyp_settings.register_profile(
-        "thorough",
-        max_examples=200,
-        deadline=None,
-        suppress_health_check=[_HC.too_slow, _HC.function_scoped_fixture],
-    )
-    import os as _os
-
-    _hyp_settings.load_profile(_os.environ.get("HYPOTHESIS_PROFILE", "dev"))
-except ImportError:  # pragma: no cover - hypothesis is optional
-    pass
 
 
 @pytest.fixture(autouse=True)
@@ -179,7 +90,7 @@ def _reset_global_state():
     Prevents state pollution when tests run in suite order:
       * RNG seeds (python ``random``, numpy, torch) -> deterministic per-test.
       * ``quantforge`` logger ``propagate`` flag -> caplog can intercept records
-        even after :func:`aurora.core.logging.configure_logging` ran.
+        even after :func:`quantforge.core.logging.configure_logging` ran.
       * ``_DEPRECATION_WARNED`` flags in :mod:`quantforge.ga.fitness` -> tests
         that assert on the warning don't see "already warned".
     """

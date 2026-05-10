@@ -1,142 +1,198 @@
-"""Transaction cost analysis (TCA) for replayed broker events.
+"""R170 -- Transaction Cost Analysis (TCA) report.
 
-Phase 3 -- Candidate A. ``compute_tca`` decomposes realised execution
-into the pieces operators actually argue about:
+Decomposes the total cost of a fill stream against an arrival reference
+into the standard components defined in Kissell & Glantz:
 
-* arrival price -- the mid at decision time;
-* avg fill price -- volume-weighted across all fills for the order;
-* effective spread (bps) -- 2 * |fill - mid_at_decision| / mid_at_decision;
-* slippage (bps) -- (avg fill - arrival) / arrival, sign-aware so a
-  buy filled above arrival has positive slippage and vice versa;
-* delay cost (bps) -- (mid_at_decision - arrival) / arrival, the cost
-  of waiting from "decide" to "send to market";
-* opportunity cost (bps) -- (arrival - last_fill) * unfilled / total,
-  approximating the cost of the unfilled residual at end-of-period;
-* unfilled qty -- residual after walking all fills.
+    * effective spread = 2 * |execution - midquote|
+    * realised spread  = 2 * (execution - benchmark) * side
+    * slippage         = (execution - arrival) * side * filled_qty
+    * delay cost       = (arrival - decision) * side * filled_qty
+                         (collapsed to slippage when decision is unknown)
+    * opportunity cost = (benchmark - arrival) * side * unfilled_qty
+    * unfilled qty
+    * commissions
+    * fees
 
-bps are basis points (1e4 multiplier). All values are floats; the
-``total_cost_bps`` property sums slippage + delay + opportunity to
-give a single-number summary.
+The :class:`TCAReport` is a pure dataclass; the :func:`compute_tca`
+function is deterministic in its inputs.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List
+from dataclasses import asdict, dataclass
+from typing import Iterable, List, Mapping, Optional
 
-from aurora.execution.events import (
-    BrokerEvent,
-    OrderCreated,
-    OrderFilled,
-    OrderPartiallyFilled,
-)
+from aurora.execution.events import EventType, ExecutionEvent
+
+
+# ---------------------------------------------------------------------------
+# Report
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class TCAResult:
-    """Decomposed transaction-cost result for one order."""
-
+class TCAReport:
     arrival_price: float
-    avg_fill_price: float
-    effective_spread_bps: float
-    slippage_bps: float
-    delay_cost_bps: float
-    opportunity_cost_bps: float
+    execution_price: float
+    benchmark_price: float
+    effective_spread: float
+    realised_spread: float
+    slippage: float
+    delay_cost: float
+    opportunity_cost: float
     unfilled_qty: float
-    total_qty: float
+    requested_qty: float
+    filled_qty: float
+    commissions: float
+    fees: float
+    side: str = "buy"
 
-    @property
-    def total_cost_bps(self) -> float:
-        """Sum of slippage + delay + opportunity cost in basis points."""
-        return float(
-            self.slippage_bps + self.delay_cost_bps + self.opportunity_cost_bps
-        )
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def to_markdown(self) -> str:
+        rows: List[tuple[str, str]] = [
+            ("side", self.side),
+            ("requested_qty", _fmt(self.requested_qty)),
+            ("filled_qty", _fmt(self.filled_qty)),
+            ("unfilled_qty", _fmt(self.unfilled_qty)),
+            ("arrival_price", _fmt(self.arrival_price)),
+            ("execution_price", _fmt(self.execution_price)),
+            ("benchmark_price", _fmt(self.benchmark_price)),
+            ("effective_spread", _fmt(self.effective_spread)),
+            ("realised_spread", _fmt(self.realised_spread)),
+            ("slippage", _fmt(self.slippage)),
+            ("delay_cost", _fmt(self.delay_cost)),
+            ("opportunity_cost", _fmt(self.opportunity_cost)),
+            ("commissions", _fmt(self.commissions)),
+            ("fees", _fmt(self.fees)),
+        ]
+        lines = ["| metric | value |", "|---|---|"]
+        for k, v in rows:
+            lines.append(f"| {k} | {v} |")
+        return "\n".join(lines)
+
+
+def _fmt(x: float) -> str:
+    if x == int(x):
+        return f"{int(x)}"
+    return f"{x:.6f}"
+
+
+# ---------------------------------------------------------------------------
+# Computation
+# ---------------------------------------------------------------------------
 
 
 def compute_tca(
-    events: List[BrokerEvent],
+    events: Iterable[ExecutionEvent],
     arrival_price: float,
-    mid_at_decision: float,
-) -> TCAResult:
-    """Compute :class:`TCAResult` from an order's event stream.
+    benchmark_price: float,
+    requested_qty: float,
+    *,
+    side: Optional[str] = None,
+    decision_price: Optional[float] = None,
+    fees: float = 0.0,
+) -> TCAReport:
+    """Compute TCA against a single benchmark.
 
-    ``events`` is the slice of events for a single order id. ``events``
-    that are not fills or the originating ``OrderCreated`` are ignored
-    here -- they contribute to replay/reconciliation but not to TCA.
-
-    The function never raises on empty input: an order with no fills
-    yields zero average price, zero filled qty, all costs zero except
-    opportunity cost which equals the full slippage from arrival.
+    Parameters
+    ----------
+    events:
+        The :class:`ExecutionEvent` sequence for the order(s) under
+        review. ``FILL`` and ``PARTIAL_FILL`` contribute to fill metrics.
+        ``COMMISSION`` events accumulate.
+    arrival_price:
+        Mid-quote at the moment the order arrived at the trader / venue.
+    benchmark_price:
+        Reference price used for realised spread and opportunity cost.
+        Often a post-trade VWAP or a midquote some seconds later.
+    requested_qty:
+        Total intended quantity, used to compute ``unfilled_qty``.
+    side:
+        ``"buy"`` or ``"sell"``. If omitted, inferred from the first fill
+        payload or defaults to ``"buy"``.
+    decision_price:
+        Mid-quote at the original decision moment, before the order was
+        sent. If supplied, ``delay_cost`` is computed against it; if not,
+        ``delay_cost`` collapses to zero.
+    fees:
+        Optional venue fees (separate from commissions tracked via
+        :class:`EventType.COMMISSION`).
     """
-    arrival_price = float(arrival_price)
-    mid_at_decision = float(mid_at_decision)
+
+    if requested_qty <= 0:
+        raise ValueError(f"requested_qty must be positive, got {requested_qty}")
     if arrival_price <= 0:
-        # Caller passed a degenerate arrival price; return all zeros so
-        # downstream aggregations stay finite.
-        return TCAResult(
-            arrival_price=arrival_price,
-            avg_fill_price=0.0,
-            effective_spread_bps=0.0,
-            slippage_bps=0.0,
-            delay_cost_bps=0.0,
-            opportunity_cost_bps=0.0,
-            unfilled_qty=0.0,
-            total_qty=0.0,
-        )
+        raise ValueError(f"arrival_price must be positive, got {arrival_price}")
+    if benchmark_price <= 0:
+        raise ValueError(f"benchmark_price must be positive, got {benchmark_price}")
 
-    total_qty = 0.0
-    total_notional = 0.0
-    side: str = "buy"
-    last_fill_price = arrival_price
+    fills: List[Mapping] = []
+    commissions = 0.0
+    inferred_side: Optional[str] = None
 
-    parent_qty = 0.0
     for ev in events:
-        if isinstance(ev, OrderCreated):
-            parent_qty = float(ev.qty)
-            side = ev.side
-            continue
-        if isinstance(ev, (OrderPartiallyFilled, OrderFilled)):
-            total_qty += float(ev.fill_qty)
-            total_notional += float(ev.fill_qty) * float(ev.fill_price)
-            last_fill_price = float(ev.fill_price)
-            side = ev.side
+        if ev.event_type in (EventType.FILL, EventType.PARTIAL_FILL):
+            qty = float(ev.payload.get("qty", 0.0) or 0.0)
+            price = float(ev.payload.get("price", 0.0) or 0.0)
+            if qty <= 0 or price <= 0:
+                continue
+            fills.append({"qty": qty, "price": price})
+            if inferred_side is None:
+                raw = ev.payload.get("side")
+                if isinstance(raw, str) and raw.lower() in {"buy", "sell"}:
+                    inferred_side = raw.lower()
+        elif ev.event_type is EventType.COMMISSION:
+            commissions += float(ev.payload.get("amount", 0.0) or 0.0)
 
-    avg_fill = total_notional / total_qty if total_qty > 0 else 0.0
-    unfilled = max(0.0, parent_qty - total_qty)
+    resolved_side = (side or inferred_side or "buy").lower()
+    if resolved_side not in {"buy", "sell"}:
+        raise ValueError(f"side must be 'buy' or 'sell', got {resolved_side!r}")
+    sign = 1.0 if resolved_side == "buy" else -1.0
 
-    # Sign convention: a buy filled above arrival means positive slippage
-    # (cost). A sell filled below arrival is also positive slippage.
-    sign = 1.0 if side == "buy" else -1.0
-    slippage_bps = (
-        ((avg_fill - arrival_price) / arrival_price) * sign * 1e4
-        if total_qty > 0
-        else 0.0
-    )
-    delay_cost_bps = ((mid_at_decision - arrival_price) / arrival_price) * sign * 1e4
-    effective_spread_bps = (
-        abs(avg_fill - mid_at_decision) / arrival_price * 2.0 * 1e4
-        if total_qty > 0 and mid_at_decision > 0
-        else 0.0
-    )
-    if parent_qty > 0 and unfilled > 0:
-        opportunity_cost_bps = (
-            ((last_fill_price - arrival_price) / arrival_price)
-            * sign
-            * 1e4
-            * (unfilled / parent_qty)
-        )
+    filled_qty = sum(f["qty"] for f in fills)
+    if filled_qty > 0:
+        weighted = sum(f["qty"] * f["price"] for f in fills)
+        execution_price = weighted / filled_qty
     else:
-        opportunity_cost_bps = 0.0
+        execution_price = 0.0
 
-    return TCAResult(
-        arrival_price=arrival_price,
-        avg_fill_price=avg_fill,
-        effective_spread_bps=float(effective_spread_bps),
-        slippage_bps=float(slippage_bps),
-        delay_cost_bps=float(delay_cost_bps),
-        opportunity_cost_bps=float(opportunity_cost_bps),
-        unfilled_qty=float(unfilled),
-        total_qty=float(total_qty),
+    unfilled_qty = max(0.0, requested_qty - filled_qty)
+
+    # Effective spread: 2 * |exec - midquote|. Use arrival as the midquote
+    # proxy when no separate midquote is supplied.
+    if execution_price > 0:
+        effective_spread = 2.0 * abs(execution_price - arrival_price)
+        realised_spread = 2.0 * (execution_price - benchmark_price) * sign
+        slippage = (execution_price - arrival_price) * sign * filled_qty
+    else:
+        effective_spread = 0.0
+        realised_spread = 0.0
+        slippage = 0.0
+
+    if decision_price is not None and decision_price > 0:
+        delay_cost = (arrival_price - decision_price) * sign * filled_qty
+    else:
+        delay_cost = 0.0
+
+    opportunity_cost = (benchmark_price - arrival_price) * sign * unfilled_qty
+
+    return TCAReport(
+        arrival_price=float(arrival_price),
+        execution_price=float(execution_price),
+        benchmark_price=float(benchmark_price),
+        effective_spread=float(effective_spread),
+        realised_spread=float(realised_spread),
+        slippage=float(slippage),
+        delay_cost=float(delay_cost),
+        opportunity_cost=float(opportunity_cost),
+        unfilled_qty=float(unfilled_qty),
+        requested_qty=float(requested_qty),
+        filled_qty=float(filled_qty),
+        commissions=float(commissions),
+        fees=float(fees),
+        side=resolved_side,
     )
 
 
-__all__ = ["TCAResult", "compute_tca"]
+__all__ = ["TCAReport", "compute_tca"]

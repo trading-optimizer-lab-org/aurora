@@ -1,0 +1,35 @@
+Cross-sectional momentum on US equities: a small-sample study.
+
+Authors: Jane Doe, John Smith, Alex Reyes.
+
+Abstract.
+
+This paper studies cross-sectional momentum on the S&P 500 over the
+sample period 2005-2020. We rebalance monthly and assume frictionless
+trading (p.2). The strategy is a simple long-short basket built from
+12-month total returns, skipping the most recent month.
+
+Headline result.
+
+The strategy delivers an annualised return of 11.5% with a Sharpe ratio
+of 1.20 over the full sample period 2005-2020 (p.4). All numbers are
+reported net of transaction costs estimated at 5 bps per trade.
+
+Out-of-sample evaluation.
+
+We split the sample into in-sample (2005-2014) and out-of-sample
+(2015-2020) windows. The out-of-sample Sharpe ratio is 0.95, with a
+maximum drawdown of 18.0% (p.7). Survivorship bias is addressed by
+using a point-in-time S&P 500 universe.
+
+Limitations.
+
+The sample is regime-dependent and the strategy may underperform in
+high-correlation regimes. Replication code is available at
+https://github.com/example/momentum-replication so other researchers
+can reproduce the results net of transaction costs. The strategy hit
+rate is 56.0% across monthly trades.
+
+Disclaimer.
+
+Past performance does not guarantee future results.

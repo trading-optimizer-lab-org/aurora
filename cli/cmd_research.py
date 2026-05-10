@@ -279,6 +279,351 @@ def cmd_research_promote(args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Atlas subcommands (R173)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_atlas():
+    """Return a freshly seeded :class:`StrategyAtlas` for CLI commands.
+
+    Indirection allows tests to monkeypatch the loader without rewriting
+    the whole CLI module.
+    """
+    from aurora.research._atlas_seed import load_seed_atlas
+    return load_seed_atlas()
+
+
+def _resolve_idea_registry():
+    """Return a freshly seeded :class:`IdeaSourceRegistry`."""
+    from aurora.research.idea_sources import load_seed_sources
+    return load_seed_sources()
+
+
+def cmd_research_atlas_list(args):
+    """List atlas entries, optionally filtered by status."""
+    atlas = _resolve_atlas()
+    status_filter = getattr(args, "status", None)
+    entries = atlas.all_entries()
+    if status_filter:
+        from aurora.research.strategy_atlas import AtlasStatus
+        try:
+            wanted = AtlasStatus(status_filter)
+        except ValueError:
+            return _runtime_error(
+                f"unknown atlas status {status_filter!r}; valid values: "
+                f"{sorted(s.value for s in AtlasStatus)}"
+            )
+        entries = [e for e in entries if e.status is wanted]
+    if getattr(args, "json", False):
+        import json as _json
+        payload = [
+            {
+                "name": e.name,
+                "asset_class": e.asset_class,
+                "status": e.status.value,
+                "owner": e.owner,
+                "benchmark_expectation": e.benchmark_expectation,
+            }
+            for e in entries
+        ]
+        print(_json.dumps(payload, indent=2))
+        return 0
+    if not entries:
+        print("(atlas empty)")
+        return 0
+    for e in entries:
+        print(
+            f"{e.status.value:20s} {e.asset_class:14s} "
+            f"{e.name}"
+        )
+    return 0
+
+
+def cmd_research_atlas_show(args):
+    """Show full details for one atlas entry."""
+    atlas = _resolve_atlas()
+    name = args.name
+    if not atlas.has(name):
+        return _runtime_error(f"atlas entry {name!r} not found")
+    entry = atlas.get(name)
+    if getattr(args, "json", False):
+        import json as _json
+        payload = {
+            "name": entry.name,
+            "asset_class": entry.asset_class,
+            "data_requirements": list(entry.data_requirements),
+            "required_engine_capabilities": list(
+                entry.required_engine_capabilities
+            ),
+            "cost_sensitivity": entry.cost_sensitivity,
+            "overfit_risk": entry.overfit_risk,
+            "implementation_difficulty": entry.implementation_difficulty,
+            "validation_gates": list(entry.validation_gates),
+            "benchmark_expectation": entry.benchmark_expectation,
+            "status": entry.status.value,
+            "owner": entry.owner,
+            "notes": entry.notes,
+        }
+        print(_json.dumps(payload, indent=2))
+        return 0
+    print(f"name:                      {entry.name}")
+    print(f"asset_class:               {entry.asset_class}")
+    print(f"status:                    {entry.status.value}")
+    print(f"owner:                     {entry.owner}")
+    print(f"data_requirements:         {', '.join(entry.data_requirements)}")
+    print(
+        "required_engine_capabilities: "
+        f"{', '.join(entry.required_engine_capabilities)}"
+    )
+    print(f"cost_sensitivity:          {entry.cost_sensitivity}")
+    print(f"overfit_risk:              {entry.overfit_risk}")
+    print(f"implementation_difficulty: {entry.implementation_difficulty}")
+    print(f"validation_gates:          {', '.join(entry.validation_gates)}")
+    print(f"benchmark_expectation:     {entry.benchmark_expectation}")
+    if entry.notes:
+        print(f"notes:                     {entry.notes}")
+    return 0
+
+
+def cmd_research_atlas_classify(args):
+    """Print counts of atlas entries grouped by status."""
+    atlas = _resolve_atlas()
+    from aurora.research.strategy_atlas import AtlasStatus
+    counts: dict[str, int] = {s.value: 0 for s in AtlasStatus}
+    for e in atlas.all_entries():
+        counts[e.status.value] += 1
+    if getattr(args, "json", False):
+        import json as _json
+        print(_json.dumps(counts, indent=2))
+        return 0
+    print(f"total entries: {len(atlas)}")
+    for status_value, count in counts.items():
+        print(f"  {status_value:20s} {count}")
+    return 0
+
+
+def cmd_research_atlas_link_source(args):
+    """Print metadata for an idea source (no atlas mutation).
+
+    Source claims are metadata only -- this command does *not* change
+    any atlas entry's status. It exists so a researcher can quickly
+    cross-reference an upstream paper / blog when proposing an entry.
+    """
+    registry = _resolve_idea_registry()
+    name = args.source_name
+    if not registry.has(name):
+        return _runtime_error(
+            f"idea source {name!r} not found; available: "
+            f"{[s.name for s in registry.all_sources()]}"
+        )
+    source = registry.get(name)
+    if getattr(args, "json", False):
+        import json as _json
+        payload = {
+            "name": source.name,
+            "url": source.url,
+            "claim": source.claim,
+            "asset_class": source.asset_class,
+            "data_needs": list(source.data_needs),
+            "assumptions": list(source.assumptions),
+            "testability_score": source.testability_score,
+            "confidence": source.confidence,
+        }
+        print(_json.dumps(payload, indent=2))
+        return 0
+    print(f"name:              {source.name}")
+    print(f"url:               {source.url}")
+    print(f"asset_class:       {source.asset_class}")
+    print(f"testability_score: {source.testability_score:.2f}")
+    print(f"confidence:        {source.confidence:.2f}")
+    print(f"claim:             {source.claim}")
+    print(f"data_needs:        {', '.join(source.data_needs)}")
+    print(f"assumptions:       {', '.join(source.assumptions)}")
+    print(
+        "note: source claims are metadata only; they do not promote any "
+        "atlas entry"
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Papers subcommands (R174)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_papers_registry_path(args):
+    """Return the JSONL path used by ``research papers`` commands.
+
+    The path is taken from ``--registry-path`` if provided, otherwise
+    from ``AU_PAPERS_REGISTRY`` (or the legacy ``QF_PAPERS_REGISTRY``),
+    otherwise ``$AU_DATA_DIR/papers.jsonl``.
+    """
+    import os
+    from pathlib import Path
+    explicit = getattr(args, "registry_path", None)
+    if explicit:
+        return Path(explicit)
+    env = (
+        os.environ.get("AU_PAPERS_REGISTRY")
+        or os.environ.get("QF_PAPERS_REGISTRY")
+    )
+    if env:
+        return Path(env)
+    try:
+        from aurora.core.runtime_paths import data_dir
+        base = data_dir()
+    except Exception:  # pragma: no cover - defensive
+        base = Path(".")
+    return Path(base) / "papers.jsonl"
+
+
+def cmd_research_papers_ingest(args):
+    """Ingest a local PDF or .txt fixture and append to the registry."""
+    from pathlib import Path
+
+    from aurora.research.literature import (
+        PaperRegistry,
+        ingest_pdf,
+        ingest_text_fixture,
+    )
+
+    src = Path(args.path)
+    if not src.exists():
+        return _runtime_error(f"papers ingest: file not found: {src}")
+    suffix = src.suffix.lower()
+    if suffix == ".pdf":
+        record, _text = ingest_pdf(src)
+    elif suffix == ".txt":
+        record, _text = ingest_text_fixture(src)
+    else:
+        return _runtime_error(
+            f"papers ingest: unsupported extension {suffix!r}; "
+            "expected .pdf or .txt"
+        )
+
+    registry_path = _resolve_papers_registry_path(args)
+    registry = PaperRegistry.load(registry_path)
+    if registry.has(record.paper_id):
+        if getattr(args, "json", False):
+            import json as _json
+            print(_json.dumps(record.to_dict(), indent=2))
+        else:
+            print(
+                f"papers ingest: paper {record.paper_id} already registered "
+                f"(content hash {record.content_hash[:12]})"
+            )
+        return 0
+    registry.register(record)
+    registry.save(registry_path)
+    if getattr(args, "json", False):
+        import json as _json
+        print(_json.dumps(record.to_dict(), indent=2))
+    else:
+        print(
+            f"papers ingest: registered {record.paper_id} "
+            f"({record.title!r}) hash={record.content_hash[:12]} "
+            f"status={record.extraction_status}"
+        )
+    return 0
+
+
+def cmd_research_papers_list(args):
+    """List registered papers."""
+    from aurora.research.literature import PaperRegistry
+
+    registry_path = _resolve_papers_registry_path(args)
+    registry = PaperRegistry.load(registry_path)
+    papers = registry.list_papers()
+    if getattr(args, "json", False):
+        import json as _json
+        print(_json.dumps([r.to_dict() for r in papers], indent=2))
+        return 0
+    if not papers:
+        print("(papers registry empty)")
+        return 0
+    for r in papers:
+        print(
+            f"{r.paper_id}  {r.extraction_status:18s}  "
+            f"{r.year}  {r.title}"
+        )
+    return 0
+
+
+def cmd_research_papers_claims(args):
+    """Print structured claims for one paper."""
+    from pathlib import Path
+
+    from aurora.research.literature import (
+        PaperRegistry,
+        extract_claims_from_text,
+        ingest_pdf,
+        ingest_text_fixture,
+    )
+
+    registry_path = _resolve_papers_registry_path(args)
+    registry = PaperRegistry.load(registry_path)
+    if not registry.has(args.paper_id):
+        return _runtime_error(
+            f"papers claims: paper {args.paper_id!r} not registered"
+        )
+    record = registry.get(args.paper_id)
+    src = Path(record.url_or_path)
+    if not src.exists():
+        return _runtime_error(
+            f"papers claims: source file no longer present: {src}"
+        )
+    suffix = src.suffix.lower()
+    if suffix == ".pdf":
+        _record_again, text = ingest_pdf(src)
+    elif suffix == ".txt":
+        _record_again, text = ingest_text_fixture(src)
+    else:
+        return _runtime_error(
+            f"papers claims: unsupported extension {suffix!r}"
+        )
+
+    claims = extract_claims_from_text(record, text)
+    if getattr(args, "json", False):
+        import json as _json
+        payload = [
+            {
+                "claim_id": c.claim_id,
+                "paper_id": c.paper_id,
+                "claim_text": c.claim_text,
+                "asset_class": c.asset_class,
+                "sample_period": c.sample_period,
+                "universe": c.universe,
+                "data_frequency": c.data_frequency,
+                "reported_metrics": c.reported_metrics,
+                "transaction_costs_included": c.transaction_costs_included,
+                "oos_included": c.oos_included,
+                "assumptions": list(c.assumptions),
+                "limitations": list(c.limitations),
+                "replication_requirements": list(c.replication_requirements),
+                "red_flags": list(c.red_flags),
+                "page_reference": c.page_reference,
+                "quote_excerpt": c.quote_excerpt,
+            }
+            for c in claims
+        ]
+        print(_json.dumps(payload, indent=2))
+        return 0
+    if not claims:
+        print(f"(no claims extracted from {record.paper_id})")
+        return 0
+    for c in claims:
+        print(
+            f"{c.claim_id} asset={c.asset_class} freq={c.data_frequency} "
+            f"oos={c.oos_included} costs={c.transaction_costs_included} "
+            f"red_flags={list(c.red_flags)}"
+        )
+        if c.page_reference:
+            print(f"  ref: {c.page_reference}")
+        print(f"  quote: {c.quote_excerpt[:140]}")
+    return 0
+
+
 def cmd_research_triage(args):
     """Run triage as a screening pass on a research specs file."""
     from dataclasses import replace as _replace
@@ -450,5 +795,101 @@ def register(subparsers, parent_parser=None):
     )
     p_rs_prom.add_argument("--config-path", default=None, dest="config_path")
     p_rs_prom.set_defaults(func=cmd_research_promote)
+
+    # ---- atlas (R173) ----------------------------------------------------
+    p_rs_atlas = research_sub.add_parser(
+        "atlas",
+        help="Strategy atlas: list / show / classify entries, link "
+             "upstream idea sources",
+        description=(
+            "Read-only views over the curated strategy atlas. Source "
+            "claims are metadata only and do not promote any entry."
+        ),
+    )
+    atlas_sub = p_rs_atlas.add_subparsers(dest="atlas_cmd", required=True)
+
+    p_at_list = atlas_sub.add_parser(
+        "list", help="List atlas entries (optionally filtered by status)",
+    )
+    p_at_list.add_argument(
+        "--status", default=None,
+        help="Filter by status value (supported, candidate, blocked, "
+             "rejected, benchmark_only, external_data_only, "
+             "needs_engine_support)",
+    )
+    p_at_list.add_argument("--json", action="store_true")
+    p_at_list.set_defaults(func=cmd_research_atlas_list)
+
+    p_at_show = atlas_sub.add_parser(
+        "show", help="Show full details for one atlas entry",
+    )
+    p_at_show.add_argument("name", help="Atlas entry name")
+    p_at_show.add_argument("--json", action="store_true")
+    p_at_show.set_defaults(func=cmd_research_atlas_show)
+
+    p_at_class = atlas_sub.add_parser(
+        "classify", help="Print counts grouped by status",
+    )
+    p_at_class.add_argument("--json", action="store_true")
+    p_at_class.set_defaults(func=cmd_research_atlas_classify)
+
+    p_at_link = atlas_sub.add_parser(
+        "link-source",
+        help="Print metadata for an idea source (no atlas mutation)",
+    )
+    p_at_link.add_argument(
+        "source_name",
+        help="Name of an idea source from the registry",
+    )
+    p_at_link.add_argument("--json", action="store_true")
+    p_at_link.set_defaults(func=cmd_research_atlas_link_source)
+
+    # ---- papers (R174) ---------------------------------------------------
+    p_rs_papers = research_sub.add_parser(
+        "papers",
+        help="Literature scout: ingest local PDFs / text fixtures, list "
+             "papers, print structured claims",
+        description=(
+            "R174 literature pipeline. Ingests files from disk only "
+            "(no web fetch). Paper claims are upstream evidence and "
+            "do not promote any atlas entry."
+        ),
+    )
+    papers_sub = p_rs_papers.add_subparsers(dest="papers_cmd", required=True)
+
+    p_pp_ingest = papers_sub.add_parser(
+        "ingest", help="Ingest a local PDF or .txt fixture",
+    )
+    p_pp_ingest.add_argument(
+        "path", help="Path to a local .pdf or .txt file",
+    )
+    p_pp_ingest.add_argument(
+        "--registry-path", default=None, dest="registry_path",
+        help="Override the JSONL registry path "
+             "(default: $AU_DATA_DIR/papers.jsonl)",
+    )
+    p_pp_ingest.add_argument("--json", action="store_true")
+    p_pp_ingest.set_defaults(func=cmd_research_papers_ingest)
+
+    p_pp_list = papers_sub.add_parser(
+        "list", help="List registered papers",
+    )
+    p_pp_list.add_argument(
+        "--registry-path", default=None, dest="registry_path",
+    )
+    p_pp_list.add_argument("--json", action="store_true")
+    p_pp_list.set_defaults(func=cmd_research_papers_list)
+
+    p_pp_claims = papers_sub.add_parser(
+        "claims", help="Print structured claims for one registered paper",
+    )
+    p_pp_claims.add_argument(
+        "paper_id", help="Paper id from `research papers list`",
+    )
+    p_pp_claims.add_argument(
+        "--registry-path", default=None, dest="registry_path",
+    )
+    p_pp_claims.add_argument("--json", action="store_true")
+    p_pp_claims.set_defaults(func=cmd_research_papers_claims)
 
     return research_sub

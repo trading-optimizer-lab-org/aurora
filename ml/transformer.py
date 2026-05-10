@@ -144,7 +144,7 @@ def make_multi_horizon_sequences(
 
     n_samples = last_anchor - first_anchor + 1
     X = np.empty((n_samples, seq_len, feat_arr.shape[1]), dtype=np.float32)
-    y: np.ndarray = np.full((n_samples, H), np.nan, dtype=np.float32)
+    y = np.full((n_samples, H), np.nan, dtype=np.float32)
 
     for i, t in enumerate(range(first_anchor, last_anchor + 1)):
         X[i] = feat_arr[t - seq_len + 1 : t + 1]
@@ -201,7 +201,8 @@ if TORCH_AVAILABLE:
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             seq_len = x.size(1)
-            return x + self.pe[:, :seq_len, :]  # type: ignore[index]
+            pe: "torch.Tensor" = self.pe  # type: ignore[assignment]
+            return x + pe[:, :seq_len, :]
 
 
     def causal_mask(seq_len: int, device=None) -> "torch.Tensor":

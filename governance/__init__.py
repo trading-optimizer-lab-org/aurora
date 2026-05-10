@@ -1,50 +1,25 @@
-"""Governance package: strategy risk register, lifecycle, and approvals.
+"""Governance: solo-operator approvals, risk records, lifecycle.
 
-Public re-exports for ``from aurora.governance import ...``:
-
-* :class:`StrategyRiskRecord`, :class:`RiskRegister`, :class:`ApprovalStatus`
-  -- model-risk records and JSONL persistence.
-* :class:`LifecycleState`, :class:`LifecycleTransition`,
-  :class:`LifecycleError`, :func:`transition`, :func:`legal_transitions`
-  -- explicit lifecycle state machine.
-* :class:`MakerCheckerFlow`, :class:`ApprovalEvent`,
-  :class:`ApprovalError`, :func:`gate_promotion` -- maker-checker
-  workflow and promotion gate.
-
-This is Candidate D / Phase 6 of the QuantForge roadmap.
+Adapted from the Candidate D maker-checker workflow for AURORA's
+single-operator model. The roles are minimal: the operator drafts the
+record, reviews it themselves, and approves promotion stage by stage.
+No second human is required by default; multi-reviewer fields exist for
+forward compatibility but are off the critical path.
 """
+from __future__ import annotations
+
 from aurora.governance.approvals import (
-    ApprovalError,
-    ApprovalEvent,
-    MakerCheckerFlow,
-    gate_promotion,
-)
-from aurora.governance.lifecycle import (
-    LifecycleError,
-    LifecycleState,
-    LifecycleTransition,
-    legal_transitions,
-    transition,
-)
-from aurora.governance.risk_register import (
-    ApprovalStatus,
-    RiskRegister,
+    LifecycleStage,
+    PromotionBlocked,
     StrategyRiskRecord,
-    risk_register_path,
+    StrategyRiskRegistry,
+    StrategyOverride,
 )
 
 __all__ = [
-    "ApprovalError",
-    "ApprovalEvent",
-    "ApprovalStatus",
-    "LifecycleError",
-    "LifecycleState",
-    "LifecycleTransition",
-    "MakerCheckerFlow",
-    "RiskRegister",
+    "LifecycleStage",
+    "PromotionBlocked",
+    "StrategyOverride",
     "StrategyRiskRecord",
-    "gate_promotion",
-    "legal_transitions",
-    "risk_register_path",
-    "transition",
+    "StrategyRiskRegistry",
 ]

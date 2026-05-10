@@ -33,6 +33,22 @@ from aurora.agent_gateway.gateway import (
     GatewayPolicy,
     StagedAction,
 )
+from aurora.agent_gateway.agent_roles import (
+    AgentCapability,
+    AgentRole,
+    AgentRoleRegistry,
+    ROLE_REGISTRY,
+)
+from aurora.agent_gateway.evidence_pack_view import (
+    EvidenceAccessDenied,
+    EvidenceHashMismatch,
+    EvidencePackView,
+)
+from aurora.agent_gateway.research_agents import (
+    AgentReview,
+    merge_reviews,
+    run_review,
+)
 
 
 __all__ = [
@@ -49,4 +65,14 @@ __all__ = [
     "AgentAuditConfig",
     "issue_token",
     "sign_payload",
+    "AgentRole",
+    "AgentCapability",
+    "AgentRoleRegistry",
+    "ROLE_REGISTRY",
+    "EvidencePackView",
+    "EvidenceAccessDenied",
+    "EvidenceHashMismatch",
+    "AgentReview",
+    "run_review",
+    "merge_reviews",
 ]

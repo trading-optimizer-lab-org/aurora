@@ -1,9 +1,4 @@
-"""Tests for the Phase 2 research-honesty ledger.
-
-Covers the contract from ``docs/roadmap/ROADMAP_PENDING.md`` Phase 2
-(Candidate B): append-only behaviour, retry safety, manual-override
-authorship, pressure-score thresholds and pressure-warning formatting.
-"""
+"""Tests for R165 research ledger enforcement."""
 from __future__ import annotations
 
 import json
@@ -12,428 +7,218 @@ from pathlib import Path
 import pytest
 
 from aurora.research.ledger import (
-    ResearchChoice,
+    LedgerEnforcementError,
+    LedgerEvent,
+    LedgerEventType,
+    LedgerIntegrityError,
     ResearchLedger,
-    VALID_KINDS,
-)
-from aurora.research.pressure import (
-    ResearchPressureScore,
-    compute_pressure,
-)
-from aurora.validation.research_pressure import (
-    RESEARCH_PRESSURE_THRESHOLDS,
-    format_pressure_warning,
 )
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def ledger_path(tmp_path: Path) -> Path:
-    return tmp_path / "research_ledger.jsonl"
-
-
-@pytest.fixture
-def ledger(ledger_path: Path) -> ResearchLedger:
-    return ResearchLedger(path=ledger_path)
-
-
-def _choice(
-    run_id: str = "r1",
-    kind: str = "parameters",
-    payload: dict | None = None,
-    author: str | None = None,
-    reason: str | None = None,
-    timestamp_iso: str = "2026-05-09T08:00:00+00:00",
-) -> ResearchChoice:
-    return ResearchChoice(
-        run_id=run_id,
-        timestamp_iso=timestamp_iso,
-        kind=kind,
-        payload=payload or {},
-        author=author,
-        reason=reason,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Append-only behaviour
-# ---------------------------------------------------------------------------
-
-
-def test_ledger_is_append_only(ledger: ResearchLedger, ledger_path: Path) -> None:
-    """Two writes produce two distinct records; the second never
-    overwrites the first."""
-    ledger.record(_choice(payload={"sma": 10}))
-    ledger.record(_choice(payload={"sma": 20}))
-
-    rows = ledger.read()
-    assert len(rows) == 2
-    assert rows[0].payload == {"sma": 10}
-    assert rows[1].payload == {"sma": 20}
-
-    # File-level assertion: two physical lines, no truncation.
-    raw_lines = [
-        line for line in ledger_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+def _seed_full_chain(ledger: ResearchLedger, project_id: str = "P1") -> None:
+    seq = [
+        (LedgerEventType.UNIVERSE_SELECTED, {"name": "etfs"}),
+        (LedgerEventType.PROVIDER_SET, {"providers": ["yahoo"]}),
+        (LedgerEventType.DATE_RANGE_SET, {"start": "2020", "end": "2026"}),
+        (LedgerEventType.FEATURE_SET, {"features": ["sma", "rsi"]}),
+        (LedgerEventType.SEED_SET, {"seed": 42}),
+        (LedgerEventType.PARAMETER_GRID, {"n_choices": 8}),
+        (LedgerEventType.CANDIDATE_GENERATED, {"candidate": "c1"}),
     ]
-    assert len(raw_lines) == 2
+    for et, payload in seq:
+        ledger.append(et, project_id=project_id, actor="op", payload=payload)
 
 
-def test_retry_does_not_overwrite_previous_records(
-    ledger: ResearchLedger,
-) -> None:
-    """Recording the same run_id twice yields two entries, not one."""
-    ledger.record(_choice(run_id="run-A", payload={"attempt": 1}))
-    ledger.record(_choice(run_id="run-A", payload={"attempt": 2}))
-
-    rows = ledger.read(run_id="run-A")
-    assert len(rows) == 2
-    payloads = [r.payload for r in rows]
-    assert {"attempt": 1} in payloads
-    assert {"attempt": 2} in payloads
+# ---------------------------------------------------------------------------
+# Append + chain
+# ---------------------------------------------------------------------------
 
 
-def test_rejected_candidate_is_recorded(ledger: ResearchLedger) -> None:
-    """``rejection_reason`` is a first-class kind on the ledger."""
-    ledger.record(
-        _choice(
-            run_id="run-B",
-            kind="rejection_reason",
-            payload={"stage": "OOS_DEV", "reason": "sharpe<0.5"},
+def test_append_creates_chain(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    e1 = ledger.append(
+        LedgerEventType.UNIVERSE_SELECTED,
+        project_id="P1", actor="op", payload={"name": "etfs"},
+    )
+    e2 = ledger.append(
+        LedgerEventType.PROVIDER_SET,
+        project_id="P1", actor="op", payload={"providers": ["yahoo"]},
+    )
+    assert e2.parent_hash == e1.event_hash
+    ledger.verify_chain()
+
+
+def test_verify_chain_detects_tampered_payload(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    ledger.append(
+        LedgerEventType.UNIVERSE_SELECTED,
+        project_id="P1", actor="op", payload={"name": "etfs"},
+    )
+    ledger.append(
+        LedgerEventType.PROVIDER_SET,
+        project_id="P1", actor="op", payload={"providers": ["yahoo"]},
+    )
+    raw = (tmp_path / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    # Mutate the second line's payload but keep the parent_hash.
+    payload = json.loads(raw[1])
+    payload["payload"]["providers"].append("EVIL")
+    raw[1] = json.dumps(payload, sort_keys=True)
+    (tmp_path / "ledger.jsonl").write_text(
+        "\n".join(raw) + "\n", encoding="utf-8",
+    )
+    with pytest.raises(LedgerIntegrityError):
+        ledger.verify_chain()
+
+
+def test_verify_chain_detects_missing_event(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    ledger.append(
+        LedgerEventType.UNIVERSE_SELECTED,
+        project_id="P1", actor="op", payload={"name": "etfs"},
+    )
+    ledger.append(
+        LedgerEventType.PROVIDER_SET,
+        project_id="P1", actor="op", payload={"providers": ["yahoo"]},
+    )
+    ledger.append(
+        LedgerEventType.DATE_RANGE_SET,
+        project_id="P1", actor="op", payload={"start": "2020", "end": "2026"},
+    )
+    # Remove the middle event and rewrite the file.
+    raw = (tmp_path / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    raw = [raw[0], raw[2]]
+    (tmp_path / "ledger.jsonl").write_text(
+        "\n".join(raw) + "\n", encoding="utf-8",
+    )
+    with pytest.raises(LedgerIntegrityError):
+        ledger.verify_chain()
+
+
+# ---------------------------------------------------------------------------
+# Enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_assert_ready_for_validation_blocks_when_missing(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    ledger.append(
+        LedgerEventType.UNIVERSE_SELECTED,
+        project_id="P1", actor="op", payload={},
+    )
+    with pytest.raises(LedgerEnforcementError) as exc:
+        ledger.assert_ready_for_validation("P1")
+    msg = str(exc.value)
+    assert "provider_set" in msg
+    assert "feature_set" in msg
+
+
+def test_assert_ready_for_validation_passes_with_full_chain(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.assert_ready_for_validation("P1")
+
+
+def test_assert_ready_for_promotion_requires_validation_run(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    with pytest.raises(LedgerEnforcementError) as exc:
+        ledger.assert_ready_for_promotion("P1")
+    assert "validation_run" in str(exc.value)
+    ledger.append(
+        LedgerEventType.VALIDATION_RUN,
+        project_id="P1", actor="op", payload={"validation_id": "v1"},
+    )
+    ledger.assert_ready_for_promotion("P1")
+
+
+def test_events_filter_by_project(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger, project_id="P1")
+    _seed_full_chain(ledger, project_id="P2")
+    p1 = ledger.events(project_id="P1")
+    p2 = ledger.events(project_id="P2")
+    assert all(e.project_id == "P1" for e in p1)
+    assert all(e.project_id == "P2" for e in p2)
+
+
+# ---------------------------------------------------------------------------
+# Trial pressure
+# ---------------------------------------------------------------------------
+
+
+def test_trial_pressure_aggregates_counts(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    for i in range(3):
+        ledger.append(
+            LedgerEventType.CANDIDATE_REJECTED,
+            project_id="P1", actor="op", payload={"candidate": f"c{i}"},
         )
+    ledger.append(
+        LedgerEventType.CANDIDATE_MODIFIED,
+        project_id="P1", actor="op", payload={"candidate": "c1"},
     )
-    rows = ledger.read(run_id="run-B")
-    assert len(rows) == 1
-    assert rows[0].kind == "rejection_reason"
-    assert rows[0].payload["stage"] == "OOS_DEV"
+    ledger.append(
+        LedgerEventType.OVERRIDE,
+        project_id="P1", actor="op", payload={"reason": "force"},
+    )
+    score = ledger.trial_pressure("P1")
+    # 1 generated + 3 rejected + 1 modified + 8 grid + 5*1 override = 18
+    assert score.candidates_generated == 1
+    assert score.candidates_rejected == 3
+    assert score.candidates_modified == 1
+    assert score.parameter_choices == 8
+    assert score.overrides == 1
+    assert score.score == pytest.approx(1 + 3 + 1 + 8 + 5)
+
+
+def test_trial_pressure_zero_when_no_events(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    score = ledger.trial_pressure("P1")
+    assert score.candidates_generated == 0
+    assert score.score == 0.0
+
+
+def test_trial_pressure_includes_oos_unlocks(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.append(
+        LedgerEventType.OOS_UNLOCK,
+        project_id="P1", actor="op",
+        payload={"phase": "explicit_unlock_oos_locked"},
+    )
+    score = ledger.trial_pressure("P1")
+    assert score.oos_unlocks == 1
+    assert score.score >= 10  # 10 * unlock weight
 
 
 # ---------------------------------------------------------------------------
-# Manual override authorship
+# Round-trip
 # ---------------------------------------------------------------------------
 
 
-def test_manual_override_requires_author_and_reason(
-    ledger: ResearchLedger,
-) -> None:
-    """Manual overrides without an author MUST raise."""
-    bad_no_author = _choice(
-        kind="manual_override",
-        payload={"override": "force_promote"},
-        author=None,
-        reason="emergency",
+def test_events_round_trip_through_disk(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    fresh = ResearchLedger(tmp_path / "ledger.jsonl")
+    events = fresh.events(project_id="P1")
+    assert events
+    assert events[0].event_type is LedgerEventType.UNIVERSE_SELECTED
+
+
+def test_event_id_uniqueness_across_appends(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    ev1 = ledger.append(
+        LedgerEventType.CANDIDATE_GENERATED,
+        project_id="P1", actor="op", payload={"candidate": "c1"},
     )
-    with pytest.raises(ValueError, match="manual_override"):
-        ledger.record(bad_no_author)
-
-    bad_no_reason = _choice(
-        kind="manual_override",
-        payload={"override": "force_promote"},
-        author="dgomez",
-        reason=None,
+    ev2 = ledger.append(
+        LedgerEventType.CANDIDATE_GENERATED,
+        project_id="P1", actor="op", payload={"candidate": "c2"},
     )
-    with pytest.raises(ValueError, match="manual_override"):
-        ledger.record(bad_no_reason)
-
-    # Happy path: both present.
-    ok = _choice(
-        kind="manual_override",
-        payload={"override": "force_promote"},
-        author="dgomez",
-        reason="release deadline",
-    )
-    ledger.record(ok)
-    rows = ledger.read()
-    assert len(rows) == 1
-    assert rows[0].author == "dgomez"
-    assert rows[0].reason == "release deadline"
-
-
-def test_unknown_kind_raises(ledger: ResearchLedger) -> None:
-    bad = _choice(kind="not_a_real_kind")
-    with pytest.raises(ValueError, match="Unknown research-choice kind"):
-        ledger.record(bad)
-
-
-def test_empty_run_id_raises(ledger: ResearchLedger) -> None:
-    bad = _choice(run_id="")
-    with pytest.raises(ValueError, match="run_id"):
-        ledger.record(bad)
-
-
-# ---------------------------------------------------------------------------
-# Read filtering
-# ---------------------------------------------------------------------------
-
-
-def test_read_filtered_by_run_id_returns_only_that_run(
-    ledger: ResearchLedger,
-) -> None:
-    ledger.record(_choice(run_id="A", payload={"x": 1}))
-    ledger.record(_choice(run_id="B", payload={"x": 2}))
-    ledger.record(_choice(run_id="A", payload={"x": 3}))
-    ledger.record(_choice(run_id="C", payload={"x": 4}))
-
-    rows_a = ledger.read(run_id="A")
-    assert {r.payload["x"] for r in rows_a} == {1, 3}
-
-    rows_b = ledger.read(run_id="B")
-    assert {r.payload["x"] for r in rows_b} == {2}
-
-    rows_all = ledger.read()
-    assert len(rows_all) == 4
-
-
-def test_read_missing_file_returns_empty(tmp_path: Path) -> None:
-    ledger = ResearchLedger(path=tmp_path / "does_not_exist.jsonl")
-    assert ledger.read() == []
-
-
-def test_read_skips_blank_and_corrupt_lines(
-    ledger: ResearchLedger, ledger_path: Path
-) -> None:
-    ledger.record(_choice(payload={"good": 1}))
-    # Inject a blank line and a junk line; reader should keep going.
-    with ledger_path.open("a", encoding="utf-8") as fh:
-        fh.write("\n")
-        fh.write("not-json\n")
-    ledger.record(_choice(payload={"good": 2}))
-
-    rows = ledger.read()
-    assert len(rows) == 2
-    assert {r.payload["good"] for r in rows} == {1, 2}
-
-
-# ---------------------------------------------------------------------------
-# Pressure score thresholds
-# ---------------------------------------------------------------------------
-
-
-def test_pressure_low_label() -> None:
-    score = ResearchPressureScore(
-        n_variants=1,
-        n_parameters=1,
-        data_length_bars=10_000,
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert score.pressure_ratio == pytest.approx(1 / 10_000)
-    assert score.risk_label() == "low"
-
-
-def test_pressure_medium_label() -> None:
-    # ratio = 200 / 10_000 = 0.02 -> medium (>0.01 and <=0.05)
-    score = ResearchPressureScore(
-        n_variants=20,
-        n_parameters=10,
-        data_length_bars=15_000,  # 200/15000 ~= 0.0133
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert 0.01 < score.pressure_ratio <= 0.05
-    assert score.risk_label() == "medium"
-
-
-def test_pressure_high_label() -> None:
-    # ratio between 0.05 and 0.20
-    score = ResearchPressureScore(
-        n_variants=50,
-        n_parameters=10,
-        data_length_bars=5_000,  # 500/5000 = 0.1
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert 0.05 < score.pressure_ratio <= 0.20
-    assert score.risk_label() == "high"
-
-
-def test_pressure_extreme_label() -> None:
-    score = ResearchPressureScore(
-        n_variants=1000,
-        n_parameters=10,
-        data_length_bars=1_000,  # ratio = 10
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert score.pressure_ratio > 0.20
-    assert score.risk_label() == "extreme"
-
-
-def test_pressure_zero_data_is_extreme() -> None:
-    score = ResearchPressureScore(
-        n_variants=1,
-        n_parameters=1,
-        data_length_bars=0,
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert score.pressure_ratio == float("inf")
-    assert score.risk_label() == "extreme"
-
-
-# ---------------------------------------------------------------------------
-# compute_pressure() reads the ledger correctly
-# ---------------------------------------------------------------------------
-
-
-def test_compute_pressure_aggregates_ledger(ledger: ResearchLedger) -> None:
-    run = "swept-run"
-    # 3 distinct strategy hashes -> 3 variants
-    for h in ("h1", "h2", "h3"):
-        ledger.record(
-            _choice(run_id=run, kind="strategy_hash", payload={"hash": h})
-        )
-    # 5 parameter choices
-    for i in range(5):
-        ledger.record(
-            _choice(run_id=run, kind="parameters", payload={"window": i})
-        )
-    # 1 manual override
-    ledger.record(
-        _choice(
-            run_id=run,
-            kind="manual_override",
-            payload={"override": "extend_window"},
-            author="dgomez",
-            reason="market regime change",
-        )
-    )
-    # 2 OOS touches via validation_window payload mentioning oos
-    ledger.record(
-        _choice(
-            run_id=run,
-            kind="validation_window",
-            payload={"oos_dev": [10, 20]},
-        )
-    )
-    ledger.record(
-        _choice(
-            run_id=run,
-            kind="validation_window",
-            payload={"tier": "OOS_LOCKED"},
-        )
-    )
-    # Unrelated run -- must NOT bleed into the score.
-    ledger.record(_choice(run_id="other", kind="parameters", payload={}))
-
-    score = compute_pressure(ledger, run_id=run, data_length_bars=2_000)
-
-    assert score.n_variants == 3
-    assert score.n_parameters == 5
-    assert score.n_manual_interventions == 1
-    assert score.n_oos_touches == 2
-    assert score.data_length_bars == 2_000
-
-
-# ---------------------------------------------------------------------------
-# Pressure warning text
-# ---------------------------------------------------------------------------
-
-
-def test_format_pressure_warning_mentions_label() -> None:
-    score = ResearchPressureScore(
-        n_variants=50,
-        n_parameters=10,
-        data_length_bars=5_000,
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    text = format_pressure_warning(score)
-    assert score.risk_label().upper() in text
-    assert "variants=50" in text
-    assert "parameters=10" in text
-
-
-def test_format_pressure_warning_extreme_blocks_promotion_message() -> None:
-    score = ResearchPressureScore(
-        n_variants=1000,
-        n_parameters=10,
-        data_length_bars=100,
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    text = format_pressure_warning(score)
-    assert "EXTREME" in text
-    assert "override" in text.lower() or "block" in text.lower()
-
-
-def test_thresholds_match_pressure_module() -> None:
-    """The validation report's thresholds and the score's bucketing
-    must agree on cut-points."""
-    just_low = ResearchPressureScore(
-        n_variants=1,
-        n_parameters=1,
-        data_length_bars=int(1 / RESEARCH_PRESSURE_THRESHOLDS["low"]),
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert just_low.risk_label() == "low"
-
-    just_medium = ResearchPressureScore(
-        n_variants=1,
-        n_parameters=1,
-        data_length_bars=int(1 / RESEARCH_PRESSURE_THRESHOLDS["medium"]),
-        n_manual_interventions=0,
-        n_oos_touches=0,
-    )
-    assert just_medium.risk_label() == "medium"
-
-
-# ---------------------------------------------------------------------------
-# Large parameter sweep (vectorbt-style)
-# ---------------------------------------------------------------------------
-
-
-def test_large_parameter_sweep_does_not_corrupt_jsonl(
-    ledger: ResearchLedger, ledger_path: Path
-) -> None:
-    """1000 parameter choices write 1000 well-formed JSONL lines."""
-    run = "sweep"
-    for i in range(1000):
-        ledger.record(
-            _choice(
-                run_id=run,
-                kind="parameters",
-                payload={"sma": i, "rsi": i % 10},
-            )
-        )
-
-    # Read back via the API.
-    rows = ledger.read(run_id=run)
-    assert len(rows) == 1000
-
-    # And verify the raw file: every line parses as JSON.
-    raw_lines = [
-        line for line in ledger_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert len(raw_lines) == 1000
-    for line in raw_lines:
-        parsed = json.loads(line)
-        assert parsed["run_id"] == run
-        assert parsed["kind"] == "parameters"
-
-
-# ---------------------------------------------------------------------------
-# Sanity: every kind in VALID_KINDS round-trips
-# ---------------------------------------------------------------------------
-
-
-def test_all_valid_kinds_round_trip(ledger: ResearchLedger) -> None:
-    for kind in sorted(VALID_KINDS):
-        if kind == "manual_override":
-            choice = _choice(
-                kind=kind,
-                author="dgomez",
-                reason="test override",
-            )
-        else:
-            choice = _choice(kind=kind)
-        ledger.record(choice)
-
-    rows = ledger.read()
-    assert {r.kind for r in rows} == VALID_KINDS
+    assert ev1.event_id != ev2.event_id

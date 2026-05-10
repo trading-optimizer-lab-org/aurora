@@ -25,6 +25,7 @@ from . import (
     cmd_audit,
     cmd_crypto,
     cmd_data,
+    cmd_doctor,
     cmd_export,
     cmd_ops,
     cmd_policy,
@@ -174,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     cmd_policy.register(sub)         # policy
     cmd_ops.register(sub)            # ops
     cmd_agent.register(sub)          # agent
+    cmd_doctor.register(sub)         # doctor (R187)
     cmd_triage.register(sub)         # triage (top-level)
 
     # Late-bound: ``research triage`` parser is appended after the

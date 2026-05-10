@@ -37,8 +37,8 @@ class KafkaEventStream:
         self.config = config or KafkaConfig()
         self.mock = bool(mock)
         self._buffer: deque = deque(maxlen=self.config.max_buffer)
-        self._producer: Any | None = None
-        self._consumer: Any | None = None
+        self._producer: Any = None
+        self._consumer: Any = None
 
     # ------------------------------------------------------------------
     # Public

@@ -28,21 +28,21 @@ import pandas as pd
 # Optional deps — lazy detection
 # ---------------------------------------------------------------------------
 
-_BaseEnv: Any
+
+class _StubEnv:  # minimal stub so class body parses without gymnasium
+    pass
+
 
 try:
     import gymnasium as gym
     from gymnasium import spaces
     GYM_AVAILABLE = True
-    _BaseEnv = gym.Env
+    _BaseEnv: type = gym.Env
 except ImportError:
     GYM_AVAILABLE = False
     gym = None
     spaces = None
-
-    class _FallbackEnv:  # minimal stub so class body parses without gymnasium
-        pass
-    _BaseEnv = _FallbackEnv
+    _BaseEnv = _StubEnv
 
 try:
     import stable_baselines3 as sb3

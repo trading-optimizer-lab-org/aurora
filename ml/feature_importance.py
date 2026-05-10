@@ -120,7 +120,7 @@ def _resolve_cv(
         except TypeError:
             try:
                 return cv_class(n_splits=cv)
-            except TypeError as exc:
+            except TypeError:
                 # Refuse to silently drop the user's ``cv`` value: when the
                 # supplied class accepts neither ``n_splits`` nor the
                 # shuffled-KFold signature, the requested fold count cannot
@@ -132,7 +132,7 @@ def _resolve_cv(
                     f"{cv} cannot be honored. Pass an instance pre-configured "
                     "with the desired number of splits, or use a class that "
                     "accepts 'n_splits'."
-                ) from exc
+                ) from None
     if callable(cv_class) and not hasattr(cv_class, "split"):
         # A zero-argument factory: same problem as the class-no-n_splits case.
         # The factory cannot accept ``cv`` so honor that contract by raising.

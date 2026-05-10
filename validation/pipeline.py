@@ -7,7 +7,7 @@ strategy before paper or live deployment.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
@@ -30,7 +30,7 @@ from aurora.validation.gap_sim import gap_sim, GapSimResult
 # sync with the protocol document.
 def get_mandatory_gates() -> list[str]:
     """Return the active mandatory-gate identifiers from
-    :class:`aurora.core.protocol_policy.ProtocolPolicy`.
+    :class:`quantforge.core.protocol_policy.ProtocolPolicy`.
     """
     from aurora.core.protocol_policy import get_active_policy
     return list(get_active_policy().mandatory_gates)
@@ -143,15 +143,15 @@ def validate_pipeline(
     fail_fast: bool = False,
     is_tier: str = "IS_ALL",
     oos_tier: str = "OOS_DEV",
-    auditor_context: Optional[object] = None,
-    auditor_orchestrator: Optional[object] = None,
+    auditor_context: Optional[Any] = None,
+    auditor_orchestrator: Optional[Any] = None,
 ) -> ValidationReport:
     """Run full validation. Returns report with overall pass/fail.
 
     Tier semantics
     --------------
     Per ``RESEARCH_PROTOCOL.md`` the price history is partitioned into
-    five tiers (see :mod:`aurora.core.data_tiers`):
+    five tiers (see :mod:`quantforge.core.data_tiers`):
 
       * ``IS_TRAIN``  - 1995-01-01..2010-12-31 (model fit)
       * ``IS_VALID``  - 2011-01-01..2012-12-31 (inner WF holdout)
@@ -462,8 +462,7 @@ def validate_pipeline(
             if auditor_orchestrator is None:
                 from aurora.agents.auditor import AuditorOrchestrator
                 auditor_orchestrator = AuditorOrchestrator.default()
-            auditor = cast(Any, auditor_orchestrator)
-            gate_result = auditor.gate(auditor_context)
+            gate_result = auditor_orchestrator.gate(auditor_context)
             audit_report = gate_result.audit_report
             audit_passed = bool(gate_result.passed)
             if not gate_result.passed:

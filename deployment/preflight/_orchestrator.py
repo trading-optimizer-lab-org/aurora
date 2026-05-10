@@ -83,7 +83,7 @@ def run_preflight(strategy, symbol: str, broker=None,
     if prices is None and data_check.passed:
         try:
             with OOSGuard("preflight_check"):
-                # Resolve via the package so test monkey-patches of
+                # Resolve through the package so test monkey-patches of
                 # ``aurora.deployment.preflight.load_asset`` are honoured.
                 import aurora.deployment.preflight as _pkg
                 prices = _pkg.load_asset(symbol, include_oos=True)
