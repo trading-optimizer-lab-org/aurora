@@ -1,0 +1,209 @@
+# R158 diversified seed manifest.
+#
+# Extends R157 from a smoke dataset to a ~133-symbol diversified seed
+# covering broad US ETFs, sector ETFs, US large caps, international
+# ETFs, bonds/rates, commodities, FX, crypto, macro, and SEC
+# fundamentals. NOT institutional truth; many feeds are research-tier
+# (Yahoo / Stooq / Binance public / FRED / SEC EDGAR / ECB).
+#
+# Trust levels:
+#   research_seed   -- third-party redistribution, treat as orientation only
+#   reference_seed  -- vendor-curated daily series (Stooq, Binance public)
+#   context_seed    -- macro filters / regime context (FRED / ECB)
+#   official_pit    -- regulator-published, point-in-time (SEC EDGAR)
+#
+# See docs/DIVERSIFIED_SEED_DATASET.md for the operator runbook.
+
+name: diversified_seed
+start: "2015-01-01"
+end: null
+frequency: "1d"
+sections:
+  broad_us_etfs:
+    asset_group: equity_index
+    trust_level: research_seed
+    symbols: [SPY, QQQ, DIA, IWM, VTI, RSP]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      US broad market ETFs. SPY/QQQ are the bellwether; RSP is the
+      equal-weight S&P 500 used to detect mega-cap concentration.
+
+  us_sector_etfs:
+    asset_group: equity_sector
+    trust_level: research_seed
+    symbols: [XLE, XLF, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      State Street Select Sector SPDRs. Drives sector rotation regimes
+      (XLK vs XLF, XLE vs XLU).
+
+  us_large_caps:
+    asset_group: equity_single_name
+    trust_level: research_seed
+    symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - AMZN
+      - GOOGL
+      - META
+      - TSLA
+      - BRK-B
+      - JPM
+      - V
+      - MA
+      - UNH
+      - LLY
+      - XOM
+      - CVX
+      - WMT
+      - COST
+      - HD
+      - PG
+      - KO
+      - PEP
+      - MCD
+      - JNJ
+      - PFE
+      - AVGO
+      - AMD
+      - NFLX
+      - ADBE
+      - CRM
+      - ORCL
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      30 US large caps. BRK-B requires per-provider symbol
+      normalisation (Stooq: BRK-B.US; Yahoo: BRK-B).
+
+  international_etfs:
+    asset_group: equity_international
+    trust_level: research_seed
+    symbols: [EFA, EEM, VEA, VWO, EWJ, EWU, EWG, EWQ, EWC, EWA, INDA, FXI, MCHI, EWZ, EWW]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      Single-country and broad EAFE / EM ETFs.
+
+  bonds_rates_etfs:
+    asset_group: rates_fixed_income
+    trust_level: research_seed
+    symbols: [TLT, IEF, SHY, BIL, HYG, LQD, TIP, AGG, BND]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      Treasury and credit ETFs across the curve. Drives the SPY/TLT
+      risk-on / risk-off classifier.
+
+  commodities:
+    asset_group: commodity
+    trust_level: research_seed
+    symbols: [GLD, SLV, USO, UNG, DBC, DBA, CPER, PPLT, PALL]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      Commodity ETFs as proxies for spot. Note these are equity
+      wrappers, not futures roll-adjusted series.
+
+  fx:
+    asset_group: fx_spot
+    trust_level: reference_seed
+    symbols: [EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD, NZDUSD, DXY]
+    providers: [yfinance_daily, stooq]
+    library: fx_daily
+    allow_fallback: true
+    expected_fields: [open, high, low, close]
+    notes: >-
+      Major G10 pairs and the dollar index. Symbol normalisation
+      table in core/data_providers/first_dataset/_symbol_map.py
+      (Yahoo: EURUSD=X; Stooq: EURUSD.FX; Dukascopy: EUR/USD).
+
+  crypto:
+    asset_group: crypto_spot
+    trust_level: reference_seed
+    symbols: [BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT, ADAUSDT, DOGEUSDT, LINKUSDT, AVAXUSDT, DOTUSDT]
+    providers: [binance_public_data]
+    library: crypto_daily
+    allow_fallback: false
+    expected_fields: [open, high, low, close, volume]
+    notes: >-
+      Top-10 perpetual-pair daily candles from Binance public data.
+      Single provider on purpose: Binance is the source of truth.
+
+  macro:
+    asset_group: macro_indicator
+    trust_level: context_seed
+    symbols:
+      - DGS1
+      - DGS2
+      - DGS5
+      - DGS10
+      - DGS30
+      - T10Y2Y
+      - T10Y3M
+      - FEDFUNDS
+      - SOFR
+      - UNRATE
+      - CPIAUCSL
+      - CORESTICKM159SFRBATL
+      - PAYEMS
+      - VIXCLS
+      - BAMLH0A0HYM2
+    providers: [fred_macro]
+    library: macro_daily
+    allow_fallback: false
+    expected_fields: [value]
+    notes: >-
+      FRED daily / monthly indicators. Used as regime filters --
+      term structure (T10Y2Y), policy stance (FEDFUNDS / SOFR),
+      labour (UNRATE / PAYEMS), inflation (CPIAUCSL), risk
+      (VIXCLS / BAMLH0A0HYM2).
+
+  fundamentals:
+    asset_group: company_fundamentals
+    trust_level: official_pit
+    symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - AMZN
+      - GOOGL
+      - META
+      - TSLA
+      - BRK-B
+      - JPM
+      - V
+      - UNH
+      - LLY
+      - XOM
+      - WMT
+      - COST
+      - PG
+      - JNJ
+      - AVGO
+      - AMD
+      - NFLX
+    providers: [sec_edgar_companyfacts]
+    library: fundamentals
+    allow_fallback: false
+    expected_fields: [tag, value, period_end_iso, accepted_iso]
+    notes: >-
+      SEC EDGAR XBRL company facts, point-in-time. The accepted_iso
+      column is the regulator-recorded acceptance timestamp; the
+      PIT gate filters out facts whose accepted_iso is after a
+      decision date.

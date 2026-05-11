@@ -1,0 +1,40 @@
+# R157 first-dataset manifest.
+#
+# Operational smoke dataset bridging the R155 / R156 provider layers
+# into a real, audited, locally-persisted seed dataset. NOT production
+# research truth. See docs/FIRST_DATASET.md for context.
+#
+# Each section drives one TimeSeriesStore library. ``providers`` is the
+# fallback chain in attempt order: the first that returns a contract-
+# valid frame wins; the rest are recorded as rejected_sources in the
+# bootstrap report.
+
+name: first
+start: "2023-01-01"
+end: "2023-12-31"
+sections:
+  equities:
+    symbols: [SPY, QQQ, DIA, IWM, TLT, GLD, AAPL, MSFT]
+    providers: [stooq, yfinance_daily, yahooquery_daily]
+    library: prices_daily
+    allow_fallback: true
+  crypto:
+    symbols: [BTCUSDT, ETHUSDT]
+    providers: [binance_public_data]
+    library: crypto_daily
+    allow_fallback: false
+  macro:
+    symbols: [DGS10, T10Y2Y, UNRATE]
+    providers: [fred_macro, dbnomics_macro, ecb_data_portal]
+    library: macro_daily
+    allow_fallback: true
+  identity:
+    symbols: [SPY, AAPL, MSFT]
+    providers: [openfigi_mapper]
+    library: identity
+    allow_fallback: false
+  fundamentals:
+    symbols: [AAPL, MSFT]
+    providers: [sec_edgar_companyfacts]
+    library: fundamentals
+    allow_fallback: false

@@ -50,6 +50,17 @@ from aurora.data_contracts.instrument_master import (
     seed_resolver,
 )
 from aurora.data_contracts.lineage import LINEAGE_VERSION, DataLineage
+from aurora.data_contracts.lineage_producer import (
+    SnapshotStoreLineageWrapper,
+    producer_for_snapshot_store,
+    record_pipeline_step,
+)
+from aurora.data_contracts.timeseries_store import (
+    TimeSeriesRecord,
+    TimeSeriesStore,
+    default_store,
+)
+default_timeseries_store = default_store  # backwards-compat alias
 from aurora.data_contracts.liquidity import (
     LiquidityRecord,
     LiquidityValidationGate,
@@ -75,6 +86,7 @@ from aurora.data_contracts.quality import (
 from aurora.data_contracts.security_master import (
     SecurityMaster,
     SecurityMasterRecord,
+    from_openfigi_mapping,
 )
 from aurora.data_contracts.validator import (
     UTC,
@@ -116,8 +128,15 @@ __all__ = [
     "QuarantineLedger",
     "SecurityMaster",
     "SecurityMasterRecord",
+    "SnapshotStoreLineageWrapper",
+    "TimeSeriesRecord",
+    "TimeSeriesStore",
     "UsageLabel",
     "UTC",
+    "default_store",
+    "default_timeseries_store",
+    "producer_for_snapshot_store",
+    "record_pipeline_step",
     "build_coverage",
     "compute_liquidity_features",
     "default_provider_terms_registry",
@@ -131,6 +150,7 @@ __all__ = [
     "hash_dataframe",
     "validate_dataframe",
     "validate_series",
+    "from_openfigi_mapping",
     "verify_dividend_adjustment",
     "verify_split_adjustment",
 ]
