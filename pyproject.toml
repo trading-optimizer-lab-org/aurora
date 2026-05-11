@@ -66,6 +66,7 @@ packages = [
     "aurora.compliance",
     "aurora.core",
     "aurora.core.data_providers",
+    "aurora.core.data_providers.first_dataset",
     "aurora.data_contracts",
     "aurora.dataeng",
     "aurora.deployment",
@@ -113,6 +114,7 @@ packages = [
 "aurora.compliance" = "compliance"
 "aurora.core" = "core"
 "aurora.core.data_providers" = "core/data_providers"
+"aurora.core.data_providers.first_dataset" = "core/data_providers/first_dataset"
 "aurora.data_contracts" = "data_contracts"
 "aurora.dataeng" = "dataeng"
 "aurora.deployment" = "deployment"
