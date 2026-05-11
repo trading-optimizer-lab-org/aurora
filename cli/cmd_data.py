@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from ._shared import _runtime_error
 
@@ -565,6 +566,10 @@ def cmd_data_coverage_report(args):
         try:
             report = load_report()
         except FileNotFoundError as exc:
+            if requested_vs_persisted:
+                rc = _print_store_coverage_fallback(dataset)
+                if rc == 0:
+                    return 0
             return _runtime_error(f"coverage-report: {exc}")
         path = default_report_path()
         print(f"first-dataset coverage report (read from {path}):")
@@ -655,6 +660,76 @@ def cmd_data_coverage_report(args):
     print(f"requested: {len(requested)}    found: 0    usable: 0")
     for s in requested:
         print(f"  - {s}: missing (run backfill to populate)")
+    return 0
+
+
+def _print_store_coverage_fallback(dataset: str) -> int:
+    """Summarise a seeded dataset from the local TimeSeriesStore.
+
+    The bootstrap JSON report is useful after a fresh download, but local
+    operators often have the parquet/sqlite store without that cache file.
+    This fallback keeps ``coverage-report --requested-vs-persisted`` useful
+    offline by comparing the checked-in manifest with persisted store rows.
+    """
+    import sqlite3
+
+    from aurora.core import runtime_paths as rp
+    from aurora.core.data_providers.first_dataset import load_manifest
+    from aurora.data_contracts.timeseries_store import TimeSeriesStore
+
+    manifest_path = {
+        "first": Path("config/first_dataset.yaml"),
+        "diversified_seed": Path("config/diversified_seed_dataset.yaml"),
+    }.get(dataset)
+    if manifest_path is None or not manifest_path.exists():
+        return 1
+
+    store = TimeSeriesStore(rp.base_data_dir() / "timeseries")
+    if not store.index_path.exists():
+        return 1
+
+    manifest = load_manifest(manifest_path)
+    con = sqlite3.connect(str(store.index_path))
+    try:
+        rows = con.execute(
+            "SELECT library, symbol, COUNT(*) FROM timeseries "
+            "GROUP BY library, symbol"
+        ).fetchall()
+    finally:
+        con.close()
+    persisted = {(str(library), str(symbol)) for library, symbol, _ in rows}
+
+    print(
+        "coverage-report: bootstrap JSON not found; "
+        "using local TimeSeriesStore fallback"
+    )
+    print(f"manifest_name: {manifest.name}")
+    print("\nrequested-vs-persisted summary:")
+    print(
+        f"  {'section':<22} {'lib':<14} {'req':>5} {'attempt':>8} "
+        f"{'persisted':>10} {'failed':>7} {'fallback':>9}"
+    )
+    total_req = 0
+    total_persisted = 0
+    total_failed = 0
+    for section in manifest.sections:
+        req = len(section.symbols)
+        found = sum(
+            1 for symbol in section.symbols
+            if (section.library, symbol) in persisted
+        )
+        failed = req - found
+        print(
+            f"  {section.name:<22} {section.library:<14} "
+            f"{req:>5} {found:>8} {found:>10} {failed:>7} {0:>9}"
+        )
+        total_req += req
+        total_persisted += found
+        total_failed += failed
+    print(
+        f"  {'TOTAL':<22} {'-':<14} {total_req:>5} {'-':>8} "
+        f"{total_persisted:>10} {total_failed:>7} {0:>9}"
+    )
     return 0
 
 
