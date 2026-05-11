@@ -264,7 +264,7 @@ class DBnomicsClient(BaseDataProvider):
         for i, period in enumerate(periods):
             raw_value = values[i] if i < len(values) else None
             try:
-                numeric_value = float(raw_value)  # type: ignore[arg-type]
+                numeric_value = float(raw_value)
             except (TypeError, ValueError):
                 # DBnomics encodes missing as "NA"; keep as NaN.
                 numeric_value = float("nan")

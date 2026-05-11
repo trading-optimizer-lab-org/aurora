@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date as _date_type
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+
+if TYPE_CHECKING:  # pragma: no cover -- import-cycle break
+    from aurora.core.data_providers.openfigi_mapper import (
+        FIGIMapping,
+        FIGIQueryResult,
+    )
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,15 @@ class SecurityMasterRecord:
         isin: optional ISIN.
         figi: optional FIGI.
         cusip: optional CUSIP.
+        sedol: optional SEDOL identifier (R156 / OpenFIGI integration).
+        composite_figi: optional Bloomberg composite FIGI.
+        share_class_figi: optional Bloomberg share-class FIGI.
+        figi_mappings: tuple of additional candidate FIGI mappings
+            preserved verbatim from the OpenFIGI mapper. Stored as
+            generic dicts so this module does not import the data
+            provider package; callers can rebuild
+            :class:`aurora.core.data_providers.openfigi_mapper.FIGIMapping`
+            from the dicts if they need typed access.
     """
 
     symbol: str
@@ -42,6 +57,103 @@ class SecurityMasterRecord:
     isin: Optional[str] = None
     figi: Optional[str] = None
     cusip: Optional[str] = None
+    sedol: Optional[str] = None
+    composite_figi: Optional[str] = None
+    share_class_figi: Optional[str] = None
+    figi_mappings: Tuple[Dict[str, Any], ...] = ()
+
+
+def from_openfigi_mapping(
+    figi_result: "FIGIQueryResult",
+    *,
+    symbol: Optional[str] = None,
+    broker_symbol: Optional[str] = None,
+    listing_window: Optional[Tuple[_date_type, _date_type]] = None,
+    active: bool = True,
+) -> SecurityMasterRecord:
+    """Construct a :class:`SecurityMasterRecord` from an OpenFIGI result.
+
+    The first candidate mapping is treated as the primary. Additional
+    candidates (when ``figi_result.is_ambiguous``) are preserved on
+    ``figi_mappings`` so the operator can review them; nothing is
+    silently dropped.
+
+    Args:
+        figi_result: a :class:`FIGIQueryResult` from
+            :class:`aurora.core.data_providers.openfigi_mapper.OpenFIGIClient`.
+        symbol: project-internal symbol. Defaults to the primary
+            candidate's ticker.
+        broker_symbol: broker identifier. Defaults to the primary
+            candidate's ticker.
+        listing_window: optional tradeable window.
+        active: whether the instrument is currently active.
+
+    Returns:
+        A frozen :class:`SecurityMasterRecord`. When the OpenFIGI
+        result has no candidates, the function still returns a record
+        with empty optional ID fields and a single-element
+        ``figi_mappings`` tuple capturing the warning, so the caller
+        does not lose the lookup outcome.
+    """
+    if figi_result.mappings:
+        primary = figi_result.mappings[0]
+    else:
+        # Synthesise an empty primary so the record can still be built.
+        from aurora.core.data_providers.openfigi_mapper import FIGIMapping
+        primary = FIGIMapping()
+    resolved_symbol = symbol or primary.ticker or ""
+    if not resolved_symbol:
+        raise ValueError(
+            "from_openfigi_mapping: cannot derive symbol from result with "
+            "no ticker; supply symbol= explicitly."
+        )
+    resolved_broker = broker_symbol or primary.ticker or resolved_symbol
+    # Preserve candidates as plain dicts to avoid importing the provider
+    # module at SecurityMasterRecord construction time.
+    extra_mappings: Tuple[Dict[str, Any], ...] = tuple(
+        {
+            "figi": m.figi,
+            "name": m.name,
+            "ticker": m.ticker,
+            "exchange_code": m.exchange_code,
+            "market_sector": m.market_sector,
+            "security_type": m.security_type,
+            "unique_id": m.unique_id,
+            "unique_id_type": m.unique_id_type,
+            "currency": m.currency,
+            "composite_figi": m.composite_figi,
+            "share_class_figi": m.share_class_figi,
+        }
+        for m in figi_result.mappings
+    )
+    # Pull ISIN/CUSIP/SEDOL out of unique_id when the unique_id_type
+    # tells us. Never invent: if the type is missing or unknown, leave
+    # the canonical fields as None.
+    isin = cusip = sedol = None
+    if primary.unique_id and primary.unique_id_type:
+        kind = primary.unique_id_type.upper()
+        if "ISIN" in kind:
+            isin = primary.unique_id
+        elif "CUSIP" in kind:
+            cusip = primary.unique_id
+        elif "SEDOL" in kind:
+            sedol = primary.unique_id
+    return SecurityMasterRecord(
+        symbol=resolved_symbol,
+        vendor_symbol=primary.ticker or resolved_symbol,
+        broker_symbol=resolved_broker,
+        exchange=primary.exchange_code or "",
+        currency=primary.currency or "",
+        listing_window=listing_window,
+        active=active,
+        isin=isin,
+        figi=primary.figi,
+        cusip=cusip,
+        sedol=sedol,
+        composite_figi=primary.composite_figi,
+        share_class_figi=primary.share_class_figi,
+        figi_mappings=extra_mappings,
+    )
 
 
 @dataclass
@@ -116,4 +228,4 @@ def _coerce_date(value: Any) -> _date_type:
     raise TypeError(f"cannot coerce {value!r} to date")
 
 
-__all__ = ["SecurityMaster", "SecurityMasterRecord"]
+__all__ = ["SecurityMaster", "SecurityMasterRecord", "from_openfigi_mapping"]

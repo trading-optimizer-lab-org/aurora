@@ -111,7 +111,7 @@ def test_intraday_intervals_supported(monkeypatch):
     with pytest.raises(ValueError, match="interval="):
         client.fetch_bars(
             "EURUSD", start="2024-01-02", end="2024-01-02",
-            interval="W1",
+            interval="W1",  # type: ignore[arg-type]
         )
 
 

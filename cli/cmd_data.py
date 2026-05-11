@@ -495,21 +495,39 @@ def cmd_data_provider_terms(args):
 
 
 def cmd_data_provider_status(args):
-    """Print the registered providers + their last successful fetch + role."""
+    """Print the registered providers + their last successful fetch + role.
+
+    By default lists only R155 baseline roles (UNIVERSE, PRICE_*,
+    CRYPTO_*, MACRO, EXPERIMENTAL) for back-compat with the original
+    R155 operator UX. Pass ``--include-complementary`` to also list
+    the R156 complementary providers (IDENTITY_MAPPING, FUNDAMENTALS,
+    MACRO_MULTI_SOURCE, CRYPTO_METRICS, FX_REFERENCE,
+    OPTIONAL_PRICE_FALLBACK).
+    """
+    from aurora.cli.cmd_data_shared import (
+        _R155_ROLE_VALUES,
+        _R156_ROLE_VALUES,
+    )
+
     registry, errors = _build_r155_registry()
     rows = registry.role_status()
+    include_complementary = bool(getattr(args, "include_complementary", False))
+    allowed = set(_R155_ROLE_VALUES)
+    if include_complementary:
+        allowed = allowed | set(_R156_ROLE_VALUES)
+    rows = [r for r in rows if r.get("role") in allowed]
     if not rows:
         print("(no providers registered)")
         return 0
     print(
-        f"{'NAME':<26}  {'ROLE':<18}  {'RELIABILITY':<13}  "
+        f"{'NAME':<26}  {'ROLE':<22}  {'RELIABILITY':<13}  "
         f"{'AUTH':<5}  {'POSTURE':<10}  LAST_SUCCESS"
     )
     for r in rows:
         auth = "yes" if r["auth_required"] else "no"
         last = r.get("last_success") or "(never)"
         print(
-            f"{r['name']:<26}  {r['role']:<18}  {r['reliability']:<13}  "
+            f"{r['name']:<26}  {r['role']:<22}  {r['reliability']:<13}  "
             f"{auth:<5}  {r['adjustment_posture']:<10}  {last}"
         )
     if errors:
@@ -649,6 +667,14 @@ def register(subparsers, parent_parser=None) -> None:
         "provider-status",
         help="List R155 providers + roles + last successful fetch",
     )
+    p_provider_status.add_argument(
+        "--include-complementary", dest="include_complementary",
+        action="store_true",
+        help=(
+            "Also list R156 complementary providers (IDENTITY_MAPPING, "
+            "FUNDAMENTALS, MACRO_MULTI_SOURCE, CRYPTO_METRICS, etc)."
+        ),
+    )
     p_provider_status.set_defaults(func=cmd_data_provider_status)
 
     p_coverage = data_sub.add_parser(
@@ -688,3 +714,128 @@ def register(subparsers, parent_parser=None) -> None:
         help="Emit JSON instead of a table",
     )
     p_terms.set_defaults(func=cmd_data_provider_terms)
+
+    # ------------------------------------------------------------------
+    # R156: identity / fundamentals / macro / crypto-metrics
+    # ------------------------------------------------------------------
+    from aurora.cli.cmd_data_r156 import (
+        cmd_data_crypto_metrics_fetch,
+        cmd_data_fundamentals_fetch,
+        cmd_data_identity_map,
+        cmd_data_macro_fetch,
+        cmd_data_macro_search,
+    )
+
+    p_identity = data_sub.add_parser(
+        "identity",
+        help="Identifier mapping (OpenFIGI: TICKER/ISIN/CUSIP/SEDOL -> FIGI)",
+    )
+    identity_sub = p_identity.add_subparsers(dest="identity_cmd", required=True)
+    p_identity_map = identity_sub.add_parser(
+        "map",
+        help="Map a ticker/ISIN/CUSIP/SEDOL to FIGI candidates",
+    )
+    p_identity_map.add_argument("--source", default="openfigi", choices=["openfigi"])
+    p_identity_map.add_argument("--symbol", default=None)
+    p_identity_map.add_argument("--exchange", default=None)
+    p_identity_map.add_argument("--id-type", dest="id_type", default="TICKER",
+        choices=["TICKER", "ISIN", "CUSIP", "SEDOL", "FIGI"])
+    p_identity_map.add_argument("--id-value", dest="id_value", default=None)
+    p_identity_map.add_argument("--output", default="table", choices=["json", "table"])
+    p_identity_map.set_defaults(func=cmd_data_identity_map)
+
+    p_fundamentals = data_sub.add_parser(
+        "fundamentals",
+        help="Fundamentals (SEC EDGAR XBRL company facts, PIT-aware)",
+    )
+    fundamentals_sub = p_fundamentals.add_subparsers(dest="fundamentals_cmd", required=True)
+    p_fundamentals_fetch = fundamentals_sub.add_parser("fetch")
+    p_fundamentals_fetch.add_argument("--source", default="sec-edgar", choices=["sec-edgar"])
+    p_fundamentals_fetch.add_argument("--ticker", default=None)
+    p_fundamentals_fetch.add_argument("--cik", default=None, type=int)
+    p_fundamentals_fetch.add_argument("--decision-date", dest="decision_date", default=None)
+    p_fundamentals_fetch.add_argument("--output", default="table", choices=["json", "table"])
+    p_fundamentals_fetch.set_defaults(func=cmd_data_fundamentals_fetch)
+
+    p_macro = data_sub.add_parser(
+        "macro",
+        help="Macro multi-source (DBnomics search/fetch, ECB FX/macro fetch)",
+    )
+    macro_sub = p_macro.add_subparsers(dest="macro_cmd", required=True)
+    p_macro_search = macro_sub.add_parser("search")
+    p_macro_search.add_argument("--source", default="dbnomics", choices=["dbnomics"])
+    p_macro_search.add_argument("--query", required=True)
+    p_macro_search.add_argument("--max-results", dest="max_results", default=20, type=int)
+    p_macro_search.add_argument("--output", default="table", choices=["json", "table"])
+    p_macro_search.set_defaults(func=cmd_data_macro_search)
+
+    p_macro_fetch = macro_sub.add_parser("fetch")
+    p_macro_fetch.add_argument("--source", required=True, choices=["dbnomics", "ecb"])
+    p_macro_fetch.add_argument("--series", required=True)
+    p_macro_fetch.add_argument("--start", default=None)
+    p_macro_fetch.add_argument("--end", default=None)
+    p_macro_fetch.add_argument("--output", default="table", choices=["json", "table"])
+    p_macro_fetch.set_defaults(func=cmd_data_macro_fetch)
+
+    p_crypto_metrics = data_sub.add_parser(
+        "crypto-metrics",
+        help="Crypto on-chain metrics (Coin Metrics community API)",
+    )
+    crypto_metrics_sub = p_crypto_metrics.add_subparsers(dest="crypto_metrics_cmd", required=True)
+    p_crypto_metrics_fetch = crypto_metrics_sub.add_parser("fetch")
+    p_crypto_metrics_fetch.add_argument("--source", default="coinmetrics", choices=["coinmetrics"])
+    p_crypto_metrics_fetch.add_argument("--asset", required=True)
+    p_crypto_metrics_fetch.add_argument("--metric", required=True)
+    p_crypto_metrics_fetch.add_argument("--start", default=None)
+    p_crypto_metrics_fetch.add_argument("--end", default=None)
+    p_crypto_metrics_fetch.add_argument("--output", default="table", choices=["json", "table"])
+    p_crypto_metrics_fetch.set_defaults(func=cmd_data_crypto_metrics_fetch)
+
+    # ------------------------------------------------------------------
+    # R157 + R158: bootstrap / manifest-summary / freeze
+    # ------------------------------------------------------------------
+    from aurora.cli.cmd_data_r157_r158 import (
+        cmd_data_bootstrap_first_dataset,
+        cmd_data_freeze,
+        cmd_data_manifest_summary,
+    )
+
+    def _add_bootstrap(name, help_text):
+        p = data_sub.add_parser(name, help=help_text)
+        p.add_argument("--manifest", required=True)
+        p.add_argument("--dry-run", dest="dry_run", action="store_true")
+        p.add_argument("--output", default="table", choices=["json", "table"])
+        p.set_defaults(func=cmd_data_bootstrap_first_dataset)
+        return p
+
+    _add_bootstrap(
+        "bootstrap-first-dataset",
+        "Walk a first-dataset manifest, fetch + validate via registered "
+        "providers, persist to the timeseries store",
+    )
+    _add_bootstrap(
+        "bootstrap-manifest",
+        "Alias for bootstrap-first-dataset (R158 diversified_seed manifest)",
+    )
+
+    p_manifest_summary = data_sub.add_parser(
+        "manifest-summary",
+        help="Print requested symbols/sections/totals for a manifest WITHOUT fetching",
+    )
+    p_manifest_summary.add_argument("--manifest", required=True)
+    p_manifest_summary.add_argument("--output", default="table", choices=["json", "table"])
+    p_manifest_summary.set_defaults(func=cmd_data_manifest_summary)
+
+    p_freeze = data_sub.add_parser(
+        "freeze",
+        help="Freeze a SnapshotStore entry from locally-persisted first-dataset rows",
+    )
+    p_freeze.add_argument("--dataset", default="first")
+    p_freeze.add_argument("--symbol", default=None)
+    p_freeze.add_argument("--symbols", default=None)
+    p_freeze.add_argument("--section", default=None)
+    p_freeze.add_argument("--library", default="prices_daily")
+    p_freeze.add_argument("--version", default=None)
+    p_freeze.add_argument("--provenance", default=None)
+    p_freeze.set_defaults(func=cmd_data_freeze)
+
