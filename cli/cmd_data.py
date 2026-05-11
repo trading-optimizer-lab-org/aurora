@@ -538,15 +538,119 @@ def cmd_data_provider_status(args):
 
 
 def cmd_data_coverage_report(args):
-    """Print a coverage report -- requested vs found vs usable."""
+    """Print a coverage report -- requested vs found vs usable.
+
+    Modes:
+        * ``--symbols A,B,C``: legacy stub. Prints "missing" for every
+          requested symbol -- placeholder pending a real per-symbol
+          inventory walk.
+        * ``--dataset first``: read the JSON report saved by the last
+          ``aurora data bootstrap-first-dataset`` run and surface the
+          per-section coverage in plain language.
+        * ``--dataset diversified_seed``: same JSON path; the R158
+          manifest also writes its bootstrap report to ``cache_dir() /
+          first_dataset_report.json`` since both use the same store.
+        * ``--requested-vs-persisted``: print a compact roll-up of
+          requested vs persisted counts per section + grand totals.
+    """
+    dataset = (getattr(args, "dataset", None) or "").strip().lower()
+    requested_vs_persisted = bool(
+        getattr(args, "requested_vs_persisted", False)
+    )
+    if dataset in ("first", "diversified_seed"):
+        from aurora.core.data_providers.first_dataset import (
+            default_report_path,
+            load_report,
+        )
+        try:
+            report = load_report()
+        except FileNotFoundError as exc:
+            return _runtime_error(f"coverage-report: {exc}")
+        path = default_report_path()
+        print(f"first-dataset coverage report (read from {path}):")
+        print(f"manifest_name: {report.get('manifest_name')}")
+        print(f"dry_run:       {report.get('dry_run')}")
+        sections = report.get("sections", []) or []
+        if requested_vs_persisted:
+            total_req = 0
+            total_persisted = 0
+            total_failed = 0
+            total_fallback = 0
+            print("\nrequested-vs-persisted summary:")
+            print(
+                f"  {'section':<22} {'lib':<14} {'req':>5} {'attempt':>8} "
+                f"{'persisted':>10} {'failed':>7} {'fallback':>9}"
+            )
+            for s in sections:
+                req = len(list(s.get("requested", [])))
+                results = list(s.get("results", []))
+                attempted = sum(
+                    1 for r in results if r.get("selected_provider")
+                )
+                persisted = sum(1 for r in results if r.get("persisted"))
+                failed = sum(1 for r in results if not r.get("persisted"))
+                fallback = sum(1 for r in results if r.get("fallback_used"))
+                print(
+                    f"  {s.get('name',''):<22} {s.get('library',''):<14} "
+                    f"{req:>5} {attempted:>8} {persisted:>10} {failed:>7} "
+                    f"{fallback:>9}"
+                )
+                total_req += req
+                total_persisted += persisted
+                total_failed += failed
+                total_fallback += fallback
+            print(
+                f"  {'TOTAL':<22} {'-':<14} {total_req:>5} {'-':>8} "
+                f"{total_persisted:>10} {total_failed:>7} {total_fallback:>9}"
+            )
+            return 0
+        for s in sections:
+            requested = list(s.get("requested", []))
+            fetched = list(s.get("fetched", []))
+            failed = list(s.get("failed", []))
+            print(
+                f"\nsection {s.get('name')!r} (library={s.get('library')!r}): "
+                f"requested={len(requested)} fetched={len(fetched)} "
+                f"failed={len(failed)}"
+            )
+            for r in s.get("results", []):
+                sym = r.get("symbol")
+                if r.get("persisted"):
+                    src = r.get("selected_provider") or "?"
+                    rows = r.get("rows", 0)
+                    fb = " (fallback)" if r.get("fallback_used") else ""
+                    print(
+                        f"  + {sym}: ok via {src}{fb}, {rows} rows, "
+                        f"version={r.get('version','')}"
+                    )
+                else:
+                    err = r.get("error") or "unknown error"
+                    contract = list(r.get("contract_errors") or [])
+                    if contract:
+                        print(
+                            f"  - {sym}: rejected (contract violation: "
+                            f"{'; '.join(contract)})"
+                        )
+                    else:
+                        print(f"  - {sym}: failed -- {err}")
+                    rejected = list(r.get("rejected_providers") or [])
+                    if rejected:
+                        print(
+                            f"      tried providers: {', '.join(rejected)}"
+                        )
+        return 0
+
     requested = (
         [s.strip() for s in args.symbols.split(",") if s.strip()]
-        if args.symbols
+        if getattr(args, "symbols", None)
         else []
     )
     if not requested:
         print("requested: 0    found: 0    usable: 0")
-        print("(supply --symbols A,B,C to compute a real report)")
+        print(
+            "(supply --symbols A,B,C, or --dataset first to read the "
+            "first-dataset bootstrap report)"
+        )
         return 0
     print(f"requested: {len(requested)}    found: 0    usable: 0")
     for s in requested:
@@ -684,6 +788,22 @@ def register(subparsers, parent_parser=None) -> None:
     p_coverage.add_argument(
         "--symbols", default="",
         help="Comma-separated list of symbols requested",
+    )
+    p_coverage.add_argument(
+        "--dataset", default=None,
+        help=(
+            "Named dataset whose bootstrap report should be summarised "
+            "(first | diversified_seed). Mutually-useful with "
+            "--requested-vs-persisted."
+        ),
+    )
+    p_coverage.add_argument(
+        "--requested-vs-persisted", dest="requested_vs_persisted",
+        action="store_true",
+        help=(
+            "Roll-up: requested / attempted / persisted / failed / "
+            "fallback counts per section + grand totals."
+        ),
     )
     p_coverage.set_defaults(func=cmd_data_coverage_report)
 
