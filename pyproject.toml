@@ -21,6 +21,7 @@ dependencies = [
     "numba>=0.58",
     "pydantic>=2",
     "platformdirs>=4.0",
+    "networkx>=3.0",
 ]
 
 [project.optional-dependencies]
