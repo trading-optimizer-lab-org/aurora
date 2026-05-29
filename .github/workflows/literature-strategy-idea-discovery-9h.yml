@@ -1,6 +1,15 @@
 name: Literature Strategy Idea Discovery 9h
 
 on:
+  push:
+    branches:
+      - codex/universal-robustness
+      - main
+    paths:
+      - ".github/literature-idea-discovery-trigger.txt"
+      - ".github/workflows/literature-strategy-idea-discovery-9h.yml"
+      - "research/literature_corpus_build.py"
+      - "cli/cmd_research.py"
   workflow_dispatch:
     inputs:
       estudios_repo_url:
