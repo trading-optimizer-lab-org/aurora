@@ -1202,6 +1202,11 @@ def _external_ai_configured() -> bool:
             os.environ.get("OPENAI_API_KEY", "").strip()
             and os.environ.get("AURORA_PAPER_AI_MODEL", "").strip()
         )
+    if provider == "github_models":
+        return bool(
+            (os.environ.get("GITHUB_TOKEN", "").strip() or os.environ.get("GITHUB_MODELS_TOKEN", "").strip())
+            and os.environ.get("AURORA_PAPER_AI_MODEL", "").strip()
+        )
     return bool(os.environ.get("AURORA_CODEX_BIN", "").strip())
 
 

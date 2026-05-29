@@ -29,6 +29,10 @@ on:
         required: false
         default: "0"
 
+permissions:
+  contents: read
+  models: read
+
 jobs:
   discover:
     name: build-literature-corpus
@@ -42,10 +46,11 @@ jobs:
       OUT_ROOT: ${{ github.workspace }}/outputs/literature
       PYTHONUTF8: "1"
       AURORA_PAPER_AI_COMMAND: ${{ vars.AURORA_PAPER_AI_COMMAND }}
-      AURORA_PAPER_AI_PROVIDER: ${{ vars.AURORA_PAPER_AI_PROVIDER || 'openai' }}
-      AURORA_PAPER_AI_MODEL: ${{ vars.AURORA_PAPER_AI_MODEL || 'gpt-4.1-mini' }}
+      AURORA_PAPER_AI_PROVIDER: ${{ vars.AURORA_PAPER_AI_PROVIDER || 'github_models' }}
+      AURORA_PAPER_AI_MODEL: ${{ vars.AURORA_PAPER_AI_MODEL || 'openai/gpt-4o-mini' }}
       AURORA_CODEX_BIN: ${{ vars.AURORA_CODEX_BIN }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout Aurora
         uses: actions/checkout@v4

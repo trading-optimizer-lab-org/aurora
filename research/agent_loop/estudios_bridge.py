@@ -557,6 +557,8 @@ def _run_paper_ai(prompt: str, timeout_seconds: int) -> str:
     provider = os.environ.get("AURORA_PAPER_AI_PROVIDER", "codex-cli").strip().lower()
     if provider == "openai":
         return _run_openai_paper_ai(prompt, timeout_seconds)
+    if provider == "github_models":
+        return _run_github_models_paper_ai(prompt, timeout_seconds)
     if provider != "codex-cli":
         raise RuntimeError(f"unsupported paper AI provider: {provider}")
     codex_bin = os.environ.get("AURORA_CODEX_BIN", "codex")
@@ -570,6 +572,47 @@ def _run_paper_ai(prompt: str, timeout_seconds: int) -> str:
         timeout=timeout_seconds,
     )
     return proc.stdout
+
+
+def _run_github_models_paper_ai(prompt: str, timeout_seconds: int) -> str:
+    token = os.environ.get("GITHUB_TOKEN", "").strip() or os.environ.get("GITHUB_MODELS_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN is required for AURORA_PAPER_AI_PROVIDER=github_models")
+    model = os.environ.get("AURORA_PAPER_AI_MODEL", "").strip()
+    if not model:
+        raise RuntimeError("AURORA_PAPER_AI_MODEL is required for GitHub Models paper AI")
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Return only valid JSON. Do not include markdown fences.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+    }
+    request = urllib.request.Request(
+        "https://models.github.ai/inference/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=int(timeout_seconds)) as response:
+        raw = response.read().decode("utf-8")
+    data = _extract_json_object(raw)
+    choices = data.get("choices", [])
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and content.strip():
+            return content
+    raise RuntimeError("GitHub Models response did not contain output text")
 
 
 def _run_openai_paper_ai(prompt: str, timeout_seconds: int) -> str:

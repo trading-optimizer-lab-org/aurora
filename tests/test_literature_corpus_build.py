@@ -260,6 +260,9 @@ def test_literature_discovery_workflow_is_headless_and_locked_closed():
     assert "max_studies_to_enrich) MAX_STUDIES_TO_ENRICH_SAFE" in workflow
     assert 'python -m pip install -e ".[ml]"' in workflow
     assert "AURORA_PAPER_AI_PROVIDER" in workflow
+    assert "github_models" in workflow
+    assert "models: read" in workflow
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
     assert "OPENAI_API_KEY" in workflow
     assert "ESTUDIOS_REPO_URL" in workflow
     assert "backtest" not in workflow.lower()
@@ -277,3 +280,68 @@ def test_external_ai_requires_complete_openai_config(monkeypatch):
 
     monkeypatch.setenv("AURORA_PAPER_AI_MODEL", "gpt-test")
     assert corpus._external_ai_configured() is True
+
+
+def test_external_ai_supports_github_models_with_actions_token(monkeypatch):
+    import aurora.research.literature_corpus_build as corpus
+
+    monkeypatch.delenv("AURORA_PAPER_AI_COMMAND", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AURORA_CODEX_BIN", raising=False)
+    monkeypatch.setenv("AURORA_PAPER_AI_PROVIDER", "github_models")
+    monkeypatch.setenv("AURORA_PAPER_AI_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_MODELS_TOKEN", raising=False)
+    assert corpus._external_ai_configured() is False
+
+    monkeypatch.setenv("GITHUB_TOKEN", "actions-token")
+    assert corpus._external_ai_configured() is True
+
+
+def test_github_models_paper_ai_reads_chat_completion(monkeypatch):
+    import aurora.research.agent_loop.estudios_bridge as bridge
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "usable_for_strategy": True,
+                                        "confidence": 0.8,
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.headers["Authorization"]
+        captured["timeout"] = timeout
+        return _FakeResponse()
+
+    monkeypatch.setenv("AURORA_PAPER_AI_PROVIDER", "github_models")
+    monkeypatch.setenv("AURORA_PAPER_AI_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setenv("GITHUB_TOKEN", "actions-token")
+    monkeypatch.setattr(bridge.urllib.request, "urlopen", fake_urlopen)
+
+    raw = bridge._run_paper_ai("prompt", 12)
+
+    assert json.loads(raw)["usable_for_strategy"] is True
+    assert captured["url"] == "https://models.github.ai/inference/chat/completions"
+    assert captured["authorization"] == "Bearer actions-token"
+    assert captured["timeout"] == 12
