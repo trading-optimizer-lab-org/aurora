@@ -256,5 +256,21 @@ def test_literature_discovery_workflow_is_headless_and_locked_closed():
     assert 'MAX_STUDIES_TO_ENRICH_SAFE="${MAX_STUDIES_TO_ENRICH_INPUT:-0}"' in workflow
     assert 'RUN_ID_SAFE="${RUN_ID_INPUT:-literature-idea-discovery}-${GITHUB_RUN_ID}"' in workflow
     assert 'python -m pip install -e ".[ml]"' in workflow
+    assert "AURORA_PAPER_AI_PROVIDER" in workflow
+    assert "OPENAI_API_KEY" in workflow
     assert "ESTUDIOS_REPO_URL" in workflow
     assert "backtest" not in workflow.lower()
+
+
+def test_external_ai_requires_complete_openai_config(monkeypatch):
+    import aurora.research.literature_corpus_build as corpus
+
+    monkeypatch.delenv("AURORA_PAPER_AI_COMMAND", raising=False)
+    monkeypatch.delenv("AURORA_CODEX_BIN", raising=False)
+    monkeypatch.setenv("AURORA_PAPER_AI_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "present")
+    monkeypatch.delenv("AURORA_PAPER_AI_MODEL", raising=False)
+    assert corpus._external_ai_configured() is False
+
+    monkeypatch.setenv("AURORA_PAPER_AI_MODEL", "gpt-test")
+    assert corpus._external_ai_configured() is True

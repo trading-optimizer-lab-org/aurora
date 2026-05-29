@@ -1172,12 +1172,15 @@ def _ai_prompt(study: dict[str, Any], text: str) -> str:
 
 
 def _external_ai_configured() -> bool:
-    return bool(
-        os.environ.get("AURORA_PAPER_AI_COMMAND", "").strip()
-        or os.environ.get("AURORA_PAPER_AI_PROVIDER", "").strip()
-        or os.environ.get("AURORA_CODEX_BIN", "").strip()
-        or os.environ.get("OPENAI_API_KEY", "").strip()
-    )
+    if os.environ.get("AURORA_PAPER_AI_COMMAND", "").strip():
+        return True
+    provider = os.environ.get("AURORA_PAPER_AI_PROVIDER", "").strip().lower()
+    if provider == "openai":
+        return bool(
+            os.environ.get("OPENAI_API_KEY", "").strip()
+            and os.environ.get("AURORA_PAPER_AI_MODEL", "").strip()
+        )
+    return bool(os.environ.get("AURORA_CODEX_BIN", "").strip())
 
 
 def _study_score(study: dict[str, Any]) -> float:

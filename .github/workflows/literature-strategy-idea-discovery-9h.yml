@@ -41,6 +41,11 @@ jobs:
       MAX_STUDIES_TO_ENRICH_INPUT: ${{ inputs.max_studies_to_enrich }}
       OUT_ROOT: ${{ github.workspace }}/outputs/literature
       PYTHONUTF8: "1"
+      AURORA_PAPER_AI_COMMAND: ${{ vars.AURORA_PAPER_AI_COMMAND }}
+      AURORA_PAPER_AI_PROVIDER: ${{ vars.AURORA_PAPER_AI_PROVIDER || 'openai' }}
+      AURORA_PAPER_AI_MODEL: ${{ vars.AURORA_PAPER_AI_MODEL || 'gpt-4.1-mini' }}
+      AURORA_CODEX_BIN: ${{ vars.AURORA_CODEX_BIN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Checkout Aurora
         uses: actions/checkout@v4
