@@ -252,5 +252,8 @@ def test_literature_discovery_workflow_is_headless_and_locked_closed():
     assert "literature-corpus-build" in workflow
     assert "--no-locked" in workflow
     assert "--pages-per-query" in workflow
+    assert 'PAGES_PER_QUERY_SAFE="${PAGES_PER_QUERY_INPUT:-5}"' in workflow
+    assert 'MAX_STUDIES_TO_ENRICH_SAFE="${MAX_STUDIES_TO_ENRICH_INPUT:-0}"' in workflow
+    assert 'RUN_ID_SAFE="${RUN_ID_INPUT:-literature-idea-discovery}-${GITHUB_RUN_ID}"' in workflow
     assert "ESTUDIOS_REPO_URL" in workflow
     assert "backtest" not in workflow.lower()

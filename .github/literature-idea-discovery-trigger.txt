@@ -1,1 +1,1 @@
-2026-05-29T00:00:00Z initial literature idea discovery trigger
+2026-05-29T13:05:00Z relaunch literature idea discovery with push-safe defaults

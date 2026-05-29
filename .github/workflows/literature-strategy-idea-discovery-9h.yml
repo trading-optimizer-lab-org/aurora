@@ -36,7 +36,9 @@ jobs:
     timeout-minutes: 540
     env:
       ESTUDIOS_REPO_URL: ${{ inputs.estudios_repo_url || vars.ESTUDIOS_REPO_URL }}
-      RUN_ID: ${{ inputs.run_id }}-${{ github.run_id }}
+      RUN_ID_INPUT: ${{ inputs.run_id }}
+      PAGES_PER_QUERY_INPUT: ${{ inputs.pages_per_query }}
+      MAX_STUDIES_TO_ENRICH_INPUT: ${{ inputs.max_studies_to_enrich }}
       OUT_ROOT: ${{ github.workspace }}/outputs/literature
       PYTHONUTF8: "1"
     steps:
@@ -79,13 +81,16 @@ jobs:
       - name: Build corpus
         shell: bash
         run: |
+          RUN_ID_SAFE="${RUN_ID_INPUT:-literature-idea-discovery}-${GITHUB_RUN_ID}"
+          PAGES_PER_QUERY_SAFE="${PAGES_PER_QUERY_INPUT:-5}"
+          MAX_STUDIES_TO_ENRICH_SAFE="${MAX_STUDIES_TO_ENRICH_INPUT:-0}"
           aurora research literature-corpus-build \
-            --run-id "${RUN_ID}" \
+            --run-id "${RUN_ID_SAFE}" \
             --run-root "${OUT_ROOT}" \
             --per-page 200 \
-            --pages-per-query "${{ inputs.pages_per_query }}" \
+            --pages-per-query "${PAGES_PER_QUERY_SAFE}" \
             --sorts relevance,citations,date \
-            --max-studies-to-enrich "${{ inputs.max_studies_to_enrich }}" \
+            --max-studies-to-enrich "${MAX_STUDIES_TO_ENRICH_SAFE}" \
             --timeout-seconds 180 \
             --ai-timeout-seconds 300 \
             --no-locked \
