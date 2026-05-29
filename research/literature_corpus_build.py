@@ -250,6 +250,7 @@ def run_literature_corpus_build(
     _init_db(sqlite_path)
     _write_json(output_dir / "query_bank.json", LITERATURE_QUERY_BANK)
     _write_json(status_path, {"run_id": config.run_id, "status": "running", "locked_opened": False})
+    _log_progress("corpus_started", run_id=config.run_id, pages_per_query=config.pages_per_query)
 
     canonical_by_key: dict[str, str] = {}
     studies_by_id: dict[str, dict[str, Any]] = {}
@@ -361,10 +362,19 @@ def run_literature_corpus_build(
                                 "locked_opened": False,
                             },
                         )
+                        _log_progress(
+                            "search_completed",
+                            family=family,
+                            sort=sort,
+                            page=page,
+                            returned_count=len(studies),
+                            unique_studies=len(studies_by_id),
+                        )
 
     ranked = sorted(studies_by_id.items(), key=lambda item: _study_score(item[1]), reverse=True)
     if config.max_studies_to_enrich > 0:
         ranked = ranked[: int(config.max_studies_to_enrich)]
+    _log_progress("search_phase_completed", unique_studies=len(studies_by_id), studies_to_enrich=len(ranked))
 
     enriched = 0
     ideas_total = 0
@@ -420,6 +430,17 @@ def run_literature_corpus_build(
                     "current_index": index,
                 },
             )
+            if index == 1 or index % 250 == 0 or index == len(ranked):
+                _log_progress(
+                    "enrich_progress",
+                    current_index=index,
+                    studies_to_enrich=len(ranked),
+                    studies_enriched=enriched,
+                    ideas_total=ideas_total,
+                    ideas_ready_to_test=ideas_ready,
+                    ideas_pending_data=ideas_pending,
+                    failures_count=failures,
+                )
 
     _export_artifacts(sqlite_path, output_dir)
     report = LiteratureCorpusBuildReport(
@@ -441,6 +462,7 @@ def run_literature_corpus_build(
         availability_reason=availability.reason,
     )
     _write_json(status_path, report.to_dict())
+    _log_progress("corpus_completed", **report.to_dict())
     return report
 
 
@@ -1315,6 +1337,10 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+
+
+def _log_progress(event: str, **payload: Any) -> None:
+    print(json.dumps({"event": event, **payload}, ensure_ascii=False, default=str), flush=True)
 
 
 def _now() -> str:
