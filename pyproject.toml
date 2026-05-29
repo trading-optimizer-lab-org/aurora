@@ -24,8 +24,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ml = ["scikit-learn>=1.3", "statsmodels>=0.14", "hmmlearn>=0.3"]
+ml = ["scikit-learn>=1.3", "statsmodels>=0.14", "hmmlearn>=0.3", "lightgbm>=4.0", "xgboost>=2.0"]
 dl = ["torch>=2.0"]
+kronos = ["torch>=2.0", "einops==0.8.1", "huggingface_hub>=0.33", "safetensors>=0.6", "tqdm>=4.67"]
 rl = ["gymnasium>=0.29", "stable-baselines3>=2.2"]
 ga = ["deap>=1.4", "scikit-optimize>=0.9", "joblib>=1.3"]
 live = [
@@ -41,7 +42,7 @@ llm = ["anthropic>=0.25"]
 portfolio = ["cvxpy>=1.4"]
 report = ["weasyprint"]
 dev = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6", "ruff>=0.5", "mypy>=1.7"]
-all = ["aurora[ml,dl,rl,ga,live,crypto,monitoring,llm,portfolio,report]"]
+all = ["aurora[ml,dl,kronos,rl,ga,live,crypto,monitoring,llm,portfolio,report]"]
 
 [project.scripts]
 # `aurora` is the canonical entry point; `forge` is kept as a deprecated
@@ -89,6 +90,7 @@ packages = [
     "aurora.reporting.daily_ops",
     "aurora.reporting.tearsheet",
     "aurora.research",
+    "aurora.research.agent_loop",
     "aurora.research.factory",
     "aurora.research.factory.factory",
     "aurora.research.literature",
@@ -137,6 +139,7 @@ packages = [
 "aurora.reporting.daily_ops" = "reporting/daily_ops"
 "aurora.reporting.tearsheet" = "reporting/tearsheet"
 "aurora.research" = "research"
+"aurora.research.agent_loop" = "research/agent_loop"
 "aurora.research.factory" = "research/factory"
 "aurora.research.factory.factory" = "research/factory/factory"
 "aurora.research.literature" = "research/literature"

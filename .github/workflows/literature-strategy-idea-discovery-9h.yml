@@ -1,0 +1,91 @@
+name: Literature Strategy Idea Discovery 9h
+
+on:
+  workflow_dispatch:
+    inputs:
+      estudios_repo_url:
+        description: "Optional Git URL for ESTUDIOS. If empty, direct OpenAlex metadata search is used."
+        required: false
+        default: ""
+      run_id:
+        description: "Run id used in artifacts"
+        required: false
+        default: "literature-idea-discovery"
+      pages_per_query:
+        description: "Pages per query/sort"
+        required: false
+        default: "5"
+      max_studies_to_enrich:
+        description: "0 enriches every deduplicated study found"
+        required: false
+        default: "0"
+
+jobs:
+  discover:
+    name: build-literature-corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 540
+    env:
+      ESTUDIOS_REPO_URL: ${{ inputs.estudios_repo_url || vars.ESTUDIOS_REPO_URL }}
+      RUN_ID: ${{ inputs.run_id }}-${{ github.run_id }}
+      OUT_ROOT: ${{ github.workspace }}/outputs/literature
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout Aurora
+        uses: actions/checkout@v4
+
+      - name: Checkout ESTUDIOS if configured
+        shell: bash
+        run: |
+          if [ -n "${ESTUDIOS_REPO_URL}" ]; then
+            git clone --depth 1 "${ESTUDIOS_REPO_URL}" "${GITHUB_WORKSPACE}/ESTUDIOS"
+          else
+            echo "ESTUDIOS_REPO_URL not set; using direct OpenAlex metadata search without PDF enrichment."
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Aurora
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Install ESTUDIOS
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -d "${GITHUB_WORKSPACE}/ESTUDIOS" ]; then
+            cd "${GITHUB_WORKSPACE}/ESTUDIOS"
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/python -m pip install -e ".[pdf]"
+            echo "AURORA_ESTUDIOS_ROOT=${GITHUB_WORKSPACE}/ESTUDIOS" >> "$GITHUB_ENV"
+            echo "AURORA_ESTUDIOS_PYTHON=${GITHUB_WORKSPACE}/ESTUDIOS/.venv/bin/python" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build corpus
+        shell: bash
+        run: |
+          aurora research literature-corpus-build \
+            --run-id "${RUN_ID}" \
+            --run-root "${OUT_ROOT}" \
+            --per-page 200 \
+            --pages-per-query "${{ inputs.pages_per_query }}" \
+            --sorts relevance,citations,date \
+            --max-studies-to-enrich "${{ inputs.max_studies_to_enrich }}" \
+            --timeout-seconds 180 \
+            --ai-timeout-seconds 300 \
+            --no-locked \
+            --json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-strategy-idea-discovery
+          path: outputs/literature/**
+          if-no-files-found: warn
