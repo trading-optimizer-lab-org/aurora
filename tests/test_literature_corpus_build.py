@@ -255,6 +255,9 @@ def test_literature_discovery_workflow_is_headless_and_locked_closed():
     assert 'PAGES_PER_QUERY_SAFE="${PAGES_PER_QUERY_INPUT:-5}"' in workflow
     assert 'MAX_STUDIES_TO_ENRICH_SAFE="${MAX_STUDIES_TO_ENRICH_INPUT:-0}"' in workflow
     assert 'RUN_ID_SAFE="${RUN_ID_INPUT:-literature-idea-discovery}-${GITHUB_RUN_ID}"' in workflow
+    assert "literature-idea-discovery-trigger.txt" in workflow
+    assert "pages_per_query) PAGES_PER_QUERY_SAFE" in workflow
+    assert "max_studies_to_enrich) MAX_STUDIES_TO_ENRICH_SAFE" in workflow
     assert 'python -m pip install -e ".[ml]"' in workflow
     assert "AURORA_PAPER_AI_PROVIDER" in workflow
     assert "OPENAI_API_KEY" in workflow

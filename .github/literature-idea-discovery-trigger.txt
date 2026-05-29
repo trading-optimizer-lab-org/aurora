@@ -1,1 +1,4 @@
-2026-05-29T13:25:00Z relaunch literature idea discovery with ml extra dependencies
+run_prefix=literature-idea-discovery
+pages_per_query=5
+max_studies_to_enrich=0
+note=2026-05-29T13:25:00Z current baseline round

@@ -89,6 +89,16 @@ jobs:
           RUN_ID_SAFE="${RUN_ID_INPUT:-literature-idea-discovery}-${GITHUB_RUN_ID}"
           PAGES_PER_QUERY_SAFE="${PAGES_PER_QUERY_INPUT:-5}"
           MAX_STUDIES_TO_ENRICH_SAFE="${MAX_STUDIES_TO_ENRICH_INPUT:-0}"
+          TRIGGER_FILE="${GITHUB_WORKSPACE}/.github/literature-idea-discovery-trigger.txt"
+          if [ -f "${TRIGGER_FILE}" ]; then
+            while IFS='=' read -r key value; do
+              case "${key}" in
+                pages_per_query) PAGES_PER_QUERY_SAFE="${value}" ;;
+                max_studies_to_enrich) MAX_STUDIES_TO_ENRICH_SAFE="${value}" ;;
+                run_prefix) RUN_ID_SAFE="${value}-${GITHUB_RUN_ID}" ;;
+              esac
+            done < "${TRIGGER_FILE}"
+          fi
           aurora research literature-corpus-build \
             --run-id "${RUN_ID_SAFE}" \
             --run-root "${OUT_ROOT}" \
