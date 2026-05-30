@@ -1,0 +1,150 @@
+name: BTC 5m All Features 5 Methods Train Only 1h 180 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes_per_method_stage:
+        description: "Minutes per method-stage job"
+        required: true
+        default: "50"
+      max_parallel:
+        description: "Max parallel method-stage jobs"
+        required: true
+        default: "180"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs
+  FILE_PREFIX: btc_5m_all_features_5methods_trainonly_1h_180jobs
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fair run shape
+        run: |
+          test "${{ inputs.max_parallel }}" -ge 1
+          test "${{ inputs.max_parallel }}" -le 180
+          test "${{ inputs.minutes_per_method_stage }}" -ge 1
+          test "${{ inputs.minutes_per_method_stage }}" -le 50
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Ingest BTCUSDT 5m public data
+        run: |
+          python -m aurora.cli.forge research kronos ingest-crypto-5m \
+            --run-id btc-5m-trainonly-data-${GITHUB_RUN_ID} \
+            --symbol BTCUSDT \
+            --library crypto_5m \
+            --interval 5m \
+            --start "2023-05-01 00:00:00+00:00" \
+            --end "2026-04-30 23:55:00+00:00" \
+            --version binance_5m_36m \
+            --replace \
+            --json
+      - name: Build external all-feature panel
+        run: |
+          python scripts/build_crypto_phase12_external.py \
+            --symbol BTCUSDT \
+            --source-library crypto_5m \
+            --source-version binance_5m_36m \
+            --output-library crypto_5m_external \
+            --output-version binance_5m_36m_phase12_v2 \
+            --workers 8
+      - name: Upload BTC 5m data store
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-5m-all-features-trainonly-data
+          path: .aurora-data/timeseries
+
+  search:
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix:
+        method: [dehb_real, genetic, beam, bandit, github_ml]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download BTC 5m data store
+        uses: actions/download-artifact@v4
+        with:
+          name: btc-5m-all-features-trainonly-data
+          path: .aurora-data/timeseries
+      - name: Run one train-only BTC method-stage job
+        run: |
+          python scripts/run_btc_5m_all_features_5methods_trainonly_stage.py \
+            --method "${{ matrix.method }}" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages 36 \
+            --time-budget-minutes "${{ inputs.minutes_per_method_stage }}" \
+            --output-dir "$OUTPUT_DIR/${{ matrix.method }}/stage_${{ matrix.stage }}" \
+            --file-prefix "$FILE_PREFIX" \
+            --top-rows-per-stage 500
+      - name: Upload method-stage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-5m-trainonly-${{ matrix.method }}-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/${{ matrix.method }}/stage_${{ matrix.stage }}
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: search
+    if: ${{ always() }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download all method-stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/artifacts
+          pattern: btc-5m-trainonly-*
+          merge-multiple: true
+      - name: Merge train-only BTC artifacts
+        run: |
+          python scripts/merge_btc_5m_all_features_5methods_trainonly.py \
+            --input-glob "outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/artifacts/**/*_stage_*.csv" \
+            --audit-glob "outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/artifacts/**/*_feature_audit.json" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --expected-jobs 180 \
+            --top-n 1000
+      - name: Upload final BTC train-only leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-5m-all-features-5methods-trainonly-1h-180jobs-leaderboard
+          path: |
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_leaderboard.csv
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_train_top.csv
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_validation_report.csv
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_methods.csv
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_summary.json
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_feature_audit.json
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_fail_reasons.csv
+            outputs/btc_5m_all_features_5methods_trainonly_1h_180jobs/btc_5m_all_features_5methods_trainonly_1h_180jobs_sizing.csv
