@@ -11,6 +11,12 @@ on:
         description: "Max parallel method-stage jobs"
         required: true
         default: "180"
+  push:
+    branches:
+      - codex/universal-robustness
+    paths:
+      - .github/btc-5m-trainonly-180jobs-trigger.txt
+      - .github/workflows/btc-5m-all-features-5methods-trainonly-1h-180jobs.yml
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -30,10 +36,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate fair run shape
         run: |
-          test "${{ inputs.max_parallel }}" -ge 1
-          test "${{ inputs.max_parallel }}" -le 180
-          test "${{ inputs.minutes_per_method_stage }}" -ge 1
-          test "${{ inputs.minutes_per_method_stage }}" -le 50
+          test "${{ inputs.max_parallel || '180' }}" -ge 1
+          test "${{ inputs.max_parallel || '180' }}" -le 180
+          test "${{ inputs.minutes_per_method_stage || '50' }}" -ge 1
+          test "${{ inputs.minutes_per_method_stage || '50' }}" -le 50
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -74,7 +80,7 @@ jobs:
     continue-on-error: true
     strategy:
       fail-fast: false
-      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      max-parallel: ${{ fromJSON(inputs.max_parallel || '180') }}
       matrix:
         method: [dehb_real, genetic, beam, bandit, github_ml]
         stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
@@ -97,7 +103,7 @@ jobs:
             --method "${{ matrix.method }}" \
             --stage "${{ matrix.stage }}" \
             --total-stages 36 \
-            --time-budget-minutes "${{ inputs.minutes_per_method_stage }}" \
+            --time-budget-minutes "${{ inputs.minutes_per_method_stage || '50' }}" \
             --output-dir "$OUTPUT_DIR/${{ matrix.method }}/stage_${{ matrix.stage }}" \
             --file-prefix "$FILE_PREFIX" \
             --top-rows-per-stage 500

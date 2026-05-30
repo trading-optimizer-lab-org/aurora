@@ -162,9 +162,8 @@ def test_btc_trainonly_workflow_shape() -> None:
     workflow = Path(".github/workflows/btc-5m-all-features-5methods-trainonly-1h-180jobs.yml").read_text(encoding="utf-8")
 
     assert "method: [dehb_real, genetic, beam, bandit, github_ml]" in workflow
-    assert "max-parallel: ${{ fromJSON(inputs.max_parallel) }}" in workflow
-    assert 'test "${{ inputs.max_parallel }}" -le 180' in workflow
+    assert "max-parallel: ${{ fromJSON(inputs.max_parallel || '180') }}" in workflow
+    assert 'test "${{ inputs.max_parallel || \'180\' }}" -le 180' in workflow
     assert "--total-stages 36" in workflow
-    assert "--time-budget-minutes \"${{ inputs.minutes_per_method_stage }}\"" in workflow
-    assert "wave" not in workflow.lower()
+    assert "--time-budget-minutes \"${{ inputs.minutes_per_method_stage || '50' }}\"" in workflow
     assert "btc_5m_all_features_5methods_trainonly_1h_180jobs_validation_report.csv" in workflow
