@@ -391,30 +391,48 @@ def build_phase12_external_panel(
         out[column] = np.nan
     notes: dict[str, Any] = {"symbol": symbol, "columns": list(EXTERNAL_CRYPTO_FEATURE_BACKLOG)}
 
-    metrics, note = fetch_binance_metrics(symbol, index, workers=workers)
-    out.update(metrics)
-    notes["binance_metrics"] = note
+    try:
+        metrics, note = fetch_binance_metrics(symbol, index, workers=workers)
+        out.update(metrics)
+        notes["binance_metrics"] = note
+    except Exception as exc:
+        notes["binance_metrics"] = {"status": "unavailable", "error": str(exc)}
 
-    funding, note = fetch_binance_funding(symbol, index)
-    out["funding_rate"] = funding
-    notes["binance_funding"] = note
+    try:
+        funding, note = fetch_binance_funding(symbol, index)
+        out["funding_rate"] = funding
+        notes["binance_funding"] = note
+    except Exception as exc:
+        notes["binance_funding"] = {"status": "unavailable", "error": str(exc)}
 
-    premium_basis, note = fetch_binance_premium_basis(symbol, source["close"].astype(float), index)
-    out.update(premium_basis)
-    notes["binance_premium_basis"] = note
+    try:
+        premium_basis, note = fetch_binance_premium_basis(symbol, source["close"].astype(float), index)
+        out.update(premium_basis)
+        notes["binance_premium_basis"] = note
+    except Exception as exc:
+        notes["binance_premium_basis"] = {"status": "unavailable", "error": str(exc)}
 
     if include_book_depth:
-        depth, note = fetch_binance_book_depth(symbol, index, workers=workers)
-        out.update(depth)
-        notes["binance_book_depth"] = note
+        try:
+            depth, note = fetch_binance_book_depth(symbol, index, workers=workers)
+            out.update(depth)
+            notes["binance_book_depth"] = note
+        except Exception as exc:
+            notes["binance_book_depth"] = {"status": "unavailable", "error": str(exc)}
 
-    fear, note = fetch_fear_greed(index)
-    out["fear_greed_index"] = fear
-    notes["fear_greed"] = note
+    try:
+        fear, note = fetch_fear_greed(index)
+        out["fear_greed_index"] = fear
+        notes["fear_greed"] = note
+    except Exception as exc:
+        notes["fear_greed"] = {"status": "unavailable", "error": str(exc)}
 
-    coinmetrics, note = fetch_coinmetrics_daily(index)
-    out.update(coinmetrics)
-    notes["coinmetrics"] = note
+    try:
+        coinmetrics, note = fetch_coinmetrics_daily(index)
+        out.update(coinmetrics)
+        notes["coinmetrics"] = note
+    except Exception as exc:
+        notes["coinmetrics"] = {"status": "unavailable", "error": str(exc)}
 
     out = out.replace([np.inf, -np.inf], np.nan)
     notes["non_null_by_column"] = {column: int(out[column].notna().sum()) for column in out.columns}
