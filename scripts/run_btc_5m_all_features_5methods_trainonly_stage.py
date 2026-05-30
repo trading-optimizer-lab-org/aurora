@@ -16,6 +16,8 @@ from aurora.research.btc_5m_trainonly_search import BTC5mSearchConfig, METHODS, 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one fair BTC 5m train-only method-stage job.")
     parser.add_argument("--method", required=True, choices=METHODS)
+    parser.add_argument("--wave", type=int, default=0)
+    parser.add_argument("--total-waves", type=int, default=1)
     parser.add_argument("--stage", type=int, required=True)
     parser.add_argument("--total-stages", type=int, default=36)
     parser.add_argument("--time-budget-minutes", type=float, default=50.0)
@@ -34,13 +36,16 @@ def main() -> int:
     rows, meta, audit = run_stage(
         config,
         method=args.method,
+        wave=int(args.wave),
+        total_waves=int(args.total_waves),
         stage=int(args.stage),
         total_stages=int(args.total_stages),
         time_budget_minutes=float(args.time_budget_minutes),
     )
-    rows_path = output_dir / f"{args.file_prefix}_stage_{args.method}_{args.stage}.csv"
-    meta_path = output_dir / f"{args.file_prefix}_stage_{args.method}_{args.stage}_meta.json"
-    audit_path = output_dir / f"{args.file_prefix}_stage_{args.method}_{args.stage}_feature_audit.json"
+    artifact_stem = f"{args.file_prefix}_wave_{int(args.wave)}_stage_{args.method}_{args.stage}"
+    rows_path = output_dir / f"{artifact_stem}.csv"
+    meta_path = output_dir / f"{artifact_stem}_meta.json"
+    audit_path = output_dir / f"{artifact_stem}_feature_audit.json"
     pd.DataFrame(rows).to_csv(rows_path, index=False)
     meta_path.write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
     audit_path.write_text(json.dumps(audit, indent=2, sort_keys=True), encoding="utf-8")
@@ -50,4 +55,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

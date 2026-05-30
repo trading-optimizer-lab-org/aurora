@@ -1,0 +1,76 @@
+name: BTC 5m Train Only 9h Wave
+
+on:
+  workflow_call:
+    inputs:
+      wave:
+        required: true
+        type: number
+      total_waves:
+        required: true
+        type: number
+      max_parallel:
+        required: true
+        type: number
+      minutes_per_method_stage:
+        required: true
+        type: string
+      data_artifact:
+        required: true
+        type: string
+      output_dir:
+        required: true
+        type: string
+      file_prefix:
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix:
+        method: [dehb_real, genetic, beam, bandit, github_ml]
+        stage: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download BTC 5m data store
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.data_artifact }}
+          path: .aurora-data/timeseries
+      - name: Run one train-only BTC method-stage job
+        run: |
+          python scripts/run_btc_5m_all_features_5methods_trainonly_stage.py \
+            --method "${{ matrix.method }}" \
+            --wave "${{ inputs.wave }}" \
+            --total-waves "${{ inputs.total_waves }}" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages 36 \
+            --time-budget-minutes "${{ inputs.minutes_per_method_stage }}" \
+            --output-dir "${{ inputs.output_dir }}/wave_${{ inputs.wave }}/${{ matrix.method }}/stage_${{ matrix.stage }}" \
+            --file-prefix "${{ inputs.file_prefix }}" \
+            --top-rows-per-stage 500
+      - name: Upload method-stage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-5m-trainonly-9h-wave-${{ inputs.wave }}-${{ matrix.method }}-stage-${{ matrix.stage }}
+          path: ${{ inputs.output_dir }}/wave_${{ inputs.wave }}/${{ matrix.method }}/stage_${{ matrix.stage }}

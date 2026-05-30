@@ -10,8 +10,10 @@ from aurora.data_contracts.timeseries_store import TimeSeriesStore
 from aurora.research.btc_5m_trainonly_search import (
     BTC5mSearchConfig,
     _profit_factor,
+    candidate_id_from_spec,
     choose_train_size,
     evaluate_spec,
+    merge_stage_rows,
     positions_from_scores,
     run_stage,
     strategy_metrics,
@@ -152,6 +154,77 @@ def test_run_stage_uses_all_features_and_keeps_locked_closed(tmp_path, monkeypat
     assert "funding_rate" in audit["feature_columns_used_names"] or audit["feature_columns_raw"] > audit["feature_columns_used"]
 
 
+def test_run_stage_wave_changes_search_but_not_contract(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AU_DATA_DIR", str(tmp_path))
+    _write_store(tmp_path)
+
+    rows_a, meta_a, _ = run_stage(
+        _small_config(),
+        method="genetic",
+        wave=0,
+        total_waves=11,
+        stage=0,
+        total_stages=36,
+        time_budget_minutes=0.0,
+    )
+    rows_b, meta_b, _ = run_stage(
+        _small_config(),
+        method="genetic",
+        wave=1,
+        total_waves=11,
+        stage=0,
+        total_stages=36,
+        time_budget_minutes=0.0,
+    )
+
+    assert rows_a and rows_b
+    assert meta_a["seed"] != meta_b["seed"]
+    assert meta_a["wave"] == 0
+    assert meta_b["wave"] == 1
+    assert rows_a[0]["wave"] == 0
+    assert rows_b[0]["wave"] == 1
+    assert rows_a[0]["total_waves"] == 11
+    assert rows_b[0]["total_waves"] == 11
+    assert {row["candidate_id"] for row in rows_a} != {row["candidate_id"] for row in rows_b}
+    assert meta_a["locked_opened"] is False
+    assert meta_b["validation_used_for_selection"] is False
+
+
+def test_candidate_id_is_rule_based_not_wave_based() -> None:
+    spec = {
+        "method": "genetic",
+        "route": "linear_feature_rule",
+        "features": ("ret_1", "volume_z"),
+        "weights": (0.5, -0.25),
+        "threshold": 0.2,
+        "iteration": 3,
+        "engine": "genetic",
+    }
+
+    assert candidate_id_from_spec(spec) == candidate_id_from_spec(dict(spec))
+
+
+def test_merge_stage_rows_dedupes_between_waves_by_best_train_score() -> None:
+    low = pd.DataFrame(
+        [
+            {"candidate_id": "same", "method": "beam", "wave": 0, "train_score": 1.0, "verified": True},
+            {"candidate_id": "only_a", "method": "beam", "wave": 0, "train_score": 2.0, "verified": True},
+        ]
+    )
+    high = pd.DataFrame(
+        [
+            {"candidate_id": "same", "method": "beam", "wave": 1, "train_score": 3.0, "verified": True},
+            {"candidate_id": "only_b", "method": "beam", "wave": 1, "train_score": 0.5, "verified": False},
+        ]
+    )
+
+    merged = merge_stage_rows([low, high])
+
+    assert merged["candidate_id"].tolist() == ["same", "only_a", "only_b"]
+    assert float(merged.loc[merged["candidate_id"] == "same", "train_score"].iloc[0]) == 3.0
+    assert int(merged.loc[merged["candidate_id"] == "same", "wave"].iloc[0]) == 1
+
+
 def test_positions_from_scores_can_hold_cash_long_and_short() -> None:
     positions = positions_from_scores(np.array([-2.0, -0.1, 0.0, 0.1, 2.0]), threshold=0.5)
 
@@ -167,3 +240,29 @@ def test_btc_trainonly_workflow_shape() -> None:
     assert "--total-stages 36" in workflow
     assert "--time-budget-minutes \"${{ inputs.minutes_per_method_stage || '50' }}\"" in workflow
     assert "btc_5m_all_features_5methods_trainonly_1h_180jobs_validation_report.csv" in workflow
+
+
+def test_btc_trainonly_9h_workflow_shape() -> None:
+    import yaml
+
+    workflow_path = Path(".github/workflows/btc-5m-all-features-5methods-trainonly-9h-max500-real180.yml")
+    wave_path = Path(".github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml")
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    wave = yaml.safe_load(wave_path.read_text(encoding="utf-8"))
+
+    jobs = workflow["jobs"]
+    wave_jobs = [name for name in jobs if name.startswith("search_wave_")]
+    assert len(wave_jobs) == 11
+    assert jobs["search_wave_0"]["needs"] == "data"
+    assert jobs["search_wave_10"]["needs"] == "search_wave_9"
+    assert jobs["merge"]["needs"] == "search_wave_10"
+    assert workflow["env"]["EXPECTED_JOBS"] == "1980"
+    assert workflow["env"]["JOBS_PER_WAVE"] == "180"
+
+    strategy = wave["jobs"]["search"]["strategy"]
+    matrix = strategy["matrix"]
+    assert len(matrix["method"]) == 5
+    assert len(matrix["stage"]) == 36
+    assert len(matrix["method"]) * len(matrix["stage"]) == 180
+    assert len(matrix["method"]) * len(matrix["stage"]) < 256
+    assert "max_parallel" in str(strategy["max-parallel"])

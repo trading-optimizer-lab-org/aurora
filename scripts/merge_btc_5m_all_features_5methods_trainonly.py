@@ -22,20 +22,17 @@ def main() -> int:
     parser.add_argument("--file-prefix", default="btc_5m_all_features_5methods_trainonly_1h_180jobs")
     parser.add_argument("--expected-jobs", type=int, default=180)
     parser.add_argument("--top-n", type=int, default=1000)
+    parser.add_argument("--waves", type=int, default=1)
+    parser.add_argument("--jobs-per-wave", type=int, default=180)
+    parser.add_argument("--minutes-per-method-stage", type=float, default=50.0)
+    parser.add_argument("--max-parallel-requested", type=int, default=180)
+    parser.add_argument("--assumed-effective-parallelism", type=int, default=180)
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = sorted(glob.glob(args.input_glob, recursive=True))
-    frames = []
-    for path in paths:
-        try:
-            frame = pd.read_csv(path)
-        except pd.errors.EmptyDataError:
-            continue
-        if not frame.empty:
-            frames.append(frame)
-    merged = merge_stage_rows(frames)
+    merged = _read_and_dedupe(paths)
     if not merged.empty and "train_score" in merged.columns:
         merged = merged.sort_values("train_score", ascending=False).reset_index(drop=True)
 
@@ -55,6 +52,11 @@ def main() -> int:
         "verified": int(leaderboard["verified"].astype(bool).sum()) if "verified" in leaderboard.columns else 0,
         "stage_files_found": int(len(paths)),
         "expected_jobs": int(args.expected_jobs),
+        "waves": int(args.waves),
+        "jobs_per_wave": int(args.jobs_per_wave),
+        "minutes_per_method_stage": float(args.minutes_per_method_stage),
+        "max_parallel_requested": int(args.max_parallel_requested),
+        "assumed_effective_parallelism": int(args.assumed_effective_parallelism),
         "partial": int(len(paths)) < int(args.expected_jobs),
         "methods": list(METHODS),
         "locked_opened": False,
@@ -82,6 +84,43 @@ def main() -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def _read_and_dedupe(paths: list[str]) -> pd.DataFrame:
+    best_by_candidate: dict[str, dict[str, object]] = {}
+    frames_without_id = []
+    for path in paths:
+        try:
+            frame = pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            continue
+        if frame.empty:
+            continue
+        if "candidate_id" not in frame.columns:
+            frames_without_id.append(frame)
+            continue
+        frame = frame.sort_values("train_score", ascending=False) if "train_score" in frame.columns else frame
+        frame = frame.drop_duplicates("candidate_id", keep="first")
+        for record in frame.to_dict("records"):
+            candidate_id = str(record.get("candidate_id", ""))
+            if not candidate_id:
+                continue
+            current = best_by_candidate.get(candidate_id)
+            if current is None or _score(record) > _score(current):
+                best_by_candidate[candidate_id] = record
+    frames = []
+    if best_by_candidate:
+        frames.append(pd.DataFrame(best_by_candidate.values()))
+    frames.extend(frames_without_id)
+    return merge_stage_rows(frames)
+
+
+def _score(record: dict[str, object]) -> float:
+    try:
+        value = float(record.get("train_score", float("-inf")))
+    except Exception:
+        return float("-inf")
+    return value if pd.notna(value) else float("-inf")
 
 
 def _fail_reasons(frame: pd.DataFrame) -> pd.DataFrame:

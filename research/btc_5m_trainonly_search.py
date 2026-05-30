@@ -29,6 +29,7 @@ BTC_5M_PPY = 365 * 24 * 12
 METHODS = ("dehb_real", "genetic", "beam", "bandit", "github_ml")
 SIZE_GRID = (0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0)
 FORBIDDEN_TOKENS = ("locked", "future", "target", "label", "prediction")
+WAVE_SEED_STRIDE = 100_000_000
 
 
 @dataclass(frozen=True)
@@ -61,11 +62,13 @@ def run_stage(
     stage: int,
     total_stages: int,
     time_budget_minutes: float,
+    wave: int = 0,
+    total_waves: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     if method not in METHODS:
         raise ValueError(f"unknown BTC 5m method: {method}")
     dataset, audit = load_dataset(config)
-    seed = int(config.random_seed + stage * 10_000 + _method_offset(method))
+    seed = int(config.random_seed + int(wave) * WAVE_SEED_STRIDE + stage * 10_000 + _method_offset(method))
     rng = np.random.default_rng(seed)
     start = time.monotonic()
     deadline = start + max(1.0, float(time_budget_minutes) * 60.0)
@@ -85,6 +88,8 @@ def run_stage(
                 continue
             seen.add(str(row["candidate_id"]))
             row["method"] = method
+            row["wave"] = int(wave)
+            row["total_waves"] = int(total_waves)
             row["stage"] = int(stage)
             row["total_stages"] = int(total_stages)
             row["candidates_evaluated"] = int(len(rows) + 1)
@@ -99,8 +104,11 @@ def run_stage(
     meta = {
         "run_id": config.run_id,
         "method": method,
+        "wave": int(wave),
+        "total_waves": int(total_waves),
         "stage": int(stage),
         "total_stages": int(total_stages),
+        "seed": int(seed),
         "rows": len(rows),
         "candidates_unique": len({row["candidate_id"] for row in rows}),
         "time_budget_minutes": float(time_budget_minutes),
@@ -664,4 +672,3 @@ def _finite_or(value: Any, fallback: float) -> float:
 
 def _method_offset(method: str) -> int:
     return {name: idx * 1_000_000 for idx, name in enumerate(METHODS, start=1)}[method]
-

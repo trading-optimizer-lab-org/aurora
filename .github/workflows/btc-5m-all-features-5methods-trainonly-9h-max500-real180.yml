@@ -1,0 +1,257 @@
+name: BTC 5m All Features 5 Methods Train Only 9h Max500 Real180
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes_per_method_stage:
+        description: "Minutes per method-stage job"
+        required: true
+        default: "50"
+      max_parallel:
+        description: "Max parallel method-stage jobs"
+        required: true
+        default: "500"
+      assumed_effective_parallelism:
+        description: "Parallelism used for duration estimate"
+        required: true
+        default: "180"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+  FILE_PREFIX: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+  WAVES: "11"
+  JOBS_PER_WAVE: "180"
+  EXPECTED_JOBS: "1980"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fair 9h run shape
+        run: |
+          test "${{ inputs.max_parallel || '500' }}" -ge 1
+          test "${{ inputs.max_parallel || '500' }}" -le 500
+          test "${{ inputs.minutes_per_method_stage || '50' }}" -ge 1
+          test "${{ inputs.minutes_per_method_stage || '50' }}" -le 50
+          test "${{ inputs.assumed_effective_parallelism || '180' }}" -ge 1
+          test "${{ inputs.assumed_effective_parallelism || '180' }}" -le 500
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Ingest BTCUSDT 5m public data
+        run: |
+          python -m aurora.cli.forge research kronos ingest-crypto-5m \
+            --run-id btc-5m-trainonly-9h-data-${GITHUB_RUN_ID} \
+            --symbol BTCUSDT \
+            --library crypto_5m \
+            --interval 5m \
+            --start "2023-05-01 00:00:00+00:00" \
+            --end "2026-04-30 23:55:00+00:00" \
+            --version binance_5m_36m \
+            --replace \
+            --json
+      - name: Build external all-feature panel
+        run: |
+          python scripts/build_crypto_phase12_external.py \
+            --symbol BTCUSDT \
+            --source-library crypto_5m \
+            --source-version binance_5m_36m \
+            --output-library crypto_5m_external \
+            --output-version binance_5m_36m_phase12_v2 \
+            --workers 8
+      - name: Upload BTC 5m data store
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-5m-all-features-trainonly-9h-data
+          path: .aurora-data/timeseries
+
+  search_wave_0:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: data
+    with:
+      wave: 0
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_1:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_0
+    with:
+      wave: 1
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_2:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_1
+    with:
+      wave: 2
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_3:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_2
+    with:
+      wave: 3
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_4:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_3
+    with:
+      wave: 4
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_5:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_4
+    with:
+      wave: 5
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_6:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_5
+    with:
+      wave: 6
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_7:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_6
+    with:
+      wave: 7
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_8:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_7
+    with:
+      wave: 8
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_9:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_8
+    with:
+      wave: 9
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  search_wave_10:
+    uses: ./.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml
+    needs: search_wave_9
+    with:
+      wave: 10
+      total_waves: 11
+      max_parallel: ${{ fromJSON(inputs.max_parallel || '500') }}
+      minutes_per_method_stage: ${{ inputs.minutes_per_method_stage || '50' }}
+      data_artifact: btc-5m-all-features-trainonly-9h-data
+      output_dir: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180
+      file_prefix: btc_5m_all_features_5methods_trainonly_9h_max500_real180
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: search_wave_10
+    if: ${{ always() }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download all method-stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/artifacts
+          pattern: btc-5m-trainonly-9h-*
+          merge-multiple: true
+      - name: Merge train-only BTC artifacts
+        run: |
+          python scripts/merge_btc_5m_all_features_5methods_trainonly.py \
+            --input-glob "outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/artifacts/**/*_stage_*.csv" \
+            --audit-glob "outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/artifacts/**/*_feature_audit.json" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --expected-jobs "$EXPECTED_JOBS" \
+            --waves "$WAVES" \
+            --jobs-per-wave "$JOBS_PER_WAVE" \
+            --minutes-per-method-stage "${{ inputs.minutes_per_method_stage || '50' }}" \
+            --max-parallel-requested "${{ inputs.max_parallel || '500' }}" \
+            --assumed-effective-parallelism "${{ inputs.assumed_effective_parallelism || '180' }}" \
+            --top-n 1000
+      - name: Upload final BTC train-only leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-5m-all-features-5methods-trainonly-9h-max500-real180-leaderboard
+          path: |
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_leaderboard.csv
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_train_top.csv
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_verified.csv
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_validation_report.csv
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_methods.csv
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_summary.json
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_feature_audit.json
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_fail_reasons.csv
+            outputs/btc_5m_all_features_5methods_trainonly_9h_max500_real180/btc_5m_all_features_5methods_trainonly_9h_max500_real180_sizing.csv
