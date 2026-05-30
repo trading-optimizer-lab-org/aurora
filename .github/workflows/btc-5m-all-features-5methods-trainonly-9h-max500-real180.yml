@@ -15,6 +15,11 @@ on:
         description: "Parallelism used for duration estimate"
         required: true
         default: "180"
+  push:
+    branches:
+      - codex/universal-robustness
+    paths:
+      - .github/btc-5m-trainonly-9h-max500-real180-trigger.txt
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
