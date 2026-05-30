@@ -1,0 +1,1 @@
+btc-5m-trainonly-9h-max500-real180 2026-05-30T21:40:00+02:00 waves=11 jobs_per_wave=180 max_parallel=500 assumed=180 minutes=50
