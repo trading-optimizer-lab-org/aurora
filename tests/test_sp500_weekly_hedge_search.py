@@ -283,6 +283,14 @@ def test_workflow_shapes_for_1wave_and_6waves_are_comparable() -> None:
         assert "bandit" not in text
 
 
+def test_policy1995_data_download_does_not_request_pre_binance_crypto_months() -> None:
+    from scripts.download_diversified_seed import binance_effective_start
+
+    assert binance_effective_start("BTCUSDT", "1995-01-01") == "2017-08-01"
+    assert binance_effective_start("SOLUSDT", "1995-01-01") == "2020-08-01"
+    assert binance_effective_start("BTCUSDT", "2019-01-01") == "2019-01-01"
+
+
 def test_stage_script_smoke_with_synthetic_dataset(tmp_path: Path) -> None:
     out = tmp_path / "out"
     cmd = [

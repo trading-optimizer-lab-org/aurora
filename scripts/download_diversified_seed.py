@@ -50,6 +50,21 @@ START = DEFAULT_START
 END = None  # today
 HTTP_TIMEOUT = 30
 
+# Binance spot data did not exist in 1995. For late-entry runs, starting each
+# crypto pair at a realistic first month avoids thousands of guaranteed 404s.
+BINANCE_SPOT_FIRST_MONTH = {
+    "BTCUSDT": "2017-08-01",
+    "ETHUSDT": "2017-08-01",
+    "BNBUSDT": "2017-11-01",
+    "XRPUSDT": "2018-05-01",
+    "ADAUSDT": "2018-04-01",
+    "DOGEUSDT": "2019-07-01",
+    "LINKUSDT": "2019-01-01",
+    "SOLUSDT": "2020-08-01",
+    "DOTUSDT": "2020-08-01",
+    "AVAXUSDT": "2020-09-01",
+}
+
 REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "config" / "diversified_seed_dataset.yaml"
 
@@ -82,11 +97,22 @@ def fetch_yfinance(symbol: str, start: str = START) -> pd.DataFrame | None:
         return None
 
 
+def binance_effective_start(pair: str, start: str) -> str:
+    requested = datetime.strptime(start, "%Y-%m-%d").date()
+    first = datetime.strptime(
+        BINANCE_SPOT_FIRST_MONTH.get(pair.upper(), "2017-01-01"),
+        "%Y-%m-%d",
+    ).date()
+    return max(requested, first).isoformat()
+
+
 def fetch_binance_klines(pair: str, start: str = START) -> pd.DataFrame | None:
     """Aggregate Binance daily klines from monthly ZIPs."""
     sym = pair.upper()
-    start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+    start_dt = datetime.strptime(binance_effective_start(sym, start), "%Y-%m-%d").date()
     today = datetime.strptime(END, "%Y-%m-%d").date() if END else date.today()
+    if start_dt > today:
+        return None
     frames: list[pd.DataFrame] = []
     cur = start_dt.replace(day=1)
     while cur <= today:
