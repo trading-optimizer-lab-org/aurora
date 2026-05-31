@@ -1,6 +1,6 @@
-"""Tests for triple-barrier labeling, meta-labeling and bet sizing.
+﻿"""Tests for triple-barrier labeling, meta-labeling and bet sizing.
 
-Run: uv run --with scipy pytest quantforge/tests/test_labels.py -v
+Run: uv run --with scipy pytest aurora/tests/test_labels.py -v
 """
 from __future__ import annotations
 import numpy as np

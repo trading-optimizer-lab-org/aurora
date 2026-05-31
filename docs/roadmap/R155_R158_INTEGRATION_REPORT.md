@@ -1,4 +1,4 @@
-# R155-R158 integration report
+﻿# R155-R158 integration report
 
 Date: 2026-05-10
 Branch: `integration/r155-r158-from-backup`
@@ -302,7 +302,7 @@ These pass after merge to main + reinstall.
 ## Recommended next step
 
 After this branch merges to main and the editable install is refreshed
-(`pip install -e .` from the canonical `C:/Users/HP/QuantForge`):
+(`pip install -e .` from the canonical `C:/Users/HP/Aurora`):
 
 1. Run the 3 deferred subprocess CLI tests to confirm they pass against
    the merged main.

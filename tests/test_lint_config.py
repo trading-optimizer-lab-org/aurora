@@ -1,4 +1,4 @@
-"""Tests that lint/type config in pyproject.toml is present and parseable.
+﻿"""Tests that lint/type config in pyproject.toml is present and parseable.
 
 These guard against accidental removal or breakage of dev tooling config in
 pyproject.toml. Pre-commit YAML coverage lives in
@@ -64,7 +64,7 @@ def test_coveragerc_exists():
 def test_no_unmarked_live_data_loads():
     """Tests that load the SPY parquet cache must be marked `integration`.
 
-    Walks every ``test_*.py`` under ``quantforge/tests/`` with the AST and
+    Walks every ``test_*.py`` under ``aurora/tests/`` with the AST and
     flags any test function that references ``SPY.parquet`` (or calls
     ``load_asset("SPY", ...)``) without the ``@pytest.mark.integration``
     decorator. Catches the regression class where a contributor adds a

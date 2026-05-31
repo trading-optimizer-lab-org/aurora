@@ -1,4 +1,4 @@
-"""Tests for quantforge.execution.vwap."""
+﻿"""Tests for aurora.execution.vwap."""
 from __future__ import annotations
 from datetime import datetime, timedelta
 

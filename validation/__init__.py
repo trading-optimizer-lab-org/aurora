@@ -26,6 +26,21 @@ from aurora.validation.pipeline import validate_pipeline, ValidationReport
 from aurora.validation.purged_cv import PurgedKFold, cv_score
 from aurora.validation.retraining import simulate_retraining, RetrainResult
 from aurora.validation.scenarios import KNOWN_CRASHES, stress_test_all_known
+from aurora.validation.statistical_robustness import (
+    RobustnessCheck,
+    StatisticalRobustnessConfig,
+    StatisticalRobustnessReport,
+    benjamini_hochberg,
+    statistical_robustness_gate,
+)
+from aurora.validation.robustness_config import UniversalRobustnessConfig
+from aurora.validation.robustness_reports import write_universal_robustness_outputs
+from aurora.validation.universal_robustness import (
+    UniversalRobustnessResult,
+    run_batch_universal_robustness,
+    run_universal_robustness,
+    run_universal_robustness_from_positions,
+)
 from aurora.validation.spp import spp
 from aurora.validation.structural_breaks import (
     chow_test,
@@ -67,6 +82,12 @@ _SUBMODULES = [
     "parameter_rank_stability",
     "partial_dependence",
     "shap_explain",
+    "statistical_robustness",
+    "universal_robustness",
+    "robustness_config",
+    "robustness_data_quality",
+    "robustness_duplicates",
+    "robustness_reports",
 ]
 
 # Class / function / dataclass entries — the public callable API.
@@ -107,6 +128,18 @@ _PUBLIC_API = [
     # scenarios
     "KNOWN_CRASHES",
     "stress_test_all_known",
+    # statistical robustness
+    "RobustnessCheck",
+    "StatisticalRobustnessConfig",
+    "StatisticalRobustnessReport",
+    "benjamini_hochberg",
+    "statistical_robustness_gate",
+    "UniversalRobustnessConfig",
+    "UniversalRobustnessResult",
+    "run_universal_robustness",
+    "run_universal_robustness_from_positions",
+    "run_batch_universal_robustness",
+    "write_universal_robustness_outputs",
     # Batch D
     "AdversarialBacktester",
     "CopulaTailDependence",

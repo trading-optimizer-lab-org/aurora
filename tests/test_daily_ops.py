@@ -1,4 +1,4 @@
-"""Tests for quantforge.reporting.daily_ops (P2.B).
+﻿"""Tests for aurora.reporting.daily_ops (P2.B).
 
 Covers:
 - DailyOpsConfig defaults and validation
@@ -13,7 +13,7 @@ Covers:
 Run::
 
     cd "C:/Users/HP/MODELO SP500"
-    "C:/Python314/python.exe" -m pytest quantforge/tests/test_daily_ops.py -v
+    "C:/Python314/python.exe" -m pytest aurora/tests/test_daily_ops.py -v
 """
 from __future__ import annotations
 

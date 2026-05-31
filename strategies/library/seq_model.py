@@ -1,4 +1,4 @@
-"""Sequence-model Strategy wrapper (QuantForge v1.3 Batch N.4).
+﻿"""Sequence-model Strategy wrapper (Aurora v1.3 Batch N.4).
 
 Wraps an LSTM, Transformer, or RL agent as a :class:`Strategy`.
 

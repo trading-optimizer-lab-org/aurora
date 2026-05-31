@@ -1,4 +1,4 @@
-"""Infrastructure adapters for QuantForge v2.0.
+﻿"""Infrastructure adapters for Aurora v2.0.
 
 Optional infra modules. Heavy SDKs (ray, dask, torch, boto3, psycopg2,
 redis, prometheus_client, pyarrow.dataset) are imported lazily inside

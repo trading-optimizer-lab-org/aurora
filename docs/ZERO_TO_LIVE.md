@@ -1,4 +1,4 @@
-# Zero To Live
+﻿# Zero To Live
 
 Operator-facing path from clean clone to guarded live trading. Every command
 either runs offline, or states the credential / data dependency it needs. No
@@ -12,7 +12,7 @@ that is called out explicitly.
 
 ## 0. What you are setting up
 
-QuantForge is a quant research engine with a 7-stage protocol spine:
+Aurora is a quant research engine with a 7-stage protocol spine:
 
 ```
 ProtocolPolicy -> DataProviderRegistry -> SnapshotStore ->
@@ -25,7 +25,9 @@ require explicit ceremonies. Live trades require a triple-gate: scoped token
 + env flag + active OOSGuard ceremony + operator countersignature.
 
 If any of those words feel new, read [`SPINE.md`](SPINE.md) and
-[`RESEARCH_PROTOCOL.md`](RESEARCH_PROTOCOL.md) before continuing.
+[`RESEARCH_OPERATING_PROTOCOL.md`](RESEARCH_OPERATING_PROTOCOL.md)
+before continuing. `RESEARCH_PROTOCOL.md` remains the tier and lockbox
+reference, but the operating protocol is the mandatory research flow.
 
 ---
 
@@ -34,8 +36,8 @@ If any of those words feel new, read [`SPINE.md`](SPINE.md) and
 Tested on Python 3.10+ (developer machine here is 3.14).
 
 ```powershell
-git clone <your-fork-or-mirror> QuantForge
-cd QuantForge
+git clone <your-fork-or-mirror> Aurora
+cd Aurora
 python -m pip install -e ".[dev,ga,docs,mutate]"
 ```
 
@@ -49,20 +51,20 @@ python -m pip install -e ".[dev,all]"
 Verify:
 
 ```powershell
-python -c "import quantforge; print(quantforge.__version__)"
+python -c "import aurora; print(aurora.__version__)"
 forge --version
 ```
 
 If `forge` is missing from PATH, the entry point did not register. Re-run the
-editable install or invoke `python -m quantforge.cli.forge` directly.
+editable install or invoke `python -m aurora.cli.forge` directly.
 
 > **Important: pin one interpreter.** Subprocess-launching code (mutmut,
 > the protocol-policy CLI smoke test, the live deploy gate) calls
-> `sys.executable -m quantforge.cli.forge`. If you install editable under
+> `sys.executable -m aurora.cli.forge`. If you install editable under
 > `C:/Python314/python.exe` but then run `make test` with a `python` on
 > `$PATH` that resolves to a different interpreter (e.g. system Python
 > 3.12 with no project deps), those subprocesses see
-> "No module named quantforge" and the suite fails inside otherwise
+> "No module named aurora" and the suite fails inside otherwise
 > unrelated tests. Pin `PYTHON` in the Makefile and the install command
 > to the same path:
 >
@@ -114,11 +116,11 @@ re-hashing.
 ## 4. Run a deterministic smoke backtest
 
 ```python
-from quantforge.core.seed import set_global_seed
-from quantforge.core.engine import run_backtest
-from quantforge.core.data_layer import load_asset
-from quantforge.core.costs import IBKR_costs
-from quantforge.strategies.library import MACross
+from aurora.core.seed import set_global_seed
+from aurora.core.engine import run_backtest
+from aurora.core.data_layer import load_asset
+from aurora.core.costs import IBKR_costs
+from aurora.strategies.library import MACross
 
 
 set_global_seed(42)
@@ -229,7 +231,7 @@ forge ops daily   # generate the operational daily report first
 Then start a paper run via your chosen wrapper. Lumibot example:
 
 ```python
-from quantforge.deployment.paper import QFPaperStrategy
+from aurora.deployment.paper import QFPaperStrategy
 
 strat = QFPaperStrategy(strategy_name="MACross", asset="SPY")
 strat.bind()  # checks the validation marker; halts if missing

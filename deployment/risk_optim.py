@@ -1,4 +1,4 @@
-"""CVaR / CDaR portfolio optimization (Task H.2 of QuantForge v1.1).
+﻿"""CVaR / CDaR portfolio optimization (Task H.2 of Aurora v1.1).
 
 Implements:
 - min_cvar:               minimize Conditional Value-at-Risk (Expected Shortfall)

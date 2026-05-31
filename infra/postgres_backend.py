@@ -1,8 +1,8 @@
-"""Postgres-backed registry / journal drop-in.
+﻿"""Postgres-backed registry / journal drop-in.
 
-Mirrors the SQLite-based :class:`quantforge.registry.registry.BacktestRegistry`
+Mirrors the SQLite-based :class:`aurora.registry.registry.BacktestRegistry`
 API but persists to Postgres via lazy ``psycopg2``. The same dataclass
-:class:`~quantforge.registry.registry.RegistryEntry` is reused, so callers
+:class:`~aurora.registry.registry.RegistryEntry` is reused, so callers
 swap implementations without touching downstream code.
 
 Two modes:
@@ -36,7 +36,7 @@ class PostgresConfig:
         table: registry table name.
     """
     dsn: str = ""
-    dsn_env: str = "QUANTFORGE_PG_DSN"
+    dsn_env: str = "AURORA_PG_DSN"
     schema: str = "public"
     table: str = "backtests"
 

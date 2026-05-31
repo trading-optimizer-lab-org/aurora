@@ -444,3 +444,8 @@ def test_provider_status_include_complementary_lists_r156(
     assert "MACRO_MULTI_SOURCE" in out
     assert "CRYPTO_METRICS" in out
     assert "FX_REFERENCE" in out
+    assert "cftc_cot" in out
+    assert "kenneth_french" in out
+    assert "federal_reserve_h15" in out
+    assert "bls_public_api" in out
+    assert "yale_shiller" in out

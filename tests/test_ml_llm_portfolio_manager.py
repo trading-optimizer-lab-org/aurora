@@ -1,4 +1,4 @@
-"""Tests for quantforge.ml.llm_portfolio_manager."""
+﻿"""Tests for aurora.ml.llm_portfolio_manager."""
 from __future__ import annotations
 
 import json

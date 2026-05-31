@@ -1,4 +1,4 @@
-"""Tests for StrategyAllocator. Run: pytest quantforge/tests/test_allocator.py -v"""
+﻿"""Tests for StrategyAllocator. Run: pytest aurora/tests/test_allocator.py -v"""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

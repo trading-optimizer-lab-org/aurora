@@ -1,7 +1,7 @@
-"""Strategy specification (immutable proposal record) for the Research Factory.
+﻿"""Strategy specification (immutable proposal record) for the Research Factory.
 
 A ``StrategySpec`` is the unit of work submitted to
-:class:`~quantforge.research.factory.factory.ResearchFactory`. It pins down
+:class:`~aurora.research.factory.factory.ResearchFactory`. It pins down
 *everything* needed to reproduce a candidate strategy run:
 
 * the hypothesis text and expected edge,
@@ -13,7 +13,7 @@ A ``StrategySpec`` is the unit of work submitted to
 * an optional ``parent_spec_id`` so mutations / variations carry lineage.
 
 The factory's StrategySpec deliberately does NOT inherit from the
-``quantforge.strategies.base.StrategySpec`` class, which is the GA's
+``aurora.strategies.base.StrategySpec`` class, which is the GA's
 parameter-range descriptor. Both names co-exist in the codebase: the GA
 spec describes *what shapes a parameter can take*, while the factory spec
 describes *one concrete proposal*.

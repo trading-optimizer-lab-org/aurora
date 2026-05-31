@@ -1,4 +1,4 @@
-"""Tests for quantforge.monitoring.dashboard.
+﻿"""Tests for aurora.monitoring.dashboard.
 
 The dashboard helpers ``compute_dashboard_metrics`` and
 ``fetch_dashboard_data`` are pure pandas / sqlite and run without Streamlit.

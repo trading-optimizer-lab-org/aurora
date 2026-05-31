@@ -1,6 +1,6 @@
-"""PineScript exporter (R80 slice 1).
+﻿"""PineScript exporter (R80 slice 1).
 
-Translates a :class:`quantforge.strategies.rules.Rule` (R78) into a
+Translates a :class:`aurora.strategies.rules.Rule` (R78) into a
 TradingView PineScript v5 script. Provenance metadata identical to
 the Lean exporter (R1): policy_hash, spec_hash, forge_version,
 exported_at, README warning.
@@ -113,7 +113,7 @@ def export_pinescript(
         )
     header = (
         "//@version=5\n"
-        f"// QuantForge export -- DO NOT EDIT BY HAND\n"
+        f"// Aurora export -- DO NOT EDIT BY HAND\n"
         f"// rule_name: {rule.name}\n"
         f"// policy_hash: {manifest.policy_hash}\n"
         f"// spec_hash:   {manifest.spec_hash}\n"

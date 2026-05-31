@@ -1,6 +1,6 @@
-"""Tests for microstructure features.
+﻿"""Tests for microstructure features.
 
-Run: uv run pytest quantforge/tests/test_microstructure.py -v
+Run: uv run pytest aurora/tests/test_microstructure.py -v
 """
 from __future__ import annotations
 import numpy as np

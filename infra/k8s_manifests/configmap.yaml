@@ -1,18 +1,18 @@
-# QuantForge ConfigMap skeleton.
+﻿# Aurora ConfigMap skeleton.
 # Documentation only; merged with secrets at deploy time.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: quantforge-config
+  name: aurora-config
   labels:
-    app: quantforge
+    app: aurora
 data:
-  QUANTFORGE_ENV: "prod"
+  AURORA_ENV: "prod"
   TZ: "UTC"
   PYTHONUNBUFFERED: "1"
   DASHBOARD_PORT: "8501"
   ALERTS_INTERVAL_SEC: "30"
-  REDIS_URL: "redis://quantforge-redis:6379/0"
-  POSTGRES_DSN: "postgresql://qf:qf@quantforge-journal-db:5432/qf_journal"
+  REDIS_URL: "redis://aurora-redis:6379/0"
+  POSTGRES_DSN: "postgresql://qf:qf@aurora-journal-db:5432/qf_journal"
   PROMETHEUS_PORT: "9100"
   LOG_LEVEL: "INFO"

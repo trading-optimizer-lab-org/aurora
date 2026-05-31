@@ -1,4 +1,4 @@
-"""TOTP two-factor authentication for critical actions.
+﻿"""TOTP two-factor authentication for critical actions.
 
 Wraps the ``pyotp`` library for time-based one-time passwords used to gate
 sensitive operations such as live trading arming, deployment to prod, and
@@ -33,7 +33,7 @@ class TwoFactorConfig:
         valid_window: number of preceding/following steps accepted on verify.
     """
     secret_env: str = "QF_TOTP_SECRET"
-    issuer: str = "QuantForge"
+    issuer: str = "Aurora"
     account_label: str = "operations"
     digits: int = 6
     period_seconds: int = 30

@@ -1,4 +1,4 @@
-"""Tests for the experiment tracker (quantforge.registry.experiments)."""
+﻿"""Tests for the experiment tracker (aurora.registry.experiments)."""
 from __future__ import annotations
 
 import json

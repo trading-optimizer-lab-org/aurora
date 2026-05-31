@@ -1,4 +1,4 @@
-"""Tests for quantforge.ml.causal_inference."""
+﻿"""Tests for aurora.ml.causal_inference."""
 from __future__ import annotations
 
 import numpy as np

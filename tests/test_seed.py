@@ -1,4 +1,4 @@
-"""Tests for global seed propagation.
+﻿"""Tests for global seed propagation.
 
 Covers:
 - set_global_seed seeds python.random, numpy, env
@@ -6,7 +6,7 @@ Covers:
 - JIT engine produces identical results across two seeded runs
   (proves numba JIT RNG honors global seed via numpy)
 
-Run: pytest quantforge/tests/test_seed.py -v
+Run: pytest aurora/tests/test_seed.py -v
 """
 from __future__ import annotations
 import os

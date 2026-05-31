@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import io
@@ -21,7 +21,7 @@ from aurora.data_contracts.timeseries_store import TimeSeriesStore
 from aurora.research.crypto_direction_ml import EXTERNAL_CRYPTO_FEATURE_BACKLOG
 
 
-USER_AGENT = "QuantForge/crypto-phase12"
+USER_AGENT = "Aurora/crypto-phase12"
 BINANCE_ARCHIVE = "https://data.binance.vision/data/futures/um/daily"
 BINANCE_FAPI = "https://fapi.binance.com"
 COINMETRICS = "https://community-api.coinmetrics.io/v4"

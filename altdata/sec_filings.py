@@ -1,4 +1,4 @@
-"""SEC EDGAR filings adapter.
+﻿"""SEC EDGAR filings adapter.
 
 Pulls 10-K, 10-Q, 8-K, and Form 4 (insider trades) from SEC EDGAR using only
 ``urllib`` from the stdlib; no third-party SDK is required. Network access is
@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 import pandas as pd
 
 # SEC requires a User-Agent header that identifies the requester.
-_DEFAULT_UA = "QuantForge altdata/0.1 (research)"
+_DEFAULT_UA = "Aurora altdata/0.1 (research)"
 _SUB_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 
 _VALID_FORMS = frozenset({"10-K", "10-Q", "8-K", "4"})

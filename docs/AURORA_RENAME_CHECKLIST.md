@@ -1,16 +1,16 @@
-# Aurora Rename Execution Checklist (R23)
+﻿# Aurora Rename Execution Checklist (R23)
 
 ## Status
 
 **Executed 2026-05-09 (commit `cf41bc2`).** `pyproject.toml`
 `name = "aurora"`; package-dir map re-routes `aurora.*` to the
 on-disk dirs; CLI entry `aurora`; `forge` kept as deprecated alias.
-`quantforge/__init__.py` shim re-exports aurora and emits
+`aurora/__init__.py` shim re-exports aurora and emits
 `DeprecationWarning`. `core/env_compat.py::aurora_env(new, old)`
 reads `AU_*` first, falls back to `QF_*` with `DeprecationWarning`.
 
 Wheel builds as `aurora-1.5.0-py3-none-any.whl`. Both `import aurora`
-(no warning) and `import quantforge` (DeprecationWarning) work.
+(no warning) and `import aurora` (DeprecationWarning) work.
 `aurora --version` -> `aurora 1.5.0`.
 
 The text below is the original checklist, kept for historical
@@ -44,7 +44,7 @@ The right shape: one rename branch, one merge, one shim release.
 
 ```bash
 # from outside the repo dir
-git mv QuantForge Aurora
+git mv Aurora Aurora
 ```
 
 `pyproject.toml` `[tool.setuptools]` `package-dir` map updates so the
@@ -62,10 +62,10 @@ find . -name '*.py' \
     -not -path './.venv/*' \
     -not -path './.claude/*' \
     -exec sed -i '' \
-        -e 's/^import quantforge/import aurora/g' \
-        -e 's/^from quantforge\./from aurora./g' \
-        -e "s/'quantforge\\./'aurora./g" \
-        -e 's/"quantforge\\./"aurora./g' \
+        -e 's/^import aurora/import aurora/g' \
+        -e 's/^from aurora\./from aurora./g' \
+        -e "s/'aurora\\./'aurora./g" \
+        -e 's/"aurora\\./"aurora./g' \
         {} +
 ```
 
@@ -75,7 +75,7 @@ reviewers see a focused diff (`core/`, then `validation/`, then
 
 ### 3. Compatibility shim
 
-Land `aurora/_quantforge_shim.py`:
+Land `aurora/_aurora_shim.py`:
 
 ```python
 # pseudo-code shape; lands when the rename branch is ready
@@ -86,14 +86,14 @@ import warnings
 def _install_shim():
     import sys
     import aurora
-    sys.modules.setdefault("quantforge", aurora)
+    sys.modules.setdefault("aurora", aurora)
     warnings.filterwarnings(
         "default",
-        message=r"`quantforge\..*` is deprecated; use `aurora\..*`",
+        message=r"`aurora\..*` is deprecated; use `aurora\..*`",
     )
 ```
 
-Imports of `quantforge.*` resolve via the shim and emit a
+Imports of `aurora.*` resolve via the shim and emit a
 `DeprecationWarning`. The shim is removed in v1.6.
 
 ### 4. Env var migration
@@ -137,7 +137,7 @@ Update every operator-facing doc:
 ## Definition of done
 
 - [x] `import aurora` resolves to the rename branch's package.
-- [x] `import quantforge` works AND emits a `DeprecationWarning`
+- [x] `import aurora` works AND emits a `DeprecationWarning`
       during the shim window.
 - [x] `aurora --version` returns the new package version.
 - [x] All operator docs reference Aurora consistently.
@@ -151,7 +151,7 @@ If the rename branch hits a regression in main that cannot be hot-
 fixed, revert the merge commit. The rename is fully contained in one
 merge so revert is clean. The compat shim makes the revert window
 even safer because downstream consumers can keep importing
-`quantforge.*` either way.
+`aurora.*` either way.
 
 ## Why this checklist is the canonical reference
 

@@ -1,6 +1,6 @@
-"""Tests for BLLLMViews.
+﻿"""Tests for BLLLMViews.
 
-Run: pytest quantforge/tests/test_bl_with_llm_views.py -v
+Run: pytest aurora/tests/test_bl_with_llm_views.py -v
 """
 from __future__ import annotations
 import numpy as np

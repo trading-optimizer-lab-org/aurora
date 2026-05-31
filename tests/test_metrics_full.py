@@ -1,4 +1,4 @@
-"""Tests for quantforge.analytics.metrics_full — quantstats parity suite."""
+﻿"""Tests for aurora.analytics.metrics_full — quantstats parity suite."""
 from __future__ import annotations
 import math
 import numpy as np

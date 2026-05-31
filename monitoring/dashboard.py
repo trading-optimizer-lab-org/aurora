@@ -1,6 +1,6 @@
-"""Streamlit live dashboard for QuantForge trade journal.
+﻿"""Streamlit live dashboard for Aurora trade journal.
 
-Reads the SQLite trade journal written by ``quantforge.registry.journal`` and
+Reads the SQLite trade journal written by ``aurora.registry.journal`` and
 renders an auto-refreshing dashboard with PnL, open positions, per-strategy
 panels, and a recent-trade ticker.
 
@@ -9,7 +9,7 @@ Streamlit is an optional dependency. The pure helpers
 sqlite3 / numpy and are testable without Streamlit. ``run_dashboard`` lazy
 imports streamlit and raises a clear ``RuntimeError`` if missing.
 
-Journal schema (see ``quantforge/registry/journal.py``):
+Journal schema (see ``aurora/registry/journal.py``):
     id, timestamp, strategy_name, strategy_version, symbol, side,
     quantity, fill_price, notional, commission, slippage_bps,
     signal_value, status, order_id, note
@@ -400,17 +400,17 @@ def run_dashboard(config: Optional[DashboardConfig] = None):
     import streamlit as st
 
     st.set_page_config(
-        page_title="QuantForge Live Dashboard",
+        page_title="Aurora Live Dashboard",
         layout="wide",
     )
 
     # --- sidebar --------------------------------------------------------
-    st.sidebar.title("QuantForge")
+    st.sidebar.title("Aurora")
     st.sidebar.caption("Live trade journal monitor")
 
     journal_path = st.sidebar.text_input(
         "Journal path", value=str(cfg.journal_path),
-        help="SQLite database written by quantforge.registry.journal",
+        help="SQLite database written by aurora.registry.journal",
     )
     refresh = st.sidebar.number_input(
         "Refresh seconds", min_value=1, max_value=3600,
@@ -552,7 +552,7 @@ def run_dashboard(config: Optional[DashboardConfig] = None):
 
 
 def _streamlit_entrypoint() -> int:
-    """Module-mode entry: ``python -m quantforge.monitoring.dashboard``.
+    """Module-mode entry: ``python -m aurora.monitoring.dashboard``.
 
     When invoked under ``streamlit run``, Streamlit imports this module as a
     script, so calling ``run_dashboard()`` here renders the page.

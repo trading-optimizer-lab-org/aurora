@@ -1,4 +1,4 @@
-"""``forge run / validate / search / ...`` core analytical subcommands (R49 split).
+﻿"""``forge run / validate / search / ...`` core analytical subcommands (R49 split).
 
 This module groups the original "core" CLI commands: backtest run /
 validate / GA search / list-strategies / tearsheet / bench / config /
@@ -37,6 +37,45 @@ def _resolve_tier_load(asset, tier):
     return _forge_mod._resolve_tier_load(asset, tier)
 
 
+def _enforce_cli_protocol(
+    args,
+    *,
+    command: str,
+    objective: str,
+    metric: str,
+    universe,
+    features,
+    candidate_id: str,
+    providers=("snapshot_or_cache",),
+    date_range=None,
+    constraints=None,
+    allowed_selection_phases=("is_train", "is_valid", "oos_dev"),
+):
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+    )
+
+    symbols = tuple(universe if isinstance(universe, (list, tuple)) else (universe,))
+    return ensure_mandatory_research_protocol(
+        project_id=getattr(args, "project_id", None)
+        or make_project_id(command, *symbols, candidate_id),
+        objective=objective,
+        metric=metric,
+        universe=symbols,
+        providers=tuple(providers),
+        date_range=dict(date_range or {}),
+        features=tuple(features),
+        seed=getattr(args, "seed", "not_set"),
+        candidate_id=candidate_id,
+        allowed_selection_phases=tuple(allowed_selection_phases),
+        locked_phases=("oos_locked", "forward"),
+        constraints={"command": command, **dict(constraints or {})},
+        actor="aurora_cli",
+        ledger_path=getattr(args, "protocol_ledger", None),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Existing commands (run / validate / search) -- kept stable
 # ---------------------------------------------------------------------------
@@ -46,6 +85,12 @@ def cmd_validate(args):
     from aurora.validation.pipeline import validate_pipeline
     from aurora.core.data_layer import OOSGuard
     from aurora.core.data_tiers import load_up_to_tier
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+        record_robustness_run,
+        record_validation_run,
+    )
 
     cfg = _load_global_config(args)
     if getattr(args, "dry_run", False):
@@ -79,6 +124,30 @@ def cmd_validate(args):
         "forward": ("FORWARD", "explicit_unlock_forward", "FORWARD"),
     }
     max_tier, guard_phase, oos_tier = tier_map[tier_arg]
+    project_id = getattr(args, "project_id", None) or make_project_id(
+        "validate", args.strategy, args.asset, tier_arg,
+    )
+    candidate_id = make_project_id(args.strategy, args.asset, "validation")
+    protocol_guard = ensure_mandatory_research_protocol(
+        project_id=project_id,
+        objective=f"Validate {args.strategy} on {args.asset}",
+        metric="validation_overall_passed",
+        universe=(args.asset,),
+        providers=("snapshot_or_cache",),
+        date_range={"max_tier": max_tier, "validation_tier": oos_tier},
+        features=(args.strategy,),
+        seed=args.seed,
+        candidate_id=candidate_id,
+        allowed_selection_phases=("is_all", "oos_dev"),
+        locked_phases=("oos_locked", "forward"),
+        constraints={
+            "command": "validate",
+            "costs": args.costs,
+            "n_trials": args.n_trials,
+        },
+        actor="aurora_cli",
+        ledger_path=getattr(args, "protocol_ledger", None),
+    )
 
     # Round-3 audit fix: load only IS + chosen tier (cap at end of
     # max_tier). The legacy ``load_asset(include_oos=True)`` returned
@@ -121,6 +190,47 @@ def cmd_validate(args):
             is_tier="IS_ALL",
             oos_tier=oos_tier,
         )
+    protocol_guard.record_selection(
+        candidate_id,
+        phases_used=("is_all",) if tier_arg in ("oos_locked", "forward") else ("is_all", "oos_dev"),
+        metrics={
+            "overall_passed": bool(getattr(rep, "overall_passed", False)),
+            "is_calmar": (getattr(rep, "is_metrics", {}) or {}).get("calmar"),
+            "oos_calmar": (getattr(rep, "oos_metrics", {}) or {}).get("calmar"),
+        },
+        actor="aurora_cli",
+        payload={"strategy": args.strategy, "asset": args.asset},
+    )
+    record_robustness_run(
+        protocol_guard,
+        candidate_id=candidate_id,
+        actor="aurora_cli",
+        checks=(
+            "validation_pipeline",
+            "walk_forward",
+            "monte_carlo",
+            "lookahead",
+            "cost_model",
+        ),
+        passed=bool(getattr(rep, "overall_passed", False)),
+        metrics={
+            "overall_passed": bool(getattr(rep, "overall_passed", False)),
+            "wf_pass": getattr(rep, "wf_pass", None),
+            "wf_total": getattr(rep, "wf_total", None),
+        },
+        payload={"strategy": args.strategy, "asset": args.asset},
+    )
+    record_validation_run(
+        protocol_guard,
+        candidate_id=candidate_id,
+        actor="aurora_cli",
+        metrics={
+            "overall_passed": bool(getattr(rep, "overall_passed", False)),
+            "is_calmar": (getattr(rep, "is_metrics", {}) or {}).get("calmar"),
+            "oos_calmar": (getattr(rep, "oos_metrics", {}) or {}).get("calmar"),
+        },
+        payload={"strategy": args.strategy, "asset": args.asset},
+    )
     print(rep.report())
     return 0 if rep.overall_passed else 1
 
@@ -142,6 +252,10 @@ def cmd_search(args):
     from aurora.ga.fitness import multi_objective_fitness_is, validate_oos
     from aurora.core.data_layer import load_asset, OOSGuard
     from aurora.core.data_tiers import split_by_tier
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+    )
 
     cfg = _load_global_config(args)
     if getattr(args, "dry_run", False):
@@ -155,6 +269,40 @@ def cmd_search(args):
         _arg_error(
             f"--is-tier must be 'is_train' or 'is_all' (got {is_tier_arg!r})"
         )
+    project_id = getattr(args, "project_id", None) or make_project_id(
+        "search", args.strategy, args.asset, is_tier_arg,
+    )
+    candidate_id = make_project_id(
+        args.strategy, args.asset, "ga", args.population, args.generations,
+        args.seed,
+    )
+    protocol_guard = ensure_mandatory_research_protocol(
+        project_id=project_id,
+        objective=f"Search parameters for {args.strategy} on {args.asset}",
+        metric="ga_pareto_calmar",
+        universe=(args.asset,),
+        providers=("snapshot_or_cache",),
+        date_range={
+            "is_tier": is_tier_arg,
+            "post_selection_validation": (
+                "skipped" if args.skip_oos else "oos_dev"
+            ),
+        },
+        features=(args.strategy, "ga_parameter_grid"),
+        seed=args.seed,
+        candidate_id=candidate_id,
+        allowed_selection_phases=("is_train", "is_all", "is_valid", "oos_dev"),
+        locked_phases=("oos_locked", "forward"),
+        constraints={
+            "command": "search",
+            "population": args.population,
+            "generations": args.generations,
+            "oos_top": args.oos_top,
+        },
+        max_trials=int(args.population) * int(args.generations),
+        actor="aurora_cli",
+        ledger_path=getattr(args, "protocol_ledger", None),
+    )
 
     # Step 1 -- load IS only. OOS_DEV is NOT in memory during GA. Even
     # though the GA fitness function only consumes is_p, having OOS in
@@ -178,6 +326,20 @@ def cmd_search(args):
     print(f"\nPareto front ({len(pareto)} individuals, is_tier={is_tier_arg}):")
     print(f"{'Calmar':>8} {'Sharpe':>8} {'Robust':>8} {'MDDpen':>8}  Params")
     sorted_pareto = sorted(pareto, key=lambda x: -x[1][0])
+    if sorted_pareto:
+        best_params, best_fit = sorted_pareto[0]
+        protocol_guard.record_selection(
+            candidate_id=candidate_id,
+            phases_used=(is_tier_arg,),
+            metrics={
+                "calmar": float(best_fit[0]),
+                "sharpe": float(best_fit[1]),
+                "robust": float(best_fit[2]),
+                "mdd_penalty": float(best_fit[3]),
+            },
+            actor="aurora_cli",
+            payload={"params": dict(best_params)},
+        )
     for params, fit in sorted_pareto[:20]:
         print(f"{fit[0]:>8.3f} {fit[1]:>8.3f} {fit[2]:>8.3f} {fit[3]:>8.3f}  {params}")
 
@@ -229,6 +391,10 @@ def cmd_search(args):
 
 def cmd_run(args):
     from aurora.core.engine import run_backtest
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+    )
 
     cfg = _load_global_config(args)
     if getattr(args, "dry_run", False):
@@ -236,12 +402,30 @@ def cmd_run(args):
         return 0
     set_global_seed(args.seed)
     cls = _resolve_strategy(args.strategy)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    ensure_mandatory_research_protocol(
+        project_id=getattr(args, "project_id", None) or make_project_id(
+            "run", args.strategy, args.asset, tier,
+        ),
+        objective=f"Backtest display for {args.strategy} on {args.asset}",
+        metric="backtest_metrics",
+        universe=(args.asset,),
+        providers=("snapshot_or_cache",),
+        date_range={"tier": tier},
+        features=(args.strategy,),
+        seed=args.seed,
+        candidate_id=make_project_id(args.strategy, args.asset, "run"),
+        allowed_selection_phases=("is_train", "is_all", "oos_dev"),
+        locked_phases=("oos_locked", "forward"),
+        constraints={"command": "run", "costs": args.costs},
+        actor="aurora_cli",
+        ledger_path=getattr(args, "protocol_ledger", None),
+    )
     # ``run`` is a post-validation backtest display, not a fitness loop.
     # Round-3 audit fix: ``--tier`` is the explicit knob (default
     # ``oos_dev``). The legacy "include everything" behaviour is now
     # behind ``--tier full`` + ``QF_ALLOW_FULL_TIER=1``.
-    prices = _resolve_tier_load(args.asset, getattr(args, "tier",
-                                                    _DEFAULT_ANALYTICAL_TIER))
+    prices = _resolve_tier_load(args.asset, tier)
     strat = cls()
     res = run_backtest(prices, strat.signals, costs=_costs_from(args.costs))
     print(f"Strategy: {args.strategy} on {args.asset}")
@@ -301,6 +485,18 @@ def cmd_tearsheet(args):
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
     cls = _resolve_strategy(args.strategy)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    _enforce_cli_protocol(
+        args,
+        command="tearsheet",
+        objective=f"Generate tearsheet for {args.strategy} on {args.asset}",
+        metric="tearsheet_backtest_metrics",
+        universe=(args.asset,),
+        features=(args.strategy, "tearsheet"),
+        candidate_id=f"{args.strategy}_{args.asset}_tearsheet",
+        date_range={"tier": tier},
+        constraints={"costs": args.costs},
+    )
     prices = _resolve_tier_load(args.asset, getattr(args, "tier",
                                                     _DEFAULT_ANALYTICAL_TIER))
     strat = cls()
@@ -423,6 +619,18 @@ def cmd_label(args):
 
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    _enforce_cli_protocol(
+        args,
+        command="label",
+        objective=f"Triple-barrier labeling for {args.asset}",
+        metric="label_distribution",
+        universe=(args.asset,),
+        features=("triple_barrier_labels",),
+        candidate_id=f"{args.asset}_labels",
+        date_range={"tier": tier},
+        constraints={"pt": args.pt, "sl": args.sl, "hp": args.hp},
+    )
     prices = _resolve_tier_load(args.asset, getattr(args, "tier",
                                                     _DEFAULT_ANALYTICAL_TIER))
 
@@ -486,6 +694,17 @@ def cmd_factor(args):
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
     cls = _resolve_strategy(args.strategy)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    _enforce_cli_protocol(
+        args,
+        command="factor",
+        objective=f"Factor analysis for {args.strategy} on {args.asset}",
+        metric="factor_ic",
+        universe=(args.asset,),
+        features=(args.strategy, "forward_returns"),
+        candidate_id=f"{args.strategy}_{args.asset}_factor",
+        date_range={"tier": tier, "periods": args.periods},
+    )
     prices = _resolve_tier_load(args.asset, getattr(args, "tier",
                                                     _DEFAULT_ANALYTICAL_TIER))
     strat = cls()
@@ -527,6 +746,18 @@ def cmd_attribute(args):
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
     cls = _resolve_strategy(args.strategy)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    _enforce_cli_protocol(
+        args,
+        command="attribute",
+        objective=f"Attribute performance for {args.strategy} on {args.asset}",
+        metric="attribution",
+        universe=(args.asset, args.benchmark or args.asset),
+        features=(args.strategy, "benchmark_or_regime"),
+        candidate_id=f"{args.strategy}_{args.asset}_attribute",
+        date_range={"tier": tier},
+        constraints={"costs": args.costs},
+    )
     prices = _resolve_tier_load(args.asset, getattr(args, "tier",
                                                     _DEFAULT_ANALYTICAL_TIER))
     strat = cls()
@@ -583,6 +814,18 @@ def cmd_purge_cv(args):
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
     cls = _resolve_strategy(args.strategy)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    _enforce_cli_protocol(
+        args,
+        command="purge_cv",
+        objective=f"Purged CV for {args.strategy} on {args.asset}",
+        metric="purged_cv_calmar",
+        universe=(args.asset,),
+        features=(args.strategy, "purged_cv"),
+        candidate_id=f"{args.strategy}_{args.asset}_purge_cv",
+        date_range={"tier": tier},
+        constraints={"k": args.k, "embargo": args.embargo, "costs": args.costs},
+    )
     prices = _resolve_tier_load(args.asset, getattr(args, "tier",
                                                     _DEFAULT_ANALYTICAL_TIER))
     spec = cls.spec()
@@ -636,6 +879,22 @@ def cmd_fracdiff(args):
 
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
+    tier = getattr(args, "tier", _DEFAULT_ANALYTICAL_TIER)
+    _enforce_cli_protocol(
+        args,
+        command="fracdiff",
+        objective=f"Fractional differentiation sweep for {args.asset}",
+        metric="adf_stationarity",
+        universe=(args.asset,),
+        features=("fracdiff",),
+        candidate_id=f"{args.asset}_fracdiff",
+        date_range={"tier": tier},
+        constraints={
+            "max_d": args.max_d,
+            "step": args.step,
+            "threshold": args.threshold,
+        },
+    )
     prices = _resolve_tier_load(args.asset, getattr(args, "tier",
                                                     _DEFAULT_ANALYTICAL_TIER))
     series = np.log(prices.replace(0, np.nan).dropna())
@@ -697,6 +956,21 @@ def cmd_cscv(args):
     set_global_seed(args.seed)
     if not args.returns_csv:
         _arg_error("--returns-csv is required")
+    _enforce_cli_protocol(
+        args,
+        command="cscv",
+        objective=f"CSCV/PBO analysis for {args.returns_csv}",
+        metric="pbo",
+        universe=("returns_matrix",),
+        providers=("user_csv",),
+        features=("returns_matrix", "cscv"),
+        candidate_id=f"cscv_{args.returns_csv}",
+        date_range={"source": args.returns_csv},
+        constraints={
+            "n_splits": args.n_splits,
+            "max_combos": args.max_combos,
+        },
+    )
 
     df = pd.read_csv(args.returns_csv, index_col=0)
     try:
@@ -743,6 +1017,20 @@ def cmd_preflight(args):
     cfg = _load_global_config(args)  # noqa: F841
     set_global_seed(args.seed)
     cls = _resolve_strategy(args.strategy)
+    _enforce_cli_protocol(
+        args,
+        command="preflight",
+        objective=f"Preflight {args.strategy} on {args.symbol}",
+        metric="preflight_all_passed",
+        universe=(args.symbol,),
+        features=(args.strategy, "preflight"),
+        candidate_id=f"{args.strategy}_{args.symbol}_preflight",
+        date_range={"runtime": "preflight"},
+        constraints={
+            "min_bars": args.min_bars,
+            "max_position_pct": args.max_position_pct,
+        },
+    )
     strat = cls()
 
     rep = run_preflight(
@@ -791,6 +1079,24 @@ def cmd_search_multi(args):
         _arg_error(
             f"--is-tier must be 'is_train' or 'is_valid' (got {is_tier!r})"
         )
+    _enforce_cli_protocol(
+        args,
+        command="search_multi",
+        objective=(
+            f"Multi-asset GA search for {args.strategy} on "
+            + ",".join(symbols)
+        ),
+        metric="multi_asset_ga_pareto_calmar",
+        universe=tuple(symbols),
+        features=(args.strategy, "multi_asset_ga"),
+        candidate_id=f"{args.strategy}_{'_'.join(symbols)}_multi_ga",
+        date_range={"is_tier": is_tier},
+        constraints={
+            "population": args.population,
+            "generations": args.generations,
+        },
+        allowed_selection_phases=("is_train", "is_valid"),
+    )
 
     price_dict_is: dict = {}
     for s in symbols:
@@ -877,7 +1183,7 @@ def cmd_freeze(args):
 def cmd_dashboard(args):
     """Launch the Streamlit live dashboard.
 
-    Wraps ``streamlit run quantforge/monitoring/dashboard.py`` and passes
+    Wraps ``streamlit run aurora/monitoring/dashboard.py`` and passes
     the journal path / refresh interval through environment variables so the
     script entrypoint can pick them up.
     """
@@ -945,6 +1251,14 @@ def register(subparsers, parent_parser=None) -> None:
     p_run.add_argument("--seed", type=int, default=42)
     p_run.add_argument("--dry-run", action="store_true",
                        help="Print resolved config and exit without executing.")
+    p_run.add_argument(
+        "--project-id", default=None,
+        help="Research protocol project id (auto-generated if omitted).",
+    )
+    p_run.add_argument(
+        "--protocol-ledger", default=None,
+        help="Override research protocol ledger path.",
+    )
     _add_tier_arg(p_run)
     p_run.set_defaults(func=cmd_run)
 
@@ -967,6 +1281,14 @@ def register(subparsers, parent_parser=None) -> None:
     p_val.add_argument("--seed", type=int, default=42)
     p_val.add_argument("--dry-run", action="store_true",
                        help="Print resolved config and exit without executing.")
+    p_val.add_argument(
+        "--project-id", default=None,
+        help="Research protocol project id (auto-generated if omitted).",
+    )
+    p_val.add_argument(
+        "--protocol-ledger", default=None,
+        help="Override research protocol ledger path.",
+    )
     # P2.2 round-4 audit -- explicit tier flag for formal validation.
     # Default remains oos_dev. oos_locked/forward additionally require
     # --i-understand-ceremony to acknowledge unsealing the locked tier.
@@ -1012,6 +1334,14 @@ def register(subparsers, parent_parser=None) -> None:
     )
     p_search.add_argument("--dry-run", action="store_true",
                           help="Print resolved config and exit without executing.")
+    p_search.add_argument(
+        "--project-id", default=None,
+        help="Research protocol project id (auto-generated if omitted).",
+    )
+    p_search.add_argument(
+        "--protocol-ledger", default=None,
+        help="Override research protocol ledger path.",
+    )
     p_search.set_defaults(func=cmd_search)
 
     # list-strategies -------------------------------------------------------
@@ -1225,7 +1555,7 @@ def register_dashboard(subparsers, parent_parser=None) -> None:
     """
     p_dash = subparsers.add_parser(
         "dashboard", help="Launch live Streamlit dashboard",
-        description=("Wrap 'streamlit run' to serve the QuantForge live "
+        description=("Wrap 'streamlit run' to serve the Aurora live "
                      "dashboard against a trade journal SQLite file."),
     )
     p_dash.add_argument("--journal", default="aurora.db",

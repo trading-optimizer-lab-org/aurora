@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.postgres_backend.PostgresRegistry (mock mode)."""
+﻿"""Tests for aurora.infra.postgres_backend.PostgresRegistry (mock mode)."""
 from __future__ import annotations
 
 import pytest

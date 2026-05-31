@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.distributed.DistributedBacktester."""
+﻿"""Tests for aurora.infra.distributed.DistributedBacktester."""
 from __future__ import annotations
 
 from unittest.mock import patch

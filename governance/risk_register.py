@@ -1,4 +1,4 @@
-"""Strategy risk register.
+﻿"""Strategy risk register.
 
 A :class:`StrategyRiskRecord` answers the model-risk question for any
 strategy that may be promoted toward paper or live capital:
@@ -163,7 +163,7 @@ class RiskRegister:
     maker-checker flow.
 
     Design rationale: the audit chain in
-    :mod:`quantforge.agent_gateway.audit` already covers tamper-evident
+    :mod:`aurora.agent_gateway.audit` already covers tamper-evident
     logging; this register only needs durable append-only persistence.
     Reads scan the file end-to-start so latest-wins lookup is O(N) but
     cheap in practice (one record per strategy lifecycle event).

@@ -1,4 +1,4 @@
-"""Validation marker reader/writer for preflight."""
+﻿"""Validation marker reader/writer for preflight."""
 from __future__ import annotations
 
 import json
@@ -54,7 +54,7 @@ def _marker_path(strategy_name: str, project_dir: str = ".",
             cache_dir = os.path.abspath(cache_dir)
         return os.path.join(cache_dir, f".validation_passed_{strategy_name}.json")
     root = _resolve_project_dir(project_dir)
-    cache = os.path.join(root, "quantforge", "data_cache_qf")
+    cache = os.path.join(root, "aurora", "data_cache_qf")
     return os.path.join(cache, f".validation_passed_{strategy_name}.json")
 
 

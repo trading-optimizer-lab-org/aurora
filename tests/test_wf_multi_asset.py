@@ -1,9 +1,9 @@
-"""Walk-forward across a multi-asset price dict.
+﻿"""Walk-forward across a multi-asset price dict.
 
 The single-asset ``walk_forward`` is reused per symbol. We verify that each
 WF fold produces finite metrics for every asset in the dict.
 
-Run: pytest quantforge/tests/test_wf_multi_asset.py -v
+Run: pytest aurora/tests/test_wf_multi_asset.py -v
 """
 from __future__ import annotations
 import numpy as np

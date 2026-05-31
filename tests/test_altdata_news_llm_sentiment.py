@@ -1,4 +1,4 @@
-"""Tests for quantforge.altdata.news_llm_sentiment."""
+﻿"""Tests for aurora.altdata.news_llm_sentiment."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

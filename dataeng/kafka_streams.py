@@ -1,4 +1,4 @@
-"""Kafka producer/consumer wrapper with lazy ``confluent-kafka`` import.
+﻿"""Kafka producer/consumer wrapper with lazy ``confluent-kafka`` import.
 
 In ``mock=True`` mode events are stored in an in-process deque so tests can
 publish and consume without a real broker.
@@ -24,8 +24,8 @@ class KafkaConfig:
     """
     bootstrap_servers: str = "localhost:9092"
     topic: str = "aurora.events"
-    group_id: str = "quantforge"
-    client_id: str = "quantforge-client"
+    group_id: str = "aurora"
+    client_id: str = "aurora-client"
     max_buffer: int = 10_000
 
 

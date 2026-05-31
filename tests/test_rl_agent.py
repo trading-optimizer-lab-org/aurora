@@ -1,10 +1,10 @@
-"""Tests for quantforge.ml.rl_agent.
+﻿"""Tests for aurora.ml.rl_agent.
 
 All tests skip when gymnasium or stable_baselines3 is not installed.
 
 Run with optional deps:
     uv run --with gymnasium --with stable-baselines3 \
-        pytest quantforge/tests/test_rl_agent.py -v
+        pytest aurora/tests/test_rl_agent.py -v
 """
 from __future__ import annotations
 

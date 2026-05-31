@@ -1,4 +1,4 @@
-"""Regime-conditional risk parity.
+﻿"""Regime-conditional risk parity.
 
 Risk parity computed separately on returns conditioned on a regime label
 (e.g. produced by an HMM, Markov-switching model, or a trend filter). The
@@ -12,7 +12,7 @@ Plumbing
 --------
 The regime detector itself lives outside this module; pass a precomputed
 regime label series aligned to ``prices.index``. ``HMMRegimeDetector`` is the
-recommended choice (see :mod:`quantforge.regime.hmm`) but is not imported
+recommended choice (see :mod:`aurora.regime.hmm`) but is not imported
 here to keep the dependency graph small.
 """
 from __future__ import annotations

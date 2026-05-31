@@ -1,4 +1,4 @@
-# R159-R190 pre-merge review
+﻿# R159-R190 pre-merge review
 
 Date: 2026-05-10
 Branch: `claude/loving-ishizaka-96d02d`
@@ -234,7 +234,7 @@ should be tracked in a follow-up session:
   `tests/test_openfigi_mapper.py`, `tests/test_dbnomics_macro.py`,
   `tests/test_ecb_data_portal.py`,
   `tests/test_coinmetrics_community.py`, `tests/test_tiingo_daily.py`,
-  `tests/test_cli_data_r156.py` exist in `C:/Users/HP/QuantForge/tests/`
+  `tests/test_cli_data_r156.py` exist in `C:/Users/HP/Aurora/tests/`
   but have never been committed to any branch. The roadmap claims R155
   / R156 as completed with these test counts as evidence; the evidence
   itself was never under version control. The operator should commit

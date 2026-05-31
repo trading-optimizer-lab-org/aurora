@@ -1,8 +1,8 @@
-"""Secure agent gateway for non-human actors.
+﻿"""Secure agent gateway for non-human actors.
 
 P1.A architectural hardening: any LLM, scheduled job, external API, or
 other automated actor that wants to query, propose, or execute against
-QuantForge must hold a scoped, signed token. Live trading requires
+Aurora must hold a scoped, signed token. Live trading requires
 explicit ceremony plus a human counter-signature. Every action is
 audit-logged in append-only hash-chained JSONL.
 

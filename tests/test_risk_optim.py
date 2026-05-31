@@ -1,6 +1,6 @@
-"""Tests for CVaR/CDaR optimization (Task H.2). Run:
+﻿"""Tests for CVaR/CDaR optimization (Task H.2). Run:
 
-    pytest quantforge/tests/test_risk_optim.py -v
+    pytest aurora/tests/test_risk_optim.py -v
 """
 from __future__ import annotations
 import numpy as np

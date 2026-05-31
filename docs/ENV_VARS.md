@@ -1,6 +1,6 @@
-# Environment Variable Inventory (R57 + R58)
+﻿# Environment Variable Inventory (R57 + R58)
 
-Single canonical reference for every environment variable QuantForge
+Single canonical reference for every environment variable Aurora
 reads. Operators wiring credentials should source from this list, not
 from `grep`.
 
@@ -90,9 +90,9 @@ exchange id (`BINANCE`, `KRAKEN`, `COINBASE`, ...):
 
 | Variable | Purpose |
 |---|---|
-| `QUANTFORGE_PG_DSN` | PostgreSQL backend (R7 future remote driver). |
-| `QUANTFORGE_REDIS_URL` | Redis cache backend. |
-| `QUANTFORGE_TIMESCALE_DSN` | TimescaleDB backend. |
+| `AURORA_PG_DSN` | PostgreSQL backend (R7 future remote driver). |
+| `AURORA_REDIS_URL` | Redis cache backend. |
+| `AURORA_TIMESCALE_DSN` | TimescaleDB backend. |
 | `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage. |
 
 ## Runtime tuning
@@ -106,7 +106,7 @@ exchange id (`BINANCE`, `KRAKEN`, `COINBASE`, ...):
 
 ## Display / test-only (informational)
 
-These are read by tests or third-party libs, not by QuantForge code:
+These are read by tests or third-party libs, not by Aurora code:
 `DISPLAY`, `MPLBACKEND`, `PYCHARM_HOSTED`, `PYTHONHASHSEED`.
 
 ## Verification

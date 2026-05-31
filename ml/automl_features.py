@@ -1,4 +1,4 @@
-"""AutoML candidate-feature engineer (QuantForge v2.0 Batch C).
+﻿"""AutoML candidate-feature engineer (Aurora v2.0 Batch C).
 
 Generates a large pool of candidate features from a price/feature panel and
 ranks them by mutual information against a target. SHAP scoring is supported

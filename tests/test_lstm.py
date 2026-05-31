@@ -1,6 +1,6 @@
-"""Tests for quantforge.ml.lstm (Batch N.1).
+﻿"""Tests for aurora.ml.lstm (Batch N.1).
 
-Run: uv run --with torch pytest quantforge/tests/test_lstm.py -v
+Run: uv run --with torch pytest aurora/tests/test_lstm.py -v
 """
 from __future__ import annotations
 

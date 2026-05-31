@@ -1,11 +1,11 @@
-"""Lean export adapter -- QuantForge StrategySpec -> Lean C# project.
+﻿"""Lean export adapter -- Aurora StrategySpec -> Lean C# project.
 
 Both spec variants are accepted on input:
 
-* :class:`quantforge.research.factory.spec.StrategySpec` (immutable
+* :class:`aurora.research.factory.spec.StrategySpec` (immutable
   factory record with ``spec_hash``, ``policy_hash``, ``universe``,
   ``rebalance``, ``strategy_class``, ``params``).
-* :class:`quantforge.strategies.base.StrategySpec` (GA parameter-range
+* :class:`aurora.strategies.base.StrategySpec` (GA parameter-range
   descriptor with ``name``, ``params``).
 
 Inputs are duck-typed: anything with at least ``name`` and ``params`` is
@@ -30,7 +30,7 @@ Translation tiers (:meth:`LeanExporter._classify_translation`):
 R54 note: every "TODO" / "FIXME" string in this module is content
 embedded into the *generated Lean C# code*, not pending Python work.
 The comments tell the Lean-side operator which methods need a manual
-port; no Python action is required from QuantForge maintainers.
+port; no Python action is required from Aurora maintainers.
 """
 from __future__ import annotations
 
@@ -123,7 +123,7 @@ class LeanProjectArtifact:
 # ---------------------------------------------------------------------------
 
 
-# Map of QuantForge strategy class short-name -> translation tier. The
+# Map of Aurora strategy class short-name -> translation tier. The
 # short-name is the last segment of ``strategy_class`` (e.g.
 # "aurora.strategies.library.ma_cross.MACross" -> "MACross"). Tier
 # is purely informational; the actual rendered logic is decided by
@@ -270,7 +270,7 @@ def _coerce_spec_hash(spec: Any) -> str:
 
 def _qf_version() -> str:
     try:
-        from quantforge import __version__ as v
+        from aurora import __version__ as v
         return str(v)
     except Exception:
         return "0.0.0+local"
@@ -300,14 +300,14 @@ def _indent_json(obj: Any, *, indent_spaces: int = 4, base_indent: int = 4) -> s
 
 
 class LeanExporter:
-    """Export a QuantForge strategy spec to a Lean (QuantConnect) project.
+    """Export a Aurora strategy spec to a Lean (QuantConnect) project.
 
     Parameters:
         config: :class:`LeanExportConfig` describing the export run.
         policy: :class:`ProtocolPolicy` used to bind the export to a
             specific protocol version. The export records
             ``policy._with_hash().policy_hash`` so a Lean run can be
-            tied back to the exact QuantForge policy active at export
+            tied back to the exact Aurora policy active at export
             time.
 
     Usage::
@@ -517,7 +517,7 @@ class LeanExporter:
             )
         return (
             "## EXPORTED WITHOUT VALIDATION MARKER\n\n"
-            "**Research-grade only.** No QuantForge validation evidence "
+            "**Research-grade only.** No Aurora validation evidence "
             "was attached to this export. Treat the Lean project as a "
             "scratchpad; do not interpret results as confirmation of "
             "any QF promotion criterion.\n"
@@ -625,7 +625,7 @@ class LeanExporter:
             f"            _mom = MOM(Sym, {lookback}, Resolution.{self.config.resolution});"
         )
         on_data = (
-            "            // TODO partial: QuantForge TSMomentum has additional sizing logic.\n"
+            "            // TODO partial: Aurora TSMomentum has additional sizing logic.\n"
             "            //               Consult qf_metadata.json -> params and port the\n"
             "            //               vol-targeting / kelly fraction step manually.\n"
             "            if (!_mom.IsReady) return;\n"
@@ -646,7 +646,7 @@ class LeanExporter:
             f"Resolution.{self.config.resolution});"
         )
         on_data = (
-            "            // TODO partial: QuantForge mean-reversion variants embed a\n"
+            "            // TODO partial: Aurora mean-reversion variants embed a\n"
             "            //               regime filter. Inspect qf_metadata.json and\n"
             "            //               wire the regime gate before relying on this.\n"
             "            if (!_bb.IsReady) return;\n"
@@ -669,7 +669,7 @@ class LeanExporter:
         decls = f'        private const string Sym = "{sym}";'
         init = (
             "            // TODO scaffold-only: no Lean equivalent is registered for this\n"
-            "            //                   QuantForge strategy class. Port the logic\n"
+            "            //                   Aurora strategy class. Port the logic\n"
             "            //                   manually before running.\n"
             "            // Original QF params:\n"
             f"{param_block}"
@@ -677,7 +677,7 @@ class LeanExporter:
         on_data = (
             "            // TODO scaffold-only: implement OnData body manually.\n"
             "            //                   See qf_metadata.json for spec_hash and the\n"
-            "            //                   QuantForge strategy_class to port from.\n"
+            "            //                   Aurora strategy_class to port from.\n"
             "            return;"
         )
         return decls, init, on_data

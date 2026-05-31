@@ -1,4 +1,4 @@
-data:
+﻿data:
   is_start: "1995-01-01"
   is_end: "2012-12-31"
   oos_start: "2013-01-01"
@@ -6,7 +6,7 @@ data:
   # cache_dir is optional and override-only. By default, QF resolves an
   # XDG-compliant cache via platformdirs; uncomment ONLY to pin a specific
   # path (CI, shared volumes, etc.).
-  # cache_dir: "quantforge/data_cache_qf"
+  # cache_dir: "aurora/data_cache_qf"
 
 costs:
   profile: ibkr

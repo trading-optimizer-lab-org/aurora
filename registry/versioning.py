@@ -1,4 +1,4 @@
-"""Strategy versioning + provenance hash (Task K.2).
+﻿"""Strategy versioning + provenance hash (Task K.2).
 
 Deterministic StrategyVersion = sha256(code_hash + params_hash)[:16].
 
@@ -7,7 +7,7 @@ Deterministic StrategyVersion = sha256(code_hash + params_hash)[:16].
 - params_hash: sha256 of canonical-JSON of params dict (sorted keys, type-stable).
 - git_hash / git_dirty: best-effort capture via subprocess; None / False if unavailable.
 
-VersionRegistry: append-only JSON-lines log at quantforge/data_cache_qf/version_history.jsonl.
+VersionRegistry: append-only JSON-lines log at aurora/data_cache_qf/version_history.jsonl.
 - register(): idempotent (skipped if version_id already present).
 - mark_validated(): rewrites the file with the updated row (versions are rare; OK).
 - lineage(): walks parent_version chain (oldest -> ... -> requested version_id).

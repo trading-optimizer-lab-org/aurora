@@ -1,7 +1,7 @@
-"""Tests for ML / analytics CLI subcommands (Task K.3).
+﻿"""Tests for ML / analytics CLI subcommands (Task K.3).
 
 Run:
-    uv run pytest quantforge/tests/test_cli_ml.py -v
+    uv run pytest aurora/tests/test_cli_ml.py -v
 """
 from __future__ import annotations
 import json

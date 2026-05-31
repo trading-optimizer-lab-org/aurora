@@ -1,9 +1,9 @@
-"""ResearchFactory -- automated hypothesis -> review-queue pipeline.
+﻿"""ResearchFactory -- automated hypothesis -> review-queue pipeline.
 
 The factory accepts a :class:`StrategySpec`, runs it through IS / WF /
 OOS_DEV gates, and either promotes it to the review queue (for human
 sign-off) or archives it with a categorical
-:class:`~quantforge.research.factory.outcomes.RejectionReason`.
+:class:`~aurora.research.factory.outcomes.RejectionReason`.
 
 Hard guarantees
 ---------------
@@ -15,7 +15,7 @@ Hard guarantees
   archive (or review queue) via atomic file appends so concurrent
   submitters never interleave bytes.
 * Every submission is logged in the
-  :class:`~quantforge.registry.experiments.ExperimentTracker`, which
+  :class:`~aurora.registry.experiments.ExperimentTracker`, which
   this module aliases as the "ExperimentRegistry" for naming
   consistency with the parent task spec.
 * The optional auditor injection point uses a duck-typed protocol so
@@ -49,7 +49,7 @@ class ResearchFactory(_IngestMixin, _ValidateMixin, _TriageMixin, _PromoteMixin)
 
     Constructor injects the only dependencies the factory needs from the
     rest of the system: a :class:`ProtocolPolicy`, the experiment registry
-    (an :class:`~quantforge.registry.experiments.ExperimentTracker`), and
+    (an :class:`~aurora.registry.experiments.ExperimentTracker`), and
     optionally an auditor. Tests can pass a fake auditor and a custom
     ``backtest_fn`` / ``walk_forward_fn`` to keep the factory unit
     independent of the engine.
@@ -69,7 +69,7 @@ class ResearchFactory(_IngestMixin, _ValidateMixin, _TriageMixin, _PromoteMixin)
         backtest_fn: Optional[Callable[..., dict]] = None,
         walk_forward_fn: Optional[Callable[..., dict]] = None,
         data_loader: Optional[Callable[..., pd.Series]] = None,
-        triage_engine: Any = None,  # quantforge.triage.TriageEngine
+        triage_engine: Any = None,  # aurora.triage.TriageEngine
     ) -> None:
         self.config = config
         self.policy = policy

@@ -1,4 +1,4 @@
-# Aurora Release Checklist (R188)
+﻿# Aurora Release Checklist (R188)
 
 This is the local-release checklist for Aurora. It assumes a single-operator
 workflow where the wheel is built locally, installed into a clean venv, and
@@ -112,7 +112,7 @@ Manual sanity checks if the script is unavailable:
   `aurora <pyproject version>`.
 - `aurora doctor` runs to completion and reports the expected provider /
   policy / snapshot status.
-- `python -c "import quantforge"` emits a single `DeprecationWarning`
+- `python -c "import aurora"` emits a single `DeprecationWarning`
   pointing at the v1.6 retirement target.
 
 ---
@@ -182,26 +182,26 @@ publishes.
 
 The Aurora rename (R23, v1.5.0) introduced two compatibility shims:
 
-- The `quantforge` import alias -- see `quantforge/__init__.py`.
+- The `aurora` import alias -- see `aurora/__init__.py`.
 - The `QF_*` / `QFORGE_*` env var fallback -- see
   `core/env_compat.py::aurora_env`.
 
 Both are scheduled for removal in **v1.6**. Cutover plan:
 
 1. **Tag the last v1.5.x release** that ships the shim. Use a clear
-   release-notes line such as: "Last release with `quantforge` import
+   release-notes line such as: "Last release with `aurora` import
    alias and `QF_*` env vars; v1.6 removes them."
 2. **Open a single retirement commit** on the v1.6 branch:
-   - Delete the `quantforge/` shim package directory.
-   - Drop `"quantforge"` from `pyproject.toml::tool.setuptools.packages`
+   - Delete the `aurora/` shim package directory.
+   - Drop `"aurora"` from `pyproject.toml::tool.setuptools.packages`
      and `package-dir`.
    - Delete `core/env_compat.py` and replace any `aurora_env(...)` call
      site with a direct `os.environ[...]` read of the canonical `AU_*`
      name.
    - Update `CHANGELOG.md` with a `### Removed` entry.
-   - Tag commit message: `feat: v1.6 -- retire quantforge shim and QF_* env fallback`.
+   - Tag commit message: `feat: v1.6 -- retire aurora shim and QF_* env fallback`.
 3. **Run the wheel smoke step (section 2) again** with the v1.6 wheel
-   to confirm `import quantforge` now raises `ModuleNotFoundError`.
+   to confirm `import aurora` now raises `ModuleNotFoundError`.
 4. **Update CLAUDE.md** to drop the legacy column from the runtime-paths
    env var table.
 

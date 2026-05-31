@@ -1,4 +1,4 @@
-"""Append-only hash-chained audit log for the AgentGateway.
+﻿"""Append-only hash-chained audit log for the AgentGateway.
 
 Each entry stores both ``prev_hash`` (chain back-reference) and
 ``this_hash`` (entry digest). ``verify_chain`` re-walks the JSONL file
@@ -7,7 +7,7 @@ and detects any entry whose recomputed digest does not match the stored
 ``this_hash``.
 
 When ``mirror_soc2`` is enabled, every append also writes to the
-existing :class:`quantforge.compliance.soc2_audit.SOC2AuditTrail` so the
+existing :class:`aurora.compliance.soc2_audit.SOC2AuditTrail` so the
 canonical SOC 2 log holds the same record. Mirror failures are
 swallowed (best-effort) so a SOC2 outage cannot wedge gateway
 operations.

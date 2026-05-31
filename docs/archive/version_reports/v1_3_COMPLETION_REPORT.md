@@ -1,8 +1,8 @@
-# QuantForge v1.3 Completion Report
+﻿# Aurora v1.3 Completion Report
 
 **Date:** 2026-05-07
 **Method:** SDD parallel batches M/N/O
-**Plan:** `quantforge/docs/DEVELOPMENT_PLAN_v1_3.md`
+**Plan:** `aurora/docs/DEVELOPMENT_PLAN_v1_3.md`
 
 ## Summary across versions
 
@@ -51,7 +51,7 @@ Test runtime: 75s total suite. New v1.3 tests: ~50s combined.
 ## New modules in v1.3
 
 ```
-quantforge/
+aurora/
 ├── core/
 │   ├── engine_intraday.py       NEW (RTH/24h/ETH calendar-aware minute engine)
 │   ├── bars.py                  NEW (tick/volume/dollar bars per AFML Ch.2)
@@ -128,7 +128,7 @@ quantforge/
 ## CLI commands now (15 total)
 
 v1.0/1.1/1.2 had 14. v1.3 adds:
-- `forge dashboard --journal quantforge.db` — launch Streamlit dashboard
+- `forge dashboard --journal aurora.db` — launch Streamlit dashboard
 
 ## Validation gates (still 13 from v1.2)
 
@@ -137,7 +137,7 @@ No new gates added in v1.3 (all v1.2 gates remain). v1.3 adds production / infer
 ## Architecture status (v1.3)
 
 ```
-quantforge/
+aurora/
 ├── core/        engine + multi + jit + intraday + bars + costs + costs_intraday +
 │                slippage + metrics + seed + data_layer + realtime + config +
 │                logging + features + taxes
@@ -165,7 +165,7 @@ quantforge/
 
 ## STOP CONDITION MET
 
-QuantForge v1.3 feature-complete per development plan.
+Aurora v1.3 feature-complete per development plan.
 - 946 cumulative tests across all v1.0/v1.1/v1.2/v1.3
 - 15 modules added in v1.3
 - 15 CLI commands available
@@ -177,5 +177,5 @@ Full suite run (excluding `test_config.py`, `test_hmm.py`, `test_property.py` wh
 
 To run full suite with all deps:
 ```
-uv run --with pytest --with statsmodels --with deap --with hmmlearn --with hypothesis pytest quantforge/tests/ -q
+uv run --with pytest --with statsmodels --with deap --with hmmlearn --with hypothesis pytest aurora/tests/ -q
 ```

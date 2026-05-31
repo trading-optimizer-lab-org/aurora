@@ -1,4 +1,4 @@
-"""Feature importance methods (AFML Ch.8).
+﻿"""Feature importance methods (AFML Ch.8).
 
 Implements:
 - MDI: Mean Decrease Impurity (in-sample, tree ensembles)
@@ -100,7 +100,7 @@ def _resolve_cv(
     (NOT a shuffled IID K-Fold, which leaks future information into the
     training set on time-series data). Callers with a proper datetime index
     plus a ``t1`` mapping should pass an instance of
-    ``quantforge.validation.purged_cv.PurgedKFold`` for purging+embargo.
+    ``aurora.validation.purged_cv.PurgedKFold`` for purging+embargo.
 
     Notes:
     - ``cv_class`` may be a splitter instance, a splitter class, or a
@@ -170,7 +170,7 @@ def mean_decrease_accuracy(
         cv_class:     splitter class or instance to use. Default is a
                       non-shuffled ``KFold`` (time-ordered, no IID shuffle).
                       For time-series with overlapping label horizons, pass
-                      ``quantforge.validation.purged_cv.PurgedKFold(...)``
+                      ``aurora.validation.purged_cv.PurgedKFold(...)``
                       for full purging + embargo (AFML Ch.7).
 
     Returns DataFrame ['mean', 'std'] of importance score = baseline - permuted.
@@ -249,7 +249,7 @@ def single_feature_importance(
         cv_class: splitter class or instance. Default is a non-shuffled
             ``KFold`` (time-ordered). For time-series with overlapping label
             horizons, pass ``PurgedKFold(...)`` from
-            ``quantforge.validation.purged_cv`` for full purging + embargo
+            ``aurora.validation.purged_cv`` for full purging + embargo
             (AFML Ch.7).
 
     Returns DataFrame ['mean', 'std'] of OOS score per feature.
@@ -270,7 +270,7 @@ def single_feature_importance(
         X_j = X[[col]]
         est = estimator_factory()
         # cross_val_score expects the splitter to expose split(); both
-        # sklearn KFold and quantforge.validation.PurgedKFold do.
+        # sklearn KFold and aurora.validation.PurgedKFold do.
         scores = cross_val_score(est, X_j, y, cv=kf, scoring=scoring)
         means[j] = scores.mean()
         stds[j] = scores.std(ddof=1) if len(scores) > 1 else 0.0

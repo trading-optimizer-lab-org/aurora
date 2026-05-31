@@ -1,8 +1,8 @@
-# Data Providers configuration (P0.B)
+﻿# Data Providers configuration (P0.B)
 #
 # Declares the providers known to ``DataProviderRegistry`` and their PIT /
 # tier-permission posture. The registry boots its built-ins from
-# ``quantforge.core.data_providers.{yahoo,snapshot,csv,openbb,synthetic}``;
+# ``aurora.core.data_providers.{yahoo,snapshot,csv,openbb,synthetic}``;
 # this file is a discoverability hint for human operators and a default
 # `default_provider` for the ``forge data fetch`` CLI.
 

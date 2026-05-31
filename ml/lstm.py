@@ -1,4 +1,4 @@
-"""LSTM return forecaster (QuantForge v1.3 Batch N.1).
+﻿"""LSTM return forecaster (Aurora v1.3 Batch N.1).
 
 Lightweight PyTorch LSTM for next-bar return prediction with:
   * sliding-window sequence construction (anti-lookahead).
@@ -6,7 +6,7 @@ Lightweight PyTorch LSTM for next-bar return prediction with:
   * save/load roundtrip.
   * lazy torch import so the module loads without torch installed.
 
-Design follows quantforge.ml convention: lazy/optional heavy deps, dict-style
+Design follows aurora.ml convention: lazy/optional heavy deps, dict-style
 fit() history, numpy in / numpy out for inference.
 """
 from __future__ import annotations

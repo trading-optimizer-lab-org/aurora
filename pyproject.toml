@@ -52,9 +52,7 @@ aurora = "aurora.cli.forge:main"
 forge = "aurora.cli.forge:main"
 
 # Layout: pyproject.toml lives INSIDE the on-disk package dir. The package is
-# now imported as `aurora.*`; the legacy `quantforge` namespace is also
-# packaged as a thin compat shim that re-exports `aurora.*` with a
-# DeprecationWarning. Removed in v1.6 per docs/AURORA_RENAME_CHECKLIST.md.
+# imported as `aurora.*`.
 [tool.setuptools]
 packages = [
     "aurora",
@@ -101,8 +99,6 @@ packages = [
     "aurora.strategies.library",
     "aurora.triage",
     "aurora.validation",
-    # Back-compat shim package (R23). Removed in v1.6.
-    "quantforge",
 ]
 
 [tool.setuptools.package-dir]
@@ -150,12 +146,10 @@ packages = [
 "aurora.strategies.library" = "strategies/library"
 "aurora.triage" = "triage"
 "aurora.validation" = "validation"
-"quantforge" = "quantforge"
 
 [tool.setuptools.package-data]
 "aurora" = ["py.typed", "config/*.yaml", "config/*.yml"]
 "aurora.exports.lean" = ["templates/*.template"]
-"quantforge" = ["py.typed"]
 
 [tool.ruff]
 line-length = 100
@@ -169,7 +163,6 @@ extend-exclude = [
     "docs/_build",
     "docs/api/generated",
     "aurora.egg-info",
-    "quantforge.egg-info",
 ]
 
 [tool.ruff.lint]
@@ -180,9 +173,8 @@ extend-exclude = [
 select = ["F821", "F541", "B008", "B023", "B904"]
 ignore = [
     "E501",
-    # N999: the repo top-level dir is "QuantForge" (capitalized) until
-    # the disk-level rename ships. The package itself is "aurora" via
-    # the [tool.setuptools.package-dir] remapping.
+    # N999: the package itself is "aurora" via the
+    # [tool.setuptools.package-dir] remapping.
     "N999",
 ]
 
@@ -194,14 +186,10 @@ ignore_missing_imports = true
 no_implicit_optional = true
 check_untyped_defs = false  # gradual typing — relax for now
 explicit_package_bases = true
-# R23 shim: the on-disk `quantforge/` directory exists only to emit a
-# DeprecationWarning when downstream code does `import quantforge`. mypy
-# resolves the same file under both `QuantForge.quantforge` and
-# `quantforge`, so exclude the shim directory from the type check.
 # `docs/` is excluded because `docs/conf.py` imports sphinx, which uses
 # Python 3.12+ `type` statements that mypy at python_version=3.10 cannot
 # parse. `build/` is the wheel-build artefact tree.
-exclude = '(?x)(quantforge/|docs/|build/|\.claude/|\.venv/|\.eggs/)'
+exclude = '(?x)(docs/|build/|\.claude/|\.venv/|\.eggs/)'
 
 [[tool.mypy.overrides]]
 module = ["sphinx", "sphinx.*"]

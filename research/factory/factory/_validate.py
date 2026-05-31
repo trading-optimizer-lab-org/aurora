@@ -20,6 +20,12 @@ from aurora.research.factory.outcomes import (
     ResearchStage,
 )
 from aurora.research.factory.spec import StrategySpec
+from aurora.research.protocol_enforcement import (
+    ensure_mandatory_research_protocol,
+    make_project_id,
+    record_robustness_run,
+    record_validation_run,
+)
 
 if TYPE_CHECKING:
     from aurora.core.protocol_policy import ProtocolPolicy
@@ -95,6 +101,25 @@ class _ValidateMixin:
         # the policy in force at submit time. Generators never set this;
         # the factory always overwrites whatever the spec carries.
         spec = spec.with_policy_hash(self.policy.policy_hash)
+        protocol_guard = ensure_mandatory_research_protocol(
+            project_id=make_project_id("factory", spec.spec_id, spec.name),
+            objective=spec.hypothesis or f"Research factory submit: {spec.name}",
+            metric="research_factory_promising",
+            universe=tuple(spec.universe),
+            providers=("research_factory_loader",),
+            date_range={"max_tier": self._MAX_TIER, "rebalance": spec.rebalance},
+            features=(spec.strategy_class,),
+            seed=spec.spec_hash[:16],
+            candidate_id=spec.spec_id,
+            allowed_selection_phases=("is_train", "is_valid", "oos_dev"),
+            locked_phases=("oos_locked", "forward"),
+            constraints={
+                "entrypoint": "ResearchFactory.submit",
+                "spec_hash": spec.spec_hash,
+                "generator": spec.generator,
+            },
+            actor="aurora_factory",
+        )
 
         # ----- 1. spec validation --------------------------------------
         errs = spec.validate()
@@ -356,6 +381,46 @@ class _ValidateMixin:
             cost_seconds=time.perf_counter() - t0,
         )
         _atomic_jsonl_append(self.config.review_queue_path, cand.to_dict())
+        protocol_guard.record_selection(
+            spec.spec_id,
+            phases_used=("is_train", "oos_dev"),
+            metrics={
+                "is_sharpe": is_sharpe,
+                "oos_dev_sharpe": wf_sharpe,
+                "promising": True,
+            },
+            actor="aurora_factory",
+            payload={"candidate_run_id": candidate_id},
+        )
+        record_robustness_run(
+            protocol_guard,
+            candidate_id=spec.spec_id,
+            actor="aurora_factory",
+            checks=(
+                "is_gate",
+                "walk_forward_gate",
+                "oos_dev_gate",
+                "auditor_gate",
+            ),
+            passed=True,
+            metrics={
+                "is_sharpe": is_sharpe,
+                "oos_dev_sharpe": wf_sharpe,
+                "auditor_hard_fail": False,
+            },
+            payload={"candidate_run_id": candidate_id},
+        )
+        record_validation_run(
+            protocol_guard,
+            candidate_id=spec.spec_id,
+            actor="aurora_factory",
+            metrics={
+                "is_sharpe": is_sharpe,
+                "oos_dev_sharpe": wf_sharpe,
+                "promising": True,
+            },
+            payload={"candidate_run_id": candidate_id},
+        )
         self._close_experiment(experiment_id, success=True, score=wf_sharpe)
         summary = (
             f"PROMOTED {spec.name} (sharpe IS={is_sharpe:.3f} OOS={wf_sharpe:.3f})"

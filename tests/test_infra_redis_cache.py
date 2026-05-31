@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.redis_cache.RedisCache (mock mode)."""
+﻿"""Tests for aurora.infra.redis_cache.RedisCache (mock mode)."""
 from __future__ import annotations
 
 import time

@@ -1,4 +1,4 @@
-"""Compliance and regulatory reporting modules for QuantForge v3.0 Batch F.
+﻿"""Compliance and regulatory reporting modules for Aurora v3.0 Batch F.
 
 Each submodule exposes a primary class with a dataclass config and a main
 method. Optional vendor SDKs (sqlcipher, pyotp, cryptography) are imported

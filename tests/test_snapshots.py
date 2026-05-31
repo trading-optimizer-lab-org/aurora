@@ -1,6 +1,6 @@
-"""Tests for the immutable data snapshots store.
+﻿"""Tests for the immutable data snapshots store.
 
-Run: uv run pytest quantforge/tests/test_snapshots.py -v
+Run: uv run pytest aurora/tests/test_snapshots.py -v
 """
 from __future__ import annotations
 

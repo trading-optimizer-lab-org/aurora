@@ -1,17 +1,17 @@
-# QuantForge dashboard Deployment skeleton.
+﻿# Aurora dashboard Deployment skeleton.
 # Documentation only; values must be overridden by Helm / kustomize.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: quantforge-dashboard
+  name: aurora-dashboard
   labels:
-    app: quantforge
+    app: aurora
     component: dashboard
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: quantforge
+      app: aurora
       component: dashboard
   strategy:
     type: RollingUpdate
@@ -21,19 +21,19 @@ spec:
   template:
     metadata:
       labels:
-        app: quantforge
+        app: aurora
         component: dashboard
     spec:
       containers:
         - name: dashboard
-          image: quantforge/dashboard:latest
+          image: aurora/dashboard:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8501
           envFrom:
             - configMapRef:
-                name: quantforge-config
+                name: aurora-config
           resources:
             requests:
               cpu: "200m"

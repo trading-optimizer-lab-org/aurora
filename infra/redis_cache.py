@@ -1,4 +1,4 @@
-"""Redis cache for ``data_layer`` fetches with TTL.
+﻿"""Redis cache for ``data_layer`` fetches with TTL.
 
 Lazy ``redis-py``. The default ``mock=True`` mode keeps an in-memory
 dict with synthetic TTL handling so tests run without redis-server.
@@ -27,8 +27,8 @@ class RedisCacheConfig:
         default_ttl: default TTL in seconds (None = no expiry).
     """
     url: str = "redis://localhost:6379/0"
-    url_env: str = "QUANTFORGE_REDIS_URL"
-    namespace: str = "quantforge"
+    url_env: str = "AURORA_REDIS_URL"
+    namespace: str = "aurora"
     default_ttl: Optional[int] = 3600
 
 

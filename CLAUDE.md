@@ -1,8 +1,8 @@
-# Aurora
+﻿# Aurora
 
 Standalone Python quant research engine. Backtest + GA + validation gates + paper/live with hash-bound provenance and 7-stage protocol spine.
 
-Renamed from QuantForge to Aurora in v1.5.0 (R23). The legacy `quantforge`
+Renamed from Aurora to Aurora in v1.5.0 (R23). The legacy `aurora`
 namespace remains importable as a thin compat shim that emits a
 `DeprecationWarning`; the shim is removed in v1.6.
 
@@ -11,7 +11,7 @@ namespace remains importable as a thin compat shim that emits a
 Flat layout (Layout B). `pyproject.toml` at repo root. Subpackages live as top-level dirs (`core/`, `strategies/`, `validation/`, etc) and map to `aurora.<name>` via `[tool.setuptools.package-dir]`.
 
 ```
-QuantForge/                  <- repo root + package root (dir name unchanged)
+Aurora/                  <- repo root + package root (dir name unchanged)
 ├── pyproject.toml
 ├── __init__.py              <- aurora package init
 ├── core/                    <- aurora.core
@@ -25,7 +25,7 @@ QuantForge/                  <- repo root + package root (dir name unchanged)
 ├── triage/                  <- aurora.triage
 ├── reporting/daily_ops/     <- aurora.reporting.daily_ops
 ├── exports/lean/            <- aurora.exports.lean
-├── quantforge/              <- back-compat shim package (removed in v1.6)
+├── aurora/              <- back-compat shim package (removed in v1.6)
 ├── tests/                   <- pytest suite
 ├── docs/                    <- ARCHITECTURE, RESEARCH_PROTOCOL, version reports
 ├── examples/

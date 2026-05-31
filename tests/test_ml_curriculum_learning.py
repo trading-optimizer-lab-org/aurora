@@ -1,4 +1,4 @@
-"""Tests for quantforge.ml.curriculum_learning."""
+﻿"""Tests for aurora.ml.curriculum_learning."""
 from __future__ import annotations
 
 import numpy as np

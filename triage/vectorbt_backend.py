@@ -1,13 +1,13 @@
-"""Optional vectorbt adapter.
+﻿"""Optional vectorbt adapter.
 
 The triage engine prefers the internal numpy backend
-(:mod:`quantforge.triage.vectorized`) but can route through ``vectorbt``
+(:mod:`aurora.triage.vectorized`) but can route through ``vectorbt``
 when ``TriageConfig.use_vectorbt=True`` AND the ``vectorbt`` package is
 importable. If the import fails we emit a single warning and fall back
 to the internal backend; callers never need to handle the absence
 themselves.
 
-Note: vectorbt is intentionally NOT a hard dependency of QuantForge.
+Note: vectorbt is intentionally NOT a hard dependency of Aurora.
 It is large and pulls in plotting/UI extras that would bloat installs
 for the 99 % of users who only need the official engine.
 """
@@ -46,7 +46,7 @@ def vectorbt_pnl_batch(
     OR raises during execution. The fallback emits a UserWarning so
     callers see why their requested backend was skipped, but the result
     is otherwise identical to calling
-    :func:`quantforge.triage.vectorized.compute_pnl_batch` directly.
+    :func:`aurora.triage.vectorized.compute_pnl_batch` directly.
     """
     from aurora.triage.vectorized import compute_pnl_batch
 

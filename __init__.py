@@ -1,4 +1,4 @@
-"""QuantForge - quant research engine with militant anti-overfit pipeline."""
+﻿"""Aurora - quant research engine with militant anti-overfit pipeline."""
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version

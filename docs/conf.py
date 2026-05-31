@@ -1,4 +1,4 @@
-"""Sphinx configuration for QuantForge API reference (R15)."""
+﻿"""Sphinx configuration for Aurora API reference (R15)."""
 from __future__ import annotations
 
 import sys
@@ -21,8 +21,8 @@ sys.path.insert(0, str(_REPO_ROOT))
 # Project metadata
 # --------------------------------------------------------------------------
 
-project = "QuantForge"
-author = "QuantForge Project"
+project = "Aurora"
+author = "Aurora Project"
 copyright = f"{datetime.now().year}, {author}"
 
 try:
@@ -134,7 +134,7 @@ suppress_warnings = ["intersphinx", "intersphinx.external"]
 # --------------------------------------------------------------------------
 
 html_theme = "furo"
-html_title = f"QuantForge {release}"
+html_title = f"Aurora {release}"
 html_static_path: list[str] = []
 html_show_sourcelink = False
 templates_path = ["_templates"]

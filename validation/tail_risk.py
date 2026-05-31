@@ -1,6 +1,6 @@
-"""Tail risk scenarios via block bootstrap of historical tail events.
+﻿"""Tail risk scenarios via block bootstrap of historical tail events.
 
-Task L.3 (QuantForge v1.2). Provides:
+Task L.3 (Aurora v1.2). Provides:
 - extract_tail_blocks: identify worst N% rolling-return blocks
 - tail_aware_bootstrap: block bootstrap that oversamples tail blocks
 - tail_var_estimation: VaR/CVaR comparison base vs tail-stressed paths

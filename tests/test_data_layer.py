@@ -1,6 +1,6 @@
-"""Tests for the data layer: IS/OOS fence, snapshot freeze integration.
+﻿"""Tests for the data layer: IS/OOS fence, snapshot freeze integration.
 
-Run: uv run pytest quantforge/tests/test_data_layer.py -v
+Run: uv run pytest aurora/tests/test_data_layer.py -v
 """
 from __future__ import annotations
 

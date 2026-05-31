@@ -1,4 +1,4 @@
-# QuantForge v2.0 — production docker-compose stub
+﻿# Aurora v2.0 — production docker-compose stub
 #
 # Spins up the live trading + research stack as separate services so each
 # can be scaled / restarted independently. Documentation only; the
@@ -9,11 +9,11 @@ version: "3.9"
 x-common-env: &common-env
   TZ: "UTC"
   PYTHONUNBUFFERED: "1"
-  QUANTFORGE_ENV: "prod"
+  AURORA_ENV: "prod"
 
 services:
   dashboard:
-    image: quantforge/dashboard:latest
+    image: aurora/dashboard:latest
     container_name: qf_dashboard
     restart: unless-stopped
     environment:
@@ -28,7 +28,7 @@ services:
       - ./data_cache_qf:/app/data_cache_qf:ro
 
   alerts:
-    image: quantforge/alerts:latest
+    image: aurora/alerts:latest
     container_name: qf_alerts
     restart: unless-stopped
     environment:
@@ -41,7 +41,7 @@ services:
       - ./data_cache_qf:/app/data_cache_qf:ro
 
   broker_worker:
-    image: quantforge/broker_worker:latest
+    image: aurora/broker_worker:latest
     container_name: qf_broker_worker
     restart: unless-stopped
     environment:

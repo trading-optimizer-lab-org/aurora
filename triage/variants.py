@@ -1,4 +1,4 @@
-"""StrategyVariant -- the unit of work for the triage backend.
+﻿"""StrategyVariant -- the unit of work for the triage backend.
 
 A ``StrategyVariant`` is a single concrete proposal: a strategy class FQN,
 a frozen parameter dict, a universe, and a rebalance cadence. It is
@@ -25,7 +25,7 @@ from typing import Any, Iterable, Iterator, Mapping, Optional
 
 
 def _canonical(payload: dict) -> str:
-    """Return the deterministic JSON encoding used everywhere in QuantForge."""
+    """Return the deterministic JSON encoding used everywhere in Aurora."""
     return json.dumps(
         payload,
         sort_keys=True,

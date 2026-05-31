@@ -1,4 +1,4 @@
-"""Experiment tracker for GA + optimization runs.
+﻿"""Experiment tracker for GA + optimization runs.
 
 MLflow-style tracker. Stores experiments as JSON files in a directory:
 
@@ -28,7 +28,7 @@ def _default_root() -> str:
     """Resolve the experiments root via runtime_paths (R75).
 
     Honours $QF_DATA_DIR / $QF_CACHE_DIR; falls back to platformdirs.
-    Never lands inside the in-repo `quantforge/data_cache_qf/` ghost
+    Never lands inside the in-repo `aurora/data_cache_qf/` ghost
     directory.
     """
     from aurora.core.runtime_paths import cache_dir

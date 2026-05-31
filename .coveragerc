@@ -1,5 +1,5 @@
-[run]
-source = quantforge
+﻿[run]
+source = aurora
 omit =
     */tests/*
     */examples/*

@@ -1,8 +1,8 @@
-# Strategy Templates Gallery (R87)
+﻿# Strategy Templates Gallery (R87)
 
 Starter strategies grouped by family. Each template lives under
 `strategies/templates/` and is callable from the engine via
-`from quantforge.strategies.templates import <name>`.
+`from aurora.strategies.templates import <name>`.
 
 ## Trend following
 

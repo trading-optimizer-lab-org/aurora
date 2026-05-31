@@ -1,4 +1,4 @@
-"""Smoke tests for QuantForge core modules. Run: pytest quantforge/tests/"""
+﻿"""Smoke tests for Aurora core modules. Run: pytest aurora/tests/"""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

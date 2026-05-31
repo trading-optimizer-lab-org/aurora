@@ -1,6 +1,6 @@
-"""Tests for time-series Transformer multi-horizon forecaster.
+﻿"""Tests for time-series Transformer multi-horizon forecaster.
 
-Run: uv run --with torch pytest quantforge/tests/test_transformer.py -v
+Run: uv run --with torch pytest aurora/tests/test_transformer.py -v
 
 If torch is not installed, all tests are skipped via importorskip.
 """

@@ -1,4 +1,4 @@
-"""Tests for quantforge.registry — SQLite-backed backtest registry."""
+﻿"""Tests for aurora.registry — SQLite-backed backtest registry."""
 from __future__ import annotations
 
 import os

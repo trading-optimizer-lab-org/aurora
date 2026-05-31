@@ -1,6 +1,6 @@
-"""Tests for aurora.core.costs (CostModel parameters and apply_costs).
+﻿"""Tests for aurora.core.costs (CostModel parameters and apply_costs).
 
-Run: uv run pytest quantforge/tests/test_costs.py -v
+Run: uv run pytest aurora/tests/test_costs.py -v
 """
 from __future__ import annotations
 

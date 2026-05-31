@@ -1,4 +1,4 @@
-"""``forge crypto`` subcommand group (R49 split).
+﻿"""``forge crypto`` subcommand group (R49 split).
 
 P3.A: optional CCXT-backed crypto data + execution.
 """
@@ -21,7 +21,7 @@ def _ccxt_load_config():
         return {}
     candidates = [
         os.path.join(os.path.dirname(__file__), "..", "config", "ccxt.yaml"),
-        "quantforge/config/ccxt.yaml",
+        "aurora/config/ccxt.yaml",
         "config/ccxt.yaml",
     ]
     for path in candidates:
@@ -279,7 +279,7 @@ def cmd_crypto_allow_live(args):
     token_dir = (
         args.token_dir
         or cfg.get("allow_live_token_dir")
-        or "~/.quantforge/ccxt_tokens"
+        or "~/.aurora/ccxt_tokens"
     )
     try:
         from aurora.deployment.ccxt_adapter import (

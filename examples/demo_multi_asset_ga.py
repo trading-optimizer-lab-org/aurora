@@ -1,4 +1,4 @@
-"""Demo: multi-asset GA on PairTrade(SPY, QQQ).
+﻿"""Demo: multi-asset GA on PairTrade(SPY, QQQ).
 
 Round-4 audit (P2.4): updated to use ``load_tier`` so the demo respects
 the tier-ceremony rules. The GA runs strictly on IS_TRAIN bars; OOS
@@ -6,7 +6,7 @@ validation happens AFTER the Pareto front is selected.
 
 Run:
     uv run --with vectorbt --with deap --with scipy --with pyarrow \\
-        python quantforge/examples/demo_multi_asset_ga.py
+        python aurora/examples/demo_multi_asset_ga.py
 """
 from __future__ import annotations
 import sys, os

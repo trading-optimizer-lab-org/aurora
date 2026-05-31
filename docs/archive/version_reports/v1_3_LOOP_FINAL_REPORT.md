@@ -1,4 +1,4 @@
-# QuantForge v1.3 — Continuous Loop Final Report
+﻿# Aurora v1.3 — Continuous Loop Final Report
 
 **Date:** 2026-05-07
 **Method:** SDD continuous-agent-loop (sequential rounds, parallel batches)
@@ -19,7 +19,7 @@
 
 ## Convergence proof
 
-Round Z consolidated audit (single agent, full quantforge tree + .github + .pre-commit) returned:
+Round Z consolidated audit (single agent, full aurora tree + .github + .pre-commit) returned:
 
 > **"Codebase converged; no findings."**
 
@@ -42,13 +42,13 @@ Confirmed clean across:
 ## Final test count
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/ -m "not slow and not integration" \
-    --ignore=quantforge/tests/test_config.py \
-    --ignore=quantforge/tests/test_property.py
+"C:/Python314/python.exe" -m pytest aurora/tests/ -m "not slow and not integration" \
+    --ignore=aurora/tests/test_config.py \
+    --ignore=aurora/tests/test_property.py
 1332 passed, 27 failed, 12 skipped, 10 deselected
 ```
 
-27 failures: ALL pre-existing missing optional deps (pydantic in test_cli, statsmodels in fracdiff, deap in test_cli_ml). Zero quantforge-induced failures.
+27 failures: ALL pre-existing missing optional deps (pydantic in test_cli, statsmodels in fracdiff, deap in test_cli_ml). Zero aurora-induced failures.
 
 ## Cumulative progress vs v1.2 baseline
 
@@ -92,7 +92,7 @@ Net decay: ~50% per round. Convergence after 5 audit-fix cycles.
 
 ## Conclusion
 
-QuantForge v1.3.1 has converged. No further automated round can find issues against current scope. Continuous loop terminates per user directive ("stop only if no improvements in a round").
+Aurora v1.3.1 has converged. No further automated round can find issues against current scope. Continuous loop terminates per user directive ("stop only if no improvements in a round").
 
 Reports generated:
 - `docs/v1_3_COMPLETION_REPORT.md` (M/N/O batches)

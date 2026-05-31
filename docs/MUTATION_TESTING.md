@@ -1,6 +1,6 @@
-# Mutation Testing (R12)
+﻿# Mutation Testing (R12)
 
-QuantForge uses [mutmut](https://github.com/boxed/mutmut) to measure how
+Aurora uses [mutmut](https://github.com/boxed/mutmut) to measure how
 strongly the test suite catches subtle code changes.
 
 ## Why

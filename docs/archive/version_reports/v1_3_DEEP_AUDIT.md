@@ -1,8 +1,8 @@
-# QuantForge v1.3 — Deep Read-Only Audit
+﻿# Aurora v1.3 — Deep Read-Only Audit
 
 **Date:** 2026-05-07
 **Method:** SDD parallel investigation, 8 read-only agents, ~321 findings
-**Scope:** Entire QuantForge package post-v1.3 + mejoras P/Q/R/S/T
+**Scope:** Entire Aurora package post-v1.3 + mejoras P/Q/R/S/T
 
 ## Findings count by domain
 
@@ -153,7 +153,7 @@
 - No `timeout-minutes` cap (default 6h)
 - pytest-cov not in fixed addopts → CI runs with cov but local devs don't
 - pre-commit only runs `ruff --fix` (lint subset), no `ruff format`, no mypy
-- Pin `pip cache` to `quantforge/pyproject.toml` only — repo-root `.github/workflows/` has no path-mapping fallback
+- Pin `pip cache` to `aurora/pyproject.toml` only — repo-root `.github/workflows/` has no path-mapping fallback
 
 ## Recommended remediation order
 
@@ -191,7 +191,7 @@
 
 ## Risk assessment
 
-QuantForge **research layer** is largely sound: backtest engine + GA + most validation gates work as documented after the v1.3+P/Q/R/S/T fixes. **Production layer is NOT ready**: 8 critical findings concentrated in deployment (kill switch, audit log, idempotency, reconciliation, halt) plus security findings (LLM sandbox, torch.load, SMTP TLS, XSS) make live trading unsafe without the P0 fixes.
+Aurora **research layer** is largely sound: backtest engine + GA + most validation gates work as documented after the v1.3+P/Q/R/S/T fixes. **Production layer is NOT ready**: 8 critical findings concentrated in deployment (kill switch, audit log, idempotency, reconciliation, halt) plus security findings (LLM sandbox, torch.load, SMTP TLS, XSS) make live trading unsafe without the P0 fixes.
 
 The core engine has **6 critical findings** that affect backtest correctness across paths (NAV[0], JIT no-clip divergence, multi-asset cost, taxes NAV). These should be fixed even for pure research use.
 

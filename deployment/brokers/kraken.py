@@ -1,4 +1,4 @@
-"""Kraken broker adapter (krakenex SDK).
+﻿"""Kraken broker adapter (krakenex SDK).
 
 The SDK is imported lazily inside ``__init__`` so the broker package
 stays importable when ``krakenex`` is not installed.
@@ -54,7 +54,7 @@ class KrakenAdapter(Broker):
         self._seen_client_order_ids: OrderedDict[str, dict] = OrderedDict()
         self._local_positions: dict[str, float] = {}
         # Map of userref (u32) -> client_order_id we already submitted. We
-        # use it to surface collisions: two different QuantForge IDs hashing
+        # use it to surface collisions: two different Aurora IDs hashing
         # to the same Kraken userref would otherwise become indistinguishable
         # after-the-fact, masking trace failures.
         self._userref_to_cid: dict[int, str] = {}
@@ -67,11 +67,11 @@ class KrakenAdapter(Broker):
 
     @staticmethod
     def _client_order_id_to_userref(client_order_id: Optional[str]) -> int:
-        """Map QuantForge ``client_order_id`` (string) to a Kraken ``userref``.
+        """Map Aurora ``client_order_id`` (string) to a Kraken ``userref``.
 
         Kraken's REST API accepts ``userref`` as a 32-bit unsigned integer; it
         does NOT honor a free-form ``cl_ord_id`` field on AddOrder. We hash the
-        QuantForge id with BLAKE2b (4-byte digest) into a stable u32 so
+        Aurora id with BLAKE2b (4-byte digest) into a stable u32 so
         callers can trace orders by their own id while still satisfying the
         Kraken contract. BLAKE2b replaces the previous polynomial-rolling
         hash so collisions on real workloads behave like uniform random in a
@@ -121,7 +121,7 @@ class KrakenAdapter(Broker):
         # a 32-bit unsigned integer so we keep traceability on their side.
         userref = self._client_order_id_to_userref(order.client_order_id)
         # Detect cross-client_order_id userref collisions locally. A real
-        # collision means two distinct QuantForge IDs hash to the same u32
+        # collision means two distinct Aurora IDs hash to the same u32
         # — log it loudly so operators can rotate the upstream ID scheme.
         existing_cid = self._userref_to_cid.get(userref)
         if existing_cid is not None and existing_cid != order.client_order_id:

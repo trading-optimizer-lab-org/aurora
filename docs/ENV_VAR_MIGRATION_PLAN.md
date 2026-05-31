@@ -1,4 +1,4 @@
-# Env Var Migration Plan (R76 -- sub-task of R23 Aurora rename)
+﻿# Env Var Migration Plan (R76 -- sub-task of R23 Aurora rename)
 
 ## Status
 
@@ -63,14 +63,14 @@ the rename specification.
 
 ### Already-non-namespaced (DO NOT rename)
 
-These don't carry the QuantForge brand and stay as-is:
+These don't carry the Aurora brand and stay as-is:
 
 - `ANTHROPIC_API_KEY`, `ALPACA_API_KEY`, `ALPACA_API_SECRET`
 - `FRED_API_KEY`, `TRANSCRIPTS_API_KEY`, `ETHERSCAN_API_KEY`
 - `TWITTER_BEARER_TOKEN`, `PLANET_API_KEY`
 - `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
-- `QUANTFORGE_PG_DSN`, `QUANTFORGE_REDIS_URL`,
-  `QUANTFORGE_TIMESCALE_DSN` -- stay (operator infra is owned by the
+- `AURORA_PG_DSN`, `AURORA_REDIS_URL`,
+  `AURORA_TIMESCALE_DSN` -- stay (operator infra is owned by the
   operator; renaming the connection-string env breaks operator
   monitoring).
 - `AZURE_STORAGE_CONNECTION_STRING` -- stays.
@@ -118,7 +118,7 @@ The `os.environ["QF_X"]` literal goes away.
 
 ## What this plan deliberately does NOT decide
 
-- The Python package rename (`quantforge` -> `aurora`) -- handled
+- The Python package rename (`aurora` -> `aurora`) -- handled
   by the main R23 plan.
 - The CLI rename (`forge` -> `aurora`) -- handled by R23.
 - Provider-credential format changes (e.g. moving from env vars to

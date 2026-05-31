@@ -1,15 +1,15 @@
-# OBSOLETO - Mejoras Pendientes a Implementar
+﻿# OBSOLETO - Mejoras Pendientes a Implementar
 
 Este documento queda archivado como contexto historico. No describe el estado
-actual de QuantForge v1.4.
+actual de Aurora v1.4.
 
 Motivo: su tesis principal sobre filtracion de OOS en el GA fue cerrada por la
 ruta de fitness IS-only y el endurecimiento del spine v1.4. La referencia viva
-para pendientes es `C:\Users\HP\Desktop\quantforge_roadmap_pendiente.txt`.
+para pendientes es `C:\Users\HP\Desktop\aurora_roadmap_pendiente.txt`.
 
 ---
 
-Respuesta directa: QuantForge es un motor propio de investigación cuantitativa para crear, probar, optimizar, validar y preparar estrategias para paper/live. No es solo un backtester: intenta ser una plataforma completa anti-overfit.
+Respuesta directa: Aurora es un motor propio de investigación cuantitativa para crear, probar, optimizar, validar y preparar estrategias para paper/live. No es solo un backtester: intenta ser una plataforma completa anti-overfit.
 
 Lo más importante: la idea es buena y encaja con lo que necesitas, pero ahora mismo le falta cerrar una contradicción grave: la documentación dice que el OOS es sagrado, pero parte del algoritmo genético está usando OOS dentro de la optimización. Eso puede fabricar estrategias aparentemente buenas pero contaminadas. La serpiente se muerde la cola, con corbata y métricas bonitas.
 
@@ -17,7 +17,7 @@ No he tocado ni modificado nada.
 
 ## Qué Es
 
-QuantForge está en quantforge. Por lo que he visto, pretende cubrir todo este flujo:
+Aurora está en aurora. Por lo que he visto, pretende cubrir todo este flujo:
 
 - Cargar datos.
 - Ejecutar backtests.
@@ -66,7 +66,7 @@ Prioridad real:
 
 ### 1. Separar datasets correctamente
 
-Ahora QuantForge usa básicamente IS/OOS. Tu protocolo actual necesita algo más estricto:
+Ahora Aurora usa básicamente IS/OOS. Tu protocolo actual necesita algo más estricto:
 
 - IS_TRAIN
 - IS_VALID
@@ -87,7 +87,7 @@ data_layer.py descarga de yfinance si falta caché. Eso no sirve para validació
 
 ### 4. Integración real con JADE/HEDGE
 
-QuantForge parece un motor general, pero todavía no veo que sea la fuente canónica de JADE. Antes de usarlo como juez, necesita adaptadores que reproduzcan exactamente resultados ya conocidos.
+Aurora parece un motor general, pero todavía no veo que sea la fuente canónica de JADE. Antes de usarlo como juez, necesita adaptadores que reproduzcan exactamente resultados ya conocidos.
 
 ### 5. Un único pipeline obligatorio
 
@@ -95,7 +95,7 @@ pipeline.py ejecuta varias validaciones, pero otras quedan como módulos sueltos
 
 ### 6. Reproducibilidad de entorno
 
-La carpeta tiene mucho código, pero las dependencias parecen incompletas. requirements.txt no refleja todo lo que QuantForge importa. También __init__.py dice versión 0.1.0, mientras los informes hablan de v1.2 completa.
+La carpeta tiene mucho código, pero las dependencias parecen incompletas. requirements.txt no refleja todo lo que Aurora importa. También __init__.py dice versión 0.1.0, mientras los informes hablan de v1.2 completa.
 
 ### 7. Live todavía no es producción seria
 
@@ -107,7 +107,7 @@ Hay documentación potente, pero parte está desfasada. El README dice unas fase
 
 ## Mi Diagnóstico
 
-- Hecho: QuantForge es una plataforma cuantitativa ambiciosa y bastante avanzada.
+- Hecho: Aurora es una plataforma cuantitativa ambiciosa y bastante avanzada.
 - Hecho: tiene una contradicción seria entre la regla anti-overfit y la implementación del GA.
 - Suposición razonable: nació para resolver exactamente los problemas que estás teniendo con JADE: sobreoptimización, OOS débil, costes, validación dispersa y falta de trazabilidad.
 - Mi opinión: no metería más funciones v1.3 todavía. Primero cerraría el núcleo. Si no, añades más piezas encima de una frontera IS/OOS mal protegida. Eso es construir un castillo con radar, piscina y cimientos de mantequilla.
@@ -116,13 +116,13 @@ Hay documentación potente, pero parte está desfasada. El README dice unas fase
 
 Yo haría esto:
 
-1. Convertir QuantForge en el juez oficial, no todavía en el motor live.
+1. Convertir Aurora en el juez oficial, no todavía en el motor live.
 2. Corregir GA para que no use OOS como objetivo.
 3. Crear splits compatibles con tu RESEARCH_PROTOCOL.md.
 4. Añadir snapshots congelados obligatorios.
-5. Validar que QuantForge reproduce métricas conocidas antes de confiar en nuevas optimizaciones.
+5. Validar que Aurora reproduce métricas conocidas antes de confiar en nuevas optimizaciones.
 
-En resumen: QuantForge tiene muy buena pinta como base, pero ahora mismo le falta blindar la frontera anti-overfit. Esa es la pieza crítica antes de usarlo para decidir qué estrategia es válida.
+En resumen: Aurora tiene muy buena pinta como base, pero ahora mismo le falta blindar la frontera anti-overfit. Esa es la pieza crítica antes de usarlo para decidir qué estrategia es válida.
 
 ---
 

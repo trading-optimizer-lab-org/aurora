@@ -1,4 +1,4 @@
-"""Tests for quantforge.regime.bayes_alpha."""
+﻿"""Tests for aurora.regime.bayes_alpha."""
 from __future__ import annotations
 
 import os

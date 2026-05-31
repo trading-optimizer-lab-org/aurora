@@ -1,4 +1,4 @@
-"""Tests for quantforge.research.strategy_combiner."""
+﻿"""Tests for aurora.research.strategy_combiner."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

@@ -255,6 +255,68 @@ def _build_r155_registry():
         )
     except Exception as exc:
         errors.append(f"fred_macro: {exc}")
+    try:
+        from aurora.core.data_providers.cftc_cot_weekly import (
+            CFTCCOTWeeklyProvider,
+            descriptor as cftc_descriptor,
+            sample_cot_csv,
+        )
+        registry.register(
+            CFTCCOTWeeklyProvider(client=lambda _p: sample_cot_csv()),
+            descriptor=cftc_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"cftc_cot: {exc}")
+    try:
+        from aurora.core.data_providers.kenneth_french_factors import (
+            KennethFrenchFactorsProvider,
+            descriptor as french_descriptor,
+            sample_french_factor_csv,
+        )
+        registry.register(
+            KennethFrenchFactorsProvider(
+                client=lambda _p: sample_french_factor_csv()
+            ),
+            descriptor=french_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"kenneth_french: {exc}")
+    try:
+        from aurora.core.data_providers.federal_reserve_h15 import (
+            FederalReserveH15Provider,
+            descriptor as h15_descriptor,
+            sample_h15_csv,
+        )
+        registry.register(
+            FederalReserveH15Provider(client=lambda _p: sample_h15_csv()),
+            descriptor=h15_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"federal_reserve_h15: {exc}")
+    try:
+        from aurora.core.data_providers.bls_public_api import (
+            BLSPublicAPIProvider,
+            descriptor as bls_descriptor,
+            sample_bls_json,
+        )
+        registry.register(
+            BLSPublicAPIProvider(client=lambda _p: sample_bls_json()),
+            descriptor=bls_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"bls_public_api: {exc}")
+    try:
+        from aurora.core.data_providers.yale_shiller import (
+            YaleShillerProvider,
+            descriptor as shiller_descriptor,
+            sample_shiller_csv,
+        )
+        registry.register(
+            YaleShillerProvider(client=lambda _p: sample_shiller_csv()),
+            descriptor=shiller_descriptor(),
+        )
+    except Exception as exc:
+        errors.append(f"yale_shiller: {exc}")
     if os.environ.get("AU_ENABLE_AKSHARE") == "1":
         try:
             import pandas as _pd

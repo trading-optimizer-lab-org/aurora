@@ -1,6 +1,6 @@
-"""Tests for quantforge.reporting.tearsheet.
+﻿"""Tests for aurora.reporting.tearsheet.
 
-Run: pytest quantforge/tests/test_tearsheet.py -v
+Run: pytest aurora/tests/test_tearsheet.py -v
 """
 from __future__ import annotations
 import os

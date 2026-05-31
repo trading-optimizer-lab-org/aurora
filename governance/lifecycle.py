@@ -1,9 +1,9 @@
-"""Strategy lifecycle state machine.
+﻿"""Strategy lifecycle state machine.
 
 Strategies move through a small set of explicit states. The transition
 graph below is the *only* legal set of edges; anything else raises
 :class:`LifecycleError`. The graph is intentionally narrow so the
-governance gate (see :mod:`quantforge.governance.approvals`) can refuse
+governance gate (see :mod:`aurora.governance.approvals`) can refuse
 illegal moves before any consumer code touches a paper or live capital
 path.
 
@@ -29,7 +29,7 @@ States (one record per strategy-version):
 The transition table also records:
 
 * ``required_approval`` -- the minimum
-  :class:`~quantforge.governance.risk_register.ApprovalStatus` the
+  :class:`~aurora.governance.risk_register.ApprovalStatus` the
   strategy's risk record must hold before this edge can fire.
   ``None`` means "no record check at this edge". The promotion gate
   layered above still does its own checks.

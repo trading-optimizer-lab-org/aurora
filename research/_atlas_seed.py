@@ -1,6 +1,6 @@
-"""Canonical seed entries for the strategy atlas.
+﻿"""Canonical seed entries for the strategy atlas.
 
-This module declares the *first slice* of strategies QuantForge admits,
+This module declares the *first slice* of strategies Aurora admits,
 candidates that are still under review, ideas that are blocked because
 the platform cannot honestly run them today, and a small set of
 "benchmark only" entries kept for comparison reporting.

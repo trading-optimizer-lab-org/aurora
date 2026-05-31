@@ -1,10 +1,10 @@
-"""Demo: Bayesian optimization for best MACross params on SPY.
+﻿"""Demo: Bayesian optimization for best MACross params on SPY.
 
 Requires an editable install with the GA extras (which include scikit-optimize):
     pip install -e ".[ga]"
 
 Run:
-    python quantforge/examples/demo_bayes.py
+    python aurora/examples/demo_bayes.py
 """
 from __future__ import annotations
 

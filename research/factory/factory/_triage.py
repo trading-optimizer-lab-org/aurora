@@ -1,4 +1,4 @@
-"""Triage phase: bulk pre-screening of specs before the full pipeline.
+﻿"""Triage phase: bulk pre-screening of specs before the full pipeline.
 
 Module-private mixin. Public API stays at
 ``aurora.research.factory.factory``.
@@ -71,7 +71,7 @@ class _TriageMixin:
 
         When :attr:`triage_engine` is None, this method falls back to
         :meth:`submit_batch` (no pre-screening). Otherwise, it converts
-        each spec to a :class:`~quantforge.triage.variants.StrategyVariant`,
+        each spec to a :class:`~aurora.triage.variants.StrategyVariant`,
         runs them through the triage engine in a single batch, and only
         passes the *promising* hits to the full IS / WF / OOS_DEV
         pipeline. Triage hits that fail the simple thresholds are

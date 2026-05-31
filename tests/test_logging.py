@@ -1,4 +1,4 @@
-"""Tests for aurora.core.logging."""
+﻿"""Tests for aurora.core.logging."""
 from __future__ import annotations
 import json
 import logging
@@ -33,7 +33,7 @@ def test_get_logger_idempotent():
     a = get_logger("engine")
     b = get_logger("engine")
     assert a is b
-    # same actual python logger (name normalized to quantforge.engine)
+    # same actual python logger (name normalized to aurora.engine)
     assert a.name == "aurora.engine"
 
 

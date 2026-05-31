@@ -1,4 +1,4 @@
-"""Great Expectations-style data quality validator.
+﻿"""Great Expectations-style data quality validator.
 
 Lazy import of ``great_expectations``. In mock mode the validator runs the
 expectation set as plain Python predicates over a pandas DataFrame so unit
@@ -36,7 +36,7 @@ class GEConfig:
         suite_name: name of the expectation suite.
         fail_fast: stop after first failure.
     """
-    suite_name: str = "quantforge_default"
+    suite_name: str = "aurora_default"
     fail_fast: bool = False
 
 

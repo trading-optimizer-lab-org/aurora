@@ -1,9 +1,9 @@
-"""Strategy Zoo.
+﻿"""Strategy Zoo.
 
 Pre-loaded library of 50+ named single-asset strategies sourced from public
 academic literature. Each entry is a thin Strategy subclass wrapping one of:
 
-  * an existing implementation in quantforge/strategies/library
+  * an existing implementation in aurora/strategies/library
   * a simple closed-form signal computed from price/return statistics
 
 The zoo is INTENTIONALLY single-asset and self-contained. Multi-asset and

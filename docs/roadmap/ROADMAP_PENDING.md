@@ -1,4 +1,4 @@
-# Aurora Roadmap (formerly QuantForge)
+﻿# Aurora Roadmap (formerly Aurora)
 
 Status: living roadmap
 Last updated: 2026-05-10 (solo-operator posture applied to R158-R190)
@@ -132,7 +132,7 @@ alerts.
 
 Project name decision: **AURORA**. R23 has executed: package metadata,
 CLI entry point and primary imports use `aurora`. The legacy
-`quantforge` namespace remains only as the planned compatibility shim.
+`aurora` namespace remains only as the planned compatibility shim.
 
 Current strict open items, external blockers and recently reconciled
 state notes:
@@ -200,7 +200,7 @@ state notes:
 
 R23 (Aurora rename) and R76 (env var migration) closed 2026-05-09 in
 commit `cf41bc2`. Package now installs as `aurora-1.5.0`; both
-`import aurora` and the deprecation-warned `import quantforge` shim
+`import aurora` and the deprecation-warned `import aurora` shim
 work; `aurora --version` returns `aurora 1.5.0`.
 
 Every other roadmap item has either landed code, a scaffold, a
@@ -596,7 +596,7 @@ include `filter_by_rejection_reason`, `filter_by_stage`,
 
 Status: completed, committed as `9593e86`; packaging fixed in follow-up
 Evidence: `research/auto_loop/`, `tests/test_auto_loop.py` (7 tests),
-`pyproject.toml` (`quantforge.research.auto_loop` registered)
+`pyproject.toml` (`aurora.research.auto_loop` registered)
 
 `AutoResearchLoop` wraps `ResearchFactory` with a `generate -> submit
 -> log` cycle. Tier guard inherited from the factory. Review-queue cap
@@ -607,11 +607,11 @@ reproducibility.
 
 Caveat: the original commit (`9593e86`) created
 `research/auto_loop/__init__.py` and `loop.py` but did not register
-`quantforge.research.auto_loop` in `[tool.setuptools].packages` and
+`aurora.research.auto_loop` in `[tool.setuptools].packages` and
 `[tool.setuptools.package-dir]`. That meant the package worked under
 editable install but would have been missing from any wheel built
 from the repo. The packaging entries were added in a follow-up; the
-wheel now ships `quantforge/research/auto_loop/loop.py`.
+wheel now ships `aurora/research/auto_loop/loop.py`.
 
 ### R7. Distributed snapshots backend interface
 
@@ -705,7 +705,7 @@ until their acceptance bars are explicitly checked:
    transaction costs, stress tests and walk-forward / purged
    validation.
 5. **Candidate E -- Strategy atlas and benchmark catalogue.** Curated
-   map from strategy literature to QuantForge support level, data
+   map from strategy literature to Aurora support level, data
    requirements, implementation difficulty, validation risk and
    benchmark / graveyard status.
 6. **Candidate D -- Strategy risk register.** Model-risk record,
@@ -883,8 +883,8 @@ The remaining work is CI policy and optional broader cleanup:
 The follow-up landed:
 
 - `pyproject.toml` `[tool.ruff.lint]` ignore list adds `N999` (the
-  repo top-level dir is still `QuantForge`; the package itself is now
-  `aurora` via `package-dir` remapping, with `quantforge` kept as a
+  repo top-level dir is still `Aurora`; the package itself is now
+  `aurora` via `package-dir` remapping, with `aurora` kept as a
   compatibility shim).
 - `.github/workflows/lint.yml` now runs two jobs: `ruff-full`
   (permissive sweep over the whole repo, `continue-on-error: true`)
@@ -924,20 +924,20 @@ Definition of done:
 - Existing tests still pass; add a fake-backend test to prove the
   abstraction is real.
 
-### R22. Retire the legacy `quantforge/data_cache_qf` ghost directory
+### R22. Retire the legacy `aurora/data_cache_qf` ghost directory
 
 Status: completed in follow-up
 Evidence: `core/config.py`, `core/features.py`, `tests/test_config.py`,
 `.gitignore` (entry retained as defence in depth)
 
-The legacy default cache path `quantforge/data_cache_qf/` was created
+The legacy default cache path `aurora/data_cache_qf/` was created
 as a side effect of `DataConfig` and `FeatureStore` constructors using
 that string as a hardcoded default. The empty top-level
-`quantforge/` directory it produced shadowed the real `quantforge`
+`aurora/` directory it produced shadowed the real `aurora`
 package on filesystems where Python's path resolution favoured the
 on-disk subdirectory over the installed package, breaking the
-pre-rename `python -m quantforge.cli.forge` path and any subprocess
-test that imported `quantforge.cli`.
+pre-rename `python -m aurora.cli.forge` path and any subprocess
+test that imported `aurora.cli`.
 
 Fix:
 
@@ -949,7 +949,7 @@ Fix:
   way; explicit `root=` callers are unchanged.
 - `tests/test_config.py::test_default_config` updated to assert the
   new contract (`cfg.data.cache_dir == str(runtime_paths.cache_dir())`).
-- The on-disk `quantforge/` ghost directory was deleted.
+- The on-disk `aurora/` ghost directory was deleted.
 
 ### R20. Docs build hygiene
 
@@ -1001,9 +1001,9 @@ Definition of done:
 - Any target with zero coverage is either covered with new tests or
   dropped from `paths_to_mutate`.
 
-### R23. Rename project from "QuantForge" to "AURORA"
+### R23. Rename project from "Aurora" to "AURORA"
 
-Status: completed in 2026-05-09 (commit `cf41bc2`). `pyproject.toml` `name = "aurora"`; package-dir map re-routes `aurora.*` to the on-disk dirs; CLI entry `aurora`; `forge` kept as deprecated alias. `quantforge/__init__.py` shim re-exports aurora and emits `DeprecationWarning`. `core/env_compat.py::aurora_env(new, old)` reads `AU_*` first, falls back to `QF_*` with `DeprecationWarning`. Wheel builds as `aurora-1.5.0-py3-none-any.whl`. Verified: `import aurora` ok, `python -W error::DeprecationWarning -c "import quantforge"` raises as designed, `aurora --version` -> `aurora 1.5.0`. 550 files touched; 3370 fast tests + 3 slow/integration green; ruff + mypy + sphinx + pre-commit all green. Per `docs/AURORA_RENAME_CHECKLIST.md`.
+Status: completed in 2026-05-09 (commit `cf41bc2`). `pyproject.toml` `name = "aurora"`; package-dir map re-routes `aurora.*` to the on-disk dirs; CLI entry `aurora`; `forge` kept as deprecated alias. `aurora/__init__.py` shim re-exports aurora and emits `DeprecationWarning`. `core/env_compat.py::aurora_env(new, old)` reads `AU_*` first, falls back to `QF_*` with `DeprecationWarning`. Wheel builds as `aurora-1.5.0-py3-none-any.whl`. Verified: `import aurora` ok, `python -W error::DeprecationWarning -c "import aurora"` raises as designed, `aurora --version` -> `aurora 1.5.0`. 550 files touched; 3370 fast tests + 3 slow/integration green; ruff + mypy + sphinx + pre-commit all green. Per `docs/AURORA_RENAME_CHECKLIST.md`.
 Priority: high
 Effort: 1 to 2 weeks (touches every file that references the project)
 Area: branding / packaging / docs
@@ -1016,8 +1016,8 @@ Scope of change:
 
 - `pyproject.toml`: `name = "aurora"`, scripts `aurora = "aurora.cli.forge:main"`,
   package list (`aurora.*`) and package-dir map.
-- Repository top-level directory rename: `QuantForge/` -> `Aurora/`.
-- Package import path: `quantforge.*` -> `aurora.*` across ~230 modules.
+- Repository top-level directory rename: `Aurora/` -> `Aurora/`.
+- Package import path: `aurora.*` -> `aurora.*` across ~230 modules.
 - CLI entry point: `forge` -> `aurora`.
 - Environment variables: `QF_*` -> `AU_*`. Provide compatibility
   fallbacks (read both, warn on `QF_*`) for at least one release.
@@ -1031,7 +1031,7 @@ Migration plan:
 
 1. Land the rename behind a branch. Do not bundle other work.
 2. Provide an `aurora_compat.py` shim that re-exports the old
-   `quantforge` namespace for one release cycle, so external
+   `aurora` namespace for one release cycle, so external
    consumers (sp500_ls_v2, naomi, jade) do not break overnight.
 3. Update CHANGELOG with the rename + the deprecation window for the
    shim.
@@ -1039,7 +1039,7 @@ Migration plan:
 
 Definition of done:
 
-- `import aurora` works; `import quantforge` works AND emits a
+- `import aurora` works; `import aurora` works AND emits a
   DeprecationWarning during the shim window.
 - `aurora --version` returns the new package version.
 - All 13 docs under `docs/` reference Aurora consistently.
@@ -1106,7 +1106,7 @@ Priority: low
 Effort: 5 minutes once decided
 Area: docs / packaging
 
-`docs/index.rst` no longer carries the `anthropics/quantforge`
+`docs/index.rst` no longer carries the `anthropics/aurora`
 placeholder, but no canonical URL exists yet. Decide where the repo
 lives (private fork, organisation account, ...), set
 `project_urls` in `pyproject.toml`, and link from the README plus
@@ -1621,8 +1621,8 @@ Ops:
   centralised: `QF_DATA_DIR`, `QF_CACHE_DIR`, `QF_SNAPSHOT_ROOT`,
   `QF_AUDIT_LOG`, `QF_GATEWAY_AUDIT`, `QF_OOS_LOCK`,
   `QF_RESEARCH_ARCHIVE`, `QF_REVIEW_QUEUE`.
-- Infra DSNs: `QUANTFORGE_PG_DSN`, `QUANTFORGE_REDIS_URL`,
-  `QUANTFORGE_TIMESCALE_DSN`, `AZURE_STORAGE_CONNECTION_STRING`.
+- Infra DSNs: `AURORA_PG_DSN`, `AURORA_REDIS_URL`,
+  `AURORA_TIMESCALE_DSN`, `AZURE_STORAGE_CONNECTION_STRING`.
 
 External provider credentials:
 
@@ -1691,7 +1691,7 @@ What is missing:
 - A doc paragraph in `CONTRIBUTING.md` telling new contributors to
   run that target on first clone.
 - While editing `CONTRIBUTING.md`, fix its stale setup commands: it
-  still describes an older nested `quantforge/` package path, but the
+  still describes an older nested `aurora/` package path, but the
   repo now uses the flat Layout B root install (`pip install -e ".[...]"`).
 - A CI job that runs `pre-commit run --all-files` so PRs that bypass
   the hook locally are still caught.
@@ -1750,7 +1750,7 @@ Suggested paths: `.github/workflows/typecheck.yml`,
 verification now passes with no errors across 410 source files. Add a
 blocking `typecheck` job that runs the same command used locally
 (respecting the flat Layout B package structure; do not use
-`python -m mypy quantforge/`, because the canonical package is now
+`python -m mypy aurora/`, because the canonical package is now
 `aurora` and the repo still uses the flat Layout B source layout).
 
 ### R64. Coverage gate enforced in CI
@@ -1913,7 +1913,7 @@ Area: portability
 Suggested paths: `dataeng/airflow_dags.py` (already grep-flagged),
 plus any module that did not migrate to `runtime_paths`
 
-R22 retired the `quantforge/data_cache_qf` ghost dir; one or two
+R22 retired the `aurora/data_cache_qf` ghost dir; one or two
 hardcoded paths slipped through. `dataeng/airflow_dags.py` was
 flagged by the path audit. Sweep the remaining modules and route
 every disk-write through `runtime_paths.cache_dir()` or the
@@ -1953,7 +1953,7 @@ Suggested paths: `research/auto_gen/`, `strategies/blocks/`,
 
 StrategyQuant's headline feature: combine indicators + comparison
 operators + entry / exit rules randomly into N candidate strategies,
-then filter through validation. QuantForge today runs GA on existing
+then filter through validation. Aurora today runs GA on existing
 strategies; it cannot invent new ones from atomic primitives.
 
 Scope:
@@ -5281,7 +5281,7 @@ Implementation plan:
 5. Add lightweight build provenance:
    commit, Python version, dependency lock / freeze, wheel hash and
    build timestamp.
-6. Define retirement date for `quantforge` import shim and `QF_*`
+6. Define retirement date for `aurora` import shim and `QF_*`
    environment variable fallback.
 7. Add release verification command:
    install wheel in clean env, import `aurora`, CLI smoke, legacy shim
@@ -5423,7 +5423,7 @@ These are not rejected. They are too broad to start as single tasks:
 
 These may be promoted into numbered R155+ items when they are concrete
 enough to implement. Treat them as seven strategic programmes, not as a
-pile of loose wishes. The point is to stop QuantForge / AURORA from
+pile of loose wishes. The point is to stop Aurora / AURORA from
 fooling itself with bad data, overfit research, unrealistic execution,
 uncurated strategy sprawl or unowned model risk, while also keeping
 portfolio optimisation and agentic analysis inside hard safety rails.
@@ -5507,7 +5507,7 @@ Source references:
 
 ### Candidate A. Execution integrity programme
 
-Why it matters: after a paper or live session, QuantForge should be
+Why it matters: after a paper or live session, Aurora should be
 able to rebuild what happened from broker events alone: order created,
 accepted, partially filled, filled, cancelled, rejected, modified,
 expired, disconnected and reconnected. If the replayed state differs
@@ -5634,7 +5634,7 @@ feature sitting on soft ground. Glamorous? No. Useful? Painfully.
 Why it matters: the "151 Trading Strategies" PDF is useful because it
 maps a wide strategy universe across options, equities, ETFs, fixed
 income, futures, FX, volatility, crypto, macro and more. It is dangerous
-if treated as a shopping list. QuantForge / AURORA should turn it into
+if treated as a shopping list. Aurora / AURORA should turn it into
 a curated atlas that says what each idea needs, what the engine already
 supports, what is out of scope, and which benchmarks or graveyard
 entries should exist before anyone promotes a new strategy.
@@ -5652,7 +5652,7 @@ Definition of ready:
   validation gates and owner.
 - The atlas classifies each idea as supported, candidate, blocked,
   rejected, benchmark-only or external-data-only.
-- The first curated slice covers only strategies QuantForge can test
+- The first curated slice covers only strategies Aurora can test
   honestly today: ETF momentum rotation, dual momentum, multi-asset
   trend following, volatility targeting, ETF mean reversion, simple
   stat-arb / pairs, KNN single-stock as an ML example, and controlled
@@ -5691,7 +5691,7 @@ Why it matters: every backtest and validation run should prove that
 the input data is sane before the strategy sees it. Bad data can look
 like alpha: split errors, duplicated bars, wrong timezone, missing
 holidays, impossible prices, currency mistakes, stale snapshots or
-vendor-specific quirks. If QuantForge lets that through silently, the
+vendor-specific quirks. If Aurora lets that through silently, the
 rest of the validation stack is polishing bad evidence.
 
 Recommended promotion target: merge with the data-integrity cluster
@@ -5756,7 +5756,7 @@ concentration, sector / group exposure, leverage, cash, liquidity and
 out-of-sample decay. skfolio is useful because it shows a mature shape
 for portfolio optimisation with a scikit-learn-style API, model
 selection, risk measures, stress testing, constraints and purged /
-walk-forward validation. QuantForge should learn from that shape before
+walk-forward validation. Aurora should learn from that shape before
 inventing another half-optimizer that looks clever until costs arrive.
 
 Recommended promotion target: merge with the portfolio / monitoring
@@ -5802,7 +5802,7 @@ Definition of ready:
   benchmark-relative attribution and monthly / yearly summaries.
 - skfolio remains the main API-shape reference because its model
   selection, walk-forward, purged CV and sklearn-compatible interface
-  match QuantForge's validation direction better than a pure optimiser.
+  match Aurora's validation direction better than a pure optimiser.
 - Reports compare every optimiser against simple baselines: equal
   weight, inverse volatility, cash / no-trade and the previous
   production allocation.
@@ -5810,7 +5810,7 @@ Definition of ready:
   leak future data through validation, or improve headline Sharpe by
   ignoring transaction costs.
 
-Reason not to start immediately: QuantForge already has useful
+Reason not to start immediately: Aurora already has useful
 portfolio pieces, but a serious optimiser should sit on top of data
 contracts, research honesty and realistic execution costs. Otherwise it
 will allocate capital beautifully to evidence that should have been
@@ -5823,7 +5823,7 @@ its signal has weak information content, high turnover, unstable
 quantiles, regime-specific decay or benchmark-relative
 underperformance. Alphalens and pyfolio are useful references because
 they separate factor quality, portfolio behaviour and benchmark
-comparison into operator-readable reports. QuantForge already has many
+comparison into operator-readable reports. Aurora already has many
 validation primitives; Candidate H turns them into consistent research
 reports.
 
@@ -5858,7 +5858,7 @@ reports over weak evidence is just arts and crafts with Sharpe ratios.
 ### Candidate D. Strategy risk register and approval workflow
 
 Why it matters: a strategy can be technically valid and still be a bad
-idea to run. QuantForge / AURORA needs a simple model-risk layer that
+idea to run. Aurora / AURORA needs a simple model-risk layer that
 answers: what is this strategy for, when should it not be used, who
 owns it, what evidence promoted it, what risk limits apply, when does
 it expire, and who approved the move toward live.
@@ -5897,7 +5897,7 @@ analysis as a coordinated set of specialist agents instead of a single
 chat box. That is useful for research triage, explanation and
 operator-facing summaries. It is also risky if copied literally:
 financial agents can sound confident while quietly mixing weak sources,
-stale data, prompt injection and unvalidated reasoning. QuantForge /
+stale data, prompt injection and unvalidated reasoning. Aurora /
 AURORA should use this pattern only as a controlled support layer above
 the existing protocol spine, never as an authority that can inspect
 locked OOS data or submit orders.
@@ -5968,7 +5968,7 @@ Global rules for every phase:
 - Do not add a new dependency until there is a short written decision:
   licence, maintenance status, dependency size, Python compatibility,
   API stability and fallback if removed.
-- Every new persistent artifact must use `quantforge.core.runtime_paths`
+- Every new persistent artifact must use `aurora.core.runtime_paths`
   or an existing runtime-path helper. No hardcoded user paths.
 - Every feature that can affect strategy promotion must preserve
   `policy_hash`, `snapshot_hash`, `strategy_hash` and audit evidence.
@@ -6330,7 +6330,7 @@ Reference usage:
 - Use vectorbt-style sweeps only as atlas input when the full sweep
   config and rejected variants are recorded.
 - Use Quantpedia / QuantStart / Ernie Chan-style sources only as idea
-  discovery. Their claims must be re-tested under QuantForge data
+  discovery. Their claims must be re-tested under Aurora data
   contracts and validation gates.
 
 Tests:

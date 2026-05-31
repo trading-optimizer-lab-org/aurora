@@ -1,6 +1,6 @@
-"""Tests for feature store with provenance.
+﻿"""Tests for feature store with provenance.
 
-Run: uv run pytest quantforge/tests/test_features.py -v
+Run: uv run pytest aurora/tests/test_features.py -v
 """
 from __future__ import annotations
 import time

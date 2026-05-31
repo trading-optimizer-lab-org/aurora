@@ -1,4 +1,4 @@
-"""Tests for quantforge.deployment.live (Lumibot live trading wrapper).
+﻿"""Tests for aurora.deployment.live (Lumibot live trading wrapper).
 
 All broker interactions are mocked — no real orders are submitted, lumibot is
 not required.

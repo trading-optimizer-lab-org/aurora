@@ -1,6 +1,6 @@
-"""Tests for FXHedger.
+﻿"""Tests for FXHedger.
 
-Run: pytest quantforge/tests/test_fx_hedger.py -v
+Run: pytest aurora/tests/test_fx_hedger.py -v
 """
 from __future__ import annotations
 import math

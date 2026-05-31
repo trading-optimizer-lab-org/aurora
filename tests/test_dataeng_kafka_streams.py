@@ -1,4 +1,4 @@
-"""Tests for quantforge.dataeng.kafka_streams."""
+﻿"""Tests for aurora.dataeng.kafka_streams."""
 from __future__ import annotations
 
 import pytest

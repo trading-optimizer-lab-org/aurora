@@ -25,6 +25,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 
 class LedgerEventType(str, Enum):
+    PROTOCOL_DECLARED = "protocol_declared"
     UNIVERSE_SELECTED = "universe_selected"
     PROVIDER_SET = "provider_set"
     DATE_RANGE_SET = "date_range_set"
@@ -34,7 +35,10 @@ class LedgerEventType(str, Enum):
     CANDIDATE_GENERATED = "candidate_generated"
     CANDIDATE_REJECTED = "candidate_rejected"
     CANDIDATE_MODIFIED = "candidate_modified"
+    ROBUSTNESS_RUN = "robustness_run"
     VALIDATION_RUN = "validation_run"
+    SELECTION_RUN = "selection_run"
+    LOCKED_RESULT_REPORTED = "locked_result_reported"
     OVERRIDE = "override"
     OOS_UNLOCK = "oos_unlock"
     PROMOTION = "promotion"
@@ -44,16 +48,20 @@ class LedgerEventType(str, Enum):
 # Events that must be present (at least once) before a candidate may
 # move into validation.
 _PRE_VALIDATION_REQUIRED: Tuple[LedgerEventType, ...] = (
+    LedgerEventType.PROTOCOL_DECLARED,
     LedgerEventType.UNIVERSE_SELECTED,
     LedgerEventType.PROVIDER_SET,
     LedgerEventType.DATE_RANGE_SET,
     LedgerEventType.FEATURE_SET,
+    LedgerEventType.PARAMETER_GRID,
     LedgerEventType.SEED_SET,
     LedgerEventType.CANDIDATE_GENERATED,
 )
 
 
 _PRE_PROMOTION_REQUIRED: Tuple[LedgerEventType, ...] = (
+    LedgerEventType.SELECTION_RUN,
+    LedgerEventType.ROBUSTNESS_RUN,
     LedgerEventType.VALIDATION_RUN,
 )
 
@@ -221,14 +229,72 @@ class ResearchLedger:
             )
 
     def assert_ready_for_promotion(self, project_id: str) -> None:
-        """Raise unless the project also has a validation_run event."""
+        """Raise unless robustness and validation both passed promotion gates."""
         self.assert_ready_for_validation(project_id)
-        types_seen = {e.event_type for e in self.events(project_id=project_id)}
+        events = self.events(project_id=project_id)
+        types_seen = {e.event_type for e in events}
         missing = [t for t in _PRE_PROMOTION_REQUIRED if t not in types_seen]
         if missing:
             raise LedgerEnforcementError(
                 "research ledger missing pre-promotion events: "
                 + ", ".join(t.value for t in missing)
+            )
+        robustness_events = [
+            event for event in events
+            if event.event_type is LedgerEventType.ROBUSTNESS_RUN
+        ]
+        latest_robustness = robustness_events[-1]
+        if latest_robustness.payload.get("passed") is not True:
+            raise LedgerEnforcementError(
+                "research ledger latest robustness_run did not pass"
+            )
+        validation_events = [
+            (idx, event) for idx, event in enumerate(events)
+            if event.event_type is LedgerEventType.VALIDATION_RUN
+        ]
+        selection_events = [
+            (idx, event) for idx, event in enumerate(events)
+            if event.event_type is LedgerEventType.SELECTION_RUN
+        ]
+        robustness_index = max(
+            idx for idx, event in enumerate(events)
+            if event is latest_robustness
+        )
+        selection_index, latest_selection = selection_events[-1]
+        validation_index, latest_validation = validation_events[-1]
+        if not (selection_index < robustness_index < validation_index):
+            raise LedgerEnforcementError(
+                "research ledger promotion events must be ordered as "
+                "selection_run -> robustness_run -> validation_run"
+            )
+        validation_metrics = latest_validation.payload.get("metrics", {})
+        if (
+            isinstance(validation_metrics, Mapping)
+            and validation_metrics.get("overall_passed") is False
+        ):
+            raise LedgerEnforcementError(
+                "research ledger latest validation_run did not pass"
+            )
+        robust_candidate = latest_robustness.payload.get("candidate_id")
+        validation_candidate = latest_validation.payload.get("candidate_id")
+        selection_candidate = latest_selection.payload.get("candidate_id")
+        if (
+            selection_candidate is not None
+            and validation_candidate is not None
+            and selection_candidate != validation_candidate
+        ):
+            raise LedgerEnforcementError(
+                "research ledger latest selection_run and validation_run "
+                "refer to different candidates"
+            )
+        if (
+            robust_candidate is not None
+            and validation_candidate is not None
+            and robust_candidate != validation_candidate
+        ):
+            raise LedgerEnforcementError(
+                "research ledger latest robustness_run and validation_run "
+                "refer to different candidates"
             )
 
     # -- pressure ----------------------------------------------------------

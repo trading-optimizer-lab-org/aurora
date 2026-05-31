@@ -1,7 +1,7 @@
-"""Auto research loop (R10).
+﻿"""Auto research loop (R10).
 
 Schedules a periodic ``generate -> submit -> archive`` cycle on top of
-:class:`quantforge.research.factory.ResearchFactory`. The loop is the
+:class:`aurora.research.factory.ResearchFactory`. The loop is the
 operational outer wrapper around the factory; it does not touch tier
 gates, hash chains or audit logs directly.
 

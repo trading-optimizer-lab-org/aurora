@@ -1,9 +1,9 @@
-# QuantForge v1.1 Completion Report
+﻿# Aurora v1.1 Completion Report
 
 **Date:** 2026-05-06
 **Method:** Subagent-Driven Development (parallel batches G, H, I)
-**Plan:** `quantforge/docs/DEVELOPMENT_PLAN_v1_1.md`
-**Driven by:** `quantforge/docs/GITHUB_RESEARCH_v1.1.md`
+**Plan:** `aurora/docs/DEVELOPMENT_PLAN_v1_1.md`
+**Driven by:** `aurora/docs/GITHUB_RESEARCH_v1.1.md`
 
 ## Summary
 
@@ -53,7 +53,7 @@
 ## New top-level modules
 
 ```
-quantforge/
+aurora/
 ├── ml/                           NEW (Batch G)
 │   ├── __init__.py
 │   ├── labels.py                 Triple-barrier + meta-labeling + bet sizing
@@ -134,7 +134,7 @@ For strategies to advance to paper:
 
 ## STOP CONDITION MET
 
-QuantForge v1.1 feature-complete per development plan.
+Aurora v1.1 feature-complete per development plan.
 - 564/564 tests pass
 - 17 new modules added in v1.1
 - ML / portfolio optim / analytics gaps closed per GitHub research

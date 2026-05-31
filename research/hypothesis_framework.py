@@ -1,4 +1,4 @@
-"""Hypothesis Framework.
+﻿"""Hypothesis Framework.
 
 Standardized H0/H1 test bench for strategies.
 
@@ -9,7 +9,7 @@ A Hypothesis defines:
     threshold -- benchmark value (typically 0.0 or another strategy's metric)
     alternative -- "greater" | "less" | "two-sided"
 
-The HypothesisTester runs a strategy through the QuantForge engine, then
+The HypothesisTester runs a strategy through the Aurora engine, then
 applies a bootstrap test on bar-level returns to compute a p-value for the
 metric being above/below the threshold.
 

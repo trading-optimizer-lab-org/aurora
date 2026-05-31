@@ -1,10 +1,10 @@
-"""Pre-trade safety checks (preflight).
+﻿"""Pre-trade safety checks (preflight).
 
 Run all checks before allowing a strategy to go paper or live. Returns a
 PreflightReport. Any check with passed=False populates `blockers`.
 
 Convention: validate_pipeline writes a marker file under
-`quantforge/data_cache_qf/.validation_passed_<strategy_name>.json` when
+`aurora/data_cache_qf/.validation_passed_<strategy_name>.json` when
 overall_passed=True. Preflight verifies that marker exists for the strategy.
 """
 from __future__ import annotations

@@ -1,8 +1,8 @@
-"""Equivalence + speedup tests for JIT-accelerated kernels.
+﻿"""Equivalence + speedup tests for JIT-accelerated kernels.
 
 Run:
     uv run --with numba --with vectorbt --with scipy --with pyarrow --with pytest \
-        python -m pytest quantforge/tests/test_jit.py -v
+        python -m pytest aurora/tests/test_jit.py -v
 """
 from __future__ import annotations
 import time

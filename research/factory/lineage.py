@@ -1,7 +1,7 @@
-"""Spec-lineage graph utilities.
+﻿"""Spec-lineage graph utilities.
 
 Tracks the parent->child relationship between
-:class:`~quantforge.research.factory.spec.StrategySpec` instances. A spec
+:class:`~aurora.research.factory.spec.StrategySpec` instances. A spec
 that was mutated from another (e.g. by GA crossover, by a template
 generator, or by a human edit) carries the parent's ``spec_id`` in
 ``parent_spec_id``. Walking that chain reconstructs the lineage DAG.

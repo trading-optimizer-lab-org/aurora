@@ -1,6 +1,6 @@
-"""Tests for quantforge.monitoring.drift (Batch O.5).
+﻿"""Tests for aurora.monitoring.drift (Batch O.5).
 
-Run: uv run pytest quantforge/tests/test_drift.py -v
+Run: uv run pytest aurora/tests/test_drift.py -v
 """
 from __future__ import annotations
 

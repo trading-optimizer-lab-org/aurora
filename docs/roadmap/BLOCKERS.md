@@ -1,4 +1,4 @@
-# Roadmap Blockers
+﻿# Roadmap Blockers
 
 Honest accounting of items in [`ROADMAP_PENDING.md`](ROADMAP_PENDING.md)
 that cannot be completed inside this repository alone. Each entry names
@@ -34,7 +34,7 @@ landed in repo as preparation.
 - Mostly daily series; rate limits comfortable.
 - Implementation outline:
 
-  1. Add `quantforge.altdata.fred_macro.FREDClient` that wraps `requests`
+  1. Add `aurora.altdata.fred_macro.FREDClient` that wraps `requests`
      under a `requests.Session`. Read API key from `$FRED_API_KEY`.
   2. Add a thin retry/backoff layer (already a util in
      `dataeng/`).

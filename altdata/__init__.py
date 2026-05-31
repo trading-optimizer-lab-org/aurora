@@ -1,4 +1,4 @@
-"""Alternative data ingestion adapters for QuantForge v2.0.
+﻿"""Alternative data ingestion adapters for Aurora v2.0.
 
 Each module exposes a ``*Adapter`` class with a dataclass config and a primary
 fetch function. Optional vendor SDKs are imported lazily inside fetch methods so

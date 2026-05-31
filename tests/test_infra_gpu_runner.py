@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.gpu_runner.GPURunner."""
+﻿"""Tests for aurora.infra.gpu_runner.GPURunner."""
 from __future__ import annotations
 
 from unittest.mock import patch

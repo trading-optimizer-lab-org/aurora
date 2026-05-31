@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.cloud_sync.CloudSync (mock mode)."""
+﻿"""Tests for aurora.infra.cloud_sync.CloudSync (mock mode)."""
 from __future__ import annotations
 
 import os

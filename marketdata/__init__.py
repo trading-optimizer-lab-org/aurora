@@ -1,4 +1,4 @@
-"""Deep market data modules for QuantForge v3.0 Batch A.
+﻿"""Deep market data modules for Aurora v3.0 Batch A.
 
 Each submodule exposes a primary class plus a dataclass config. All modules
 ship with deterministic mock data paths so tests run offline. Optional vendor

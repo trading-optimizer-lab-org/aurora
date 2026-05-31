@@ -1,6 +1,6 @@
-"""Versioned, point-in-time-aware DataProviderRegistry (P0.B).
+﻿"""Versioned, point-in-time-aware DataProviderRegistry (P0.B).
 
-Centralizes data sourcing across QuantForge. Every dataset returned by the
+Centralizes data sourcing across Aurora. Every dataset returned by the
 registry carries provenance metadata (``DatasetMetadata``): source, version,
 asof_date, content_hash, point_in_time flag, and tier_permission. The
 registry's ``fetch`` integrates with :class:`~aurora.core.data_layer.OOSGuard`
@@ -759,6 +759,71 @@ def get_default_registry() -> DataProviderRegistry:
                 _log.warning(
                     "failed to bootstrap provider %s: %s", mod_name, exc,
                 )
+        try:
+            from aurora.core.data_providers.cftc_cot_weekly import (
+                CFTCCOTWeeklyProvider,
+                descriptor as cftc_cot_descriptor,
+            )
+            registry.register(
+                CFTCCOTWeeklyProvider(),
+                descriptor=cftc_cot_descriptor(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning(
+                "failed to bootstrap provider cftc_cot: %s", exc,
+            )
+        try:
+            from aurora.core.data_providers.kenneth_french_factors import (
+                KennethFrenchFactorsProvider,
+                descriptor as kenneth_french_descriptor,
+            )
+            registry.register(
+                KennethFrenchFactorsProvider(),
+                descriptor=kenneth_french_descriptor(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning(
+                "failed to bootstrap provider kenneth_french: %s", exc,
+            )
+        try:
+            from aurora.core.data_providers.federal_reserve_h15 import (
+                FederalReserveH15Provider,
+                descriptor as federal_reserve_h15_descriptor,
+            )
+            registry.register(
+                FederalReserveH15Provider(),
+                descriptor=federal_reserve_h15_descriptor(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning(
+                "failed to bootstrap provider federal_reserve_h15: %s", exc,
+            )
+        try:
+            from aurora.core.data_providers.bls_public_api import (
+                BLSPublicAPIProvider,
+                descriptor as bls_public_api_descriptor,
+            )
+            registry.register(
+                BLSPublicAPIProvider(),
+                descriptor=bls_public_api_descriptor(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning(
+                "failed to bootstrap provider bls_public_api: %s", exc,
+            )
+        try:
+            from aurora.core.data_providers.yale_shiller import (
+                YaleShillerProvider,
+                descriptor as yale_shiller_descriptor,
+            )
+            registry.register(
+                YaleShillerProvider(),
+                descriptor=yale_shiller_descriptor(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning(
+                "failed to bootstrap provider yale_shiller: %s", exc,
+            )
         # Optional providers: only register when their backing dep is
         # importable. Keeps "from aurora.core.data_providers import ..."
         # cheap and avoids surfacing a stub provider that always raises.

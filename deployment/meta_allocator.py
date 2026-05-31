@@ -1,4 +1,4 @@
-"""Meta-allocator: allocator-of-allocators.
+﻿"""Meta-allocator: allocator-of-allocators.
 
 Top-level chooses among (HRP, RiskParity, BL, equal_weight) based on an
 externally-provided regime label, returning the active sub-allocator weights
@@ -14,7 +14,7 @@ Design
 
 The regime input is intentionally a free-form label (string or int). Mapping
 regimes to allocators is the responsibility of the caller's regime detector
-(e.g. :class:`quantforge.regime.GaussianHMM`); this module only does the
+(e.g. :class:`aurora.regime.GaussianHMM`); this module only does the
 selection. Default mapping:
 
     regime  -> method

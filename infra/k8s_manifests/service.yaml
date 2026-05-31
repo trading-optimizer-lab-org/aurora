@@ -1,16 +1,16 @@
-# QuantForge dashboard Service skeleton.
+﻿# Aurora dashboard Service skeleton.
 # Documentation only; expose via Ingress / LoadBalancer in production.
 apiVersion: v1
 kind: Service
 metadata:
-  name: quantforge-dashboard
+  name: aurora-dashboard
   labels:
-    app: quantforge
+    app: aurora
     component: dashboard
 spec:
   type: ClusterIP
   selector:
-    app: quantforge
+    app: aurora
     component: dashboard
   ports:
     - name: http

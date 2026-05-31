@@ -1,4 +1,4 @@
-"""GA runner using DEAP (multi-objective NSGA-II by default)."""
+﻿"""GA runner using DEAP (multi-objective NSGA-II by default)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
@@ -144,7 +144,7 @@ def run_ga(strategy_class, prices_is, prices_oos=None, fitness_fn=None,
 
     NOTE: ``prices_oos`` is accepted for backwards compatibility but is NEVER
     passed to the fitness function. The GA must not see OOS data. To validate
-    Pareto front candidates against OOS, call ``quantforge.ga.fitness.validate_oos``
+    Pareto front candidates against OOS, call ``aurora.ga.fitness.validate_oos``
     AFTER ``run_ga`` returns, ideally inside an ``OOSGuard`` context.
 
     Args:

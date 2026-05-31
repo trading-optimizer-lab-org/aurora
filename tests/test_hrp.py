@@ -1,6 +1,6 @@
-"""Tests for Hierarchical Risk Parity allocator (Task H.1).
+﻿"""Tests for Hierarchical Risk Parity allocator (Task H.1).
 
-Run: pytest quantforge/tests/test_hrp.py -v
+Run: pytest aurora/tests/test_hrp.py -v
 """
 from __future__ import annotations
 import numpy as np

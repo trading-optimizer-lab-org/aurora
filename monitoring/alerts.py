@@ -1,4 +1,4 @@
-"""QuantForge live alerts: rule-based monitoring with email + webhook delivery.
+﻿"""Aurora live alerts: rule-based monitoring with email + webhook delivery.
 
 This module evaluates user-supplied rules against runtime metrics and dispatches
 notifications via SMTP and HTTP webhooks. The webhook payload format
@@ -16,7 +16,7 @@ Design notes
 Run tests::
 
     cd "C:/Users/HP/MODELO SP500"
-    uv run pytest quantforge/tests/test_alerts.py -v
+    uv run pytest aurora/tests/test_alerts.py -v
 """
 from __future__ import annotations
 
@@ -404,8 +404,8 @@ class AlertEngine:
             )
 
         msg = EmailMessage()
-        msg["Subject"] = f"[QuantForge {alert.severity.upper()}] {alert.rule_name}"
-        msg["From"] = cfg.smtp_user or "quantforge-alerts@localhost"
+        msg["Subject"] = f"[Aurora {alert.severity.upper()}] {alert.rule_name}"
+        msg["From"] = cfg.smtp_user or "aurora-alerts@localhost"
         msg["To"] = ", ".join(cfg.smtp_to)
         body_lines = [
             alert.message,

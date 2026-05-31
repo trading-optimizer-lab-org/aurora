@@ -1,4 +1,4 @@
-# QuantForge v3.0 Completion Report
+﻿# Aurora v3.0 Completion Report
 
 **Date:** 2026-05-07
 **Method:** SDD parallel batches v3.A-I (9 agents, 90 new modules)
@@ -39,7 +39,7 @@
 ## New v3 packages
 
 ```
-quantforge/
+aurora/
 ├── marketdata/   NEW v3 — TAQ, L3 book, dark pools, blocks, auctions, extended hours, corp actions, survivorship
 ├── markets/      NEW v3 — forex, futures, options, bonds, credit, commodities, vol products, crypto basis, ETF arb, CEF
 ├── risk/         NEW v3 — ES, spectral, CDaR, factor RP, HERC, max-div, MDP, EMV, risk budgeting, stress VaR
@@ -54,7 +54,7 @@ quantforge/
 ## Cumulative architecture (v1.0 → v3.0)
 
 ```
-quantforge/
+aurora/
 ├── core/         engine + intraday + multi + jit + bars + costs + slippage + realtime + snapshots + sqlite_utils + features + taxes + metrics + seed + data_layer + config + logging
 ├── strategies/   base + library (14 strategies + pair_discovery + statarb_mr)
 ├── signals/      8 v2 signal modules
@@ -99,9 +99,9 @@ quantforge/
 ## Test verification
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/ -m "not slow and not integration" \
-    --ignore=quantforge/tests/test_config.py \
-    --ignore=quantforge/tests/test_property.py
+"C:/Python314/python.exe" -m pytest aurora/tests/ -m "not slow and not integration" \
+    --ignore=aurora/tests/test_config.py \
+    --ignore=aurora/tests/test_property.py
 2485 passed, 28 failed, 12 skipped, 10 deselected
 ```
 
@@ -121,4 +121,4 @@ v1.3.1 base: production-ready paper + supervised live (loop convergence Round Z)
 
 v2.0 + v3.0 expansions: research-grade demo for many surfaces, mock-friendly for tests. Production deployment of v2/v3 modules requires real-data integration testing case-by-case (alt data feeds, compliance reporting endpoints, exchange execution adapters, etc).
 
-QuantForge has grown from 289-test minimal backtest engine into a 2485-test full-stack quant research + trading + compliance + research-workflow platform.
+Aurora has grown from 289-test minimal backtest engine into a 2485-test full-stack quant research + trading + compliance + research-workflow platform.

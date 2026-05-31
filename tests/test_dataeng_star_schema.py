@@ -1,4 +1,4 @@
-"""Tests for quantforge.dataeng.star_schema."""
+﻿"""Tests for aurora.dataeng.star_schema."""
 from __future__ import annotations
 
 import pytest

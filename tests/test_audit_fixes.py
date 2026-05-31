@@ -1,4 +1,4 @@
-"""Regression tests for the v1.3.1 deep-audit infrastructure / packaging /
+﻿"""Regression tests for the v1.3.1 deep-audit infrastructure / packaging /
 documentation fixes.
 
 These tests guard the structural improvements:
@@ -70,7 +70,7 @@ def test_pyproject_addopts_strict_markers():
 def test_pyproject_package_data_py_typed():
     data = _load_pyproject()
     pkg_data = data["tool"]["setuptools"]["package-data"]
-    assert "py.typed" in pkg_data["quantforge"]
+    assert "py.typed" in pkg_data["aurora"]
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ def test_data_cache_does_not_write_into_site_packages(monkeypatch, tmp_path):
 
     # Reload data_layer with a synthetic PROJ that has no legacy cache dir.
     fake_proj = tmp_path / "fake_proj"
-    (fake_proj / "quantforge").mkdir(parents=True)
+    (fake_proj / "aurora").mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
 
     import importlib

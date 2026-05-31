@@ -1,6 +1,6 @@
-"""Auto research loop runtime (R10).
+﻿"""Auto research loop runtime (R10).
 
-Wraps :class:`quantforge.research.factory.ResearchFactory` with a daily
+Wraps :class:`aurora.research.factory.ResearchFactory` with a daily
 schedule that generates N hypotheses, submits each, and writes a
 per-cycle JSONL summary so an operator can resume / audit the loop.
 

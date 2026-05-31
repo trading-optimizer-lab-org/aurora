@@ -1,9 +1,9 @@
-"""Release provenance + compatibility hardening tests (R188).
+﻿"""Release provenance + compatibility hardening tests (R188).
 
 Covers:
 
 - ``aurora.__version__`` agrees with ``pyproject.toml``'s ``project.version``.
-- ``import quantforge`` emits a ``DeprecationWarning`` (shim contract).
+- ``import aurora`` is canonical and emits no rename warning.
 - ``QF_*`` env vars route through ``aurora.core.env_compat.aurora_env`` and
   emit a ``DeprecationWarning``.
 - ``docs/RELEASE_CHECKLIST.md`` exists and references the wheel-smoke step
@@ -17,7 +17,6 @@ because a real wheel build is too slow.
 from __future__ import annotations
 
 import ast
-import importlib
 import sys
 import tomllib
 import warnings
@@ -54,35 +53,20 @@ def test_aurora_version_matches_pyproject() -> None:
     )
 
 
-def test_quantforge_shim_emits_deprecation_warning() -> None:
-    """Importing the ``quantforge`` compat shim must emit a DeprecationWarning.
-
-    The shim fires its warning at module-import time. Because Python caches
-    modules in ``sys.modules`` and dedups warnings by (location, message),
-    we drop any cached ``quantforge*`` module entries first and then force a
-    fresh import inside a ``catch_warnings`` block with ``always`` filter.
-    """
-    # Wipe any cached quantforge modules so the import statement re-executes
-    # the shim's top-level ``warnings.warn(...)`` call.
+def test_aurora_import_is_canonical_without_deprecation_warning() -> None:
+    """Importing the canonical ``aurora`` package must not warn."""
     for mod_name in list(sys.modules):
-        if mod_name == "quantforge" or mod_name.startswith("quantforge."):
+        if mod_name == "aurora" or mod_name.startswith("aurora."):
             del sys.modules[mod_name]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        importlib.import_module("quantforge")
+        __import__("aurora")
 
     deprecations = [
         w for w in caught if issubclass(w.category, DeprecationWarning)
     ]
-    assert deprecations, (
-        "import quantforge did not emit a DeprecationWarning; "
-        "shim contract is broken (see quantforge/__init__.py)."
-    )
-    # The shim's warning text references the v1.6 retirement.
-    messages = " ".join(str(w.message) for w in deprecations)
-    assert "quantforge" in messages.lower()
-    assert "aurora" in messages.lower()
+    assert not deprecations
 
 
 def test_qf_env_var_emits_deprecation_warning(monkeypatch) -> None:
@@ -143,7 +127,7 @@ def test_release_checklist_exists_and_covers_required_topics() -> None:
     assert "sigstore" in text or "trusted publishing" in text
     # Shim retirement target points at v1.6.
     assert "v1.6" in text
-    assert "quantforge" in text
+    assert "aurora" in text
 
 
 def test_release_smoke_script_is_syntactically_valid() -> None:

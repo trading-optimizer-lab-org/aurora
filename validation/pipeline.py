@@ -1,4 +1,4 @@
-"""Full validation pipeline: 8-gate orchestrator (5 mandatory + DSR + 2 optional).
+﻿"""Full validation pipeline: 8-gate orchestrator (5 mandatory + DSR + 2 optional).
 
 Mandatory gates: walk-forward, MC bootstrap, MC trade reorder, SPP, lookahead.
 Plus DSR (deflated Sharpe) and the two optional gates (noise injection, gap
@@ -30,7 +30,7 @@ from aurora.validation.gap_sim import gap_sim, GapSimResult
 # sync with the protocol document.
 def get_mandatory_gates() -> list[str]:
     """Return the active mandatory-gate identifiers from
-    :class:`quantforge.core.protocol_policy.ProtocolPolicy`.
+    :class:`aurora.core.protocol_policy.ProtocolPolicy`.
     """
     from aurora.core.protocol_policy import get_active_policy
     return list(get_active_policy().mandatory_gates)
@@ -145,13 +145,15 @@ def validate_pipeline(
     oos_tier: str = "OOS_DEV",
     auditor_context: Optional[Any] = None,
     auditor_orchestrator: Optional[Any] = None,
+    research_project_id: Optional[str] = None,
+    protocol_ledger_path: Optional[str] = None,
 ) -> ValidationReport:
     """Run full validation. Returns report with overall pass/fail.
 
     Tier semantics
     --------------
     Per ``RESEARCH_PROTOCOL.md`` the price history is partitioned into
-    five tiers (see :mod:`quantforge.core.data_tiers`):
+    five tiers (see :mod:`aurora.core.data_tiers`):
 
       * ``IS_TRAIN``  - 1995-01-01..2010-12-31 (model fit)
       * ``IS_VALID``  - 2011-01-01..2012-12-31 (inner WF holdout)
@@ -219,6 +221,86 @@ def validate_pipeline(
                 f"an active OOSGuard({required_phase!r}); none found. "
                 "Locked tiers are gated by a single-look ceremony."
             )
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+        record_robustness_run,
+        record_validation_run,
+    )
+
+    protocol_project_id = research_project_id or make_project_id(
+        "validate_pipeline", name, oos_tier_norm,
+    )
+    protocol_candidate_id = make_project_id(name, "validation_pipeline")
+    protocol_guard = ensure_mandatory_research_protocol(
+        project_id=protocol_project_id,
+        objective=f"Validate strategy pipeline result for {name}",
+        metric="validation_overall_passed",
+        universe=(name,),
+        providers=("caller_supplied_prices",),
+        date_range={"is_tier": is_tier_norm, "oos_tier": oos_tier_norm},
+        features=("strategy_factory", "validation_pipeline"),
+        seed="caller_controlled",
+        candidate_id=protocol_candidate_id,
+        allowed_selection_phases=("IS_TRAIN", "IS_ALL", "OOS_DEV"),
+        locked_phases=("OOS_LOCKED", "FORWARD"),
+        constraints={
+            "n_trials_optimization": n_trials_optimization,
+            "cost_model": type(costs).__name__,
+        },
+        actor="aurora_validation",
+        ledger_path=protocol_ledger_path,
+    )
+
+    def _record_and_return(report: ValidationReport) -> ValidationReport:
+        phases_used = [is_tier_norm]
+        if oos_tier_norm == "OOS_DEV":
+            phases_used.append(oos_tier_norm)
+        protocol_guard.record_selection(
+            protocol_candidate_id,
+            phases_used=tuple(phases_used),
+            metrics={
+                "overall_passed": report.overall_passed,
+                "is_calmar": report.is_metrics.get("calmar"),
+                "oos_calmar": report.oos_metrics.get("calmar"),
+            },
+            actor="aurora_validation",
+            payload={"strategy_name": name},
+        )
+        record_robustness_run(
+            protocol_guard,
+            candidate_id=protocol_candidate_id,
+            actor="aurora_validation",
+            checks=(
+                "walk_forward",
+                "monte_carlo_bootstrap",
+                "monte_carlo_reorder",
+                "spp_cross_validation",
+                "lookahead",
+                "cost_model",
+                "trial_pressure",
+            ),
+            passed=bool(report.overall_passed),
+            metrics={
+                "overall_passed": report.overall_passed,
+                "wf_pass": report.wf_pass,
+                "wf_total": report.wf_total,
+                "lookahead_passed": report.lookahead_passed,
+            },
+            payload={"strategy_name": name, "failures": list(report.failures)},
+        )
+        record_validation_run(
+            protocol_guard,
+            candidate_id=protocol_candidate_id,
+            actor="aurora_validation",
+            metrics={
+                "overall_passed": report.overall_passed,
+                "is_calmar": report.is_metrics.get("calmar"),
+                "oos_calmar": report.oos_metrics.get("calmar"),
+            },
+            payload={"strategy_name": name, "failures": list(report.failures)},
+        )
+        return report
 
     failures: list[str] = []
 
@@ -241,7 +323,7 @@ def validate_pipeline(
     if len(is_prices) == 0 and len(oos_prices) == 0:
         is_prices, oos_prices = split_is_oos(prices)
     if len(is_prices) < 50 or len(oos_prices) < 50:
-        return ValidationReport(
+        return _record_and_return(ValidationReport(
             strategy_name=name,
             is_metrics={},
             oos_metrics={},
@@ -257,7 +339,7 @@ def validate_pipeline(
             dsr_passed=None,
             overall_passed=False,
             failures=["insufficient data"],
-        )
+        ))
 
     # Auto-generate default WF windows from prices.index when the canonical
     # 1995-2012 windows fall fully outside the available date range. This
@@ -305,7 +387,7 @@ def validate_pipeline(
 
     def _early_fail() -> ValidationReport:
         """Return a partial report when ``fail_fast`` triggers a short-circuit."""
-        return ValidationReport(
+        return _record_and_return(ValidationReport(
             strategy_name=name,
             is_metrics=is_metrics,
             oos_metrics=oos_metrics,
@@ -321,7 +403,7 @@ def validate_pipeline(
             dsr_passed=None,
             overall_passed=False,
             failures=list(failures),
-        )
+        ))
 
     # Walk-forward -- run on the carved validation series. ``walk_forward``
     # filters its own IS/OOS windows; we still pass the carved series so a
@@ -496,7 +578,7 @@ def validate_pipeline(
             # Marker is advisory; never break the pipeline if disk write fails.
             pass
 
-    return ValidationReport(
+    return _record_and_return(ValidationReport(
         strategy_name=name,
         is_metrics=is_metrics,
         oos_metrics=oos_metrics,
@@ -510,4 +592,4 @@ def validate_pipeline(
         gap_result=gap_result,
         audit_report=audit_report,
         audit_passed=audit_passed,
-    )
+    ))

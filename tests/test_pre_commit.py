@@ -1,9 +1,9 @@
-"""Pre-commit configuration sanity tests.
+﻿"""Pre-commit configuration sanity tests.
 
 Verify .pre-commit-config.yaml exists at the repository root and is valid YAML.
 Skips gracefully if PyYAML isn't installed.
 
-Run: pytest quantforge/tests/test_pre_commit.py -v
+Run: pytest aurora/tests/test_pre_commit.py -v
 """
 from __future__ import annotations
 from pathlib import Path

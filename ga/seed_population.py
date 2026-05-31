@@ -1,4 +1,4 @@
-"""GA population seeding from known-good configs (Task 5.3).
+﻿"""GA population seeding from known-good configs (Task 5.3).
 
 Avoid cold-start by initializing the GA population with parameters that
 prior research already validated. Each KnownConfig encodes a strategy
@@ -36,13 +36,13 @@ class KnownConfig:
 
 # Library of known-good configurations.
 # strategy_class is the class __name__ (matches Strategy subclass names in
-# quantforge.strategies.library), so callers can filter by class.
+# aurora.strategies.library), so callers can filter by class.
 KNOWN_CONFIGS: dict[str, KnownConfig] = {
     "macross_spy_baseline": KnownConfig(
         name="macross_spy_baseline",
         strategy_class="MACross",
         params={"fast": 20, "slow": 100, "allow_short": True},
-        source="QuantForge default",
+        source="Aurora default",
     ),
     "tsmom_industry_6m": KnownConfig(
         name="tsmom_industry_6m",
@@ -110,7 +110,7 @@ def load_known_configs(strategy_class) -> list[KnownConfig]:
 def seed_genome_from_known(strategy_class, params: dict) -> list[float]:
     """Encode a known params dict into a normalized [0, 1] genome.
 
-    This inverts the decode logic in ``quantforge.ga.runner._make_evaluate``:
+    This inverts the decode logic in ``aurora.ga.runner._make_evaluate``:
     - tuple range (lo, hi) -> g = (val - lo) / (hi - lo)
     - list categorical -> g = (idx + 0.5) / len(list)  (midpoint of slot)
 

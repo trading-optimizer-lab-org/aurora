@@ -325,13 +325,16 @@ class TradingEnv(_BaseEnv):
         #     of a notional ``position * notional`` exposure. We instead
         #     update cash linearly via (1 + position * simple_return), then
         #     debit costs as a multiplicative haircut.
+        equity_position = float(target_position)
         if self.config.max_position == 1:
             compound_factor = (
-                float(np.exp(position_pnl)) if np.isfinite(position_pnl) else 1.0
+                float(np.exp(equity_position * pct_ret_log))
+                if np.isfinite(pct_ret_log)
+                else 1.0
             )
             self._cash = self._cash * compound_factor * (1.0 - cost)
         else:
-            position_simple_pnl = float(prev_position) * pct_ret_simple
+            position_simple_pnl = equity_position * pct_ret_simple
             if not np.isfinite(position_simple_pnl):
                 position_simple_pnl = 0.0
             self._cash = self._cash * (1.0 + position_simple_pnl) * (1.0 - cost)

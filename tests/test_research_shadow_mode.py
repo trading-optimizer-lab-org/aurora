@@ -1,4 +1,4 @@
-"""Tests for quantforge.research.shadow_mode."""
+﻿"""Tests for aurora.research.shadow_mode."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

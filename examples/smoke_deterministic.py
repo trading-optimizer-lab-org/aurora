@@ -1,4 +1,4 @@
-"""Deterministic smoke example.
+﻿"""Deterministic smoke example.
 
 Synthetic 500-bar GBM with a fixed seed, run MACross(20, 100) through the
 backtest engine, print metrics. Output is byte-stable and used as a
@@ -8,7 +8,7 @@ Requires an editable install:
     pip install -e .
 
 Run:
-    python quantforge/examples/smoke_deterministic.py
+    python aurora/examples/smoke_deterministic.py
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Tests for quantforge.altdata.satellite_geo."""
+﻿"""Tests for aurora.altdata.satellite_geo."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

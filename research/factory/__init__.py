@@ -1,4 +1,4 @@
-"""Research Factory: hypothesis -> review-queue automation.
+﻿"""Research Factory: hypothesis -> review-queue automation.
 
 Public re-exports for ``from aurora.research.factory import ...``:
 
@@ -13,7 +13,7 @@ Public re-exports for ``from aurora.research.factory import ...``:
   :class:`LLMHypothesisGenerator`.
 
 NOTE: ``StrategySpec`` from this package collides in name with the GA's
-parameter-range descriptor in :mod:`quantforge.strategies.base`. They are
+parameter-range descriptor in :mod:`aurora.strategies.base`. They are
 deliberately separate types -- the GA spec describes "what shapes a
 parameter can take", while this factory spec describes "one concrete
 proposal". Import the one you need by its module path.

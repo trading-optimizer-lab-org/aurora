@@ -1,4 +1,4 @@
-# Disaster Recovery (R36)
+﻿# Disaster Recovery (R36)
 
 What to do when the snapshot store, audit chain or research archive is
 in a degraded state.
@@ -34,7 +34,7 @@ Recovery procedure:
    ```
 2. Rebuild the index from the blob filenames:
    ```bash
-   python -m quantforge.core.snapshot_repair --root "$QF_SNAPSHOT_ROOT"
+   python -m aurora.core.snapshot_repair --root "$QF_SNAPSHOT_ROOT"
    ```
    The repair walker reads every parquet under `<root>/blobs/`,
    re-hashes the contents, and re-inserts a row only when
@@ -51,7 +51,7 @@ A parquet on disk no longer matches the sha256 it was filed under.
 Cause is usually disk rot or interrupted write.
 
 ```bash
-python -m quantforge.core.snapshot_repair --check-only --root "$QF_SNAPSHOT_ROOT"
+python -m aurora.core.snapshot_repair --check-only --root "$QF_SNAPSHOT_ROOT"
 ```
 
 Output lists every mismatched blob. Decisions:
@@ -132,7 +132,7 @@ strategy and the policy at a recent date.
 
 ## Backup strategy
 
-QuantForge does not ship a backup tool. The recommended pattern:
+Aurora does not ship a backup tool. The recommended pattern:
 
 1. Daily: rsync `$QF_DATA_DIR` to a separate disk or object store.
 2. Weekly: cold backup (offline copy) of the snapshot blobs and the
@@ -148,7 +148,7 @@ QuantForge does not ship a backup tool. The recommended pattern:
 - Recovering keys lost from the secrets manager. See
   `docs/HMAC_KEY_OPERATIONS.md`.
 - Recovering compromised broker credentials. Rotate at the broker,
-  not in QuantForge.
+  not in Aurora.
 - Reconstructing in-flight live orders from a partially crashed
   process. The KillSwitch should fire on detect-and-pause; broker
   reconciliation is the canonical truth, not the local audit log.

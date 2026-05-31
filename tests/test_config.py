@@ -1,4 +1,4 @@
-"""Tests for aurora.core.config: pydantic validation, YAML/TOML I/O, overrides."""
+﻿"""Tests for aurora.core.config: pydantic validation, YAML/TOML I/O, overrides."""
 from __future__ import annotations
 import sys
 from pathlib import Path
@@ -30,7 +30,7 @@ def test_default_config():
     assert cfg.data.oos_end == "2024-12-31"
     # cache_dir resolves via runtime_paths (honours $QF_CACHE_DIR /
     # $QF_DATA_DIR; falls back to platformdirs user-data dir). The legacy
-    # in-repo `quantforge/data_cache_qf` default was retired so the
+    # in-repo `aurora/data_cache_qf` default was retired so the
     # ghost directory it created stops shadowing the package.
     from aurora.core.runtime_paths import cache_dir as _cache_dir
     assert cfg.data.cache_dir == str(_cache_dir())
@@ -226,7 +226,7 @@ def test_missing_file(tmp_path: Path):
 
 
 def test_example_yaml_loads():
-    """The shipped example file at quantforge/docs/config.example.yaml must parse."""
+    """The shipped example file at aurora/docs/config.example.yaml must parse."""
     here = Path(__file__).resolve().parent
     example = here.parent / "docs" / "config.example.yaml"
     assert example.exists(), f"Expected example config at {example}"

@@ -1,4 +1,4 @@
-"""Tests for quantforge.research.llm_assistant."""
+﻿"""Tests for aurora.research.llm_assistant."""
 from __future__ import annotations
 
 import ast

@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.observability.Observability."""
+﻿"""Tests for aurora.infra.observability.Observability."""
 from __future__ import annotations
 
 import json

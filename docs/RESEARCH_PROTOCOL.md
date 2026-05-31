@@ -1,5 +1,10 @@
 # Research Protocol
 
+> Canonical workflow note: the mandatory, unified workflow now lives in
+> `RESEARCH_OPERATING_PROTOCOL.md`. This file remains the detailed tier
+> and lockbox reference. If the two ever conflict, the operating protocol
+> wins unless a newer version explicitly replaces it.
+
 This document defines the formal data-split policy for Aurora research.
 The split is the foundation of the OOS sagrado doctrine. Every backtest,
 every GA run, every paper / live deployment must respect it.

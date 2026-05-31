@@ -1,4 +1,4 @@
-"""Tests for quantforge.altdata.fred_macro."""
+﻿"""Tests for aurora.altdata.fred_macro."""
 from __future__ import annotations
 
 import pandas as pd

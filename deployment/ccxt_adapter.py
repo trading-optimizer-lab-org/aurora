@@ -1,6 +1,6 @@
-"""CCXT broker adapter (P3.A).
+﻿"""CCXT broker adapter (P3.A).
 
-Lazy-imports ``ccxt`` so QuantForge stays importable without crypto deps.
+Lazy-imports ``ccxt`` so Aurora stays importable without crypto deps.
 
 Triple-gate for live trading
 ----------------------------

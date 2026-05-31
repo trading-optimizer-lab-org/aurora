@@ -22,6 +22,12 @@ from aurora.research.ledger import (
 
 def _seed_full_chain(ledger: ResearchLedger, project_id: str = "P1") -> None:
     seq = [
+        (LedgerEventType.PROTOCOL_DECLARED, {
+            "objective": "demo",
+            "metric": "calmar",
+            "allowed_selection_phases": ["train", "validation"],
+            "locked_phases": ["locked"],
+        }),
         (LedgerEventType.UNIVERSE_SELECTED, {"name": "etfs"}),
         (LedgerEventType.PROVIDER_SET, {"providers": ["yahoo"]}),
         (LedgerEventType.DATE_RANGE_SET, {"start": "2020", "end": "2026"}),
@@ -113,6 +119,7 @@ def test_assert_ready_for_validation_blocks_when_missing(tmp_path: Path):
     with pytest.raises(LedgerEnforcementError) as exc:
         ledger.assert_ready_for_validation("P1")
     msg = str(exc.value)
+    assert "protocol_declared" in msg
     assert "provider_set" in msg
     assert "feature_set" in msg
 
@@ -123,17 +130,132 @@ def test_assert_ready_for_validation_passes_with_full_chain(tmp_path: Path):
     ledger.assert_ready_for_validation("P1")
 
 
-def test_assert_ready_for_promotion_requires_validation_run(tmp_path: Path):
+def test_assert_ready_for_promotion_requires_robustness_and_validation_run(tmp_path: Path):
     ledger = ResearchLedger(tmp_path / "ledger.jsonl")
     _seed_full_chain(ledger)
     with pytest.raises(LedgerEnforcementError) as exc:
         ledger.assert_ready_for_promotion("P1")
+    assert "selection_run" in str(exc.value)
+    assert "robustness_run" in str(exc.value)
     assert "validation_run" in str(exc.value)
+    ledger.append(
+        LedgerEventType.SELECTION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1", "passed": True},
+    )
     ledger.append(
         LedgerEventType.VALIDATION_RUN,
         project_id="P1", actor="op", payload={"validation_id": "v1"},
     )
     ledger.assert_ready_for_promotion("P1")
+
+
+def test_assert_ready_for_promotion_rejects_failed_latest_robustness(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.append(
+        LedgerEventType.SELECTION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1", "passed": True},
+    )
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1", "passed": False},
+    )
+    ledger.append(
+        LedgerEventType.VALIDATION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+
+    with pytest.raises(LedgerEnforcementError, match="latest robustness_run did not pass"):
+        ledger.assert_ready_for_promotion("P1")
+
+
+def test_assert_ready_for_promotion_rejects_candidate_mismatch(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.append(
+        LedgerEventType.SELECTION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1", "passed": True},
+    )
+    ledger.append(
+        LedgerEventType.VALIDATION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c2"},
+    )
+
+    with pytest.raises(LedgerEnforcementError, match="different candidates"):
+        ledger.assert_ready_for_promotion("P1")
+
+
+def test_assert_ready_for_promotion_rejects_failed_validation(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.append(
+        LedgerEventType.SELECTION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1", "passed": True},
+    )
+    ledger.append(
+        LedgerEventType.VALIDATION_RUN,
+        project_id="P1", actor="op",
+        payload={"candidate_id": "c1", "metrics": {"overall_passed": False}},
+    )
+
+    with pytest.raises(LedgerEnforcementError, match="validation_run did not pass"):
+        ledger.assert_ready_for_promotion("P1")
+
+
+def test_assert_ready_for_promotion_rejects_selection_validation_mismatch(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.append(
+        LedgerEventType.SELECTION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c2", "passed": True},
+    )
+    ledger.append(
+        LedgerEventType.VALIDATION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c2"},
+    )
+
+    with pytest.raises(LedgerEnforcementError, match="selection_run and validation_run"):
+        ledger.assert_ready_for_promotion("P1")
+
+
+def test_assert_ready_for_promotion_rejects_out_of_order_events(tmp_path: Path):
+    ledger = ResearchLedger(tmp_path / "ledger.jsonl")
+    _seed_full_chain(ledger)
+    ledger.append(
+        LedgerEventType.ROBUSTNESS_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1", "passed": True},
+    )
+    ledger.append(
+        LedgerEventType.SELECTION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+    ledger.append(
+        LedgerEventType.VALIDATION_RUN,
+        project_id="P1", actor="op", payload={"candidate_id": "c1"},
+    )
+
+    with pytest.raises(LedgerEnforcementError, match="selection_run -> robustness_run"):
+        ledger.assert_ready_for_promotion("P1")
 
 
 def test_events_filter_by_project(tmp_path: Path):
@@ -208,7 +330,7 @@ def test_events_round_trip_through_disk(tmp_path: Path):
     fresh = ResearchLedger(tmp_path / "ledger.jsonl")
     events = fresh.events(project_id="P1")
     assert events
-    assert events[0].event_type is LedgerEventType.UNIVERSE_SELECTED
+    assert events[0].event_type is LedgerEventType.PROTOCOL_DECLARED
 
 
 def test_event_id_uniqueness_across_appends(tmp_path: Path):

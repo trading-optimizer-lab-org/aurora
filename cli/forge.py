@@ -1,4 +1,4 @@
-"""Aurora CLI entry point (legacy file name ``forge.py`` retained).
+﻿"""Aurora CLI entry point (legacy file name ``forge.py`` retained).
 
 Quick start::
 
@@ -189,7 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Configure logging for the quantforge namespace based on --log-level.
+    # Configure logging for the aurora namespace based on --log-level.
     log_level = getattr(args, "log_level", "INFO")
     try:
         from aurora.core.logging import configure_logging

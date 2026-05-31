@@ -1,4 +1,4 @@
-"""Tests for quantforge.marketdata.auction_imbalance."""
+﻿"""Tests for aurora.marketdata.auction_imbalance."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

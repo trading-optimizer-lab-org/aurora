@@ -1,4 +1,4 @@
-"""Feature store with provenance.
+﻿"""Feature store with provenance.
 
 On-disk cache for computed indicators (RSI, MA, vol, returns, etc.) keyed by
 (symbol, indicator, params, source_data_hash, code_hash).
@@ -106,7 +106,7 @@ class FeatureStore:
     def __init__(self, root: str | None = None):
         # Default to the runtime cache dir (honours $QF_CACHE_DIR /
         # $QF_DATA_DIR; falls back to platformdirs). Never lands inside
-        # the in-repo `quantforge/data_cache_qf/` ghost directory.
+        # the in-repo `aurora/data_cache_qf/` ghost directory.
         if root is None:
             from aurora.core.runtime_paths import cache_dir as _cache_dir
             self.root = Path(_cache_dir()) / "features"
@@ -338,7 +338,7 @@ def _returns_compute(p: np.ndarray, kind: str = "log") -> np.ndarray:
 
 def cached_rsi(store: FeatureStore, symbol: str, prices: pd.Series,
                period: int = 14) -> np.ndarray:
-    """Cached RSI. Mirrors quantforge.strategies.library.rsi_meanrev._rsi."""
+    """Cached RSI. Mirrors aurora.strategies.library.rsi_meanrev._rsi."""
     return store.get_or_compute(symbol, "rsi", prices, _rsi_compute, period=period)
 
 

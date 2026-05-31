@@ -1,4 +1,4 @@
-"""Strategy abstract base + spec dataclass.
+﻿"""Strategy abstract base + spec dataclass.
 
 Conventions:
 - Strategy.signals(prices, **params) -> np.array of weights in [-1, 1]
@@ -24,7 +24,7 @@ class StrategySpec:
     def to_genome(self) -> list[float]:
         """Encode current params as a unit-cube genome (each gene in [0, 1]).
 
-        Convention matches quantforge.ga.runner._make_evaluate.decode: each
+        Convention matches aurora.ga.runner._make_evaluate.decode: each
         gene corresponds to a sorted param key and is normalized to [0, 1]
         using the declared param_range. Values without a declared range pass
         through as-is (rare).
@@ -68,7 +68,7 @@ class StrategySpec:
     def from_genome(self, genome: list[float]) -> "StrategySpec":
         """Decode a unit-cube genome (each gene in [0, 1]) into a new spec.
 
-        Uses the same convention as quantforge.ga.runner._make_evaluate.decode
+        Uses the same convention as aurora.ga.runner._make_evaluate.decode
         so a round-trip ``spec.from_genome(spec.to_genome()).params`` recovers
         the discrete projection of the original params.
         """

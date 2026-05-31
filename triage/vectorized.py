@@ -1,6 +1,6 @@
-"""Internal numpy/pandas vectorized triage backend.
+﻿"""Internal numpy/pandas vectorized triage backend.
 
-This is the *default* backend the :class:`~quantforge.triage.engine.TriageEngine`
+This is the *default* backend the :class:`~aurora.triage.engine.TriageEngine`
 falls back to when ``vectorbt`` is unavailable. It pre-computes signals
 per variant in batch via numpy broadcasting and then computes returns
 under a flat-bps cost model.
@@ -77,7 +77,7 @@ def compute_signals_batch(
         prices: DataFrame with a DatetimeIndex and one or more asset
             columns. Each variant's strategy is invoked once per asset
             column.
-        variants: sequence of :class:`~quantforge.triage.variants.StrategyVariant`.
+        variants: sequence of :class:`~aurora.triage.variants.StrategyVariant`.
 
     Returns:
         ``np.ndarray`` of shape ``(n_variants, n_time, n_assets)`` and

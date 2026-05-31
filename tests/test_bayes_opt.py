@@ -1,4 +1,4 @@
-"""Tests for Bayesian optimization (quantforge.ga.bayes_opt)."""
+﻿"""Tests for Bayesian optimization (aurora.ga.bayes_opt)."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

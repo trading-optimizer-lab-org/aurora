@@ -1,4 +1,4 @@
-"""Tests for ``quantforge.exports.lean`` (P3.B Lean export adapter).
+﻿"""Tests for ``aurora.exports.lean`` (P3.B Lean export adapter).
 
 The exporter is pure-Python text generation -- no Lean runtime is
 required. These tests pin:
@@ -275,7 +275,7 @@ def test_main_cs_smoke_regex(tmp_path, policy):
     # using directives.
     assert "using QuantConnect.Algorithm;" in main
     # namespace declaration.
-    assert re.search(r"namespace\s+QuantForge\.Exports", main)
+    assert re.search(r"namespace\s+Aurora\.Exports", main)
     # class declaration extending QCAlgorithm.
     assert re.search(r"class\s+\w+\s*:\s*QCAlgorithm", main)
     # required overrides.

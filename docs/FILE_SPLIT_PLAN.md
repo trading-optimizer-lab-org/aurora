@@ -1,4 +1,4 @@
-# File Split Plan (R49 / R50 / R51 / R52)
+﻿# File Split Plan (R49 / R50 / R51 / R52)
 
 ## Status
 
@@ -101,7 +101,7 @@ deployment/brokers/
 
 ### Acceptance
 
-- `from quantforge.deployment.brokers import PaperBroker, AlpacaBroker,
+- `from aurora.deployment.brokers import PaperBroker, AlpacaBroker,
   IBKRBroker, ...` continues to work.
 - Per-broker module <= 500 lines.
 - Tests under `tests/test_brokers_*.py` already partition by broker;

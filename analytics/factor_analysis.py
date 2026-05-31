@@ -1,4 +1,4 @@
-"""Alphalens-style factor analysis.
+﻿"""Alphalens-style factor analysis.
 
 Reference: https://github.com/quantopian/alphalens
 
@@ -13,7 +13,7 @@ It does **not** ship a hard-coded multi-factor model such as Fama-French
 3-factor (Mkt-RF, SMB, HML), Carhart 4-factor (+ Momentum), or
 Fama-French 5-factor (+ RMW, CMA). Multi-factor *attribution* (regressing
 returns on a custom factor matrix and reporting alpha/betas) is provided by
-:func:`quantforge.analytics.attribution.attribution_by_factor`, which
+:func:`aurora.analytics.attribution.attribution_by_factor`, which
 accepts an arbitrary `factor_returns_dict` so the caller can pass any
 combination of Mkt-RF, SMB, HML, Momentum, Quality, or custom factor
 returns.

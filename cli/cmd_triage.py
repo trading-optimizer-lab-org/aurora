@@ -49,6 +49,10 @@ def _variants_from_yaml(path: str):
 def cmd_triage_run(args):
     """Run a triage batch and write the result parquet to disk."""
     from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+    )
     from aurora.triage import TriageEngine
 
     cfg = _load_triage_config(args)
@@ -57,6 +61,24 @@ def cmd_triage_run(args):
     variants = _variants_from_yaml(args.variants)
     if not variants:
         return _runtime_error("variants file produced zero variants")
+    sym = variants[0].universe[0] if variants[0].universe else "SPY"
+    ensure_mandatory_research_protocol(
+        project_id=getattr(args, "project_id", None)
+        or make_project_id("triage", sym, len(variants)),
+        objective=f"Triage {len(variants)} variants for {sym}",
+        metric="triage_promising_count",
+        universe=(sym,),
+        providers=("triage_loader", "user_parquet" if getattr(args, "prices", None) else "snapshot_or_cache"),
+        date_range={"tier": cfg.triage_tier_only},
+        features=tuple(v.strategy_class for v in variants),
+        seed="variants_file",
+        candidate_id=make_project_id("triage_batch", sym, len(variants)),
+        allowed_selection_phases=("is_train", "is_valid", "oos_dev"),
+        locked_phases=("oos_locked", "forward"),
+        constraints={"command": "triage run"},
+        actor="aurora_cli",
+        ledger_path=getattr(args, "protocol_ledger", None),
+    )
     if getattr(args, "prices", None):
         import pandas as pd
         prices = pd.read_parquet(args.prices)
@@ -65,7 +87,6 @@ def cmd_triage_run(args):
                 f"prices parquet at {args.prices!r} must have a DatetimeIndex"
             )
     else:
-        sym = variants[0].universe[0] if variants[0].universe else "SPY"
         prices = _load_triage_prices(sym, cfg.triage_tier_only)
     batch = engine.triage_batch(prices, variants)
     batch.to_parquet(args.output)
@@ -110,6 +131,12 @@ def cmd_triage_promote(args):
     from aurora.core.costs import IBKR_costs
     from aurora.core.engine import run_backtest
     from aurora.core.protocol_policy import ProtocolPolicy
+    from aurora.research.protocol_enforcement import (
+        ensure_mandatory_research_protocol,
+        make_project_id,
+        record_robustness_run,
+        record_validation_run,
+    )
     from aurora.triage import TriageBatch, TriageEngine
 
     batch = TriageBatch.from_parquet(args.batch)
@@ -136,6 +163,23 @@ def cmd_triage_promote(args):
         promotion_token=engine._tokens[target.variant_id],
     )
     sym = (target.metadata.get("universe") or ["SPY"])[0]
+    guard = ensure_mandatory_research_protocol(
+        project_id=getattr(args, "project_id", None)
+        or make_project_id("triage_promote", sym, target.variant_id),
+        objective=f"Promote triage variant {target.variant_id}",
+        metric="official_engine_metrics",
+        universe=(sym,),
+        providers=("triage_loader",),
+        date_range={"tier": cfg.triage_tier_only},
+        features=(target.metadata.get("strategy_class", "unknown"),),
+        seed=target.variant_id,
+        candidate_id=target.variant_id,
+        allowed_selection_phases=("is_train", "is_valid", "oos_dev"),
+        locked_phases=("oos_locked", "forward"),
+        constraints={"command": "triage promote"},
+        actor="aurora_cli",
+        ledger_path=getattr(args, "protocol_ledger", None),
+    )
     prices = _load_triage_prices(sym, cfg.triage_tier_only)[sym]
     cls_name = target.metadata.get("strategy_class", "").rsplit(".", 1)[-1]
     cls = _resolve_strategy(cls_name)
@@ -145,6 +189,32 @@ def cmd_triage_promote(args):
         return run_backtest(_prices, strat.signals, costs=IBKR_costs)
 
     res = engine.promote_to_official(target, _runner, prices=prices)
+    guard.record_selection(
+        target.variant_id,
+        phases_used=("is_train", "is_valid", "oos_dev"),
+        metrics={"sharpe": res.sharpe, "cagr": res.cagr, "mdd": res.mdd},
+        actor="aurora_cli",
+        payload={"source": "triage_promote"},
+    )
+    record_robustness_run(
+        guard,
+        candidate_id=target.variant_id,
+        actor="aurora_cli",
+        checks=(
+            "triage_promising_gate",
+            "official_engine_replay",
+            "cost_model",
+        ),
+        passed=True,
+        metrics={"sharpe": res.sharpe, "cagr": res.cagr, "mdd": res.mdd},
+        payload={"source": "triage_promote"},
+    )
+    record_validation_run(
+        guard,
+        candidate_id=target.variant_id,
+        actor="aurora_cli",
+        metrics={"sharpe": res.sharpe, "cagr": res.cagr, "mdd": res.mdd},
+    )
     print(
         f"promoted {target.variant_id[:12]} -> "
         f"sharpe={res.sharpe:.3f} cagr={res.cagr:.3f} mdd={res.mdd:.3f}"
@@ -200,6 +270,8 @@ def register(subparsers, parent_parser=None) -> None:
         "--tier", default=None,
         help="Override triage_tier_only (must be IS_TRAIN/IS_VALID/OOS_DEV)",
     )
+    p_t_run.add_argument("--project-id", default=None)
+    p_t_run.add_argument("--protocol-ledger", default=None)
     p_t_run.set_defaults(func=cmd_triage_run)
 
     p_t_list = triage_sub.add_parser(
@@ -232,6 +304,8 @@ def register(subparsers, parent_parser=None) -> None:
         "--tier", default=None,
         help="Override triage_tier_only when reloading prices",
     )
+    p_t_prom.add_argument("--project-id", default=None)
+    p_t_prom.add_argument("--protocol-ledger", default=None)
     p_t_prom.set_defaults(func=cmd_triage_promote)
 
 
@@ -262,4 +336,6 @@ def register_research_triage(research_sub) -> None:
         "--tier", default=None,
         help="Override triage_tier_only",
     )
+    p_rs_triage.add_argument("--project-id", default=None)
+    p_rs_triage.add_argument("--protocol-ledger", default=None)
     p_rs_triage.set_defaults(func=cmd_research_triage)

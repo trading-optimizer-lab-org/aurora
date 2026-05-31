@@ -1,4 +1,4 @@
-"""Tests for quantforge.research.strategy_marketplace."""
+﻿"""Tests for aurora.research.strategy_marketplace."""
 from __future__ import annotations
 import pytest
 

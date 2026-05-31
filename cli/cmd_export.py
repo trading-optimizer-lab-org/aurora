@@ -1,4 +1,4 @@
-"""``forge export`` subcommand group (R49 split).
+﻿"""``forge export`` subcommand group (R49 split).
 
 P3.B: Lean (QuantConnect) cross-validation adapter.
 """
@@ -23,7 +23,7 @@ def _strategy_spec_for_export(spec_path):
 
 
 def cmd_export_lean(args):
-    """Export a vetted QuantForge spec to a Lean (QuantConnect) project."""
+    """Export a vetted Aurora spec to a Lean (QuantConnect) project."""
     import json as _json
     from pathlib import Path as _Path
 
@@ -119,9 +119,9 @@ def register(subparsers, parent_parser=None) -> None:
         "export",
         help="Cross-validation adapters (Lean / QuantConnect)",
         description=(
-            "Export a vetted QuantForge spec to a Lean (QuantConnect) C# "
+            "Export a vetted Aurora spec to a Lean (QuantConnect) C# "
             "project skeleton + provenance metadata for cross-validation. "
-            "Export only -- promotion still goes through the QuantForge "
+            "Export only -- promotion still goes through the Aurora "
             "research protocol."
         ),
     )

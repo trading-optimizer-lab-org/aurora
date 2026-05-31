@@ -1,4 +1,4 @@
-"""End-to-end spine integration test.
+﻿"""End-to-end spine integration test.
 
 Exercises the full chain: Policy -> DataProviderRegistry -> SnapshotStore ->
 ExperimentRegistry -> ValidationPipeline (with AuditorOrchestrator) ->
@@ -24,7 +24,7 @@ the ceremony at any stage refuses the action loudly.
 
 Known issues found while writing this test
 ------------------------------------------
-* :class:`quantforge.validation.pipeline.ValidationReport` does not currently
+* :class:`aurora.validation.pipeline.ValidationReport` does not currently
   carry a ``policy_hash`` attribute. The audit_report it embeds (when
   ``auditor_context`` is provided) does carry one, so end-to-end provenance is
   preserved through ``audit_report.policy_hash``. The provenance test

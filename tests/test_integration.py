@@ -1,4 +1,4 @@
-"""End-to-end integration tests for QuantForge (Task 6.1).
+﻿"""End-to-end integration tests for Aurora (Task 6.1).
 
 Covers full pipeline:
     data -> strategy -> validate_pipeline -> marker -> preflight -> tearsheet
@@ -149,7 +149,7 @@ def test_e2e_strategy_to_paper_marker(tmp_path, monkeypatch):
 
     if rep.overall_passed:
         # Marker must exist
-        marker_path = tmp_path / "quantforge" / "data_cache_qf" / ".validation_passed_MACross.json"
+        marker_path = tmp_path / "aurora" / "data_cache_qf" / ".validation_passed_MACross.json"
         assert marker_path.exists(), f"marker not written at {marker_path}"
         # Preflight finds it
         check = check_validation_marker("MACross", project_dir=str(tmp_path))
@@ -314,7 +314,7 @@ def test_e2e_full_workflow(tmp_path, monkeypatch):
     # Redirect QF_CACHE so preflight's data-availability check (which calls
     # load_asset under the hood) reads/writes inside tmp_path instead of the
     # real project cache. Avoids network and avoids polluting the repo.
-    fake_cache = tmp_path / "quantforge" / "data_cache_qf"
+    fake_cache = tmp_path / "aurora" / "data_cache_qf"
     fake_cache.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_dl, "QF_CACHE", str(fake_cache))
     # Also patch the symbol QF_CACHE imported into preflight

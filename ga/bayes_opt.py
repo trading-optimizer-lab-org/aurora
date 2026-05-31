@@ -1,4 +1,4 @@
-"""Bayesian Optimization alternative to GA.
+﻿"""Bayesian Optimization alternative to GA.
 
 Wraps scikit-optimize gp_minimize over StrategySpec.param_ranges.
 Falls back to a minimal sklearn+scipy GP-EI implementation if skopt is missing.
@@ -177,7 +177,7 @@ def _scalarize(fitness_tuple, weights=(0.5, 0.3, 0.2, 0.5),
 def _detect_bayes_fitness_signature(fitness_fn) -> str:
     """Return 'is_only' if fitness_fn takes (prices, signal_fn, ...), else 'legacy'.
 
-    Mirrors quantforge.ga.runner._detect_fitness_signature for the BO codepath
+    Mirrors aurora.ga.runner._detect_fitness_signature for the BO codepath
     so the fallback for the deprecated ``(prices_is, prices_oos, signal_fn)``
     shape passes ``None`` for prices_oos rather than leaking the OOS series.
     """
@@ -208,7 +208,7 @@ def bayes_optimize(strategy_class, prices_is, prices_oos=None,
             BO loop forwards ``None`` for the oos slot so the deprecated
             implementation in ``ga.fitness`` cannot see OOS during selection.
             For OOS validation of selected candidates use
-            ``quantforge.ga.fitness.validate_oos`` AFTER ``bayes_optimize``
+            ``aurora.ga.fitness.validate_oos`` AFTER ``bayes_optimize``
             returns, ideally inside an ``OOSGuard`` context.
         fitness_fn: callable. Two supported shapes:
             - new (preferred): ``fn(prices_is, signal_fn) -> tuple|float``

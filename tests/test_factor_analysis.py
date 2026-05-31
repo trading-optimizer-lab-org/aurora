@@ -1,6 +1,6 @@
-"""Tests for alphalens-style factor analysis.
+﻿"""Tests for alphalens-style factor analysis.
 
-Run: uv run pytest quantforge/tests/test_factor_analysis.py -v
+Run: uv run pytest aurora/tests/test_factor_analysis.py -v
 """
 from __future__ import annotations
 

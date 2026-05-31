@@ -1,4 +1,4 @@
-"""Immutable, content-hashed data snapshots.
+﻿"""Immutable, content-hashed data snapshots.
 
 A snapshot freezes a price series to disk (parquet) and registers the metadata
 in a SQLite index. The SHA-256 hash is computed deterministically from the
@@ -701,7 +701,7 @@ class SnapshotStore:
 
         ``audit_report`` may be either:
           * an object with a ``content_hash()`` method (the canonical case --
-            ``quantforge.agents.auditor.AuditReport``), or
+            ``aurora.agents.auditor.AuditReport``), or
           * a plain hex string already representing the hash.
 
         Returns the hash string that was persisted. Raises

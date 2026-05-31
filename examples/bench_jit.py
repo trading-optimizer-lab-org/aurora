@@ -1,10 +1,10 @@
-"""Benchmark: run_backtest vs run_backtest_jit on 10K bars synthetic prices.
+﻿"""Benchmark: run_backtest vs run_backtest_jit on 10K bars synthetic prices.
 
 Reports speedup ratio. Target >5x.
 
 Run:
     uv run --with numba --with vectorbt --with scipy --with pyarrow \
-        python quantforge/examples/bench_jit.py
+        python aurora/examples/bench_jit.py
 """
 from __future__ import annotations
 import time

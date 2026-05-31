@@ -1,4 +1,4 @@
-"""Purged K-Fold cross-validation with embargo.
+﻿"""Purged K-Fold cross-validation with embargo.
 
 Source: Lopez de Prado 'Advances in Financial Machine Learning' (AFML), Ch.7,
 adapted from mlfinlab/cross_validation.py
@@ -13,7 +13,7 @@ Why purging matters:
 - Embargo additionally drops a buffer of train samples that fall *just after*
   the test fold, so any short-term serial correlation does not leak.
 
-This module is the canonical CV layer for ML strategies in QuantForge. For
+This module is the canonical CV layer for ML strategies in Aurora. For
 non-ML strategies the metrics are still meaningful: each fold becomes an OOS
 slice with the train slice already optimized away (caller provides a factory).
 """

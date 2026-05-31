@@ -1,4 +1,4 @@
-"""Multi-asset GA runner using DEAP NSGA-II + MultiAssetEngine.
+﻿"""Multi-asset GA runner using DEAP NSGA-II + MultiAssetEngine.
 
 Generic over any multi-asset strategy class that exposes:
 - `spec()` -> StrategySpec (genome ranges)
@@ -159,7 +159,7 @@ def multi_asset_validate_oos(
 ) -> dict:
     """Run candidate weights against OOS data. Used AFTER GA selection only.
 
-    Mirrors quantforge.ga.fitness.validate_oos for the multi-asset case.
+    Mirrors aurora.ga.fitness.validate_oos for the multi-asset case.
     Returns a metrics dict; on failure returns NaN-filled dict + 'error' key.
     """
     try:

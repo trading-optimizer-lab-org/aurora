@@ -1,4 +1,4 @@
-name: typecheck
+﻿name: typecheck
 on:
   push:
     branches: [main]
@@ -21,6 +21,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,ga]"
       - name: Run mypy
-        # No `quantforge/` package subdir in this layout (Layout B); mypy
+        # No `aurora/` package subdir in this layout (Layout B); mypy
         # walks the configured packages from `pyproject.toml`.
         run: python -m mypy .

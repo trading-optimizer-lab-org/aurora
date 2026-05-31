@@ -1,4 +1,4 @@
-"""Tests for quantforge.deployment.cov_shrinkage (Task H.4)."""
+﻿"""Tests for aurora.deployment.cov_shrinkage (Task H.4)."""
 from __future__ import annotations
 import time
 

@@ -1,4 +1,4 @@
-"""Tests for quantforge.deployment.brokers (multi-broker abstraction).
+﻿"""Tests for aurora.deployment.brokers (multi-broker abstraction).
 
 PaperBroker is exercised end-to-end. SDK-dependent adapters are tested by
 mocking imports / clients — no real broker traffic, no real credentials.

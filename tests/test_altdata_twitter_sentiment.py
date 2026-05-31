@@ -1,4 +1,4 @@
-"""Tests for quantforge.altdata.twitter_sentiment.
+﻿"""Tests for aurora.altdata.twitter_sentiment.
 
 All tests run offline using ``mock=True``. The live network path is exercised
 indirectly via missing-credential guard tests.

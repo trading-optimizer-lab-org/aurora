@@ -1,6 +1,6 @@
-"""Tests for SectorHRP.
+﻿"""Tests for SectorHRP.
 
-Run: pytest quantforge/tests/test_sector_hrp.py -v
+Run: pytest aurora/tests/test_sector_hrp.py -v
 """
 from __future__ import annotations
 import numpy as np

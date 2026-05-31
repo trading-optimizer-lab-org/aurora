@@ -1,4 +1,4 @@
-QuantForge API Reference
+﻿Aurora API Reference
 ========================
 
 Standalone Python quant research engine. Backtest, GA, validation gates,
@@ -9,6 +9,7 @@ Project resources:
 - Architecture overview: :doc:`ARCHITECTURE`
 - Spine reference: :doc:`SPINE`
 - Strategy authoring guide: :doc:`STRATEGY_AUTHOR`
+- Research operating protocol: :doc:`RESEARCH_OPERATING_PROTOCOL`
 - Research protocol: :doc:`RESEARCH_PROTOCOL`
 - Glossary: :doc:`GLOSSARY`
 
@@ -24,6 +25,7 @@ For the operator-facing journey from install to live, see
    ARCHITECTURE
    SPINE
    STRATEGY_AUTHOR
+   RESEARCH_OPERATING_PROTOCOL
    RESEARCH_PROTOCOL
    GLOSSARY
    TRIAGE

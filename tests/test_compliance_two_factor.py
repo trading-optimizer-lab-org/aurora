@@ -1,4 +1,4 @@
-"""Tests for quantforge.compliance.two_factor."""
+﻿"""Tests for aurora.compliance.two_factor."""
 from __future__ import annotations
 
 import base64
@@ -41,7 +41,7 @@ def test_provisioning_uri_contains_issuer(auth):
     s = "JBSWY3DPEHPK3PXP"
     uri = auth.provisioning_uri(s)
     assert uri.startswith("otpauth://totp/")
-    assert "QuantForge" in uri
+    assert "Aurora" in uri
 
 
 def test_now_otp_is_digit_string(auth):

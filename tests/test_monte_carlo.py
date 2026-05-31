@@ -1,4 +1,4 @@
-"""Tests for quantforge.validation.monte_carlo (block bootstrap)."""
+﻿"""Tests for aurora.validation.monte_carlo (block bootstrap)."""
 from __future__ import annotations
 import numpy as np
 import pytest

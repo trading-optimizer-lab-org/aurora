@@ -1,6 +1,6 @@
-"""Tests for ESGFilter.
+﻿"""Tests for ESGFilter.
 
-Run: pytest quantforge/tests/test_esg_filter.py -v
+Run: pytest aurora/tests/test_esg_filter.py -v
 """
 from __future__ import annotations
 import numpy as np

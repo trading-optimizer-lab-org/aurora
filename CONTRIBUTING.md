@@ -1,6 +1,6 @@
-# Contributing to Aurora
+﻿# Contributing to Aurora
 
-Aurora (renamed from QuantForge in v1.5.0 / R23) is a quant research
+Aurora (renamed from Aurora in v1.5.0 / R23) is a quant research
 engine with a militant anti-overfit pipeline. This guide covers the
 rules contributors must follow.
 
@@ -19,7 +19,7 @@ For the full stack:
 pip install -e ".[dev,all]"
 ```
 
-The legacy `quantforge` namespace remains importable as a thin compat
+The legacy `aurora` namespace remains importable as a thin compat
 shim that emits a `DeprecationWarning`; the shim is removed in v1.6.
 
 ## Running tests

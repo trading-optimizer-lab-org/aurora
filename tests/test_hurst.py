@@ -1,6 +1,6 @@
-"""Tests for quantforge.regime.hurst (Task J.5).
+﻿"""Tests for aurora.regime.hurst (Task J.5).
 
-Run: uv run pytest quantforge/tests/test_hurst.py -v
+Run: uv run pytest aurora/tests/test_hurst.py -v
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""mutmut configuration for QuantForge mutation testing (R12).
+﻿"""mutmut configuration for Aurora mutation testing (R12).
 
 mutmut 3.x reads ``[tool.mutmut]`` from ``pyproject.toml`` for
 ``paths_to_mutate`` and pytest test-selection arguments. This file exists to

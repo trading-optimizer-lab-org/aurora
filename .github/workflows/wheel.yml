@@ -1,4 +1,4 @@
-name: wheel
+﻿name: wheel
 on:
   push:
     branches: [main]
@@ -29,14 +29,14 @@ jobs:
           assert tpl_count >= 4, f'lean templates count {tpl_count} < 4'
           print(f'wheel OK: {aurora.__version__}, configs={yaml_count}, templates={tpl_count}')
           "
-          # quantforge namespace remains importable as a deprecation-warned shim
+          # aurora namespace remains importable as a deprecation-warned shim
           /tmp/test_venv/bin/python -W error::DeprecationWarning -c "
           import warnings
           # Importing the shim must raise DeprecationWarning under -W error
           try:
-              import quantforge
+              import aurora
           except DeprecationWarning:
-              print('quantforge shim correctly emits DeprecationWarning')
+              print('aurora shim correctly emits DeprecationWarning')
           "
       - uses: actions/upload-artifact@v4
         with:

@@ -1,4 +1,4 @@
-"""Cloud object-store sync stub for strategy + parquet snapshots.
+﻿"""Cloud object-store sync stub for strategy + parquet snapshots.
 
 Three providers are wired through one interface:
 
@@ -33,7 +33,7 @@ class CloudConfig:
         mock_root: when ``mock=True``, local directory used as fake bucket.
     """
     provider: str = "s3"
-    bucket: str = "quantforge"
+    bucket: str = "aurora"
     prefix: str = ""
     region: str = "us-east-1"
     mock_root: Optional[str] = None
@@ -146,7 +146,7 @@ class CloudSync:
         if self.config.mock_root:
             return self.config.mock_root
         # R75: default mock root resolves through runtime_paths so it
-        # never recreates the legacy in-repo `quantforge/data_cache_qf/`
+        # never recreates the legacy in-repo `aurora/data_cache_qf/`
         # ghost directory.
         from aurora.core.runtime_paths import cache_dir
         return str(

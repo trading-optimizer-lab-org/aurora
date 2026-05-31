@@ -1,7 +1,7 @@
-"""Stage / rejection enums and the candidate-run record for the factory.
+﻿"""Stage / rejection enums and the candidate-run record for the factory.
 
 A :class:`CandidateRun` is the immutable outcome of pushing a
-:class:`~quantforge.research.factory.spec.StrategySpec` through the
+:class:`~aurora.research.factory.spec.StrategySpec` through the
 factory. It carries:
 
 * the spec that was submitted,

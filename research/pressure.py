@@ -1,4 +1,4 @@
-"""Research pressure scoring (Phase 2 / Candidate B).
+﻿"""Research pressure scoring (Phase 2 / Candidate B).
 
 Quantifies the ratio of research choices to data length. The intuition:
 the more variants and parameters a researcher tries against a fixed
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 # Thresholds applied to ``pressure_ratio`` (variants*params / data_length).
-# Mirrored in :mod:`quantforge.validation.research_pressure` so the
+# Mirrored in :mod:`aurora.validation.research_pressure` so the
 # validation report and the score itself agree on labels.
 _LOW_MAX = 0.01
 _MEDIUM_MAX = 0.05

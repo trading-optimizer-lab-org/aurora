@@ -1,7 +1,7 @@
-# Research Factory configuration (P1.C).
+﻿# Research Factory configuration (P1.C).
 #
 # Default thresholds for the IS/WF/OOS_DEV gates run by
-# ``quantforge.research.factory.ResearchFactory``. Tune these per project,
+# ``aurora.research.factory.ResearchFactory``. Tune these per project,
 # but never lower the OOS_DEV bar below the protocol's promotion floor.
 
 # In-sample backtest gate.

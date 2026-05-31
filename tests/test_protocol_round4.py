@@ -1,4 +1,4 @@
-"""Round-4 protocol-tier audit fixes.
+﻿"""Round-4 protocol-tier audit fixes.
 
 Each test pins one of the round-4 fixes documented in the external audit:
 
@@ -113,8 +113,8 @@ def test_live_proceeds_with_valid_marker(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(live_mod, "HAS_LUMIBOT", True)
     qf_strat = _make_qf_strategy_named("ValidatedStrat_R4")
 
-    # Write a fresh marker into the tmp project_dir's quantforge/data_cache_qf
-    cache = tmp_path / "quantforge" / "data_cache_qf"
+    # Write a fresh marker into the tmp project_dir's aurora/data_cache_qf
+    cache = tmp_path / "aurora" / "data_cache_qf"
     cache.mkdir(parents=True, exist_ok=True)
     # ``write_validation_marker`` requires the report; we synthesize a minimal
     # JSON payload manually to stay independent of the report shape.

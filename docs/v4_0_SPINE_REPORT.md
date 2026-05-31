@@ -1,4 +1,4 @@
-# QuantForge v4.0 — Spine Hardening Report
+﻿# Aurora v4.0 — Spine Hardening Report
 
 **Date:** 2026-05-07
 **Method:** SDD parallel batches P0/P1/P2/P3 + spine integration (10 agents, 11 new packages)
@@ -60,7 +60,7 @@ Asserts hash bindings end-to-end and negative paths (refused without ceremony / 
 ## New top-level packages
 
 ```
-quantforge/
+aurora/
 ├── core/
 │   ├── protocol_policy.py        NEW v4 — central policy as code, frozen, hashed
 │   └── data_providers/           NEW v4 — registry + yahoo/snapshot/csv/openbb/synthetic/ccxt
@@ -110,9 +110,9 @@ quantforge/
 ## Test verification
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/ -m "not slow and not integration" \
-    --ignore=quantforge/tests/test_config.py \
-    --ignore=quantforge/tests/test_property.py
+"C:/Python314/python.exe" -m pytest aurora/tests/ -m "not slow and not integration" \
+    --ignore=aurora/tests/test_config.py \
+    --ignore=aurora/tests/test_property.py
 2780 passed, 6 skipped, 10 deselected, 10 failed in 378.45s
 ```
 
@@ -167,7 +167,7 @@ quantforge/
 - Markdown + JSON outputs; CLI for cron/slack integration
 
 ### CCXT crypto adapter
-- Optional ccxt dependency (`pip install quantforge[crypto]`)
+- Optional ccxt dependency (`pip install aurora[crypto]`)
 - Lazy import; smoke tests pass without ccxt
 - Sandbox default ON; live requires triple-gate + per-exchange consent token
 - KillSwitch + AuditLog + RateLimiter (ccxt-rate-limit aware) + position concentration cap from policy
@@ -245,4 +245,4 @@ Every artifact is hash-bound to its protocol version. Every cross-tier read requ
 
 **v4.0 spine hardening:** the 7-stage spine (Policy → DataProviders → SnapshotStore → ExperimentRegistry → ValidationPipeline → AgentGateway → Paper/Live) is fully wired and integration-tested. The protocol is now enforceable as code, not just documentation.
 
-QuantForge has grown from 289-test minimal backtest engine into a 2780-test full-stack quant research + trading + compliance + audit platform with a hardened protocol spine.
+Aurora has grown from 289-test minimal backtest engine into a 2780-test full-stack quant research + trading + compliance + audit platform with a hardened protocol spine.

@@ -1,4 +1,4 @@
-"""PDF tearsheet renderer skeleton (R84).
+﻿"""PDF tearsheet renderer skeleton (R84).
 
 Today the tearsheet ships as HTML. This module wraps the HTML render
 pipeline with WeasyPrint (already in `pyproject.toml`'s `report`
@@ -41,7 +41,7 @@ def render_html_to_pdf(
 
     Raises:
         ImportError: ``weasyprint`` is not installed. The caller
-            should install with ``pip install quantforge[report]``.
+            should install with ``pip install aurora[report]``.
     """
     if config is None:
         config = PdfRenderConfig()
@@ -50,7 +50,7 @@ def render_html_to_pdf(
     except ImportError as exc:
         raise ImportError(
             "weasyprint is required for PDF rendering. "
-            "Install via `pip install quantforge[report]`."
+            "Install via `pip install aurora[report]`."
         ) from exc
     output_path.parent.mkdir(parents=True, exist_ok=True)
     HTML(

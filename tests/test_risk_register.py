@@ -1,4 +1,4 @@
-"""Tests for ``quantforge.governance`` (Phase 6 / Candidate D).
+﻿"""Tests for ``aurora.governance`` (Phase 6 / Candidate D).
 
 DEPRECATED: superseded by R175 solo-operator risk record (see
 ``tests/test_risk_record.py``). The Phase 6 maker-checker symbols

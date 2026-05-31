@@ -1,6 +1,6 @@
-# HMAC Key Operations (R35)
+﻿# HMAC Key Operations (R35)
 
-Operator-facing guide for the HMAC keys QuantForge uses to sign agent
+Operator-facing guide for the HMAC keys Aurora uses to sign agent
 tokens, operator countersignatures, and audit-trail records.
 
 ## Keys at a glance
@@ -54,7 +54,7 @@ Operator-grade options, in order of preference:
 
 ## Loading at runtime
 
-QuantForge reads each variable lazily on the first use; if the variable
+Aurora reads each variable lazily on the first use; if the variable
 is missing the gateway / pipeline raises a typed `RuntimeError` rather
 than silently signing with empty bytes. The expected pattern is:
 
@@ -64,7 +64,7 @@ export QF_GATEWAY_SECRET="$(vault kv get -field=secret secret/aurora/gateway)"
 export QF_OPERATOR_KEY="$(vault kv get -field=key secret/aurora/operator)"
 
 # Now run the gateway / agent / live wrappers.
-python -m quantforge.cli.forge agent stage --strategy MACross ...
+python -m aurora.cli.forge agent stage --strategy MACross ...
 ```
 
 ## Rotation procedure

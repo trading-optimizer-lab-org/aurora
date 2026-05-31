@@ -1,6 +1,6 @@
-"""Tests for the real-time data ingestion adapter.
+﻿"""Tests for the real-time data ingestion adapter.
 
-Run: uv run pytest quantforge/tests/test_realtime.py -v
+Run: uv run pytest aurora/tests/test_realtime.py -v
 """
 from __future__ import annotations
 

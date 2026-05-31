@@ -1,10 +1,10 @@
-"""Lumibot live trading wrapper for QuantForge strategies.
+﻿"""Lumibot live trading wrapper for Aurora strategies.
 
 WARNING - LIVE TRADING RISKS
 ============================
 This module submits REAL ORDERS to a live broker. Before deploying:
 
-1. Strategy MUST pass the QuantForge validation pipeline (WF, MC, Lookahead,
+1. Strategy MUST pass the Aurora validation pipeline (WF, MC, Lookahead,
    DSR > 0.5, Calmar gates, lockbox approval). Never deploy unvalidated code.
 2. Test on paper (deployment.paper.QFPaperStrategy) for >= 1 month first.
 3. Start with the smallest viable size; daily_loss_limit and max_notional_pct
@@ -12,7 +12,7 @@ This module submits REAL ORDERS to a live broker. Before deploying:
 4. Network/broker outages, partial fills, halted symbols, after-hours gaps,
    liquidity holes, and corporate actions can all cause REAL money loss
    beyond what your backtest models. Live P&L will diverge from backtest P&L.
-5. You accept full responsibility. The QuantForge authors do NOT.
+5. You accept full responsibility. The Aurora authors do NOT.
 
 Pre-trade risk checks layered on top of paper wrapper:
 - Daily loss limit (halt new orders if NAV draw exceeds limit since session start)
@@ -130,7 +130,7 @@ class TransientOrderError(Exception):
 
 
 def _order_client_id(order) -> str | None:
-    """Return the QuantForge client_order_id attribute on the order, if any."""
+    """Return the Aurora client_order_id attribute on the order, if any."""
     for attr in ("client_order_id", "_client_order_id"):
         val = getattr(order, attr, None)
         if val:
@@ -194,7 +194,7 @@ def _verify_agent_gateway_commit(order, gateway_committed) -> None:
 
     P1.A integration point: when a non-human actor submits an order
     through ``submit_with_retry``, the caller must pass the
-    :class:`quantforge.agent_gateway.CommittedAction` returned by
+    :class:`aurora.agent_gateway.CommittedAction` returned by
     ``AgentGateway.commit``. This helper confirms the committed
     action's symbol and side match the order. Mismatches raise a
     ``RuntimeError`` so the broker is never reached.
@@ -338,7 +338,7 @@ def preflight_checks(strategy, qf_config: LiveConfig) -> list[str]:
 
 
 class QFLiveStrategy(LumibotStrategy):
-    """Lumibot live trading wrapper for QuantForge strategies.
+    """Lumibot live trading wrapper for Aurora strategies.
 
     Adds pre-trade risk checks on top of paper wrapper:
     - Max position notional check (no over-leverage)

@@ -1,4 +1,4 @@
-"""Weights & Biases hyperparameter tracking.
+﻿"""Weights & Biases hyperparameter tracking.
 
 Lazy import of ``wandb``. When unavailable (the normal test path) the
 tracker stores everything in memory so tests can exercise the contract
@@ -30,7 +30,7 @@ class WandBRun:
 class WandBTracker:
     """Track hyperparameters + metrics with optional W&B backend."""
 
-    def __init__(self, project: str = "quantforge",
+    def __init__(self, project: str = "aurora",
                  entity: str | None = None, use_real: bool = False):
         if not project:
             raise ValueError("project must be non-empty")

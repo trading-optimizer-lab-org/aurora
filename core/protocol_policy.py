@@ -1,4 +1,4 @@
-"""Central, immutable policy object for the QuantForge research protocol.
+﻿"""Central, immutable policy object for the Aurora research protocol.
 
 P0.A goal: turn ``RESEARCH_PROTOCOL.md`` from documentation into enforced
 code. Every module that previously hard-coded a tier date, a ceremony name,
@@ -12,9 +12,9 @@ Design contract
   to derive a new policy for tests.
 * :func:`ProtocolPolicy.default` returns the current production policy with
   the constants in :mod:`aurora.core.data_tiers`,
-  :mod:`quantforge.validation.pipeline`, :mod:`quantforge.ga.runner`, and
+  :mod:`aurora.validation.pipeline`, :mod:`aurora.ga.runner`, and
   :mod:`aurora.core.costs` reproduced as data.
-* :func:`ProtocolPolicy.load` reads ``quantforge/config/protocol_policy.yaml``
+* :func:`ProtocolPolicy.load` reads ``aurora/config/protocol_policy.yaml``
   if it exists and otherwise falls back to :func:`default`.
 * :attr:`ProtocolPolicy.policy_hash` is a deterministic ``sha256`` digest of
   the canonical JSON dump (``sort_keys=True``, no extra whitespace). The
@@ -128,7 +128,7 @@ class GAConfigPolicy:
     """GA defaults at the protocol level.
 
     These are the *floor* values; per-call overrides via
-    ``quantforge.ga.runner.GAConfig`` are still allowed but should not
+    ``aurora.ga.runner.GAConfig`` are still allowed but should not
     drop below these.
     """
 
@@ -151,7 +151,7 @@ class GAConfigPolicy:
 
 @dataclass(frozen=True)
 class ProtocolPolicy:
-    """Single source of truth for the QuantForge research protocol.
+    """Single source of truth for the Aurora research protocol.
 
     See module docstring for the immutability contract.
     """
@@ -176,7 +176,7 @@ class ProtocolPolicy:
 
         The values mirror the existing module-level constants in
         :mod:`aurora.core.data_tiers`,
-        :mod:`quantforge.validation.pipeline`, :mod:`quantforge.ga.runner`
+        :mod:`aurora.validation.pipeline`, :mod:`aurora.ga.runner`
         and :mod:`aurora.core.costs` as of v3.0.
         """
         tiers = {
@@ -438,7 +438,7 @@ class ProtocolPolicy:
     @staticmethod
     def default_yaml_path() -> str:
         """Canonical on-disk location for the protocol policy YAML."""
-        # /quantforge/core/protocol_policy.py -> /quantforge/config/protocol_policy.yaml
+        # /aurora/core/protocol_policy.py -> /aurora/config/protocol_policy.yaml
         here = Path(__file__).resolve().parent
         return str(here.parent / "config" / "protocol_policy.yaml")
 

@@ -1,4 +1,4 @@
-"""Exotic / multi-asset markets adapters for QuantForge v3.0.
+﻿"""Exotic / multi-asset markets adapters for Aurora v3.0.
 
 Each module exposes an analyzer/builder/trader class with a dataclass config
 and primary ``analyze``/``signals`` method. All modules ship with deterministic

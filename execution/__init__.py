@@ -1,4 +1,4 @@
-"""QuantForge execution algorithms (Batch E — Sophisticated Execution).
+﻿"""Aurora execution algorithms (Batch E — Sophisticated Execution).
 
 Ten algorithmic execution modules:
 

@@ -1,4 +1,4 @@
-"""Prometheus metrics + Grafana dashboard JSON emitter.
+﻿"""Prometheus metrics + Grafana dashboard JSON emitter.
 
 Lazy ``prometheus_client``. When the SDK is missing, counters fall back
 to an in-memory dict so callers can still increment metrics. The
@@ -35,7 +35,7 @@ class ObservabilityConfig:
         push_gateway: optional pushgateway URL (no test coverage).
         labels: default label key/values applied to every metric.
     """
-    namespace: str = "quantforge"
+    namespace: str = "aurora"
     port: int = 9100
     push_gateway: str = ""
     labels: dict = field(default_factory=dict)
@@ -117,7 +117,7 @@ class Observability:
         self._http_started = True
         return True
 
-    def render_grafana_dashboard(self, title: str = "QuantForge") -> dict:
+    def render_grafana_dashboard(self, title: str = "Aurora") -> dict:
         """Return a Grafana dashboard JSON dict with the default panels."""
         panels = []
         for i, (name, _) in enumerate(_DEFAULT_COUNTERS):
@@ -155,11 +155,11 @@ class Observability:
             "panels": panels,
             "time": {"from": "now-6h", "to": "now"},
             "refresh": "30s",
-            "tags": ["quantforge", "trading"],
+            "tags": ["aurora", "trading"],
         }
 
     def write_grafana_dashboard(self, path: str,
-                                title: str = "QuantForge") -> str:
+                                title: str = "Aurora") -> str:
         """Persist the Grafana dashboard JSON to ``path``."""
         import os
 

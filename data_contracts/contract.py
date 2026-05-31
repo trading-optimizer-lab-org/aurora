@@ -1,4 +1,4 @@
-"""Versioned data contract dataclasses.
+﻿"""Versioned data contract dataclasses.
 
 A :class:`DataContract` is a frozen description of what a dataset must look
 like before any backtest, GA run, validation gate or factory submit is
@@ -82,7 +82,7 @@ class AvailabilityPolicy:
         available_time_col: column that records when the row became
             visible to the pipeline. The validator uses this column to
             enforce point-in-time access in
-            :func:`quantforge.data_contracts.validator.validate_dataframe`.
+            :func:`aurora.data_contracts.validator.validate_dataframe`.
         ingested_time_col: column that records when the row hit our
             storage. Optional, used for lineage only.
         revision_time_col: column that records the latest revision time.
@@ -108,7 +108,7 @@ class CorporateActionPolicy:
     """How the validator treats suspicious split-like jumps.
 
     ``severity`` controls how
-    :func:`quantforge.data_contracts.validator.validate_dataframe` reacts
+    :func:`aurora.data_contracts.validator.validate_dataframe` reacts
     when a single bar-to-bar move on a price column exceeds
     ``split_jump_threshold``:
 
@@ -225,7 +225,7 @@ class DataValidationResult:
             validation. Always populated when validation runs.
         validator_version: version string for the validator that
             produced the result. See
-            :data:`quantforge.data_contracts.validator.VALIDATOR_VERSION`.
+            :data:`aurora.data_contracts.validator.VALIDATOR_VERSION`.
         decision_outcome: free-form summary string written into the
             lineage record. Empty when not yet decided.
     """

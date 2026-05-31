@@ -1,4 +1,4 @@
-"""Data engineering modules for QuantForge v3.0.
+﻿"""Data engineering modules for Aurora v3.0.
 
 Each module exposes a primary class with a dataclass config and a main method.
 External dependencies (kafka, flink, dbt, great_expectations, networkx) are

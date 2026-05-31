@@ -1,4 +1,4 @@
-"""YAML/TOML config system for QuantForge with pydantic v2 validation.
+﻿"""YAML/TOML config system for Aurora with pydantic v2 validation.
 
 Loaded explicitly. No singletons. Pass ForgeConfig to functions.
 """
@@ -15,7 +15,7 @@ def _default_cache_dir() -> str:
     """Resolve the default cache dir via runtime_paths.
 
     Honours $QF_CACHE_DIR / $QF_DATA_DIR. Falls back to the platformdirs
-    user-data dir; never the in-repo `quantforge/data_cache_qf/` ghost
+    user-data dir; never the in-repo `aurora/data_cache_qf/` ghost
     directory. The string-typed return shape is preserved for backward
     compatibility with YAML / TOML configs that store this as a string.
     """

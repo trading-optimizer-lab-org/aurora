@@ -1,4 +1,4 @@
-"""Regime analysis utilities.
+﻿"""Regime analysis utilities.
 
 Modules:
 - bayes_alpha: Bayesian rolling regression for alpha estimation.
@@ -24,7 +24,7 @@ Public Markov switching API:
 - MarkovSwitchingMean
 """
 # Build ``__all__`` conditionally on import success, mirroring the
-# top-level ``quantforge/__init__.py`` pattern. Symbols whose backing
+# top-level ``aurora/__init__.py`` pattern. Symbols whose backing
 # import failed are left out of ``__all__`` so ``from aurora.regime
 # import *`` does not surface ``None`` placeholders, while the names are
 # still bound at module level for ``hasattr``-style probes.

@@ -1,4 +1,4 @@
-.PHONY: help count-tests test lint format coverage docs docs-clean \
+﻿.PHONY: help count-tests test lint format coverage docs docs-clean \
 	property-thorough mutate mutate-results mutate-full setup \
 	precommit-install precommit-run mypy security-scan
 
@@ -60,7 +60,7 @@ format:
 	$(PYTHON) -m ruff format .
 
 coverage:
-	$(PYTHON) -m pytest --cov=quantforge --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"
+	$(PYTHON) -m pytest --cov=aurora --cov-report=term-missing --cov-config=.coveragerc -m "not slow and not integration"
 
 docs:
 	$(PYTHON) -m sphinx -b html -q docs docs/_build/html

@@ -1,4 +1,4 @@
-# ESTUDIOS Aurora Integration
+﻿# ESTUDIOS Aurora Integration
 
 ## Objetivo
 
@@ -57,18 +57,18 @@ GitHub no tiene `C:\Users\HP\ESTUDIOS`. Para usar esta integracion en CI hay que
 Si no se hace, los workflows que solo usan el puente deben degradar de forma controlada.
 El comando `sp500-literature-build` debe fallar rapido y explicar que falta ESTUDIOS.
 
-## Entorno local QuantForge
+## Entorno local Aurora
 
 Este equipo tambien tiene `trading-lab` instalado en editable y ese proyecto contiene otro
 paquete llamado `aurora`. Para que `C:/Python314/python.exe` importe este checkout de
-QuantForge, existe el shim local:
+Aurora, existe el shim local:
 
 ```text
-C:\Users\HP\AppData\Roaming\Python\Python314\site-packages\000_quantforge_aurora_prefer_editable.pth
+C:\Users\HP\AppData\Roaming\Python\Python314\site-packages\000_aurora_aurora_prefer_editable.pth
 ```
 
-Ese shim da prioridad al finder editable de QuantForge. Sin el shim, Python puede cargar
-`trading-lab\src\aurora` y fallar tests de QuantForge aunque el codigo sea correcto.
+Ese shim da prioridad al finder editable de Aurora. Sin el shim, Python puede cargar
+`trading-lab\src\aurora` y fallar tests de Aurora aunque el codigo sea correcto.
 
 ## Desactivar evidencia de literatura
 

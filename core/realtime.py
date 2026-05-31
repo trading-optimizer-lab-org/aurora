@@ -1,4 +1,4 @@
-"""Real-time data ingestion adapter for QuantForge.
+﻿"""Real-time data ingestion adapter for Aurora.
 
 Polling-based wrapper around yfinance live API. Buffers recent bars per symbol
 in an in-memory ring buffer and exposes a replay generator that streams bars

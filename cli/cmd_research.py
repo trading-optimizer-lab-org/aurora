@@ -1,4 +1,4 @@
-"""``forge research`` subcommand group (R49 split).
+﻿"""``forge research`` subcommand group (R49 split).
 
 P1.C: ResearchFactory pipeline (hypothesis -> review queue).
 
@@ -38,9 +38,9 @@ def _load_research_factory(args, *, with_data_loader=True):
     """Construct a :class:`ResearchFactory` for CLI commands.
 
     Loads the factory config from ``args.config_path`` (default
-    ``quantforge/config/research_factory.yaml``), resolves the active
+    ``aurora/config/research_factory.yaml``), resolves the active
     :class:`ProtocolPolicy`, and wires in an
-    :class:`~quantforge.registry.experiments.ExperimentTracker`. A noop
+    :class:`~aurora.registry.experiments.ExperimentTracker`. A noop
     auditor is left as None -- the auditor (P1.B) is a separate concern.
     """
     import os
@@ -55,7 +55,7 @@ def _load_research_factory(args, *, with_data_loader=True):
     if cfg_path and os.path.exists(cfg_path):
         cfg = ResearchPipelineConfig.from_yaml(cfg_path)
     else:
-        # Bundled default location: quantforge/config/research_factory.yaml
+        # Bundled default location: aurora/config/research_factory.yaml
         here = os.path.dirname(os.path.abspath(__file__))
         bundled = os.path.normpath(
             os.path.join(here, "..", "config", "research_factory.yaml")

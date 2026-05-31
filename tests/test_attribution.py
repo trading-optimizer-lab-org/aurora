@@ -1,6 +1,6 @@
-"""Tests for quantforge.analytics.attribution.
+﻿"""Tests for aurora.analytics.attribution.
 
-Run: pytest quantforge/tests/test_attribution.py -v
+Run: pytest aurora/tests/test_attribution.py -v
 """
 from __future__ import annotations
 from dataclasses import dataclass, field

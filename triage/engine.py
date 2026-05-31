@@ -1,4 +1,4 @@
-"""TriageEngine -- vectorized screening backend for thousands of variants.
+﻿"""TriageEngine -- vectorized screening backend for thousands of variants.
 
 Goal
 ----
@@ -8,7 +8,7 @@ cost. Anything that survives triage thresholds is **only** flagged as
 produces a result that can be promoted on its own. Promotion goes
 through :class:`aurora.core.engine.run_backtest` (or the official
 runner the caller passes to :meth:`TriageEngine.promote_to_official`),
-which carries the full QuantForge ceremony (costs, slippage, snapshots,
+which carries the full Aurora ceremony (costs, slippage, snapshots,
 OOSGuard).
 
 Tier guard
@@ -82,7 +82,7 @@ class TriageConfig:
         min_trades: minimum number of (proxy) trades. Variants below
             this are rejected as statistical noise.
         use_vectorbt: when True and vectorbt is installed, the pnl loop
-            routes through :mod:`quantforge.triage.vectorbt_backend`.
+            routes through :mod:`aurora.triage.vectorbt_backend`.
             Falls back silently otherwise.
         triage_tier_only: data tier the engine is allowed to read.
             MUST be one of ``IS_TRAIN`` / ``IS_VALID`` / ``OOS_DEV``;

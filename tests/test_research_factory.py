@@ -1,4 +1,4 @@
-"""Tests for ``quantforge.research.factory`` (P1.C).
+﻿"""Tests for ``aurora.research.factory`` (P1.C).
 
 The factory is the automated hypothesis -> review-queue pipeline: agents
 propose StrategySpecs, the factory runs IS / WF / OOS_DEV gates, and

@@ -1,4 +1,4 @@
-# QuantForge v1.3 — Deep Audit Fix Report (Batch U)
+﻿# Aurora v1.3 — Deep Audit Fix Report (Batch U)
 
 **Date:** 2026-05-07
 **Method:** SDD parallel batches U.1-U.8 (8 agents)
@@ -127,7 +127,7 @@ Cumulative tests: **1241 passing** (vs 1122 before batch U → +119 net new). 27
 - SMTP `starttls(context=ssl.create_default_context())`
 - Webhook strict suffix host match (`.slack.com`, `.discord.com`/`.discordapp.com`)
 - Webhook https-only scheme guard (allow_http opt-in)
-- LLM `_ALLOWED_IMPORTS` AST sandbox (numpy, pandas, quantforge.strategies.base, __future__)
+- LLM `_ALLOWED_IMPORTS` AST sandbox (numpy, pandas, aurora.strategies.base, __future__)
 - LLM rejects exec/eval/`__import__`/compile/open/getattr/setattr/dunder
 - LLM error message no longer echoes raw output (DEBUG log only)
 - Tearsheet `_esc` html.escape on title/metrics/dates/strategy_name (XSS closed)
@@ -160,7 +160,7 @@ Cumulative tests: **1241 passing** (vs 1122 before batch U → +119 net new). 27
 - analytics/__init__: attribution + factor analysis re-exported
 - registry/__init__: versioning re-exported
 - core/__init__: run_backtest convenience re-export
-- quantforge/__init__: top-level convenience exports + auto-version via importlib.metadata
+- aurora/__init__: top-level convenience exports + auto-version via importlib.metadata
 - API_REFERENCE: drift detectors corrected, CLI subcommands fixed, multi_objective_fitness DEPRECATED, snapshots section added
 - README: test count → ~1241, install path generic, "13-gate" claim re-worded
 - ARCHITECTURE: monitoring deps line corrected
@@ -184,9 +184,9 @@ Cumulative tests: **1241 passing** (vs 1122 before batch U → +119 net new). 27
 
 ### Full pytest
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/ -m "not slow and not integration" \
-    --ignore=quantforge/tests/test_config.py \
-    --ignore=quantforge/tests/test_property.py
+"C:/Python314/python.exe" -m pytest aurora/tests/ -m "not slow and not integration" \
+    --ignore=aurora/tests/test_config.py \
+    --ignore=aurora/tests/test_property.py
 1241 passed, 27 failed, 13 skipped, 10 deselected
 ```
 27 failures: pydantic missing (test_cli, test_cli_ml), statsmodels missing (fracdiff). Pre-existing.

@@ -1,6 +1,6 @@
-"""RAG over research archive (R9).
+﻿"""RAG over research archive (R9).
 
-Indexes :mod:`quantforge.research.factory` archive and review-queue JSONL
+Indexes :mod:`aurora.research.factory` archive and review-queue JSONL
 files for keyword search and category filtering. Pure stdlib, no external
 embedding dependencies. Local by default; the index is rebuilt from JSONL
 on every load so callers always see current archive state.

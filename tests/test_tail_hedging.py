@@ -1,6 +1,6 @@
-"""Tests for TailHedgingOverlay.
+﻿"""Tests for TailHedgingOverlay.
 
-Run: pytest quantforge/tests/test_tail_hedging.py -v
+Run: pytest aurora/tests/test_tail_hedging.py -v
 """
 from __future__ import annotations
 import math

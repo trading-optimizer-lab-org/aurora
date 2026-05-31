@@ -1,4 +1,4 @@
-"""LLM-assisted research utilities for QuantForge."""
+﻿"""LLM-assisted research utilities for Aurora."""
 from aurora.research.llm_assistant import (
     LLMConfig,
     LLMResearchAssistant,
@@ -96,6 +96,48 @@ from aurora.research.blue_green_models import (
     BlueGreenModelDeployer,
     DeploymentReport,
 )
+from aurora.research.protocol_guard import (
+    LockedResearchPhaseError,
+    ResearchProtocolGuard,
+    ResearchProtocolSpec,
+)
+from aurora.research.protocol_enforcement import (
+    default_research_ledger_path,
+    ensure_mandatory_research_protocol,
+    make_project_id,
+    record_robustness_run,
+    record_validation_run,
+)
+from aurora.research.lookahead_guard import (
+    LookaheadBiasError,
+    assert_signal_is_causal,
+)
+from aurora.research.sp500_autosearch import (
+    AutosearchConfig,
+    AutosearchReport,
+    CandidateEvidence,
+    PeriodMetrics,
+    run_sp500_autosearch,
+)
+from aurora.research.source_discovery import (
+    SourceCandidate,
+    SourceDiscoveryConfig,
+    SourceDiscoveryReport,
+    discover_sources,
+    source_report_to_markdown,
+)
+from aurora.research.sp500_research_agent import (
+    SP500ResearchAgentConfig,
+    SP500ResearchAgentReport,
+    run_sp500_research_agent,
+    sp500_agent_report_to_markdown,
+)
+from aurora.research.agent_loop import (
+    AgentGoalSpec,
+    AgentLoopResult,
+    AgentRunState,
+    run_agent_loop,
+)
 
 __all__ = [
     # llm assistant
@@ -132,4 +174,15 @@ __all__ = [
     "ShadowModeRunner", "ShadowReport",
     "CanaryDeployer", "CanaryReport",
     "BlueGreenModelDeployer", "DeploymentReport",
+    "LockedResearchPhaseError", "ResearchProtocolGuard", "ResearchProtocolSpec",
+    "default_research_ledger_path", "ensure_mandatory_research_protocol",
+    "make_project_id", "record_robustness_run", "record_validation_run",
+    "LookaheadBiasError", "assert_signal_is_causal",
+    "AutosearchConfig", "AutosearchReport", "CandidateEvidence",
+    "PeriodMetrics", "run_sp500_autosearch",
+    "SourceCandidate", "SourceDiscoveryConfig", "SourceDiscoveryReport",
+    "discover_sources", "source_report_to_markdown",
+    "SP500ResearchAgentConfig", "SP500ResearchAgentReport",
+    "run_sp500_research_agent", "sp500_agent_report_to_markdown",
+    "AgentGoalSpec", "AgentLoopResult", "AgentRunState", "run_agent_loop",
 ]

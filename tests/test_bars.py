@@ -1,6 +1,6 @@
-"""Tests for aurora.core.bars (Batch M.2 — alternative bars per AFML Ch. 2).
+﻿"""Tests for aurora.core.bars (Batch M.2 — alternative bars per AFML Ch. 2).
 
-Run: uv run pytest quantforge/tests/test_bars.py -v
+Run: uv run pytest aurora/tests/test_bars.py -v
 """
 from __future__ import annotations
 

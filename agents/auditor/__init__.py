@@ -1,4 +1,4 @@
-"""QuantForge auditor: multi-agent reviewer system.
+﻿"""Aurora auditor: multi-agent reviewer system.
 
 P1.B: 6 specialized reviewer agents (HypothesisReviewer, DataLeakReviewer,
 CostReviewer, RegimeReviewer, RiskReviewer, DeploymentReviewer) that emit

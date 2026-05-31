@@ -1,4 +1,4 @@
-"""LLM augmenter for the auditor pipeline (R8).
+﻿"""LLM augmenter for the auditor pipeline (R8).
 
 The deterministic reviewers are the load-bearing piece of the auditor.
 This module adds an *optional* LLM observation pathway. By design:
@@ -129,7 +129,7 @@ class AnthropicLLMProvider:
         except ImportError as exc:  # pragma: no cover - import diagnostics
             raise RuntimeError(
                 "anthropic SDK is not installed; install with `pip install "
-                "quantforge[llm]` or use MockLLMProvider"
+                "aurora[llm]` or use MockLLMProvider"
             ) from exc
 
         api_key = os.environ.get(self.api_key_env, "")
@@ -157,7 +157,7 @@ class AnthropicLLMProvider:
 
 
 _PROMPT_HEADER = (
-    "You are an LLM augmenter for the QuantForge auditor pipeline.\n"
+    "You are an LLM augmenter for the Aurora auditor pipeline.\n"
     "REVIEWER: {reviewer}\n"
     "STRATEGY: {strategy_id}\n"
     "POLICY_HASH: {policy_hash}\n"

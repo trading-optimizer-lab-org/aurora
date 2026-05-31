@@ -1,4 +1,4 @@
-"""Notebook Template Engine.
+﻿"""Notebook Template Engine.
 
 Generate Jupyter ipynb files from a small set of canned templates:
 
@@ -76,8 +76,8 @@ class NotebookTemplateEngine:
                     "language": "python",
                 },
                 "language_info": {"name": "python"},
-                "quantforge_template": spec.template,
-                "quantforge_title": spec.title,
+                "aurora_template": spec.template,
+                "aurora_title": spec.title,
             },
             "nbformat": 4,
             "nbformat_minor": 5,

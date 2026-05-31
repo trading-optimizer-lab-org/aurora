@@ -1,8 +1,8 @@
-"""Benchmark: sequential vs joblib-parallel GA on MACross.
+﻿"""Benchmark: sequential vs joblib-parallel GA on MACross.
 
 Run:
     uv run --with vectorbt --with deap --with joblib --with scipy --with pyarrow \
-        python quantforge/examples/bench_ga_parallel.py
+        python aurora/examples/bench_ga_parallel.py
 """
 from __future__ import annotations
 import os

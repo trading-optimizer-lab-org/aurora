@@ -1,4 +1,4 @@
-"""TimescaleDB hypertable adapter for tick / bar ingestion.
+﻿"""TimescaleDB hypertable adapter for tick / bar ingestion.
 
 Lazy ``psycopg2``. The default ``mock=True`` mode keeps an in-memory
 DataFrame so tests run offline. Real ingestion happens only when a DSN
@@ -26,7 +26,7 @@ class TimescaleConfig:
         chunk_time_interval: hypertable chunk size (e.g. ``"1 day"``).
     """
     dsn: str = ""
-    dsn_env: str = "QUANTFORGE_TIMESCALE_DSN"
+    dsn_env: str = "AURORA_TIMESCALE_DSN"
     schema: str = "public"
     ticks_table: str = "ticks"
     bars_table: str = "bars"

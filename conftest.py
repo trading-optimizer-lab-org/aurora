@@ -1,4 +1,4 @@
-"""Worktree-root conftest: ensure this checkout's aurora package wins over
+﻿"""Worktree-root conftest: ensure this checkout's aurora package wins over
 any editable install pointing elsewhere.
 
 Background
@@ -26,13 +26,10 @@ _PATH = str(_WORKTREE)
 try:
     import __editable___aurora_1_5_0_finder as _finder
     _finder.MAPPING['aurora'] = _PATH
-    _finder.MAPPING['quantforge'] = str(_WORKTREE / 'quantforge')
     # Evict any aurora modules that were loaded with the old MAPPING so the
     # next import re-resolves through the corrected path.
     for _name in list(sys.modules):
         if _name == 'aurora' or _name.startswith('aurora.'):
-            del sys.modules[_name]
-        if _name == 'quantforge' or _name.startswith('quantforge.'):
             del sys.modules[_name]
 except ImportError:
     # Editable finder not present (e.g. running from a wheel install). Fall

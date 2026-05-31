@@ -1,6 +1,6 @@
-"""Tests for the proper risk-parity allocator (convex solver).
+﻿"""Tests for the proper risk-parity allocator (convex solver).
 
-Run: pytest quantforge/tests/test_risk_parity.py -v
+Run: pytest aurora/tests/test_risk_parity.py -v
 """
 from __future__ import annotations
 import numpy as np

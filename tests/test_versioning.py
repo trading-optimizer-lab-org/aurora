@@ -1,4 +1,4 @@
-"""Tests for quantforge.registry.versioning (Task K.2)."""
+﻿"""Tests for aurora.registry.versioning (Task K.2)."""
 from __future__ import annotations
 
 import json

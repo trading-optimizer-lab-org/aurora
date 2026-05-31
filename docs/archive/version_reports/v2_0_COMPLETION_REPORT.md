@@ -1,4 +1,4 @@
-# QuantForge v2.0 Completion Report
+﻿# Aurora v2.0 Completion Report
 
 **Date:** 2026-05-07
 **Method:** SDD parallel batches v2.A through v2.H (8 agents, 80 new modules)
@@ -70,7 +70,7 @@
 ## New top-level packages
 
 ```
-quantforge/
+aurora/
 ├── altdata/            NEW v2 — 10 alt data adapters
 ├── signals/            NEW v2 — 8 signal modules
 ├── infra/              NEW v2 — 8 infra modules + docker/k8s
@@ -87,9 +87,9 @@ quantforge/
 ## Test verification
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/ -m "not slow and not integration" \
-    --ignore=quantforge/tests/test_config.py \
-    --ignore=quantforge/tests/test_property.py
+"C:/Python314/python.exe" -m pytest aurora/tests/ -m "not slow and not integration" \
+    --ignore=aurora/tests/test_config.py \
+    --ignore=aurora/tests/test_property.py
 1858 passed, 28 failed, 12 skipped, 10 deselected
 ```
 
@@ -124,7 +124,7 @@ Quantum portfolio optimizer placeholder (qiskit/QAOA), federated learning (FedAv
 ## Architecture status (v2.0)
 
 ```
-quantforge/
+aurora/
 ├── core/        engine + multi + jit + intraday + bars + costs + costs_intraday +
 │                slippage + metrics + seed + data_layer + realtime + snapshots +
 │                sqlite_utils + config + logging + features + taxes

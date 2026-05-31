@@ -1,4 +1,4 @@
-# Daily Ops Report Delivery Recipe (R37)
+﻿# Daily Ops Report Delivery Recipe (R37)
 
 `forge ops daily` and `forge ops alerts` produce the operational
 report. This doc covers wiring delivery (Slack, email), cadence, and
@@ -66,7 +66,7 @@ escalations. Slack is the right channel for real-time alerts.
 3. **Aggregation**. Multiple WARN events within a cooldown are
    bundled into a single message.
 4. **Quiet hours**. Configure operator-side quiet hours in your
-   notification platform; QuantForge does not silence them itself
+   notification platform; Aurora does not silence them itself
    because silenced operations are a security smell.
 5. **Channel split**. Day vs night, dev vs prod, paper vs live.
 

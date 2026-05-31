@@ -1,4 +1,4 @@
-"""Paper-trading focused tests for quantforge.deployment.brokers.PaperBroker.
+﻿"""Paper-trading focused tests for aurora.deployment.brokers.PaperBroker.
 
 Most PaperBroker behavior is exercised by test_brokers.py. This file groups
 the regression tests added during the deep-audit hardening pass so they are

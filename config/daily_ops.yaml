@@ -1,6 +1,6 @@
-# Default config for the daily operational report (P2.B).
+﻿# Default config for the daily operational report (P2.B).
 #
-# Loaded by quantforge.reporting.daily_ops.builder.DailyOpsConfig.from_yaml.
+# Loaded by aurora.reporting.daily_ops.builder.DailyOpsConfig.from_yaml.
 # Override per call via the CLI flags (--output-dir, --format, ...).
 
 output_dir: reports/daily

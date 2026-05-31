@@ -1,4 +1,4 @@
-"""QuantForge live monitoring (Streamlit dashboard, alerts, drift detectors).
+﻿"""Aurora live monitoring (Streamlit dashboard, alerts, drift detectors).
 
 Streamlit is an optional dependency. The pure data/metric helpers in
 ``dashboard`` work without Streamlit. ``run_dashboard`` requires it and will

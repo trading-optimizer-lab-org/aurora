@@ -1,8 +1,8 @@
-# QuantForge v1.2 Completion Report
+﻿# Aurora v1.2 Completion Report
 
 **Date:** 2026-05-06
 **Method:** SDD parallel batches J/K/L
-**Plan:** `quantforge/docs/DEVELOPMENT_PLAN_v1_2.md`
+**Plan:** `aurora/docs/DEVELOPMENT_PLAN_v1_2.md`
 
 ## Summary across versions
 
@@ -50,7 +50,7 @@ Test runtime: 58s → 73s → 112s (still well under 2 minutes for full suite).
 ## New top-level modules in v1.2
 
 ```
-quantforge/
+aurora/
 ├── regime/                       NEW
 │   ├── __init__.py
 │   ├── hmm.py
@@ -124,7 +124,7 @@ forge cscv --returns-csv strategies.csv --n-splits 16
 ## Architecture status (v1.2)
 
 ```
-quantforge/
+aurora/
 ├── core/        engine + multi + jit + costs + slippage + metrics +
 │                seed + data_layer + config + logging + features + taxes
 ├── strategies/  base + library (11 strategies)
@@ -148,7 +148,7 @@ quantforge/
 
 ## STOP CONDITION MET
 
-QuantForge v1.2 feature-complete per development plan.
+Aurora v1.2 feature-complete per development plan.
 - 741/741 tests pass (112s)
 - 14 modules added in v1.2 (regime, registry, plus extensions)
 - 14 CLI commands available

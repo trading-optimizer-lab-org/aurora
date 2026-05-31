@@ -1,10 +1,10 @@
-"""Demo: validate built-in strategies on SPY with full pipeline.
+﻿"""Demo: validate built-in strategies on SPY with full pipeline.
 
 Requires an editable install with the GA + ML extras:
     pip install -e ".[ga,ml]"
 
 Run:
-    python quantforge/examples/demo_validate.py
+    python aurora/examples/demo_validate.py
 """
 from __future__ import annotations
 

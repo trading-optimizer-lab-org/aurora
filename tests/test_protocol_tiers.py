@@ -1,4 +1,4 @@
-"""Tests pinning the protocol-tier behaviour added in the data-tiers refactor.
+﻿"""Tests pinning the protocol-tier behaviour added in the data-tiers refactor.
 
 Coverage:
   * `split_by_tier` boundary correctness
@@ -27,7 +27,7 @@ from aurora.core.costs import ZERO_costs
 from aurora.core.data_layer import OOSGuard
 
 # CLI-driven tests only run when pydantic is importable; ``forge`` loads
-# ``quantforge.core.config`` (which requires pydantic) before any subcommand.
+# ``aurora.core.config`` (which requires pydantic) before any subcommand.
 _pydantic_required = pytest.importorskip.__self__ if False else None
 try:
     import pydantic  # noqa: F401

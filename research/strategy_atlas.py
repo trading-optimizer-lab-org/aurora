@@ -1,10 +1,10 @@
-"""Strategy atlas (Candidate E).
+﻿"""Strategy atlas (Candidate E).
 
-Canonical registry of which strategy ideas QuantForge supports, refuses,
+Canonical registry of which strategy ideas Aurora supports, refuses,
 or only keeps for benchmarking purposes. The atlas is the *first*
 gatekeeper before the validation pipeline: an idea that is not in the
 atlas, or whose status forbids promotion, never reaches the
-:mod:`quantforge.validation` gates.
+:mod:`aurora.validation` gates.
 
 The atlas exists for two reasons:
 
@@ -58,7 +58,7 @@ class AtlasStatus(Enum):
     """Used only as a comparison baseline. Never promoted to production."""
 
     EXTERNAL_DATA_ONLY = "external_data_only"
-    """Engine could run it, but required data lives outside QuantForge."""
+    """Engine could run it, but required data lives outside Aurora."""
 
     NEEDS_ENGINE_SUPPORT = "needs_engine_support"
     """Engine capability missing (e.g. tick fills, FX margin, options

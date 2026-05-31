@@ -1,4 +1,4 @@
-"""QuantForge deployment: brokers, paper/live wrappers, sizing, allocators,
+﻿"""Aurora deployment: brokers, paper/live wrappers, sizing, allocators,
 HRP, Black-Litterman, covariance shrinkage, risk parity, liquidity, preflight.
 
 Optional brokers (Alpaca, IB, Coinbase, Kraken) and Lumibot wrappers are
@@ -52,7 +52,7 @@ from aurora.deployment.liquidity import (
 # ``risk_parity`` is the canonical name kept for backwards compat; the
 # allocator-style alias ``risk_parity_allocator`` mirrors the
 # equal_weight/equal_vol/inverse_dd allocator names. ``risk_parity_weights``
-# remains importable from ``quantforge.deployment.risk_parity``.
+# remains importable from ``aurora.deployment.risk_parity``.
 from aurora.deployment.risk_parity import (
     risk_parity_weights as risk_parity,
     RPResult,

@@ -1,8 +1,8 @@
-"""DataFrame validator gating dataset entry into the engine.
+﻿"""DataFrame validator gating dataset entry into the engine.
 
 Runs a battery of cheap structural and statistical checks against an
-input DataFrame using a :class:`~quantforge.data_contracts.contract.DataContract`
-and emits a :class:`~quantforge.data_contracts.contract.DataValidationResult`.
+input DataFrame using a :class:`~aurora.data_contracts.contract.DataContract`
+and emits a :class:`~aurora.data_contracts.contract.DataValidationResult`.
 The intent is that backtest, GA, validation pipeline and factory submit
 all call :func:`validate_dataframe` before doing anything else with the
 data.

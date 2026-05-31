@@ -1,6 +1,6 @@
-"""Tests for ml.features_pipeline.
+﻿"""Tests for ml.features_pipeline.
 
-Run: uv run pytest quantforge/tests/test_features_pipeline.py -v
+Run: uv run pytest aurora/tests/test_features_pipeline.py -v
 """
 from __future__ import annotations
 

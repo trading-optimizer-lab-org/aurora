@@ -1,4 +1,4 @@
-# Aurora
+﻿# Aurora
 
 Aurora v1.5 -- quant research engine with 13 validation gates plus a
 final OOS hold-out (see `docs/ARCHITECTURE.md` for the canonical
@@ -9,8 +9,8 @@ standalone. 12 strategies, intraday + DL/RL + dashboard + multi-broker
 / v1.3 / v1.4 / v1.5 (count in `tests/`; verify with
 `pytest --collect-only -q`).
 
-Renamed from QuantForge to Aurora in v1.5.0 (R23). The legacy
-`quantforge` namespace remains importable as a thin compat shim that
+Renamed from Aurora to Aurora in v1.5.0 (R23). The legacy
+`aurora` namespace remains importable as a thin compat shim that
 emits a `DeprecationWarning`; the shim is removed in v1.6.
 
 ## Filosofia

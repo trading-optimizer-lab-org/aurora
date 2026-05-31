@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -49,7 +49,7 @@ review_queue.jsonl
 gateway_audit.jsonl
 gateway_audit_chain.jsonl
 data_cache_qf/
-quantforge/data_cache_qf/
+aurora/data_cache_qf/
 data_cache/
 data_snapshots/
 .qf/

@@ -1,6 +1,6 @@
-"""Tests for TaxLossHarvester.
+﻿"""Tests for TaxLossHarvester.
 
-Run: pytest quantforge/tests/test_tax_loss_harvester.py -v
+Run: pytest aurora/tests/test_tax_loss_harvester.py -v
 """
 from __future__ import annotations
 import numpy as np

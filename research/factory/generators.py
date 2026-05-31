@@ -1,4 +1,4 @@
-"""Pluggable hypothesis generators.
+﻿"""Pluggable hypothesis generators.
 
 A generator emits :class:`StrategySpec` instances to be fed into
 :class:`ResearchFactory`. The contract is intentionally narrow:
@@ -38,7 +38,7 @@ class HypothesisGenerator(Protocol):
 
 
 class GAHypothesisGenerator:
-    """Wrap a :class:`~quantforge.ga.runner.GARunner` Pareto front into specs.
+    """Wrap a :class:`~aurora.ga.runner.GARunner` Pareto front into specs.
 
     The GA produces (params, fitness) pairs. We convert each Pareto entry
     into a :class:`StrategySpec` whose ``parent_spec_id`` is set to a

@@ -1,4 +1,4 @@
-# Hedging Decision (R121)
+﻿# Hedging Decision (R121)
 
 ## Status
 
@@ -8,7 +8,7 @@ strategies** running under the R71 isolation override.
 
 ## Why this decision
 
-The QuantForge engine today nets to a single position per symbol.
+The Aurora engine today nets to a single position per symbol.
 Supporting native hedging means:
 
 - extending the engine state model to two parallel position legs per
@@ -24,7 +24,7 @@ Supporting native hedging means:
   netted position when the engine model says two legs).
 
 The maintenance cost is large and the benefit is small: every
-hedging strategy that QuantForge has run in production was actually
+hedging strategy that Aurora has run in production was actually
 two strategies sharing a symbol, not a single-rule two-legged
 position. The R71 isolation primitive already supports that pattern.
 

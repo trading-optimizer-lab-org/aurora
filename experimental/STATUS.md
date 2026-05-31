@@ -1,7 +1,7 @@
-# `experimental/` Triage (R48)
+﻿# `experimental/` Triage (R48)
 
 The `experimental/` directory holds 20 speculative modules that explore
-ideas at the edge of the QuantForge surface. Every module here is
+ideas at the edge of the Aurora surface. Every module here is
 `experimental` for production-status purposes per
 [`docs/MODULE_STATUS.md`](../docs/MODULE_STATUS.md). None are
 production. None are imported by core code paths.

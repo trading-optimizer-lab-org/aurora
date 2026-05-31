@@ -1,6 +1,6 @@
-"""Tests for RetirementGlidePath.
+﻿"""Tests for RetirementGlidePath.
 
-Run: pytest quantforge/tests/test_glide_path.py -v
+Run: pytest aurora/tests/test_glide_path.py -v
 """
 from __future__ import annotations
 from datetime import datetime

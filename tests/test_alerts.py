@@ -1,9 +1,9 @@
-"""Tests for quantforge.monitoring.alerts.
+﻿"""Tests for aurora.monitoring.alerts.
 
 Run::
 
     cd "C:/Users/HP/MODELO SP500"
-    uv run pytest quantforge/tests/test_alerts.py -v
+    uv run pytest aurora/tests/test_alerts.py -v
 
 No real network or SMTP — every dispatch path is mocked.
 """

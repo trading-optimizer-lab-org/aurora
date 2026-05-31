@@ -1,4 +1,4 @@
-"""Data-contract lineage record.
+﻿"""Data-contract lineage record.
 
 A :class:`DataLineage` record is the small per-decision provenance object
 that travels alongside every dataset entering a backtest, GA run,
@@ -7,7 +7,7 @@ and JSON-friendly so it can be appended to an audit chain or written to
 the run report without coupling to any storage backend.
 
 This module deliberately does NOT touch
-:mod:`quantforge.dataeng.data_lineage`, which is a different scope
+:mod:`aurora.dataeng.data_lineage`, which is a different scope
 (graph-based dataset transformations). That module remains the home for
 "how did this dataset get built across many transformations".
 """

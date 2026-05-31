@@ -1,4 +1,4 @@
-"""ResearchPipelineConfig dataclass for the factory."""
+﻿"""ResearchPipelineConfig dataclass for the factory."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,7 +9,7 @@ from pathlib import Path
 class ResearchPipelineConfig:
     """Knobs controlling the factory's gating behaviour.
 
-    Defaults match ``quantforge/config/research_factory.yaml``. Subclassing
+    Defaults match ``aurora/config/research_factory.yaml``. Subclassing
     the dataclass is fine for tests; the factory only relies on attribute
     access.
     """

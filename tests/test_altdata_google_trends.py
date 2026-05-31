@@ -1,4 +1,4 @@
-"""Tests for quantforge.altdata.google_trends."""
+﻿"""Tests for aurora.altdata.google_trends."""
 from __future__ import annotations
 
 import numpy as np

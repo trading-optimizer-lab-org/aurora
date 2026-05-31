@@ -1,8 +1,8 @@
-# GITHUB RESEARCH — QuantForge v1.1 Gap Analysis
+﻿# GITHUB RESEARCH — Aurora v1.1 Gap Analysis
 
 **Date:** 2026-05-06
 **Method:** Direct `gh api` traversal of 16 quant repos + targeted source reads.
-**Baseline:** QuantForge v1.0 (87 files, 289 tests, 6 modules: core/strategies/ga/validation/deployment/reporting/cli)
+**Baseline:** Aurora v1.0 (87 files, 289 tests, 6 modules: core/strategies/ga/validation/deployment/reporting/cli)
 **Goal:** Identify SPECIFIC features QF v1.0 lacks; produce prioritized v1.1 plan.
 
 ---
@@ -182,7 +182,7 @@ class PurgedKFold(KFold):
         # Plus embargo: drop training samples within pct_embargo*N after test
 ```
 
-QF target: `quantforge/validation/purged_cv.py` exporting `PurgedKFold`, `ml_cross_val_score(model, X, y, cv, sample_weight=None)`.
+QF target: `aurora/validation/purged_cv.py` exporting `PurgedKFold`, `ml_cross_val_score(model, X, y, cv, sample_weight=None)`.
 
 ### 3.2 Triple-Barrier Labels — sequence
 
@@ -194,7 +194,7 @@ QF target: `quantforge/validation/purged_cv.py` exporting `PurgedKFold`, `ml_cro
 # 4. get_bins(events, close)  → returns {-1, 0, +1} labels (or meta {0,1})
 ```
 
-QF target: `quantforge/strategies/labels.py` (`triple_barrier`, `meta_label`).
+QF target: `aurora/strategies/labels.py` (`triple_barrier`, `meta_label`).
 
 ### 3.3 HRP — Lopez de Prado recursive bisection
 
@@ -210,7 +210,7 @@ class HRPOpt(BaseOptimizer):
         # 4. recursive bisection with inverse-variance weighting
 ```
 
-QF target: extend `quantforge/deployment/allocator.py` with `Method.HRP`, `Method.CVAR`, `Method.BL`.
+QF target: extend `aurora/deployment/allocator.py` with `Method.HRP`, `Method.CVAR`, `Method.BL`.
 
 ### 3.4 Slippage — zipline VolumeShareSlippage
 
@@ -223,7 +223,7 @@ DEFAULT_EQUITY_VOLUME_SLIPPAGE_BAR_LIMIT = 0.025  # max 2.5% of bar volume
 #   if cumulative_volume_filled > volume_limit*bar_volume: LiquidityExceeded
 ```
 
-QF target: extend `quantforge/core/costs.py` with `SlippageModel` ABC + `VolumeShareSlippage`, `FixedBpsSlippage`.
+QF target: extend `aurora/core/costs.py` with `SlippageModel` ABC + `VolumeShareSlippage`, `FixedBpsSlippage`.
 
 ### 3.5 quantstats — port these metrics first (small, high signal)
 
@@ -236,7 +236,7 @@ From `quantstats/stats.py` (verified function list):
 - `probabilistic_sharpe_ratio`, `probabilistic_sortino_ratio` (these complement our DSR)
 - `treynor_ratio`, `rar`, `consecutive_wins`, `consecutive_losses`, `outlier_win_ratio`
 
-QF target: extend `quantforge/core/metrics.py` (existing) with `extended_metrics(returns)` returning dict of 80 keys; tear sheet renders them in 4 tables.
+QF target: extend `aurora/core/metrics.py` (existing) with `extended_metrics(returns)` returning dict of 80 keys; tear sheet renders them in 4 tables.
 
 ### 3.6 Alpha158 / Alpha360 — kbar+price+volume+rolling feature config
 
@@ -250,7 +250,7 @@ QF target: extend `quantforge/core/metrics.py` (existing) with `extended_metrics
 #   over windows: [5, 10, 20, 30, 60]
 ```
 
-QF target: `quantforge/core/features.py` (existing feature store) gains `quantforge.core.alpha158.compute_features(prices)` returning a 158-column DataFrame, cached via existing provenance.
+QF target: `aurora/core/features.py` (existing feature store) gains `aurora.core.alpha158.compute_features(prices)` returning a 158-column DataFrame, cached via existing provenance.
 
 ---
 
@@ -315,7 +315,7 @@ QF target: `quantforge/core/features.py` (existing feature store) gains `quantfo
 ## 5. Proposed v1.1 module map (concrete file paths)
 
 ```
-quantforge/
+aurora/
 ├── core/
 │   ├── costs.py                       (EXTEND: VolumeShareSlippage, FixedBpsSlippage)
 │   ├── metrics.py                     (EXTEND: 80+ stats from quantstats)

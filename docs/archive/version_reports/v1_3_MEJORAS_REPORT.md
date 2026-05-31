@@ -1,7 +1,7 @@
-# QuantForge v1.3 — Mejoras Pendientes Implementation Report
+﻿# Aurora v1.3 — Mejoras Pendientes Implementation Report
 
 **Date:** 2026-05-07
-**Source:** `quantforge/mejoras_pendientes_a_implementar.md`
+**Source:** `aurora/mejoras_pendientes_a_implementar.md`
 **Method:** SDD parallel batches P/Q/R/S/T (24 agents total)
 
 ## Executive summary
@@ -168,7 +168,7 @@ These can be tackled in a future v1.3.1 patch release.
 - 35 tests added
 
 ### T.2 Flaky test elimination
-- `tests/conftest.py` — autouse fixture `_reset_global_state` re-seeds Python/numpy/torch RNGs, resets quantforge.core.seed.GLOBAL_SEED, restores logger.propagate, clears DEPRECATION_WARNED state
+- `tests/conftest.py` — autouse fixture `_reset_global_state` re-seeds Python/numpy/torch RNGs, resets aurora.core.seed.GLOBAL_SEED, restores logger.propagate, clears DEPRECATION_WARNED state
 - `test_lstm_fit_runs`, `test_fetch_latest_stale_warns_or_raises`, `test_slippage_rejection_tracked`, `test_genome_encoding` — all 4 now pass in full suite
 - `test_multi_asset_ga.py` — updated for PairTrade 5-key spec (recompute_hedge_ratio_every added)
 
@@ -188,7 +188,7 @@ These can be tackled in a future v1.3.1 patch release.
 - `core/slippage.py` — `intraday_curve` callable for time-of-day volume_limit variation
 
 ### T.5 Infra polish
-- `quantforge/.coveragerc` — branch coverage, fail_under=70, omit tests/examples
+- `aurora/.coveragerc` — branch coverage, fail_under=70, omit tests/examples
 - `pyproject.toml` — `[tool.mypy]` section (gradual typing)
 - `.github/workflows/ci.yml` — coverage upload + codecov-action
 - `tests/test_lint_config.py` — config sanity tests (5 new)
@@ -201,9 +201,9 @@ These can be tackled in a future v1.3.1 patch release.
 ## Test verification (final)
 
 ```
-"C:/Python314/python.exe" -m pytest quantforge/tests/ -m "not slow and not integration" \
-    --ignore=quantforge/tests/test_config.py \
-    --ignore=quantforge/tests/test_property.py
+"C:/Python314/python.exe" -m pytest aurora/tests/ -m "not slow and not integration" \
+    --ignore=aurora/tests/test_config.py \
+    --ignore=aurora/tests/test_property.py
 1122 passed, 27 failed, 12 skipped, 10 deselected
 ```
 

@@ -1,5 +1,5 @@
-// =====================================================================
-// QuantForge -> Lean export
+﻿// =====================================================================
+// Aurora -> Lean export
 // project_name : $project_name
 // strategy     : $strategy_name
 // spec_hash    : $spec_hash
@@ -8,9 +8,9 @@
 // exported_at  : $exported_at
 //
 // DO NOT TRUST IN ISOLATION.
-// This algorithm is a cross-validation skeleton. Refit on QuantForge IS
+// This algorithm is a cross-validation skeleton. Refit on Aurora IS
 // data; cross-validate WF on Lean. Do NOT promote to Lean live without
-// re-running the QuantForge OOS_DEV ceremony.
+// re-running the Aurora OOS_DEV ceremony.
 //
 // QF strategy params (from spec):
 $params_comment
@@ -23,10 +23,10 @@ using QuantConnect.Data;
 using QuantConnect.Indicators;
 using QuantConnect.Orders;
 
-namespace QuantForge.Exports
+namespace Aurora.Exports
 {
     /// <summary>
-    /// Cross-validation skeleton for QuantForge strategy "$strategy_name".
+    /// Cross-validation skeleton for Aurora strategy "$strategy_name".
     /// Tier      : $tier_marker
     /// Universe  : $universe_csv
     /// Rebalance : $rebalance

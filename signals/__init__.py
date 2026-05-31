@@ -1,4 +1,4 @@
-"""QuantForge signal modules.
+﻿"""Aurora signal modules.
 
 Signal-only (not full strategies). Each returns pd.Series or pd.DataFrame
 of {-1, 0, +1} aligned to dates. Combine with sizing/risk wrappers downstream.

@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.parquet_partitioned.PartitionedParquetStore."""
+﻿"""Tests for aurora.infra.parquet_partitioned.PartitionedParquetStore."""
 from __future__ import annotations
 
 import pandas as pd

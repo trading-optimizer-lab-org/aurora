@@ -1,4 +1,4 @@
-# ruff: noqa: N806, N803, B007
+﻿# ruff: noqa: N806, N803, B007
 """Internal mean-risk and risk-budgeting optimisers.
 
 - ``MeanRiskOptimizer`` minimises a chosen risk measure (variance,
@@ -303,7 +303,7 @@ class SkfolioAdapter(PortfolioOptimizer):
     """Stub adapter for the optional ``skfolio`` package.
 
     The real ``skfolio`` import is deferred to ``fit`` so importing
-    QuantForge does not require the dependency. If ``skfolio`` is not
+    Aurora does not require the dependency. If ``skfolio`` is not
     installed, ``fit`` raises ``ImportError`` with a clear message --
     tests using ``pytest.importorskip`` skip cleanly.
     """

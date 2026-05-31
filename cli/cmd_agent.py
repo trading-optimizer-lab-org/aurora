@@ -1,4 +1,4 @@
-"""``forge agent`` subcommand group (R49 split).
+﻿"""``forge agent`` subcommand group (R49 split).
 
 P1.A: scoped-token gateway for non-human actors.
 """
@@ -16,7 +16,7 @@ def _agent_gateway_from_args(args):
     """Construct an :class:`AgentGateway` using config + args overrides.
 
     Honors ``--audit-path`` if provided, otherwise reads
-    ``quantforge/config/agent_gateway.yaml``.
+    ``aurora/config/agent_gateway.yaml``.
     """
     import os as _os  # noqa: F401  (parity with original module)
     from pathlib import Path as _Path

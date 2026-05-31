@@ -1,4 +1,4 @@
-"""Flink stream processing topology stub with lazy ``pyflink`` import.
+﻿"""Flink stream processing topology stub with lazy ``pyflink`` import.
 
 In mock mode operators run as plain Python list comprehensions on the input
 batch, so unit tests can exercise topology composition without a JVM.
@@ -20,7 +20,7 @@ class FlinkConfig:
     """
     parallelism: int = 1
     checkpoint_interval_ms: int = 60_000
-    job_name: str = "quantforge-flink-job"
+    job_name: str = "aurora-flink-job"
 
 
 class FlinkStreamProcessor:

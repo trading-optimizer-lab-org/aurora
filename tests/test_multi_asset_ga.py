@@ -1,7 +1,7 @@
-"""Tests for multi-asset GA runner.
+﻿"""Tests for multi-asset GA runner.
 
 Run:
-    pytest quantforge/tests/test_multi_asset_ga.py -v
+    pytest aurora/tests/test_multi_asset_ga.py -v
 """
 from __future__ import annotations
 import numpy as np

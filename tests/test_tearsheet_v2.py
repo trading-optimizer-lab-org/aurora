@@ -1,6 +1,6 @@
-"""Tests for extended tearsheet (generate_full_tearsheet + helpers).
+﻿"""Tests for extended tearsheet (generate_full_tearsheet + helpers).
 
-Run: pytest quantforge/tests/test_tearsheet_v2.py -v
+Run: pytest aurora/tests/test_tearsheet_v2.py -v
 """
 from __future__ import annotations
 import os

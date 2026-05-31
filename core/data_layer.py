@@ -1,4 +1,4 @@
-"""Data layer with OOS LOCK enforcement.
+﻿"""Data layer with OOS LOCK enforcement.
 
 Critical anti-snooping mechanism: OOS data segregated and access-counted.
 Any read of OOS during optimization phase increments counter. If counter > 0
@@ -21,15 +21,15 @@ DATA_CACHE = os.path.join(PROJ, "data_cache")
 
 
 def _resolve_qf_cache() -> str:
-    """Return the QuantForge cache directory.
+    """Return the Aurora cache directory.
 
     Resolution order:
       1. ``$QF_CACHE`` environment variable (explicit override).
-      2. Project-local ``quantforge/data_cache_qf/`` if it already contains
+      2. Project-local ``aurora/data_cache_qf/`` if it already contains
          cached parquet data (legacy in-tree cache, preserved for editable
          installs and the existing test suite).
-      3. ``platformdirs.user_cache_dir("quantforge")`` if installed (XDG/win/mac).
-      4. Fallback to ``~/.cache/quantforge`` (POSIX-style default).
+      3. ``platformdirs.user_cache_dir("aurora")`` if installed (XDG/win/mac).
+      4. Fallback to ``~/.cache/aurora`` (POSIX-style default).
 
     Never writes inside ``site-packages`` so the package directory stays
     read-only when installed from a wheel.
@@ -38,7 +38,7 @@ def _resolve_qf_cache() -> str:
     env = aurora_env("AU_CACHE", "QF_CACHE")
     if env:
         return env
-    legacy = os.path.join(PROJ, "quantforge", "data_cache_qf")
+    legacy = os.path.join(PROJ, "aurora", "data_cache_qf")
     if os.path.isdir(legacy) and any(
         f.endswith(".parquet") for f in os.listdir(legacy)
     ):
@@ -46,9 +46,9 @@ def _resolve_qf_cache() -> str:
     try:
         from platformdirs import user_cache_dir
 
-        return user_cache_dir("quantforge")
+        return user_cache_dir("aurora")
     except ImportError:
-        return os.path.join(os.path.expanduser("~"), ".cache", "quantforge")
+        return os.path.join(os.path.expanduser("~"), ".cache", "aurora")
 
 
 QF_CACHE = _resolve_qf_cache()
@@ -82,7 +82,7 @@ OOS_END = "2024-12-31"
 def _get_git_hash() -> Optional[str]:
     """Best-effort capture of HEAD git hash. Returns None if unavailable.
 
-    Uses :func:`quantforge.registry.versioning._run_git_proc` (Popen +
+    Uses :func:`aurora.registry.versioning._run_git_proc` (Popen +
     explicit terminate/kill) instead of ``subprocess.run`` so a hung
     ``git.exe`` on Windows does not orphan a zombie process — the
     standard library's ``run(..., timeout=...)`` raises ``TimeoutExpired``
@@ -277,7 +277,7 @@ class OOSGuard:
         -----------
         Acquires :pyattr:`OOSGuard._lock_file_mutex` (per-process) AND a
         cross-process advisory file lock via
-        :func:`quantforge.registry.versioning._exclusive_file_lock` so
+        :func:`aurora.registry.versioning._exclusive_file_lock` so
         that two guards exiting on different threads OR different
         processes cannot read-modify-write the same lock file and lose
         violations. The in-process mutex prevents intra-process races

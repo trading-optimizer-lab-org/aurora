@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for QuantForge tests.
+﻿"""Shared pytest fixtures for Aurora tests.
 
 Centralized synthetic data and journal builders. Tests should prefer these
 over local helpers to keep generated series consistent and reduce duplication.
@@ -10,7 +10,7 @@ from a seeded ``numpy.random.default_rng(42)`` so runs are deterministic and
 reproducible across machines and CI environments.
 
 Tests requiring live or cached vendor data (yfinance pulls, the SPY parquet
-cache under ``quantforge/data_cache_qf/``, broker APIs, etc.) MUST be marked
+cache under ``aurora/data_cache_qf/``, broker APIs, etc.) MUST be marked
 with ``@pytest.mark.integration`` and MUST skip when the underlying data file
 or network resource is unavailable. The CI fast suite runs ``-m "not slow and
 not integration"``, so any unmarked live-data test would silently break CI on
@@ -68,7 +68,7 @@ def _isolate_default_oos_lock(tmp_path_factory, monkeypatch):
     Round-2 of the protocol audit makes ``OOSGuard`` persist its audit
     record to ``DEFAULT_LOCK_PATH`` by default. Without this fixture,
     every test that constructs ``OOSGuard("...")`` (no explicit
-    lock_path) would mutate the developer's real ``~/.cache/quantforge``
+    lock_path) would mutate the developer's real ``~/.cache/aurora``
     file -- noisy, racy, and a cross-test contamination vector.
 
     This fixture redirects the constant for the duration of each test
@@ -89,9 +89,9 @@ def _reset_global_state():
 
     Prevents state pollution when tests run in suite order:
       * RNG seeds (python ``random``, numpy, torch) -> deterministic per-test.
-      * ``quantforge`` logger ``propagate`` flag -> caplog can intercept records
-        even after :func:`quantforge.core.logging.configure_logging` ran.
-      * ``_DEPRECATION_WARNED`` flags in :mod:`quantforge.ga.fitness` -> tests
+      * ``aurora`` logger ``propagate`` flag -> caplog can intercept records
+        even after :func:`aurora.core.logging.configure_logging` ran.
+      * ``_DEPRECATION_WARNED`` flags in :mod:`aurora.ga.fitness` -> tests
         that assert on the warning don't see "already warned".
     """
     # --- pre-test: seed everything deterministically ---
@@ -101,13 +101,13 @@ def _reset_global_state():
         _torch.manual_seed(42)
         if _torch.cuda.is_available():  # pragma: no cover - no GPU on CI
             _torch.cuda.manual_seed_all(42)
-    # Reset quantforge GLOBAL_SEED so any module that re-seeds via
+    # Reset aurora GLOBAL_SEED so any module that re-seeds via
     # get_seed() (e.g. LSTMForecaster._build) sees a deterministic value
     # instead of whatever a previous test left there.
     if _qf_seed is not None:
         _qf_seed.GLOBAL_SEED = 42
 
-    # --- pre-test: ensure quantforge logger propagates so caplog sees records ---
+    # --- pre-test: ensure aurora logger propagates so caplog sees records ---
     qf_logger = logging.getLogger("aurora")
     qf_logger.propagate = True
 

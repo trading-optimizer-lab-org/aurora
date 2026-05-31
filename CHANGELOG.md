@@ -1,6 +1,6 @@
-# Changelog
+﻿# Changelog
 
-All notable changes to Aurora (renamed from QuantForge in v1.5.0)
+All notable changes to Aurora (renamed from Aurora in v1.5.0)
 are documented here. Detailed batch reports live in
 `docs/v1_COMPLETION_REPORT.md`, `docs/v1_1_COMPLETION_REPORT.md`,
 `docs/v1_2_COMPLETION_REPORT.md`, and `docs/v1_3_COMPLETION_REPORT.md`.
@@ -11,8 +11,8 @@ The Aurora rename (R23). Same product, new namespace.
 
 ### Renamed
 
-- Project renamed from QuantForge to Aurora. Same product; identical API.
-- Python package: `quantforge` -> `aurora`. The `quantforge` namespace
+- Project renamed from Aurora to Aurora. Same product; identical API.
+- Python package: `aurora` -> `aurora`. The `aurora` namespace
   remains as a back-compat shim until v1.6, emitting a
   `DeprecationWarning` when imported.
 - CLI entry point: `aurora` is the new canonical command. `forge` keeps
@@ -27,7 +27,7 @@ The Aurora rename (R23). Same product, new namespace.
 - `aurora/core/env_compat.py` -- single helper that reads the new env
   var name first, falls back to the legacy name, and emits a
   `DeprecationWarning` on the legacy path.
-- `quantforge/__init__.py` -- thin compat shim that re-exports `aurora.*`
+- `aurora/__init__.py` -- thin compat shim that re-exports `aurora.*`
   and emits one `DeprecationWarning` on import.
 
 ### Changed
@@ -39,7 +39,7 @@ The Aurora rename (R23). Same product, new namespace.
 - `agent_gateway` reads `AU_GATEWAY_SECRET`, `AU_OPERATOR_KEY`,
   `AU_AGENT_LIVE_AUTH` first.
 - `deployment.ccxt_adapter` reads `AU_CCXT_*` patterns first.
-- Logger root name flipped from `"quantforge"` to `"aurora"`.
+- Logger root name flipped from `"aurora"` to `"aurora"`.
 - Operator docs (CLAUDE.md, README.md, CONTRIBUTING.md, RESEARCH_PROTOCOL,
   ARCHITECTURE, SPINE, plus the API/strategy/glossary references)
   updated to Aurora. Historical `docs/v*_COMPLETION_REPORT.md` and
@@ -101,11 +101,11 @@ behavior changes to research / GA / validation. Cumulative test count rises
 to ~1330.
 
 ### Added
-- `quantforge.deployment` re-exports `equal_weight`, `equal_vol`,
+- `aurora.deployment` re-exports `equal_weight`, `equal_vol`,
   `inverse_dd`, `risk_parity_allocator` (alias of `risk_parity_weights`),
   and `preflight_checks` (alias of `run_preflight`) so the documented
   public allocator / preflight surface matches the imports.
-- `quantforge.regime` re-exports `BayesAlphaModel` (alias of
+- `aurora.regime` re-exports `BayesAlphaModel` (alias of
   `bayesian_rolling_alpha`), `BayesAlphaResult`, and `MarkovSwitchingMean`.
 - `STRATEGY_AUTHOR.md`: Wrapper strategies section documenting the
   `is_wrapper=True` sentinel, the `base: Strategy = None` ctor convention,
@@ -120,12 +120,12 @@ to ~1330.
   targets.
 
 ### Changed
-- `quantforge/__init__.py`: dropped dead outer `try/except ImportError`
+- `aurora/__init__.py`: dropped dead outer `try/except ImportError`
   around `importlib.metadata` (always present on Python 3.10+); `__all__`
   now appends conditionally instead of advertising symbols that resolve to
   `None`.
-- `tests/conftest.py`: cache `torch`, `quantforge.core.seed`, and
-  `quantforge.ga.fitness` imports at module load; the autouse fixture now
+- `tests/conftest.py`: cache `torch`, `aurora.core.seed`, and
+  `aurora.ga.fitness` imports at module load; the autouse fixture now
   reseeds without re-importing per test.
 - `.pre-commit-config.yaml`: reordered ruff hooks so `ruff-format` runs
   first, then `ruff --fix` on the formatted layout.

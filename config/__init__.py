@@ -1,1 +1,1 @@
-"""Configuration data packaged with QuantForge."""
+﻿"""Configuration data packaged with Aurora."""

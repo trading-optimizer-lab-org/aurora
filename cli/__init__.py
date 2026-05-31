@@ -1,4 +1,4 @@
-"""QuantForge CLI public API surface (R73).
+﻿"""Aurora CLI public API surface (R73).
 
 Importers should reach into this package, not the multi-thousand-line
 `cli.forge` module directly. Lazy re-export of the entry point so

@@ -1,4 +1,4 @@
-"""Research-pressure validation report integration (Phase 2 / Candidate B).
+﻿"""Research-pressure validation report integration (Phase 2 / Candidate B).
 
 Bridges the research ledger's pressure score into the validation
 pipeline's plain-text report. Operators reading a promotion report
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 # Public threshold table. Mirrors the cut-points in
-# :mod:`quantforge.research.pressure`. Keys are the labels emitted by
+# :mod:`aurora.research.pressure`. Keys are the labels emitted by
 # ``ResearchPressureScore.risk_label()``; values are the *upper bound*
 # of the corresponding bucket. Any pressure ratio strictly above
 # ``high`` is reported as "extreme".

@@ -1,4 +1,4 @@
-"""Smoke tests for quantforge.infra package init re-exports."""
+﻿"""Smoke tests for aurora.infra package init re-exports."""
 from __future__ import annotations
 
 

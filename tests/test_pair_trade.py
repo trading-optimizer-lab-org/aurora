@@ -1,4 +1,4 @@
-"""Tests for PairTrade strategy. Run: pytest quantforge/tests/test_pair_trade.py -v"""
+﻿"""Tests for PairTrade strategy. Run: pytest aurora/tests/test_pair_trade.py -v"""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

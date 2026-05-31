@@ -1,4 +1,4 @@
-"""Tests for quantforge.infra.timescaledb.TimescaleAdapter (mock mode)."""
+﻿"""Tests for aurora.infra.timescaledb.TimescaleAdapter (mock mode)."""
 from __future__ import annotations
 
 import pandas as pd

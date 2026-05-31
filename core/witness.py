@@ -1,4 +1,4 @@
-"""Reproducibility witness object (R146).
+﻿"""Reproducibility witness object (R146).
 
 Every run (backtest, validation, GA, factory submit) emits a Witness
 that captures the full reproducibility envelope: seed, git_hash,
@@ -73,10 +73,10 @@ def _git_hash() -> Optional[str]:
 def _forge_version() -> Optional[str]:
     try:
         import importlib.metadata as md
-        return md.version("quantforge")
+        return md.version("aurora")
     except Exception:
         try:
-            import quantforge as qf
+            import aurora as qf
             return getattr(qf, "__version__", None)
         except Exception:
             return None

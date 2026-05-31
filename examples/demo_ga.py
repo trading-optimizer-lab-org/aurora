@@ -1,10 +1,10 @@
-"""Demo: GA search for best MACross params on SPY.
+﻿"""Demo: GA search for best MACross params on SPY.
 
 Requires an editable install:
     pip install -e .
 
 Run:
-    python quantforge/examples/demo_ga.py
+    python aurora/examples/demo_ga.py
 """
 from __future__ import annotations
 

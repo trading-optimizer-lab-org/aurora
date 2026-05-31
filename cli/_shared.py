@@ -1,4 +1,4 @@
-"""Shared helpers used by 2+ ``aurora.cli.cmd_*`` modules (R49 split).
+﻿"""Shared helpers used by 2+ ``aurora.cli.cmd_*`` modules (R49 split).
 
 Anything that lives here is an implementation detail of the CLI dispatcher;
 no public API stability guarantee.
@@ -63,8 +63,8 @@ def _resolve_strategy(name: str):
     """Resolve a strategy by name with import fallback.
 
     Lookup order:
-        1. ``quantforge.strategies.library.__all__`` map.
-        2. Direct import of ``quantforge.strategies.library.<name>`` and pick
+        1. ``aurora.strategies.library.__all__`` map.
+        2. Direct import of ``aurora.strategies.library.<name>`` and pick
            a class attribute matching ``name``.
         3. Raise SystemExit listing the known strategies.
     """
@@ -72,7 +72,7 @@ def _resolve_strategy(name: str):
     if name in lib:
         return lib[name]
 
-    # Fallback: walk every submodule of ``quantforge.strategies.library``
+    # Fallback: walk every submodule of ``aurora.strategies.library``
     # looking for a class attribute matching ``name`` exactly. Names like
     # ``MACross`` do not lowercase to a valid module path
     # (``ma_cross.py``), so the previous str.lower() guess silently

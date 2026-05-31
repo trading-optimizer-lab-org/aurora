@@ -1,4 +1,4 @@
-"""Alpaca broker adapter (alpaca-py SDK).
+﻿"""Alpaca broker adapter (alpaca-py SDK).
 
 The SDK is imported lazily inside ``__init__`` so the broker package
 stays importable when ``alpaca-py`` is not installed.
@@ -39,7 +39,7 @@ class AlpacaAdapter(Broker):
 
     def __init__(self, config: BrokerConfig):
         self.config = config
-        # Lazy import — keeps QuantForge importable without alpaca-py.
+        # Lazy import — keeps Aurora importable without alpaca-py.
         self._sdk = _import_or_raise("alpaca", "pip install alpaca-py")
         api_key = _read_env(config.api_key_env)
         api_secret = _read_env(config.api_secret_env)

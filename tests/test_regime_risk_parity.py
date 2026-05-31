@@ -1,6 +1,6 @@
-"""Tests for RegimeRiskParity.
+﻿"""Tests for RegimeRiskParity.
 
-Run: pytest quantforge/tests/test_regime_risk_parity.py -v
+Run: pytest aurora/tests/test_regime_risk_parity.py -v
 """
 from __future__ import annotations
 import numpy as np

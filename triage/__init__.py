@@ -1,10 +1,10 @@
-"""Vectorized triage backend for QuantForge.
+﻿"""Vectorized triage backend for Aurora.
 
 Triage is a fast screening layer for thousands of strategy variants.
 It is **not** a substitute for the official engine: anything that
 passes triage thresholds gets re-run on
 :func:`aurora.core.engine.run_backtest` (or whatever the caller
-passes as ``official_runner``) under full QuantForge ceremony --
+passes as ``official_runner``) under full Aurora ceremony --
 costs, slippage, snapshots, OOSGuard, protocol enforcement.
 
 Public API::

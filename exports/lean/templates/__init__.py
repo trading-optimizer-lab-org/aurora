@@ -1,1 +1,1 @@
-"""LEAN export templates packaged with QuantForge."""
+﻿"""LEAN export templates packaged with Aurora."""

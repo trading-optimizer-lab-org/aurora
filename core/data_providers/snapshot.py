@@ -1,4 +1,4 @@
-"""SnapshotStore-backed provider.
+﻿"""SnapshotStore-backed provider.
 
 Loads a previously-frozen series from a :class:`SnapshotStore`. Always
 ``point_in_time=True`` because SnapshotStore freezes data at a known
@@ -25,7 +25,7 @@ class SnapshotProvider(BaseDataProvider):
     Construction kwargs:
         root_dir: SnapshotStore root. Defaults to ``<PROJ>/data_snapshots``
             so the provider points at the same store the rest of
-            QuantForge writes to.
+            Aurora writes to.
 
     Fetch kwargs (in priority order):
         sha256: load by content hash. Takes precedence over ``symbol``.

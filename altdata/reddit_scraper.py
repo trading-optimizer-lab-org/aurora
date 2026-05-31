@@ -1,4 +1,4 @@
-"""Reddit symbol-mention scraper.
+﻿"""Reddit symbol-mention scraper.
 
 Wraps PRAW (Python Reddit API Wrapper) lazily. Scrapes a configurable list of
 subreddits (default: ``wallstreetbets``, ``stocks``, ``options``) for ticker
@@ -40,7 +40,7 @@ class RedditConfig:
     """
     client_id_env: str = "REDDIT_CLIENT_ID"
     client_secret_env: str = "REDDIT_CLIENT_SECRET"
-    user_agent: str = "quantforge-altdata/0.1"
+    user_agent: str = "aurora-altdata/0.1"
     subreddits: tuple[str, ...] = ("wallstreetbets", "stocks", "options")
     post_limit: int = 100
     stopwords: frozenset[str] = field(default_factory=lambda: _DEFAULT_STOPWORDS)

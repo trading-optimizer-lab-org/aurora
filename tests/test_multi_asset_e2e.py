@@ -1,4 +1,4 @@
-"""E2E integration test combining MultiAssetEngine + HRP allocator + Black-Litterman.
+﻿"""E2E integration test combining MultiAssetEngine + HRP allocator + Black-Litterman.
 
 Pipeline tested:
   1. Synthetic 3-asset GBM returns
@@ -7,7 +7,7 @@ Pipeline tested:
   4. Run BL on prior + 1 absolute view -> posterior weights -> MultiAssetEngine
   5. Verify equity curves valid, metrics finite, no NaN propagation across assets
 
-Run: pytest quantforge/tests/test_multi_asset_e2e.py -v
+Run: pytest aurora/tests/test_multi_asset_e2e.py -v
 """
 from __future__ import annotations
 import numpy as np

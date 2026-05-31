@@ -1,4 +1,4 @@
-"""LLM research assistant for QuantForge.
+﻿"""LLM research assistant for Aurora.
 
 Wraps the Anthropic API to support strategy ideation, drafting, and critique.
 
@@ -175,10 +175,10 @@ except Exception:
     ANTHROPIC_AVAILABLE = False
 
 
-SYSTEM_PROMPT = """You are a quantitative research assistant for QuantForge, a backtesting framework.
+SYSTEM_PROMPT = """You are a quantitative research assistant for Aurora, a backtesting framework.
 
-QuantForge Strategy interface conventions:
-- Strategy subclasses live in quantforge/strategies/library/.
+Aurora Strategy interface conventions:
+- Strategy subclasses live in aurora/strategies/library/.
 - Each subclass inherits from aurora.strategies.base.Strategy.
 - Implement signals(self, prices: pd.Series) -> np.ndarray.
 - Output array length matches len(prices); values in [-1.0, 1.0]; no NaN.
@@ -188,7 +188,7 @@ QuantForge Strategy interface conventions:
   param_ranges for GA encoding. param_ranges entries are (low, high) for
   numeric params or a list of allowed values for categorical params.
 - Constructor parameters mirror the keys in StrategySpec.params.
-- Imports allowed: numpy as np, pandas as pd, and quantforge.strategies.base.
+- Imports allowed: numpy as np, pandas as pd, and aurora.strategies.base.
 
 When asked for ideas, return STRICT JSON: a list of objects with keys
 {name, hypothesis, signal_logic, params, rationale}. No prose outside the JSON.
@@ -275,7 +275,7 @@ class LLMResearchAssistant:
         Security model
         --------------
         Relative paths are resolved against the project root (the parent
-        of the ``quantforge`` package directory) and must stay within it
+        of the ``aurora`` package directory) and must stay within it
         after resolution. A relative path that escapes the project root
         via ``..`` segments is rejected with :class:`ValueError`.
 
@@ -326,7 +326,7 @@ class LLMResearchAssistant:
         """Ask the LLM for n strategy ideas. Returns a parsed JSON list."""
         prompt = (
             f"Research context:\n{context}\n\n"
-            f"Propose {n} concrete strategy ideas suitable for the QuantForge "
+            f"Propose {n} concrete strategy ideas suitable for the Aurora "
             "Strategy interface. Return ONLY a JSON list with objects keyed by "
             "name, hypothesis, signal_logic, params, rationale. No prose."
         )
@@ -364,7 +364,7 @@ class LLMResearchAssistant:
         """
         prompt = (
             "Implement the following strategy idea as a complete Python module "
-            "containing a Strategy subclass. Follow the QuantForge conventions "
+            "containing a Strategy subclass. Follow the Aurora conventions "
             "described in the system prompt exactly. Output ONLY Python source.\n\n"
             f"Idea (JSON):\n{json.dumps(idea, indent=2)}"
         )
@@ -390,7 +390,7 @@ class LLMResearchAssistant:
         """Summarize a research log file into at most `max_words` words."""
         content = self.read_research_log(path)
         prompt = (
-            f"Summarize the following QuantForge research log in at most "
+            f"Summarize the following Aurora research log in at most "
             f"{max_words} words. Focus on hypotheses tested, what worked, "
             "what failed, and open questions.\n\n"
             f"Log:\n{content}"

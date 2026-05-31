@@ -1,4 +1,4 @@
-"""Performance benchmark scaffold (R40).
+﻿"""Performance benchmark scaffold (R40).
 
 Contains the four representative benchmarks the project uses to gate
 R5 (GPU triage) and R6 (Rust core engine) against measurement, not
@@ -15,7 +15,7 @@ flaggable in CI.
 
 Run directly:
 
-    python -m quantforge.examples.benchmarks all
+    python -m aurora.examples.benchmarks all
 
 or import for ad-hoc profiling:
 

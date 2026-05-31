@@ -1,4 +1,4 @@
-"""Structured logging for QuantForge.
+﻿"""Structured logging for Aurora.
 
 Stdlib-only by default. Optional `structlog` enrichment if installed.
 
@@ -80,7 +80,7 @@ def configure_logging(
     json_format: bool = False,
     rotating: bool = True,
 ) -> None:
-    """Configure root quantforge logger.
+    """Configure root aurora logger.
 
     Args:
         level: DEBUG | INFO | WARNING | ERROR
@@ -147,7 +147,7 @@ def get_logger(name: str = "aurora") -> logging.Logger:
     """
     if not _CONFIGURED:
         configure_logging()
-    # Force quantforge namespace so child loggers inherit handlers
+    # Force aurora namespace so child loggers inherit handlers
     if name != _ROOT_NAME and not name.startswith(_ROOT_NAME + "."):
         if name == "__main__" or name == "":
             name = _ROOT_NAME

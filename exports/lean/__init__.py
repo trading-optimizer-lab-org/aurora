@@ -1,4 +1,4 @@
-"""Lean (QuantConnect) export adapter for QuantForge strategies.
+﻿"""Lean (QuantConnect) export adapter for Aurora strategies.
 
 Public API:
 
@@ -12,13 +12,13 @@ Public API:
 Design contract:
 
 * Export-only. There is no Lean importer. A Lean project produced here is
-  for cross-validation; promotion to live still goes through the QuantForge
+  for cross-validation; promotion to live still goes through the Aurora
   protocol (see ``RESEARCH_PROTOCOL.md``).
 * No Lean runtime dep. Pure-Python text generation using
   :class:`string.Template`.
 * Every artifact carries provenance (``policy_hash``, ``spec_hash``,
   ``qf_version``, ``exported_at``) so a Lean run can be tied back to the
-  exact QuantForge configuration that produced it.
+  exact Aurora configuration that produced it.
 """
 from aurora.exports.lean.exporter import (
     LeanExportConfig,

@@ -1,10 +1,10 @@
-"""Multi-leg options strategy builder.
+﻿"""Multi-leg options strategy builder.
 
 Constructs vertical spreads, iron condors and butterflies, then provides
 payoff diagrams and net-greek summaries from per-leg Black-Scholes greeks.
 
 This module is self-contained: it implements its own BS pricer rather than
-depending on any other quantforge module.
+depending on any other aurora module.
 """
 from __future__ import annotations
 

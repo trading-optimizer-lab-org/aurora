@@ -1,4 +1,4 @@
-"""Tests for quantforge.validation.retraining."""
+﻿"""Tests for aurora.validation.retraining."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd

@@ -1,4 +1,4 @@
-"""Gaussian HMM regime detection (Hamilton 1989 style).
+﻿"""Gaussian HMM regime detection (Hamilton 1989 style).
 
 Wraps hmmlearn.GaussianHMM. Sorts states by mean return ascending so state 0 is
 always the lowest-return regime and state K-1 the highest. Reproducible via
@@ -17,7 +17,7 @@ try:
     from hmmlearn.hmm import GaussianHMM as _SkGaussianHMM
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
-        "hmmlearn is required for quantforge.regime.hmm. "
+        "hmmlearn is required for aurora.regime.hmm. "
         "Install with: uv add hmmlearn"
     ) from exc
 

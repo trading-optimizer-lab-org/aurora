@@ -1,6 +1,6 @@
-"""Tests for quantforge.ml.fracdiff (Task G.4).
+﻿"""Tests for aurora.ml.fracdiff (Task G.4).
 
-Run: uv run pytest quantforge/tests/test_fracdiff.py -v
+Run: uv run pytest aurora/tests/test_fracdiff.py -v
 """
 from __future__ import annotations
 

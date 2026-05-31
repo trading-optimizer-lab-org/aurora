@@ -1,8 +1,8 @@
-# QuantForge v1.0 Completion Report
+﻿# Aurora v1.0 Completion Report
 
 **Date:** 2026-05-06
 **Method:** Subagent-Driven Development (parallel batches)
-**Plan:** `quantforge/docs/DEVELOPMENT_PLAN.md`
+**Plan:** `aurora/docs/DEVELOPMENT_PLAN.md`
 
 ## Summary
 
@@ -64,7 +64,7 @@
 ## Final architecture
 
 ```
-quantforge/
+aurora/
 ├── __init__.py
 ├── README.md
 ├── core/
@@ -159,7 +159,7 @@ forge search --strategy MACross --asset SPY --population 100
 forge list-strategies
 forge tearsheet --strategy MACross --asset SPY --output tear.html
 forge bench --strategy MACross --n 5000
-forge config show --config quantforge/docs/config.example.yaml
+forge config show --config aurora/docs/config.example.yaml
 forge config init --output myconfig.yaml
 forge preflight --strategy MACross --symbol SPY
 ```
@@ -193,20 +193,20 @@ After validation passes, marker file written → preflight required → paper 90
 
 Single seed propagates everywhere:
 ```python
-from quantforge.core.seed import set_global_seed
+from aurora.core.seed import set_global_seed
 set_global_seed(42)
 # All random ops downstream are deterministic
 ```
 
 OOSGuard locks any access to OOS data during optimization phase. CI hook:
 ```python
-from quantforge.core.data_layer import check_oos_integrity
+from aurora.core.data_layer import check_oos_integrity
 assert check_oos_integrity(), "OOS contamination detected"
 ```
 
 ## STOP CONDITION MET
 
-QuantForge v1.0 is feature-complete per development plan. 289/289 tests pass. Ready for:
+Aurora v1.0 is feature-complete per development plan. 289/289 tests pass. Ready for:
 - Application to existing project strategies (STANDARD R111, HEDGE R6, INDUSTRY tsmom6)
 - New strategy generation via GA
 - Paper trading via Lumibot wrapper

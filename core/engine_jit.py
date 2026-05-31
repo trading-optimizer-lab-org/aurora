@@ -1,4 +1,4 @@
-"""Numba JIT-accelerated hot paths for QuantForge backtest engine.
+﻿"""Numba JIT-accelerated hot paths for Aurora backtest engine.
 
 Same semantics as core.engine + core.costs + indicator loops in strategies.library,
 but with @njit on the inner numerical kernels. Falls back to pure-numpy when

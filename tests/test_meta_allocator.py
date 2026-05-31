@@ -1,6 +1,6 @@
-"""Tests for MetaAllocator (allocator-of-allocators).
+﻿"""Tests for MetaAllocator (allocator-of-allocators).
 
-Run: pytest quantforge/tests/test_meta_allocator.py -v
+Run: pytest aurora/tests/test_meta_allocator.py -v
 """
 from __future__ import annotations
 import numpy as np

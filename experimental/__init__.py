@@ -1,4 +1,4 @@
-"""QuantForge experimental — wild-idea modules.
+﻿"""Aurora experimental — wild-idea modules.
 
 Each module is self-contained and uses lazy imports for any heavy / optional
 third-party dependency (qiskit, torch, sklearn, ...). Importing this package

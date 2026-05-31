@@ -1,8 +1,8 @@
-"""Demo: generate a full tearsheet for MACross(20, 100) on SPY.
+﻿"""Demo: generate a full tearsheet for MACross(20, 100) on SPY.
 
 Run:
     uv run --with vectorbt --with matplotlib --with scipy --with pyarrow \\
-        --with yfinance python quantforge/examples/demo_tearsheet.py
+        --with yfinance python aurora/examples/demo_tearsheet.py
 """
 from __future__ import annotations
 import os

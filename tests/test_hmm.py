@@ -1,11 +1,11 @@
-"""Tests for quantforge.regime.hmm — Gaussian HMM regime detection."""
+﻿"""Tests for aurora.regime.hmm — Gaussian HMM regime detection."""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
 
-# Skip the entire module when hmmlearn isn't installed; quantforge.regime.hmm
+# Skip the entire module when hmmlearn isn't installed; aurora.regime.hmm
 # raises ImportError at module load time without it.
 pytest.importorskip("hmmlearn")
 

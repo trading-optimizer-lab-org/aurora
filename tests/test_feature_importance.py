@@ -1,4 +1,4 @@
-"""Tests for quantforge.ml.feature_importance (AFML Ch.8)."""
+﻿"""Tests for aurora.ml.feature_importance (AFML Ch.8)."""
 from __future__ import annotations
 import os
 

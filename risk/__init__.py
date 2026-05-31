@@ -1,4 +1,4 @@
-"""Advanced Risk modules (QuantForge v3.0 Batch C).
+﻿"""Advanced Risk modules (Aurora v3.0 Batch C).
 
 Modules:
 - expected_shortfall  : Coherent ES (CVaR) at multiple confidence levels.

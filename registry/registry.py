@@ -1,4 +1,4 @@
-"""SQLite registry for backtest results.
+﻿"""SQLite registry for backtest results.
 
 Stdlib sqlite3 only. JSON-encoded dicts/lists. Dedup via UNIQUE config_hash.
 """
@@ -69,7 +69,7 @@ def hash_config(strategy_class: str, params: dict, asset: str,
 def _capture_git_hash() -> Optional[str]:
     """Best-effort HEAD hash. None on any failure.
 
-    Uses :func:`quantforge.registry.versioning._run_git_proc` (Popen +
+    Uses :func:`aurora.registry.versioning._run_git_proc` (Popen +
     explicit terminate/kill) instead of ``subprocess.run`` so a hung
     ``git.exe`` on Windows does not orphan a zombie process — the
     standard library's ``run(..., timeout=...)`` raises ``TimeoutExpired``

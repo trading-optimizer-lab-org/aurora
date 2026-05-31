@@ -1,6 +1,6 @@
-"""Tests for VolTargetForecaster.
+﻿"""Tests for VolTargetForecaster.
 
-Run: pytest quantforge/tests/test_vol_target_forecast.py -v
+Run: pytest aurora/tests/test_vol_target_forecast.py -v
 """
 from __future__ import annotations
 import numpy as np

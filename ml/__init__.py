@@ -1,4 +1,4 @@
-"""QuantForge ML — labeling, meta-labeling, bet sizing, feature importance.
+﻿"""Aurora ML — labeling, meta-labeling, bet sizing, feature importance.
 
 Implements Lopez de Prado AFML chapters 3-4, 8.
 """
