@@ -40,12 +40,24 @@ def main() -> int:
     parser.add_argument("--file-prefix", default="sp500_weekly_hedge_all_assets_all_features_dehb_500")
     parser.add_argument("--top-rows-per-stage", type=int, default=500)
     parser.add_argument("--random-seed", type=int, default=9102601)
+    parser.add_argument("--train-start", default="1995-01-01")
+    parser.add_argument("--train-end", default="2010-12-31")
+    parser.add_argument("--validation-start", default="2011-01-01")
+    parser.add_argument("--validation-end", default="2020-12-31")
+    parser.add_argument("--locked-start", default="2021-01-01")
+    parser.add_argument("--allow-late-entry", action="store_true")
     parser.add_argument("--synthetic-smoke", action="store_true")
     args = parser.parse_args()
 
     config = SP500WeeklyHedgeConfig(
         top_rows_per_stage=int(args.top_rows_per_stage),
         random_seed=int(args.random_seed),
+        train_start=str(args.train_start),
+        train_end=str(args.train_end),
+        validation_start=str(args.validation_start),
+        validation_end=str(args.validation_end),
+        locked_start=str(args.locked_start),
+        allow_late_entry=bool(args.allow_late_entry),
     )
     dataset = _synthetic_dataset() if args.synthetic_smoke else None
     output_dir = Path(args.output_dir)

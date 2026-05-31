@@ -28,6 +28,9 @@ _SEARCH = _load_search_module()
 METHOD = _SEARCH.METHOD
 merge_stage_rows = _SEARCH.merge_stage_rows
 method_summary = _SEARCH.method_summary
+generate_subperiod_report = _SEARCH.generate_subperiod_report
+generate_negative_sp500_years_report = _SEARCH.generate_negative_sp500_years_report
+build_hedge_rankings = _SEARCH.build_hedge_rankings
 
 
 def main() -> int:
@@ -43,6 +46,12 @@ def main() -> int:
     parser.add_argument("--assumed-effective-parallelism", type=int, default=180)
     parser.add_argument("--minutes-per-stage", type=float, default=55.0)
     parser.add_argument("--top-n", type=int, default=2000)
+    parser.add_argument("--train-start", default="1995-01-01")
+    parser.add_argument("--train-end", default="2010-12-31")
+    parser.add_argument("--validation-start", default="2011-01-01")
+    parser.add_argument("--validation-end", default="2020-12-31")
+    parser.add_argument("--locked-start", default="2021-01-01")
+    parser.add_argument("--allow-late-entry", action="store_true")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -84,6 +93,9 @@ def main() -> int:
     sizing = merged[sizing_cols].copy() if not merged.empty else merged
     methods = method_summary(merged)
     fail_reasons = _fail_reasons(merged)
+    subperiods = generate_subperiod_report(merged)
+    negative_years = generate_negative_sp500_years_report(merged)
+    rankings = build_hedge_rankings(merged)
     feature_audit = _feature_audit(args.audit_glob)
     summary = {
         "rows": int(len(leaderboard)),
@@ -101,12 +113,19 @@ def main() -> int:
         "minutes_per_stage": float(args.minutes_per_stage),
         "estimated_search_minutes_conservative": float(args.waves) * float(args.minutes_per_stage),
         "matrix_split": "single_matrix_80_jobs_per_wave",
-        "objective": "gain_or_hold_when_sp500_falls_weekly_and_avoid_losses_when_sp500_rises",
+        "objective": "maximize_convex_protection_on_negative_sp500_weeks_with_acceptable_cost_on_positive_weeks",
         "locked_opened": False,
         "optimization_period": "train",
         "validation_role": "report_only",
         "validation_used_for_selection": False,
-        "sort_order": "train_score_desc",
+        "sort_order": "train_downside_hedge_score_desc",
+        "train_start": str(args.train_start),
+        "train_end": str(args.train_end),
+        "validation_start": str(args.validation_start),
+        "validation_end": str(args.validation_end),
+        "locked_start": str(args.locked_start),
+        "allow_late_entry": bool(args.allow_late_entry),
+        "subperiods": 6,
     }
 
     leaderboard.to_csv(output_dir / f"{args.file_prefix}_leaderboard.csv", index=False)
@@ -116,6 +135,10 @@ def main() -> int:
     methods.to_csv(output_dir / f"{args.file_prefix}_methods.csv", index=False)
     fail_reasons.to_csv(output_dir / f"{args.file_prefix}_fail_reasons.csv", index=False)
     sizing.to_csv(output_dir / f"{args.file_prefix}_sizing.csv", index=False)
+    subperiods.to_csv(output_dir / f"{args.file_prefix}_subperiods.csv", index=False)
+    negative_years.to_csv(output_dir / f"{args.file_prefix}_negative_sp500_years_report.csv", index=False)
+    for name, ranking in rankings.items():
+        ranking.to_csv(output_dir / f"{args.file_prefix}_{name}.csv", index=False)
     (output_dir / f"{args.file_prefix}_feature_audit.json").write_text(
         json.dumps(feature_audit, indent=2, sort_keys=True),
         encoding="utf-8",

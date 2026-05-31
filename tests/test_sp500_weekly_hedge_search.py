@@ -13,11 +13,15 @@ from aurora.research.sp500_weekly_hedge_search import (
     SP500WeeklyHedgeConfig,
     candidate_id_from_spec,
     choose_train_size,
+    downside_hedge_score,
     evaluate_spec,
+    generate_negative_sp500_years_report,
+    generate_subperiod_report,
     hedge_train_score,
     merge_stage_rows,
     portfolio_metrics,
     run_stage,
+    train_fail_reason,
 )
 
 
@@ -58,6 +62,80 @@ def test_score_prefers_strategy_that_gains_when_spy_falls_and_does_not_lose_when
     assert hedge_train_score(portfolio_metrics(good, spy, idx, size=1.0)) > hedge_train_score(
         portfolio_metrics(bad, spy, idx, size=1.0)
     )
+
+
+def test_downside_score_weights_large_spy_drops_more_than_small_drops() -> None:
+    idx = pd.date_range("2008-01-04", periods=6, freq="W-FRI")
+    spy = np.array([-0.01, -0.08, 0.02, 0.03, -0.02, -0.06])
+    protects_crashes = np.array([-0.01, 0.05, 0.001, 0.001, -0.01, 0.04])
+    protects_small_dips = np.array([0.05, -0.01, 0.001, 0.001, 0.04, -0.01])
+
+    crash_metrics = portfolio_metrics(protects_crashes, spy, idx, size=1.0)
+    small_metrics = portfolio_metrics(protects_small_dips, spy, idx, size=1.0)
+
+    assert crash_metrics["down_weighted_mean_weekly"] > small_metrics["down_weighted_mean_weekly"]
+    assert downside_hedge_score(crash_metrics) > downside_hedge_score(small_metrics)
+
+
+def test_train_verification_fails_when_crash_weeks_are_bad_even_if_total_return_is_good() -> None:
+    idx = pd.date_range("2008-01-04", periods=120, freq="W-FRI")
+    spy = np.resize(np.array([-0.08, -0.04, -0.01, 0.02, 0.03]), len(idx))
+    strategy = np.where(spy <= -0.04, -0.03, np.where(spy < 0.0, 0.10, 0.04))
+    config = SP500WeeklyHedgeConfig(
+        min_train_weeks=100,
+        min_down_weeks=60,
+        min_crash_weeks=20,
+        min_crash_positive_pct=0.45,
+    )
+    metrics = portfolio_metrics(strategy, spy, idx, size=1.0)
+
+    assert metrics["final_nav"] > 1.0
+    assert train_fail_reason(metrics, config) == "train_not_positive_on_crash_weeks"
+
+
+def test_late_entry_returns_do_not_fill_missing_asset_history_with_zero() -> None:
+    idx = pd.date_range("2000-01-07", periods=12, freq="W-FRI")
+    features = pd.DataFrame({"signal": np.ones(len(idx))}, index=idx)
+    returns = pd.DataFrame({"LATE": [np.nan] * 5 + [0.01] * 7}, index=idx)
+    spec = {
+        "features": ("signal",),
+        "signal_weights": (1.0,),
+        "threshold": 0.0,
+        "assets": ("LATE",),
+        "asset_weights": (1.0,),
+    }
+
+    base, exposure = __import__(
+        "aurora.research.sp500_weekly_hedge_search",
+        fromlist=["returns_for_spec"],
+    ).returns_for_spec(features, returns, spec)
+
+    assert np.isnan(base[:5]).all()
+    assert np.isfinite(base[5:]).all()
+    assert np.isnan(exposure[:5]).all()
+
+
+def test_subperiod_and_negative_sp500_year_reports_are_generated() -> None:
+    idx = pd.date_range("1999-01-01", periods=220, freq="W-FRI")
+    spy = np.resize(np.array([-0.03, 0.02, -0.02, 0.01]), len(idx))
+    strategy = np.where(spy < 0.0, 0.01, 0.002)
+    frame = pd.DataFrame(
+        [
+            {
+                "candidate_id": "hedge",
+                "period": "train",
+                "strategy_returns_json": json.dumps(strategy.tolist()),
+                "spy_returns_json": json.dumps(spy.tolist()),
+                "returns_index_json": json.dumps([d.isoformat() for d in idx]),
+            }
+        ]
+    )
+
+    subperiods = generate_subperiod_report(frame)
+    negative_years = generate_negative_sp500_years_report(frame)
+
+    assert set(subperiods["subperiod"]).issuperset({"train_1999_2002", "train_2003_2006"})
+    assert {"sp500_return", "strategy_return", "beats_sp500"}.issubset(negative_years.columns)
 
 
 def test_size_is_chosen_only_from_train() -> None:
@@ -173,25 +251,32 @@ def test_merge_dedupes_by_candidate_id() -> None:
 
 
 def test_workflow_shapes_for_1wave_and_6waves_are_comparable() -> None:
-    one = Path(".github/workflows/sp500-weekly-hedge-dehb-1wave-80jobs-1h.yml")
-    six = Path(".github/workflows/sp500-weekly-hedge-dehb-6waves-80jobs-1h.yml")
+    one = Path(".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-1wave-80jobs-1h.yml")
+    six = Path(".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-1h.yml")
     one_data = yaml.safe_load(one.read_text(encoding="utf-8"))
     six_data = yaml.safe_load(six.read_text(encoding="utf-8"))
     assert one_data["env"]["EXPECTED_JOBS"] == "80"
     assert one_data["env"]["WAVES"] == "1"
     assert one_data["env"]["JOBS_PER_WAVE"] == "80"
     assert one_data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
+    assert one_data["env"]["TRAIN_START"] == "1995-01-01"
+    assert one_data["env"]["LOCKED_START"] == "2021-01-01"
     assert one_data["jobs"]["wave_0"]["strategy"]["max-parallel"] == 500
     assert len(one_data["jobs"]["wave_0"]["strategy"]["matrix"]["stage"]) == 80
     assert six_data["env"]["EXPECTED_JOBS"] == "480"
     assert six_data["env"]["WAVES"] == "6"
     assert six_data["env"]["JOBS_PER_WAVE"] == "80"
     assert six_data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
+    assert six_data["env"]["TRAIN_START"] == "1995-01-01"
+    assert six_data["env"]["LOCKED_START"] == "2021-01-01"
     for wave in range(6):
         job = six_data["jobs"][f"wave_{wave}"]
         assert job["strategy"]["max-parallel"] == 500
         assert len(job["strategy"]["matrix"]["stage"]) == 80
     for text in (one.read_text(encoding="utf-8"), six.read_text(encoding="utf-8")):
+        assert '--start "$TRAIN_START" --end "$VALIDATION_END"' in text
+        assert '--locked-start "$LOCKED_START"' in text
+        assert "--allow-late-entry" in text
         assert "genetic" not in text
         assert "github_ml" not in text
         assert "beam" not in text

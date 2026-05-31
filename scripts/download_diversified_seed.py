@@ -19,6 +19,7 @@ Skipped without operator credentials:
 from __future__ import annotations
 
 import io
+import argparse
 import json
 import os
 import time
@@ -44,7 +45,8 @@ SEC_USER_AGENT = os.environ.get(
     "AU_SEC_EDGAR_USER_AGENT",
     "Aurora research operator@example.com",
 )
-START = "2015-01-01"
+DEFAULT_START = "2015-01-01"
+START = DEFAULT_START
 END = None  # today
 HTTP_TIMEOUT = 30
 
@@ -84,7 +86,7 @@ def fetch_binance_klines(pair: str, start: str = START) -> pd.DataFrame | None:
     """Aggregate Binance daily klines from monthly ZIPs."""
     sym = pair.upper()
     start_dt = datetime.strptime(start, "%Y-%m-%d").date()
-    today = date.today()
+    today = datetime.strptime(END, "%Y-%m-%d").date() if END else date.today()
     frames: list[pd.DataFrame] = []
     cur = start_dt.replace(day=1)
     while cur <= today:
@@ -218,6 +220,13 @@ def fetch_openfigi(ticker: str) -> list[dict] | None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Download diversified seed dataset into the Aurora TimeSeriesStore.")
+    parser.add_argument("--start", default=DEFAULT_START)
+    parser.add_argument("--end", default=None)
+    args = parser.parse_args()
+    global START, END
+    START = str(args.start)
+    END = str(args.end) if args.end else None
     with open(MANIFEST, encoding="utf-8") as f:
         manifest = yaml.safe_load(f)
     sections = manifest["sections"]
@@ -241,6 +250,8 @@ def main() -> None:
             persisted = False
             provider = "-"
             rows = 0
+            first_date = None
+            last_date = None
             error = None
             try:
                 if sec_name == "fx":
@@ -268,7 +279,11 @@ def main() -> None:
                     df = fetch_yfinance(sym)
                     provider = "yfinance"
                 if df is not None and not df.empty:
+                    if END is not None:
+                        df = df.loc[: pd.Timestamp(END)]
                     rows = len(df)
+                    first_date = str(pd.to_datetime(df.index).min().date())
+                    last_date = str(pd.to_datetime(df.index).max().date())
                     df_to_store = df.reset_index()
                     df_to_store.columns = [str(c).lower() for c in df_to_store.columns]
                     rec = store.put(library, sym, df, version=version, metadata={
@@ -284,8 +299,8 @@ def main() -> None:
 
             if persisted:
                 sec_report["ok"] += 1
-                sec_report["results"].append({"symbol": sym, "provider": provider, "rows": rows})
-                print(f"  OK  {sym:<12} via {provider:<22} rows={rows}")
+                sec_report["results"].append({"symbol": sym, "provider": provider, "rows": rows, "start": first_date, "end": last_date})
+                print(f"  OK  {sym:<12} via {provider:<22} rows={rows} start={first_date} end={last_date}")
             else:
                 sec_report["fail"] += 1
                 sec_report["results"].append({"symbol": sym, "provider": provider, "rows": 0, "error": error or "empty"})

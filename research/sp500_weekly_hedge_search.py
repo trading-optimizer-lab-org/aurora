@@ -35,16 +35,23 @@ WAVE_SEED_STRIDE = 100_000_000
 class SP500WeeklyHedgeConfig:
     run_id: str = "sp500_weekly_hedge_all_assets_all_features_dehb_500"
     manifest_path: str = "config/diversified_seed_dataset.yaml"
-    train_start: str = "2015-01-01"
-    train_end: str = "2022-12-31"
-    validation_start: str = "2023-01-01"
-    validation_end: str = "2025-12-31"
-    locked_start: str = "2026-01-01"
+    train_start: str = "1995-01-01"
+    train_end: str = "2010-12-31"
+    validation_start: str = "2011-01-01"
+    validation_end: str = "2020-12-31"
+    locked_start: str = "2021-01-01"
     benchmark_symbol: str = "SPY"
     max_leverage: float = 5.0
     size_grid: tuple[float, ...] = DEFAULT_SIZE_GRID
-    min_train_weeks: int = 120
-    min_down_weeks: int = 20
+    allow_late_entry: bool = True
+    min_train_weeks: int = 260
+    min_down_weeks: int = 80
+    min_crash_weeks: int = 25
+    min_down_positive_pct: float = 0.52
+    min_crash_positive_pct: float = 0.45
+    min_up_mean_weekly: float = -0.0005
+    max_train_beta_spy: float = 0.50
+    max_train_correlation_spy: float = 0.60
     max_features_per_candidate: int = 8
     max_assets_per_candidate: int = 8
     max_feature_columns: int = 5000
@@ -112,7 +119,13 @@ def run_stage(
         "optimization_period": "train",
         "validation_role": "report_only",
         "validation_used_for_selection": False,
-        "objective": "gain_or_hold_when_sp500_falls_weekly_and_avoid_losses_when_sp500_rises",
+        "objective": "maximize_convex_protection_on_negative_sp500_weeks_with_acceptable_cost_on_positive_weeks",
+        "train_start": config.train_start,
+        "train_end": config.train_end,
+        "validation_start": config.validation_start,
+        "validation_end": config.validation_end,
+        "locked_start": config.locked_start,
+        "allow_late_entry": bool(config.allow_late_entry),
     }
     return rows, meta, audit
 
@@ -122,8 +135,8 @@ def load_dataset(config: SP500WeeklyHedgeConfig) -> tuple[dict[str, Any], dict[s
     manifest = yaml.safe_load((repo_root / config.manifest_path).read_text(encoding="utf-8"))
     store = TimeSeriesStore(base_data_dir() / "timeseries")
     tradable_symbols, context_symbols = _symbols_from_manifest(manifest)
-    prices, found, missing = _load_price_panels(store, tradable_symbols, end=config.validation_end)
-    context, context_found, context_missing = _load_context_panels(store, context_symbols, end=config.validation_end)
+    prices, found, missing = _load_price_panels(store, tradable_symbols, start=config.train_start, end=config.validation_end)
+    context, context_found, context_missing = _load_context_panels(store, context_symbols, start=config.train_start, end=config.validation_end)
     if config.benchmark_symbol not in prices.columns:
         raise ValueError(f"benchmark {config.benchmark_symbol} is required in stored prices")
 
@@ -138,20 +151,33 @@ def load_dataset(config: SP500WeeklyHedgeConfig) -> tuple[dict[str, Any], dict[s
     valid_mask = _between(features.index, config.validation_start, config.validation_end)
     locked_mask = features.index >= pd.Timestamp(config.locked_start)
 
+    feature_available = features.notna()
     train_x = features.loc[train_mask].copy()
     valid_x = features.loc[valid_mask].copy()
+    train_feature_available = feature_available.loc[train_mask].copy()
+    valid_feature_available = feature_available.loc[valid_mask].copy()
     train_rets = weekly_returns.loc[train_x.index].copy()
     valid_rets = weekly_returns.loc[valid_x.index].copy()
     train_spy = spy_returns.loc[train_x.index].copy()
     valid_spy = spy_returns.loc[valid_x.index].copy()
-    train_x, valid_x, train_rets, valid_rets, train_spy, valid_spy = _clean_and_align(
-        train_x, valid_x, train_rets, valid_rets, train_spy, valid_spy, config
+    train_x, valid_x, train_rets, valid_rets, train_spy, valid_spy, train_feature_available, valid_feature_available = _clean_and_align(
+        train_x,
+        valid_x,
+        train_rets,
+        valid_rets,
+        train_spy,
+        valid_spy,
+        config,
+        train_feature_available,
+        valid_feature_available,
     )
 
     selected, dropped = _select_usable_features(train_x, train_spy, config)
     train_x = train_x.loc[:, selected]
     valid_x = valid_x.loc[:, selected]
     train_x, valid_x = _impute_and_standardize(train_x, valid_x)
+    train_x.attrs["availability_mask"] = train_feature_available.loc[:, selected]
+    valid_x.attrs["availability_mask"] = valid_feature_available.loc[:, selected]
 
     audit = {
         "manifest": manifest.get("name", "unknown"),
@@ -170,6 +196,12 @@ def load_dataset(config: SP500WeeklyHedgeConfig) -> tuple[dict[str, Any], dict[s
         "rows_locked_declared": int(np.sum(locked_mask)),
         "locked_opened": False,
         "validation_role": "report_only",
+        "train_start": config.train_start,
+        "train_end": config.train_end,
+        "validation_start": config.validation_start,
+        "validation_end": config.validation_end,
+        "locked_start": config.locked_start,
+        "allow_late_entry": bool(config.allow_late_entry),
     }
     return {
         "train_x": train_x,
@@ -230,7 +262,7 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
     train_1x = portfolio_metrics(train_base, dataset["train_spy_returns"], dataset["train_index"], size=1.0)
     valid_1x = portfolio_metrics(valid_base, dataset["valid_spy_returns"], dataset["valid_index"], size=1.0)
     fail_reason = train_fail_reason(train_sized, config)
-    score = hedge_train_score(train_sized) if not fail_reason else -1_000_000.0 + hedge_train_score(train_sized)
+    score = downside_hedge_score(train_sized) if not fail_reason else -1_000_000.0 + downside_hedge_score(train_sized)
     public_spec = {k: v for k, v in spec.items() if not str(k).startswith("_")}
     asset_weights = dict(zip(spec["assets"], spec["asset_weights"]))
     row: dict[str, Any] = {
@@ -250,6 +282,7 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
         "position_size": float(size),
         "max_leverage": float(config.max_leverage),
         "train_score": float(score),
+        "train_downside_hedge_score": float(downside_hedge_score(train_sized)),
         "verified": fail_reason == "",
         "rejection_reason": fail_reason,
         "locked_opened": False,
@@ -258,6 +291,17 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
         "validation_used_for_selection": False,
         "train_average_abs_exposure": float(np.nanmean(np.abs(train_exposure))) if len(train_exposure) else 0.0,
         "validation_average_abs_exposure": float(np.nanmean(np.abs(valid_exposure))) if len(valid_exposure) else 0.0,
+        "effective_start": _effective_start(dataset["train_index"], dataset["valid_index"], train_base, valid_base),
+        "effective_train_weeks": int(np.isfinite(train_base).sum()),
+        "effective_validation_weeks": int(np.isfinite(valid_base).sum()),
+        "effective_spy_down_weeks_train": int(train_sized.get("spy_down_weeks", 0.0)),
+        "late_entry_assets": _late_entry_assets(dataset["train_index"], dataset["train_asset_returns"], spec),
+        "train_returns_json": _returns_json(train_base * float(size)),
+        "validation_returns_json": _returns_json(valid_base * float(size)),
+        "train_spy_returns_json": _returns_json(dataset["train_spy_returns"]),
+        "validation_spy_returns_json": _returns_json(dataset["valid_spy_returns"]),
+        "train_index_json": _index_json(dataset["train_index"]),
+        "validation_index_json": _index_json(dataset["valid_index"]),
     }
     row.update(_prefix_metrics("train_1x", train_1x))
     row.update(_prefix_metrics("validation_1x", valid_1x))
@@ -272,6 +316,11 @@ def returns_for_spec(
     spec: dict[str, Any],
 ) -> tuple[np.ndarray, np.ndarray]:
     selected = list(spec.get("features", ()))
+    feature_available = features.attrs.get("availability_mask")
+    if isinstance(feature_available, pd.DataFrame) and selected:
+        feature_mask = feature_available.loc[:, selected].all(axis=1).to_numpy(dtype=bool)
+    else:
+        feature_mask = features.loc[:, selected].notna().all(axis=1).to_numpy(dtype=bool) if selected else np.ones(len(features), dtype=bool)
     matrix = features.loc[:, selected].to_numpy(dtype=np.float64)
     signal_weights = np.asarray(spec.get("signal_weights", (1.0,) * len(selected)), dtype=np.float64)
     if len(signal_weights) != len(selected):
@@ -289,8 +338,18 @@ def returns_for_spec(
         weights = np.ones(len(assets), dtype=np.float64)
     gross = float(np.sum(np.abs(weights)))
     weights = weights / gross if gross > 1e-12 else np.ones(len(assets)) / max(1, len(assets))
-    portfolio_base = asset_returns.loc[:, assets].to_numpy(dtype=np.float64) @ weights if assets else np.zeros(len(features))
-    return exposure * portfolio_base, exposure
+    if assets:
+        asset_frame = asset_returns.loc[:, assets]
+        asset_mask = asset_frame.notna().all(axis=1).to_numpy(dtype=bool)
+        portfolio_base = asset_frame.to_numpy(dtype=np.float64) @ weights
+    else:
+        asset_mask = np.ones(len(features), dtype=bool)
+        portfolio_base = np.zeros(len(features))
+    valid = feature_mask & asset_mask & np.isfinite(portfolio_base) & np.isfinite(exposure)
+    strategy = exposure * portfolio_base
+    strategy = np.where(valid, strategy, np.nan)
+    exposure = np.where(valid, exposure, np.nan)
+    return strategy, exposure
 
 
 def choose_train_size(
@@ -336,6 +395,12 @@ def portfolio_metrics(
     metrics = compute_metrics(strategy, ppy=WEEKLY_PPY)
     down = spy < 0.0
     up = spy >= 0.0
+    crash = _crash_mask(spy)
+    negative_years = _negative_sp500_year_metrics(strategy, spy, idx)
+    down_weighted = _weighted_down_mean(strategy, spy)
+    crash_weeks = float(np.sum(crash))
+    crash_mean = float(np.mean(strategy[crash])) if np.any(crash) else 0.0
+    crash_positive = float(np.mean(strategy[crash] > 0.0)) if np.any(crash) else 0.0
     return {
         "cagr": float(metrics.cagr) / 100.0,
         "sharpe": float(metrics.sharpe),
@@ -354,25 +419,53 @@ def portfolio_metrics(
         "spy_down_total_return": _compound_return(strategy[down]),
         "spy_up_total_return": _compound_return(strategy[up]),
         "spy_down_mean_weekly": float(np.mean(strategy[down])) if np.any(down) else 0.0,
+        "spy_down_weighted_mean_weekly": down_weighted,
+        "down_weighted_mean_weekly": down_weighted,
         "spy_up_mean_weekly": float(np.mean(strategy[up])) if np.any(up) else 0.0,
         "spy_down_positive_pct": float(np.mean(strategy[down] > 0.0)) if np.any(down) else 0.0,
         "spy_up_positive_pct": float(np.mean(strategy[up] > 0.0)) if np.any(up) else 0.0,
+        "spy_crash_weeks": crash_weeks,
+        "crash_weeks": crash_weeks,
+        "spy_crash_mean_weekly": crash_mean,
+        "crash_mean_weekly": crash_mean,
+        "spy_crash_positive_pct": crash_positive,
+        "crash_positive_pct": crash_positive,
+        "negative_sp500_years": float(negative_years["negative_sp500_years"]),
+        "negative_sp500_years_win_pct": float(negative_years["negative_sp500_years_win_pct"]),
+        "negative_sp500_years_positive_pct": float(negative_years["negative_sp500_years_positive_pct"]),
         "correlation_spy": _safe_corr(pd.Series(strategy), pd.Series(spy)),
         "beta_spy": _beta(strategy, spy),
     }
 
 
-def hedge_train_score(metrics: dict[str, float]) -> float:
-    down_mean = _finite_or(metrics.get("spy_down_mean_weekly"), -1.0)
-    up_mean = _finite_or(metrics.get("spy_up_mean_weekly"), -1.0)
+def downside_hedge_score(metrics: dict[str, float]) -> float:
+    down_weighted = _finite_or(metrics.get("spy_down_weighted_mean_weekly"), -1.0)
+    crash_mean = _finite_or(metrics.get("spy_crash_mean_weekly"), -1.0)
     down_hit = _finite_or(metrics.get("spy_down_positive_pct"), 0.0)
-    up_hit = _finite_or(metrics.get("spy_up_positive_pct"), 0.0)
-    sharpe = _finite_or(metrics.get("sharpe"), -10.0)
-    calmar = _finite_or(metrics.get("calmar"), -10.0)
-    pf = min(_finite_or(metrics.get("profit_factor"), 0.0), 10.0)
+    crash_hit = _finite_or(metrics.get("spy_crash_positive_pct"), 0.0)
+    negative_win = _finite_or(metrics.get("negative_sp500_years_win_pct"), 0.0)
+    negative_positive = _finite_or(metrics.get("negative_sp500_years_positive_pct"), 0.0)
+    up_mean = _finite_or(metrics.get("spy_up_mean_weekly"), -1.0)
     drawdown = abs(min(_finite_or(metrics.get("max_drawdown"), 0.0), 0.0))
     beta = _finite_or(metrics.get("beta_spy"), 0.0)
-    return float(120.0 * down_mean + 70.0 * up_mean + 1.5 * down_hit + 0.8 * up_hit + 0.3 * sharpe + 0.3 * calmar + 0.05 * pf - 1.2 * drawdown - 0.4 * max(beta, 0.0))
+    corr = _finite_or(metrics.get("correlation_spy"), 0.0)
+    return float(
+        220.0 * down_weighted
+        + 140.0 * crash_mean
+        + 2.0 * down_hit
+        + 2.5 * crash_hit
+        + 1.5 * negative_win
+        + 1.0 * negative_positive
+        + 40.0 * min(up_mean, 0.002)
+        - 120.0 * abs(min(up_mean, 0.0))
+        - 1.5 * drawdown
+        - 0.8 * max(beta, 0.0)
+        - 0.5 * max(corr, 0.0)
+    )
+
+
+def hedge_train_score(metrics: dict[str, float]) -> float:
+    return downside_hedge_score(metrics)
 
 
 def train_fail_reason(metrics: dict[str, float], config: SP500WeeklyHedgeConfig) -> str:
@@ -382,14 +475,28 @@ def train_fail_reason(metrics: dict[str, float], config: SP500WeeklyHedgeConfig)
         return "train_too_few_weeks"
     if metrics["spy_down_weeks"] < float(config.min_down_weeks):
         return "train_too_few_spy_down_weeks"
+    if metrics["spy_crash_weeks"] < float(config.min_crash_weeks):
+        return "train_too_few_crash_weeks"
     if metrics["spy_down_mean_weekly"] <= 0.0:
-        return "train_not_hedging_spy_down_weeks"
-    if metrics["spy_up_mean_weekly"] < 0.0:
-        return "train_loses_when_spy_rises"
+        return "train_not_positive_on_spy_down_weeks"
+    if metrics["spy_crash_mean_weekly"] < 0.0:
+        return "train_not_positive_on_crash_weeks"
+    if metrics["spy_down_weighted_mean_weekly"] <= 0.0:
+        return "train_not_positive_weighted_spy_down_weeks"
+    if metrics["spy_down_positive_pct"] < float(config.min_down_positive_pct):
+        return "train_down_hit_rate_low"
+    if metrics["spy_crash_positive_pct"] < float(config.min_crash_positive_pct):
+        return "train_crash_hit_rate_low"
+    if metrics["spy_up_mean_weekly"] < float(config.min_up_mean_weekly):
+        return "train_loses_too_much_when_spy_up"
     if metrics["final_nav"] <= 1.0:
         return "train_final_nav"
     if metrics["profit_factor"] <= 1.0:
         return "train_profit_factor"
+    if metrics["beta_spy"] > float(config.max_train_beta_spy):
+        return "train_beta_too_positive"
+    if metrics["correlation_spy"] > float(config.max_train_correlation_spy):
+        return "train_correlation_too_high"
     return ""
 
 
@@ -481,6 +588,105 @@ def method_summary(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def generate_subperiod_report(frame: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for payload in _iter_return_payloads(frame):
+        for name, start, end, period in _subperiod_specs():
+            mask = (payload["index"] >= pd.Timestamp(start)) & (payload["index"] <= pd.Timestamp(end))
+            if not np.any(mask):
+                continue
+            metrics = portfolio_metrics(payload["strategy"][mask], payload["spy"][mask], payload["index"][mask], size=1.0)
+            rows.append(
+                {
+                    "candidate_id": payload["candidate_id"],
+                    "period": period,
+                    "subperiod": name,
+                    "start": start,
+                    "end": end,
+                    **_prefix_metrics("", metrics),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def generate_negative_sp500_years_report(frame: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for payload in _iter_return_payloads(frame):
+        strategy = pd.Series(payload["strategy"], index=payload["index"])
+        spy = pd.Series(payload["spy"], index=payload["index"])
+        for year, spy_year in spy.groupby(spy.index.year):
+            sp500_return = _compound_return(spy_year.to_numpy(dtype=np.float64))
+            if sp500_return >= 0.0:
+                continue
+            strat_year = strategy.loc[strategy.index.year == year]
+            strategy_return = _compound_return(strat_year.to_numpy(dtype=np.float64))
+            year_metrics = portfolio_metrics(
+                strat_year.to_numpy(dtype=np.float64),
+                spy_year.to_numpy(dtype=np.float64),
+                pd.DatetimeIndex(strat_year.index),
+                size=1.0,
+            )
+            rows.append(
+                {
+                    "candidate_id": payload["candidate_id"],
+                    "period": "train" if int(year) <= 2010 else "validation",
+                    "year": int(year),
+                    "sp500_return": float(sp500_return),
+                    "strategy_return": float(strategy_return),
+                    "excess_vs_sp500": float(strategy_return - sp500_return),
+                    "strategy_positive": bool(strategy_return > 0.0),
+                    "beats_sp500": bool(strategy_return > sp500_return),
+                    "max_drawdown_in_year": float(year_metrics["max_drawdown"]),
+                    "weeks_positive_pct": float(year_metrics["weeks_positive_pct"]),
+                    "spy_down_weeks": float(year_metrics["spy_down_weeks"]),
+                    "spy_down_mean_weekly": float(year_metrics["spy_down_mean_weekly"]),
+                    "spy_down_positive_pct": float(year_metrics["spy_down_positive_pct"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_hedge_rankings(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    if frame.empty:
+        return {name: frame.copy() for name in _ranking_names()}
+    data = frame.copy()
+    for column in (
+        "train_downside_hedge_score",
+        "train_spy_down_mean_weekly",
+        "train_spy_down_weighted_mean_weekly",
+        "train_spy_crash_mean_weekly",
+        "train_negative_sp500_years_win_pct",
+        "train_spy_up_mean_weekly",
+    ):
+        if column not in data.columns:
+            data[column] = 0.0
+    verified = data[data["verified"].astype(bool)].copy() if "verified" in data.columns else data.copy()
+    strict = verified[
+        (verified["train_spy_down_mean_weekly"] > 0.0)
+        & (verified["train_spy_down_weighted_mean_weekly"] > 0.0)
+        & (verified["train_spy_crash_mean_weekly"] >= 0.0)
+    ].copy()
+    return {
+        "balanced_hedge_ranking": verified.sort_values("train_downside_hedge_score", ascending=False),
+        "best_down_weeks": verified.sort_values(["train_spy_down_weighted_mean_weekly", "train_spy_down_mean_weekly"], ascending=False),
+        "best_crash_weeks": verified.sort_values(["train_spy_crash_mean_weekly", "train_spy_crash_positive_pct"], ascending=False),
+        "best_negative_years": verified.sort_values(["train_negative_sp500_years_win_pct", "train_negative_sp500_years_positive_pct"], ascending=False),
+        "lowest_cost_when_spy_up": verified.sort_values("train_spy_up_mean_weekly", ascending=False),
+        "strict_hedge_pass": strict.sort_values("train_downside_hedge_score", ascending=False),
+    }
+
+
+def _ranking_names() -> tuple[str, ...]:
+    return (
+        "balanced_hedge_ranking",
+        "best_down_weeks",
+        "best_crash_weeks",
+        "best_negative_years",
+        "lowest_cost_when_spy_up",
+        "strict_hedge_pass",
+    )
+
+
 def _symbols_from_manifest(manifest: dict[str, Any]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     tradable: list[tuple[str, str]] = []
     context: list[tuple[str, str]] = []
@@ -499,6 +705,7 @@ def _load_price_panels(
     store: TimeSeriesStore,
     symbols: list[tuple[str, str]],
     *,
+    start: str,
     end: str,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     frames: list[pd.Series] = []
@@ -506,7 +713,7 @@ def _load_price_panels(
     missing: list[str] = []
     for library, symbol in symbols:
         try:
-            frame = store.read(library, symbol, end=end)
+            frame = store.read(library, symbol, start=start, end=end)
         except Exception:
             missing.append(f"{library}/{symbol}")
             continue
@@ -527,6 +734,7 @@ def _load_context_panels(
     store: TimeSeriesStore,
     symbols: list[tuple[str, str]],
     *,
+    start: str,
     end: str,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     frames: list[pd.Series] = []
@@ -534,7 +742,7 @@ def _load_context_panels(
     missing: list[str] = []
     for library, symbol in symbols:
         try:
-            frame = store.read(library, symbol, end=end)
+            frame = store.read(library, symbol, start=start, end=end)
         except Exception:
             missing.append(f"{library}/{symbol}")
             continue
@@ -556,12 +764,14 @@ def _clean_and_align(
     train_spy: pd.Series,
     valid_spy: pd.Series,
     config: SP500WeeklyHedgeConfig,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    train_feature_available: pd.DataFrame,
+    valid_feature_available: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.DataFrame, pd.DataFrame]:
     assets = [c for c in train_rets.columns if train_rets[c].notna().sum() >= config.min_train_weeks]
     train_rets = train_rets.loc[:, assets]
     valid_rets = valid_rets.loc[:, assets]
-    train_rets = train_rets.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    valid_rets = valid_rets.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    train_rets = train_rets.replace([np.inf, -np.inf], np.nan)
+    valid_rets = valid_rets.replace([np.inf, -np.inf], np.nan)
     mask_train = np.isfinite(train_spy.to_numpy(dtype=float))
     mask_valid = np.isfinite(valid_spy.to_numpy(dtype=float))
     return (
@@ -571,6 +781,8 @@ def _clean_and_align(
         valid_rets.loc[mask_valid],
         train_spy.loc[mask_train],
         valid_spy.loc[mask_valid],
+        train_feature_available.loc[mask_train],
+        valid_feature_available.loc[mask_valid],
     )
 
 
@@ -642,6 +854,8 @@ def _rank_assets_for_hedge(dataset: dict[str, Any], assets: tuple[str, ...]) -> 
 
 
 def _prefix_metrics(prefix: str, metrics: dict[str, float]) -> dict[str, float]:
+    if not prefix:
+        return {key: value for key, value in metrics.items() if key != "min_nav"}
     return {f"{prefix}_{key}": value for key, value in metrics.items() if key != "min_nav"}
 
 
@@ -664,12 +878,149 @@ def _empty_metrics() -> dict[str, float]:
         "spy_down_total_return": 0.0,
         "spy_up_total_return": 0.0,
         "spy_down_mean_weekly": 0.0,
+        "spy_down_weighted_mean_weekly": 0.0,
+        "down_weighted_mean_weekly": 0.0,
         "spy_up_mean_weekly": 0.0,
         "spy_down_positive_pct": 0.0,
         "spy_up_positive_pct": 0.0,
+        "spy_crash_weeks": 0.0,
+        "crash_weeks": 0.0,
+        "spy_crash_mean_weekly": 0.0,
+        "crash_mean_weekly": 0.0,
+        "spy_crash_positive_pct": 0.0,
+        "crash_positive_pct": 0.0,
+        "negative_sp500_years": 0.0,
+        "negative_sp500_years_win_pct": 0.0,
+        "negative_sp500_years_positive_pct": 0.0,
         "correlation_spy": 0.0,
         "beta_spy": 0.0,
     }
+
+
+def _crash_mask(spy: np.ndarray) -> np.ndarray:
+    arr = np.asarray(spy, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return np.zeros(len(spy), dtype=bool)
+    threshold = min(0.0, float(np.quantile(arr, 0.20)))
+    return np.asarray(spy, dtype=np.float64) <= threshold
+
+
+def _weighted_down_mean(strategy: np.ndarray, spy: np.ndarray) -> float:
+    strategy = np.asarray(strategy, dtype=np.float64)
+    spy = np.asarray(spy, dtype=np.float64)
+    down = spy < 0.0
+    if not np.any(down):
+        return 0.0
+    weights = np.abs(spy[down])
+    total = float(np.sum(weights))
+    if total <= 1e-15:
+        return float(np.mean(strategy[down]))
+    return float(np.sum(strategy[down] * weights) / total)
+
+
+def _negative_sp500_year_metrics(strategy: np.ndarray, spy: np.ndarray, index: pd.DatetimeIndex) -> dict[str, float]:
+    s = pd.Series(strategy, index=index)
+    b = pd.Series(spy, index=index)
+    negative = []
+    for year, spy_year in b.groupby(b.index.year):
+        sp500_return = _compound_return(spy_year.to_numpy(dtype=np.float64))
+        if sp500_return >= 0.0:
+            continue
+        strat_year = s.loc[s.index.year == year]
+        strategy_return = _compound_return(strat_year.to_numpy(dtype=np.float64))
+        negative.append((strategy_return, sp500_return))
+    if not negative:
+        return {
+            "negative_sp500_years": 0.0,
+            "negative_sp500_years_win_pct": 0.0,
+            "negative_sp500_years_positive_pct": 0.0,
+        }
+    return {
+        "negative_sp500_years": float(len(negative)),
+        "negative_sp500_years_win_pct": float(np.mean([strategy_return > sp500_return for strategy_return, sp500_return in negative])),
+        "negative_sp500_years_positive_pct": float(np.mean([strategy_return > 0.0 for strategy_return, _ in negative])),
+    }
+
+
+def _effective_start(
+    train_index: pd.DatetimeIndex,
+    valid_index: pd.DatetimeIndex,
+    train_returns: np.ndarray,
+    valid_returns: np.ndarray,
+) -> str:
+    idx = train_index.append(valid_index)
+    returns = np.concatenate([np.asarray(train_returns, dtype=np.float64), np.asarray(valid_returns, dtype=np.float64)])
+    finite = np.isfinite(returns)
+    if not np.any(finite):
+        return ""
+    return pd.Timestamp(idx[np.argmax(finite)]).date().isoformat()
+
+
+def _late_entry_assets(train_index: pd.DatetimeIndex, train_asset_returns: pd.DataFrame, spec: dict[str, Any]) -> str:
+    starts = []
+    for asset in spec.get("assets", ()):
+        if asset not in train_asset_returns.columns:
+            continue
+        series = train_asset_returns[asset]
+        finite = series.notna().to_numpy(dtype=bool)
+        if np.any(finite):
+            first = pd.Timestamp(series.index[np.argmax(finite)])
+            if first > pd.Timestamp(train_index[0]):
+                starts.append(f"{asset}:{first.date().isoformat()}")
+    return ",".join(starts)
+
+
+def _returns_json(returns: Any) -> str:
+    arr = np.asarray(returns, dtype=np.float64)
+    out = [None if not np.isfinite(value) else float(value) for value in arr]
+    return json.dumps(out, separators=(",", ":"))
+
+
+def _index_json(index: pd.DatetimeIndex) -> str:
+    return json.dumps([pd.Timestamp(value).date().isoformat() for value in index], separators=(",", ":"))
+
+
+def _iter_return_payloads(frame: pd.DataFrame):
+    if frame.empty:
+        return
+    for _, row in frame.iterrows():
+        try:
+            train_returns = json.loads(row.get("train_returns_json", "[]"))
+            valid_returns = json.loads(row.get("validation_returns_json", "[]"))
+            train_spy = json.loads(row.get("train_spy_returns_json", "[]"))
+            valid_spy = json.loads(row.get("validation_spy_returns_json", "[]"))
+            train_index = json.loads(row.get("train_index_json", "[]"))
+            valid_index = json.loads(row.get("validation_index_json", "[]"))
+            if not train_returns and "strategy_returns_json" in row:
+                strategy = np.asarray([np.nan if value is None else float(value) for value in json.loads(row["strategy_returns_json"])], dtype=np.float64)
+                spy = np.asarray([np.nan if value is None else float(value) for value in json.loads(row["spy_returns_json"])], dtype=np.float64)
+                index = pd.DatetimeIndex(pd.to_datetime(json.loads(row["returns_index_json"])))
+            else:
+                strategy = np.asarray([np.nan if value is None else float(value) for value in [*train_returns, *valid_returns]], dtype=np.float64)
+                spy = np.asarray([np.nan if value is None else float(value) for value in [*train_spy, *valid_spy]], dtype=np.float64)
+                index = pd.DatetimeIndex(pd.to_datetime([*train_index, *valid_index]))
+        except Exception:
+            continue
+        if len(strategy) != len(spy) or len(strategy) != len(index):
+            continue
+        yield {
+            "candidate_id": row.get("candidate_id", ""),
+            "strategy": strategy,
+            "spy": spy,
+            "index": index,
+        }
+
+
+def _subperiod_specs() -> tuple[tuple[str, str, str, str], ...]:
+    return (
+        ("train_1995_1998", "1995-01-01", "1998-12-31", "train"),
+        ("train_1999_2002", "1999-01-01", "2002-12-31", "train"),
+        ("train_2003_2006", "2003-01-01", "2006-12-31", "train"),
+        ("train_2007_2010", "2007-01-01", "2010-12-31", "train"),
+        ("valid_2011_2012", "2011-01-01", "2012-12-31", "validation"),
+        ("valid_2013_2020", "2013-01-01", "2020-12-31", "validation"),
+    )
 
 
 def _profit_factor(returns: np.ndarray) -> float:
