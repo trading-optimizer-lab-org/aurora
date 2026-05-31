@@ -19,6 +19,12 @@ on:
         description: "Permutation samples per candidate"
         required: true
         default: "80"
+  push:
+    branches:
+      - codex/universal-robustness
+    paths:
+      - .github/btc-5m-pf105-statistical-robustness-trigger.txt
+      - .github/workflows/btc-5m-pf105-statistical-robustness.yml
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
