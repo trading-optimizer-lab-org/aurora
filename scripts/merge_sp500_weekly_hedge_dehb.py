@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -11,7 +12,22 @@ sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 
-from aurora.research.sp500_weekly_hedge_search import METHOD, merge_stage_rows, method_summary
+
+def _load_search_module():
+    module_path = ROOT / "research" / "sp500_weekly_hedge_search.py"
+    spec = importlib.util.spec_from_file_location("sp500_weekly_hedge_search_runtime", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load SP500 hedge search module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[str(spec.name)] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_SEARCH = _load_search_module()
+METHOD = _SEARCH.METHOD
+merge_stage_rows = _SEARCH.merge_stage_rows
+method_summary = _SEARCH.method_summary
 
 
 def main() -> int:
