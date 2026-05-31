@@ -291,6 +291,37 @@ def test_policy1995_data_download_does_not_request_pre_binance_crypto_months() -
     assert binance_effective_start("BTCUSDT", "2019-01-01") == "2019-01-01"
 
 
+def test_policy1995_yfinance_download_uses_runtime_start(monkeypatch) -> None:
+    import scripts.download_diversified_seed as downloader
+
+    calls = []
+
+    def fake_download(symbol, *, start, end, progress, auto_adjust, threads):
+        calls.append((symbol, start, end, progress, auto_adjust, threads))
+        idx = pd.date_range(start, periods=2, freq="D")
+        return pd.DataFrame(
+            {
+                "Open": [1.0, 1.1],
+                "High": [1.1, 1.2],
+                "Low": [0.9, 1.0],
+                "Close": [1.0, 1.1],
+                "Adj Close": [1.0, 1.1],
+                "Volume": [100, 120],
+            },
+            index=idx,
+        )
+
+    monkeypatch.setattr(downloader.yf, "download", fake_download)
+    monkeypatch.setattr(downloader, "START", "1995-01-01")
+    monkeypatch.setattr(downloader, "END", "2020-12-31")
+
+    frame = downloader.fetch_yfinance("SPY")
+
+    assert calls[0][1] == "1995-01-01"
+    assert calls[0][2] == "2020-12-31"
+    assert not frame.empty
+
+
 def test_stage_script_smoke_with_synthetic_dataset(tmp_path: Path) -> None:
     out = tmp_path / "out"
     cmd = [

@@ -87,8 +87,9 @@ def normalise_yfinance_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df[["open", "high", "low", "close", "adj_close", "volume"]]
 
 
-def fetch_yfinance(symbol: str, start: str = START) -> pd.DataFrame | None:
+def fetch_yfinance(symbol: str, start: str | None = None) -> pd.DataFrame | None:
     try:
+        start = START if start is None else start
         df = yf.download(symbol, start=start, end=END, progress=False, auto_adjust=False, threads=False)
         if df is None or df.empty:
             return None
@@ -106,9 +107,10 @@ def binance_effective_start(pair: str, start: str) -> str:
     return max(requested, first).isoformat()
 
 
-def fetch_binance_klines(pair: str, start: str = START) -> pd.DataFrame | None:
+def fetch_binance_klines(pair: str, start: str | None = None) -> pd.DataFrame | None:
     """Aggregate Binance daily klines from monthly ZIPs."""
     sym = pair.upper()
+    start = START if start is None else start
     start_dt = datetime.strptime(binance_effective_start(sym, start), "%Y-%m-%d").date()
     today = datetime.strptime(END, "%Y-%m-%d").date() if END else date.today()
     if start_dt > today:
@@ -262,7 +264,7 @@ def main() -> None:
     version = now_iso()
 
     print(f"AURORA real-network bootstrap of '{manifest['name']}'")
-    print(f"start={START} end=today version={version}")
+    print(f"start={START} end={END or 'today'} version={version}")
     print(f"data dir: {base_data_dir()}")
     print()
 
@@ -281,10 +283,10 @@ def main() -> None:
             error = None
             try:
                 if sec_name == "fx":
-                    df = fetch_yfinance(yf_fx_symbol(sym))
+                    df = fetch_yfinance(yf_fx_symbol(sym), start=START)
                     provider = "yfinance"
                 elif sec_name == "crypto":
-                    df = fetch_binance_klines(sym)
+                    df = fetch_binance_klines(sym, start=START)
                     provider = "binance_public_data"
                 elif sec_name == "macro":
                     df = fetch_dbnomics_series(sym)
@@ -302,7 +304,7 @@ def main() -> None:
                         time.sleep(0.15)
                     df = None
                 else:
-                    df = fetch_yfinance(sym)
+                    df = fetch_yfinance(sym, start=START)
                     provider = "yfinance"
                 if df is not None and not df.empty:
                     if END is not None:
