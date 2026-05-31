@@ -1,1 +1,1 @@
-btc-5m-pf105-statistical-robustness source_run_id=26693004318 max_parallel=180 bootstrap=80 permutations=80
+btc-5m-pf105-statistical-robustness source_run_id=26693004318 max_parallel=500 bootstrap=80 permutations=80
