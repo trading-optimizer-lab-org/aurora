@@ -283,6 +283,48 @@ def test_workflow_shapes_for_1wave_and_6waves_are_comparable() -> None:
         assert "bandit" not in text
 
 
+def test_policy1995_6waves_9h_workflow_shape() -> None:
+    path = Path(".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+
+    assert data["name"] == "SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 9h"
+    assert data["env"]["WAVES"] == "6"
+    assert data["env"]["JOBS_PER_WAVE"] == "80"
+    assert data["env"]["EXPECTED_JOBS"] == "480"
+    assert data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
+    assert data["env"]["TRAIN_START"] == "1995-01-01"
+    assert data["env"]["LOCKED_START"] == "2021-01-01"
+    assert data["jobs"]["wave_0"]["strategy"]["max-parallel"] == 500
+    assert data["jobs"]["wave_0"]["timeout-minutes"] == 115
+    assert len(data["jobs"]["wave_0"]["strategy"]["matrix"]["stage"]) == 80
+    assert 'default: "85"' in text
+    assert 'test "${{ inputs.minutes_per_stage || \'85\' }}" = "85"' in text
+    assert "sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h-results" in text
+    assert "sp500_weekly_hedge_dehb_policy1995_downside_6waves_80jobs_9h" in text
+    assert "genetic" not in text
+    assert "github_ml" not in text
+    assert "beam" not in text
+    assert "bandit" not in text
+
+
+def test_policy1995_autostart_9h_workflow_filters_current_run_and_success_only() -> None:
+    path = Path(".github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+
+    assert data["name"] == "SP500 Weekly Hedge Policy1995 Autostart 9h"
+    assert "SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 1h" in text
+    assert "github.event.workflow_run.id == 26721369552" in text
+    assert "github.event.workflow_run.conclusion == 'success'" in text
+    assert "github.event.workflow_run.head_branch == 'codex/universal-robustness'" in text
+    assert "sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml" in text
+    assert "minutes_per_stage=85" in text
+    assert "max_parallel_requested=500" in text
+    assert "status=in_progress" in text
+    assert "status=queued" in text
+
+
 def test_policy1995_data_download_does_not_request_pre_binance_crypto_months() -> None:
     from scripts.download_diversified_seed import binance_effective_start
 
