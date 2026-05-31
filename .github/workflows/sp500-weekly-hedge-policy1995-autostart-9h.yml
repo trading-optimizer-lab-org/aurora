@@ -1,0 +1,84 @@
+name: SP500 Weekly Hedge Policy1995 Autostart 9h
+
+on:
+  workflow_run:
+    workflows:
+      - SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 1h
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  launch_9h:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.id == 26721369552 &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'codex/universal-robustness'
+    steps:
+      - name: Check duplicate 9h runs
+        id: duplicate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml
+          TARGET_BRANCH: codex/universal-robustness
+        run: |
+          set -euo pipefail
+          in_progress="$(
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$WORKFLOW_FILE" \
+              --branch "$TARGET_BRANCH" \
+              --status=in_progress \
+              --limit 20 \
+              --json databaseId \
+              --jq '.[].databaseId' | head -n 1
+          )"
+          queued="$(
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$WORKFLOW_FILE" \
+              --branch "$TARGET_BRANCH" \
+              --status=queued \
+              --limit 20 \
+              --json databaseId \
+              --jq '.[].databaseId' | head -n 1
+          )"
+          if [ -n "$in_progress" ] || [ -n "$queued" ]; then
+            echo "duplicate=true" >> "$GITHUB_OUTPUT"
+            echo "Existing 9h run found. in_progress=$in_progress queued=$queued"
+          else
+            echo "duplicate=false" >> "$GITHUB_OUTPUT"
+            echo "No active 9h run found."
+          fi
+      - name: Launch 9h workflow
+        if: steps.duplicate.outputs.duplicate == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml
+          TARGET_BRANCH: codex/universal-robustness
+        run: |
+          set -euo pipefail
+          gh workflow run "$WORKFLOW_FILE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f minutes_per_stage=85 \
+            -f max_parallel_requested=500
+          echo "Launched SP500 policy1995 downside 6waves 80jobs 9h from completed run 26721369552."
+
+  skipped:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.id != 26721369552 ||
+      github.event.workflow_run.conclusion != 'success' ||
+      github.event.workflow_run.head_branch != 'codex/universal-robustness'
+    steps:
+      - name: Explain skip
+        run: |
+          echo "Not launching 9h workflow."
+          echo "run_id=${{ github.event.workflow_run.id }}"
+          echo "conclusion=${{ github.event.workflow_run.conclusion }}"
+          echo "head_branch=${{ github.event.workflow_run.head_branch }}"
