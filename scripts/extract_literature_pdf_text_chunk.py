@@ -57,7 +57,9 @@ def _zstd_available() -> bool:
 
 def write_jsonl_zst(path: Path, rows: list[dict[str, Any]]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode("utf-8")
+    payload = "".join(
+        json.dumps(sanitize_json(row), ensure_ascii=False) + "\n" for row in rows
+    ).encode("utf-8", errors="replace")
     if _zstd_available():
         import zstandard as zstd
 
@@ -76,6 +78,22 @@ def read_manifest(path: Path) -> list[dict[str, str]]:
 def chunk_rows(rows: list[dict[str, str]], chunk_index: int, chunk_size: int) -> list[dict[str, str]]:
     start = int(chunk_index) * int(chunk_size)
     return rows[start : start + int(chunk_size)]
+
+
+def sanitize_text(value: str) -> str:
+    return value.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+
+def sanitize_json(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_text(value)
+    if isinstance(value, dict):
+        return {str(key): sanitize_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_json(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_json(item) for item in value]
+    return value
 
 
 def parse_candidate_urls(row: dict[str, str]) -> list[str]:
@@ -290,7 +308,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fields})
+            writer.writerow({field: sanitize_json(row.get(field, "")) for field in fields})
 
 
 def run_chunk(args: argparse.Namespace) -> dict[str, Any]:
@@ -365,10 +383,10 @@ def run_chunk(args: argparse.Namespace) -> dict[str, Any]:
         ],
     )
     claims_path = out_dir / f"chunk_{chunk:03d}_claims.jsonl"
-    claims_path.write_text(
-        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in claim_rows),
-        encoding="utf-8",
+    claims_payload = "".join(
+        json.dumps(sanitize_json(row), ensure_ascii=False) + "\n" for row in claim_rows
     )
+    claims_path.write_bytes(claims_payload.encode("utf-8", errors="replace"))
     shutil.rmtree(tmp_root, ignore_errors=True)
     summary = {
         "chunk_index": chunk,

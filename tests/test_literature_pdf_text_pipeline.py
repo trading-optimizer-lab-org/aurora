@@ -144,6 +144,15 @@ def test_process_row_marks_short_text_as_scanned_and_keeps_no_pdf(
     assert not list(tmp_path.rglob("*.pdf"))
 
 
+def test_jsonl_writer_replaces_invalid_unicode(tmp_path: Path) -> None:
+    out = tmp_path / "bad_unicode.jsonl.zst"
+
+    codec = extract.write_jsonl_zst(out, [{"text": "bad\ud800char"}])
+
+    assert codec in {"zstd", "plain_fallback"}
+    assert out.exists()
+
+
 def test_exactness_does_not_claim_exact_when_required_fields_missing() -> None:
     row = {
         "study_id": "W1",
