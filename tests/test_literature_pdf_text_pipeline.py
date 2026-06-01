@@ -181,6 +181,19 @@ def test_merge_reader_handles_unicode_line_separator_inside_json(tmp_path: Path)
     assert rows == [{"study_id": "W1", "text": "alpha\u2028beta"}]
 
 
+def test_merge_reader_handles_zstd_without_content_size(tmp_path: Path) -> None:
+    zstd = pytest.importorskip("zstandard")
+    path = tmp_path / "chunk_000_text.jsonl.zst"
+    payload = b'{"study_id":"W1","text":"ok"}\n'
+    compressor = zstd.ZstdCompressor(write_content_size=False)
+    path.write_bytes(compressor.compress(payload))
+
+    rows, errors = merge.read_jsonl_zst(path)
+
+    assert errors == []
+    assert rows == [{"study_id": "W1", "text": "ok"}]
+
+
 def test_exactness_does_not_claim_exact_when_required_fields_missing() -> None:
     row = {
         "study_id": "W1",

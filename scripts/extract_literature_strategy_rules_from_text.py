@@ -5,10 +5,13 @@ import argparse
 import csv
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
-from scripts.merge_literature_pdf_text_chunks import read_jsonl_zst
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from merge_literature_pdf_text_chunks import read_jsonl_zst
 
 
 FIELD_PATTERNS = {

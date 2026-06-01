@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import io
 import json
 import sys
 from pathlib import Path
@@ -16,7 +17,12 @@ def read_jsonl_zst(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any
         if data.startswith(b"\x28\xb5\x2f\xfd"):
             import zstandard as zstd
 
-            raw = zstd.ZstdDecompressor().decompress(data)
+            decompressor = zstd.ZstdDecompressor()
+            try:
+                raw = decompressor.decompress(data)
+            except zstd.ZstdError:
+                with decompressor.stream_reader(io.BytesIO(data)) as reader:
+                    raw = reader.read()
         else:
             raw = data
         text = raw.decode("utf-8", errors="replace")
