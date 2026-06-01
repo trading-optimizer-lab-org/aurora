@@ -108,6 +108,24 @@ def test_download_pdf_rejects_too_large_before_download() -> None:
     assert "exceeds" in error
 
 
+def test_download_pdf_classifies_non_requests_exception() -> None:
+    class BrokenSession:
+        def get(self, *_: object, **__: object) -> FakeResponse:
+            raise UnicodeDecodeError("utf-8", b"\xf1", 0, 1, "bad redirect")
+
+    status, payload, _, error = extract.download_pdf(
+        ["https://example.org/bad-redirect"],
+        timeout_seconds=1,
+        max_bytes=80 * 1024 * 1024,
+        retries=0,
+        session=BrokenSession(),
+    )
+
+    assert status == "download_failed"
+    assert payload is None
+    assert "UnicodeDecodeError" in error
+
+
 def test_process_row_marks_short_text_as_scanned_and_keeps_no_pdf(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

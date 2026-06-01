@@ -166,6 +166,10 @@ def download_pdf(
                 last_error = f"{type(exc).__name__}: {exc}"
                 if attempt < retries:
                     time.sleep(min(2.0, 0.25 * (attempt + 1)))
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                if attempt < retries:
+                    time.sleep(min(2.0, 0.25 * (attempt + 1)))
     if "forbidden" in last_error:
         return "paywalled_or_forbidden", None, "", last_error
     if "HTML response" in last_error or "not PDF" in last_error:
@@ -323,7 +327,7 @@ def run_chunk(args: argparse.Namespace) -> dict[str, Any]:
     error_rows: list[dict[str, Any]] = []
     max_bytes = int(float(args.max_pdf_mb) * 1024 * 1024)
     with concurrent.futures.ThreadPoolExecutor(max_workers=int(args.pdfs_per_job_concurrency)) as executor:
-        futures = [
+        futures = {
             executor.submit(
                 process_row,
                 row,
@@ -332,11 +336,31 @@ def run_chunk(args: argparse.Namespace) -> dict[str, Any]:
                 retries=int(args.retry_failed_downloads),
                 text_max_chars=int(args.text_max_chars),
                 tmp_root=tmp_root,
-            )
+            ): row
             for row in rows
-        ]
+        }
         for future in concurrent.futures.as_completed(futures):
-            text_row, status_row, claims, error_row = future.result()
+            try:
+                text_row, status_row, claims, error_row = future.result()
+            except Exception as exc:
+                row = futures[future]
+                status_row = {
+                    "study_id": row.get("study_id", ""),
+                    "idea_id": row.get("idea_id", ""),
+                    "strategy_family": row.get("strategy_family", ""),
+                    "status": "download_failed",
+                    "used_url": "",
+                    "pdf_hash": "",
+                    "text_chars": 0,
+                    "page_count": 0,
+                    "candidate_url_count": len(parse_candidate_urls(row)),
+                    "error": f"worker exception {type(exc).__name__}: {exc}",
+                    "locked_opened": "false",
+                    "pdf_kept": "false",
+                }
+                text_row = None
+                claims = []
+                error_row = status_row.copy()
             if text_row:
                 text_rows.append(text_row)
             status_rows.append(status_row)
