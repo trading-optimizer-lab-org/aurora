@@ -11,6 +11,10 @@ on:
         description: "Source literature run id"
         required: false
         default: "26638765315"
+      code_ref:
+        description: "Branch/ref containing the extraction scripts"
+        required: false
+        default: "codex/universal-robustness"
       chunk_size:
         description: "Papers per chunk"
         required: false
@@ -48,6 +52,8 @@ jobs:
     steps:
       - name: Checkout Aurora
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -129,6 +135,8 @@ jobs:
     steps:
       - name: Checkout Aurora
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -180,6 +188,8 @@ jobs:
     steps:
       - name: Checkout Aurora
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -229,6 +239,8 @@ jobs:
     steps:
       - name: Checkout Aurora
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
