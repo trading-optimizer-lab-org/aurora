@@ -1,0 +1,281 @@
+name: Literature PDF Text Extract 29855
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_artifact_id:
+        description: "Artifact id containing studies_all.csv and strategy_ideas_all.csv"
+        required: false
+        default: "7292418450"
+      source_run_id:
+        description: "Source literature run id"
+        required: false
+        default: "26638765315"
+      chunk_size:
+        description: "Papers per chunk"
+        required: false
+        default: "100"
+      timeout_seconds:
+        description: "Download timeout per PDF"
+        required: false
+        default: "90"
+      retry_failed_downloads:
+        description: "Retries per PDF URL"
+        required: false
+        default: "2"
+      pdfs_per_job_concurrency:
+        description: "Concurrent PDFs inside each job"
+        required: false
+        default: "2"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare_manifest:
+    name: prepare-manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      chunks_a: ${{ steps.chunk-matrix.outputs.chunks_a }}
+      chunks_b: ${{ steps.chunk-matrix.outputs.chunks_b }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      CHUNK_SIZE: ${{ inputs.chunk_size }}
+    steps:
+      - name: Checkout Aurora
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Aurora PDF deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[pdf]"
+
+      - name: Download source literature artifact
+        shell: bash
+        run: |
+          mkdir -p .tmp/literature-source
+          curl -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
+            -o .tmp/literature-source/source.zip
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          source = Path(".tmp/literature-source/source.zip")
+          out = Path(".tmp/literature-source")
+          wanted = {
+              "studies_all.csv": out / "studies_all.csv",
+              "strategy_ideas_all.csv": out / "strategy_ideas_all.csv",
+          }
+          with ZipFile(source) as zf:
+              names = zf.namelist()
+              for suffix, target in wanted.items():
+                  matches = [name for name in names if name.endswith(suffix)]
+                  if not matches:
+                      raise SystemExit(f"missing {suffix} in source artifact")
+                  target.write_bytes(zf.read(matches[0]))
+          PY
+
+      - name: Build PDF manifest
+        shell: bash
+        run: |
+          mkdir -p outputs/literature/pdf_text_pipeline_29855
+          python scripts/build_literature_pdf_manifest.py \
+            --ideas-csv .tmp/literature-source/strategy_ideas_all.csv \
+            --studies-csv .tmp/literature-source/studies_all.csv \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --output outputs/literature/pdf_text_pipeline_29855/literature_pdf_manifest_29855.csv
+
+      - name: Create chunk matrices
+        id: chunk-matrix
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          chunks = list(range(299))
+          print("chunks_a=" + json.dumps(chunks[:256]))
+          print("chunks_b=" + json.dumps(chunks[256:]))
+          PY
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-pdf-manifest-29855
+          path: outputs/literature/pdf_text_pipeline_29855/literature_pdf_manifest_29855.csv
+          if-no-files-found: error
+
+  extract_chunk_a:
+    name: extract-chunk-a-${{ matrix.chunk }}
+    needs: prepare_manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 154
+      matrix:
+        chunk: ${{ fromJson(needs.prepare_manifest.outputs.chunks_a) }}
+    steps:
+      - name: Checkout Aurora
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Aurora PDF deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[pdf]"
+
+      - name: Download manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-pdf-manifest-29855
+          path: .tmp/manifest
+
+      - name: Extract chunk
+        shell: bash
+        run: |
+          python scripts/extract_literature_pdf_text_chunk.py \
+            --manifest .tmp/manifest/literature_pdf_manifest_29855.csv \
+            --chunk-index "${{ matrix.chunk }}" \
+            --chunk-size "${{ inputs.chunk_size }}" \
+            --output-dir "outputs/literature/pdf_text_pipeline_29855/chunks/chunk_${{ matrix.chunk }}" \
+            --timeout-seconds "${{ inputs.timeout_seconds }}" \
+            --retry-failed-downloads "${{ inputs.retry_failed_downloads }}" \
+            --pdfs-per-job-concurrency "${{ inputs.pdfs_per_job_concurrency }}"
+
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-pdf-text-chunk-${{ matrix.chunk }}
+          path: outputs/literature/pdf_text_pipeline_29855/chunks/chunk_${{ matrix.chunk }}/**
+          if-no-files-found: warn
+
+  extract_chunk_b:
+    name: extract-chunk-b-${{ matrix.chunk }}
+    needs: prepare_manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 26
+      matrix:
+        chunk: ${{ fromJson(needs.prepare_manifest.outputs.chunks_b) }}
+    steps:
+      - name: Checkout Aurora
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Aurora PDF deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[pdf]"
+
+      - name: Download manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-pdf-manifest-29855
+          path: .tmp/manifest
+
+      - name: Extract chunk
+        shell: bash
+        run: |
+          python scripts/extract_literature_pdf_text_chunk.py \
+            --manifest .tmp/manifest/literature_pdf_manifest_29855.csv \
+            --chunk-index "${{ matrix.chunk }}" \
+            --chunk-size "${{ inputs.chunk_size }}" \
+            --output-dir "outputs/literature/pdf_text_pipeline_29855/chunks/chunk_${{ matrix.chunk }}" \
+            --timeout-seconds "${{ inputs.timeout_seconds }}" \
+            --retry-failed-downloads "${{ inputs.retry_failed_downloads }}" \
+            --pdfs-per-job-concurrency "${{ inputs.pdfs_per_job_concurrency }}"
+
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-pdf-text-chunk-${{ matrix.chunk }}
+          path: outputs/literature/pdf_text_pipeline_29855/chunks/chunk_${{ matrix.chunk }}/**
+          if-no-files-found: warn
+
+  merge_text:
+    name: merge-text-and-rules
+    needs:
+      - extract_chunk_a
+      - extract_chunk_b
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Aurora
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Aurora PDF deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[pdf]"
+
+      - name: Download chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: literature-pdf-text-chunk-*
+          path: .tmp/literature-pdf-chunks
+          merge-multiple: true
+
+      - name: Merge text chunks
+        shell: bash
+        run: |
+          python scripts/merge_literature_pdf_text_chunks.py \
+            --input-dir .tmp/literature-pdf-chunks \
+            --output-dir outputs/literature/pdf_text_pipeline_29855/final \
+            --expected-chunks 299 \
+            --source-ideas 29855 \
+            --fail-on-partial
+
+      - name: Extract strategy exactness
+        shell: bash
+        run: |
+          python scripts/extract_literature_strategy_rules_from_text.py \
+            --corpus outputs/literature/pdf_text_pipeline_29855/final/literature_full_text_corpus.jsonl.zst \
+            --output outputs/literature/pdf_text_pipeline_29855/final/literature_strategy_exactness.csv \
+            --summary outputs/literature/pdf_text_pipeline_29855/final/literature_strategy_exactness_summary.json
+
+      - name: Show quality report
+        shell: bash
+        run: |
+          cat outputs/literature/pdf_text_pipeline_29855/final/literature_pdf_text_summary.json
+          cat outputs/literature/pdf_text_pipeline_29855/final/literature_strategy_exactness_summary.json
+
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-pdf-text-extract-29855-results
+          path: outputs/literature/pdf_text_pipeline_29855/final/**
+          if-no-files-found: warn
