@@ -120,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", default="")
     args = parser.parse_args(argv)
-    rows = [classify_text(row) for row in read_jsonl_zst(Path(args.corpus))]
+    corpus_rows, _errors = read_jsonl_zst(Path(args.corpus))
+    rows = [classify_text(row) for row in corpus_rows]
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     write_csv(out, rows)

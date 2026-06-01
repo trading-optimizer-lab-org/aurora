@@ -10,19 +10,54 @@ from pathlib import Path
 from typing import Any
 
 
-def read_jsonl_zst(path: Path) -> list[dict[str, Any]]:
+def read_jsonl_zst(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     data = path.read_bytes()
     try:
-        import zstandard as zstd
+        if data.startswith(b"\x28\xb5\x2f\xfd"):
+            import zstandard as zstd
 
-        text = zstd.ZstdDecompressor().decompress(data).decode("utf-8")
+            raw = zstd.ZstdDecompressor().decompress(data)
+        else:
+            raw = data
+        text = raw.decode("utf-8", errors="replace")
     except Exception:
-        text = data.decode("utf-8")
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+        text = data.decode("utf-8", errors="replace")
+    rows: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(
+                {
+                    "path": str(path),
+                    "line_number": line_number,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "line_prefix": line[:500],
+                }
+            )
+            continue
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+        else:
+            errors.append(
+                {
+                    "path": str(path),
+                    "line_number": line_number,
+                    "error": "non-dict jsonl row",
+                    "line_prefix": line[:500],
+                }
+            )
+    return rows, errors
 
 
 def write_jsonl_zst(path: Path, rows: list[dict[str, Any]]) -> str:
-    payload = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode("utf-8")
+    payload = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode(
+        "utf-8",
+        errors="replace",
+    )
     try:
         import zstandard as zstd
 
@@ -67,8 +102,11 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
     if missing_ratio > float(args.max_missing_chunk_ratio):
         raise ValueError(f"missing chunk ratio {missing_ratio:.4f} exceeds limit")
     text_rows: list[dict[str, Any]] = []
+    merge_errors: list[dict[str, Any]] = []
     for path in text_paths:
-        text_rows.extend(read_jsonl_zst(path))
+        rows, errors = read_jsonl_zst(path)
+        text_rows.extend(rows)
+        merge_errors.extend(errors)
     status_rows = read_csvs(status_paths)
     error_rows = read_csvs(error_paths) if error_paths else []
     claim_lines: list[str] = []
@@ -89,6 +127,7 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
     write_csv(output_dir / "literature_pdf_text_status.csv", list(status_by_study.values()))
     write_csv(output_dir / "literature_pdf_text_failures.csv", failure_rows)
     write_csv(output_dir / "literature_pdf_text_success.csv", success_rows)
+    write_csv(output_dir / "literature_pdf_text_merge_errors.csv", merge_errors)
     (output_dir / "literature_pdf_text_claims.jsonl").write_text(
         "\n".join(line for line in claim_lines if line.strip()) + ("\n" if claim_lines else ""),
         encoding="utf-8",
@@ -107,7 +146,11 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
         ],
     )
     source_ideas = int(args.source_ideas)
-    partial = len(status_paths) != expected or len(status_by_study) != source_ideas
+    partial = (
+        len(status_paths) != expected
+        or len(status_by_study) != source_ideas
+        or bool(merge_errors)
+    )
     summary = {
         "source_ideas": source_ideas,
         "chunks_expected": expected,
@@ -123,6 +166,7 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
         "unique_status_studies": len(status_by_study),
         "text_rows": len(text_rows),
         "claims_rows": len([line for line in claim_lines if line.strip()]),
+        "merge_error_count": len(merge_errors),
         "compression": codec,
     }
     (output_dir / "literature_pdf_text_summary.json").write_text(
