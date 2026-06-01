@@ -297,6 +297,7 @@ def test_policy1995_6waves_9h_workflow_shape() -> None:
     assert data["env"]["LOCKED_START"] == "2021-01-01"
     assert data["jobs"]["wave_0"]["strategy"]["max-parallel"] == 500
     assert data["jobs"]["wave_0"]["timeout-minutes"] == 115
+    assert data["jobs"]["merge"]["timeout-minutes"] == 120
     assert len(data["jobs"]["wave_0"]["strategy"]["matrix"]["stage"]) == 80
     assert 'default: "85"' in text
     assert 'test "${{ inputs.minutes_per_stage || \'85\' }}" = "85"' in text
