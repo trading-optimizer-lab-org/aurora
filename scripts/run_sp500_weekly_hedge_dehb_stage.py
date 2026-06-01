@@ -46,6 +46,12 @@ def main() -> int:
     parser.add_argument("--validation-end", default="2020-12-31")
     parser.add_argument("--locked-start", default="2021-01-01")
     parser.add_argument("--allow-late-entry", action="store_true")
+    parser.add_argument(
+        "--exclude-asset-group",
+        action="append",
+        default=[],
+        help="Manifest asset_group to exclude from tradable assets and generated features. Repeatable.",
+    )
     parser.add_argument("--synthetic-smoke", action="store_true")
     args = parser.parse_args()
 
@@ -58,6 +64,7 @@ def main() -> int:
         validation_end=str(args.validation_end),
         locked_start=str(args.locked_start),
         allow_late_entry=bool(args.allow_late_entry),
+        exclude_asset_groups=tuple(str(group) for group in args.exclude_asset_group),
     )
     dataset = _synthetic_dataset() if args.synthetic_smoke else None
     output_dir = Path(args.output_dir)

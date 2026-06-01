@@ -57,6 +57,7 @@ class SP500WeeklyHedgeConfig:
     max_feature_columns: int = 5000
     top_rows_per_stage: int = 500
     random_seed: int = 9102601
+    exclude_asset_groups: tuple[str, ...] = ()
 
 
 def run_stage(
@@ -126,6 +127,7 @@ def run_stage(
         "validation_end": config.validation_end,
         "locked_start": config.locked_start,
         "allow_late_entry": bool(config.allow_late_entry),
+        "excluded_asset_groups": list(config.exclude_asset_groups),
     }
     return rows, meta, audit
 
@@ -134,7 +136,7 @@ def load_dataset(config: SP500WeeklyHedgeConfig) -> tuple[dict[str, Any], dict[s
     repo_root = Path(__file__).resolve().parents[1]
     manifest = yaml.safe_load((repo_root / config.manifest_path).read_text(encoding="utf-8"))
     store = TimeSeriesStore(base_data_dir() / "timeseries")
-    tradable_symbols, context_symbols = _symbols_from_manifest(manifest)
+    tradable_symbols, context_symbols, excluded = _symbols_from_manifest(manifest, config.exclude_asset_groups)
     prices, found, missing = _load_price_panels(store, tradable_symbols, start=config.train_start, end=config.validation_end)
     context, context_found, context_missing = _load_context_panels(store, context_symbols, start=config.train_start, end=config.validation_end)
     if config.benchmark_symbol not in prices.columns:
@@ -184,9 +186,13 @@ def load_dataset(config: SP500WeeklyHedgeConfig) -> tuple[dict[str, Any], dict[s
         "tradable_requested": len(tradable_symbols),
         "tradable_found": len(found),
         "tradable_missing": missing,
+        "excluded_asset_groups": list(config.exclude_asset_groups),
+        "excluded_symbols": excluded,
+        "excluded_symbols_count": int(len(excluded)),
         "context_found": len(context_found),
         "context_missing": context_missing,
         "assets_used": list(train_rets.columns),
+        "assets_used_count": int(len(train_rets.columns)),
         "features_raw": int(features.shape[1]),
         "features_used": int(len(selected)),
         "feature_columns_used_names": list(selected),
@@ -202,6 +208,8 @@ def load_dataset(config: SP500WeeklyHedgeConfig) -> tuple[dict[str, Any], dict[s
         "validation_end": config.validation_end,
         "locked_start": config.locked_start,
         "allow_late_entry": bool(config.allow_late_entry),
+        "crypto_used": False if "crypto_spot" in set(config.exclude_asset_groups) else None,
+        "single_name_equities_used": False if "equity_single_name" in set(config.exclude_asset_groups) else None,
     }
     return {
         "train_x": train_x,
@@ -687,18 +695,27 @@ def _ranking_names() -> tuple[str, ...]:
     )
 
 
-def _symbols_from_manifest(manifest: dict[str, Any]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+def _symbols_from_manifest(
+    manifest: dict[str, Any],
+    exclude_asset_groups: tuple[str, ...] | list[str] | set[str] = (),
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]], list[str]]:
     tradable: list[tuple[str, str]] = []
     context: list[tuple[str, str]] = []
+    excluded: list[str] = []
+    excluded_groups = {str(group) for group in exclude_asset_groups}
     for section in manifest.get("sections", {}).values():
         library = str(section.get("library", ""))
+        asset_group = str(section.get("asset_group", ""))
         for symbol in section.get("symbols", []):
             item = (library, str(symbol))
+            if asset_group in excluded_groups:
+                excluded.append(f"{asset_group}/{library}/{symbol}")
+                continue
             if library in {"prices_daily", "fx_daily", "crypto_daily"}:
                 tradable.append(item)
             elif library == "macro_daily":
                 context.append(item)
-    return tradable, context
+    return tradable, context, excluded
 
 
 def _load_price_panels(

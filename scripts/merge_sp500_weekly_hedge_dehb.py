@@ -52,6 +52,12 @@ def main() -> int:
     parser.add_argument("--validation-end", default="2020-12-31")
     parser.add_argument("--locked-start", default="2021-01-01")
     parser.add_argument("--allow-late-entry", action="store_true")
+    parser.add_argument(
+        "--exclude-asset-group",
+        action="append",
+        default=[],
+        help="Manifest asset_group excluded by the stage runner. Repeatable.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -125,6 +131,9 @@ def main() -> int:
         "validation_end": str(args.validation_end),
         "locked_start": str(args.locked_start),
         "allow_late_entry": bool(args.allow_late_entry),
+        "excluded_asset_groups": [str(group) for group in args.exclude_asset_group],
+        "crypto_used": False if "crypto_spot" in set(args.exclude_asset_group) else None,
+        "single_name_equities_used": False if "equity_single_name" in set(args.exclude_asset_group) else None,
         "subperiods": 6,
     }
 

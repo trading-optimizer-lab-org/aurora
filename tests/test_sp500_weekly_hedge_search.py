@@ -194,6 +194,27 @@ def test_run_stage_uses_dehb_real_only() -> None:
     assert audit["locked_opened"] is False
 
 
+def test_manifest_filter_excludes_crypto_and_single_name_equities_but_keeps_etfs() -> None:
+    module = __import__("aurora.research.sp500_weekly_hedge_search", fromlist=["_symbols_from_manifest"])
+    manifest = yaml.safe_load(Path("config/diversified_seed_dataset.yaml").read_text(encoding="utf-8"))
+
+    tradable, context, excluded = module._symbols_from_manifest(
+        manifest,
+        ("crypto_spot", "equity_single_name"),
+    )
+    tradable_symbols = {symbol for _, symbol in tradable}
+
+    assert "BTCUSDT" not in tradable_symbols
+    assert "AAPL" not in tradable_symbols
+    assert "SPY" in tradable_symbols
+    assert "TLT" in tradable_symbols
+    assert "GLD" in tradable_symbols
+    assert "EURUSD" in tradable_symbols
+    assert any(item.startswith("crypto_spot/crypto_daily/") for item in excluded)
+    assert any(item.startswith("equity_single_name/prices_daily/") for item in excluded)
+    assert context
+
+
 def test_wave_changes_seed_but_not_candidate_identity_contract() -> None:
     config = SP500WeeklyHedgeConfig(top_rows_per_stage=5, size_grid=(1.0,), random_seed=11)
     _, meta0, _ = run_stage(
@@ -309,6 +330,32 @@ def test_policy1995_6waves_9h_workflow_shape() -> None:
     assert "bandit" not in text
 
 
+def test_no_crypto_no_stocks_6waves_3h_workflow_shape() -> None:
+    path = Path(".github/workflows/sp500-weekly-hedge-dehb-no-crypto-no-stocks-6waves-80jobs-3h.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+
+    assert data["name"] == "SP500 Weekly Hedge DEHB No Crypto No Stocks 6 Waves 80 Jobs 3h"
+    assert data["env"]["WAVES"] == "6"
+    assert data["env"]["JOBS_PER_WAVE"] == "80"
+    assert data["env"]["EXPECTED_JOBS"] == "480"
+    assert data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
+    assert data["env"]["FILE_PREFIX"] == "sp500_weekly_hedge_dehb_no_crypto_no_stocks_6waves_80jobs_3h"
+    assert data["jobs"]["wave_0"]["strategy"]["max-parallel"] == 500
+    assert data["jobs"]["wave_0"]["timeout-minutes"] == 45
+    assert data["jobs"]["merge"]["timeout-minutes"] == 120
+    assert len(data["jobs"]["wave_0"]["strategy"]["matrix"]["stage"]) == 80
+    assert 'default: "30"' in text
+    assert 'test "${{ inputs.minutes_per_stage || \'30\' }}" = "30"' in text
+    assert "--exclude-asset-group crypto_spot" in text
+    assert "--exclude-asset-group equity_single_name" in text
+    assert "sp500-weekly-hedge-dehb-no-crypto-no-stocks-6waves-80jobs-3h-results" in text
+    assert "genetic" not in text
+    assert "github_ml" not in text
+    assert "beam" not in text
+    assert "bandit" not in text
+
+
 def test_policy1995_autostart_9h_workflow_filters_current_run_and_success_only() -> None:
     path = Path(".github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -385,6 +432,10 @@ def test_stage_script_smoke_with_synthetic_dataset(tmp_path: Path) -> None:
         str(out),
         "--top-rows-per-stage",
         "5",
+        "--exclude-asset-group",
+        "crypto_spot",
+        "--exclude-asset-group",
+        "equity_single_name",
     ]
     completed = subprocess.run(cmd, check=True, capture_output=True, text=True)
     meta = json.loads(completed.stdout)
@@ -392,4 +443,5 @@ def test_stage_script_smoke_with_synthetic_dataset(tmp_path: Path) -> None:
     assert meta["total_waves"] == 2
     assert meta["locked_opened"] is False
     assert meta["validation_used_for_selection"] is False
+    assert meta["excluded_asset_groups"] == ["crypto_spot", "equity_single_name"]
     assert list(out.glob("*_wave_1_stage_0.csv"))
