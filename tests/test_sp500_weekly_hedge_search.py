@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
 from aurora.research.sp500_weekly_hedge_search import (
@@ -354,6 +355,68 @@ def test_no_crypto_no_stocks_6waves_3h_workflow_shape() -> None:
     assert "github_ml" not in text
     assert "beam" not in text
     assert "bandit" not in text
+
+
+def test_no_crypto_no_stocks_2waves_500jobs_180parallel_workflow_shape() -> None:
+    path = Path(".github/workflows/sp500-weekly-hedge-dehb-no-crypto-no-stocks-2waves-500jobs-180parallel-1h.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+
+    assert data["name"] == "SP500 Weekly Hedge DEHB No Crypto No Stocks 2 Waves 500 Jobs 180 Parallel 1h"
+    assert data["env"]["WAVES"] == "2"
+    assert data["env"]["JOBS_PER_WAVE"] == "500"
+    assert data["env"]["EXPECTED_JOBS"] == "1000"
+    assert data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
+    assert data["env"]["TRAIN_START"] == "1995-01-01"
+    assert data["env"]["LOCKED_START"] == "2021-01-01"
+    assert data["env"]["FILE_PREFIX"] == "sp500_weekly_hedge_dehb_no_crypto_no_stocks_2waves_500jobs_180parallel_1h"
+    assert data["jobs"]["wave_0_a"]["strategy"]["max-parallel"] == 90
+    assert data["jobs"]["wave_0_b"]["strategy"]["max-parallel"] == 90
+    assert data["jobs"]["wave_1_a"]["strategy"]["max-parallel"] == 90
+    assert data["jobs"]["wave_1_b"]["strategy"]["max-parallel"] == 90
+    assert len(data["jobs"]["wave_0_a"]["strategy"]["matrix"]["stage"]) == 250
+    assert len(data["jobs"]["wave_0_b"]["strategy"]["matrix"]["stage"]) == 250
+    assert len(data["jobs"]["wave_1_a"]["strategy"]["matrix"]["stage"]) == 250
+    assert len(data["jobs"]["wave_1_b"]["strategy"]["matrix"]["stage"]) == 250
+    assert data["jobs"]["merge"]["timeout-minutes"] == 120
+    assert 'default: "10"' in text
+    assert 'default: "180"' in text
+    assert 'python scripts/download_diversified_seed.py --start "$TRAIN_START" --end "$VALIDATION_END"' in text
+    assert "--total-stages 500" in text
+    assert "--max-parallel-requested 180" in text
+    assert "--exclude-asset-group crypto_spot" in text
+    assert "--exclude-asset-group equity_single_name" in text
+    assert "sp500-weekly-hedge-dehb-no-crypto-no-stocks-2waves-500jobs-180parallel-1h-results" in text
+    assert "genetic" not in text
+    assert "github_ml" not in text
+    assert "beam" not in text
+    assert "bandit" not in text
+
+
+def test_merge_guard_rejects_empty_partial_or_unconfirmed_runs() -> None:
+    guard = __import__("scripts.merge_sp500_weekly_hedge_dehb", fromlist=["_fail_if_invalid_summary"])._fail_if_invalid_summary
+    good = {
+        "stage_files_found": 1000,
+        "expected_jobs": 1000,
+        "partial": False,
+        "rows": 10,
+        "locked_opened": False,
+        "excluded_asset_groups": ["crypto_spot", "equity_single_name"],
+        "crypto_used": False,
+        "single_name_equities_used": False,
+    }
+
+    guard(good, {"locked_opened": False})
+    for bad in (
+        {**good, "stage_files_found": 0},
+        {**good, "partial": True},
+        {**good, "rows": 0},
+        {**good, "locked_opened": True},
+        {**good, "crypto_used": None},
+        {**good, "single_name_equities_used": None},
+    ):
+        with pytest.raises(SystemExit):
+            guard(bad, {"locked_opened": False})
 
 
 def test_policy1995_autostart_9h_workflow_filters_current_run_and_success_only() -> None:

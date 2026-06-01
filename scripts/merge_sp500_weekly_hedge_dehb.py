@@ -157,6 +157,7 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
+    _fail_if_invalid_summary(summary, feature_audit)
     return 0
 
 
@@ -192,6 +193,22 @@ def _feature_audit(pattern: str) -> dict[str, object]:
         payload["locked_opened"] = False
         return payload
     return {"available": False, "audit_files_found": len(paths), "locked_opened": False}
+
+
+def _fail_if_invalid_summary(summary: dict[str, object], feature_audit: dict[str, object]) -> None:
+    if int(summary.get("stage_files_found", 0) or 0) <= 0:
+        raise SystemExit("merge failed: no stage artifacts found")
+    if bool(summary.get("partial", False)):
+        raise SystemExit("merge failed: partial stage artifacts")
+    if int(summary.get("rows", 0) or 0) <= 0:
+        raise SystemExit("merge failed: no merged candidate rows")
+    if bool(summary.get("locked_opened", True)) or bool(feature_audit.get("locked_opened", True)):
+        raise SystemExit("merge failed: locked_opened must be false")
+    excluded = {str(group) for group in summary.get("excluded_asset_groups", []) or []}
+    if "crypto_spot" in excluded and summary.get("crypto_used") is not False:
+        raise SystemExit("merge failed: crypto exclusion was not confirmed")
+    if "equity_single_name" in excluded and summary.get("single_name_equities_used") is not False:
+        raise SystemExit("merge failed: single-name equity exclusion was not confirmed")
 
 
 if __name__ == "__main__":
