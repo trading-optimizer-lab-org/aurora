@@ -126,7 +126,7 @@ jobs:
     name: extract-chunk-a-${{ matrix.chunk }}
     needs: prepare_manifest
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 154
@@ -179,7 +179,7 @@ jobs:
     name: extract-chunk-b-${{ matrix.chunk }}
     needs: prepare_manifest
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 26
