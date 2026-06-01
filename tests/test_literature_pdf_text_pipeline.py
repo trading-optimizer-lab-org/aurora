@@ -171,6 +171,16 @@ def test_jsonl_writer_replaces_invalid_unicode(tmp_path: Path) -> None:
     assert out.exists()
 
 
+def test_merge_reader_handles_unicode_line_separator_inside_json(tmp_path: Path) -> None:
+    path = tmp_path / "chunk_000_text.jsonl.zst"
+    path.write_text('{"study_id":"W1","text":"alpha\u2028beta"}\n', encoding="utf-8")
+
+    rows, errors = merge.read_jsonl_zst(path)
+
+    assert errors == []
+    assert rows == [{"study_id": "W1", "text": "alpha\u2028beta"}]
+
+
 def test_exactness_does_not_claim_exact_when_required_fields_missing() -> None:
     row = {
         "study_id": "W1",

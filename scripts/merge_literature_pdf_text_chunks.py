@@ -24,7 +24,11 @@ def read_jsonl_zst(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any
         text = data.decode("utf-8", errors="replace")
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    # JSONL rows are separated by the byte newline we wrote. Do not use
+    # splitlines(): paper text may contain Unicode separators such as U+2028,
+    # and Python treats those as line breaks even when they are inside a JSON
+    # string. That turns valid JSON into garbage confetti. Very helpful.
+    for line_number, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
         try:
