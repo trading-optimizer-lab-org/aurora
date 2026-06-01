@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -16,10 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import requests
-
-from aurora.research.literature.extraction import extract_claims_from_text
-from aurora.research.literature.ingest import _fallback_pdf_text
-from aurora.research.literature.papers import PaperRecord, utc_now_isoformat
 
 
 STATUSES = {
@@ -33,6 +30,20 @@ STATUSES = {
     "no_pdf_url",
 }
 MAX_QUOTE_CHARS = 240
+
+CLAIM_PATTERNS = {
+    "asset_class": re.compile(
+        r"\b(stocks?|equities|bonds?|commodit(?:y|ies)|currenc(?:y|ies)|forex|FX|ETF|futures?|crypto|bitcoin)\b",
+        re.I,
+    ),
+    "frequency": re.compile(r"\b(daily|weekly|monthly|quarterly|intraday)\b", re.I),
+    "signal": re.compile(
+        r"\b(momentum|reversal|carry|value|quality|volatility|trend|moving average|factor|signal|rank)\b",
+        re.I,
+    ),
+    "costs": re.compile(r"\b(transaction costs?|commissions?|slippage|net of costs|gross of costs)\b", re.I),
+    "sample_period": re.compile(r"\b(19\d{2}|20\d{2})\s*[-–—to/]+\s*(19\d{2}|20\d{2})\b"),
+}
 
 
 def _zstd_available() -> bool:
@@ -161,38 +172,46 @@ def extract_pdf_text(payload: bytes, tmp_dir: Path) -> tuple[str, int, str]:
                     chunks.append("")
             return "\n\n".join(chunks).strip(), len(reader.pages), pdf_hash
         except ImportError:
-            return _fallback_pdf_text(payload), max(1, payload.count(b"/Page")), pdf_hash
+            return payload.decode("utf-8", errors="ignore"), max(1, payload.count(b"/Page")), pdf_hash
     finally:
         path.unlink(missing_ok=True)
 
 
-def make_paper_record(row: dict[str, str], used_url: str, pdf_hash: str, status: str, pages: int) -> PaperRecord:
-    try:
-        year = int(str(row.get("study_year") or "2026")[:4])
-    except ValueError:
-        year = 2026
-    return PaperRecord(
-        paper_id=row.get("study_id") or f"paper-{pdf_hash[:16]}",
-        title=row.get("study_title") or "untitled",
-        authors=(),
-        year=year,
-        source="remote_pdf",
-        url_or_path=used_url,
-        doi=row.get("doi") or None,
-        ssrn_id=None,
-        licence_note="open-access URL from literature metadata; PDF not retained",
-        ingestion_time=utc_now_isoformat(),
-        content_hash=pdf_hash or "0" * 64,
-        extraction_status="text_extracted" if status == "text_extracted" else "failed",
-        page_count=max(0, int(pages)),
-    )
+def _claim_quote(text: str, match: re.Match[str]) -> str:
+    left = max(0, match.start() - 90)
+    right = min(len(text), match.end() + 90)
+    return re.sub(r"\s+", " ", text[left:right]).strip()[:MAX_QUOTE_CHARS]
 
 
-def _short_claim(claim: Any) -> dict[str, Any]:
-    payload = claim.__dict__.copy()
-    quote = str(payload.get("quote_excerpt") or "")
-    payload["quote_excerpt"] = quote[:MAX_QUOTE_CHARS]
-    return payload
+def extract_basic_claims(row: dict[str, str], text: str) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    study_id = row.get("study_id") or ""
+    idea_id = row.get("idea_id") or ""
+    for claim_type, regex in CLAIM_PATTERNS.items():
+        seen: set[str] = set()
+        for match in regex.finditer(text):
+            value = match.group(0).strip()
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            digest = hashlib.sha256(f"{study_id}|{idea_id}|{claim_type}|{key}".encode("utf-8")).hexdigest()[:12]
+            claims.append(
+                {
+                    "claim_id": f"{study_id}-{claim_type}-{digest}",
+                    "study_id": study_id,
+                    "idea_id": idea_id,
+                    "strategy_family": row.get("strategy_family", ""),
+                    "claim_type": claim_type,
+                    "claim_value": value,
+                    "quote_excerpt": _claim_quote(text, match),
+                    "locked_opened": False,
+                    "extractor": "basic_regex_v1",
+                }
+            )
+            if len(seen) >= 5:
+                break
+    return claims
 
 
 def process_row(
@@ -243,7 +262,6 @@ def process_row(
     claims: list[dict[str, Any]] = []
     if text and status in {"text_extracted", "maybe_scanned_pdf"}:
         trimmed = text[:text_max_chars]
-        record = make_paper_record(row, used_url, pdf_hash, status, pages)
         text_row = {
             "study_id": row.get("study_id", ""),
             "idea_id": row.get("idea_id", ""),
@@ -260,7 +278,7 @@ def process_row(
             "locked_opened": False,
         }
         try:
-            claims = [_short_claim(claim) for claim in extract_claims_from_text(record, trimmed)]
+            claims = extract_basic_claims(row, trimmed)
         except Exception as exc:
             status_row["claims_error"] = f"{type(exc).__name__}: {exc}"
     return text_row, status_row, claims, error_row
