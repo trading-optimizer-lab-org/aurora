@@ -1,0 +1,19 @@
+status: pendiente_no_lanzar
+workflow: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend
+workflow_file: .github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend.yml
+merge_now_workflow: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Merge Now
+stop_workflow: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Stop
+config_file: configs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend.yaml
+method: dehb_real
+jobs_total: 500
+logical_waves: 1
+technical_blocks: 2
+jobs_per_block: 250
+max_parallel_requested: 500
+minutes_per_stage: 50
+stop_after_minutes: 60
+tradable_assets:
+  - SPY
+feature_filter: momentum_trend_only
+crypto_allowed: false
+locked_opened: false
