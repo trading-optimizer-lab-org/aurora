@@ -1095,4 +1095,3 @@ def register(subparsers, parent_parser=None) -> None:
     p_freeze.add_argument("--version", default=None)
     p_freeze.add_argument("--provenance", default=None)
     p_freeze.set_defaults(func=cmd_data_freeze)
-
