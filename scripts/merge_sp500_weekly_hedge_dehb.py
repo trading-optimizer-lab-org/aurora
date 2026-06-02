@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pandas as pd
+import numpy as np
 
 
 def _load_search_module():
@@ -55,6 +56,7 @@ def main() -> int:
     parser.add_argument("--allow-partial", action="store_true")
     parser.add_argument("--require-spy-only", action="store_true")
     parser.add_argument("--require-momentum-trend-only", action="store_true")
+    parser.add_argument("--require-no-long-spy", action="store_true")
     parser.add_argument(
         "--exclude-asset-group",
         action="append",
@@ -70,7 +72,7 @@ def main() -> int:
     if not merged.empty and "train_score" in merged.columns:
         merged = merged.sort_values("train_score", ascending=False).reset_index(drop=True)
 
-    leaderboard = merged
+    leaderboard = _annotate_merge_quality(merged)
     train_top = merged.head(int(args.top_n)) if not merged.empty else merged
     verified = merged[merged["verified"].astype(bool)].copy() if not merged.empty and "verified" in merged.columns else merged.head(0).copy()
     validation_cols = [c for c in merged.columns if c.startswith("validation_")]
@@ -100,11 +102,15 @@ def main() -> int:
         or c.startswith("validation_")
     ]
     sizing = merged[sizing_cols].copy() if not merged.empty else merged
-    methods = method_summary(merged)
-    fail_reasons = _fail_reasons(merged)
-    subperiods = generate_subperiod_report(merged)
-    negative_years = generate_negative_sp500_years_report(merged)
-    rankings = build_hedge_rankings(merged)
+    methods = method_summary(leaderboard)
+    fail_reasons = _fail_reasons(leaderboard)
+    subperiods = generate_subperiod_report(leaderboard)
+    negative_years = generate_negative_sp500_years_report(leaderboard)
+    rankings = build_hedge_rankings(leaderboard)
+    duplicates = _duplicates_frame(leaderboard)
+    portfolio = _portfolio_frame(leaderboard)
+    simple_robust = leaderboard[_bool_col(leaderboard, "simple_robust_pass")].copy() if not leaderboard.empty else leaderboard.copy()
+    no_long_audit = _no_long_spy_audit(leaderboard)
     feature_audit = _feature_audit(args.audit_glob)
     parallelism = _parallelism_summary(args.input_glob, expected_jobs=int(args.expected_jobs))
     summary = {
@@ -145,6 +151,11 @@ def main() -> int:
         "parallelism_valid": bool(parallelism["parallelism_valid"]),
         "spy_only": bool(feature_audit.get("spy_only", False)) if args.require_spy_only else None,
         "feature_filter": str(feature_audit.get("feature_filter", "")) if args.require_momentum_trend_only else "",
+        "no_long_spy": bool(no_long_audit.get("no_long_spy", False)) if args.require_no_long_spy else None,
+        "max_spy_position_train": float(no_long_audit.get("max_spy_position_train", 0.0)),
+        "max_spy_position_validation": float(no_long_audit.get("max_spy_position_validation", 0.0)),
+        "long_spy_weeks_train": int(no_long_audit.get("long_spy_weeks_train", 0)),
+        "long_spy_weeks_validation": int(no_long_audit.get("long_spy_weeks_validation", 0)),
     }
 
     leaderboard.to_csv(output_dir / f"{args.file_prefix}_leaderboard.csv", index=False)
@@ -154,6 +165,10 @@ def main() -> int:
     methods.to_csv(output_dir / f"{args.file_prefix}_methods.csv", index=False)
     fail_reasons.to_csv(output_dir / f"{args.file_prefix}_fail_reasons.csv", index=False)
     sizing.to_csv(output_dir / f"{args.file_prefix}_sizing.csv", index=False)
+    simple_robust.to_csv(output_dir / f"{args.file_prefix}_simple_robustness.csv", index=False)
+    duplicates.to_csv(output_dir / f"{args.file_prefix}_duplicates.csv", index=False)
+    portfolio.to_csv(output_dir / f"{args.file_prefix}_portfolio.csv", index=False)
+    pd.DataFrame([no_long_audit]).to_csv(output_dir / f"{args.file_prefix}_no_long_spy_audit.csv", index=False)
     subperiods.to_csv(output_dir / f"{args.file_prefix}_subperiods.csv", index=False)
     negative_years.to_csv(output_dir / f"{args.file_prefix}_negative_sp500_years_report.csv", index=False)
     for name, ranking in rankings.items():
@@ -167,6 +182,10 @@ def main() -> int:
         json.dumps(feature_audit, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    (output_dir / f"{args.file_prefix}_no_long_spy_audit.json").write_text(
+        json.dumps(no_long_audit, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     (output_dir / f"{args.file_prefix}_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -178,6 +197,8 @@ def main() -> int:
         allow_partial=bool(args.allow_partial),
         require_spy_only=bool(args.require_spy_only),
         require_momentum_trend_only=bool(args.require_momentum_trend_only),
+        require_no_long_spy=bool(args.require_no_long_spy),
+        no_long_audit=no_long_audit,
     )
     return 0
 
@@ -192,6 +213,117 @@ def _read_and_dedupe(paths: list[str]) -> pd.DataFrame:
         if not frame.empty:
             frames.append(frame)
     return merge_stage_rows(frames)
+
+
+def _annotate_merge_quality(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    out = frame.copy()
+    if "return_fingerprint" not in out.columns:
+        out["return_fingerprint"] = [
+            _return_fingerprint(_returns_series(value)) for value in out.get("train_returns_json", pd.Series("", index=out.index))
+        ]
+    out["duplicate_group_id"] = out.get("duplicate_group_id", out["return_fingerprint"]).fillna(out["return_fingerprint"]).astype(str)
+    sizes = out["duplicate_group_id"].value_counts().to_dict()
+    out["duplicate_group_size"] = out["duplicate_group_id"].map(sizes).fillna(1).astype(int)
+    out = out.sort_values("train_score", ascending=False) if "train_score" in out.columns else out
+    out["duplicate_representative"] = ~out["duplicate_group_id"].duplicated()
+    if "simple_robust_pass" not in out.columns:
+        out["simple_robust_pass"] = False
+    out["portfolio_eligible"] = _bool_col(out, "simple_robust_pass") & _bool_col(out, "duplicate_representative")
+    return out.reset_index(drop=True)
+
+
+def _duplicates_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "duplicate_group_id" not in frame.columns:
+        return pd.DataFrame(columns=["duplicate_group_id", "duplicate_group_size", "representative_candidate_id"])
+    rows = []
+    for group_id, group in frame.groupby("duplicate_group_id", dropna=False):
+        group = group.sort_values("train_score", ascending=False) if "train_score" in group.columns else group
+        rows.append(
+            {
+                "duplicate_group_id": str(group_id),
+                "duplicate_group_size": int(len(group)),
+                "representative_candidate_id": str(group.iloc[0].get("candidate_id", "")),
+            }
+        )
+    return pd.DataFrame(rows).sort_values("duplicate_group_size", ascending=False).reset_index(drop=True)
+
+
+def _portfolio_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    pool = frame[_bool_col(frame, "portfolio_eligible")].copy()
+    if pool.empty:
+        pool = frame[_bool_col(frame, "duplicate_representative", default=True)].copy()
+    if pool.empty:
+        return pool
+    return pool.sort_values("train_score", ascending=False).head(25).reset_index(drop=True)
+
+
+def _no_long_spy_audit(frame: pd.DataFrame) -> dict[str, object]:
+    required = {
+        "max_spy_position_train",
+        "max_spy_position_validation",
+        "long_spy_weeks_train",
+        "long_spy_weeks_validation",
+    }
+    if frame.empty:
+        return {
+            "no_long_spy": False,
+            "rows_checked": 0,
+            "required_columns_present": False,
+            "max_spy_position_train": 0.0,
+            "max_spy_position_validation": 0.0,
+            "long_spy_weeks_train": 0,
+            "long_spy_weeks_validation": 0,
+        }
+    required_present = required.issubset(set(frame.columns))
+    max_train = _numeric_col(frame, "max_spy_position_train").max()
+    max_valid = _numeric_col(frame, "max_spy_position_validation").max()
+    train_long = int(_numeric_col(frame, "long_spy_weeks_train").sum())
+    valid_long = int(_numeric_col(frame, "long_spy_weeks_validation").sum())
+    return {
+        "no_long_spy": bool(required_present and max_train <= 1e-12 and max_valid <= 1e-12 and train_long == 0 and valid_long == 0),
+        "rows_checked": int(len(frame)),
+        "required_columns_present": bool(required_present),
+        "max_spy_position_train": float(max_train) if pd.notna(max_train) else 0.0,
+        "max_spy_position_validation": float(max_valid) if pd.notna(max_valid) else 0.0,
+        "long_spy_weeks_train": train_long,
+        "long_spy_weeks_validation": valid_long,
+    }
+
+
+def _numeric_col(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series([0.0] * len(frame), index=frame.index, dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
+
+
+def _bool_col(frame: pd.DataFrame, column: str, *, default: bool = False) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series([default] * len(frame), index=frame.index, dtype=bool)
+    return frame[column].map(lambda value: str(value).strip().lower() in {"1", "true", "yes", "y"}).astype(bool)
+
+
+def _returns_series(payload: object) -> pd.Series:
+    if isinstance(payload, str):
+        try:
+            values = json.loads(payload)
+        except json.JSONDecodeError:
+            values = []
+    elif isinstance(payload, list):
+        values = payload
+    else:
+        values = []
+    return pd.Series(values, dtype=float).replace([float("inf"), float("-inf")], np.nan).dropna().reset_index(drop=True)
+
+
+def _return_fingerprint(series: pd.Series) -> str:
+    import hashlib
+
+    values = np.round(pd.to_numeric(series, errors="coerce").dropna().to_numpy(dtype=float), 8)
+    return hashlib.sha256(values.tobytes()).hexdigest()[:16]
 
 
 def _fail_reasons(frame: pd.DataFrame) -> pd.DataFrame:
@@ -295,6 +427,8 @@ def _fail_if_invalid_summary(
     allow_partial: bool = False,
     require_spy_only: bool = False,
     require_momentum_trend_only: bool = False,
+    require_no_long_spy: bool = False,
+    no_long_audit: dict[str, object] | None = None,
 ) -> None:
     if int(summary.get("stage_files_found", 0) or 0) <= 0:
         raise SystemExit("merge failed: no stage artifacts found")
@@ -318,6 +452,10 @@ def _fail_if_invalid_summary(
         forbidden_used = [feature for feature in feature_audit.get("forbidden_features_found", []) or [] if feature in used]
         if forbidden_used:
             raise SystemExit("merge failed: forbidden features were used")
+    if require_no_long_spy:
+        audit = no_long_audit or {}
+        if audit.get("no_long_spy") is not True:
+            raise SystemExit("merge failed: no-long-SPY audit was not confirmed")
 
 
 if __name__ == "__main__":
