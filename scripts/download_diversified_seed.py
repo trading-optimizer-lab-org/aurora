@@ -18,6 +18,7 @@ Skipped without operator credentials:
 """
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import os
@@ -78,6 +79,26 @@ def fetch_yfinance(symbol: str, start: str = START) -> pd.DataFrame | None:
         return normalise_yfinance_df(df, symbol)
     except Exception:
         return None
+
+
+def binance_effective_start(pair: str, requested_start: str) -> str:
+    """Avoid wasting requests before Binance has public spot history."""
+    listing_floor = {
+        "BTCUSDT": "2017-08-01",
+        "ETHUSDT": "2017-08-01",
+        "BNBUSDT": "2017-11-01",
+        "ADAUSDT": "2018-04-01",
+        "XRPUSDT": "2018-05-01",
+        "DOGEUSDT": "2019-07-01",
+        "LINKUSDT": "2019-01-01",
+        "SOLUSDT": "2020-08-01",
+        "DOTUSDT": "2020-08-01",
+        "AVAXUSDT": "2020-09-01",
+    }
+    floor = listing_floor.get(pair.upper())
+    if floor is None:
+        return requested_start
+    return max(requested_start, floor)
 
 
 def fetch_binance_klines(pair: str, start: str = START) -> pd.DataFrame | None:
@@ -217,7 +238,18 @@ def fetch_openfigi(ticker: str) -> list[dict] | None:
         return None
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Download the diversified seed dataset into TimeSeriesStore.")
+    parser.add_argument("--start", default=START, help="Start date for market data downloads, YYYY-MM-DD.")
+    parser.add_argument("--end", default=END, help="End date for yfinance downloads, YYYY-MM-DD. Defaults to today.")
+    return parser.parse_args()
+
+
 def main() -> None:
+    global START, END
+    args = parse_args()
+    START = str(args.start)
+    END = str(args.end) if args.end else None
     with open(MANIFEST, encoding="utf-8") as f:
         manifest = yaml.safe_load(f)
     sections = manifest["sections"]
@@ -227,7 +259,7 @@ def main() -> None:
     version = now_iso()
 
     print(f"AURORA real-network bootstrap of '{manifest['name']}'")
-    print(f"start={START} end=today version={version}")
+    print(f"start={START} end={END or 'today'} version={version}")
     print(f"data dir: {base_data_dir()}")
     print()
 
@@ -244,10 +276,10 @@ def main() -> None:
             error = None
             try:
                 if sec_name == "fx":
-                    df = fetch_yfinance(yf_fx_symbol(sym))
+                    df = fetch_yfinance(yf_fx_symbol(sym), start=START)
                     provider = "yfinance"
                 elif sec_name == "crypto":
-                    df = fetch_binance_klines(sym)
+                    df = fetch_binance_klines(sym, start=binance_effective_start(sym, START))
                     provider = "binance_public_data"
                 elif sec_name == "macro":
                     df = fetch_dbnomics_series(sym)
@@ -265,7 +297,7 @@ def main() -> None:
                         time.sleep(0.15)
                     df = None
                 else:
-                    df = fetch_yfinance(sym)
+                    df = fetch_yfinance(sym, start=START)
                     provider = "yfinance"
                 if df is not None and not df.empty:
                     rows = len(df)
