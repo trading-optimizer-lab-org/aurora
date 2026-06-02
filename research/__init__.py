@@ -126,12 +126,24 @@ from aurora.research.source_discovery import (
     discover_sources,
     source_report_to_markdown,
 )
-from aurora.research.sp500_research_agent import (
-    SP500ResearchAgentConfig,
-    SP500ResearchAgentReport,
-    run_sp500_research_agent,
-    sp500_agent_report_to_markdown,
-)
+try:
+    from aurora.research.sp500_research_agent import (
+        SP500ResearchAgentConfig,
+        SP500ResearchAgentReport,
+        run_sp500_research_agent,
+        sp500_agent_report_to_markdown,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "aurora.research.sp500_research_agent":
+        raise
+    SP500ResearchAgentConfig = None
+    SP500ResearchAgentReport = None
+
+    def run_sp500_research_agent(*args, **kwargs):
+        raise ModuleNotFoundError("aurora.research.sp500_research_agent is not available")
+
+    def sp500_agent_report_to_markdown(*args, **kwargs):
+        raise ModuleNotFoundError("aurora.research.sp500_research_agent is not available")
 from aurora.research.agent_loop import (
     AgentGoalSpec,
     AgentLoopResult,
