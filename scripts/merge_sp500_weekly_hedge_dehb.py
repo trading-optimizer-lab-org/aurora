@@ -56,6 +56,11 @@ def main() -> int:
     parser.add_argument("--require-spy-only", action="store_true")
     parser.add_argument("--require-momentum-trend-only", action="store_true")
     parser.add_argument(
+        "--lightweight",
+        action="store_true",
+        help="Skip return/index JSON columns and heavy return-path reports for large partial merges.",
+    )
+    parser.add_argument(
         "--exclude-asset-group",
         action="append",
         default=[],
@@ -66,7 +71,7 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = sorted(glob.glob(args.input_glob, recursive=True))
-    merged = _read_and_dedupe(paths)
+    merged = _read_and_dedupe(paths, lightweight=bool(args.lightweight))
     if not merged.empty and "train_score" in merged.columns:
         merged = merged.sort_values("train_score", ascending=False).reset_index(drop=True)
 
@@ -102,8 +107,8 @@ def main() -> int:
     sizing = merged[sizing_cols].copy() if not merged.empty else merged
     methods = method_summary(merged)
     fail_reasons = _fail_reasons(merged)
-    subperiods = generate_subperiod_report(merged)
-    negative_years = generate_negative_sp500_years_report(merged)
+    subperiods = pd.DataFrame() if args.lightweight else generate_subperiod_report(merged)
+    negative_years = pd.DataFrame() if args.lightweight else generate_negative_sp500_years_report(merged)
     rankings = build_hedge_rankings(merged)
     feature_audit = _feature_audit(args.audit_glob)
     parallelism = _parallelism_summary(args.input_glob, expected_jobs=int(args.expected_jobs))
@@ -112,6 +117,7 @@ def main() -> int:
         "unique_candidates": int(leaderboard["candidate_id"].nunique()) if "candidate_id" in leaderboard.columns else 0,
         "verified": int(leaderboard["verified"].astype(bool).sum()) if "verified" in leaderboard.columns else 0,
         "stage_files_found": int(len(paths)),
+        "lightweight_merge": bool(args.lightweight),
         "expected_jobs": int(args.expected_jobs),
         "waves": int(args.waves),
         "jobs_per_wave": int(args.jobs_per_wave),
@@ -182,11 +188,20 @@ def main() -> int:
     return 0
 
 
-def _read_and_dedupe(paths: list[str]) -> pd.DataFrame:
+def _read_and_dedupe(paths: list[str], *, lightweight: bool = False) -> pd.DataFrame:
     frames = []
     for path in paths:
         try:
-            frame = pd.read_csv(path)
+            if lightweight:
+                columns = pd.read_csv(path, nrows=0).columns
+                usecols = [
+                    column
+                    for column in columns
+                    if not str(column).endswith("_json") and str(column) != "rule"
+                ]
+                frame = pd.read_csv(path, usecols=usecols)
+            else:
+                frame = pd.read_csv(path)
         except pd.errors.EmptyDataError:
             continue
         if not frame.empty:

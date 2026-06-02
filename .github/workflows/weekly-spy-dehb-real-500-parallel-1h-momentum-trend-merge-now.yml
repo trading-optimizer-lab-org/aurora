@@ -39,6 +39,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
           path: outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend/artifacts
           pattern: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stage-*
           merge-multiple: true
@@ -66,7 +67,8 @@ jobs:
             --exclude-asset-group equity_single_name \
             --allow-partial \
             --require-spy-only \
-            --require-momentum-trend-only
+            --require-momentum-trend-only \
+            --lightweight
       - name: Upload partial leaderboard
         uses: actions/upload-artifact@v4
         with:
