@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -8,13 +9,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from aurora.research.literature_strategy_backtest import (  # noqa: E402
-    LiteratureBacktestConfig,
-    load_dataset,
-    load_signatures,
-    run_chunk,
-    synthetic_dataset,
-)
+
+def _load_engine():
+    module_path = ROOT / "research" / "literature_strategy_backtest.py"
+    spec = importlib.util.spec_from_file_location("literature_strategy_backtest_runtime", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load literature strategy backtest module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[str(spec.name)] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_ENGINE = _load_engine()
+LiteratureBacktestConfig = _ENGINE.LiteratureBacktestConfig
+load_dataset = _ENGINE.load_dataset
+load_signatures = _ENGINE.load_signatures
+run_chunk = _ENGINE.run_chunk
+synthetic_dataset = _ENGINE.synthetic_dataset
 
 
 def main() -> int:
