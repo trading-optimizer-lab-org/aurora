@@ -38,6 +38,7 @@ jobs:
       - name: Download available stage artifacts
         uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
           path: outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend_no_long_spy_quality/artifacts
           pattern: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-stage-*
