@@ -1,0 +1,69 @@
+campaign_id: sp500_down_alpha_20_real_1995_v1
+objective: "Buscar 20 estrategias realmente diferentes para obtener alpha en meses negativos del SP500, backtesteables desde 1995"
+sources:
+  local_exactness_csv: outputs/literature/pdf_text_pipeline_29855/manual_review_needs_review/literature_strategy_exactness_after_manual_review.csv
+  local_text_corpus: outputs/literature/pdf_text_pipeline_29855/literature_full_text_corpus.jsonl.zst
+  search_external: true
+  external_queries:
+    - "S&P 500 downside protection strategy backtest 1995"
+    - "equity crisis alpha trend following paper backtest"
+    - "stock market drawdown hedge macro signal paper"
+    - "VIX SKEW put call ratio market timing S&P 500 returns paper"
+rules:
+  allow_exact: true
+  allow_proxy: true
+  allow_template: false
+  require_full_text_evidence: true
+  forbid_invented_proxies: true
+  min_lag_days: 1
+  sp500_down_horizon: "months"
+  require_effective_start_lte: "1995-01-01"
+  locked_start: "2021-01-01"
+  locked_opened: false
+diversity:
+  target_count: 20
+  max_per_strategy_family: 1
+  max_per_study_id: 1
+  family_targets:
+    - trend_following_crisis_alpha
+    - time_series_momentum_multi_asset
+    - equity_market_timing_moving_average
+    - volatility_regime_timing_vix
+    - vix_term_structure
+    - skew_tail_risk_timing
+    - put_call_ratio_contrarian
+    - cboe_protective_put_benchmark
+    - buywrite_covered_call_benchmark
+    - bond_safe_haven_rotation
+    - yield_curve_stress_timing
+    - credit_spread_stress
+    - inflation_rates_defensive
+    - dollar_fx_safe_haven
+    - gold_commodity_crisis_hedge
+    - low_volatility_minimum_vol
+    - quality_value_defensive_factor
+    - correlation_dispersion_stress
+    - macro_recession_unemployment
+    - liquidity_fed_policy_stress
+universe:
+  allow_assets: ["ETF", "futures_proxy", "macro", "rates", "volatility_index"]
+  forbid_assets: ["crypto"]
+  require_data_available: true
+backtest:
+  train_start: "1995-01-01"
+  train_end: "2010-12-31"
+  validation_start: "2011-01-01"
+  validation_end: "2020-12-31"
+  benchmark: "SPY"
+  size_grid: [0, 0.25, 0.5, 1, 1.5, 2, 3, 4, 5]
+  choose_size_on_train_only: true
+ranking:
+  primary_metric: "validation_sp500_down_month_avg_return_pct"
+  tie_breakers:
+    - "validation_sp500_down_month_positive_pct"
+    - "validation_mdd"
+    - "validation_sharpe"
+    - "train_sp500_down_month_avg_return_pct"
+github:
+  chunks: 180
+  max_parallel: 180

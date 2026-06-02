@@ -1,0 +1,219 @@
+name: Literature Campaign To Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign_config:
+        description: "Campaign YAML path"
+        required: true
+        default: "config/literature_campaign_sp500_down_alpha_v1.yaml"
+      code_ref:
+        description: "Branch/ref to run"
+        required: false
+        default: "codex/universal-robustness"
+      synthetic_smoke:
+        description: "Use synthetic data instead of downloading real store"
+        required: false
+        default: "false"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/literature_campaign
+
+permissions:
+  contents: read
+  actions: read
+  models: read
+
+jobs:
+  validate_campaign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      chunks: ${{ steps.meta.outputs.chunks }}
+      chunk_list: ${{ steps.meta.outputs.chunk_list }}
+      max_parallel: ${{ steps.meta.outputs.max_parallel }}
+      expected_specs: ${{ steps.meta.outputs.expected_specs }}
+      campaign_id: ${{ steps.meta.outputs.campaign_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml,pdf]"
+      - name: Validate YAML and build campaign inputs
+        run: |
+          python scripts/validate_literature_campaign.py --config "${{ inputs.campaign_config }}"
+          python scripts/build_literature_campaign_specs.py \
+            --config "${{ inputs.campaign_config }}" \
+            --output-dir "$OUTPUT_DIR/prepare"
+      - name: Build matrix metadata
+        id: meta
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import csv, json, yaml
+          from pathlib import Path
+
+          config = yaml.safe_load(Path("${{ inputs.campaign_config }}").read_text(encoding="utf-8"))
+          chunks = int(config.get("github", {}).get("chunks", 180))
+          max_parallel = int(config.get("github", {}).get("max_parallel", 180))
+          specs_path = Path("outputs/literature_campaign/prepare/campaign_strategy_specs.csv")
+          with specs_path.open(newline="", encoding="utf-8") as handle:
+              expected_specs = sum(1 for _ in csv.DictReader(handle))
+          if expected_specs <= 0:
+              raise SystemExit("campaign produced zero strategy specs")
+          if chunks > 256:
+              raise SystemExit("campaign chunks must be <= 256 for this workflow")
+          print(f"chunks={chunks}")
+          print("chunk_list=" + json.dumps(list(range(chunks))))
+          print(f"max_parallel={max_parallel}")
+          print(f"expected_specs={expected_specs}")
+          print(f"campaign_id={config['campaign_id']}")
+          PY
+      - name: Upload campaign prepare artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-campaign-prepare-${{ steps.meta.outputs.campaign_id }}
+          path: ${{ env.OUTPUT_DIR }}/prepare/**
+          if-no-files-found: error
+
+  data:
+    runs-on: ubuntu-latest
+    needs: validate_campaign
+    if: ${{ inputs.synthetic_smoke != 'true' }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download data through validation only
+        run: |
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          cfg = yaml.safe_load(Path("${{ inputs.campaign_config }}").read_text(encoding="utf-8"))
+          print(cfg["backtest"]["train_start"], cfg["backtest"]["validation_end"])
+          PY
+          START=$(python - <<'PY'
+          import yaml
+          from pathlib import Path
+          print(yaml.safe_load(Path("${{ inputs.campaign_config }}").read_text(encoding="utf-8"))["backtest"]["train_start"])
+          PY
+          )
+          END=$(python - <<'PY'
+          import yaml
+          from pathlib import Path
+          print(yaml.safe_load(Path("${{ inputs.campaign_config }}").read_text(encoding="utf-8"))["backtest"]["validation_end"])
+          PY
+          )
+          python scripts/download_diversified_seed.py --start "$START" --end "$END"
+      - name: Upload data store
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-campaign-data-${{ needs.validate_campaign.outputs.campaign_id }}
+          path: .aurora-data/timeseries
+
+  backtest_chunks:
+    runs-on: ubuntu-latest
+    needs: [validate_campaign, data]
+    if: ${{ always() && needs.validate_campaign.result == 'success' && (inputs.synthetic_smoke == 'true' || needs.data.result == 'success') }}
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.validate_campaign.outputs.max_parallel) }}
+      matrix:
+        chunk: ${{ fromJson(needs.validate_campaign.outputs.chunk_list) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download campaign prepare artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-campaign-prepare-${{ needs.validate_campaign.outputs.campaign_id }}
+          path: ${{ env.OUTPUT_DIR }}/prepare
+      - name: Download data store
+        if: ${{ inputs.synthetic_smoke != 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-campaign-data-${{ needs.validate_campaign.outputs.campaign_id }}
+          path: .aurora-data/timeseries
+      - name: Run campaign chunk
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.synthetic_smoke }}" = "true" ]; then EXTRA="--synthetic-smoke"; fi
+          python scripts/run_literature_campaign_backtest_chunk.py \
+            --config "${{ inputs.campaign_config }}" \
+            --specs "$OUTPUT_DIR/prepare/campaign_strategy_specs.csv" \
+            --chunk-index "${{ matrix.chunk }}" \
+            --chunks "${{ needs.validate_campaign.outputs.chunks }}" \
+            --output-dir "$OUTPUT_DIR/chunks/chunk_${{ matrix.chunk }}" \
+            $EXTRA
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-campaign-${{ needs.validate_campaign.outputs.campaign_id }}-chunk-${{ matrix.chunk }}
+          path: ${{ env.OUTPUT_DIR }}/chunks/chunk_${{ matrix.chunk }}/**
+          if-no-files-found: warn
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [validate_campaign, backtest_chunks]
+    if: ${{ always() && needs.validate_campaign.result == 'success' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download all chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.OUTPUT_DIR }}/artifacts
+          pattern: literature-campaign-${{ needs.validate_campaign.outputs.campaign_id }}-chunk-*
+          merge-multiple: true
+      - name: Download campaign prepare artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-campaign-prepare-${{ needs.validate_campaign.outputs.campaign_id }}
+          path: ${{ env.OUTPUT_DIR }}/prepare
+      - name: Merge campaign chunks
+        run: |
+          python scripts/merge_literature_campaign_backtest.py \
+            --config "${{ inputs.campaign_config }}" \
+            --input-dir "$OUTPUT_DIR/artifacts" \
+            --output-dir "$OUTPUT_DIR/final" \
+            --expected-chunks "${{ needs.validate_campaign.outputs.chunks }}" \
+            --expected-specs "${{ needs.validate_campaign.outputs.expected_specs }}" \
+            --max-parallel-requested "${{ needs.validate_campaign.outputs.max_parallel }}" \
+            --prepare-dir "$OUTPUT_DIR/prepare"
+      - name: Upload final campaign results
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-campaign-${{ needs.validate_campaign.outputs.campaign_id }}-results
+          path: ${{ env.OUTPUT_DIR }}/final/**
+          if-no-files-found: error

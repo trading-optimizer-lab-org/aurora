@@ -231,6 +231,7 @@ def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: Lit
 
     frequency = spec["frequency"]
     ppy = PERIODS_PER_YEAR[frequency]
+    coverage_start = selected_symbols_coverage_start(dataset["prices"], spec["symbols"])
     returns = _resample_returns(dataset["returns"].loc[:, list(spec["symbols"])], frequency)
     context = _resample_context(dataset["context"], frequency, returns.index)
     signal = build_signal(returns, context, spec)
@@ -256,8 +257,15 @@ def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: Lit
     valid_1x = metrics_dict(valid_base, ppy, "validation_1x")
     train = metrics_dict(train_sized, ppy, "train")
     validation = metrics_dict(valid_sized, ppy, "validation")
-    effective_start = str(train_base.dropna().index.min().date())
+    first_trade_date = str(train_base.dropna().index.min().date())
+    effective_start = normalized_effective_start(coverage_start, config.train_start)
     score = train_score(train_metrics, train_base, train_weights)
+    down_months = sp500_down_month_metrics(
+        train_sized,
+        valid_sized,
+        dataset,
+        config,
+    )
     return base | {
         "status": "evaluated",
         "unsupported_reason": "",
@@ -269,6 +277,8 @@ def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: Lit
         "size_chosen_train": float(size),
         "train_score": float(score),
         "effective_start": effective_start,
+        "data_coverage_start": str(coverage_start.date()) if coverage_start is not None else "",
+        "first_trade_date": first_trade_date,
         "train_observations": int(train_base.dropna().shape[0]),
         "validation_observations": int(valid_base.dropna().shape[0]),
         "train_trades_per_month": trades_per_month(train_weights, train_base.index, ppy),
@@ -276,7 +286,7 @@ def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: Lit
         "locked_opened": False,
         "validation_used_for_selection": False,
         "paper_exact_replication_claimed": False,
-    } | train_1x | valid_1x | train | validation
+    } | train_1x | valid_1x | train | validation | down_months
 
 
 def signature_to_spec(row: dict[str, Any], dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -494,6 +504,109 @@ def positive_period_pct(returns: pd.Series, freq: str) -> float:
     return round(float((compounded > 0.0).mean() * 100.0), 4)
 
 
+def sp500_down_month_metrics(
+    train_returns: pd.Series,
+    validation_returns: pd.Series,
+    dataset: dict[str, Any],
+    config: LiteratureBacktestConfig,
+) -> dict[str, float]:
+    """Measure strategy behavior in months where SPY/SP500 falls.
+
+    Uses only train and validation windows. Locked is not read by this module.
+    """
+
+    benchmark = _benchmark_returns(dataset)
+    train = _down_month_metrics_for_period(
+        train_returns,
+        benchmark,
+        config.train_start,
+        config.train_end,
+        "train",
+    )
+    validation = _down_month_metrics_for_period(
+        validation_returns,
+        benchmark,
+        config.validation_start,
+        config.validation_end,
+        "validation",
+    )
+    return train | validation
+
+
+def selected_symbols_coverage_start(prices: pd.DataFrame, symbols: tuple[str, ...]) -> pd.Timestamp | None:
+    starts: list[pd.Timestamp] = []
+    for symbol in symbols:
+        if symbol not in prices.columns:
+            continue
+        series = prices[symbol].dropna()
+        if series.empty:
+            continue
+        starts.append(pd.Timestamp(series.index.min()))
+    if not starts:
+        return None
+    return max(starts)
+
+
+def normalized_effective_start(coverage_start: pd.Timestamp | None, train_start: str) -> str:
+    """Treat first trading days after Jan 1 as full 1995 coverage.
+
+    A strategy with SPY data starting on the first trading day of 1995 should not
+    be rejected as "late-entry" just because markets were closed on Jan 1.
+    """
+
+    if coverage_start is None:
+        return ""
+    required = pd.Timestamp(train_start)
+    if coverage_start <= required + pd.Timedelta(days=7):
+        return str(required.date())
+    return str(coverage_start.date())
+
+
+def _benchmark_returns(dataset: dict[str, Any]) -> pd.Series:
+    returns: pd.DataFrame = dataset["returns"]
+    for symbol in ("SPY", "^GSPC", "SP500"):
+        if symbol in returns.columns:
+            return pd.to_numeric(returns[symbol], errors="coerce")
+    return pd.Series(dtype=float)
+
+
+def _down_month_metrics_for_period(
+    strategy_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    start: str,
+    end: str,
+    prefix: str,
+) -> dict[str, float]:
+    keys = {
+        f"{prefix}_sp500_down_month_avg_return_pct": float("nan"),
+        f"{prefix}_sp500_down_month_positive_pct": float("nan"),
+        f"{prefix}_sp500_down_month_worst_return_pct": float("nan"),
+        f"{prefix}_sp500_down_month_beats_sp500_pct": float("nan"),
+        f"{prefix}_sp500_down_month_count": 0.0,
+    }
+    if strategy_returns.empty or benchmark_returns.empty:
+        return keys
+    strategy = strategy_returns.dropna()
+    benchmark = benchmark_returns.dropna()
+    strategy_m = (1.0 + strategy).resample("ME").prod(min_count=1) - 1.0
+    benchmark_m = (1.0 + benchmark).resample("ME").prod(min_count=1) - 1.0
+    frame = pd.DataFrame({"strategy": strategy_m, "sp500": benchmark_m}).dropna()
+    if frame.empty:
+        return keys
+    mask = _between(frame.index, start, end) & (frame["sp500"] < 0.0)
+    down = frame.loc[mask]
+    if down.empty:
+        return keys
+    keys.update({
+        f"{prefix}_sp500_down_month_avg_return_pct": round(float(down["strategy"].mean() * 100.0), 6),
+        f"{prefix}_sp500_down_month_positive_pct": round(float((down["strategy"] > 0.0).mean() * 100.0), 6),
+        f"{prefix}_sp500_down_month_worst_return_pct": round(float(down["strategy"].min() * 100.0), 6),
+        f"{prefix}_sp500_down_month_beats_sp500_pct": round(float((down["strategy"] > down["sp500"]).mean() * 100.0), 6),
+        f"{prefix}_sp500_down_month_count": float(len(down)),
+    })
+    return keys
+
+
 def trades_per_month(weights: pd.DataFrame, index: pd.Index, ppy: int) -> float:
     if weights.empty or len(weights) < 2:
         return 0.0
@@ -627,9 +740,15 @@ def _base_output(row: dict[str, Any]) -> dict[str, Any]:
         "action_bucket": str(row.get("action_bucket", "")),
         "frequency_bucket": str(row.get("frequency_bucket", "")),
         "parameter_bucket": str(row.get("parameter_bucket", "")),
+        "example_study_id": str(row.get("example_study_id", "")),
+        "example_idea_id": str(row.get("example_idea_id", "")),
+        "example_title": str(row.get("example_title", "")),
+        "source_text_ref": str(row.get("source_text_ref", "")),
+        "rule_summary": str(row.get("rule_summary", "")),
+        "fidelity_caveat": str(row.get("fidelity_caveat", "")),
         "exact_rows": exact_rows,
         "template_rows": template_rows,
-        "source_exactness": "exact_source" if exact_rows > 0 else "template_only",
+        "source_exactness": str(row.get("source_exactness") or ("exact_source" if exact_rows > 0 else "template_only")),
         "paper_exact_replication_claimed": False,
     }
 
