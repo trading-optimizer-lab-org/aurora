@@ -22,6 +22,8 @@ env:
   VALIDATION_START: "2011-01-01"
   VALIDATION_END: "2020-12-31"
   LOCKED_START: "2021-01-01"
+  FEATURE_HISTORY_START_YEAR: "1995"
+  MIN_FEATURE_WEEKS_PER_YEAR: "26"
 
 permissions:
   contents: read
@@ -122,7 +124,9 @@ jobs:
             --train-end "$TRAIN_END" \
             --validation-start "$VALIDATION_START" \
             --validation-end "$VALIDATION_END" \
-            --locked-start "$LOCKED_START"
+            --locked-start "$LOCKED_START" \
+            --require-feature-data-from-year "$FEATURE_HISTORY_START_YEAR" \
+            --min-feature-weeks-per-year "$MIN_FEATURE_WEEKS_PER_YEAR"
       - name: Upload stage artifact
         uses: actions/upload-artifact@v4
         with:

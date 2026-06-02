@@ -414,6 +414,55 @@ def test_spy_momentum_trend_stage_filter_forces_spy_only_and_rejects_forbidden_f
     assert audit["feature_filter"] == "momentum_trend_only"
 
 
+def test_spy_momentum_trend_stage_filter_requires_feature_history_since_1995() -> None:
+    module = __import__(
+        "scripts.run_sp500_weekly_hedge_momentum_trend_stage",
+        fromlist=["_spy_momentum_trend_dataset"],
+    )
+    idx = pd.date_range("1995-01-06", "1997-12-26", freq="W-FRI")
+    train_x = pd.DataFrame(
+        {
+            "SPY__ret_1w": np.linspace(-0.02, 0.02, len(idx)),
+            "TLT__ret_26w": np.nan,
+        },
+        index=idx,
+    )
+    train_x.loc[train_x.index.year >= 1997, "TLT__ret_26w"] = 0.01
+    train_x.attrs["availability_mask"] = train_x.notna()
+    valid_idx = pd.date_range("2011-01-07", periods=12, freq="W-FRI")
+    valid_x = pd.DataFrame(
+        {
+            "SPY__ret_1w": 0.01,
+            "TLT__ret_26w": 0.01,
+        },
+        index=valid_idx,
+    )
+    valid_x.attrs["availability_mask"] = valid_x.notna()
+    dataset = {
+        "train_x": train_x,
+        "valid_x": valid_x,
+        "train_asset_returns": pd.DataFrame({"SPY": 0.001}, index=idx),
+        "valid_asset_returns": pd.DataFrame({"SPY": 0.001}, index=valid_idx),
+        "train_spy_returns": np.full(len(idx), 0.001),
+        "valid_spy_returns": np.full(len(valid_idx), 0.001),
+        "train_index": pd.DatetimeIndex(idx),
+        "valid_index": pd.DatetimeIndex(valid_idx),
+        "feature_names": tuple(train_x.columns),
+        "asset_symbols": ("SPY",),
+    }
+
+    filtered, audit = module._spy_momentum_trend_dataset(
+        dataset,
+        {"locked_opened": False},
+        require_feature_data_from_year=1995,
+        min_feature_weeks_per_year=26,
+    )
+
+    assert filtered["feature_names"] == ("SPY__ret_1w",)
+    assert "TLT__ret_26w" in audit["feature_columns_rejected_history_names"]
+    assert audit["feature_columns_rejected_history_count"] == 1
+
+
 def test_spy_dehb_real_500_parallel_1h_momentum_trend_workflow_shape() -> None:
     path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend.yml")
     merge_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml")
@@ -434,6 +483,10 @@ def test_spy_dehb_real_500_parallel_1h_momentum_trend_workflow_shape() -> None:
     assert 'default: "50"' in text
     assert 'default: "500"' in text
     assert "--total-stages 500" in text
+    assert "--require-feature-data-from-year \"$FEATURE_HISTORY_START_YEAR\"" in text
+    assert "--min-feature-weeks-per-year \"$MIN_FEATURE_WEEKS_PER_YEAR\"" in text
+    assert data["env"]["FEATURE_HISTORY_START_YEAR"] == "1995"
+    assert data["env"]["MIN_FEATURE_WEEKS_PER_YEAR"] == "26"
     assert "scripts/run_sp500_weekly_hedge_momentum_trend_stage.py" in text
     assert "sleep 3600" in text
     assert "gh run cancel" in text

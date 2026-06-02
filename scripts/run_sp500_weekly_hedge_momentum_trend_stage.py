@@ -77,6 +77,8 @@ def main() -> int:
     parser.add_argument("--validation-start", default="2011-01-01")
     parser.add_argument("--validation-end", default="2020-12-31")
     parser.add_argument("--locked-start", default="2021-01-01")
+    parser.add_argument("--require-feature-data-from-year", type=int, default=None)
+    parser.add_argument("--min-feature-weeks-per-year", type=int, default=26)
     parser.add_argument("--synthetic-smoke", action="store_true")
     args = parser.parse_args()
 
@@ -104,7 +106,12 @@ def main() -> int:
         source_audit = {"available": True, "source": "synthetic_smoke", "locked_opened": False}
     else:
         dataset, source_audit = load_dataset(config)
-    filtered, audit = _spy_momentum_trend_dataset(dataset, source_audit)
+    filtered, audit = _spy_momentum_trend_dataset(
+        dataset,
+        source_audit,
+        require_feature_data_from_year=args.require_feature_data_from_year,
+        min_feature_weeks_per_year=int(args.min_feature_weeks_per_year),
+    )
     rows, meta, _ = run_stage(
         config,
         stage=int(args.stage),
@@ -140,7 +147,13 @@ def main() -> int:
     return 0
 
 
-def _spy_momentum_trend_dataset(dataset: dict[str, Any], source_audit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _spy_momentum_trend_dataset(
+    dataset: dict[str, Any],
+    source_audit: dict[str, Any],
+    *,
+    require_feature_data_from_year: int | None = None,
+    min_feature_weeks_per_year: int = 26,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     features = [str(name) for name in dataset.get("feature_names", ())]
     allowed = [name for name in features if _feature_allowed(name)]
     forbidden_found = [name for name in features if any(token in name.lower() for token in FORBIDDEN_FEATURE_TOKENS)]
@@ -150,14 +163,26 @@ def _spy_momentum_trend_dataset(dataset: dict[str, Any], source_audit: dict[str,
     valid_rets = pd.DataFrame(dataset["valid_asset_returns"]).copy()
     if "SPY" not in train_rets.columns or "SPY" not in valid_rets.columns:
         raise ValueError("SPY asset returns are required for SPY-only run")
-    train_x = pd.DataFrame(dataset["train_x"]).loc[:, allowed].copy()
-    valid_x = pd.DataFrame(dataset["valid_x"]).loc[:, allowed].copy()
+    train_x_source = pd.DataFrame(dataset["train_x"])
+    valid_x_source = pd.DataFrame(dataset["valid_x"])
     train_attrs = getattr(dataset["train_x"], "attrs", {})
     valid_attrs = getattr(dataset["valid_x"], "attrs", {})
-    if isinstance(train_attrs.get("availability_mask"), pd.DataFrame):
-        train_x.attrs["availability_mask"] = train_attrs["availability_mask"].loc[:, allowed]
-    if isinstance(valid_attrs.get("availability_mask"), pd.DataFrame):
-        valid_x.attrs["availability_mask"] = valid_attrs["availability_mask"].loc[:, allowed]
+    train_availability = train_attrs.get("availability_mask") if isinstance(train_attrs.get("availability_mask"), pd.DataFrame) else train_x_source.notna()
+    valid_availability = valid_attrs.get("availability_mask") if isinstance(valid_attrs.get("availability_mask"), pd.DataFrame) else valid_x_source.notna()
+    history_rejected: list[str] = []
+    if require_feature_data_from_year is not None:
+        allowed, history_rejected = _features_with_required_year_coverage(
+            allowed,
+            pd.DataFrame(train_availability),
+            start_year=int(require_feature_data_from_year),
+            min_weeks_per_year=int(min_feature_weeks_per_year),
+        )
+        if not allowed:
+            raise ValueError("no SPY momentum/trend features available with required 1995+ coverage")
+    train_x = train_x_source.loc[:, allowed].copy()
+    valid_x = valid_x_source.loc[:, allowed].copy()
+    train_x.attrs["availability_mask"] = pd.DataFrame(train_availability).loc[:, allowed]
+    valid_x.attrs["availability_mask"] = pd.DataFrame(valid_availability).loc[:, allowed]
     filtered = dict(dataset)
     filtered.update(
         {
@@ -178,6 +203,10 @@ def _spy_momentum_trend_dataset(dataset: dict[str, Any], source_audit: dict[str,
         "feature_columns_used_names": allowed,
         "feature_columns_rejected_count": int(len(features) - len(allowed)),
         "forbidden_features_found": forbidden_found,
+        "require_feature_data_from_year": require_feature_data_from_year,
+        "min_feature_weeks_per_year": int(min_feature_weeks_per_year),
+        "feature_columns_rejected_history_count": int(len(history_rejected)),
+        "feature_columns_rejected_history_names": history_rejected,
         "assets_used": ["SPY"],
         "assets_used_count": 1,
         "spy_only": True,
@@ -186,6 +215,36 @@ def _spy_momentum_trend_dataset(dataset: dict[str, Any], source_audit: dict[str,
     }
     _fail_if_invalid_filtered_dataset(filtered, audit)
     return filtered, audit
+
+
+def _features_with_required_year_coverage(
+    features: list[str],
+    availability: pd.DataFrame,
+    *,
+    start_year: int,
+    min_weeks_per_year: int,
+) -> tuple[list[str], list[str]]:
+    years = sorted({int(ts.year) for ts in pd.DatetimeIndex(availability.index) if int(ts.year) >= int(start_year)})
+    kept: list[str] = []
+    rejected: list[str] = []
+    for feature in features:
+        if feature not in availability.columns:
+            rejected.append(feature)
+            continue
+        ok = True
+        feature_available = availability[feature].astype(bool)
+        for year in years:
+            year_mask = availability.index.year == year
+            if int(year_mask.sum()) < int(min_weeks_per_year):
+                continue
+            if int(feature_available.loc[year_mask].sum()) < int(min_weeks_per_year):
+                ok = False
+                break
+        if ok:
+            kept.append(feature)
+        else:
+            rejected.append(feature)
+    return kept, rejected
 
 
 def _feature_allowed(name: str) -> bool:
