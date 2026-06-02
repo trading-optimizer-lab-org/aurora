@@ -52,6 +52,9 @@ def main() -> int:
     parser.add_argument("--validation-end", default="2020-12-31")
     parser.add_argument("--locked-start", default="2021-01-01")
     parser.add_argument("--allow-late-entry", action="store_true")
+    parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument("--require-spy-only", action="store_true")
+    parser.add_argument("--require-momentum-trend-only", action="store_true")
     parser.add_argument(
         "--exclude-asset-group",
         action="append",
@@ -103,6 +106,7 @@ def main() -> int:
     negative_years = generate_negative_sp500_years_report(merged)
     rankings = build_hedge_rankings(merged)
     feature_audit = _feature_audit(args.audit_glob)
+    parallelism = _parallelism_summary(args.input_glob, expected_jobs=int(args.expected_jobs))
     summary = {
         "rows": int(len(leaderboard)),
         "unique_candidates": int(leaderboard["candidate_id"].nunique()) if "candidate_id" in leaderboard.columns else 0,
@@ -135,6 +139,12 @@ def main() -> int:
         "crypto_used": False if "crypto_spot" in set(args.exclude_asset_group) else None,
         "single_name_equities_used": False if "equity_single_name" in set(args.exclude_asset_group) else None,
         "subperiods": 6,
+        "jobs_started": int(parallelism["jobs_started"]),
+        "jobs_completed": int(parallelism["jobs_completed"]),
+        "max_parallel_observed": int(parallelism["max_parallel_observed"]),
+        "parallelism_valid": bool(parallelism["parallelism_valid"]),
+        "spy_only": bool(feature_audit.get("spy_only", False)) if args.require_spy_only else None,
+        "feature_filter": str(feature_audit.get("feature_filter", "")) if args.require_momentum_trend_only else "",
     }
 
     leaderboard.to_csv(output_dir / f"{args.file_prefix}_leaderboard.csv", index=False)
@@ -148,6 +158,11 @@ def main() -> int:
     negative_years.to_csv(output_dir / f"{args.file_prefix}_negative_sp500_years_report.csv", index=False)
     for name, ranking in rankings.items():
         ranking.to_csv(output_dir / f"{args.file_prefix}_{name}.csv", index=False)
+    _feature_audit_frame(feature_audit).to_csv(output_dir / f"{args.file_prefix}_feature_audit.csv", index=False)
+    (output_dir / f"{args.file_prefix}_parallelism.json").write_text(
+        json.dumps(parallelism, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     (output_dir / f"{args.file_prefix}_feature_audit.json").write_text(
         json.dumps(feature_audit, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -157,7 +172,13 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
-    _fail_if_invalid_summary(summary, feature_audit)
+    _fail_if_invalid_summary(
+        summary,
+        feature_audit,
+        allow_partial=bool(args.allow_partial),
+        require_spy_only=bool(args.require_spy_only),
+        require_momentum_trend_only=bool(args.require_momentum_trend_only),
+    )
     return 0
 
 
@@ -195,10 +216,89 @@ def _feature_audit(pattern: str) -> dict[str, object]:
     return {"available": False, "audit_files_found": len(paths), "locked_opened": False}
 
 
-def _fail_if_invalid_summary(summary: dict[str, object], feature_audit: dict[str, object]) -> None:
+def _feature_audit_frame(feature_audit: dict[str, object]) -> pd.DataFrame:
+    features = feature_audit.get("feature_columns_used_names", [])
+    if not isinstance(features, list):
+        features = []
+    if not features:
+        return pd.DataFrame(
+            [
+                {
+                    "feature": "",
+                    "allowed": False,
+                    "feature_filter": feature_audit.get("feature_filter", ""),
+                    "spy_only": bool(feature_audit.get("spy_only", False)),
+                    "crypto_used": bool(feature_audit.get("crypto_used", False)),
+                }
+            ]
+        )
+    return pd.DataFrame(
+        [
+            {
+                "feature": str(feature),
+                "allowed": True,
+                "feature_filter": feature_audit.get("feature_filter", ""),
+                "spy_only": bool(feature_audit.get("spy_only", False)),
+                "crypto_used": bool(feature_audit.get("crypto_used", False)),
+            }
+            for feature in features
+        ]
+    )
+
+
+def _parallelism_summary(pattern: str, *, expected_jobs: int) -> dict[str, object]:
+    root = _root_from_glob(pattern)
+    metas = []
+    if root.exists():
+        for path in root.rglob("job_meta.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if payload.get("started_epoch") is not None:
+                metas.append(payload)
+    events: list[tuple[float, int]] = []
+    for meta in metas:
+        start = float(meta.get("started_epoch") or 0.0)
+        end = float(meta.get("ended_epoch") or start)
+        events.append((start, 1))
+        events.append((end, -1))
+    active = 0
+    max_active = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], -item[1])):
+        active += delta
+        max_active = max(max_active, active)
+    starts = [float(meta.get("started_epoch")) for meta in metas if meta.get("started_epoch") is not None]
+    return {
+        "jobs_started": int(len(metas)),
+        "jobs_completed": int(sum(1 for meta in metas if meta.get("ended_epoch") is not None)),
+        "expected_jobs": int(expected_jobs),
+        "max_parallel_observed": int(max_active),
+        "parallelism_valid": bool(max_active >= int(expected_jobs)),
+        "first_start_epoch": min(starts) if starts else None,
+        "last_start_epoch": max(starts) if starts else None,
+        "first_last_start_spread_seconds": (max(starts) - min(starts)) if starts else None,
+    }
+
+
+def _root_from_glob(pattern: str) -> Path:
+    marker = "**"
+    if marker in pattern:
+        return Path(pattern.split(marker, 1)[0])
+    return Path(pattern).parent
+
+
+def _fail_if_invalid_summary(
+    summary: dict[str, object],
+    feature_audit: dict[str, object],
+    *,
+    allow_partial: bool = False,
+    require_spy_only: bool = False,
+    require_momentum_trend_only: bool = False,
+) -> None:
     if int(summary.get("stage_files_found", 0) or 0) <= 0:
         raise SystemExit("merge failed: no stage artifacts found")
-    if bool(summary.get("partial", False)):
+    if bool(summary.get("partial", False)) and not allow_partial:
         raise SystemExit("merge failed: partial stage artifacts")
     if int(summary.get("rows", 0) or 0) <= 0:
         raise SystemExit("merge failed: no merged candidate rows")
@@ -209,6 +309,15 @@ def _fail_if_invalid_summary(summary: dict[str, object], feature_audit: dict[str
         raise SystemExit("merge failed: crypto exclusion was not confirmed")
     if "equity_single_name" in excluded and summary.get("single_name_equities_used") is not False:
         raise SystemExit("merge failed: single-name equity exclusion was not confirmed")
+    if require_spy_only and feature_audit.get("spy_only") is not True:
+        raise SystemExit("merge failed: SPY-only audit was not confirmed")
+    if require_momentum_trend_only and feature_audit.get("feature_filter") != "momentum_trend_only":
+        raise SystemExit("merge failed: momentum/trend-only feature audit was not confirmed")
+    if require_momentum_trend_only and feature_audit.get("forbidden_features_found"):
+        used = set(feature_audit.get("feature_columns_used_names", []) or [])
+        forbidden_used = [feature for feature in feature_audit.get("forbidden_features_found", []) or [] if feature in used]
+        if forbidden_used:
+            raise SystemExit("merge failed: forbidden features were used")
 
 
 if __name__ == "__main__":

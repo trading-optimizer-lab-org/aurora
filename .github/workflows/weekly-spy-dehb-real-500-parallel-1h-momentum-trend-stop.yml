@@ -1,0 +1,22 @@
+name: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Stop
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id to cancel"
+        required: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ inputs.source_run_id }}" || true

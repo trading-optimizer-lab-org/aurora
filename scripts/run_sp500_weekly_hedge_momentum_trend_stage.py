@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+def _load_search_module():
+    module_path = ROOT / "research" / "sp500_weekly_hedge_search.py"
+    spec = importlib.util.spec_from_file_location("sp500_weekly_hedge_search_runtime", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load SP500 hedge search module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[str(spec.name)] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_SEARCH = _load_search_module()
+SP500WeeklyHedgeConfig = _SEARCH.SP500WeeklyHedgeConfig
+load_dataset = _SEARCH.load_dataset
+run_stage = _SEARCH.run_stage
+
+ALLOWED_SUFFIXES = (
+    "__ret_1w",
+    "__ret_4w",
+    "__ret_13w",
+    "__ret_26w",
+    "__vol_4w",
+    "__vol_13w",
+    "__ma_gap_10w",
+    "__ma_gap_30w",
+    "__drawdown_26w",
+    "__corr_spy_13w",
+    "__beta_spy_13w",
+)
+FORBIDDEN_FEATURE_TOKENS = (
+    "btc",
+    "eth",
+    "crypto",
+    "binance",
+    "usdt",
+    "cftc",
+    "sec",
+    "bls",
+    "calendar",
+    "politic",
+    "election",
+)
+CRYPTO_TOKENS = ("btc", "eth", "crypto", "binance", "usdt")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run one SPY-only momentum/trend weekly hedge DEHB stage.")
+    parser.add_argument("--wave", type=int, default=0)
+    parser.add_argument("--total-waves", type=int, default=1)
+    parser.add_argument("--stage", type=int, required=True)
+    parser.add_argument("--total-stages", type=int, default=500)
+    parser.add_argument("--time-budget-minutes", type=float, default=50.0)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--file-prefix", default="weekly_spy_dehb_real_500_parallel_1h_momentum_trend")
+    parser.add_argument("--top-rows-per-stage", type=int, default=500)
+    parser.add_argument("--random-seed", type=int, default=9102601)
+    parser.add_argument("--train-start", default="1995-01-01")
+    parser.add_argument("--train-end", default="2010-12-31")
+    parser.add_argument("--validation-start", default="2011-01-01")
+    parser.add_argument("--validation-end", default="2020-12-31")
+    parser.add_argument("--locked-start", default="2021-01-01")
+    parser.add_argument("--synthetic-smoke", action="store_true")
+    args = parser.parse_args()
+
+    started_epoch = time.time()
+    started_iso = datetime.now(timezone.utc).isoformat()
+    config = SP500WeeklyHedgeConfig(
+        run_id=str(args.file_prefix),
+        top_rows_per_stage=int(args.top_rows_per_stage),
+        random_seed=int(args.random_seed),
+        train_start=str(args.train_start),
+        train_end=str(args.train_end),
+        validation_start=str(args.validation_start),
+        validation_end=str(args.validation_end),
+        locked_start=str(args.locked_start),
+        allow_late_entry=True,
+        max_leverage=1.0,
+        max_assets_per_candidate=1,
+        exclude_asset_groups=("crypto_spot", "equity_single_name"),
+    )
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_audit: dict[str, Any]
+    if args.synthetic_smoke:
+        dataset = _synthetic_dataset()
+        source_audit = {"available": True, "source": "synthetic_smoke", "locked_opened": False}
+    else:
+        dataset, source_audit = load_dataset(config)
+    filtered, audit = _spy_momentum_trend_dataset(dataset, source_audit)
+    rows, meta, _ = run_stage(
+        config,
+        stage=int(args.stage),
+        total_stages=int(args.total_stages),
+        time_budget_minutes=float(args.time_budget_minutes),
+        wave=int(args.wave),
+        total_waves=int(args.total_waves),
+        dataset=filtered,
+    )
+    for row in rows:
+        row["assets"] = "SPY"
+        row["asset_count"] = 1
+        row["max_leverage"] = 1.0
+        row["spy_only"] = True
+        row["feature_filter"] = "momentum_trend_only"
+        row["crypto_used"] = False
+    stem = f"{args.file_prefix}_wave_{int(args.wave)}_stage_{int(args.stage)}"
+    pd.DataFrame(rows).to_csv(output_dir / f"{stem}.csv", index=False)
+    meta.update(
+        {
+            "objective": "maximize_positive_strategy_return_on_spy_down_weeks_and_non_negative_mean_on_spy_up_weeks",
+            "assets_used": ["SPY"],
+            "spy_only": True,
+            "feature_filter": "momentum_trend_only",
+            "crypto_used": False,
+            "max_leverage": 1.0,
+        }
+    )
+    (output_dir / f"{stem}_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
+    (output_dir / f"{stem}_feature_audit.json").write_text(json.dumps(audit, indent=2, sort_keys=True), encoding="utf-8")
+    _write_job_meta(output_dir, args, started_epoch=started_epoch, started_iso=started_iso, rows=len(rows))
+    print(json.dumps(meta, indent=2, sort_keys=True))
+    return 0
+
+
+def _spy_momentum_trend_dataset(dataset: dict[str, Any], source_audit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    features = [str(name) for name in dataset.get("feature_names", ())]
+    allowed = [name for name in features if _feature_allowed(name)]
+    forbidden_found = [name for name in features if any(token in name.lower() for token in FORBIDDEN_FEATURE_TOKENS)]
+    if not allowed:
+        raise ValueError("no SPY momentum/trend features available after filter")
+    train_rets = pd.DataFrame(dataset["train_asset_returns"]).copy()
+    valid_rets = pd.DataFrame(dataset["valid_asset_returns"]).copy()
+    if "SPY" not in train_rets.columns or "SPY" not in valid_rets.columns:
+        raise ValueError("SPY asset returns are required for SPY-only run")
+    train_x = pd.DataFrame(dataset["train_x"]).loc[:, allowed].copy()
+    valid_x = pd.DataFrame(dataset["valid_x"]).loc[:, allowed].copy()
+    train_attrs = getattr(dataset["train_x"], "attrs", {})
+    valid_attrs = getattr(dataset["valid_x"], "attrs", {})
+    if isinstance(train_attrs.get("availability_mask"), pd.DataFrame):
+        train_x.attrs["availability_mask"] = train_attrs["availability_mask"].loc[:, allowed]
+    if isinstance(valid_attrs.get("availability_mask"), pd.DataFrame):
+        valid_x.attrs["availability_mask"] = valid_attrs["availability_mask"].loc[:, allowed]
+    filtered = dict(dataset)
+    filtered.update(
+        {
+            "train_x": train_x,
+            "valid_x": valid_x,
+            "train_asset_returns": train_rets.loc[:, ["SPY"]],
+            "valid_asset_returns": valid_rets.loc[:, ["SPY"]],
+            "feature_names": tuple(allowed),
+            "asset_symbols": ("SPY",),
+        }
+    )
+    audit = {
+        "available": True,
+        "source_audit": source_audit,
+        "feature_filter": "momentum_trend_only",
+        "feature_columns_source_count": int(len(features)),
+        "feature_columns_used_count": int(len(allowed)),
+        "feature_columns_used_names": allowed,
+        "feature_columns_rejected_count": int(len(features) - len(allowed)),
+        "forbidden_features_found": forbidden_found,
+        "assets_used": ["SPY"],
+        "assets_used_count": 1,
+        "spy_only": True,
+        "crypto_used": False,
+        "locked_opened": False,
+    }
+    _fail_if_invalid_filtered_dataset(filtered, audit)
+    return filtered, audit
+
+
+def _feature_allowed(name: str) -> bool:
+    lower = name.lower()
+    if any(token in lower for token in FORBIDDEN_FEATURE_TOKENS):
+        return False
+    if any(token in lower for token in CRYPTO_TOKENS):
+        return False
+    if name.endswith(ALLOWED_SUFFIXES):
+        return True
+    if lower.startswith("macro__vix") and ("__chg_4w" in lower or "__chg_13w" in lower):
+        return True
+    return False
+
+
+def _fail_if_invalid_filtered_dataset(dataset: dict[str, Any], audit: dict[str, Any]) -> None:
+    assets = tuple(str(asset) for asset in dataset.get("asset_symbols", ()))
+    if assets != ("SPY",):
+        raise ValueError(f"SPY-only run expected asset_symbols=('SPY',), got {assets}")
+    features = tuple(str(feature) for feature in dataset.get("feature_names", ()))
+    bad = [feature for feature in features if not _feature_allowed(feature)]
+    if bad:
+        raise ValueError(f"non momentum/trend features leaked into catalog: {bad[:10]}")
+    if audit.get("forbidden_features_found"):
+        leaked_used = [feature for feature in audit["forbidden_features_found"] if feature in features]
+        if leaked_used:
+            raise ValueError(f"forbidden features leaked into used catalog: {leaked_used[:10]}")
+
+
+def _synthetic_dataset() -> dict[str, object]:
+    idx = pd.date_range("2020-01-03", periods=160, freq="W-FRI")
+    spy = np.resize(np.array([0.03, -0.04, 0.02, -0.03], dtype=float), len(idx))
+    qqq = spy * 1.2
+    asset_returns = pd.DataFrame({"SPY": spy, "QQQ": qqq}, index=idx)
+    features = pd.DataFrame(
+        {
+            "SPY__ret_1w": spy,
+            "SPY__ma_gap_10w": np.resize(np.array([0.02, -0.03, 0.01, -0.02]), len(idx)),
+            "QQQ__ret_13w": qqq,
+            "macro__VIXCLS__chg_4w": np.where(spy < 0.0, 1.0, -1.0),
+            "macro__UNRATE__level": np.linspace(4.0, 5.0, len(idx)),
+            "BTCUSDT__ret_1w": qqq,
+        },
+        index=idx,
+    )
+    return {
+        "train_x": features.iloc[:120],
+        "valid_x": features.iloc[120:],
+        "train_asset_returns": asset_returns.iloc[:120],
+        "valid_asset_returns": asset_returns.iloc[120:],
+        "train_spy_returns": asset_returns["SPY"].iloc[:120].to_numpy(dtype=float),
+        "valid_spy_returns": asset_returns["SPY"].iloc[120:].to_numpy(dtype=float),
+        "train_index": pd.DatetimeIndex(idx[:120]),
+        "valid_index": pd.DatetimeIndex(idx[120:]),
+        "feature_names": tuple(features.columns),
+        "asset_symbols": ("SPY", "QQQ"),
+    }
+
+
+def _write_job_meta(output_dir: Path, args: argparse.Namespace, *, started_epoch: float, started_iso: str, rows: int) -> None:
+    ended_epoch = time.time()
+    payload = {
+        "method": "dehb_real",
+        "stage": int(args.stage),
+        "wave": int(args.wave),
+        "started_epoch": float(started_epoch),
+        "ended_epoch": float(ended_epoch),
+        "started_at": started_iso,
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "elapsed_seconds": float(ended_epoch - started_epoch),
+        "rows": int(rows),
+    }
+    (output_dir / "job_meta.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

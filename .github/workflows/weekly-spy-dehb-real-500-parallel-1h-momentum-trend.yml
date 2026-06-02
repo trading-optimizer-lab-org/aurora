@@ -1,0 +1,142 @@
+name: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes_per_stage:
+        description: "Minutes per DEHB stage job"
+        required: true
+        default: "50"
+      max_parallel_requested:
+        description: "Requested total parallel jobs"
+        required: true
+        default: "500"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend
+  FILE_PREFIX: weekly_spy_dehb_real_500_parallel_1h_momentum_trend
+  TRAIN_START: "1995-01-01"
+  TRAIN_END: "2010-12-31"
+  VALIDATION_START: "2011-01-01"
+  VALIDATION_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      stages_a: ${{ steps.matrix.outputs.stages_a }}
+      stages_b: ${{ steps.matrix.outputs.stages_b }}
+    steps:
+      - id: matrix
+        name: Build 250+250 stage matrices
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print("stages_a=" + json.dumps(list(range(0, 250))))
+          print("stages_b=" + json.dumps(list(range(250, 500))))
+          PY
+
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fixed shape
+        run: |
+          test "${{ inputs.max_parallel_requested || '500' }}" = "500"
+          test "${{ inputs.minutes_per_stage || '50' }}" = "50"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Build diversified daily data store without locked
+        run: python scripts/download_diversified_seed.py --start "$TRAIN_START" --end "$VALIDATION_END"
+      - name: Upload daily data store
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-data
+          path: .aurora-data/timeseries
+
+  watchdog:
+    runs-on: ubuntu-latest
+    needs: data
+    timeout-minutes: 70
+    steps:
+      - name: Dispatch partial merge and cancel search after one hour
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          sleep 3600
+          gh workflow run weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml \
+            --ref "$REF_NAME" \
+            -f source_run_id="$SOURCE_RUN_ID"
+          gh run cancel "$SOURCE_RUN_ID" || true
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 250
+      matrix:
+        stage: ${{ fromJSON(needs.plan.outputs.stages_a) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download daily data store
+        uses: actions/download-artifact@v4
+        with:
+          name: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-data
+          path: .aurora-data/timeseries
+      - name: Run one SPY-only momentum/trend DEHB stage
+        run: |
+          python scripts/run_sp500_weekly_hedge_momentum_trend_stage.py \
+            --wave 0 \
+            --total-waves 1 \
+            --stage "${{ matrix.stage }}" \
+            --total-stages 500 \
+            --time-budget-minutes "${{ inputs.minutes_per_stage || '50' }}" \
+            --output-dir "$OUTPUT_DIR/stage_${{ matrix.stage }}" \
+            --file-prefix "$FILE_PREFIX" \
+            --top-rows-per-stage 500 \
+            --train-start "$TRAIN_START" \
+            --train-end "$TRAIN_END" \
+            --validation-start "$VALIDATION_START" \
+            --validation-end "$VALIDATION_END" \
+            --locked-start "$LOCKED_START"
+      - name: Upload stage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/stage_${{ matrix.stage }}
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 250
+      matrix:
+        stage: ${{ fromJSON(needs.plan.outputs.stages_b) }}
+    steps: *search_steps

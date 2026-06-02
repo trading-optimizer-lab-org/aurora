@@ -1,0 +1,76 @@
+name: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Merge Now
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id from Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend"
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend
+  FILE_PREFIX: weekly_spy_dehb_real_500_parallel_1h_momentum_trend
+  TRAIN_START: "1995-01-01"
+  TRAIN_END: "2010-12-31"
+  VALIDATION_START: "2011-01-01"
+  VALIDATION_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  merge-now:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Give cancelled jobs time to publish completed artifacts
+        run: sleep 90
+      - name: Download available stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          path: outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend/artifacts
+          pattern: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stage-*
+          merge-multiple: true
+      - name: Merge available SPY-only momentum/trend artifacts
+        run: |
+          python scripts/merge_sp500_weekly_hedge_dehb.py \
+            --input-glob "$OUTPUT_DIR/artifacts/**/*_stage_*.csv" \
+            --audit-glob "$OUTPUT_DIR/artifacts/**/*_feature_audit.json" \
+            --output-dir "$OUTPUT_DIR" \
+            --file-prefix "$FILE_PREFIX" \
+            --expected-jobs 500 \
+            --waves 1 \
+            --jobs-per-wave 500 \
+            --max-parallel-requested 500 \
+            --assumed-effective-parallelism 500 \
+            --minutes-per-stage 50 \
+            --top-n 2000 \
+            --train-start "$TRAIN_START" \
+            --train-end "$TRAIN_END" \
+            --validation-start "$VALIDATION_START" \
+            --validation-end "$VALIDATION_END" \
+            --locked-start "$LOCKED_START" \
+            --allow-late-entry \
+            --exclude-asset-group crypto_spot \
+            --exclude-asset-group equity_single_name \
+            --allow-partial \
+            --require-spy-only \
+            --require-momentum-trend-only
+      - name: Upload partial leaderboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-spy-dehb-real-500-parallel-1h-momentum-trend-leaderboard
+          path: |
+            outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend/*.csv
+            outputs/weekly_spy_dehb_real_500_parallel_1h_momentum_trend/*.json

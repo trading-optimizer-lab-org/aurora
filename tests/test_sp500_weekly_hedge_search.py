@@ -393,6 +393,86 @@ def test_no_crypto_no_stocks_2waves_500jobs_180parallel_workflow_shape() -> None
     assert "bandit" not in text
 
 
+def test_spy_momentum_trend_stage_filter_forces_spy_only_and_rejects_forbidden_features() -> None:
+    module = __import__(
+        "scripts.run_sp500_weekly_hedge_momentum_trend_stage",
+        fromlist=["_synthetic_dataset", "_spy_momentum_trend_dataset"],
+    )
+
+    filtered, audit = module._spy_momentum_trend_dataset(module._synthetic_dataset(), {"locked_opened": False})
+
+    assert filtered["asset_symbols"] == ("SPY",)
+    assert list(filtered["train_asset_returns"].columns) == ["SPY"]
+    assert "SPY__ret_1w" in filtered["feature_names"]
+    assert "SPY__ma_gap_10w" in filtered["feature_names"]
+    assert "QQQ__ret_13w" in filtered["feature_names"]
+    assert "macro__VIXCLS__chg_4w" in filtered["feature_names"]
+    assert "macro__UNRATE__level" not in filtered["feature_names"]
+    assert "BTCUSDT__ret_1w" not in filtered["feature_names"]
+    assert audit["spy_only"] is True
+    assert audit["crypto_used"] is False
+    assert audit["feature_filter"] == "momentum_trend_only"
+
+
+def test_spy_dehb_real_500_parallel_1h_momentum_trend_workflow_shape() -> None:
+    path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend.yml")
+    merge_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml")
+    stop_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stop.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    merge = yaml.safe_load(merge_path.read_text(encoding="utf-8"))
+    stop = yaml.safe_load(stop_path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    merge_text = merge_path.read_text(encoding="utf-8")
+
+    assert data["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend"
+    assert "push" not in data.get(True, {})
+    assert data["jobs"]["search_a"]["strategy"]["max-parallel"] == 250
+    assert data["jobs"]["search_b"]["strategy"]["max-parallel"] == 250
+    assert data["jobs"]["search_a"]["timeout-minutes"] == 60
+    assert data["jobs"]["search_b"]["timeout-minutes"] == 60
+    assert data["jobs"]["watchdog"]["timeout-minutes"] == 70
+    assert 'default: "50"' in text
+    assert 'default: "500"' in text
+    assert "--total-stages 500" in text
+    assert "scripts/run_sp500_weekly_hedge_momentum_trend_stage.py" in text
+    assert "sleep 3600" in text
+    assert "gh run cancel" in text
+    assert "genetic" not in text
+    assert "github_ml" not in text
+    assert "beam" not in text
+    assert "bandit" not in text
+    assert merge["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Merge Now"
+    assert "--allow-partial" in merge_text
+    assert "--require-spy-only" in merge_text
+    assert "--require-momentum-trend-only" in merge_text
+    assert stop["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Stop"
+
+
+def test_merge_guard_allows_partial_only_when_explicit_for_spy_momentum_trend() -> None:
+    guard = __import__("scripts.merge_sp500_weekly_hedge_dehb", fromlist=["_fail_if_invalid_summary"])._fail_if_invalid_summary
+    summary = {
+        "stage_files_found": 120,
+        "expected_jobs": 500,
+        "partial": True,
+        "rows": 10,
+        "locked_opened": False,
+        "excluded_asset_groups": ["crypto_spot", "equity_single_name"],
+        "crypto_used": False,
+        "single_name_equities_used": False,
+    }
+    audit = {
+        "locked_opened": False,
+        "spy_only": True,
+        "feature_filter": "momentum_trend_only",
+        "feature_columns_used_names": ["SPY__ret_1w"],
+        "forbidden_features_found": ["BTCUSDT__ret_1w"],
+    }
+
+    with pytest.raises(SystemExit):
+        guard(summary, audit)
+    guard(summary, audit, allow_partial=True, require_spy_only=True, require_momentum_trend_only=True)
+
+
 def test_merge_guard_rejects_empty_partial_or_unconfirmed_runs() -> None:
     guard = __import__("scripts.merge_sp500_weekly_hedge_dehb", fromlist=["_fail_if_invalid_summary"])._fail_if_invalid_summary
     good = {
