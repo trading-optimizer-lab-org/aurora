@@ -1,0 +1,42 @@
+run_id: weekly_spy_dehb_real_500_parallel_1h_momentum_trend_no_long_spy_quality
+workflow: Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality
+method: dehb_real
+asset_mode: spy_only
+tradable_assets:
+  - SPY
+feature_filter: momentum_trend_only
+feature_family_mode: quality_stage
+crypto_allowed: false
+locked_opened: false
+validation_role: report_only
+waves: 1
+jobs_total: 500
+technical_blocks: 2
+jobs_per_block: 250
+max_parallel_requested: 500
+minutes_per_stage: 50
+timeout_minutes_per_stage: 60
+train_start: "1995-01-01"
+train_end: "2010-12-31"
+validation_start: "2011-01-01"
+validation_end: "2020-12-31"
+locked_start: "2021-01-01"
+feature_history_start_year: 1995
+min_feature_weeks_per_year: 26
+top_rows_per_stage: 500
+max_leverage: 1.0
+no_long_spy: true
+exposure_policy: short_or_cash_spy
+search_quality_enabled: true
+objective: maximize_positive_strategy_return_on_spy_down_weeks_without_long_spy
+train_acceptance:
+  train_spy_down_mean_weekly: "> 0"
+  train_spy_down_positive_pct: ">= 0.50"
+  train_spy_up_mean_weekly: ">= -0.0005"
+  train_cagr: "> 0"
+simple_soft_robustness:
+  train_cagr: ">= 0"
+  validation_cagr: ">= 0"
+  train_sharpe: ">= 0"
+  validation_sharpe: ">= 0"
+  mdd: report_only

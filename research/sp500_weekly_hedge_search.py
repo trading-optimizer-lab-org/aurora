@@ -13,7 +13,7 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -69,6 +69,8 @@ def run_stage(
     wave: int = 0,
     total_waves: int = 1,
     dataset: dict[str, Any] | None = None,
+    spec_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    row_filter: Callable[[dict[str, Any]], bool | tuple[bool, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     dataset, audit = (dataset, _synthetic_audit()) if dataset is not None else load_dataset(config)
     seed = int(config.random_seed + int(wave) * WAVE_SEED_STRIDE + int(stage) * 100_003)
@@ -78,6 +80,8 @@ def run_stage(
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     iteration = 0
+    candidates_evaluated = 0
+    candidates_rejected_by_filter = 0
 
     while time.monotonic() < deadline or iteration == 0:
         specs = candidate_specs(dataset, config, stage=stage, total_stages=total_stages, rng=rng, iteration=iteration)
@@ -86,16 +90,25 @@ def run_stage(
         for spec in specs:
             if rows and time.monotonic() >= deadline:
                 break
+            if spec_transform is not None:
+                spec = spec_transform(spec)
+            candidates_evaluated += 1
             row = evaluate_spec(dataset, config, spec)
             candidate_id = str(row["candidate_id"])
             if candidate_id in seen:
                 continue
             seen.add(candidate_id)
+            if row_filter is not None:
+                accepted, reason = _filter_decision(row_filter(row))
+                if not accepted:
+                    candidates_rejected_by_filter += 1
+                    row["quality_rejection_reason"] = reason
+                    continue
             row["stage"] = int(stage)
             row["total_stages"] = int(total_stages)
             row["wave"] = int(wave)
             row["total_waves"] = int(total_waves)
-            row["candidates_evaluated"] = int(len(rows) + 1)
+            row["candidates_evaluated"] = int(candidates_evaluated)
             row["elapsed_seconds"] = float(time.monotonic() - start)
             rows.append(row)
         iteration += 1
@@ -115,6 +128,8 @@ def run_stage(
         "seed": int(seed),
         "rows": len(rows),
         "candidates_unique": len({row["candidate_id"] for row in rows}),
+        "candidates_evaluated": int(candidates_evaluated),
+        "candidates_rejected_by_filter": int(candidates_rejected_by_filter),
         "time_budget_minutes": float(time_budget_minutes),
         "locked_opened": False,
         "optimization_period": "train",
@@ -273,6 +288,8 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
     score = downside_hedge_score(train_sized) if not fail_reason else -1_000_000.0 + downside_hedge_score(train_sized)
     public_spec = {k: v for k, v in spec.items() if not str(k).startswith("_")}
     asset_weights = dict(zip(spec["assets"], spec["asset_weights"]))
+    train_spy_position = asset_position_for_spec(dataset["train_x"], dataset["train_asset_returns"], spec, asset="SPY") * float(size)
+    valid_spy_position = asset_position_for_spec(dataset["valid_x"], dataset["valid_asset_returns"], spec, asset="SPY") * float(size)
     row: dict[str, Any] = {
         "candidate_id": candidate_id_from_spec(public_spec),
         "method": METHOD,
@@ -299,6 +316,12 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
         "validation_used_for_selection": False,
         "train_average_abs_exposure": float(np.nanmean(np.abs(train_exposure))) if len(train_exposure) else 0.0,
         "validation_average_abs_exposure": float(np.nanmean(np.abs(valid_exposure))) if len(valid_exposure) else 0.0,
+        "max_spy_position_train": _nanmax_or(train_spy_position, 0.0),
+        "max_spy_position_validation": _nanmax_or(valid_spy_position, 0.0),
+        "min_spy_position_train": _nanmin_or(train_spy_position, 0.0),
+        "min_spy_position_validation": _nanmin_or(valid_spy_position, 0.0),
+        "long_spy_weeks_train": int(np.nansum(train_spy_position > 1e-12)),
+        "long_spy_weeks_validation": int(np.nansum(valid_spy_position > 1e-12)),
         "effective_start": _effective_start(dataset["train_index"], dataset["valid_index"], train_base, valid_base),
         "effective_train_weeks": int(np.isfinite(train_base).sum()),
         "effective_validation_weeks": int(np.isfinite(valid_base).sum()),
@@ -308,6 +331,8 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
         "validation_returns_json": _returns_json(valid_base * float(size)),
         "train_spy_returns_json": _returns_json(dataset["train_spy_returns"]),
         "validation_spy_returns_json": _returns_json(dataset["valid_spy_returns"]),
+        "train_spy_position_json": _returns_json(train_spy_position),
+        "validation_spy_position_json": _returns_json(valid_spy_position),
         "train_index_json": _index_json(dataset["train_index"]),
         "validation_index_json": _index_json(dataset["valid_index"]),
     }
@@ -316,6 +341,50 @@ def evaluate_spec(dataset: dict[str, Any], config: SP500WeeklyHedgeConfig, spec:
     row.update(_prefix_metrics("train", train_sized))
     row.update(_prefix_metrics("validation", valid_sized))
     return row
+
+
+def asset_position_for_spec(
+    features: pd.DataFrame,
+    asset_returns: pd.DataFrame,
+    spec: dict[str, Any],
+    *,
+    asset: str,
+) -> np.ndarray:
+    selected = list(spec.get("features", ()))
+    feature_available = features.attrs.get("availability_mask")
+    if isinstance(feature_available, pd.DataFrame) and selected:
+        feature_mask = feature_available.loc[:, selected].all(axis=1).to_numpy(dtype=bool)
+    else:
+        feature_mask = features.loc[:, selected].notna().all(axis=1).to_numpy(dtype=bool) if selected else np.ones(len(features), dtype=bool)
+    matrix = features.loc[:, selected].to_numpy(dtype=np.float64)
+    signal_weights = np.asarray(spec.get("signal_weights", (1.0,) * len(selected)), dtype=np.float64)
+    if len(signal_weights) != len(selected):
+        signal_weights = np.ones(len(selected), dtype=np.float64)
+    denom = float(np.sum(np.abs(signal_weights)))
+    signal_weights = signal_weights / denom if denom > 1e-12 else np.ones(len(selected)) / max(1, len(selected))
+    scores = matrix @ signal_weights if len(selected) else np.zeros(len(features), dtype=np.float64)
+    threshold = abs(float(spec.get("threshold", 0.0)))
+    signal = np.zeros(len(scores), dtype=np.float64)
+    signal[scores >= threshold] = 1.0
+    signal[scores <= -threshold] = -1.0
+
+    assets = list(spec.get("assets", ()))
+    weights = np.asarray(spec.get("asset_weights", (1.0,) * len(assets)), dtype=np.float64)
+    if len(weights) != len(assets):
+        weights = np.ones(len(assets), dtype=np.float64)
+    gross = float(np.sum(np.abs(weights)))
+    weights = weights / gross if gross > 1e-12 else np.ones(len(assets)) / max(1, len(assets))
+    if asset in assets:
+        asset_weight = float(weights[assets.index(asset)])
+        asset_mask = asset_returns.loc[:, [asset]].notna().all(axis=1).to_numpy(dtype=bool)
+    else:
+        asset_weight = 0.0
+        asset_mask = np.ones(len(features), dtype=bool)
+    valid = feature_mask & asset_mask & np.isfinite(signal)
+    position = signal * asset_weight
+    if spec.get("exposure_policy") == "short_or_cash_spy" and asset == "SPY":
+        position = np.minimum(position, 0.0)
+    return np.where(valid, position, np.nan)
 
 
 def returns_for_spec(
@@ -349,6 +418,14 @@ def returns_for_spec(
     if assets:
         asset_frame = asset_returns.loc[:, assets]
         asset_mask = asset_frame.notna().all(axis=1).to_numpy(dtype=bool)
+        if spec.get("exposure_policy") == "short_or_cash_spy" and assets == ["SPY"]:
+            raw_position = np.minimum(exposure * float(weights[0]), 0.0)
+            portfolio_base = asset_frame["SPY"].to_numpy(dtype=np.float64)
+            strategy = raw_position * portfolio_base
+            valid = feature_mask & asset_mask & np.isfinite(portfolio_base) & np.isfinite(raw_position)
+            strategy = np.where(valid, strategy, np.nan)
+            raw_position = np.where(valid, raw_position, np.nan)
+            return strategy, raw_position
         portfolio_base = asset_frame.to_numpy(dtype=np.float64) @ weights
     else:
         asset_mask = np.ones(len(features), dtype=bool)
@@ -358,6 +435,26 @@ def returns_for_spec(
     strategy = np.where(valid, strategy, np.nan)
     exposure = np.where(valid, exposure, np.nan)
     return strategy, exposure
+
+
+def _filter_decision(value: bool | tuple[bool, str]) -> tuple[bool, str]:
+    if isinstance(value, tuple):
+        accepted = bool(value[0])
+        reason = str(value[1]) if len(value) > 1 else ""
+        return accepted, reason
+    return bool(value), "" if bool(value) else "row_filter"
+
+
+def _nanmax_or(values: np.ndarray, default: float) -> float:
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    return float(np.max(finite)) if len(finite) else float(default)
+
+
+def _nanmin_or(values: np.ndarray, default: float) -> float:
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    return float(np.min(finite)) if len(finite) else float(default)
 
 
 def choose_train_size(

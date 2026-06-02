@@ -12,6 +12,7 @@ import yaml
 
 from aurora.research.sp500_weekly_hedge_search import (
     SP500WeeklyHedgeConfig,
+    asset_position_for_spec,
     candidate_id_from_spec,
     choose_train_size,
     downside_hedge_score,
@@ -499,6 +500,138 @@ def test_spy_dehb_real_500_parallel_1h_momentum_trend_workflow_shape() -> None:
     assert "--require-spy-only" in merge_text
     assert "--require-momentum-trend-only" in merge_text
     assert stop["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Stop"
+
+
+def test_asset_position_for_spec_exposes_real_spy_long_short_and_cash() -> None:
+    idx = pd.date_range("2020-01-03", periods=8, freq="W-FRI")
+    features = pd.DataFrame({"always_on": np.ones(len(idx)), "always_off": np.zeros(len(idx))}, index=idx)
+    assets = pd.DataFrame({"SPY": np.full(len(idx), 0.01)}, index=idx)
+
+    long_spec = {
+        "features": ("always_on",),
+        "signal_weights": (1.0,),
+        "threshold": 0.5,
+        "assets": ("SPY",),
+        "asset_weights": (1.0,),
+    }
+    short_spec = {**long_spec, "asset_weights": (-1.0,)}
+    cash_spec = {**long_spec, "threshold": 2.0}
+
+    assert np.nanmax(asset_position_for_spec(features, assets, long_spec, asset="SPY")) == pytest.approx(1.0)
+    assert np.nanmax(asset_position_for_spec(features, assets, short_spec, asset="SPY")) == pytest.approx(-1.0)
+    assert np.nanmax(asset_position_for_spec(features, assets, cash_spec, asset="SPY")) == pytest.approx(0.0)
+
+
+def test_no_long_spy_quality_filter_rejects_any_positive_position() -> None:
+    module = __import__(
+        "scripts.run_sp500_weekly_hedge_momentum_trend_stage",
+        fromlist=["_quality_row_filter"],
+    )
+    row = {
+        "candidate_id": "long",
+        "method": "dehb_real",
+        "features": "SPY__ret_1w",
+        "assets": "SPY",
+        "asset_weights": "SPY:1",
+        "rule": "{}",
+        "train_returns_json": json.dumps([0.001] * 80),
+        "validation_returns_json": json.dumps([0.001] * 80),
+        "effective_train_weeks": 80,
+        "train_cagr": 0.05,
+        "train_max_drawdown": -0.05,
+        "train_spy_down_positive_pct": 0.6,
+        "max_spy_position_train": 0.25,
+        "max_spy_position_validation": 0.0,
+        "long_spy_weeks_train": 1,
+        "long_spy_weeks_validation": 0,
+    }
+
+    accepted, reason = module._quality_row_filter(module.SearchQualityConfig(), forbid_long_spy=True)(row)
+
+    assert accepted is False
+    assert reason == "long_spy_in_train"
+
+
+def test_no_long_spy_quality_filter_accepts_short_or_cash_candidate() -> None:
+    module = __import__(
+        "scripts.run_sp500_weekly_hedge_momentum_trend_stage",
+        fromlist=["_quality_row_filter"],
+    )
+    row = {
+        "candidate_id": "short",
+        "method": "dehb_real",
+        "features": "SPY__ret_1w",
+        "assets": "SPY",
+        "asset_weights": "SPY:-1",
+        "rule": "{}",
+        "train_returns_json": json.dumps([0.001] * 80),
+        "validation_returns_json": json.dumps([0.001] * 80),
+        "effective_train_weeks": 80,
+        "train_cagr": 0.05,
+        "train_max_drawdown": -0.05,
+        "train_spy_down_positive_pct": 0.6,
+        "max_spy_position_train": 0.0,
+        "max_spy_position_validation": 0.0,
+        "long_spy_weeks_train": 0,
+        "long_spy_weeks_validation": 0,
+    }
+
+    accepted, reason = module._quality_row_filter(module.SearchQualityConfig(), forbid_long_spy=True)(row)
+
+    assert accepted is True
+    assert reason == ""
+    assert row["no_long_spy"] is True
+    assert row["simple_robust_pass"] is True
+
+
+def test_spy_no_long_quality_pending_workflow_shape() -> None:
+    path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality.yml")
+    merge_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-merge-now.yml")
+    stop_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-stop.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    merge = yaml.safe_load(merge_path.read_text(encoding="utf-8"))
+    stop = yaml.safe_load(stop_path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    merge_text = merge_path.read_text(encoding="utf-8")
+
+    assert data["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality"
+    assert "push" not in data.get(True, {})
+    assert data["jobs"]["search_a"]["strategy"]["max-parallel"] == 250
+    assert data["jobs"]["search_b"]["strategy"]["max-parallel"] == 250
+    assert "--forbid-long-spy" in text
+    assert "--enable-search-quality" in text
+    assert "--feature-family-mode quality_stage" in text
+    assert "--require-feature-data-from-year \"$FEATURE_HISTORY_START_YEAR\"" in text
+    assert data["env"]["FEATURE_HISTORY_START_YEAR"] == "1995"
+    assert data["env"]["MIN_FEATURE_WEEKS_PER_YEAR"] == "26"
+    assert merge["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality Merge Now"
+    assert "--require-no-long-spy" in merge_text
+    assert stop["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality Stop"
+
+
+def test_merge_guard_rejects_required_no_long_spy_when_audit_fails() -> None:
+    guard = __import__("scripts.merge_sp500_weekly_hedge_dehb", fromlist=["_fail_if_invalid_summary"])._fail_if_invalid_summary
+    summary = {
+        "stage_files_found": 1,
+        "partial": True,
+        "rows": 1,
+        "locked_opened": False,
+        "excluded_asset_groups": ["crypto_spot", "equity_single_name"],
+        "crypto_used": False,
+        "single_name_equities_used": False,
+    }
+    feature_audit = {"locked_opened": False, "spy_only": True, "feature_filter": "momentum_trend_only"}
+
+    with pytest.raises(SystemExit):
+        guard(
+            summary,
+            feature_audit,
+            allow_partial=True,
+            require_spy_only=True,
+            require_momentum_trend_only=True,
+            require_no_long_spy=True,
+            no_long_audit={"no_long_spy": False},
+        )
 
 
 def test_merge_guard_allows_partial_only_when_explicit_for_spy_momentum_trend() -> None:
