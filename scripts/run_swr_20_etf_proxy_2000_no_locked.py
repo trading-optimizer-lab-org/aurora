@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,17 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from aurora.validation.safe_withdrawal import safe_withdrawal_rate, simulate_monthly_withdrawal
+_SAFE_WITHDRAWAL_PATH = Path(__file__).resolve().parents[1] / "validation" / "safe_withdrawal.py"
+_SAFE_WITHDRAWAL_SPEC = importlib.util.spec_from_file_location(
+    "aurora_safe_withdrawal_standalone",
+    _SAFE_WITHDRAWAL_PATH,
+)
+if _SAFE_WITHDRAWAL_SPEC is None or _SAFE_WITHDRAWAL_SPEC.loader is None:
+    raise RuntimeError(f"cannot load safe withdrawal module from {_SAFE_WITHDRAWAL_PATH}")
+_SAFE_WITHDRAWAL = importlib.util.module_from_spec(_SAFE_WITHDRAWAL_SPEC)
+sys.modules["aurora_safe_withdrawal_standalone"] = _SAFE_WITHDRAWAL
+_SAFE_WITHDRAWAL_SPEC.loader.exec_module(_SAFE_WITHDRAWAL)
+safe_withdrawal_rate = _SAFE_WITHDRAWAL.safe_withdrawal_rate
 
 
 OUTPUT_FILES = {

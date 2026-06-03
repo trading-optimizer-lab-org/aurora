@@ -23,32 +23,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
     steps:
       - name: Build 20x18 matrix
         id: matrix
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          matrix = [
+          full = [
               {"family_id": family_id, "shard_id": shard_id}
               for family_id in range(20)
               for shard_id in range(18)
           ]
-          print("matrix=" + json.dumps(matrix))
+          print("matrix_a=" + json.dumps(full[:180]))
+          print("matrix_b=" + json.dumps(full[180:]))
           PY
 
-  search:
+  search_a:
     runs-on: ubuntu-latest
     needs: plan
     timeout-minutes: 60
     continue-on-error: true
     strategy:
       fail-fast: false
-      max-parallel: 360
+      max-parallel: 180
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    steps:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &search_steps
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -75,9 +77,21 @@ jobs:
           name: swr-20-etf-proxy-2000-family-${{ matrix.family_id }}-shard-${{ matrix.shard_id }}
           path: ${{ env.OUTPUT_DIR }}/shards/family_*_shard_*
 
+  search_b:
+    runs-on: ubuntu-latest
+    needs: plan
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *search_steps
+
   merge:
     runs-on: ubuntu-latest
-    needs: search
+    needs: [search_a, search_b]
     if: always()
     timeout-minutes: 30
     steps:
