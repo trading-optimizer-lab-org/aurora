@@ -41,45 +41,50 @@ SAFE_ASSETS = ["short_treasury", "intermediate_treasury", "long_treasury"]
 
 
 def eval_all_starts(returns: np.ndarray, min_horizon: int) -> tuple[int, int, float, float, int, int]:
-    failed = 0
-    final_le_initial = 0
-    min_final = 1.0e18
-    worst_mdd = 0.0
-    worst_final_i = -1
-    worst_mdd_i = -1
     n = len(returns)
-    for start in range(n):
-        if n - start < min_horizon:
+    if n < min_horizon:
+        return 0, 0, 1.0e18, 0.0, -1, -1
+    starts = np.arange(0, n - min_horizon + 1, dtype=np.int64)
+    caps = np.full(len(starts), INITIAL_CAPITAL, dtype=np.float64)
+    peaks = caps.copy()
+    mdds = np.zeros(len(starts), dtype=np.float64)
+    failed = np.zeros(len(starts), dtype=bool)
+    alive = np.ones(len(starts), dtype=bool)
+    max_steps = n - int(starts.min())
+    for step in range(max_steps):
+        idx = starts + step
+        active = alive & (idx < n)
+        if not bool(active.any()):
+            break
+        caps[active] -= MONTHLY_WITHDRAWAL
+        newly_failed = active & (caps <= 0.0)
+        failed |= newly_failed
+        alive &= ~newly_failed
+        active = alive & (idx < n)
+        if not bool(active.any()):
             continue
-        cap = INITIAL_CAPITAL
-        peak = INITIAL_CAPITAL
-        mdd = 0.0
-        path_failed = False
-        for i in range(start, n):
-            cap -= MONTHLY_WITHDRAWAL
-            if cap <= 0.0:
-                path_failed = True
-                break
-            cap *= 1.0 + returns[i]
-            if cap <= 0.0:
-                path_failed = True
-                break
-            if cap > peak:
-                peak = cap
-            dd = cap / peak - 1.0
-            if dd < mdd:
-                mdd = dd
-        if path_failed:
-            failed += 1
-        if cap <= INITIAL_CAPITAL:
-            final_le_initial += 1
-        if cap < min_final:
-            min_final = cap
-            worst_final_i = start
-        if mdd < worst_mdd:
-            worst_mdd = mdd
-            worst_mdd_i = start
-    return failed, final_le_initial, min_final, worst_mdd, worst_final_i, worst_mdd_i
+        caps[active] *= 1.0 + returns[idx[active]]
+        newly_failed = active & (caps <= 0.0)
+        failed |= newly_failed
+        alive &= ~newly_failed
+        active = alive & (idx < n)
+        if not bool(active.any()):
+            continue
+        peaks[active] = np.maximum(peaks[active], caps[active])
+        dd = caps[active] / peaks[active] - 1.0
+        active_indices = np.flatnonzero(active)
+        mdds[active_indices] = np.minimum(mdds[active_indices], dd)
+    final_le_initial = caps <= INITIAL_CAPITAL
+    worst_final_i = int(np.argmin(caps))
+    worst_mdd_i = int(np.argmin(mdds))
+    return (
+        int(failed.sum()),
+        int(final_le_initial.sum()),
+        float(caps[worst_final_i]),
+        float(mdds[worst_mdd_i]),
+        int(starts[worst_final_i]),
+        int(starts[worst_mdd_i]),
+    )
 
 
 def main() -> None:
