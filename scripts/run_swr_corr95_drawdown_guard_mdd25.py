@@ -119,20 +119,11 @@ def run_data(output_dir: Path) -> None:
     for name, meta in PROXIES.items():
         if meta["proxy_correlation"] < MIN_PROXY_CORRELATION:
             raise RuntimeError(f"Proxy below threshold: {name}")
-    raw = yf.download(
-        [meta["symbol"] for meta in PROXIES.values()],
-        start="1995-01-01",
-        end="2020-01-01",
-        auto_adjust=True,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
-    prices = pd.DataFrame()
-    for name, meta in PROXIES.items():
-        prices[name] = raw[meta["symbol"]]["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw["Close"]
+    prices = download_proxy_prices()
     prices = prices.dropna(how="any")
     monthly = prices.resample("ME").last().pct_change().dropna()
+    if len(monthly) < 250:
+        raise RuntimeError(f"Insufficient monthly rows after download: {len(monthly)}")
     if prices.index.max() >= LOCKED_START or monthly.index.max() >= LOCKED_START:
         raise RuntimeError("Locked data leak.")
     if monthly.index.min() > pd.Timestamp("1995-02-28"):
@@ -160,8 +151,62 @@ def run_data(output_dir: Path) -> None:
     write_feature_audit(data_dir)
 
 
+def download_proxy_prices() -> pd.DataFrame:
+    symbols = [meta["symbol"] for meta in PROXIES.values()]
+    last_error: Exception | None = None
+    for attempt in range(5):
+        try:
+            raw = yf.download(
+                symbols,
+                start="1995-01-01",
+                end="2020-01-01",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=False,
+            )
+            prices = pd.DataFrame()
+            for name, meta in PROXIES.items():
+                prices[name] = raw[meta["symbol"]]["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw["Close"]
+            prices = prices.dropna(how="any")
+            if len(prices) > 4_000:
+                return prices
+        except Exception as exc:  # pragma: no cover - defensive network retry
+            last_error = exc
+        time.sleep(2.0 + attempt)
+
+    prices = pd.DataFrame()
+    for name, meta in PROXIES.items():
+        last_series_error: Exception | None = None
+        for attempt in range(5):
+            try:
+                one = yf.download(
+                    meta["symbol"],
+                    start="1995-01-01",
+                    end="2020-01-01",
+                    auto_adjust=True,
+                    progress=False,
+                    threads=False,
+                )
+                if not one.empty and "Close" in one:
+                    prices[name] = one["Close"]
+                    break
+            except Exception as exc:  # pragma: no cover - defensive network retry
+                last_series_error = exc
+            time.sleep(2.0 + attempt)
+        if name not in prices:
+            raise RuntimeError(f"Could not download proxy {name} ({meta['symbol']}): {last_series_error or last_error}")
+    prices = prices.dropna(how="any")
+    if len(prices) <= 4_000:
+        raise RuntimeError(f"Proxy download returned too few daily rows: {len(prices)}")
+    return prices
+
+
 def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard: int, time_budget_minutes: float, top_per_shard: int) -> None:
     returns = pd.read_csv(output_dir / "data" / "monthly_returns.csv", parse_dates=["timestamp"]).set_index("timestamp")
+    returns.index = pd.to_datetime(returns.index, errors="raise")
+    if len(returns) < 250:
+        raise RuntimeError(f"Insufficient monthly return rows in shard input: {len(returns)}")
     if returns.index.max() >= LOCKED_START:
         raise RuntimeError("Locked data reached shard.")
     rng = np.random.default_rng(83_000_029 + family_id * 1_000_057 + shard_id * 3001)
