@@ -23,7 +23,7 @@ MIN_HORIZON_TRAIN = 120
 MIN_HORIZON_VALIDATION = 60
 MAX_MDD_AFTER_WITHDRAWALS = -0.50
 MIN_PROXY_CORRELATION = 0.95
-MAX_TURNOVER_ANNUAL = 24.0
+MAX_TURNOVER_ANNUAL = 6.0
 
 PROXIES = {
     "ndx": {"symbol": "^NDX", "tradable_proxy": "QQQ", "proxy_correlation": 0.999176},
@@ -243,6 +243,8 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
         "max_gross": float(rng.uniform(1.0, 18.0)),
         "vol_target": float(rng.choice([0.0, 0.20, 0.35, 0.50, 0.75, 1.00])),
         "vol_lb": int(rng.choice([3, 6, 12])),
+        "rebalance_months": int(rng.choice([3, 6, 12])),
+        "rebalance_band": float(rng.choice([0.0, 0.5, 1.0, 2.0, 4.0, 6.0])),
     }
 
 
@@ -272,8 +274,20 @@ def build_strategy(returns: pd.DataFrame, signals: dict[str, pd.Series], params:
         gross = weights.abs().sum(axis=1).replace(0.0, np.nan)
         scale = (params["max_gross"] / gross).clip(upper=1.0).fillna(0.0)
         weights = weights.mul(scale, axis=0)
+    weights = rebalance_with_band(weights, int(params["rebalance_months"]), float(params["rebalance_band"]))
     series = (weights * returns).sum(axis=1)
     return series.astype(float), weights.astype(float)
+
+
+def rebalance_with_band(target: pd.DataFrame, rebalance_months: int, band: float) -> pd.DataFrame:
+    out = pd.DataFrame(0.0, index=target.index, columns=target.columns)
+    last = pd.Series(0.0, index=target.columns)
+    for idx, dt in enumerate(target.index):
+        desired = target.loc[dt] if idx % rebalance_months == 0 else last
+        if float((desired - last).abs().sum()) > band:
+            last = desired.astype(float).copy()
+        out.loc[dt] = last
+    return out
 
 
 def run_merge(output_dir: Path) -> None:
