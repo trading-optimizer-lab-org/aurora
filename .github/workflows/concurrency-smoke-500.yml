@@ -1,0 +1,72 @@
+name: Concurrency Smoke 500 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      sleep_seconds:
+        description: "Seconds each probe job should stay alive"
+        required: true
+        default: "600"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      group_a: ${{ steps.matrix.outputs.group_a }}
+      group_b: ${{ steps.matrix.outputs.group_b }}
+      max_parallel_half: ${{ steps.matrix.outputs.max_parallel_half }}
+    steps:
+      - name: Build 500 job matrix
+        id: matrix
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+
+          print("group_a=" + json.dumps(list(range(0, 250))))
+          print("group_b=" + json.dumps(list(range(250, 500))))
+          print("max_parallel_half=250")
+          PY
+
+  probe_a:
+    name: probe_a (${{ matrix.index }})
+    runs-on: ubuntu-latest
+    needs: prepare
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel_half) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.group_a) }}
+    steps:
+      - name: Hold runner slot
+        shell: bash
+        run: |
+          echo "probe_group=a"
+          echo "probe_index=${{ matrix.index }}"
+          echo "requested_total_parallel_jobs=500"
+          echo "sleep_seconds=${{ inputs.sleep_seconds }}"
+          sleep "${{ inputs.sleep_seconds }}"
+
+  probe_b:
+    name: probe_b (${{ matrix.index }})
+    runs-on: ubuntu-latest
+    needs: prepare
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel_half) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.group_b) }}
+    steps:
+      - name: Hold runner slot
+        shell: bash
+        run: |
+          echo "probe_group=b"
+          echo "probe_index=${{ matrix.index }}"
+          echo "requested_total_parallel_jobs=500"
+          echo "sleep_seconds=${{ inputs.sleep_seconds }}"
+          sleep "${{ inputs.sleep_seconds }}"
