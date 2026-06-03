@@ -1,0 +1,138 @@
+name: SWR Strict Final GT Initial 360 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      configs_per_shard:
+        description: "Candidate configs tested per shard"
+        required: true
+        default: "4000"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/swr_strict_final_gt_initial_360jobs
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download no-locked proxy data
+        run: python scripts/run_swr_strict_final_gt_initial.py --mode data --output-dir "$OUTPUT_DIR"
+      - name: Upload no-locked data
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-strict-final-gt-initial-data
+          path: ${{ env.OUTPUT_DIR }}/data
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - name: Build 20x18 matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          full = [
+              {"family_id": family_id, "shard_id": shard_id}
+              for family_id in range(20)
+              for shard_id in range(18)
+          ]
+          print("matrix_a=" + json.dumps(full[:180]))
+          print("matrix_b=" + json.dumps(full[180:]))
+          PY
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 90
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download no-locked data
+        uses: actions/download-artifact@v4
+        with:
+          name: swr-strict-final-gt-initial-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Run strict SWR shard
+        run: |
+          python scripts/run_swr_strict_final_gt_initial.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --family-id "${{ matrix.family_id }}" \
+            --shard-id "${{ matrix.shard_id }}" \
+            --configs-per-shard "${{ inputs.configs_per_shard }}"
+      - name: Upload shard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-strict-final-gt-initial-family-${{ matrix.family_id }}-shard-${{ matrix.shard_id }}
+          path: ${{ env.OUTPUT_DIR }}/shards/family_*_shard_*
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 90
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *search_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, search_a, search_b]
+    if: always()
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download no-locked data
+        uses: actions/download-artifact@v4
+        with:
+          name: swr-strict-final-gt-initial-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: swr-strict-final-gt-initial-family-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+      - name: Merge available shards
+        run: python scripts/run_swr_strict_final_gt_initial.py --mode merge --output-dir "$OUTPUT_DIR"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-strict-final-gt-initial-360jobs-results
+          path: ${{ env.OUTPUT_DIR }}
