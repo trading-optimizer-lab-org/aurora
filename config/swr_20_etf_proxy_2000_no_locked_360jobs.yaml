@@ -1,0 +1,293 @@
+campaign_id: swr_20_etf_proxy_2000_no_locked_360jobs
+
+capital:
+  initial: 100000.0
+  monthly_withdrawal: 2000.0
+  withdraw_at_start: true
+  min_horizon_months_train: 120
+  min_horizon_months_validation: 60
+  precision: 10.0
+  max_monthly_search: 10000.0
+
+periods:
+  train_start: "1995-01-01"
+  train_end: "2010-12-31"
+  validation_start: "2011-01-01"
+  validation_end: "2019-12-31"
+  locked_start: "2020-01-01"
+
+github:
+  families: 20
+  shards_per_family: 18
+  configs_per_shard: 200
+  total_jobs: 360
+  max_parallel: 360
+
+rules:
+  forbid_concrete_stocks: true
+  forbid_crypto: true
+  require_proxy_documented: true
+  locked_opened: false
+  data_end_max: "2019-12-31"
+  max_turnover_annual: 6.0
+  max_mdd_after_withdrawals: -0.50
+
+ranking:
+  top_per_job: 20
+  top_per_family: 180
+
+size_grid_pct: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]
+lookbacks_months: [1, 3, 6, 10, 12]
+sma_months: [6, 10, 12]
+vol_lookbacks_months: [3, 6, 12]
+top_n: [1, 2, 3, 4]
+cash_bucket_months: [6, 12, 18, 24, 36]
+target_vols: [0.05, 0.07, 0.09, 0.11, 0.13]
+
+families:
+  - id: 0
+    name: 60_40_us
+    type: static_mix
+    sleeves: [us_equity, aggregate_bonds, intermediate_treasury, cash]
+  - id: 1
+    name: 3_fund_global
+    type: static_mix
+    sleeves: [us_equity, developed_ex_us, aggregate_bonds, cash]
+  - id: 2
+    name: permanent_portfolio
+    type: static_mix
+    sleeves: [us_equity, long_treasury, gold_proxy, cash]
+  - id: 3
+    name: golden_butterfly
+    type: static_mix
+    sleeves: [us_equity, small_cap_proxy, short_treasury, long_treasury, gold_proxy, cash]
+  - id: 4
+    name: all_weather_simple
+    type: risk_parity
+    sleeves: [us_equity, intermediate_treasury, long_treasury, aggregate_bonds, commodities_proxy, gold_proxy, cash]
+  - id: 5
+    name: risk_parity_trend_overlay
+    type: risk_parity_trend
+    sleeves: [us_equity, developed_ex_us, intermediate_treasury, long_treasury, gold_proxy, commodities_proxy, cash]
+  - id: 6
+    name: faber_taa
+    type: trend_top_n
+    sleeves: [us_equity, developed_ex_us, aggregate_bonds, real_estate_proxy, commodities_proxy, cash]
+  - id: 7
+    name: dual_momentum_gem
+    type: dual_momentum
+    sleeves: [us_equity, developed_ex_us, aggregate_bonds, intermediate_treasury, cash]
+  - id: 8
+    name: relative_strength_top_n
+    type: relative_strength
+    sleeves: [us_equity, developed_ex_us, emerging_markets, real_estate_proxy, long_treasury, gold_proxy, commodities_proxy, cash]
+  - id: 9
+    name: canary_vigilant_allocation
+    type: canary
+    sleeves: [us_equity, developed_ex_us, emerging_markets, aggregate_bonds, intermediate_treasury, gold_proxy, cash]
+  - id: 10
+    name: absolute_momentum_defensive
+    type: absolute_momentum
+    sleeves: [us_equity, developed_ex_us, aggregate_bonds, intermediate_treasury, short_treasury, cash]
+  - id: 11
+    name: multiasset_trend_following
+    type: trend_top_n
+    sleeves: [us_equity, developed_ex_us, emerging_markets, intermediate_treasury, long_treasury, gold_proxy, commodities_proxy, cash]
+  - id: 12
+    name: volatility_target
+    type: vol_target
+    sleeves: [us_equity, developed_ex_us, aggregate_bonds, intermediate_treasury, gold_proxy, cash]
+  - id: 13
+    name: min_vol_etf_rotation
+    type: min_vol_rotation
+    sleeves: [us_equity, developed_ex_us, emerging_markets, aggregate_bonds, intermediate_treasury, real_estate_proxy, cash]
+  - id: 14
+    name: cvar_drawdown_aware
+    type: drawdown_aware
+    sleeves: [us_equity, developed_ex_us, intermediate_treasury, long_treasury, gold_proxy, cash]
+  - id: 15
+    name: treasury_duration_trend
+    type: trend_top_n
+    sleeves: [short_treasury, intermediate_treasury, long_treasury, aggregate_bonds, cash]
+  - id: 16
+    name: gold_commodity_crisis_hedge
+    type: crisis_hedge
+    sleeves: [us_equity, gold_proxy, commodities_proxy, long_treasury, cash]
+  - id: 17
+    name: credit_stress_hyg_lqd
+    type: credit_stress
+    sleeves: [us_equity, high_yield_proxy, corporate_bond_proxy, intermediate_treasury, cash]
+  - id: 18
+    name: cash_bucket_withdrawal
+    type: cash_bucket
+    sleeves: [us_equity, developed_ex_us, aggregate_bonds, intermediate_treasury, cash]
+  - id: 19
+    name: ensemble_decorrelated
+    type: ensemble
+    sleeves: [us_equity, developed_ex_us, emerging_markets, aggregate_bonds, intermediate_treasury, long_treasury, gold_proxy, commodities_proxy, real_estate_proxy, cash]
+
+sleeves:
+  us_equity:
+    tradable_etf: SPY
+    proxy_symbol: SPY
+    proxy_name: SPDR S&P 500 ETF Trust total-return proxy
+    proxy_source: Yahoo Finance adjusted close
+    proxy_start: "1993-01-29"
+    etf_inception: "1993-01-29"
+    proxy_quality_score: 0.98
+    expense_annual: 0.0009
+  developed_ex_us:
+    tradable_etf: EFA
+    proxy_symbol: VGTSX
+    proxy_name: Vanguard Total International Stock Index Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1996-04-29"
+    etf_inception: "2001-08-14"
+    proxy_quality_score: 0.72
+    expense_annual: 0.0007
+  emerging_markets:
+    tradable_etf: EEM
+    proxy_symbol: VEIEX
+    proxy_name: Vanguard Emerging Markets Stock Index Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1994-05-04"
+    etf_inception: "2003-04-07"
+    proxy_quality_score: 0.74
+    expense_annual: 0.0068
+  aggregate_bonds:
+    tradable_etf: AGG
+    proxy_symbol: VBMFX
+    proxy_name: Vanguard Total Bond Market Index Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1986-12-11"
+    etf_inception: "2003-09-22"
+    proxy_quality_score: 0.78
+    expense_annual: 0.0003
+  short_treasury:
+    tradable_etf: SHY
+    proxy_symbol: VFISX
+    proxy_name: Vanguard Short-Term Treasury Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1991-10-28"
+    etf_inception: "2002-07-22"
+    proxy_quality_score: 0.78
+    expense_annual: 0.0015
+  intermediate_treasury:
+    tradable_etf: IEF
+    proxy_symbol: VFITX
+    proxy_name: Vanguard Intermediate-Term Treasury Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1991-10-28"
+    etf_inception: "2002-07-22"
+    proxy_quality_score: 0.78
+    expense_annual: 0.0015
+  long_treasury:
+    tradable_etf: TLT
+    proxy_symbol: VUSTX
+    proxy_name: Vanguard Long-Term Treasury Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1986-05-19"
+    etf_inception: "2002-07-22"
+    proxy_quality_score: 0.78
+    expense_annual: 0.0015
+  corporate_bond_proxy:
+    tradable_etf: LQD
+    proxy_symbol: VBLTX
+    proxy_name: Vanguard Long-Term Investment-Grade Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1986-12-29"
+    etf_inception: "2002-07-22"
+    proxy_quality_score: 0.66
+    expense_annual: 0.0014
+  high_yield_proxy:
+    tradable_etf: HYG
+    proxy_symbol: VWEHX
+    proxy_name: Vanguard High-Yield Corporate Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1978-12-27"
+    etf_inception: "2007-04-04"
+    proxy_quality_score: 0.66
+    expense_annual: 0.0049
+  real_estate_proxy:
+    tradable_etf: VNQ
+    proxy_symbol: VGSIX
+    proxy_name: Vanguard Real Estate Index Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1996-05-13"
+    etf_inception: "2004-09-23"
+    proxy_quality_score: 0.70
+    expense_annual: 0.0012
+  small_cap_proxy:
+    tradable_etf: IWM
+    proxy_symbol: NAESX
+    proxy_name: Vanguard Small-Cap Index Fund proxy
+    proxy_source: Yahoo Finance adjusted close fund proxy before ETF inception
+    proxy_start: "1960-01-01"
+    etf_inception: "2000-05-22"
+    proxy_quality_score: 0.70
+    expense_annual: 0.0019
+  gold_proxy:
+    tradable_etf: GLD
+    proxy_symbol: GOLDPMGBD228NLBM
+    proxy_name: LBMA gold price proxy via FRED/Fallback synthetic carry-free series
+    proxy_source: FRED gold proxy if available; otherwise marked lower-quality fallback
+    proxy_start: "1968-04-01"
+    etf_inception: "2004-11-18"
+    proxy_quality_score: 0.55
+    expense_annual: 0.0040
+  commodities_proxy:
+    tradable_etf: DBC
+    proxy_symbol: PPIACO
+    proxy_name: Broad commodity price proxy via FRED/Fallback broad proxy
+    proxy_source: FRED commodity proxy if available; otherwise marked lower-quality fallback
+    proxy_start: "1913-01-01"
+    etf_inception: "2006-02-03"
+    proxy_quality_score: 0.45
+    expense_annual: 0.0087
+  cash:
+    tradable_etf: CASH
+    proxy_symbol: CASH
+    proxy_name: zero-return cash proxy
+    proxy_source: internal zero nominal return
+    proxy_start: "1900-01-01"
+    etf_inception: "1900-01-01"
+    proxy_quality_score: 1.0
+    expense_annual: 0.0
+
+literature_sources:
+  - title: Aurora local selected hedge papers PDFs
+    status: local_reference
+    path: outputs/literature/selected_hedge_papers_pdfs
+  - title: Aurora local selected hedge paper replicas
+    status: local_reference
+    path: outputs/literature/selected_hedge_paper_replicas
+  - title: Aurora local trend-following crisis alpha Hamill 2016
+    status: local_reference
+    path: outputs/literature/trend_following_crisis_alpha_hamill_2016
+  - title: Aurora local literature strategy signatures
+    status: local_reference
+    path: config/literature_strategy_signatures_9419.csv
+  - title: Bengen 1994 safe withdrawal rates
+    status: conceptual_reference
+    url: https://www.retailinvestor.org/pdf/Bengen1.pdf
+  - title: Trinity Study withdrawal methodology
+    status: conceptual_reference
+    url: https://www.aaii.com/journal/article/6045-retirement-savings-choosing-a-withdrawal-rate-that-is-sustainable
+  - title: Faber Tactical Asset Allocation
+    status: local_or_external_reference
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=962461
+  - title: Relative Strength Tactical Asset Allocation
+    status: local_or_external_reference
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2025699
+  - title: Pensions Institute WP1606 trend following and sequence risk
+    status: local_or_external_reference
+    url: https://www.pensions-institute.org/working-papers/wp1606/
+  - title: AQR trend following and crisis alpha
+    status: local_or_external_reference
+    url: https://www.aqr.com/Insights/Research
+  - title: PortfolioCharts withdrawal methodology
+    status: conceptual_reference
+    url: https://portfoliocharts.com/
+  - title: Early Retirement Now safe withdrawal series
+    status: conceptual_reference
+    url: https://earlyretirementnow.com/safe-withdrawal-rate-series/
