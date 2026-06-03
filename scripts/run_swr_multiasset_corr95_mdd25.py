@@ -10,7 +10,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from numba import njit
 
 
 CAMPAIGN_ID = "swr_multiasset_corr95_mdd25_360jobs"
@@ -41,7 +40,6 @@ RISK_ASSETS = ["ndx", "sp500", "small", "energy", "financial", "long_treasury"]
 SAFE_ASSETS = ["short_treasury", "intermediate_treasury", "long_treasury"]
 
 
-@njit
 def eval_all_starts(returns: np.ndarray, min_horizon: int) -> tuple[int, int, float, float, int, int]:
     failed = 0
     final_le_initial = 0
