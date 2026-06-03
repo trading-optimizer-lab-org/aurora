@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,7 @@ def main() -> None:
     parser.add_argument("--family-id", type=int, default=0)
     parser.add_argument("--shard-id", type=int, default=0)
     parser.add_argument("--configs-per-shard", type=int, default=50_000)
+    parser.add_argument("--time-budget-minutes", type=float, default=75.0)
     parser.add_argument("--top-per-shard", type=int, default=50)
     args = parser.parse_args()
     output_dir = Path(args.output_dir)
@@ -89,7 +91,14 @@ def main() -> None:
     if args.mode == "data":
         run_data(output_dir)
     elif args.mode == "shard":
-        run_shard(output_dir, args.family_id, args.shard_id, args.configs_per_shard, args.top_per_shard)
+        run_shard(
+            output_dir,
+            args.family_id,
+            args.shard_id,
+            args.configs_per_shard,
+            args.time_budget_minutes,
+            args.top_per_shard,
+        )
     else:
         run_merge(output_dir)
 
@@ -136,7 +145,14 @@ def run_data(output_dir: Path) -> None:
     ).to_csv(data_dir / "locked_access_audit.csv", index=False)
 
 
-def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard: int, top_per_shard: int) -> None:
+def run_shard(
+    output_dir: Path,
+    family_id: int,
+    shard_id: int,
+    configs_per_shard: int,
+    time_budget_minutes: float,
+    top_per_shard: int,
+) -> None:
     returns = pd.read_csv(output_dir / "data" / "monthly_returns.csv", parse_dates=["timestamp"]).set_index("timestamp")
     if returns.index.max() >= LOCKED_START:
         raise RuntimeError("Locked data reached shard.")
@@ -149,7 +165,13 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
     eval_all_starts(np.zeros(130, dtype=np.float64), 60)
     rows: list[dict[str, Any]] = []
     signals = precompute_signals(returns)
+    started = time.monotonic()
+    deadline = started + max(1.0, time_budget_minutes) * 60.0
+    evaluated = 0
     for config_index in range(configs_per_shard):
+        if time.monotonic() >= deadline:
+            break
+        evaluated += 1
         params = sample_params(rng, family_id)
         series, weights = build_strategy(returns, signals, params)
         if series.min() <= -0.99 or not np.isfinite(series.to_numpy()).all():
@@ -218,6 +240,25 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
         df = pd.DataFrame(columns=["strategy_id", "accepted", "score"])
     df.sort_values("score", ascending=False).head(top_per_shard).to_csv(shard_dir / "top_candidates.csv", index=False)
     df[df.get("accepted", pd.Series(dtype=bool)).astype(bool)].to_csv(shard_dir / "accepted_candidates.csv", index=False)
+    (shard_dir / "shard_summary.json").write_text(
+        json.dumps(
+            {
+                "family_id": family_id,
+                "shard_id": shard_id,
+                "configs_requested": int(configs_per_shard),
+                "configs_evaluated": int(evaluated),
+                "elapsed_seconds": float(time.monotonic() - started),
+                "time_budget_minutes": float(time_budget_minutes),
+                "rows_kept": int(len(df)),
+                "accepted_rows": int(df.get("accepted", pd.Series(dtype=bool)).astype(bool).sum()) if "accepted" in df else 0,
+                "max_turnover_annual": MAX_TURNOVER_ANNUAL,
+                "proxy_corr_min": MIN_PROXY_CORRELATION,
+                "locked_opened": False,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def precompute_signals(returns: pd.DataFrame) -> dict[str, pd.Series]:

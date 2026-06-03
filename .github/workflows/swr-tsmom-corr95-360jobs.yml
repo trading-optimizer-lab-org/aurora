@@ -2,11 +2,15 @@ name: SWR TSMOM Corr95 360 Jobs
 
 on:
   workflow_dispatch:
-    inputs:
-      configs_per_shard:
-        description: "TSMOM configs tested per shard"
-        required: true
-        default: "50000"
+      inputs:
+        configs_per_shard:
+          description: "TSMOM configs tested per shard"
+          required: true
+          default: "50000"
+        time_budget_minutes:
+          description: "Clean internal shard runtime before upload"
+          required: true
+          default: "75"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -87,7 +91,8 @@ jobs:
             --output-dir "$OUTPUT_DIR" \
             --family-id "${{ matrix.family_id }}" \
             --shard-id "${{ matrix.shard_id }}" \
-            --configs-per-shard "${{ inputs.configs_per_shard }}"
+            --configs-per-shard "${{ inputs.configs_per_shard }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}"
       - name: Upload shard artifact
         uses: actions/upload-artifact@v4
         with:
