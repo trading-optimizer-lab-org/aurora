@@ -24,6 +24,7 @@ MIN_HORIZON_TRAIN = 120
 MIN_HORIZON_VALIDATION = 60
 MAX_MDD_AFTER_WITHDRAWALS = -0.50
 MAX_TURNOVER_ANNUAL = 6.0
+MIN_PROXY_CORRELATION = 0.95
 
 PROXIES = {
     "ndx": {"symbol": "^NDX", "tradable_proxy": "QQQ", "kind": "index_proxy"},
@@ -40,13 +41,19 @@ PROXIES = {
     "gold_miners": {"symbol": "VGPMX", "tradable_proxy": "GDX_PROXY", "kind": "fund_proxy"},
 }
 
+PROXY_CORRELATION_ALLOWED = {
+    # Measured on overlapping monthly returns up to 2019-12-31.
+    # Only sleeves with proxy-vs-real ETF correlation >= 0.95 are enabled.
+    "ndx": 0.999176,
+    "short_treasury": 0.951883,
+    "long_treasury": 0.989281,
+}
+
 RISK_SETS = [
-    ["ndx", "long_treasury", "precious_metals", "short_treasury"],
-    ["ndx", "small_value", "long_treasury", "precious_metals", "short_treasury"],
-    ["ndx", "sp500", "russell2000", "long_treasury", "precious_metals", "short_treasury"],
-    ["ndx", "high_yield", "long_treasury", "precious_metals", "short_treasury"],
-    ["ndx", "small_value", "high_yield", "long_treasury", "precious_metals", "short_treasury"],
-    ["ndx", "sp500", "russell2000", "small_value", "small_cap", "high_yield", "long_treasury", "precious_metals", "gold_miners", "short_treasury"],
+    ["ndx", "long_treasury", "short_treasury"],
+    ["ndx", "short_treasury"],
+    ["ndx", "long_treasury"],
+    ["long_treasury", "short_treasury"],
 ]
 
 
@@ -120,7 +127,8 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
-    symbols = [meta["symbol"] for meta in PROXIES.values()]
+    validate_proxy_universe()
+    symbols = [PROXIES[sleeve]["symbol"] for sleeve in PROXY_CORRELATION_ALLOWED]
     raw = yf.download(
         symbols,
         start="1995-01-01",
@@ -131,7 +139,8 @@ def run_data(output_dir: Path) -> None:
         threads=True,
     )
     prices = pd.DataFrame()
-    for sleeve, meta in PROXIES.items():
+    for sleeve in PROXY_CORRELATION_ALLOWED:
+        meta = PROXIES[sleeve]
         symbol = meta["symbol"]
         prices[sleeve] = raw[symbol]["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw["Close"]
     prices = prices.dropna(how="any")
@@ -147,11 +156,14 @@ def run_data(output_dir: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     monthly_returns.to_csv(data_dir / "monthly_returns.csv", index_label="timestamp")
     proxy_rows = []
-    for sleeve, meta in PROXIES.items():
+    for sleeve in PROXY_CORRELATION_ALLOWED:
+        meta = PROXIES[sleeve]
         proxy_rows.append(
             {
                 "sleeve": sleeve,
                 **meta,
+                "proxy_correlation_to_real": PROXY_CORRELATION_ALLOWED[sleeve],
+                "proxy_correlation_min_required": MIN_PROXY_CORRELATION,
                 "first_date": prices.index.min().date().isoformat(),
                 "last_date": prices.index.max().date().isoformat(),
                 "uses_concrete_stocks": False,
@@ -171,6 +183,19 @@ def run_data(output_dir: Path) -> None:
             }
         ]
     ).to_csv(data_dir / "locked_access_audit.csv", index=False)
+
+
+def validate_proxy_universe() -> None:
+    allowed = set(PROXY_CORRELATION_ALLOWED)
+    for sleeve, corr in PROXY_CORRELATION_ALLOWED.items():
+        if sleeve not in PROXIES:
+            raise RuntimeError(f"Unknown proxy sleeve: {sleeve}")
+        if corr < MIN_PROXY_CORRELATION:
+            raise RuntimeError(f"Proxy sleeve {sleeve} below correlation threshold: {corr}")
+    for risk_set in RISK_SETS:
+        forbidden = sorted(set(risk_set) - allowed)
+        if forbidden:
+            raise RuntimeError(f"Risk set contains proxy below correlation threshold: {forbidden}")
 
 
 def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard: int, top_per_shard: int) -> None:
@@ -272,7 +297,7 @@ def make_candidate(returns: pd.DataFrame, rng: np.random.Generator, family_id: i
     rebalance_months = int(rng.choice([1, 3, 6, 12]))
     band = float(rng.choice([0.0, 0.15, 0.30, 0.55, 0.80]))
     leverage = float(rng.uniform(1.0, 10.0))
-    safe = str(rng.choice(["short_treasury", "intermediate_treasury", "long_treasury"]))
+    safe = str(rng.choice(["short_treasury", "long_treasury"]))
     if group == 0:
         weights = long_only_momentum_weights(returns, risk_set, lookback, vol_lookback, top_n, rebalance_months, band, safe)
         mode = "long_only_momentum"
