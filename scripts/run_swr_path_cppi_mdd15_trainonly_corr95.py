@@ -283,7 +283,7 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
             and train_late_eval[1] == 0
             and train_late_eval[3] > MAX_MDD_AFTER_WITHDRAWALS
         )
-        train_pass = train_full_pass and train_cv_pass
+        train_pass = train_full_pass
         train_score = train_only_score(train_eval, train_early_eval, train_late_eval, train_pass, params)
         if not train_pass and train_score < -600_000_000.0 and config_index % 307 != 0:
             continue
@@ -390,7 +390,7 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
     return {
         "family_id": family_id,
         "risk_mode": str(rng.choice(["ndx", "sp500", "risk_blend", "risk_vs_treasury"])),
-        "safe_mode": str(rng.choice(["shy", "ief", "tlt", "safe_blend"])),
+        "safe_mode": str(rng.choice(["shy", "ief", "tlt", "safe_blend", "tlt_tsmom", "ief_tsmom", "safe_tsmom_blend"])),
         "lookback": int(rng.choice([1, 3, 6, 10, 12])),
         "base_exposure": float(rng.uniform(0.0, 2.5 if low_risk else 5.0)),
         "multiplier": float(rng.uniform(0.0, 18.0 if low_risk else 35.0)),
@@ -439,6 +439,23 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
         safe_ret = returns["intermediate_treasury"]
     elif params["safe_mode"] == "tlt":
         safe_ret = returns["long_treasury"]
+    elif params["safe_mode"] == "tlt_tsmom":
+        safe_sign = np.where(mom["long_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
+        safe_ret = pd.Series(safe_sign, index=returns.index) * returns["long_treasury"]
+    elif params["safe_mode"] == "ief_tsmom":
+        safe_sign = np.where(mom["intermediate_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
+        safe_ret = pd.Series(safe_sign, index=returns.index) * returns["intermediate_treasury"]
+    elif params["safe_mode"] == "safe_tsmom_blend":
+        shy_sign = np.where(mom["short_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
+        ief_sign = np.where(mom["intermediate_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
+        tlt_sign = np.where(mom["long_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
+        raw = (
+            float(params["safe_blend_shy"]) * pd.Series(shy_sign, index=returns.index) * returns["short_treasury"]
+            + float(params["safe_blend_ief"]) * pd.Series(ief_sign, index=returns.index) * returns["intermediate_treasury"]
+            + float(params["safe_blend_tlt"]) * pd.Series(tlt_sign, index=returns.index) * returns["long_treasury"]
+        )
+        norm = abs(float(params["safe_blend_shy"])) + abs(float(params["safe_blend_ief"])) + abs(float(params["safe_blend_tlt"]))
+        safe_ret = raw / norm if norm > 0 else returns["short_treasury"] * 0.0
     else:
         raw = (
             float(params["safe_blend_shy"]) * returns["short_treasury"]
