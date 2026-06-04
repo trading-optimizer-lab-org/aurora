@@ -18,6 +18,7 @@ CAMPAIGN_ID = "swr_path_cppi_mdd15_trainonly_corr95_360jobs"
 INITIAL_CAPITAL = 100_000.0
 MONTHLY_WITHDRAWAL = 2_000.0
 TRAIN_END = pd.Timestamp("2010-12-31")
+TRAIN_CV_SPLIT = pd.Timestamp("2003-12-31")
 VALIDATION_START = pd.Timestamp("2011-01-01")
 VALIDATION_END = pd.Timestamp("2019-12-31")
 LOCKED_START = pd.Timestamp("2020-01-01")
@@ -191,6 +192,8 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
     if returns.index.max() >= LOCKED_START:
         raise RuntimeError("Locked data reached shard.")
     train = returns[returns.index <= TRAIN_END]
+    train_early = returns[returns.index <= TRAIN_CV_SPLIT]
+    train_late = returns[(returns.index > TRAIN_CV_SPLIT) & (returns.index <= TRAIN_END)]
     valid = returns[(returns.index >= VALIDATION_START) & (returns.index <= VALIDATION_END)]
     train_dates = train.index
     valid_dates = valid.index
@@ -239,8 +242,49 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
             float(params["guard_scale"]),
             float(params["recovery_boost"]),
         )
-        train_pass = train_eval[0] == 0 and train_eval[1] == 0 and train_eval[3] > MAX_MDD_AFTER_WITHDRAWALS
-        train_score = train_only_score(train_eval, train_pass, params)
+        train_early_eval = eval_path_cppi_all_starts(
+            risk_ret.loc[train_early.index].to_numpy(np.float64),
+            safe_ret.loc[train_early.index].to_numpy(np.float64),
+            signal.loc[train_early.index].to_numpy(np.float64),
+            60,
+            float(params["base_exposure"]),
+            float(params["multiplier"]),
+            float(params["floor_pct"]),
+            float(params["max_risk_exposure"]),
+            float(params["safe_exposure"]),
+            float(params["max_gross"]),
+            int(params["allow_short"]),
+            float(params["guard_threshold"]),
+            float(params["guard_scale"]),
+            float(params["recovery_boost"]),
+        )
+        train_late_eval = eval_path_cppi_all_starts(
+            risk_ret.loc[train_late.index].to_numpy(np.float64),
+            safe_ret.loc[train_late.index].to_numpy(np.float64),
+            signal.loc[train_late.index].to_numpy(np.float64),
+            60,
+            float(params["base_exposure"]),
+            float(params["multiplier"]),
+            float(params["floor_pct"]),
+            float(params["max_risk_exposure"]),
+            float(params["safe_exposure"]),
+            float(params["max_gross"]),
+            int(params["allow_short"]),
+            float(params["guard_threshold"]),
+            float(params["guard_scale"]),
+            float(params["recovery_boost"]),
+        )
+        train_full_pass = train_eval[0] == 0 and train_eval[1] == 0 and train_eval[3] > MAX_MDD_AFTER_WITHDRAWALS
+        train_cv_pass = (
+            train_early_eval[0] == 0
+            and train_early_eval[1] == 0
+            and train_early_eval[3] > MAX_MDD_AFTER_WITHDRAWALS
+            and train_late_eval[0] == 0
+            and train_late_eval[1] == 0
+            and train_late_eval[3] > MAX_MDD_AFTER_WITHDRAWALS
+        )
+        train_pass = train_full_pass and train_cv_pass
+        train_score = train_only_score(train_eval, train_early_eval, train_late_eval, train_pass, params)
         if not train_pass and train_score < -600_000_000.0 and config_index % 307 != 0:
             continue
         valid_eval = eval_path_cppi_all_starts(
@@ -269,6 +313,8 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
                 "shard_id": shard_id,
                 "config_index": config_index,
                 "train_pass": bool(train_pass),
+                "train_full_pass": bool(train_full_pass),
+                "train_cv_pass": bool(train_cv_pass),
                 "validation_pass_report_only": bool(validation_pass),
                 "final_verified_report_only": bool(train_pass and validation_pass),
                 "validation_used_for_selection": False,
@@ -279,6 +325,8 @@ def run_shard(output_dir: Path, family_id: int, shard_id: int, configs_per_shard
                 "worst_final_capital_train": float(train_eval[2]),
                 "worst_final_capital_validation": float(valid_eval[2]),
                 "mdd_after_withdrawals_train": float(train_eval[3]),
+                "mdd_after_withdrawals_train_early": float(train_early_eval[3]),
+                "mdd_after_withdrawals_train_late": float(train_late_eval[3]),
                 "mdd_after_withdrawals_validation": float(valid_eval[3]),
                 "worst_final_start_train": str(train_dates[int(train_eval[4])].date()) if train_eval[4] >= 0 else "",
                 "worst_final_start_validation": str(valid_dates[int(valid_eval[4])].date()) if valid_eval[4] >= 0 else "",
@@ -402,15 +450,26 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
     return risk_ret.astype(float), safe_ret.astype(float), sig.astype(float)
 
 
-def train_only_score(result: tuple[int, int, float, float, int, int], train_pass: bool, params: dict[str, Any]) -> float:
+def train_only_score(
+    result: tuple[int, int, float, float, int, int],
+    early_result: tuple[int, int, float, float, int, int],
+    late_result: tuple[int, int, float, float, int, int],
+    train_pass: bool,
+    params: dict[str, Any],
+) -> float:
     failed, le_initial, worst_final, mdd, _, _ = result
+    early_failed, early_le_initial, early_final, early_mdd, _, _ = early_result
+    late_failed, late_le_initial, late_final, late_mdd, _, _ = late_result
     complexity = abs(float(params["base_exposure"])) + abs(float(params["multiplier"])) + abs(float(params["safe_exposure"]))
     return (
         (1_000_000_000.0 if train_pass else 0.0)
         - failed * 25_000_000.0
         - le_initial * 2_500_000.0
+        - (early_failed + late_failed) * 15_000_000.0
+        - (early_le_initial + late_le_initial) * 1_500_000.0
         + min(worst_final, 10_000_000.0)
-        + mdd * 30_000_000.0
+        + min(early_final, late_final, 10_000_000.0) * 0.25
+        + min(mdd, early_mdd, late_mdd) * 45_000_000.0
         - complexity * 10_000.0
     )
 
