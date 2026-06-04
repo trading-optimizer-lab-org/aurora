@@ -14,7 +14,7 @@ import yfinance as yf
 from numba import njit
 
 
-CAMPAIGN_ID = "swr_path_cppi_inverse_sector_mdd15_trainonly_corr95_360jobs"
+CAMPAIGN_ID = "swr_path_cppi_multi_tsmom_inverse_sector_mdd15_trainonly_corr95_360jobs"
 INITIAL_CAPITAL = 100_000.0
 MONTHLY_WITHDRAWAL = 2_000.0
 TRAIN_END = pd.Timestamp("2010-12-31")
@@ -385,6 +385,8 @@ def precompute_signals(returns: pd.DataFrame) -> dict[str, pd.DataFrame | pd.Ser
     assets = list(PROXIES)
     for lb in [1, 3, 6, 10, 12]:
         out[f"mom_{lb}"] = (1.0 + returns[assets]).rolling(lb).apply(np.prod, raw=True).shift(1) - 1.0
+    for lb in [3, 6, 12]:
+        out[f"vol_{lb}"] = returns[assets].rolling(lb).std().shift(1)
     return out
 
 
@@ -392,9 +394,13 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
     low_risk = family_id in {0, 1, 2, 3, 10, 11, 12, 13}
     return {
         "family_id": family_id,
-        "risk_mode": str(rng.choice(["ndx", "sp500", "inverse_sp500", "energy", "financial", "risk_blend", "sector_blend", "inverse_blend", "risk_vs_treasury", "sector_vs_treasury"])),
+        "risk_mode": str(rng.choice(["ndx", "sp500", "inverse_sp500", "energy", "financial", "multi_tsmom", "risk_blend", "sector_blend", "inverse_blend", "risk_vs_treasury", "sector_vs_treasury"])),
         "safe_mode": str(rng.choice(["shy", "ief", "tlt", "inverse_sp500", "safe_blend", "tlt_tsmom", "ief_tsmom", "inverse_tsmom", "safe_tsmom_blend"])),
         "lookback": int(rng.choice([1, 3, 6, 10, 12])),
+        "vol_lookback": int(rng.choice([3, 6, 12])),
+        "top_n": int(rng.choice([1, 2, 3, 4])),
+        "bottom_n": int(rng.choice([0, 1, 2, 3])),
+        "score_power": float(rng.choice([0.5, 1.0, 1.5, 2.0])),
         "base_exposure": float(rng.uniform(0.0, 2.5 if low_risk else 5.0)),
         "multiplier": float(rng.uniform(0.0, 18.0 if low_risk else 35.0)),
         "floor_pct": float(rng.uniform(0.70, 0.90)),
@@ -436,6 +442,9 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
     elif params["risk_mode"] == "financial":
         risk_ret = returns["financial"]
         sig = mom["financial"] - float(params["signal_threshold"])
+    elif params["risk_mode"] == "multi_tsmom":
+        risk_ret = build_multi_tsmom_returns(returns, signals, params)
+        sig = pd.Series(1.0, index=returns.index)
     elif params["risk_mode"] == "risk_vs_treasury":
         risk_ret = 0.6 * returns["ndx"] + 0.4 * returns["long_treasury"]
         sig = (mom["ndx"] - mom["long_treasury"]) - float(params["signal_threshold"])
@@ -506,6 +515,35 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
         norm = abs(float(params["safe_blend_shy"])) + abs(float(params["safe_blend_ief"])) + abs(float(params["safe_blend_tlt"]))
         safe_ret = raw / norm if norm > 0 else returns["short_treasury"] * 0.0
     return risk_ret.astype(float), safe_ret.astype(float), sig.astype(float)
+
+
+def build_multi_tsmom_returns(returns: pd.DataFrame, signals: dict[str, Any], params: dict[str, Any]) -> pd.Series:
+    assets = list(PROXIES)
+    mom = signals[f"mom_{int(params['lookback'])}"].reindex(returns.index).fillna(0.0)
+    vol = signals[f"vol_{int(params['vol_lookback'])}"].reindex(returns.index).replace(0.0, np.nan)
+    threshold = float(params["signal_threshold"])
+    top_n = int(params["top_n"])
+    bottom_n = int(params["bottom_n"]) if int(params["allow_short"]) == 1 else 0
+    score_power = float(params["score_power"])
+    values: list[float] = []
+    for dt in returns.index:
+        score = mom.loc[dt, assets].astype(float)
+        risk = vol.loc[dt, assets].astype(float).fillna(score.abs().median() if score.abs().median() > 0 else 1.0)
+        adjusted = score / risk.clip(lower=1.0e-6)
+        longs = adjusted[adjusted > threshold].sort_values(ascending=False).head(top_n)
+        shorts = adjusted[adjusted < -threshold].sort_values(ascending=True).head(bottom_n)
+        weights = pd.Series(0.0, index=assets)
+        if len(longs):
+            lw = longs.abs().pow(score_power)
+            weights.loc[lw.index] = lw / lw.sum()
+        if len(shorts):
+            sw = shorts.abs().pow(score_power)
+            weights.loc[sw.index] = weights.loc[sw.index] - sw / sw.sum()
+        gross = weights.abs().sum()
+        if gross > 0:
+            weights = weights / gross
+        values.append(float((weights * returns.loc[dt, assets]).sum()))
+    return pd.Series(values, index=returns.index)
 
 
 def train_only_score(
