@@ -14,7 +14,7 @@ import yfinance as yf
 from numba import njit
 
 
-CAMPAIGN_ID = "swr_path_cppi_sector_mdd15_trainonly_corr95_360jobs"
+CAMPAIGN_ID = "swr_path_cppi_inverse_sector_mdd15_trainonly_corr95_360jobs"
 INITIAL_CAPITAL = 100_000.0
 MONTHLY_WITHDRAWAL = 2_000.0
 TRAIN_END = pd.Timestamp("2010-12-31")
@@ -36,6 +36,7 @@ PROXIES = {
     "short_treasury": {"symbol": "VFISX", "tradable_proxy": "SHY", "proxy_correlation": 0.951884},
     "energy": {"symbol": "FSENX", "tradable_proxy": "XLE", "proxy_correlation": 0.969365},
     "financial": {"symbol": "FIDSX", "tradable_proxy": "XLF", "proxy_correlation": 0.966307},
+    "inverse_sp500": {"symbol": "RYURX", "tradable_proxy": "SH", "proxy_correlation": 0.996929},
 }
 
 
@@ -391,8 +392,8 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
     low_risk = family_id in {0, 1, 2, 3, 10, 11, 12, 13}
     return {
         "family_id": family_id,
-        "risk_mode": str(rng.choice(["ndx", "sp500", "energy", "financial", "risk_blend", "sector_blend", "risk_vs_treasury", "sector_vs_treasury"])),
-        "safe_mode": str(rng.choice(["shy", "ief", "tlt", "safe_blend", "tlt_tsmom", "ief_tsmom", "safe_tsmom_blend"])),
+        "risk_mode": str(rng.choice(["ndx", "sp500", "inverse_sp500", "energy", "financial", "risk_blend", "sector_blend", "inverse_blend", "risk_vs_treasury", "sector_vs_treasury"])),
+        "safe_mode": str(rng.choice(["shy", "ief", "tlt", "inverse_sp500", "safe_blend", "tlt_tsmom", "ief_tsmom", "inverse_tsmom", "safe_tsmom_blend"])),
         "lookback": int(rng.choice([1, 3, 6, 10, 12])),
         "base_exposure": float(rng.uniform(0.0, 2.5 if low_risk else 5.0)),
         "multiplier": float(rng.uniform(0.0, 18.0 if low_risk else 35.0)),
@@ -410,6 +411,7 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
         "risk_blend_tlt": float(rng.uniform(-1.0, 2.0)),
         "risk_blend_energy": float(rng.uniform(-1.0, 2.0)),
         "risk_blend_financial": float(rng.uniform(-1.0, 2.0)),
+        "risk_blend_inverse": float(rng.uniform(-1.0, 2.0)),
         "safe_blend_shy": float(rng.uniform(-1.0, 2.0)),
         "safe_blend_ief": float(rng.uniform(-1.0, 2.0)),
         "safe_blend_tlt": float(rng.uniform(-1.0, 2.0)),
@@ -425,6 +427,9 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
     elif params["risk_mode"] == "sp500":
         risk_ret = returns["sp500"]
         sig = mom["sp500"] - float(params["signal_threshold"])
+    elif params["risk_mode"] == "inverse_sp500":
+        risk_ret = returns["inverse_sp500"]
+        sig = mom["inverse_sp500"] - float(params["signal_threshold"])
     elif params["risk_mode"] == "energy":
         risk_ret = returns["energy"]
         sig = mom["energy"] - float(params["signal_threshold"])
@@ -446,6 +451,15 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
         norm = abs(float(params["risk_blend_energy"])) + abs(float(params["risk_blend_financial"])) + abs(float(params["risk_blend_tlt"]))
         risk_ret = raw / norm if norm > 0 else returns["energy"] * 0.0
         sig = (mom["energy"] + mom["financial"] + mom["long_treasury"]) / 3.0 - float(params["signal_threshold"])
+    elif params["risk_mode"] == "inverse_blend":
+        raw = (
+            float(params["risk_blend_ndx"]) * returns["ndx"]
+            + float(params["risk_blend_inverse"]) * returns["inverse_sp500"]
+            + float(params["risk_blend_tlt"]) * returns["long_treasury"]
+        )
+        norm = abs(float(params["risk_blend_ndx"])) + abs(float(params["risk_blend_inverse"])) + abs(float(params["risk_blend_tlt"]))
+        risk_ret = raw / norm if norm > 0 else returns["inverse_sp500"] * 0.0
+        sig = (mom["ndx"] + mom["inverse_sp500"] + mom["long_treasury"]) / 3.0 - float(params["signal_threshold"])
     else:
         raw = (
             float(params["risk_blend_ndx"]) * returns["ndx"]
@@ -461,12 +475,17 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
         safe_ret = returns["intermediate_treasury"]
     elif params["safe_mode"] == "tlt":
         safe_ret = returns["long_treasury"]
+    elif params["safe_mode"] == "inverse_sp500":
+        safe_ret = returns["inverse_sp500"]
     elif params["safe_mode"] == "tlt_tsmom":
         safe_sign = np.where(mom["long_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
         safe_ret = pd.Series(safe_sign, index=returns.index) * returns["long_treasury"]
     elif params["safe_mode"] == "ief_tsmom":
         safe_sign = np.where(mom["intermediate_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
         safe_ret = pd.Series(safe_sign, index=returns.index) * returns["intermediate_treasury"]
+    elif params["safe_mode"] == "inverse_tsmom":
+        safe_sign = np.where(mom["inverse_sp500"] >= float(params["signal_threshold"]), 1.0, -1.0)
+        safe_ret = pd.Series(safe_sign, index=returns.index) * returns["inverse_sp500"]
     elif params["safe_mode"] == "safe_tsmom_blend":
         shy_sign = np.where(mom["short_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
         ief_sign = np.where(mom["intermediate_treasury"] >= float(params["signal_threshold"]), 1.0, -1.0)
