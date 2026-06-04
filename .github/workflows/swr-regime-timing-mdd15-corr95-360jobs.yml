@@ -1,0 +1,143 @@
+name: SWR Regime Timing MDD15 Corr95 360 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      configs_per_shard:
+        description: "Configs tested per shard"
+        required: true
+        default: "80000"
+      time_budget_minutes:
+        description: "Clean internal shard runtime before upload"
+        required: true
+        default: "45"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/swr_regime_timing_mdd15_corr95_360jobs
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download no-locked corr95 proxy data
+        run: python scripts/run_swr_regime_timing_mdd15_corr95.py --mode data --output-dir "$OUTPUT_DIR"
+      - name: Upload data
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-regime-timing-mdd15-corr95-data
+          path: ${{ env.OUTPUT_DIR }}/data
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - name: Build 20x18 matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          full = [
+              {"family_id": family_id, "shard_id": shard_id}
+              for family_id in range(20)
+              for shard_id in range(18)
+          ]
+          print("matrix_a=" + json.dumps(full[:180]))
+          print("matrix_b=" + json.dumps(full[180:]))
+          PY
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 65
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download data
+        uses: actions/download-artifact@v4
+        with:
+          name: swr-regime-timing-mdd15-corr95-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Run regime timing MDD15 shard
+        run: |
+          python scripts/run_swr_regime_timing_mdd15_corr95.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --family-id "${{ matrix.family_id }}" \
+            --shard-id "${{ matrix.shard_id }}" \
+            --configs-per-shard "${{ inputs.configs_per_shard }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}"
+      - name: Upload shard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-regime-timing-mdd15-corr95-family-${{ matrix.family_id }}-shard-${{ matrix.shard_id }}
+          path: ${{ env.OUTPUT_DIR }}/shards/family_*_shard_*
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 65
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *search_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, search_a, search_b]
+    if: always()
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download data
+        uses: actions/download-artifact@v4
+        with:
+          name: swr-regime-timing-mdd15-corr95-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: swr-regime-timing-mdd15-corr95-family-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+      - name: Merge shards
+        run: python scripts/run_swr_regime_timing_mdd15_corr95.py --mode merge --output-dir "$OUTPUT_DIR"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-regime-timing-mdd15-corr95-360jobs-results
+          path: ${{ env.OUTPUT_DIR }}
