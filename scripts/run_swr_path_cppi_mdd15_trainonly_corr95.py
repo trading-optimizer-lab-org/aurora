@@ -14,7 +14,7 @@ import yfinance as yf
 from numba import njit
 
 
-CAMPAIGN_ID = "swr_path_cppi_mdd15_trainonly_corr95_360jobs"
+CAMPAIGN_ID = "swr_path_cppi_sector_mdd15_trainonly_corr95_360jobs"
 INITIAL_CAPITAL = 100_000.0
 MONTHLY_WITHDRAWAL = 2_000.0
 TRAIN_END = pd.Timestamp("2010-12-31")
@@ -34,6 +34,8 @@ PROXIES = {
     "long_treasury": {"symbol": "VUSTX", "tradable_proxy": "TLT", "proxy_correlation": 0.989280},
     "intermediate_treasury": {"symbol": "VFITX", "tradable_proxy": "IEF", "proxy_correlation": 0.981267},
     "short_treasury": {"symbol": "VFISX", "tradable_proxy": "SHY", "proxy_correlation": 0.951884},
+    "energy": {"symbol": "FSENX", "tradable_proxy": "XLE", "proxy_correlation": 0.969365},
+    "financial": {"symbol": "FIDSX", "tradable_proxy": "XLF", "proxy_correlation": 0.966307},
 }
 
 
@@ -389,7 +391,7 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
     low_risk = family_id in {0, 1, 2, 3, 10, 11, 12, 13}
     return {
         "family_id": family_id,
-        "risk_mode": str(rng.choice(["ndx", "sp500", "risk_blend", "risk_vs_treasury"])),
+        "risk_mode": str(rng.choice(["ndx", "sp500", "energy", "financial", "risk_blend", "sector_blend", "risk_vs_treasury", "sector_vs_treasury"])),
         "safe_mode": str(rng.choice(["shy", "ief", "tlt", "safe_blend", "tlt_tsmom", "ief_tsmom", "safe_tsmom_blend"])),
         "lookback": int(rng.choice([1, 3, 6, 10, 12])),
         "base_exposure": float(rng.uniform(0.0, 2.5 if low_risk else 5.0)),
@@ -406,6 +408,8 @@ def sample_params(rng: np.random.Generator, family_id: int) -> dict[str, Any]:
         "risk_blend_ndx": float(rng.uniform(-1.0, 2.0)),
         "risk_blend_sp500": float(rng.uniform(-1.0, 2.0)),
         "risk_blend_tlt": float(rng.uniform(-1.0, 2.0)),
+        "risk_blend_energy": float(rng.uniform(-1.0, 2.0)),
+        "risk_blend_financial": float(rng.uniform(-1.0, 2.0)),
         "safe_blend_shy": float(rng.uniform(-1.0, 2.0)),
         "safe_blend_ief": float(rng.uniform(-1.0, 2.0)),
         "safe_blend_tlt": float(rng.uniform(-1.0, 2.0)),
@@ -421,9 +425,27 @@ def build_streams(returns: pd.DataFrame, signals: dict[str, Any], params: dict[s
     elif params["risk_mode"] == "sp500":
         risk_ret = returns["sp500"]
         sig = mom["sp500"] - float(params["signal_threshold"])
+    elif params["risk_mode"] == "energy":
+        risk_ret = returns["energy"]
+        sig = mom["energy"] - float(params["signal_threshold"])
+    elif params["risk_mode"] == "financial":
+        risk_ret = returns["financial"]
+        sig = mom["financial"] - float(params["signal_threshold"])
     elif params["risk_mode"] == "risk_vs_treasury":
         risk_ret = 0.6 * returns["ndx"] + 0.4 * returns["long_treasury"]
         sig = (mom["ndx"] - mom["long_treasury"]) - float(params["signal_threshold"])
+    elif params["risk_mode"] == "sector_vs_treasury":
+        risk_ret = 0.5 * returns["energy"] + 0.5 * returns["financial"]
+        sig = ((mom["energy"] + mom["financial"]) / 2.0 - mom["long_treasury"]) - float(params["signal_threshold"])
+    elif params["risk_mode"] == "sector_blend":
+        raw = (
+            float(params["risk_blend_energy"]) * returns["energy"]
+            + float(params["risk_blend_financial"]) * returns["financial"]
+            + float(params["risk_blend_tlt"]) * returns["long_treasury"]
+        )
+        norm = abs(float(params["risk_blend_energy"])) + abs(float(params["risk_blend_financial"])) + abs(float(params["risk_blend_tlt"]))
+        risk_ret = raw / norm if norm > 0 else returns["energy"] * 0.0
+        sig = (mom["energy"] + mom["financial"] + mom["long_treasury"]) / 3.0 - float(params["signal_threshold"])
     else:
         raw = (
             float(params["risk_blend_ndx"]) * returns["ndx"]
