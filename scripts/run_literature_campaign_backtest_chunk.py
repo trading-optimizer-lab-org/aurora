@@ -46,6 +46,7 @@ def main() -> int:
         validation_end=campaign.validation_end,
         locked_start=campaign.locked_start,
         expected_signatures=expected,
+        require_data_start_lte=campaign.require_effective_start,
     )
     signatures = _ENGINE.load_signatures(args.specs, expected=expected)
     dataset = _ENGINE.synthetic_dataset() if args.synthetic_smoke else _ENGINE.load_dataset(config)

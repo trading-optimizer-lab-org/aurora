@@ -73,6 +73,22 @@ def _dataset() -> dict[str, object]:
     }
 
 
+def _late_symbol_dataset() -> dict[str, object]:
+    idx = pd.date_range("1995-01-03", "2020-12-31", freq="B")
+    base = np.sin(np.arange(len(idx)) / 19.0) * 0.002 + 0.0002
+    spy = pd.Series(100.0 * np.cumprod(1.0 + base), index=idx)
+    qqq = pd.Series(80.0 * np.cumprod(1.0 + base * 1.2), index=idx)
+    qqq.loc[qqq.index < "2003-01-01"] = np.nan
+    prices = pd.DataFrame({"SPY": spy, "QQQ": qqq}, index=idx)
+    return {
+        "prices": prices,
+        "returns": prices.pct_change(),
+        "context": pd.DataFrame(index=idx),
+        "symbols_by_bucket": {"equity_index": ("SPY", "QQQ")},
+        "locked_opened": False,
+    }
+
+
 def test_manifest_has_9419_unique_signatures() -> None:
     frame = load_signatures("config/literature_strategy_signatures_9419.csv", expected=9419)
 
@@ -88,6 +104,27 @@ def test_signature_to_spec_is_stable_and_candidate_id_ignores_chunk() -> None:
     assert spec["symbols"] == ("SPY", "QQQ")
     assert spec["frequency"] == "monthly"
     assert candidate_id_from_signature(row) == candidate_id_from_signature(dict(row))
+
+
+def test_required_start_filters_late_symbols() -> None:
+    config = LiteratureBacktestConfig(require_data_start_lte="1995-01-01")
+    spec, reason = signature_to_spec(_row(), _late_symbol_dataset(), config)
+
+    assert reason == ""
+    assert spec["symbols"] == ("SPY",)
+
+
+def test_required_start_rejects_strategy_when_all_symbols_are_late() -> None:
+    dataset = _late_symbol_dataset()
+    dataset["prices"] = dataset["prices"].loc[:, ["QQQ"]]
+    dataset["returns"] = dataset["returns"].loc[:, ["QQQ"]]
+    dataset["symbols_by_bucket"] = {"equity_index": ("QQQ",)}
+    config = LiteratureBacktestConfig(require_data_start_lte="1995-01-01")
+
+    out = evaluate_signature(_row(), dataset, config)
+
+    assert out["status"] == "unsupported"
+    assert out["unsupported_reason"] == "unsupported_no_asset_mapping"
 
 
 def test_unsupported_cases_are_explicit() -> None:

@@ -93,6 +93,7 @@ class LiteratureBacktestConfig:
     expected_signatures: int = 9419
     min_train_observations: int = 36
     min_validation_observations: int = 12
+    require_data_start_lte: str = ""
 
 
 def load_signatures(path: str | Path, *, expected: int = 9419) -> pd.DataFrame:
@@ -225,13 +226,17 @@ def run_chunk(
 
 def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: LiteratureBacktestConfig) -> dict[str, Any]:
     base = _base_output(row)
-    spec, reason = signature_to_spec(row, dataset)
+    spec, reason = signature_to_spec(row, dataset, config)
     if reason:
         return base | _unsupported(reason)
 
     frequency = spec["frequency"]
     ppy = PERIODS_PER_YEAR[frequency]
     coverage_start = selected_symbols_coverage_start(dataset["prices"], spec["symbols"])
+    if config.require_data_start_lte and coverage_start is not None:
+        required = pd.Timestamp(config.require_data_start_lte)
+        if pd.Timestamp(coverage_start) > required + pd.Timedelta(days=7):
+            return base | _unsupported("unsupported_not_enough_required_history")
     returns = _resample_returns(dataset["returns"].loc[:, list(spec["symbols"])], frequency)
     context = _resample_context(dataset["context"], frequency, returns.index)
     signal = build_signal(returns, context, spec)
@@ -289,7 +294,7 @@ def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: Lit
     } | train_1x | valid_1x | train | validation | down_months
 
 
-def signature_to_spec(row: dict[str, Any], dataset: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def signature_to_spec(row: dict[str, Any], dataset: dict[str, Any], config: LiteratureBacktestConfig | None = None) -> tuple[dict[str, Any], str]:
     asset_bucket = str(row.get("asset_bucket") or "")
     signal_bucket = str(row.get("signal_bucket") or "")
     action_bucket = str(row.get("action_bucket") or "")
@@ -299,7 +304,11 @@ def signature_to_spec(row: dict[str, Any], dataset: dict[str, Any]) -> tuple[dic
     frequency = "monthly_template" if frequency_bucket == "unspecified" else frequency_bucket
     if frequency not in PERIODS_PER_YEAR:
         return {}, "unsupported_frequency"
-    symbols = available_symbols_for_bucket(asset_bucket, dataset)
+    symbols = available_symbols_for_bucket(
+        asset_bucket,
+        dataset,
+        require_start=getattr(config, "require_data_start_lte", "") or "",
+    )
     if not symbols:
         return {}, "unsupported_no_asset_mapping"
     if signal_bucket not in {
@@ -341,9 +350,10 @@ def signature_to_spec(row: dict[str, Any], dataset: dict[str, Any]) -> tuple[dic
     }, ""
 
 
-def available_symbols_for_bucket(asset_bucket: str, dataset: dict[str, Any]) -> tuple[str, ...]:
+def available_symbols_for_bucket(asset_bucket: str, dataset: dict[str, Any], *, require_start: str = "") -> tuple[str, ...]:
     symbols_by_bucket: dict[str, tuple[str, ...]] = dataset["symbols_by_bucket"]
     returns: pd.DataFrame = dataset["returns"]
+    prices: pd.DataFrame = dataset.get("prices", pd.DataFrame())
     preferred = PREFERRED_SYMBOLS.get(asset_bucket, tuple())
     allowed_groups = ASSET_BUCKET_GROUPS.get(asset_bucket)
     if not allowed_groups:
@@ -351,8 +361,16 @@ def available_symbols_for_bucket(asset_bucket: str, dataset: dict[str, Any]) -> 
     allowed: list[str] = []
     for group in allowed_groups:
         allowed.extend(symbols_by_bucket.get(group, tuple()))
-    ordered = [s for s in preferred if s in allowed and s in returns.columns]
-    ordered.extend(s for s in allowed if s not in ordered and s in returns.columns)
+    ordered = [
+        s
+        for s in preferred
+        if s in allowed and s in returns.columns and _symbol_has_required_start(prices, returns, s, require_start)
+    ]
+    ordered.extend(
+        s
+        for s in allowed
+        if s not in ordered and s in returns.columns and _symbol_has_required_start(prices, returns, s, require_start)
+    )
     return tuple(ordered[:16])
 
 
@@ -560,6 +578,24 @@ def normalized_effective_start(coverage_start: pd.Timestamp | None, train_start:
     if coverage_start <= required + pd.Timedelta(days=7):
         return str(required.date())
     return str(coverage_start.date())
+
+
+def _symbol_has_required_start(
+    prices: pd.DataFrame,
+    returns: pd.DataFrame,
+    symbol: str,
+    require_start: str,
+) -> bool:
+    if not require_start:
+        return True
+    source = prices if symbol in prices.columns else returns
+    if symbol not in source.columns:
+        return False
+    series = source[symbol].dropna()
+    if series.empty:
+        return False
+    required = pd.Timestamp(require_start)
+    return pd.Timestamp(series.index.min()) <= required + pd.Timedelta(days=7)
 
 
 def _benchmark_returns(dataset: dict[str, Any]) -> pd.Series:
