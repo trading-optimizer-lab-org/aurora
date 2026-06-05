@@ -47,6 +47,7 @@ def main() -> int:
         locked_start=campaign.locked_start,
         expected_signatures=expected,
         require_data_start_lte=campaign.require_effective_start,
+        size_grid=tuple(float(value) for value in campaign.raw.get("backtest", {}).get("size_grid", [])) or _ENGINE.SIZE_GRID,
     )
     signatures = _ENGINE.load_signatures(args.specs, expected=expected)
     dataset = _ENGINE.synthetic_dataset() if args.synthetic_smoke else _ENGINE.load_dataset(config)

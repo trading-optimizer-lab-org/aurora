@@ -94,6 +94,7 @@ class LiteratureBacktestConfig:
     min_train_observations: int = 36
     min_validation_observations: int = 12
     require_data_start_lte: str = ""
+    size_grid: tuple[float, ...] = SIZE_GRID
 
 
 def load_signatures(path: str | Path, *, expected: int = 9419) -> pd.DataFrame:
@@ -255,7 +256,7 @@ def evaluate_signature(row: dict[str, Any], dataset: dict[str, Any], config: Lit
     if int(valid_base.dropna().shape[0]) < config.min_validation_observations:
         return base | _unsupported("unsupported_not_enough_validation_history")
 
-    size, train_metrics = choose_train_size(train_base, ppy)
+    size, train_metrics = choose_train_size(train_base, ppy, config.size_grid)
     train_sized = train_base * size
     valid_sized = valid_base * size
     train_1x = metrics_dict(train_base, ppy, "train_1x")
@@ -466,11 +467,11 @@ def portfolio_returns(returns: pd.DataFrame, weights: pd.DataFrame) -> pd.Series
     return out
 
 
-def choose_train_size(base_returns: pd.Series, ppy: int) -> tuple[float, dict[str, float]]:
+def choose_train_size(base_returns: pd.Series, ppy: int, size_grid: tuple[float, ...] = SIZE_GRID) -> tuple[float, dict[str, float]]:
     best_size = 0.0
     best_metrics = metrics_raw(base_returns * 0.0, ppy)
     best_score = -math.inf
-    for size in SIZE_GRID:
+    for size in size_grid:
         sized = base_returns * size
         finite = sized.dropna()
         if finite.empty:

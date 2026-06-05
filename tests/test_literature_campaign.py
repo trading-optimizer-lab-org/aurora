@@ -302,6 +302,15 @@ def test_curated_precision_campaign_uses_train_only_classification_ranking() -> 
     assert cfg.max_parallel == 355
 
 
+def test_curated_precision_1x_campaign_caps_size_grid() -> None:
+    cfg = load_campaign_config("config/literature_campaign_sp500_down_papers_curated_precision_v3_1x.yaml")
+
+    assert cfg.campaign_id == "sp500_down_papers_curated_precision_v3_1x"
+    assert max(float(value) for value in cfg.raw["backtest"]["size_grid"]) == 1.0
+    assert cfg.raw["ranking"]["primary_metric"] == "train_sp500_down_precision_pct"
+    assert cfg.require_effective_start == "1995-01-01"
+
+
 def test_campaign_merge_reports_empty_top20_when_required_start_filters_all(tmp_path: Path) -> None:
     from scripts.merge_literature_campaign_backtest import merge_campaign
 

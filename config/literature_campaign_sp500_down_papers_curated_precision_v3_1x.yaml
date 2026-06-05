@@ -1,0 +1,44 @@
+campaign_id: sp500_down_papers_curated_precision_v3_1x
+objective: "Probar reglas Aurora basadas en estudios curados para anticipar/proteger caidas del SP500 priorizando precision train y size maximo 1x"
+sources:
+  curated_ideas_json: drafts/sp500_literature_extracted_ideas_20260517/ideas_to_try_curated_consolidated.json
+  search_external: false
+  external_queries: []
+rules:
+  allow_exact: true
+  allow_proxy: true
+  allow_template: false
+  require_full_text_evidence: true
+  forbid_invented_proxies: true
+  min_lag_days: 1
+  sp500_down_horizon: "months"
+  require_effective_start_lte: "1995-01-01"
+  locked_start: "2021-01-01"
+  locked_opened: false
+diversity:
+  target_count: 18
+  max_per_strategy_family: 1
+  max_per_study_id: 1
+universe:
+  allow_assets: ["ETF", "futures_proxy", "macro", "rates", "volatility_index"]
+  forbid_assets: ["crypto"]
+  require_data_available: true
+backtest:
+  train_start: "1995-01-01"
+  train_end: "2010-12-31"
+  validation_start: "2011-01-01"
+  validation_end: "2020-12-31"
+  benchmark: "SPY"
+  size_grid: [0, 0.25, 0.5, 1]
+  choose_size_on_train_only: true
+ranking:
+  primary_metric: "train_sp500_down_precision_pct"
+  tie_breakers:
+    - "train_sp500_down_recall_pct"
+    - "train_sp500_down_month_avg_return_pct"
+    - "train_sp500_up_month_positive_pct"
+    - "train_mdd"
+    - "train_sharpe"
+github:
+  chunks: 355
+  max_parallel: 355

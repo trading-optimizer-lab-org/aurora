@@ -157,6 +157,13 @@ def test_evaluate_signature_uses_train_size_and_keeps_validation_report_only() -
     assert "validation_sp500_down_precision_pct" in out
 
 
+def test_evaluate_signature_respects_config_size_grid() -> None:
+    out = evaluate_signature(_row(), _dataset(), LiteratureBacktestConfig(size_grid=(0.0, 0.25)))
+
+    assert out["status"] == "evaluated"
+    assert out["size_chosen_train"] in {0.0, 0.25}
+
+
 def test_intraday_is_not_backtested_without_intraday_dataset() -> None:
     out = evaluate_signature(_row(frequency_bucket="intraday"), _dataset(), LiteratureBacktestConfig())
 
