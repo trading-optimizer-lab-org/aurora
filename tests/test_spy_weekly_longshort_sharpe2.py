@@ -267,6 +267,30 @@ def test_select_top_candidates_preserves_split_guard_representatives() -> None:
     assert any(selected["strategy_id"].str.startswith("guard_"))
 
 
+def test_time_split_leaf_tree_returns_valid_policy_and_regime_params() -> None:
+    rng = np.random.default_rng(23)
+    matrix = rng.normal(size=(320, 8))
+    train_mask = np.array([True] * 240 + [False] * 80)
+    early_signal = matrix[:, 0] - matrix[:, 1]
+    late_signal = matrix[:, 2] + matrix[:, 3] * 0.5
+    spy_returns = np.empty(320)
+    spy_returns[:120] = np.where(early_signal[:120] > 0.0, 0.010, -0.006)
+    spy_returns[120:] = np.where(late_signal[120:] > 0.0, 0.010, -0.006)
+    params = {
+        "rule_type": "time_split_leaf_tree",
+        "feature_indices": [0, 1, 2, 3],
+        "thresholds": [0.0, 0.0, 0.0, 0.0],
+        "directions": [1.0, -1.0, 1.0, 1.0],
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert params["time_split_fallback"] is False
+    assert "early_split_thresholds" in params
+    assert "late_split_thresholds" in params
+
+
 def test_cv_bagged_leaf_ensemble_returns_valid_policy_and_cv_metrics() -> None:
     rng = np.random.default_rng(7)
     matrix = rng.normal(size=(260, 10))
