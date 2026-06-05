@@ -49,7 +49,7 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
-    symbols = ["SPY", "^VIX", "^TNX"]
+    symbols = ["SPY", "^VIX", "^TNX", "^GSPC", "^IXIC", "^RUT", "^DJI"]
     raw = yf.download(
         symbols,
         start="1995-01-01",
@@ -64,8 +64,22 @@ def run_data(output_dir: Path) -> None:
         prices[symbol] = raw[symbol]["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw["Close"]
     prices = prices.dropna(how="any")
     weekly_prices = prices.resample("W-FRI").last().dropna(how="any")
+    if isinstance(raw.columns, pd.MultiIndex):
+        spy_raw = raw["SPY"].copy()
+    else:
+        spy_raw = raw.copy()
+    spy_ohlcv = pd.DataFrame(
+        {
+            "SPY_OPEN": spy_raw["Open"].resample("W-FRI").first(),
+            "SPY_HIGH": spy_raw["High"].resample("W-FRI").max(),
+            "SPY_LOW": spy_raw["Low"].resample("W-FRI").min(),
+            "SPY_VOLUME": spy_raw["Volume"].resample("W-FRI").sum(),
+        }
+    )
+    weekly_prices = weekly_prices.join(spy_ohlcv, how="left").dropna(how="any")
     weekly_prices = weekly_prices[weekly_prices.index < LOCKED_START]
-    weekly_returns = weekly_prices.pct_change(fill_method=None).dropna(how="any")
+    close_cols = symbols
+    weekly_returns = weekly_prices[close_cols].pct_change(fill_method=None).dropna(how="any")
     if weekly_returns.index.max() >= LOCKED_START:
         raise RuntimeError(f"Locked leak: max date {weekly_returns.index.max()}")
     if weekly_returns.index.min() > pd.Timestamp("1995-02-28"):
@@ -79,6 +93,7 @@ def run_data(output_dir: Path) -> None:
         [
             {
                 "traded_asset": "SPY",
+                "context_symbols": "|".join(symbols[1:]),
                 "frequency": "weekly",
                 "position_policy": "always_long_or_short",
                 "min_position": -1.0,
@@ -257,8 +272,40 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
             mean = raw.rolling(lb).mean()
             std = raw.rolling(lb).std().replace(0.0, np.nan)
             data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
+    for symbol, name in [("^GSPC", "spx"), ("^IXIC", "nasdaq"), ("^RUT", "russell"), ("^DJI", "dow")]:
+        if symbol not in prices.columns:
+            continue
+        raw = prices[symbol].reindex(returns.index).ffill()
+        ret = raw.pct_change(fill_method=None)
+        for lb in [1, 4, 13, 26, 52]:
+            data[f"{name}_ret_{lb}w"] = (1.0 + ret).rolling(lb).apply(np.prod, raw=True).shift(1) - 1.0
+            data[f"{name}_rel_spy_{lb}w"] = data[f"{name}_ret_{lb}w"] - data[f"spy_ret_{lb}w"]
+        for lb in [13, 26, 52]:
+            mean = raw.rolling(lb).mean()
+            std = raw.rolling(lb).std().replace(0.0, np.nan)
+            data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
+    if {"SPY_OPEN", "SPY_HIGH", "SPY_LOW", "SPY_VOLUME"} <= set(prices.columns):
+        spy_open = prices["SPY_OPEN"].reindex(returns.index).ffill()
+        spy_high = prices["SPY_HIGH"].reindex(returns.index).ffill()
+        spy_low = prices["SPY_LOW"].reindex(returns.index).ffill()
+        spy_close = prices["SPY"].reindex(returns.index).ffill()
+        spy_volume = prices["SPY_VOLUME"].reindex(returns.index).ffill()
+        data["spy_week_range"] = (spy_high / spy_low - 1.0).shift(1)
+        data["spy_week_close_open"] = (spy_close / spy_open - 1.0).shift(1)
+        data["spy_week_close_high"] = (spy_close / spy_high - 1.0).shift(1)
+        data["spy_week_close_low"] = (spy_close / spy_low - 1.0).shift(1)
+        volume_change = spy_volume.pct_change(fill_method=None)
+        for lb in [4, 13, 26, 52]:
+            mean = spy_volume.rolling(lb).mean()
+            std = spy_volume.rolling(lb).std().replace(0.0, np.nan)
+            data[f"spy_volume_z_{lb}w"] = ((spy_volume - mean) / std).shift(1)
+            data[f"spy_volume_ret_{lb}w"] = (1.0 + volume_change).rolling(lb).apply(np.prod, raw=True).shift(1) - 1.0
     data["spy_ret_4w_x_vix_z_26w"] = data["spy_ret_4w"] * data["vix_z_26w"]
     data["spy_ma_20w_x_tnx_z_26w"] = data["spy_ma_gap_20w"] * data["tnx_z_26w"]
+    if "nasdaq_rel_spy_13w" in data.columns:
+        data["spy_ret_13w_x_nasdaq_rel_spy_13w"] = data["spy_ret_13w"] * data["nasdaq_rel_spy_13w"]
+    if "spy_week_range" in data.columns:
+        data["spy_week_range_x_vix_z_13w"] = data["spy_week_range"] * data["vix_z_13w"]
     week = pd.Series(data.index.isocalendar().week.astype(float).to_numpy(), index=data.index)
     month = pd.Series(data.index.month.astype(float), index=data.index)
     quarter = pd.Series(data.index.quarter.astype(float), index=data.index)
