@@ -348,6 +348,30 @@ def test_cv_quadratic_ridge_model_returns_valid_policy_and_cv_params() -> None:
     assert "cv_invert" in params
 
 
+def test_walk_forward_quadratic_ridge_model_is_causal_policy_shape() -> None:
+    rng = np.random.default_rng(37)
+    matrix = rng.normal(size=(420, 7))
+    train_mask = np.array([True] * 300 + [False] * 120)
+    signal = matrix[:, 0] * 0.4 + matrix[:, 1] * matrix[:, 2] * 0.6 - matrix[:, 3] * 0.2
+    spy_returns = np.where(signal > 0.0, 0.007, -0.005)
+    params = {
+        "rule_type": "walk_forward_quadratic_ridge_model",
+        "feature_indices": [0, 1, 2, 3, 4],
+        "weights": [0.2] * 5,
+        "ridge_alpha": 0.2,
+        "walk_forward_min_train": 80,
+        "walk_forward_refit_step": 8,
+        "walk_forward_window": 160,
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert params["walk_forward_refits"] > 0
+    assert params["walk_forward_quadratic"] is True
+    assert params["walk_forward_uses_past_validation_for_validation"] is True
+
+
 def test_multi_era_leaf_tree_returns_valid_policy_and_era_params() -> None:
     rng = np.random.default_rng(31)
     matrix = rng.normal(size=(360, 8))
