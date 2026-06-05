@@ -63,6 +63,8 @@ def test_feature_frame_uses_lagged_features_and_no_locked() -> None:
     assert features.index.max() < LOCKED_START
     # The first feature row must appear only after enough prior data exists.
     assert features.index.min() > returns.index.min()
+    assert "calendar_month_end_week" in features.columns
+    assert "calendar_options_expiry_week" in features.columns
 
 
 def test_spy_daily_weekly_features_are_lagged_into_feature_frame() -> None:

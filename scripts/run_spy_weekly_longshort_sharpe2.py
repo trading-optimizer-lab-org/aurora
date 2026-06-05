@@ -444,11 +444,28 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
     data["calendar_january"] = (month == 1.0).astype(float)
     data["calendar_september"] = (month == 9.0).astype(float)
     data["calendar_q4"] = (quarter == 4.0).astype(float)
+    day = pd.Series(data.index.day.astype(float), index=data.index)
+    days_in_month = pd.Series(data.index.days_in_month.astype(float), index=data.index)
+    week_of_month = ((day - 1.0) // 7.0 + 1.0).clip(1.0, 5.0)
+    for wom in [1, 2, 3, 4, 5]:
+        data[f"calendar_week_of_month_{wom}"] = (week_of_month == float(wom)).astype(float)
+    data["calendar_month_start_week"] = (day <= 7.0).astype(float)
+    data["calendar_month_end_week"] = (day + 7.0 > days_in_month).astype(float)
+    data["calendar_options_expiry_week"] = ((day >= 15.0) & (day <= 21.0)).astype(float)
+    data["calendar_pre_options_expiry_week"] = ((day >= 8.0) & (day <= 14.0)).astype(float)
+    data["calendar_quarter_end_week"] = (
+        (quarter != pd.Series((data.index + pd.Timedelta(days=7)).quarter.astype(float), index=data.index))
+    ).astype(float)
+    data["calendar_year_end_week"] = (
+        (year != pd.Series((data.index + pd.Timedelta(days=7)).year.astype(float), index=data.index))
+    ).astype(float)
     data = data.replace([np.inf, -np.inf], np.nan).dropna(axis=1, how="all").dropna(how="any")
     # Robust per-column scaling, fit using train only to avoid validation leakage.
     train = data[data.index <= TRAIN_END]
     median = train.median()
-    scale = (train.quantile(0.75) - train.quantile(0.25)).replace(0.0, np.nan)
+    iqr = train.quantile(0.75) - train.quantile(0.25)
+    std = train.std().replace(0.0, np.nan)
+    scale = iqr.mask(iqr == 0.0, std).replace(0.0, np.nan)
     valid_cols = scale.dropna().index
     data = data[valid_cols]
     median = median[valid_cols]
