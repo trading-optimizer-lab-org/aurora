@@ -18,6 +18,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     metrics,
     position_audit,
     sample_params,
+    select_top_candidates_for_merge,
     train_only_stability,
 )
 
@@ -213,6 +214,57 @@ def test_cv_era_leaf_tree_returns_valid_policy_and_cv_metrics() -> None:
     assert np.isfinite(selected["sharpe"])
     assert np.isfinite(params["cv_train_sharpe"])
     assert "leaf_era_agreement_mean" in params
+
+
+def test_split_guard_leaf_tree_returns_valid_policy_and_internal_fold_metrics() -> None:
+    rng = np.random.default_rng(16)
+    matrix = rng.normal(size=(260, 8))
+    train_mask = np.array([True] * 200 + [False] * 60)
+    signal = matrix[:, 0] - matrix[:, 1] * 0.3 + matrix[:, 2] * 0.2
+    spy_returns = np.where(signal > 0.0, 0.009, -0.006)
+    params = {
+        "rule_type": "split_guard_leaf_tree",
+        "feature_indices": [0, 1, 2, 3],
+        "thresholds": [0.0, 0.2, -0.3, 0.4],
+        "directions": [1.0, -1.0, 1.0, -1.0],
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert np.isfinite(params["cv_train_sharpe"])
+    assert np.isfinite(params["cv_min_fold_sharpe"])
+    assert "leaf_split_guard_agreement_mean" in params
+
+
+def test_select_top_candidates_preserves_split_guard_representatives() -> None:
+    rows = []
+    for i in range(40):
+        rows.append(
+            {
+                "strategy_id": f"loud_{i}",
+                "rule_type": "train_leaf_tree",
+                "train_score": 10_000.0 - i,
+                "train_sharpe": 2.2,
+                "train_cagr": 0.3,
+                "cv_min_fold_sharpe": -1.0,
+                "cv_fold_positive_pct": 0.25,
+            }
+        )
+    for i in range(5):
+        rows.append(
+            {
+                "strategy_id": f"guard_{i}",
+                "rule_type": "split_guard_leaf_tree",
+                "train_score": 100.0 - i,
+                "train_sharpe": 1.1,
+                "train_cagr": 0.1,
+                "cv_min_fold_sharpe": 0.9 + i * 0.01,
+                "cv_fold_positive_pct": 1.0,
+            }
+        )
+    selected = select_top_candidates_for_merge(pd.DataFrame(rows), top_per_stage=10)
+    assert any(selected["strategy_id"].str.startswith("guard_"))
 
 
 def test_cv_bagged_leaf_ensemble_returns_valid_policy_and_cv_metrics() -> None:
