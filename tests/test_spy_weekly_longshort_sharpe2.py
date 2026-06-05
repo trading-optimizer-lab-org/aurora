@@ -157,6 +157,25 @@ def test_era_leaf_tree_returns_valid_policy() -> None:
     assert "leaf_era_agreement_mean" in params
 
 
+def test_cv_era_leaf_tree_returns_valid_policy_and_cv_metrics() -> None:
+    rng = np.random.default_rng(6)
+    matrix = rng.normal(size=(220, 7))
+    train_mask = np.array([True] * 160 + [False] * 60)
+    spy_returns = np.where(matrix[:, 0] + matrix[:, 3] * 0.4 > 0.0, 0.01, -0.007)
+    params = {
+        "rule_type": "cv_era_leaf_tree",
+        "feature_indices": [0, 1, 2, 3],
+        "thresholds": [0.0, 0.1, -0.1, 0.2],
+        "directions": [1.0, 1.0, -1.0, 1.0],
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert np.isfinite(params["cv_train_sharpe"])
+    assert "leaf_era_agreement_mean" in params
+
+
 def test_train_only_stability_penalizes_split_fragility() -> None:
     dates = pd.date_range("1995-01-06", periods=520, freq="W-FRI")
     wiggle = np.sin(np.arange(520) / 3.0) * 0.002
