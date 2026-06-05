@@ -196,6 +196,9 @@ def run_shard(
                 "train_min_year_sharpe": float(train_stability["min_year_sharpe"]),
                 "train_positive_years_pct": float(train_stability["positive_years_pct"]),
                 "train_stability_score": float(train_stability["stability_score"]),
+                "cv_train_sharpe": float(params.get("cv_train_sharpe", np.nan)),
+                "cv_train_cagr": float(params.get("cv_train_cagr", np.nan)),
+                "cv_train_mdd": float(params.get("cv_train_mdd", np.nan)),
                 "train_turnover_weekly": float(turnover(positions[train_mask])),
                 "validation_turnover_weekly": float(turnover(positions[validation_mask])),
                 **{f"train_{key}": value for key, value in position_train.items() if key != "always_invested"},
@@ -356,11 +359,20 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         weights = weights / norm
     rule_type = str(
         rng.choice(
-            ["linear", "threshold_vote", "band_vote", "signed_stump_vote", "train_leaf_tree", "era_leaf_tree", "ridge_model"],
-            p=[0.13, 0.15, 0.11, 0.15, 0.18, 0.16, 0.12],
+            [
+                "linear",
+                "threshold_vote",
+                "band_vote",
+                "signed_stump_vote",
+                "train_leaf_tree",
+                "era_leaf_tree",
+                "cv_era_leaf_tree",
+                "ridge_model",
+            ],
+            p=[0.10, 0.12, 0.08, 0.12, 0.14, 0.14, 0.18, 0.12],
         )
     )
-    if rule_type in {"train_leaf_tree", "era_leaf_tree"}:
+    if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree"}:
         k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
         weights = np.ones(k, dtype=float) / k
@@ -424,6 +436,9 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "era_leaf_tree":
         positions = build_era_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "cv_era_leaf_tree":
+        positions = build_cv_era_leaf_tree_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
@@ -513,6 +528,92 @@ def build_era_leaf_tree_positions(
     params["leaf_signs"] = [float(x) for x in signs]
     params["leaf_era_agreement_mean"] = float(np.mean(era_agreement))
     return signs[leaf_id]
+
+
+def build_cv_era_leaf_tree_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = np.asarray(matrix[:, idx], dtype=float)
+    train_indices = np.flatnonzero(train_mask)
+    folds = [fold for fold in np.array_split(train_indices, 4) if len(fold) > 0]
+    cv_positions = np.full(matrix.shape[0], np.nan, dtype=float)
+    for fold in folds:
+        fit_mask = train_mask.copy()
+        fit_mask[fold] = False
+        if int(np.sum(fit_mask)) < max(80, len(idx) * 8):
+            continue
+        split_thresholds, signs, _ = fit_leaf_tree(values, spy_returns, fit_mask, params, era_consistent=True)
+        fold_leaf = compute_leaf_ids(values[fold], split_thresholds, params)
+        cv_positions[fold] = signs[fold_leaf]
+    default_sign = 1.0 if float(np.sum(spy_returns[train_mask])) >= 0.0 else -1.0
+    cv_positions[np.isnan(cv_positions)] = default_sign
+    cv_metrics = metrics(cv_positions[train_mask] * spy_returns[train_mask])
+    params["cv_train_sharpe"] = float(cv_metrics["sharpe"])
+    params["cv_train_cagr"] = float(cv_metrics["cagr"])
+    params["cv_train_mdd"] = float(cv_metrics["mdd"])
+    split_thresholds, signs, agreement = fit_leaf_tree(values, spy_returns, train_mask, params, era_consistent=True)
+    final_leaf = compute_leaf_ids(values, split_thresholds, params)
+    params["split_thresholds"] = [float(x) for x in split_thresholds]
+    params["leaf_signs"] = [float(x) for x in signs]
+    params["leaf_era_agreement_mean"] = float(agreement)
+    return signs[final_leaf]
+
+
+def fit_leaf_tree(
+    values: np.ndarray,
+    spy_returns: np.ndarray,
+    fit_mask: np.ndarray,
+    params: dict[str, Any],
+    *,
+    era_consistent: bool,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    fit_values = values[fit_mask]
+    thresholds = np.asarray(params.get("thresholds", [0.0] * values.shape[1]), dtype=float)
+    quantile_points = np.clip(0.5 + np.tanh(thresholds) * 0.38, 0.08, 0.92)
+    split_thresholds = np.asarray(
+        [np.quantile(fit_values[:, i], quantile_points[i]) for i in range(values.shape[1])],
+        dtype=float,
+    )
+    leaf_id = compute_leaf_ids(values, split_thresholds, params)
+    fit_leaf = leaf_id[fit_mask]
+    fit_rets = np.asarray(spy_returns[fit_mask], dtype=float)
+    leaf_count = int(2 ** values.shape[1])
+    default_sign = 1.0 if float(np.sum(fit_rets)) >= 0.0 else -1.0
+    signs = np.full(leaf_count, default_sign, dtype=float)
+    agreement = np.zeros(leaf_count, dtype=float)
+    if not era_consistent:
+        for leaf in range(leaf_count):
+            mask = fit_leaf == leaf
+            if int(np.sum(mask)) >= 2:
+                signs[leaf] = 1.0 if float(np.sum(fit_rets[mask])) >= 0.0 else -1.0
+                agreement[leaf] = 1.0
+        return split_thresholds, signs, float(np.mean(agreement))
+    era_ids = np.array_split(np.arange(len(fit_rets)), 4)
+    for leaf in range(leaf_count):
+        votes: list[float] = []
+        for era in era_ids:
+            mask = fit_leaf[era] == leaf
+            if int(np.sum(mask)) >= 2:
+                era_sum = float(np.sum(fit_rets[era][mask]))
+                if not math.isclose(era_sum, 0.0):
+                    votes.append(1.0 if era_sum > 0.0 else -1.0)
+        if votes:
+            vote_sum = float(np.sum(votes))
+            agreement[leaf] = abs(vote_sum) / len(votes)
+            if agreement[leaf] >= 0.50:
+                signs[leaf] = 1.0 if vote_sum >= 0.0 else -1.0
+    return split_thresholds, signs, float(np.mean(agreement))
+
+
+def compute_leaf_ids(values: np.ndarray, split_thresholds: np.ndarray, params: dict[str, Any]) -> np.ndarray:
+    directions = np.asarray(params.get("directions", [1.0] * values.shape[1]), dtype=float)
+    bits = (values * directions >= split_thresholds).astype(np.int64)
+    powers = 1 << np.arange(values.shape[1], dtype=np.int64)
+    return bits @ powers
 
 
 def build_ridge_model_positions(
@@ -666,6 +767,7 @@ def train_only_score(
     min_year = float(stability.get("min_year_sharpe", -2.0))
     positive_years = float(stability.get("positive_years_pct", 0.0))
     stability_score = float(stability.get("stability_score", -2.0))
+    cv_sharpe = float(params.get("cv_train_sharpe", np.nan))
     unstable_penalty = 0.0
     if min_half < 1.0:
         unstable_penalty += (1.0 - min_half) * 220_000.0
@@ -673,14 +775,21 @@ def train_only_score(
         unstable_penalty += (-0.25 - min_year) * 45_000.0
     if positive_years < 0.65:
         unstable_penalty += (0.65 - positive_years) * 90_000.0
+    cv_bonus = 0.0
+    cv_gap_penalty = 0.0
+    if np.isfinite(cv_sharpe):
+        cv_bonus = cv_sharpe * 650_000.0
+        cv_gap_penalty = max(0.0, float(metrics_row["sharpe"]) - cv_sharpe) * 180_000.0
     return (
         float(metrics_row["sharpe"]) * 1_000_000.0
         + stability_score * 350_000.0
+        + cv_bonus
         + float(metrics_row["cagr"]) * 20_000.0
         + float(metrics_row["mdd"]) * 10_000.0
         - turnover(positions) * 2_000.0
         - complexity * 75.0
         - unstable_penalty
+        - cv_gap_penalty
     )
 
 
