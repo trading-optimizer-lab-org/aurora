@@ -356,11 +356,11 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         weights = weights / norm
     rule_type = str(
         rng.choice(
-            ["linear", "threshold_vote", "band_vote", "signed_stump_vote", "train_leaf_tree", "ridge_model"],
-            p=[0.16, 0.18, 0.13, 0.18, 0.20, 0.15],
+            ["linear", "threshold_vote", "band_vote", "signed_stump_vote", "train_leaf_tree", "era_leaf_tree", "ridge_model"],
+            p=[0.13, 0.15, 0.11, 0.15, 0.18, 0.16, 0.12],
         )
     )
-    if rule_type == "train_leaf_tree":
+    if rule_type in {"train_leaf_tree", "era_leaf_tree"}:
         k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
         weights = np.ones(k, dtype=float) / k
@@ -422,6 +422,9 @@ def build_positions_train_only(
     if str(params.get("rule_type", "linear")) == "train_leaf_tree":
         positions = build_train_leaf_tree_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "era_leaf_tree":
+        positions = build_era_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
@@ -464,6 +467,51 @@ def build_train_leaf_tree_positions(
             signs[leaf] = 1.0 if float(np.sum(train_rets[mask])) >= 0.0 else -1.0
     params["split_thresholds"] = [float(x) for x in split_thresholds]
     params["leaf_signs"] = [float(x) for x in signs]
+    return signs[leaf_id]
+
+
+def build_era_leaf_tree_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = matrix[:, idx]
+    train_values = values[train_mask]
+    thresholds = np.asarray(params.get("thresholds", [0.0] * len(idx)), dtype=float)
+    quantile_points = np.clip(0.5 + np.tanh(thresholds) * 0.38, 0.08, 0.92)
+    split_thresholds = np.asarray(
+        [np.quantile(train_values[:, i], quantile_points[i]) for i in range(len(idx))],
+        dtype=float,
+    )
+    directions = np.asarray(params.get("directions", [1.0] * len(idx)), dtype=float)
+    bits = (values * directions >= split_thresholds).astype(np.int64)
+    powers = (1 << np.arange(len(idx), dtype=np.int64))
+    leaf_id = bits @ powers
+    train_leaf = leaf_id[train_mask]
+    train_rets = np.asarray(spy_returns[train_mask], dtype=float)
+    era_ids = np.array_split(np.arange(len(train_rets)), 4)
+    leaf_count = int(2 ** len(idx))
+    default_sign = 1.0 if float(np.sum(train_rets)) >= 0.0 else -1.0
+    signs = np.full(leaf_count, default_sign, dtype=float)
+    era_agreement = np.zeros(leaf_count, dtype=float)
+    for leaf in range(leaf_count):
+        votes: list[float] = []
+        for era in era_ids:
+            mask = train_leaf[era] == leaf
+            if int(np.sum(mask)) >= 2:
+                era_sum = float(np.sum(train_rets[era][mask]))
+                if not math.isclose(era_sum, 0.0):
+                    votes.append(1.0 if era_sum > 0.0 else -1.0)
+        if votes:
+            vote_sum = float(np.sum(votes))
+            era_agreement[leaf] = abs(vote_sum) / len(votes)
+            if era_agreement[leaf] >= 0.50:
+                signs[leaf] = 1.0 if vote_sum >= 0.0 else -1.0
+    params["split_thresholds"] = [float(x) for x in split_thresholds]
+    params["leaf_signs"] = [float(x) for x in signs]
+    params["leaf_era_agreement_mean"] = float(np.mean(era_agreement))
     return signs[leaf_id]
 
 
