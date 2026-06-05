@@ -49,7 +49,23 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
-    symbols = ["SPY", "^VIX", "^TNX", "^GSPC", "^IXIC", "^RUT", "^DJI"]
+    symbols = [
+        "SPY",
+        "^VIX",
+        "^TNX",
+        "^IRX",
+        "^FVX",
+        "^TYX",
+        "DX-Y.NYB",
+        "^GSPC",
+        "^IXIC",
+        "^RUT",
+        "^DJI",
+        "^FTSE",
+        "^N225",
+        "^GDAXI",
+        "^HSI",
+    ]
     raw = yf.download(
         symbols,
         start="1995-01-01",
@@ -275,18 +291,55 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
             mean = raw.rolling(lb).mean()
             std = raw.rolling(lb).std().replace(0.0, np.nan)
             data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
-    for symbol, name in [("^GSPC", "spx"), ("^IXIC", "nasdaq"), ("^RUT", "russell"), ("^DJI", "dow")]:
+    for symbol, name in [
+        ("^GSPC", "spx"),
+        ("^IXIC", "nasdaq"),
+        ("^RUT", "russell"),
+        ("^DJI", "dow"),
+        ("^FTSE", "ftse"),
+        ("^N225", "nikkei"),
+        ("^GDAXI", "dax"),
+        ("^HSI", "hsi"),
+        ("DX-Y.NYB", "dxy"),
+    ]:
         if symbol not in prices.columns:
             continue
         raw = prices[symbol].reindex(returns.index).ffill()
         ret = raw.pct_change(fill_method=None)
         for lb in [1, 4, 13, 26, 52]:
             data[f"{name}_ret_{lb}w"] = (1.0 + ret).rolling(lb).apply(np.prod, raw=True).shift(1) - 1.0
-            data[f"{name}_rel_spy_{lb}w"] = data[f"{name}_ret_{lb}w"] - data[f"spy_ret_{lb}w"]
+            if name != "dxy":
+                data[f"{name}_rel_spy_{lb}w"] = data[f"{name}_ret_{lb}w"] - data[f"spy_ret_{lb}w"]
         for lb in [13, 26, 52]:
             mean = raw.rolling(lb).mean()
             std = raw.rolling(lb).std().replace(0.0, np.nan)
             data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
+    for symbol, name in [("^IRX", "irx"), ("^FVX", "fvx"), ("^TNX", "tnx"), ("^TYX", "tyx")]:
+        if symbol not in prices.columns:
+            continue
+        raw = prices[symbol].reindex(returns.index).ffill()
+        diff = raw.diff()
+        for lb in [1, 4, 13, 26, 52]:
+            data[f"{name}_diff_{lb}w"] = diff.rolling(lb).sum().shift(1)
+        for lb in [13, 26, 52]:
+            mean = raw.rolling(lb).mean()
+            std = raw.rolling(lb).std().replace(0.0, np.nan)
+            data[f"{name}_level_z_{lb}w"] = ((raw - mean) / std).shift(1)
+    for left, right, spread_name in [
+        ("^TNX", "^IRX", "tnx_irx_spread"),
+        ("^TYX", "^IRX", "tyx_irx_spread"),
+        ("^FVX", "^IRX", "fvx_irx_spread"),
+        ("^TYX", "^FVX", "tyx_fvx_spread"),
+    ]:
+        if left not in prices.columns or right not in prices.columns:
+            continue
+        spread = prices[left].reindex(returns.index).ffill() - prices[right].reindex(returns.index).ffill()
+        for lb in [1, 4, 13, 26]:
+            data[f"{spread_name}_diff_{lb}w"] = spread.diff().rolling(lb).sum().shift(1)
+        for lb in [13, 26, 52]:
+            mean = spread.rolling(lb).mean()
+            std = spread.rolling(lb).std().replace(0.0, np.nan)
+            data[f"{spread_name}_z_{lb}w"] = ((spread - mean) / std).shift(1)
     if {"SPY_OPEN", "SPY_HIGH", "SPY_LOW", "SPY_VOLUME"} <= set(prices.columns):
         spy_open = prices["SPY_OPEN"].reindex(returns.index).ffill()
         spy_high = prices["SPY_HIGH"].reindex(returns.index).ffill()
