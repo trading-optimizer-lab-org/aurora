@@ -58,12 +58,12 @@ backtest:
   size_grid: [0, 0.25, 0.5, 1, 1.5, 2, 3, 4, 5]
   choose_size_on_train_only: true
 ranking:
-  primary_metric: "validation_sp500_down_month_avg_return_pct"
+  primary_metric: "train_sp500_down_month_avg_return_pct"
   tie_breakers:
-    - "validation_sp500_down_month_positive_pct"
-    - "validation_mdd"
-    - "validation_sharpe"
+    - "train_sp500_down_month_positive_pct"
+    - "train_mdd"
+    - "train_sharpe"
     - "train_sp500_down_month_avg_return_pct"
 github:
-  chunks: 180
-  max_parallel: 180
+  chunks: 355
+  max_parallel: 355

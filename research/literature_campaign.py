@@ -26,6 +26,7 @@ SUPPORTED_EXACTNESS = {
 REQUIRED_RULE_FIELDS = ("formula", "universe", "direction", "frequency")
 DEFAULT_CHUNKS = 180
 DEFAULT_MAX_PARALLEL = 180
+MAX_CAMPAIGN_PARALLEL = 512
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,7 @@ def load_campaign_config(path: str | Path) -> LiteratureCampaignConfig:
 def build_campaign_inputs(config: LiteratureCampaignConfig) -> dict[str, pd.DataFrame | dict[str, Any]]:
     """Build studies, rule extraction rows and strategy specs for a campaign."""
 
-    exactness = _load_local_exactness(config)
+    exactness = _load_campaign_source(config)
     studies = _campaign_studies(exactness)
     rules = _campaign_rules(config, exactness)
     specs = _campaign_specs(config, rules)
@@ -185,14 +186,16 @@ def _validate_campaign(raw: Mapping[str, Any]) -> None:
         raise ValueError("github.chunks must be positive")
     if int(github.get("max_parallel", DEFAULT_MAX_PARALLEL)) <= 0:
         raise ValueError("github.max_parallel must be positive")
-    if int(github.get("max_parallel", DEFAULT_MAX_PARALLEL)) > 256:
-        raise ValueError("github.max_parallel must not exceed GitHub matrix max-parallel safety limit 256")
+    if int(github.get("chunks", DEFAULT_CHUNKS)) < 2:
+        raise ValueError("github.chunks must be at least 2 for campaign block splitting")
+    if int(github.get("max_parallel", DEFAULT_MAX_PARALLEL)) > MAX_CAMPAIGN_PARALLEL:
+        raise ValueError(f"github.max_parallel must not exceed {MAX_CAMPAIGN_PARALLEL}")
     primary_metric = str(_mapping(raw, "ranking").get("primary_metric", "")).strip()
     if primary_metric.startswith("train_"):
         return
     if primary_metric.startswith("validation_"):
-        return
-    raise ValueError("ranking.primary_metric must be a train_ or validation_ metric")
+        raise ValueError("ranking.primary_metric must not use validation metrics; validation is report_only")
+    raise ValueError("ranking.primary_metric must be a train_ metric")
 
 
 def _mapping(raw: Mapping[str, Any], key: str) -> dict[str, Any]:
@@ -200,6 +203,14 @@ def _mapping(raw: Mapping[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"campaign section {key!r} must be a mapping")
     return dict(value)
+
+
+def _load_campaign_source(config: LiteratureCampaignConfig) -> pd.DataFrame:
+    sources = _mapping(config.raw, "sources")
+    curated = str(sources.get("curated_ideas_json", "")).strip()
+    if curated:
+        return _load_curated_ideas_json(Path(curated))
+    return _load_local_exactness(config)
 
 
 def _load_local_exactness(config: LiteratureCampaignConfig) -> pd.DataFrame:
@@ -223,6 +234,75 @@ def _load_local_exactness(config: LiteratureCampaignConfig) -> pd.DataFrame:
     if missing:
         raise ValueError(f"local exactness CSV missing columns: {missing}")
     return frame
+
+
+def _load_curated_ideas_json(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"curated_ideas_json not found: {path}")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("curated_ideas_json must contain a list of ideas")
+    rows = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        papers = item.get("papers") or []
+        paper_meta = item.get("paper_metadata") or []
+        family = str(item.get("family") or "curated_literature")
+        rank = int(item.get("rank") or len(rows) + 1)
+        idea = str(item.get("idea") or family)
+        rule = str(item.get("plain_rule") or "")
+        features = item.get("features") or []
+        variants = item.get("variants") or []
+        study_id = "curated_" + hashlib.sha256("|".join(map(str, papers or [idea])).encode("utf-8")).hexdigest()[:12]
+        evidence = {
+            "formula": rule,
+            "universe": "SP500/SPY timing rule with listed context features",
+            "direction": rule,
+            "frequency": "monthly",
+            "features": features,
+            "papers": papers,
+            "paper_metadata": paper_meta,
+            "why": str(item.get("why") or ""),
+            "variants": variants,
+        }
+        rows.append(
+            {
+                "study_id": study_id,
+                "idea_id": f"curated_sp500_down_{rank:02d}",
+                "strategy_family": family,
+                "signal_formula": rule,
+                "asset_universe": "SP500 benchmark, SPY tradable target, context features: " + ", ".join(map(str, features)),
+                "tradable_assets": "SPY",
+                "frequency": "monthly",
+                "rebalance_rule": "Rebalance monthly with at least one period causal lag.",
+                "position_rule": rule,
+                "thresholds": "; ".join(map(str, variants)),
+                "lookback_windows": _curated_lookbacks(features, variants),
+                "lags_required": ">=1 period",
+                "costs_assumption": "Aurora default cost model",
+                "sample_period": "Requires data from 1995-01-01 through validation end",
+                "benchmark": "SPY",
+                "exactness_status": "proxy_replicable",
+                "missing_fields_json": "[]",
+                "evidence_quote_refs": json.dumps(evidence, ensure_ascii=False),
+                "paper_exact_replication": False,
+                "reviewed_status": "curated_for_sp500_downside_campaign",
+                "can_test_in_aurora": True,
+                "review_reason": "human_curated_literature_idea_not_exact_paper_replica",
+                "exactness_status_after_review": "proxy_replicable",
+            }
+        )
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        raise ValueError("curated_ideas_json produced zero rows")
+    return frame
+
+
+def _curated_lookbacks(features: object, variants: object) -> str:
+    text = " ".join(map(str, list(features or []) + list(variants or []))).lower()
+    found = sorted(set(re.findall(r"\b\d+\s*(?:d|day|days|w|week|weeks|m|month|months)\b", text)))
+    return ", ".join(found) if found else "campaign_grid"
 
 
 def _campaign_studies(frame: pd.DataFrame) -> pd.DataFrame:
@@ -340,6 +420,8 @@ def _filter_spec(config: LiteratureCampaignConfig, spec: dict[str, Any]) -> str:
     universe = _mapping(config.raw, "universe")
     allow_assets = {str(v).lower() for v in universe.get("allow_assets", []) or []}
     forbid_assets = {str(v).lower() for v in universe.get("forbid_assets", []) or []}
+    if str(spec.get("primary_family", "")).lower() == "statistical_safety":
+        return "unsupported_not_a_trading_strategy"
     asset_tag = _asset_tag(spec["asset_bucket"])
     if allow_assets and asset_tag.lower() not in allow_assets:
         return "asset_not_allowed_by_campaign"
@@ -435,7 +517,7 @@ def _signal_bucket(family: str, text: str) -> str:
         return "value_quality_factor"
     if any(token in t for token in ["correlation", "spillover"]):
         return "correlation_spillover"
-    if any(token in t for token in ["machine learning", "forecast", "predict"]):
+    if any(token in t for token in ["machine learning", "ml ", "ml_", "forecast", "predict"]):
         return "ml_forecast"
     return "unsupported"
 

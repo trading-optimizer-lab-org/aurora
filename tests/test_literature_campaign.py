@@ -120,8 +120,8 @@ def _config(path: Path, exactness: Path, **overrides: object) -> Path:
             "choose_size_on_train_only": True,
         },
         "ranking": {
-            "primary_metric": "validation_sharpe",
-            "tie_breakers": ["train_score"],
+            "primary_metric": "train_score",
+            "tie_breakers": ["train_sharpe"],
         },
         "github": {
             "chunks": 2,
@@ -151,11 +151,14 @@ def test_campaign_config_rejects_open_locked_or_validation_size(tmp_path: Path) 
     _exactness_csv(exactness)
     open_locked = _config(tmp_path / "open_locked.yaml", exactness, rules__locked_opened=True)
     bad_size = _config(tmp_path / "bad_size.yaml", exactness, backtest__choose_size_on_train_only=False)
+    bad_ranking = _config(tmp_path / "bad_ranking.yaml", exactness, ranking__primary_metric="validation_sharpe")
 
     with pytest.raises(ValueError, match="locked_opened=false"):
         load_campaign_config(open_locked)
     with pytest.raises(ValueError, match="train only"):
         load_campaign_config(bad_size)
+    with pytest.raises(ValueError, match="validation is report_only"):
+        load_campaign_config(bad_ranking)
 
 
 def test_campaign_builds_specs_and_unsupported_reasons(tmp_path: Path) -> None:
@@ -260,7 +263,32 @@ def test_real_1995_campaign_config_is_strict() -> None:
     assert cfg.require_effective_start == "1995-01-01"
     assert cfg.raw["rules"]["sp500_down_horizon"] == "months"
     assert cfg.raw["diversity"]["target_count"] == 20
-    assert cfg.raw["ranking"]["primary_metric"] == "validation_sp500_down_month_avg_return_pct"
+    assert cfg.raw["ranking"]["primary_metric"] == "train_sp500_down_month_avg_return_pct"
+    assert cfg.chunks == 355
+    assert cfg.max_parallel == 355
+
+
+def test_curated_sp500_down_paper_campaign_builds_clean_specs() -> None:
+    cfg = load_campaign_config("config/literature_campaign_sp500_down_papers_curated_v1.yaml")
+
+    built = build_campaign_inputs(cfg)
+    specs = built["specs"]
+    unsupported = built["unsupported"]
+
+    assert cfg.campaign_id == "sp500_down_papers_curated_v1"
+    assert cfg.chunks == 355
+    assert cfg.max_parallel == 355
+    assert len(specs) >= 10
+    assert len(unsupported) == 1
+    assert unsupported.iloc[0]["primary_family"] == "statistical_safety"
+    assert unsupported.iloc[0]["unsupported_reason"] == "unsupported_not_a_trading_strategy"
+    assert specs["example_study_id"].str.startswith("curated_").all()
+    assert specs["source_exactness"].eq("proxy_or_template_source").all()
+    assert specs["paper_exact_replication_claimed"].eq(False).all()
+    assert specs["locked_opened"].eq(False).all()
+    assert specs["validation_used_for_selection"].eq(False).all()
+    assert "volatility_timing" in set(specs["primary_family"])
+    assert "ml_cross_section_asset_pricing" in set(specs["primary_family"])
 
 
 def test_campaign_merge_rejects_late_start_finalist(tmp_path: Path) -> None:
@@ -272,7 +300,7 @@ def test_campaign_merge_rejects_late_start_finalist(tmp_path: Path) -> None:
         tmp_path / "campaign.yaml",
         exactness,
         rules__require_effective_start_lte="1995-01-01",
-        ranking__primary_metric="validation_sp500_down_month_avg_return_pct",
+        ranking__primary_metric="train_sp500_down_month_avg_return_pct",
     )
     input_dir = tmp_path / "chunks"
     output_dir = tmp_path / "out"
@@ -344,3 +372,7 @@ def test_literature_campaign_workflow_shape() -> None:
     assert "scripts/merge_literature_campaign_backtest.py" in text
     assert "scripts/run_sp500_weekly_hedge_dehb_stage.py" not in text
     assert "locked_opened" not in data["env"]
+    assert "backtest_chunks_a" in data["jobs"]
+    assert "backtest_chunks_b" in data["jobs"]
+    assert "chunk_list_a" in text
+    assert "chunk_list_b" in text
