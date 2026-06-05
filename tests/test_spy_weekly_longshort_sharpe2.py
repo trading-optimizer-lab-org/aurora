@@ -326,6 +326,36 @@ def test_quadratic_ridge_model_returns_valid_policy_and_train_only_params() -> N
     assert "feature_stds" in params
 
 
+def test_multi_era_leaf_tree_returns_valid_policy_and_era_params() -> None:
+    rng = np.random.default_rng(31)
+    matrix = rng.normal(size=(360, 8))
+    train_mask = np.array([True] * 280 + [False] * 80)
+    spy_returns = np.empty(360)
+    era_edges = [0, 70, 140, 210, 360]
+    signals = [
+        matrix[:, 0] - matrix[:, 1],
+        matrix[:, 2] + matrix[:, 3],
+        -matrix[:, 0] + matrix[:, 4],
+        matrix[:, 5] - matrix[:, 6],
+    ]
+    for i in range(4):
+        start, end = era_edges[i], era_edges[i + 1]
+        spy_returns[start:end] = np.where(signals[i][start:end] > 0.0, 0.009, -0.006)
+    params = {
+        "rule_type": "multi_era_leaf_tree",
+        "feature_indices": [0, 1, 2, 3, 4, 5],
+        "thresholds": [0.0] * 6,
+        "directions": [1.0, -1.0, 1.0, 1.0, -1.0, 1.0],
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert params["multi_era_count"] >= 2
+    assert "multi_era_split_thresholds" in params
+    assert "multi_era_leaf_signs" in params
+
+
 def test_cv_bagged_leaf_ensemble_returns_valid_policy_and_cv_metrics() -> None:
     rng = np.random.default_rng(7)
     matrix = rng.normal(size=(260, 10))
