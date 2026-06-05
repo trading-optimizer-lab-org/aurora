@@ -354,9 +354,18 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         weights = np.ones(k) / k
     else:
         weights = weights / norm
-    rule_type = str(rng.choice(["linear", "threshold_vote", "band_vote", "signed_stump_vote", "train_leaf_tree"], p=[0.20, 0.22, 0.16, 0.22, 0.20]))
+    rule_type = str(
+        rng.choice(
+            ["linear", "threshold_vote", "band_vote", "signed_stump_vote", "train_leaf_tree", "ridge_model"],
+            p=[0.16, 0.18, 0.13, 0.18, 0.20, 0.15],
+        )
+    )
     if rule_type == "train_leaf_tree":
         k = min(max(4, k), min(10, len(feature_cols)))
+        feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
+        weights = np.ones(k, dtype=float) / k
+    if rule_type == "ridge_model":
+        k = int(rng.integers(4, min(26, len(feature_cols)) + 1))
         feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
         weights = np.ones(k, dtype=float) / k
     thresholds = rng.normal(0.0, 1.0, size=k)
@@ -376,6 +385,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         "band_widths": [float(x) for x in band_widths],
         "directions": [float(x) for x in directions],
         "threshold": threshold,
+        "ridge_alpha": float(10.0 ** rng.uniform(-3.0, 2.0)),
         "invert": int(rng.integers(0, 2)),
     }
 
@@ -411,6 +421,9 @@ def build_positions_train_only(
 ) -> tuple[np.ndarray, dict[str, float]]:
     if str(params.get("rule_type", "linear")) == "train_leaf_tree":
         positions = build_train_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "ridge_model":
+        positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     raw_score = build_score(matrix, params)
     threshold, invert, train_metrics = choose_train_only_threshold(raw_score, spy_returns, train_mask)
@@ -452,6 +465,39 @@ def build_train_leaf_tree_positions(
     params["split_thresholds"] = [float(x) for x in split_thresholds]
     params["leaf_signs"] = [float(x) for x in signs]
     return signs[leaf_id]
+
+
+def build_ridge_model_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    x_train = np.asarray(matrix[train_mask][:, idx], dtype=float)
+    y_train = np.asarray(spy_returns[train_mask], dtype=float)
+    finite = np.isfinite(x_train).all(axis=1) & np.isfinite(y_train)
+    x_train = x_train[finite]
+    y_train = y_train[finite]
+    if len(y_train) < max(30, len(idx) * 4):
+        return np.ones(matrix.shape[0], dtype=float)
+    alpha = float(params.get("ridge_alpha", 1.0))
+    x_design = np.c_[np.ones(len(x_train)), x_train]
+    penalty = np.eye(x_design.shape[1]) * alpha
+    penalty[0, 0] = 0.0
+    try:
+        beta = np.linalg.solve(x_design.T @ x_design + penalty, x_design.T @ y_train)
+    except np.linalg.LinAlgError:
+        beta = np.linalg.pinv(x_design.T @ x_design + penalty) @ x_design.T @ y_train
+    full_design = np.c_[np.ones(matrix.shape[0]), np.asarray(matrix[:, idx], dtype=float)]
+    prediction = full_design @ beta
+    threshold, invert, _ = choose_train_only_threshold(prediction, spy_returns, train_mask)
+    params["weights"] = [float(x) for x in beta[1:]]
+    params["intercept"] = float(beta[0])
+    params["threshold"] = float(threshold)
+    params["invert"] = int(invert)
+    oriented = -prediction if invert == 1 else prediction
+    return np.where(oriented >= threshold, 1.0, -1.0)
 
 
 def choose_train_only_threshold(score: np.ndarray, spy_returns: np.ndarray, train_mask: np.ndarray) -> tuple[float, int, dict[str, float]]:

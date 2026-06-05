@@ -121,6 +121,24 @@ def test_train_leaf_tree_returns_valid_policy() -> None:
     assert "leaf_signs" in params
 
 
+def test_ridge_model_returns_valid_policy() -> None:
+    rng = np.random.default_rng(4)
+    matrix = rng.normal(size=(180, 8))
+    train_mask = np.array([True] * 120 + [False] * 60)
+    spy_returns = np.where(matrix[:, 0] * 0.7 - matrix[:, 2] * 0.4 > 0.0, 0.01, -0.01)
+    params = {
+        "rule_type": "ridge_model",
+        "feature_indices": [0, 1, 2, 3, 4],
+        "weights": [0.2] * 5,
+        "ridge_alpha": 0.1,
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert "intercept" in params
+
+
 def test_train_only_stability_penalizes_split_fragility() -> None:
     dates = pd.date_range("1995-01-06", periods=520, freq="W-FRI")
     wiggle = np.sin(np.arange(520) / 3.0) * 0.002
