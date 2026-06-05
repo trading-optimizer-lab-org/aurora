@@ -1,0 +1,679 @@
+[
+  {
+    "rank": 1,
+    "family": "volatility_timing",
+    "idea": "Volatility-managed SPY",
+    "plain_rule": "Bajar exposicion o ponerse short cuando la volatilidad realizada/VIX sube mucho; volver long cuando se normaliza.",
+    "features": [
+      "VIX",
+      "realized_volatility_21d",
+      "realized_volatility_63d",
+      "SPY_drawdown",
+      "range_expansion"
+    ],
+    "papers": [
+      "W2614466292",
+      "W3121512573"
+    ],
+    "why": "La literatura de volatility-managed portfolios apunta a que ajustar exposicion por riesgo mejora drawdown y ratio retorno/riesgo.",
+    "variants": [
+      "umbral percentil VIX",
+      "cambio semanal VIX",
+      "volatilidad realizada inversa",
+      "volatilidad realizada + tendencia SPY"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2614466292",
+        "title": "Volatility‐Managed Portfolios",
+        "year": 2017,
+        "citations_count": 529,
+        "oa": true
+      },
+      {
+        "openalex_id": "W3121512573",
+        "title": "Risk Everywhere: Modeling and Managing Volatility",
+        "year": 2018,
+        "citations_count": 359,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 2,
+    "family": "macro_rates_credit",
+    "idea": "Filtro de credito para SPY",
+    "plain_rule": "Long cuando spreads de credito se estrechan o estan tranquilos; short cuando se ensanchan rapido.",
+    "features": [
+      "HYG/LQD",
+      "BAA-AAA",
+      "credit_spread_change_5d_21d",
+      "VIX"
+    ],
+    "papers": [
+      "W3126113144",
+      "W3123914693"
+    ],
+    "why": "El deterioro del credito suele anticipar stress de renta variable.",
+    "variants": [
+      "HYG/LQD momentum",
+      "BAA-AAA zscore",
+      "credito + VIX",
+      "credito + SPY trend"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W3126113144",
+        "title": "Deciphering the Liquidity and Credit Crunch 2007–2008",
+        "year": 2009,
+        "citations_count": 3388,
+        "oa": true
+      },
+      {
+        "openalex_id": "W3123914693",
+        "title": "New Evidence and Perspectives on Mergers",
+        "year": 2001,
+        "citations_count": 2720,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 3,
+    "family": "calendar_event",
+    "idea": "Pre-FOMC drift",
+    "plain_rule": "Probar sesgo long en ventanas previas a FOMC y reglas distintas fuera de esa ventana.",
+    "features": [
+      "FOMC_calendar",
+      "days_to_fomc",
+      "days_after_fomc",
+      "rates_change"
+    ],
+    "papers": [
+      "W2129635419",
+      "W2131938998"
+    ],
+    "why": "Hay evidencia de drift alrededor de anuncios de Fed.",
+    "variants": [
+      "long solo -1 a -3 dias",
+      "evitar shorts pre-FOMC",
+      "FOMC + volatilidad baja",
+      "post-FOMC reversal"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2129635419",
+        "title": "The Pre-FOMC Announcement Drift",
+        "year": 2012,
+        "citations_count": 57,
+        "oa": true
+      },
+      {
+        "openalex_id": "W2131938998",
+        "title": "Dynamic estimation of volatility risk premia and investor risk aversion from option-implied and realized volatilities",
+        "year": 2010,
+        "citations_count": 498,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 4,
+    "family": "sentiment_expectations",
+    "idea": "Expectativas contrarian",
+    "plain_rule": "Reducir/short cuando expectativas o sentimiento estan demasiado euforicos; long cuando estan deprimidos y el precio estabiliza.",
+    "features": [
+      "sentiment_proxy",
+      "consumer_confidence",
+      "AAII_if_available",
+      "SPY_momentum",
+      "VIX"
+    ],
+    "papers": [
+      "W2099227715",
+      "W2154303208",
+      "W2128633294"
+    ],
+    "why": "Expectativas de inversores suelen extrapolar retornos pasados y pueden ir contra retornos esperados.",
+    "variants": [
+      "sentimiento alto + momentum agotado",
+      "sentimiento bajo + VIX cayendo",
+      "sentimiento extremo percentil 90/10"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2099227715",
+        "title": "Expectations of Returns and Expected Returns",
+        "year": 2014,
+        "citations_count": 1141,
+        "oa": true
+      },
+      {
+        "openalex_id": "W2154303208",
+        "title": "Investor Sentiment and the Cross-section of Stock Returns",
+        "year": 2003,
+        "citations_count": 1532,
+        "oa": true
+      },
+      {
+        "openalex_id": "W2128633294",
+        "title": "Investor Psychology and Security Market Under‐ and Overreactions",
+        "year": 1998,
+        "citations_count": 5713,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 5,
+    "family": "expected_return_valuation",
+    "idea": "Bond-equity yield ratio",
+    "plain_rule": "Comparar atractivo de bolsa frente a bonos; long SPY cuando bolsa compensa mas, short cuando bonos son relativamente mas atractivos.",
+    "features": [
+      "earnings_yield",
+      "10y_yield",
+      "bond_equity_yield_ratio",
+      "term_spread"
+    ],
+    "papers": [
+      "W2066990638",
+      "W3049112891"
+    ],
+    "why": "Varios estudios de expected return usan valoracion relativa bolsa-bonos.",
+    "variants": [
+      "earnings_yield minus 10y",
+      "ratio E/P vs yield",
+      "valoracion + tendencia"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2066990638",
+        "title": "Stock Market Wealth and Consumption",
+        "year": 2000,
+        "citations_count": 718,
+        "oa": true
+      },
+      {
+        "openalex_id": "W3049112891",
+        "title": "What is the Expected Return on the Market?*",
+        "year": 2016,
+        "citations_count": 549,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 6,
+    "family": "regime_switching",
+    "idea": "Regimen stress/no-stress",
+    "plain_rule": "Clasificar mercado en normal, stress y recuperacion; usar long/short distinto en cada regimen.",
+    "features": [
+      "VIX",
+      "credit_spread",
+      "SPY_drawdown",
+      "yield_curve",
+      "financial_conditions"
+    ],
+    "papers": [
+      "W2899679931",
+      "W2626917328",
+      "W3043617920"
+    ],
+    "why": "La misma senal suele funcionar diferente en crisis y expansion.",
+    "variants": [
+      "stress por VIX+credito",
+      "bear por drawdown",
+      "recovery por VIX cayendo + precio subiendo"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2899679931",
+        "title": "Diversifying portfolios of U.S. stocks with crude oil and natural gas: A regime-dependent optimization with several risk measures",
+        "year": 2018,
+        "citations_count": 46,
+        "oa": true
+      },
+      {
+        "openalex_id": "W2626917328",
+        "title": "Uncertainty Shocks as Second-Moment News Shocks",
+        "year": 2019,
+        "citations_count": 217,
+        "oa": true
+      },
+      {
+        "openalex_id": "W3043617920",
+        "title": "The Unprecedented Stock Market Reaction to COVID-19",
+        "year": 2020,
+        "citations_count": 1471,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 7,
+    "family": "ml_cross_section_asset_pricing",
+    "idea": "ML no lineal con guardas duras",
+    "plain_rule": "Usar todas las features en modelos no lineales, pero aceptar solo senales estables por anos/subperiodos.",
+    "features": [
+      "all_features",
+      "feature_interactions",
+      "model_probability",
+      "ensemble_vote"
+    ],
+    "papers": [
+      "W4205539948"
+    ],
+    "why": "El paper de ML en asset pricing apoya relaciones no lineales y combinaciones amplias de predictores.",
+    "variants": [
+      "LightGBM conservador",
+      "XGBoost conservador",
+      "ensemble voto",
+      "operar solo consenso alto"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W4205539948",
+        "title": "Empirical Asset Pricing via Machine Learning",
+        "year": 2020,
+        "citations_count": 2141,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 8,
+    "family": "momentum_reversal",
+    "idea": "Momentum con filtro de stress",
+    "plain_rule": "Seguir tendencia del SPY salvo cuando volatilidad/credito indiquen riesgo de ruptura.",
+    "features": [
+      "SPY_return_21d",
+      "SPY_return_63d",
+      "SPY_distance_to_high",
+      "VIX",
+      "credit_spread"
+    ],
+    "papers": [
+      "W2128633294",
+      "W2114294998"
+    ],
+    "why": "Behavioral finance documenta underreaction/overreaction; conviene separar continuacion de agotamiento.",
+    "variants": [
+      "momentum 1-3 meses",
+      "breakout 52w",
+      "reversal tras caida extrema",
+      "momentum + VIX bajo"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2128633294",
+        "title": "Investor Psychology and Security Market Under‐ and Overreactions",
+        "year": 1998,
+        "citations_count": 5713,
+        "oa": true
+      },
+      {
+        "openalex_id": "W2114294998",
+        "title": "Investor Sentiment in the Stock Market",
+        "year": 2007,
+        "citations_count": 435,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 9,
+    "family": "sector_rotation",
+    "idea": "Defensivos vs ciclicos",
+    "plain_rule": "Long SPY si lideran sectores ciclicos/amplitud mejora; short si lideran defensivos o la amplitud se estrecha.",
+    "features": [
+      "sector_relative_strength",
+      "XLU/XLY",
+      "XLP/XLY",
+      "sector_breadth",
+      "equal_weight_vs_cap_weight"
+    ],
+    "papers": [
+      "W3121512573",
+      "W4234492972"
+    ],
+    "why": "La rotacion sectorial puede adelantar apetito por riesgo.",
+    "variants": [
+      "ciclicos-defensivos",
+      "breadth sectorial",
+      "top sectors momentum",
+      "concentracion de liderazgo"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W3121512573",
+        "title": "Risk Everywhere: Modeling and Managing Volatility",
+        "year": 2018,
+        "citations_count": 359,
+        "oa": true
+      },
+      {
+        "openalex_id": "W4234492972",
+        "title": "Carry",
+        "year": 2017,
+        "citations_count": 291,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 10,
+    "family": "cross_asset_risk",
+    "idea": "Risk appetite cross-asset",
+    "plain_rule": "Combinar dolar, oro, bonos, petroleo y credito para medir apetito por riesgo; long si mejora, short si se deteriora.",
+    "features": [
+      "DXY",
+      "gold",
+      "oil",
+      "TLT/IEF",
+      "HYG/LQD",
+      "VIX"
+    ],
+    "papers": [
+      "W3122965465",
+      "W4234492972",
+      "W3092914060"
+    ],
+    "why": "Riesgo global aparece antes en varios activos, no siempre primero en SPY.",
+    "variants": [
+      "dolar fuerte + credito mal = short",
+      "oro/bonos refugio + VIX alto",
+      "oil shock filter"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W3122965465",
+        "title": "Countercyclical currency risk premia",
+        "year": 2013,
+        "citations_count": 376,
+        "oa": true
+      },
+      {
+        "openalex_id": "W4234492972",
+        "title": "Carry",
+        "year": 2017,
+        "citations_count": 291,
+        "oa": true
+      },
+      {
+        "openalex_id": "W3092914060",
+        "title": "A Design for Addressing Multiple Ecosystem Services in Forest Management Planning",
+        "year": 2020,
+        "citations_count": 66,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 11,
+    "family": "uncertainty_geopolitical",
+    "idea": "Geopolitical/uncertainty risk filter",
+    "plain_rule": "Short o reducir SPY cuando incertidumbre/geopolitica salta; long cuando cae y precio confirma.",
+    "features": [
+      "geopolitical_risk",
+      "economic_policy_uncertainty",
+      "VIX",
+      "news_risk"
+    ],
+    "papers": [
+      "W2792967692",
+      "W2626917328"
+    ],
+    "why": "Riesgo geopolitico e incertidumbre cambian prima de riesgo y comportamiento de mercado.",
+    "variants": [
+      "GPR spike",
+      "uncertainty zscore",
+      "uncertainty + VIX falling recovery"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2792967692",
+        "title": "Measuring Geopolitical Risk",
+        "year": 2018,
+        "citations_count": 585,
+        "oa": true
+      },
+      {
+        "openalex_id": "W2626917328",
+        "title": "Uncertainty Shocks as Second-Moment News Shocks",
+        "year": 2019,
+        "citations_count": 217,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 12,
+    "family": "liquidity",
+    "idea": "Liquidity/financial conditions",
+    "plain_rule": "Long cuando liquidez/condiciones financieras mejoran; short cuando se endurecen.",
+    "features": [
+      "financial_conditions",
+      "TED_if_available",
+      "credit_spread",
+      "dollar_liquidity",
+      "fed_balance_sheet_if_available"
+    ],
+    "papers": [
+      "W3126113144",
+      "W1992758702"
+    ],
+    "why": "Crisis de liquidez y condiciones financieras afectan renta variable de forma directa.",
+    "variants": [
+      "FCI trend",
+      "credit crunch score",
+      "liquidity + momentum"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W3126113144",
+        "title": "Deciphering the Liquidity and Credit Crunch 2007–2008",
+        "year": 2009,
+        "citations_count": 3388,
+        "oa": true
+      },
+      {
+        "openalex_id": "W1992758702",
+        "title": "Liquidity Risk, Return Predictability, and Hedge Funds’ Performance: An Empirical Study",
+        "year": 2013,
+        "citations_count": 49,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 13,
+    "family": "issuance",
+    "idea": "Equity issuance timing",
+    "plain_rule": "Usar emisiones/actividad corporativa como se?al contrarian de retornos agregados.",
+    "features": [
+      "equity_issuance_proxy",
+      "IPO_activity",
+      "corporate_finance_proxy"
+    ],
+    "papers": [
+      "W1999918735",
+      "W3123110761"
+    ],
+    "why": "La literatura relaciona nueva emision/IPO con expectativas y retornos agregados.",
+    "variants": [
+      "alta emision = menor retorno esperado",
+      "IPO activity + valuation",
+      "issuance + credit"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W1999918735",
+        "title": "A Simple Model of Capital Market Equilibrium with Incomplete Information",
+        "year": 1987,
+        "citations_count": 5757,
+        "oa": true
+      },
+      {
+        "openalex_id": "W3123110761",
+        "title": "Political Uncertainty and IPO Activity: Evidence from U.S. Gubernatorial Elections",
+        "year": 2017,
+        "citations_count": 492,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 14,
+    "family": "rare_disaster",
+    "idea": "Rare disaster / crash-risk proxy",
+    "plain_rule": "Evitar o short SPY cuando proxies de desastre/riesgo de cola suben; long en normalizacion.",
+    "features": [
+      "VIX",
+      "skew_if_available",
+      "credit_spread",
+      "drawdown",
+      "gold",
+      "treasury_returns"
+    ],
+    "papers": [
+      "W2195831135"
+    ],
+    "why": "Modelos de desastre raro explican prima de riesgo variable.",
+    "variants": [
+      "tail-risk score",
+      "VIX + credit + gold",
+      "drawdown acceleration"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2195831135",
+        "title": "Talent management motives and practices in an emerging market: A comparison between MNEs and local firms",
+        "year": 2016,
+        "citations_count": 132,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 15,
+    "family": "statistical_safety",
+    "idea": "Guardas anti-spurious regression",
+    "plain_rule": "No es una estrategia; usarlo como filtro para descartar predictores lentos falsamente buenos.",
+    "features": [
+      "p_value",
+      "bootstrap",
+      "walk_forward",
+      "deflated_sharpe",
+      "PBO"
+    ],
+    "papers": [
+      "W3124684890"
+    ],
+    "why": "El paper avisa de regresiones espurias y data mining en predictores financieros.",
+    "variants": [
+      "p-value exceso",
+      "bootstrap p05",
+      "PBO bajo",
+      "subperiodos positivos"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W3124684890",
+        "title": "Spurious Regressions in Financial Economics?",
+        "year": 2003,
+        "citations_count": 592,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 16,
+    "family": "attention",
+    "idea": "Attention / news attention",
+    "plain_rule": "Probar si atencion extrema predice continuacion o reversion en SPY.",
+    "features": [
+      "news_volume",
+      "google_trends_if_available",
+      "volume_spike",
+      "absolute_return"
+    ],
+    "papers": [
+      "W2589953121"
+    ],
+    "why": "La atencion de inversores puede afectar compras/ventas y posterior reversi?n.",
+    "variants": [
+      "attention spike contrarian",
+      "attention + positive return",
+      "attention + VIX"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2589953121",
+        "title": "Sunflower crop and climate change: vulnerability, adaptation, and mitigation potential from case-studies in Europe",
+        "year": 2017,
+        "citations_count": 161,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 17,
+    "family": "quality_factor_proxy",
+    "idea": "Quality / defensive quality as market filter",
+    "plain_rule": "Cuando quality/defensivos lideran, tratarlo como se?al de stress; cuando high beta/ciclicos lideran, risk-on.",
+    "features": [
+      "quality_factor_proxy",
+      "defensive_vs_cyclical",
+      "sector_rotation",
+      "low_vol_factor"
+    ],
+    "papers": [
+      "W3135354379"
+    ],
+    "why": "Quality minus junk y factores defensivos pueden medir regimen risk-off.",
+    "variants": [
+      "quality leadership = caution",
+      "junk leadership = risk-on if credit ok",
+      "quality + VIX"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W3135354379",
+        "title": "Native Grasslands at the Core: A New Paradigm of Intensification for the Campos of Southern South America to Increase Economic and Environmental Sustainability",
+        "year": 2021,
+        "citations_count": 95,
+        "oa": true
+      }
+    ]
+  },
+  {
+    "rank": 18,
+    "family": "bond_stock_habit",
+    "idea": "Bond-stock joint regime",
+    "plain_rule": "Usar comportamiento conjunto de bonos y acciones para detectar cambios de prima de riesgo.",
+    "features": [
+      "SPY_returns",
+      "bond_returns",
+      "stock_bond_correlation",
+      "rates_volatility"
+    ],
+    "papers": [
+      "W2278797360"
+    ],
+    "why": "Habit formation y retornos bonos/acciones sugieren primas de riesgo que cambian juntas.",
+    "variants": [
+      "stock-bond correlation regime",
+      "bond rally + equity drawdown",
+      "rates vol filter"
+    ],
+    "paper_metadata": [
+      {
+        "openalex_id": "W2278797360",
+        "title": "Electric Vehicles in Logistics and Transportation: A Survey on Emerging Environmental, Strategic, and Operational Challenges",
+        "year": 2016,
+        "citations_count": 206,
+        "oa": true
+      }
+    ]
+  }
+]
