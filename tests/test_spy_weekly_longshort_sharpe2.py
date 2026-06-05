@@ -15,6 +15,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     metrics,
     position_audit,
     sample_params,
+    train_only_stability,
 )
 
 
@@ -118,6 +119,16 @@ def test_train_leaf_tree_returns_valid_policy() -> None:
     assert set(np.unique(positions)).issubset({-1.0, 1.0})
     assert selected["sharpe"] > 0.0
     assert "leaf_signs" in params
+
+
+def test_train_only_stability_penalizes_split_fragility() -> None:
+    dates = pd.date_range("1995-01-06", periods=520, freq="W-FRI")
+    wiggle = np.sin(np.arange(520) / 3.0) * 0.002
+    good_then_bad = np.r_[np.full(260, 0.01), np.full(260, -0.004)] + wiggle
+    stable = train_only_stability(good_then_bad, dates)
+    assert stable["first_half_sharpe"] > 0.0
+    assert stable["second_half_sharpe"] < 0.0
+    assert stable["min_half_sharpe"] < 0.0
 
 
 def test_metrics_reports_sharpe_and_mdd() -> None:

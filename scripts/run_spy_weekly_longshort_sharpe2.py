@@ -133,7 +133,10 @@ def run_shard(
         strategy_returns = positions * spy_values
         if not np.isfinite(train_metrics["sharpe"]):
             continue
-        train_score = train_only_score(train_metrics, positions[train_mask], params)
+        train_returns = strategy_returns[train_mask]
+        train_dates = feature_frame.index[train_mask]
+        train_stability = train_only_stability(train_returns, train_dates)
+        train_score = train_only_score(train_metrics, positions[train_mask], params, train_stability)
         # Cheap pruning, but keep deterministic probes so weak areas still report failures.
         if train_metrics["sharpe"] < 0.25 and config_index % 257 != 0:
             continue
@@ -172,6 +175,12 @@ def run_shard(
                 "validation_mdd": float(validation_metrics["mdd"]),
                 "train_positive_weeks_pct": float(train_metrics["positive_weeks_pct"]),
                 "validation_positive_weeks_pct": float(validation_metrics["positive_weeks_pct"]),
+                "train_first_half_sharpe": float(train_stability["first_half_sharpe"]),
+                "train_second_half_sharpe": float(train_stability["second_half_sharpe"]),
+                "train_min_half_sharpe": float(train_stability["min_half_sharpe"]),
+                "train_min_year_sharpe": float(train_stability["min_year_sharpe"]),
+                "train_positive_years_pct": float(train_stability["positive_years_pct"]),
+                "train_stability_score": float(train_stability["stability_score"]),
                 "train_turnover_weekly": float(turnover(positions[train_mask])),
                 "validation_turnover_weekly": float(turnover(positions[validation_mask])),
                 **{f"train_{key}": value for key, value in position_train.items() if key != "always_invested"},
@@ -444,6 +453,40 @@ def metrics(returns: np.ndarray) -> dict[str, float]:
     }
 
 
+def train_only_stability(returns: np.ndarray, dates: pd.DatetimeIndex) -> dict[str, float]:
+    values = np.asarray(returns, dtype=float)
+    midpoint = len(values) // 2
+    first = metrics(values[:midpoint])
+    second = metrics(values[midpoint:])
+    yearly_sharpes: list[float] = []
+    yearly_cagrs: list[float] = []
+    years = pd.Index(dates).year.to_numpy()
+    for year in np.unique(years):
+        chunk = values[years == year]
+        if len(chunk) >= 20:
+            current = metrics(chunk)
+            if np.isfinite(current["sharpe"]):
+                yearly_sharpes.append(float(current["sharpe"]))
+            if np.isfinite(current["cagr"]):
+                yearly_cagrs.append(float(current["cagr"]))
+    min_half = float(np.nanmin([first["sharpe"], second["sharpe"]]))
+    min_year_sharpe = float(np.min(yearly_sharpes)) if yearly_sharpes else np.nan
+    positive_years_pct = float(np.mean(np.asarray(yearly_cagrs) > 0.0)) if yearly_cagrs else np.nan
+    stability_score = (
+        max(-2.0, min_half) * 0.55
+        + max(-2.0, min_year_sharpe if np.isfinite(min_year_sharpe) else -2.0) * 0.20
+        + (positive_years_pct if np.isfinite(positive_years_pct) else 0.0) * 0.25
+    )
+    return {
+        "first_half_sharpe": float(first["sharpe"]),
+        "second_half_sharpe": float(second["sharpe"]),
+        "min_half_sharpe": min_half,
+        "min_year_sharpe": min_year_sharpe,
+        "positive_years_pct": positive_years_pct,
+        "stability_score": float(stability_score),
+    }
+
+
 def turnover(positions: np.ndarray) -> float:
     values = np.asarray(positions, dtype=float)
     if len(values) < 2:
@@ -465,14 +508,38 @@ def position_audit(positions: np.ndarray) -> dict[str, Any]:
     }
 
 
-def train_only_score(metrics_row: dict[str, float], positions: np.ndarray, params: dict[str, Any]) -> float:
+def train_only_score(
+    metrics_row: dict[str, float],
+    positions: np.ndarray,
+    params: dict[str, Any],
+    stability: dict[str, float] | None = None,
+) -> float:
     complexity = len(params["feature_indices"])
+    stability = stability or {
+        "min_half_sharpe": -2.0,
+        "min_year_sharpe": -2.0,
+        "positive_years_pct": 0.0,
+        "stability_score": -2.0,
+    }
+    min_half = float(stability.get("min_half_sharpe", -2.0))
+    min_year = float(stability.get("min_year_sharpe", -2.0))
+    positive_years = float(stability.get("positive_years_pct", 0.0))
+    stability_score = float(stability.get("stability_score", -2.0))
+    unstable_penalty = 0.0
+    if min_half < 1.0:
+        unstable_penalty += (1.0 - min_half) * 220_000.0
+    if min_year < -0.25:
+        unstable_penalty += (-0.25 - min_year) * 45_000.0
+    if positive_years < 0.65:
+        unstable_penalty += (0.65 - positive_years) * 90_000.0
     return (
         float(metrics_row["sharpe"]) * 1_000_000.0
+        + stability_score * 350_000.0
         + float(metrics_row["cagr"]) * 20_000.0
         + float(metrics_row["mdd"]) * 10_000.0
         - turnover(positions) * 2_000.0
         - complexity * 75.0
+        - unstable_penalty
     )
 
 
