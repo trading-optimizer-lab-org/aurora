@@ -562,30 +562,34 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "quadratic_ridge_model",
                 "cv_ridge_model",
                 "cv_quadratic_ridge_model",
+                "walk_forward_ridge_model",
+                "walk_forward_quadratic_ridge_model",
                 "bagged_leaf_ensemble",
                 "cv_bagged_leaf_ensemble",
                 "logic_majority",
                 "logic_all_any",
             ],
             p=[
-                0.015,
-                0.025,
-                0.015,
-                0.025,
-                0.035,
-                0.045,
-                0.085,
-                0.085,
-                0.085,
-                0.040,
+                0.010,
+                0.020,
+                0.010,
+                0.020,
                 0.030,
+                0.040,
                 0.075,
                 0.075,
                 0.075,
-                0.085,
-                0.095,
-                0.055,
-                0.055,
+                0.035,
+                0.025,
+                0.060,
+                0.060,
+                0.060,
+                0.070,
+                0.070,
+                0.075,
+                0.090,
+                0.050,
+                0.050,
             ],
         )
     )
@@ -609,11 +613,11 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
             k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type in {"ridge_model", "cv_ridge_model"}:
+    if rule_type in {"ridge_model", "cv_ridge_model", "walk_forward_ridge_model"}:
         k = int(rng.integers(4, min(26, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type in {"quadratic_ridge_model", "cv_quadratic_ridge_model"}:
+    if rule_type in {"quadratic_ridge_model", "cv_quadratic_ridge_model", "walk_forward_quadratic_ridge_model"}:
         k = int(rng.integers(4, min(13, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
@@ -657,6 +661,9 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         "logic_operator": str(rng.choice(["all", "any"])) if rule_type == "logic_all_any" else "majority",
         "threshold": threshold,
         "ridge_alpha": float(10.0 ** rng.uniform(-3.0, 2.0)),
+        "walk_forward_min_train": int(rng.choice([156, 208, 260, 312])),
+        "walk_forward_refit_step": int(rng.choice([1, 2, 4, 8, 13])),
+        "walk_forward_window": int(rng.choice([0, 260, 390, 520])),
         "ensemble_members": ensemble_members,
         "invert": int(rng.integers(0, 2)),
     }
@@ -749,6 +756,12 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "cv_quadratic_ridge_model":
         positions = build_quadratic_ridge_model_positions(matrix, spy_returns, train_mask, params, cv_threshold=True)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "walk_forward_ridge_model":
+        positions = build_walk_forward_ridge_model_positions(matrix, spy_returns, train_mask, params, quadratic=False)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "walk_forward_quadratic_ridge_model":
+        positions = build_walk_forward_ridge_model_positions(matrix, spy_returns, train_mask, params, quadratic=True)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "bagged_leaf_ensemble":
         positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=False)
@@ -1244,6 +1257,66 @@ def apply_cv_selected_threshold(
     params["cv_invert"] = int(invert)
     oriented = -score if invert == 1 else score
     return np.where(oriented >= threshold, 1.0, -1.0), float(threshold), int(invert)
+
+
+def build_walk_forward_ridge_model_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+    *,
+    quadratic: bool,
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    raw = np.asarray(matrix[:, idx], dtype=float)
+    n_rows = raw.shape[0]
+    min_train = int(params.get("walk_forward_min_train", 208))
+    refit_step = max(1, int(params.get("walk_forward_refit_step", 4)))
+    rolling_window = int(params.get("walk_forward_window", 0))
+    alpha = float(params.get("ridge_alpha", 1.0))
+    score = np.full(n_rows, np.nan, dtype=float)
+    refits = 0
+    for start in range(max(min_train, 20), n_rows, refit_step):
+        fit_start = max(0, start - rolling_window) if rolling_window > 0 else 0
+        fit_slice = slice(fit_start, start)
+        fit_x_raw = raw[fit_slice]
+        fit_y = np.asarray(spy_returns[fit_slice], dtype=float)
+        finite = np.isfinite(fit_x_raw).all(axis=1) & np.isfinite(fit_y)
+        fit_x_raw = fit_x_raw[finite]
+        fit_y = fit_y[finite]
+        min_required = max(80, raw.shape[1] * (8 if quadratic else 4))
+        if len(fit_y) < min_required:
+            continue
+        block_end = min(n_rows, start + refit_step)
+        block_raw = raw[start:block_end]
+        if quadratic:
+            mean = np.mean(fit_x_raw, axis=0)
+            std = np.std(fit_x_raw, axis=0)
+            std = np.where(std <= 1e-12, 1.0, std)
+            fit_x = quadratic_design((fit_x_raw - mean) / std)
+            block_x = quadratic_design((block_raw - mean) / std)
+            if fit_x.shape[1] > 90:
+                fit_x = fit_x[:, :90]
+                block_x = block_x[:, :90]
+        else:
+            fit_x = fit_x_raw
+            block_x = block_raw
+        beta = fit_ridge_beta(fit_x, fit_y, alpha)
+        score[start:block_end] = np.c_[np.ones(len(block_x)), block_x] @ beta
+        refits += 1
+    train_score = score[train_mask]
+    fill = float(np.nanmedian(train_score)) if np.isfinite(train_score).any() else 0.0
+    score[np.isnan(score)] = fill
+    threshold, invert, selected = choose_train_only_threshold(score, spy_returns, train_mask)
+    oriented = -score if invert == 1 else score
+    positions = np.where(oriented >= threshold, 1.0, -1.0)
+    params["threshold"] = float(threshold)
+    params["invert"] = int(invert)
+    params["walk_forward_refits"] = int(refits)
+    params["walk_forward_selected_train_sharpe"] = float(selected["sharpe"])
+    params["walk_forward_quadratic"] = bool(quadratic)
+    params["walk_forward_uses_past_validation_for_validation"] = True
+    return positions
 
 
 def quadratic_design(z: np.ndarray) -> np.ndarray:
