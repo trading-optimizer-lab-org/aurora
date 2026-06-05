@@ -254,11 +254,32 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
             data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
     data["spy_ret_4w_x_vix_z_26w"] = data["spy_ret_4w"] * data["vix_z_26w"]
     data["spy_ma_20w_x_tnx_z_26w"] = data["spy_ma_gap_20w"] * data["tnx_z_26w"]
+    week = pd.Series(data.index.isocalendar().week.astype(float).to_numpy(), index=data.index)
+    month = pd.Series(data.index.month.astype(float), index=data.index)
+    quarter = pd.Series(data.index.quarter.astype(float), index=data.index)
+    year = pd.Series(data.index.year.astype(float), index=data.index)
+    time_index = pd.Series(np.arange(len(data), dtype=float), index=data.index)
+    data["calendar_week_sin"] = np.sin(2.0 * np.pi * week / 52.0)
+    data["calendar_week_cos"] = np.cos(2.0 * np.pi * week / 52.0)
+    data["calendar_month_sin"] = np.sin(2.0 * np.pi * month / 12.0)
+    data["calendar_month_cos"] = np.cos(2.0 * np.pi * month / 12.0)
+    data["calendar_quarter_sin"] = np.sin(2.0 * np.pi * quarter / 4.0)
+    data["calendar_quarter_cos"] = np.cos(2.0 * np.pi * quarter / 4.0)
+    data["calendar_cycle4_sin"] = np.sin(2.0 * np.pi * (year % 4.0) / 4.0)
+    data["calendar_cycle4_cos"] = np.cos(2.0 * np.pi * (year % 4.0) / 4.0)
+    data["calendar_time_trend"] = time_index / max(1.0, float(len(time_index) - 1))
+    data["calendar_january"] = (month == 1.0).astype(float)
+    data["calendar_september"] = (month == 9.0).astype(float)
+    data["calendar_q4"] = (quarter == 4.0).astype(float)
     data = data.replace([np.inf, -np.inf], np.nan).dropna(how="any")
     # Robust per-column scaling, fit using train only to avoid validation leakage.
     train = data[data.index <= TRAIN_END]
     median = train.median()
     scale = (train.quantile(0.75) - train.quantile(0.25)).replace(0.0, np.nan)
+    valid_cols = scale.dropna().index
+    data = data[valid_cols]
+    median = median[valid_cols]
+    scale = scale[valid_cols]
     scaled = (data - median) / scale
     return scaled.replace([np.inf, -np.inf], np.nan).dropna(how="any").clip(-8.0, 8.0)
 
