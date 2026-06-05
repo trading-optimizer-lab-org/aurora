@@ -11,6 +11,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     build_positions_train_only,
     build_feature_frame,
     build_bagged_leaf_ensemble_positions,
+    build_spy_daily_weekly_features,
     build_score,
     choose_train_only_threshold,
     metrics,
@@ -60,6 +61,40 @@ def test_feature_frame_uses_lagged_features_and_no_locked() -> None:
     assert not features.empty
     assert features.index.max() < LOCKED_START
     # The first feature row must appear only after enough prior data exists.
+    assert features.index.min() > returns.index.min()
+
+
+def test_spy_daily_weekly_features_are_lagged_into_feature_frame() -> None:
+    rng = np.random.default_rng(17)
+    idx = pd.date_range("2000-01-03", periods=900, freq="B")
+    close = pd.Series(
+        100.0 + np.cumsum(np.sin(np.arange(len(idx)) / 6.0) * 0.2 + rng.normal(0.0, 0.35, len(idx)) + 0.03),
+        index=idx,
+    )
+    raw = pd.DataFrame(
+        {
+            "Open": close.shift(1).fillna(close.iloc[0]) * 1.001,
+            "High": close * 1.01,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": np.linspace(1_000_000, 2_000_000, len(idx)),
+        },
+        index=idx,
+    )
+    daily_weekly = build_spy_daily_weekly_features(raw)
+    weekly_prices = pd.DataFrame(
+        {
+            "SPY": raw["Close"].resample("W-FRI").last(),
+            "^VIX": 20.0 + np.sin(np.arange(len(daily_weekly)) / 4.0) * 2.0,
+            "^TNX": 5.0 + np.cos(np.arange(len(daily_weekly)) / 5.0) * 0.5,
+        },
+        index=daily_weekly.index,
+    ).join(daily_weekly)
+    weekly_prices = weekly_prices.dropna(how="any")
+    returns = weekly_prices[["SPY", "^VIX", "^TNX"]].pct_change(fill_method=None).dropna()
+    features = build_feature_frame(weekly_prices, returns)
+    assert "spy_daily_vol_z_13w" in features.columns
+    assert "spy_daily_up_down_balance" in features.columns
     assert features.index.min() > returns.index.min()
 
 
