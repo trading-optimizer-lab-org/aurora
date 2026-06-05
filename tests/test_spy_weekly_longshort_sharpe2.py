@@ -72,6 +72,23 @@ def test_sampled_rule_produces_only_plus_or_minus_one_positions() -> None:
     assert position_audit(positions)["always_invested"] is True
 
 
+def test_non_linear_rule_types_produce_finite_scores() -> None:
+    rng = np.random.default_rng(2)
+    matrix = rng.normal(size=(80, 5))
+    base = {
+        "feature_indices": [0, 1, 2],
+        "weights": [0.2, -0.5, 0.3],
+        "thresholds": [0.0, 0.5, -0.5],
+        "band_widths": [0.5, 1.0, 1.5],
+        "directions": [1.0, -1.0, 1.0],
+    }
+    for rule_type in ["linear", "threshold_vote", "band_vote", "signed_stump_vote"]:
+        params = {**base, "rule_type": rule_type}
+        score = build_score(matrix, params)
+        assert score.shape == (80,)
+        assert np.isfinite(score).all()
+
+
 def test_metrics_reports_sharpe_and_mdd() -> None:
     rets = np.array([0.02, -0.01, 0.03, -0.005, 0.01] * 20)
     out = metrics(rets)
