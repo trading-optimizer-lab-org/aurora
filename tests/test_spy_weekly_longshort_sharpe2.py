@@ -19,6 +19,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     position_audit,
     sample_params,
     select_top_candidates_for_merge,
+    select_validation_ceiling_diagnostic,
     train_only_stability,
 )
 
@@ -265,6 +266,19 @@ def test_select_top_candidates_preserves_split_guard_representatives() -> None:
         )
     selected = select_top_candidates_for_merge(pd.DataFrame(rows), top_per_stage=10)
     assert any(selected["strategy_id"].str.startswith("guard_"))
+
+
+def test_validation_ceiling_diagnostic_is_not_acceptance_source() -> None:
+    frame = pd.DataFrame(
+        [
+            {"strategy_id": "a", "train_sharpe": 0.5, "validation_sharpe": 2.4},
+            {"strategy_id": "b", "train_sharpe": 2.2, "validation_sharpe": 1.4},
+        ]
+    )
+    diagnostic = select_validation_ceiling_diagnostic(frame, top_per_stage=1)
+    assert diagnostic.iloc[0]["strategy_id"] == "a"
+    assert bool(diagnostic.iloc[0]["diagnostic_validation_selected"]) is True
+    assert bool(diagnostic.iloc[0]["eligible_for_acceptance"]) is False
 
 
 def test_time_split_leaf_tree_returns_valid_policy_and_regime_params() -> None:

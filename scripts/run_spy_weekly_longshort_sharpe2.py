@@ -285,6 +285,8 @@ def run_shard(
         frame = pd.DataFrame(columns=["strategy_id", "train_score", "final_verified_report_only"])
     top_frame = select_top_candidates_for_merge(frame, int(top_per_stage))
     top_frame.to_csv(shard_dir / "top_candidates.csv", index=False)
+    validation_diagnostic = select_validation_ceiling_diagnostic(frame, int(top_per_stage))
+    validation_diagnostic.to_csv(shard_dir / "validation_ceiling_diagnostic.csv", index=False)
     verified = frame[frame.get("final_verified_report_only", pd.Series(dtype=bool)).astype(bool)]
     verified.to_csv(shard_dir / "verified_candidates_report_only.csv", index=False)
     (shard_dir / "shard_summary.json").write_text(
@@ -296,6 +298,7 @@ def run_shard(
                 "validation_evaluated_report_only": int(validation_evaluated),
                 "rows_kept": int(len(frame)),
                 "top_rows_written": int(len(top_frame)),
+                "validation_diagnostic_rows_written": int(len(validation_diagnostic)),
                 "train_pass_rows": int(frame.get("train_pass", pd.Series(dtype=bool)).astype(bool).sum()) if "train_pass" in frame else 0,
                 "final_verified_report_only_rows": int(len(verified)),
                 "elapsed_seconds": float(time.monotonic() - started),
@@ -339,6 +342,21 @@ def select_top_candidates_for_merge(frame: pd.DataFrame, top_per_stage: int) -> 
     selected = pd.concat(pieces, ignore_index=True).drop_duplicates("strategy_id")
     max_rows = int(top_per_stage) + max(60, int(top_per_stage) // 2)
     return selected.sort_values(["train_score", "train_sharpe", "train_cagr"], ascending=[False, False, False]).head(max_rows)
+
+
+def select_validation_ceiling_diagnostic(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
+    """Diagnostic only: validation-ranked rows are never acceptance candidates."""
+
+    if frame.empty:
+        out = frame.copy()
+        out["diagnostic_validation_selected"] = pd.Series(dtype=bool)
+        out["eligible_for_acceptance"] = pd.Series(dtype=bool)
+        return out
+    ranked = frame.sort_values(["validation_sharpe", "train_sharpe"], ascending=[False, False]).head(int(top_per_stage))
+    ranked = ranked.copy()
+    ranked["diagnostic_validation_selected"] = True
+    ranked["eligible_for_acceptance"] = False
+    return ranked
 
 
 def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
@@ -1357,16 +1375,27 @@ def train_only_score(
 
 def run_merge(output_dir: Path) -> None:
     top_files = list((output_dir / "shards").glob("**/top_candidates.csv"))
+    validation_diagnostic_files = list((output_dir / "shards").glob("**/validation_ceiling_diagnostic.csv"))
     verified_files = list((output_dir / "shards").glob("**/verified_candidates_report_only.csv"))
     summary_files = list((output_dir / "shards").glob("**/shard_summary.json"))
     top = pd.concat([pd.read_csv(path) for path in top_files], ignore_index=True) if top_files else pd.DataFrame()
+    validation_diagnostic = (
+        pd.concat([pd.read_csv(path) for path in validation_diagnostic_files], ignore_index=True)
+        if validation_diagnostic_files
+        else pd.DataFrame()
+    )
     verified = pd.concat([pd.read_csv(path) for path in verified_files], ignore_index=True) if verified_files else pd.DataFrame()
     if not top.empty:
         top = top.sort_values(["train_score", "train_sharpe", "train_cagr", "feature_count"], ascending=[False, False, False, True])
+    if not validation_diagnostic.empty:
+        validation_diagnostic = validation_diagnostic.sort_values(
+            ["validation_sharpe", "train_sharpe"], ascending=[False, False]
+        )
     if not verified.empty:
         verified = verified.sort_values(["train_sharpe", "validation_sharpe", "feature_count"], ascending=[False, False, True])
     train_pass = top[top.get("train_pass", pd.Series(dtype=bool)).astype(bool)] if "train_pass" in top else pd.DataFrame()
     top.to_csv(output_dir / "spy_weekly_longshort_sharpe2_leaderboard.csv", index=False)
+    validation_diagnostic.to_csv(output_dir / "spy_weekly_longshort_sharpe2_validation_ceiling_diagnostic.csv", index=False)
     train_pass.to_csv(output_dir / "spy_weekly_longshort_sharpe2_train_pass.csv", index=False)
     verified.to_csv(output_dir / "spy_weekly_longshort_sharpe2_verified.csv", index=False)
     for name in ["weekly_prices.csv", "weekly_returns.csv", "policy_audit.csv"]:
@@ -1387,6 +1416,11 @@ def run_merge(output_dir: Path) -> None:
         "verified_count_report_only": int(len(verified)),
         "train_pass_count": int(len(train_pass)),
         "top_candidate_rows": int(len(top)),
+        "validation_ceiling_diagnostic_rows": int(len(validation_diagnostic)),
+        "validation_ceiling_diagnostic_max_sharpe": float(validation_diagnostic["validation_sharpe"].max())
+        if not validation_diagnostic.empty and "validation_sharpe" in validation_diagnostic
+        else None,
+        "validation_ceiling_diagnostic_is_acceptance_source": False,
         "shards_with_summary": int(len(shard_summaries)),
         "configs_evaluated": int(sum(item.get("configs_evaluated", 0) for item in shard_summaries)),
         "validation_evaluated_report_only": int(sum(item.get("validation_evaluated_report_only", 0) for item in shard_summaries)),
