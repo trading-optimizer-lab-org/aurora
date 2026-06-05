@@ -281,13 +281,23 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         weights = np.ones(k) / k
     else:
         weights = weights / norm
+    rule_type = str(rng.choice(["linear", "threshold_vote", "band_vote", "signed_stump_vote"]))
+    thresholds = rng.normal(0.0, 1.0, size=k)
+    band_widths = rng.uniform(0.25, 2.0, size=k)
+    directions = rng.choice([-1.0, 1.0], size=k)
     if family == 2:
         weights = np.sign(weights) / k
     threshold = float(rng.normal(0.0, 0.65 if k <= 2 else 0.35))
+    if rule_type != "linear":
+        threshold = float(rng.normal(0.0, 0.20))
     return {
         "family": int(family),
+        "rule_type": rule_type,
         "feature_indices": [int(i) for i in feature_indices],
         "weights": [float(w) for w in weights],
+        "thresholds": [float(x) for x in thresholds],
+        "band_widths": [float(x) for x in band_widths],
+        "directions": [float(x) for x in directions],
         "threshold": threshold,
         "invert": int(rng.integers(0, 2)),
     }
@@ -296,7 +306,24 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
 def build_score(matrix: np.ndarray, params: dict[str, Any]) -> np.ndarray:
     idx = np.asarray(params["feature_indices"], dtype=int)
     weights = np.asarray(params["weights"], dtype=float)
-    return matrix[:, idx] @ weights
+    values = matrix[:, idx]
+    rule_type = str(params.get("rule_type", "linear"))
+    if rule_type == "threshold_vote":
+        thresholds = np.asarray(params.get("thresholds", [0.0] * len(idx)), dtype=float)
+        votes = np.where(values >= thresholds, 1.0, -1.0)
+        return votes @ weights
+    if rule_type == "band_vote":
+        centers = np.asarray(params.get("thresholds", [0.0] * len(idx)), dtype=float)
+        widths = np.asarray(params.get("band_widths", [1.0] * len(idx)), dtype=float)
+        inside = np.abs(values - centers) <= widths
+        votes = np.where(inside, 1.0, -1.0)
+        return votes @ weights
+    if rule_type == "signed_stump_vote":
+        thresholds = np.asarray(params.get("thresholds", [0.0] * len(idx)), dtype=float)
+        directions = np.asarray(params.get("directions", [1.0] * len(idx)), dtype=float)
+        votes = np.where(values * directions >= thresholds, 1.0, -1.0)
+        return votes @ weights
+    return values @ weights
 
 
 def metrics(returns: np.ndarray) -> dict[str, float]:
