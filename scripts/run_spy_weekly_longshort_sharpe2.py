@@ -129,12 +129,7 @@ def run_shard(
             break
         evaluated += 1
         params = sample_params(rng, feature_cols, stage)
-        raw_score = build_score(matrix, params)
-        threshold, invert, train_metrics = choose_train_only_threshold(raw_score, spy_values, train_mask)
-        params["threshold"] = float(threshold)
-        params["invert"] = int(invert)
-        score = -raw_score if invert == 1 else raw_score
-        positions = np.where(score >= threshold, 1.0, -1.0)
+        positions, train_metrics = build_positions_train_only(matrix, spy_values, train_mask, params)
         strategy_returns = positions * spy_values
         if not np.isfinite(train_metrics["sharpe"]):
             continue
@@ -184,10 +179,11 @@ def run_shard(
                 "train_always_invested": bool(position_train["always_invested"]),
                 "validation_always_invested": bool(position_validation["always_invested"]),
                 "feature_count": int(len(params["feature_indices"])),
+                "rule_type": str(params.get("rule_type", "linear")),
                 "features": "|".join(feature_cols[int(i)] for i in params["feature_indices"]),
                 "weights": "|".join(f"{float(w):.8f}" for w in params["weights"]),
-                "threshold": float(threshold),
-                "invert": int(params["invert"]),
+                "threshold": float(params.get("threshold", 0.0)),
+                "invert": int(params.get("invert", 0)),
                 "params_json": json.dumps(params, sort_keys=True),
                 "train_score": float(train_score),
                 "score": float(train_score),
@@ -302,7 +298,11 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         weights = np.ones(k) / k
     else:
         weights = weights / norm
-    rule_type = str(rng.choice(["linear", "threshold_vote", "band_vote", "signed_stump_vote"]))
+    rule_type = str(rng.choice(["linear", "threshold_vote", "band_vote", "signed_stump_vote", "train_leaf_tree"], p=[0.20, 0.22, 0.16, 0.22, 0.20]))
+    if rule_type == "train_leaf_tree":
+        k = min(max(4, k), min(10, len(feature_cols)))
+        feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
+        weights = np.ones(k, dtype=float) / k
     thresholds = rng.normal(0.0, 1.0, size=k)
     band_widths = rng.uniform(0.25, 2.0, size=k)
     directions = rng.choice([-1.0, 1.0], size=k)
@@ -345,6 +345,57 @@ def build_score(matrix: np.ndarray, params: dict[str, Any]) -> np.ndarray:
         votes = np.where(values * directions >= thresholds, 1.0, -1.0)
         return votes @ weights
     return values @ weights
+
+
+def build_positions_train_only(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[np.ndarray, dict[str, float]]:
+    if str(params.get("rule_type", "linear")) == "train_leaf_tree":
+        positions = build_train_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    raw_score = build_score(matrix, params)
+    threshold, invert, train_metrics = choose_train_only_threshold(raw_score, spy_returns, train_mask)
+    params["threshold"] = float(threshold)
+    params["invert"] = int(invert)
+    score = -raw_score if invert == 1 else raw_score
+    return np.where(score >= threshold, 1.0, -1.0), train_metrics
+
+
+def build_train_leaf_tree_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = matrix[:, idx]
+    train_values = values[train_mask]
+    thresholds = np.asarray(params.get("thresholds", [0.0] * len(idx)), dtype=float)
+    # Convert random normal thresholds into train quantile thresholds so each split has a chance.
+    quantile_points = np.clip(0.5 + np.tanh(thresholds) * 0.45, 0.05, 0.95)
+    split_thresholds = np.asarray(
+        [np.quantile(train_values[:, i], quantile_points[i]) for i in range(len(idx))],
+        dtype=float,
+    )
+    directions = np.asarray(params.get("directions", [1.0] * len(idx)), dtype=float)
+    bits = (values * directions >= split_thresholds).astype(np.int64)
+    powers = (1 << np.arange(len(idx), dtype=np.int64))
+    leaf_id = bits @ powers
+    train_leaf = leaf_id[train_mask]
+    train_rets = np.asarray(spy_returns[train_mask], dtype=float)
+    leaf_count = int(2 ** len(idx))
+    default_sign = 1.0 if float(np.sum(train_rets)) >= 0.0 else -1.0
+    signs = np.full(leaf_count, default_sign, dtype=float)
+    for leaf in range(leaf_count):
+        mask = train_leaf == leaf
+        if int(np.sum(mask)) >= 2:
+            signs[leaf] = 1.0 if float(np.sum(train_rets[mask])) >= 0.0 else -1.0
+    params["split_thresholds"] = [float(x) for x in split_thresholds]
+    params["leaf_signs"] = [float(x) for x in signs]
+    return signs[leaf_id]
 
 
 def choose_train_only_threshold(score: np.ndarray, spy_returns: np.ndarray, train_mask: np.ndarray) -> tuple[float, int, dict[str, float]]:

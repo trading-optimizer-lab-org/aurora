@@ -8,6 +8,7 @@ import yaml
 
 from scripts.run_spy_weekly_longshort_sharpe2 import (
     LOCKED_START,
+    build_positions_train_only,
     build_feature_frame,
     build_score,
     choose_train_only_threshold,
@@ -99,6 +100,24 @@ def test_train_only_threshold_selector_returns_valid_policy() -> None:
     positions = np.where(oriented >= threshold, 1.0, -1.0)
     assert position_audit(positions[train_mask])["always_invested"] is True
     assert selected["sharpe"] > 0.0
+
+
+def test_train_leaf_tree_returns_valid_policy() -> None:
+    rng = np.random.default_rng(3)
+    matrix = rng.normal(size=(120, 6))
+    train_mask = np.array([True] * 90 + [False] * 30)
+    spy_returns = np.where(matrix[:, 0] + matrix[:, 1] > 0.0, 0.01, -0.01)
+    params = {
+        "rule_type": "train_leaf_tree",
+        "feature_indices": [0, 1, 2, 3],
+        "thresholds": [0.0, 0.2, -0.3, 0.4],
+        "directions": [1.0, -1.0, 1.0, -1.0],
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert selected["sharpe"] > 0.0
+    assert "leaf_signs" in params
 
 
 def test_metrics_reports_sharpe_and_mdd() -> None:
