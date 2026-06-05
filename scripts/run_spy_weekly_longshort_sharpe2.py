@@ -258,6 +258,8 @@ def run_shard(
                 "cv_train_sharpe": float(params.get("cv_train_sharpe", np.nan)),
                 "cv_train_cagr": float(params.get("cv_train_cagr", np.nan)),
                 "cv_train_mdd": float(params.get("cv_train_mdd", np.nan)),
+                "cv_min_fold_sharpe": float(params.get("cv_min_fold_sharpe", np.nan)),
+                "cv_fold_positive_pct": float(params.get("cv_fold_positive_pct", np.nan)),
                 "train_turnover_weekly": float(turnover(positions[train_mask])),
                 "validation_turnover_weekly": float(turnover(positions[validation_mask])),
                 **{f"train_{key}": value for key, value in position_train.items() if key != "always_invested"},
@@ -281,7 +283,8 @@ def run_shard(
     frame = pd.DataFrame(rows)
     if frame.empty:
         frame = pd.DataFrame(columns=["strategy_id", "train_score", "final_verified_report_only"])
-    frame.sort_values("train_score", ascending=False).head(int(top_per_stage)).to_csv(shard_dir / "top_candidates.csv", index=False)
+    top_frame = select_top_candidates_for_merge(frame, int(top_per_stage))
+    top_frame.to_csv(shard_dir / "top_candidates.csv", index=False)
     verified = frame[frame.get("final_verified_report_only", pd.Series(dtype=bool)).astype(bool)]
     verified.to_csv(shard_dir / "verified_candidates_report_only.csv", index=False)
     (shard_dir / "shard_summary.json").write_text(
@@ -292,6 +295,7 @@ def run_shard(
                 "configs_evaluated": int(evaluated),
                 "validation_evaluated_report_only": int(validation_evaluated),
                 "rows_kept": int(len(frame)),
+                "top_rows_written": int(len(top_frame)),
                 "train_pass_rows": int(frame.get("train_pass", pd.Series(dtype=bool)).astype(bool).sum()) if "train_pass" in frame else 0,
                 "final_verified_report_only_rows": int(len(verified)),
                 "elapsed_seconds": float(time.monotonic() - started),
@@ -304,6 +308,37 @@ def run_shard(
         ),
         encoding="utf-8",
     )
+
+
+def select_top_candidates_for_merge(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
+    """Keep the best candidates plus rule-family representatives for the final merge."""
+
+    if frame.empty:
+        return frame.copy()
+    ranked = frame.sort_values(["train_score", "train_sharpe", "train_cagr"], ascending=[False, False, False])
+    pieces = [ranked.head(int(top_per_stage))]
+    if "rule_type" in frame.columns:
+        per_rule = max(4, int(top_per_stage) // 20)
+        for _, group in frame.groupby("rule_type", dropna=True):
+            pieces.append(group.sort_values(["train_score", "train_sharpe"], ascending=[False, False]).head(per_rule))
+        split_guard = frame[frame["rule_type"].astype(str) == "split_guard_leaf_tree"]
+        if not split_guard.empty:
+            pieces.append(
+                split_guard.sort_values(
+                    ["cv_min_fold_sharpe", "cv_fold_positive_pct", "train_score"],
+                    ascending=[False, False, False],
+                ).head(max(12, int(top_per_stage) // 8))
+            )
+        cv_rules = frame[frame["rule_type"].astype(str).str.startswith("cv_", na=False)]
+        if not cv_rules.empty and "cv_train_sharpe" in cv_rules.columns:
+            pieces.append(
+                cv_rules.sort_values(["cv_train_sharpe", "train_score"], ascending=[False, False]).head(
+                    max(10, int(top_per_stage) // 10)
+                )
+            )
+    selected = pd.concat(pieces, ignore_index=True).drop_duplicates("strategy_id")
+    max_rows = int(top_per_stage) + max(60, int(top_per_stage) // 2)
+    return selected.sort_values(["train_score", "train_sharpe", "train_cagr"], ascending=[False, False, False]).head(max_rows)
 
 
 def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
@@ -502,21 +537,25 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "train_leaf_tree",
                 "era_leaf_tree",
                 "cv_era_leaf_tree",
+                "split_guard_leaf_tree",
                 "ridge_model",
                 "bagged_leaf_ensemble",
                 "cv_bagged_leaf_ensemble",
                 "logic_majority",
                 "logic_all_any",
             ],
-            p=[0.05, 0.06, 0.04, 0.06, 0.08, 0.09, 0.12, 0.06, 0.13, 0.13, 0.10, 0.08],
+            p=[0.04, 0.05, 0.03, 0.05, 0.06, 0.07, 0.10, 0.18, 0.05, 0.12, 0.12, 0.08, 0.05],
         )
     )
     if rule_type in {"logic_majority", "logic_all_any"}:
         k = int(rng.integers(2, min(7, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree"}:
-        k = min(max(4, k), min(10, len(feature_cols)))
+    if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree", "split_guard_leaf_tree"}:
+        if rule_type == "split_guard_leaf_tree":
+            k = int(rng.integers(3, min(7, len(feature_cols)) + 1))
+        else:
+            k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
     if rule_type == "ridge_model":
@@ -634,6 +673,9 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "cv_era_leaf_tree":
         positions = build_cv_era_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "split_guard_leaf_tree":
+        positions = build_split_guard_leaf_tree_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
@@ -765,6 +807,82 @@ def build_cv_era_leaf_tree_positions(
     params["leaf_signs"] = [float(x) for x in signs]
     params["leaf_era_agreement_mean"] = float(agreement)
     return signs[final_leaf]
+
+
+def build_split_guard_leaf_tree_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = np.asarray(matrix[:, idx], dtype=float)
+    train_indices = np.flatnonzero(train_mask)
+    folds = [fold for fold in np.array_split(train_indices, 4) if len(fold) > 0]
+    cv_positions = np.full(matrix.shape[0], np.nan, dtype=float)
+    fold_sharpes: list[float] = []
+    for fold in folds:
+        fit_mask = train_mask.copy()
+        fit_mask[fold] = False
+        if int(np.sum(fit_mask)) < max(120, len(idx) * 12):
+            continue
+        split_thresholds, signs, _ = fit_split_guard_leaf_tree(values, spy_returns, fit_mask, params)
+        fold_leaf = compute_leaf_ids(values[fold], split_thresholds, params)
+        cv_positions[fold] = signs[fold_leaf]
+        fold_metrics = metrics(cv_positions[fold] * spy_returns[fold])
+        if np.isfinite(fold_metrics["sharpe"]):
+            fold_sharpes.append(float(fold_metrics["sharpe"]))
+    default_sign = 1.0 if float(np.sum(spy_returns[train_mask])) >= 0.0 else -1.0
+    cv_positions[np.isnan(cv_positions)] = default_sign
+    cv_metrics = metrics(cv_positions[train_mask] * spy_returns[train_mask])
+    params["cv_train_sharpe"] = float(cv_metrics["sharpe"])
+    params["cv_train_cagr"] = float(cv_metrics["cagr"])
+    params["cv_train_mdd"] = float(cv_metrics["mdd"])
+    params["cv_min_fold_sharpe"] = float(np.min(fold_sharpes)) if fold_sharpes else -99.0
+    params["cv_fold_positive_pct"] = float(np.mean(np.asarray(fold_sharpes) > 0.0)) if fold_sharpes else 0.0
+    split_thresholds, signs, agreement = fit_split_guard_leaf_tree(values, spy_returns, train_mask, params)
+    final_leaf = compute_leaf_ids(values, split_thresholds, params)
+    params["split_thresholds"] = [float(x) for x in split_thresholds]
+    params["leaf_signs"] = [float(x) for x in signs]
+    params["leaf_split_guard_agreement_mean"] = float(agreement)
+    return signs[final_leaf]
+
+
+def fit_split_guard_leaf_tree(
+    values: np.ndarray,
+    spy_returns: np.ndarray,
+    fit_mask: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, float]:
+    fit_values = values[fit_mask]
+    thresholds = np.asarray(params.get("thresholds", [0.0] * values.shape[1]), dtype=float)
+    quantile_points = np.clip(0.5 + np.tanh(thresholds) * 0.32, 0.12, 0.88)
+    split_thresholds = np.asarray(
+        [np.quantile(fit_values[:, i], quantile_points[i]) for i in range(values.shape[1])],
+        dtype=float,
+    )
+    leaf_id = compute_leaf_ids(values, split_thresholds, params)
+    fit_leaf = leaf_id[fit_mask]
+    fit_rets = np.asarray(spy_returns[fit_mask], dtype=float)
+    leaf_count = int(2 ** values.shape[1])
+    default_sign = 1.0 if float(np.sum(fit_rets)) >= 0.0 else -1.0
+    signs = np.full(leaf_count, default_sign, dtype=float)
+    agreement = np.zeros(leaf_count, dtype=float)
+    era_ids = np.array_split(np.arange(len(fit_rets)), 4)
+    for leaf in range(leaf_count):
+        votes: list[float] = []
+        for era in era_ids:
+            mask = fit_leaf[era] == leaf
+            if int(np.sum(mask)) >= 3:
+                era_sum = float(np.sum(fit_rets[era][mask]))
+                if not math.isclose(era_sum, 0.0):
+                    votes.append(1.0 if era_sum > 0.0 else -1.0)
+        if len(votes) >= 2:
+            vote_sum = float(np.sum(votes))
+            agreement[leaf] = abs(vote_sum) / len(votes)
+            if agreement[leaf] >= 0.75:
+                signs[leaf] = 1.0 if vote_sum >= 0.0 else -1.0
+    return split_thresholds, signs, float(np.mean(agreement))
 
 
 def fit_leaf_tree(
@@ -1080,6 +1198,8 @@ def train_only_score(
     positive_years = float(stability.get("positive_years_pct", 0.0))
     stability_score = float(stability.get("stability_score", -2.0))
     cv_sharpe = float(params.get("cv_train_sharpe", np.nan))
+    cv_min_fold = float(params.get("cv_min_fold_sharpe", np.nan))
+    cv_fold_positive_pct = float(params.get("cv_fold_positive_pct", np.nan))
     unstable_penalty = 0.0
     if min_half < 1.0:
         unstable_penalty += (1.0 - min_half) * 220_000.0
@@ -1092,16 +1212,26 @@ def train_only_score(
     if np.isfinite(cv_sharpe):
         cv_bonus = cv_sharpe * 650_000.0
         cv_gap_penalty = max(0.0, float(metrics_row["sharpe"]) - cv_sharpe) * 180_000.0
+    cv_fold_bonus = 0.0
+    cv_fold_penalty = 0.0
+    if np.isfinite(cv_min_fold):
+        cv_fold_bonus = max(-2.0, cv_min_fold) * 450_000.0
+        if cv_min_fold < 0.75:
+            cv_fold_penalty += (0.75 - cv_min_fold) * 240_000.0
+    if np.isfinite(cv_fold_positive_pct) and cv_fold_positive_pct < 0.75:
+        cv_fold_penalty += (0.75 - cv_fold_positive_pct) * 160_000.0
     return (
         float(metrics_row["sharpe"]) * 1_000_000.0
         + stability_score * 350_000.0
         + cv_bonus
+        + cv_fold_bonus
         + float(metrics_row["cagr"]) * 20_000.0
         + float(metrics_row["mdd"]) * 10_000.0
         - turnover(positions) * 2_000.0
         - complexity * 75.0
         - unstable_penalty
         - cv_gap_penalty
+        - cv_fold_penalty
     )
 
 
@@ -1112,7 +1242,7 @@ def run_merge(output_dir: Path) -> None:
     top = pd.concat([pd.read_csv(path) for path in top_files], ignore_index=True) if top_files else pd.DataFrame()
     verified = pd.concat([pd.read_csv(path) for path in verified_files], ignore_index=True) if verified_files else pd.DataFrame()
     if not top.empty:
-        top = top.sort_values(["train_sharpe", "train_cagr", "feature_count"], ascending=[False, False, True])
+        top = top.sort_values(["train_score", "train_sharpe", "train_cagr", "feature_count"], ascending=[False, False, False, True])
     if not verified.empty:
         verified = verified.sort_values(["train_sharpe", "validation_sharpe", "feature_count"], ascending=[False, False, True])
     train_pass = top[top.get("train_pass", pd.Series(dtype=bool)).astype(bool)] if "train_pass" in top else pd.DataFrame()
