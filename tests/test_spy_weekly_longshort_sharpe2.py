@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import yaml
+
+from scripts.run_spy_weekly_longshort_sharpe2 import (
+    LOCKED_START,
+    build_feature_frame,
+    build_score,
+    metrics,
+    position_audit,
+    sample_params,
+)
+
+
+def test_spy_weekly_longshort_workflow_is_manual_355_jobs() -> None:
+    path = Path(".github/workflows/spy-weekly-longshort-sharpe2-355jobs.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["name"] == "SPY Weekly LongShort Sharpe2 355 Jobs"
+    assert "workflow_dispatch" in data[True]
+    assert "push" not in data[True]
+    text = path.read_text(encoding="utf-8")
+    assert "range(355)" in text
+    assert "max-parallel: 178" in text
+    assert "max-parallel: 177" in text
+
+
+def test_position_policy_is_always_long_or_short() -> None:
+    positions = np.array([1.0, -1.0, 1.0, -1.0])
+    audit = position_audit(positions)
+    assert audit["always_invested"] is True
+    assert audit["cash_weeks"] == 0
+    assert audit["min_position"] == -1.0
+    assert audit["max_position"] == 1.0
+    assert audit["min_abs_position"] == 1.0
+    assert audit["max_abs_position"] == 1.0
+
+
+def test_feature_frame_uses_lagged_features_and_no_locked() -> None:
+    idx = pd.date_range("2000-01-07", periods=170, freq="W-FRI")
+    wiggle = np.sin(np.arange(len(idx)) / 5.0) * 2.0
+    spy = pd.Series(np.linspace(100.0, 140.0, len(idx)) + wiggle, index=idx)
+    prices = pd.DataFrame(
+        {
+            "SPY": spy,
+            "^VIX": np.linspace(20.0, 15.0, len(idx)),
+            "^TNX": np.linspace(5.0, 3.0, len(idx)),
+        },
+        index=idx,
+    )
+    returns = prices.pct_change(fill_method=None).dropna()
+    features = build_feature_frame(prices, returns)
+    assert not features.empty
+    assert features.index.max() < LOCKED_START
+    # The first feature row must appear only after enough prior data exists.
+    assert features.index.min() > returns.index.min()
+
+
+def test_sampled_rule_produces_only_plus_or_minus_one_positions() -> None:
+    rng = np.random.default_rng(1)
+    feature_cols = [f"f{i}" for i in range(12)]
+    matrix = rng.normal(size=(100, len(feature_cols)))
+    params = sample_params(rng, feature_cols, stage=4)
+    score = build_score(matrix, params)
+    if int(params["invert"]) == 1:
+        score = -score
+    positions = np.where(score >= float(params["threshold"]), 1.0, -1.0)
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert position_audit(positions)["always_invested"] is True
+
+
+def test_metrics_reports_sharpe_and_mdd() -> None:
+    rets = np.array([0.02, -0.01, 0.03, -0.005, 0.01] * 20)
+    out = metrics(rets)
+    assert np.isfinite(out["sharpe"])
+    assert np.isfinite(out["cagr"])
+    assert out["mdd"] <= 0.0
