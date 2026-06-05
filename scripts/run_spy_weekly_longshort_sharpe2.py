@@ -488,10 +488,16 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "ridge_model",
                 "bagged_leaf_ensemble",
                 "cv_bagged_leaf_ensemble",
+                "logic_majority",
+                "logic_all_any",
             ],
-            p=[0.06, 0.08, 0.05, 0.08, 0.10, 0.11, 0.14, 0.08, 0.15, 0.15],
+            p=[0.05, 0.06, 0.04, 0.06, 0.08, 0.09, 0.12, 0.06, 0.13, 0.13, 0.10, 0.08],
         )
     )
+    if rule_type in {"logic_majority", "logic_all_any"}:
+        k = int(rng.integers(2, min(7, len(feature_cols)) + 1))
+        feature_indices = sample_feature_indices(rng, feature_cols, k, family)
+        weights = np.ones(k, dtype=float) / k
     if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree"}:
         k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
@@ -520,6 +526,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         feature_indices = np.asarray(sorted(set(member_features)), dtype=int)
         weights = np.ones(len(feature_indices), dtype=float) / max(1, len(feature_indices))
     thresholds = rng.normal(0.0, 1.0, size=k)
+    quantiles = rng.uniform(0.10, 0.90, size=k)
     band_widths = rng.uniform(0.25, 2.0, size=k)
     directions = rng.choice([-1.0, 1.0], size=k)
     if family == 2:
@@ -533,8 +540,10 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         "feature_indices": [int(i) for i in feature_indices],
         "weights": [float(w) for w in weights],
         "thresholds": [float(x) for x in thresholds],
+        "quantiles": [float(x) for x in quantiles],
         "band_widths": [float(x) for x in band_widths],
         "directions": [float(x) for x in directions],
+        "logic_operator": str(rng.choice(["all", "any"])) if rule_type == "logic_all_any" else "majority",
         "threshold": threshold,
         "ridge_alpha": float(10.0 ** rng.uniform(-3.0, 2.0)),
         "ensemble_members": ensemble_members,
@@ -617,6 +626,9 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "cv_bagged_leaf_ensemble":
         positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=True)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) in {"logic_majority", "logic_all_any"}:
+        positions = build_logic_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     raw_score = build_score(matrix, params)
     threshold, invert, train_metrics = choose_train_only_threshold(raw_score, spy_returns, train_mask)
@@ -897,6 +909,39 @@ def ensemble_score(
     w = np.asarray(weights, dtype=float)
     w = w / np.sum(w)
     return w @ stacked
+
+
+def build_logic_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = np.asarray(matrix[:, idx], dtype=float)
+    train_values = values[train_mask]
+    quantiles = np.asarray(params.get("quantiles", [0.5] * len(idx)), dtype=float)
+    quantiles = np.clip(quantiles, 0.05, 0.95)
+    split_thresholds = np.asarray(
+        [np.quantile(train_values[:, i], quantiles[i]) for i in range(len(idx))],
+        dtype=float,
+    )
+    directions = np.asarray(params.get("directions", [1.0] * len(idx)), dtype=float)
+    conditions = (values * directions >= split_thresholds).astype(float)
+    operator = str(params.get("logic_operator", "majority"))
+    if operator == "all":
+        score = np.min(conditions, axis=1)
+    elif operator == "any":
+        score = np.max(conditions, axis=1)
+    else:
+        score = np.mean(conditions, axis=1)
+    threshold, invert, selected = choose_train_only_threshold(score, spy_returns, train_mask)
+    params["split_thresholds"] = [float(x) for x in split_thresholds]
+    params["threshold"] = float(threshold)
+    params["invert"] = int(invert)
+    params["logic_train_sharpe"] = float(selected["sharpe"])
+    oriented = -score if invert == 1 else score
+    return np.where(oriented >= threshold, 1.0, -1.0)
 
 
 def choose_train_only_threshold(score: np.ndarray, spy_returns: np.ndarray, train_mask: np.ndarray) -> tuple[float, int, dict[str, float]]:
