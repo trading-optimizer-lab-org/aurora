@@ -147,7 +147,33 @@ def test_merge_fails_when_chunks_missing_or_duplicates(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     input_dir.mkdir()
-    pd.DataFrame([{"signature_hash": "a", "status": "evaluated", "locked_opened": False, "validation_used_for_selection": False, "paper_exact_replication_claimed": False}]).to_csv(
+    row = {
+        "signature_hash": "a",
+        "candidate_id": "lit_a",
+        "distinct_strategy_signature": "x",
+        "primary_family": "momentum",
+        "asset_bucket": "equity_index",
+        "signal_bucket": "momentum_trend",
+        "action_bucket": "market_timing",
+        "frequency_bucket": "monthly",
+        "parameter_bucket": "12m",
+        "example_study_id": "W1",
+        "example_idea_id": "I1",
+        "example_title": "Paper",
+        "source_text_ref": "{}",
+        "rule_summary": "rule",
+        "fidelity_caveat": "template",
+        "source_exactness": "template_only",
+        "status": "evaluated",
+        "unsupported_reason": "",
+        "error": "",
+        "locked_opened": False,
+        "validation_used_for_selection": False,
+        "paper_exact_replication_claimed": False,
+        "train_score": 1.0,
+        "validation_sharpe": 1.0,
+    }
+    pd.DataFrame([row]).to_csv(
         input_dir / "literature_strategy_backtest_chunk_000.csv",
         index=False,
     )
@@ -155,7 +181,20 @@ def test_merge_fails_when_chunks_missing_or_duplicates(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="expected 2 chunks"):
         merge(argparse.Namespace(input_dir=str(input_dir), output_dir=str(output_dir), expected_chunks=2, expected_signatures=1, max_parallel_requested=180))
 
-    pd.DataFrame([{"signature_hash": "a", "status": "evaluated", "locked_opened": False, "validation_used_for_selection": False, "paper_exact_replication_claimed": False}]).to_csv(
+    partial_summary = merge(
+        argparse.Namespace(
+            input_dir=str(input_dir),
+            output_dir=str(output_dir / "partial"),
+            expected_chunks=2,
+            expected_signatures=2,
+            max_parallel_requested=180,
+            allow_partial=True,
+        )
+    )
+    assert partial_summary["partial"] is True
+    assert partial_summary["chunks_missing"] == [1]
+
+    pd.DataFrame([row]).to_csv(
         input_dir / "literature_strategy_backtest_chunk_001.csv",
         index=False,
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ def main() -> int:
     parser.add_argument("--expected-chunks", type=int, default=180)
     parser.add_argument("--expected-signatures", type=int, default=9419)
     parser.add_argument("--max-parallel-requested", type=int, default=180)
+    parser.add_argument("--allow-partial", action="store_true")
     args = parser.parse_args()
     merge(args)
     return 0
@@ -35,13 +37,17 @@ def merge(args: argparse.Namespace) -> dict[str, object]:
     )
     summary_paths = sorted(glob.glob(str(input_dir / "**" / "literature_strategy_backtest_chunk_*_summary.json"), recursive=True))
     manifest_paths = sorted(glob.glob(str(input_dir / "**" / "literature_strategy_backtest_chunk_*_manifest.csv"), recursive=True))
-    if len(chunk_paths) != int(args.expected_chunks):
+    allow_partial = bool(getattr(args, "allow_partial", False))
+    missing_chunks = _missing_chunks(chunk_paths, int(args.expected_chunks))
+    if len(chunk_paths) != int(args.expected_chunks) and not allow_partial:
         raise SystemExit(f"merge failed: expected {args.expected_chunks} chunks, found {len(chunk_paths)}")
 
     frames = [pd.read_csv(path) for path in chunk_paths]
     data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    if len(data) != int(args.expected_signatures):
+    if len(data) != int(args.expected_signatures) and not allow_partial:
         raise SystemExit(f"merge failed: expected {args.expected_signatures} rows, found {len(data)}")
+    if len(data) > int(args.expected_signatures):
+        raise SystemExit(f"merge failed: expected at most {args.expected_signatures} rows, found {len(data)}")
     if data["signature_hash"].duplicated().any():
         dupes = data.loc[data["signature_hash"].duplicated(), "signature_hash"].head(10).tolist()
         raise SystemExit(f"merge failed: duplicate signature_hash values: {dupes}")
@@ -65,11 +71,13 @@ def merge(args: argparse.Namespace) -> dict[str, object]:
     signal_summary = _group_summary(data, "signal_bucket")
     asset_summary = _group_summary(data, "asset_bucket")
     chunk_summaries = _read_jsons(summary_paths)
-    partial = len(chunk_paths) != int(args.expected_chunks)
+    partial = len(chunk_paths) != int(args.expected_chunks) or len(data) != int(args.expected_signatures)
     summary = {
         "input_signatures": int(len(data)),
+        "input_signatures_expected": int(args.expected_signatures),
         "chunks_expected": int(args.expected_chunks),
         "chunks_found": int(len(chunk_paths)),
+        "chunks_missing": missing_chunks,
         "max_parallel_requested": int(args.max_parallel_requested),
         "partial": bool(partial),
         "backtest_enabled": True,
@@ -167,6 +175,15 @@ def _read_jsons(paths: list[str]) -> list[dict[str, object]]:
         except Exception:
             continue
     return out
+
+
+def _missing_chunks(paths: list[str], expected_chunks: int) -> list[int]:
+    seen: set[int] = set()
+    for path in paths:
+        match = re.search(r"literature_strategy_backtest_chunk_(\d+)\.csv$", str(path))
+        if match:
+            seen.add(int(match.group(1)))
+    return [idx for idx in range(expected_chunks) if idx not in seen]
 
 
 if __name__ == "__main__":

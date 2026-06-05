@@ -291,7 +291,7 @@ def test_curated_sp500_down_paper_campaign_builds_clean_specs() -> None:
     assert "ml_cross_section_asset_pricing" in set(specs["primary_family"])
 
 
-def test_campaign_merge_rejects_late_start_finalist(tmp_path: Path) -> None:
+def test_campaign_merge_reports_empty_top20_when_required_start_filters_all(tmp_path: Path) -> None:
     from scripts.merge_literature_campaign_backtest import merge_campaign
 
     exactness = tmp_path / "exactness.csv"
@@ -344,18 +344,21 @@ def test_campaign_merge_rejects_late_start_finalist(tmp_path: Path) -> None:
         index=False,
     )
 
-    with pytest.raises(SystemExit, match="empty after required 1995-01-01 start"):
-        merge_campaign(
-            argparse.Namespace(
-                config=str(cfg),
-                input_dir=str(input_dir),
-                output_dir=str(output_dir),
-                expected_chunks=1,
-                expected_specs=1,
-                max_parallel_requested=2,
-                prepare_dir="",
-            )
+    summary = merge_campaign(
+        argparse.Namespace(
+            config=str(cfg),
+            input_dir=str(input_dir),
+            output_dir=str(output_dir),
+            expected_chunks=1,
+            expected_specs=1,
+            max_parallel_requested=2,
+            prepare_dir="",
         )
+    )
+    top20 = pd.read_csv(output_dir / "campaign_top20_diverse.csv")
+    assert summary["top20_diverse_count"] == 0
+    assert top20.empty
+    assert summary["required_effective_start_lte"] == "1995-01-01"
 
 
 def test_literature_campaign_workflow_shape() -> None:

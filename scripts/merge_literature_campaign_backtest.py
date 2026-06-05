@@ -42,6 +42,7 @@ def merge_campaign(args: argparse.Namespace) -> dict[str, object]:
             expected_chunks=int(args.expected_chunks),
             expected_signatures=int(args.expected_specs),
             max_parallel_requested=int(args.max_parallel_requested),
+            allow_partial=True,
         )
     )
 
@@ -60,6 +61,7 @@ def merge_campaign(args: argparse.Namespace) -> dict[str, object]:
     _copy_prepare_artifacts(prepare_dir, out)
 
     leaderboard = pd.read_csv(out / "campaign_leaderboard.csv") if (out / "campaign_leaderboard.csv").exists() else pd.DataFrame()
+    top20_count = 0
     if not leaderboard.empty:
         primary = str(campaign.raw["ranking"]["primary_metric"])
         tie_breakers = list(campaign.raw["ranking"].get("tie_breakers", []) or [])
@@ -74,25 +76,24 @@ def merge_campaign(args: argparse.Namespace) -> dict[str, object]:
         top20 = diversity[diversity["diverse_selected"]].head(
             int(campaign.raw.get("diversity", {}).get("target_count", 20))
         ).copy()
-        if top20.empty:
-            if campaign.require_effective_start:
-                raise SystemExit(
-                    f"merge failed: campaign_top20_diverse empty after required {campaign.require_effective_start} start filter"
-                )
-            raise SystemExit("merge failed: campaign_top20_diverse would be empty")
         require_start = campaign.require_effective_start
-        if require_start and (pd.to_datetime(top20["effective_start"]) > pd.Timestamp(require_start)).any():
+        if not top20.empty and require_start and (pd.to_datetime(top20["effective_start"]) > pd.Timestamp(require_start)).any():
             raise SystemExit("merge failed: top diverse strategy starts after required 1995 start")
+        if top20.empty:
+            top20 = pd.DataFrame(columns=diversity.columns)
+        top20_count = int(len(top20))
         top20.to_csv(out / "campaign_top20_diverse.csv", index=False)
     else:
-        raise SystemExit("merge failed: campaign leaderboard is empty")
+        pd.DataFrame().to_csv(out / "campaign_sp500_down_months.csv", index=False)
+        pd.DataFrame().to_csv(out / "campaign_candidate_diversity.csv", index=False)
+        pd.DataFrame().to_csv(out / "campaign_top20_diverse.csv", index=False)
 
     summary = {
         **strategy_summary,
         "campaign_id": campaign.campaign_id,
         "objective": campaign.raw.get("objective", ""),
         "ranking_primary_metric": campaign.raw["ranking"]["primary_metric"],
-        "top20_diverse_count": int(len(pd.read_csv(out / "campaign_top20_diverse.csv"))) if (out / "campaign_top20_diverse.csv").exists() else 0,
+        "top20_diverse_count": top20_count,
         "required_effective_start_lte": campaign.require_effective_start,
         "locked_opened": False,
         "validation_used_for_selection": False,
