@@ -538,22 +538,25 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "era_leaf_tree",
                 "cv_era_leaf_tree",
                 "split_guard_leaf_tree",
+                "time_split_leaf_tree",
                 "ridge_model",
                 "bagged_leaf_ensemble",
                 "cv_bagged_leaf_ensemble",
                 "logic_majority",
                 "logic_all_any",
             ],
-            p=[0.04, 0.05, 0.03, 0.05, 0.06, 0.07, 0.10, 0.18, 0.05, 0.12, 0.12, 0.08, 0.05],
+            p=[0.035, 0.045, 0.025, 0.045, 0.055, 0.065, 0.09, 0.13, 0.12, 0.045, 0.11, 0.11, 0.075, 0.05],
         )
     )
     if rule_type in {"logic_majority", "logic_all_any"}:
         k = int(rng.integers(2, min(7, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree", "split_guard_leaf_tree"}:
+    if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree", "split_guard_leaf_tree", "time_split_leaf_tree"}:
         if rule_type == "split_guard_leaf_tree":
             k = int(rng.integers(3, min(7, len(feature_cols)) + 1))
+        elif rule_type == "time_split_leaf_tree":
+            k = int(rng.integers(4, min(9, len(feature_cols)) + 1))
         else:
             k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
@@ -676,6 +679,9 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "split_guard_leaf_tree":
         positions = build_split_guard_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "time_split_leaf_tree":
+        positions = build_time_split_leaf_tree_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
@@ -883,6 +889,54 @@ def fit_split_guard_leaf_tree(
             if agreement[leaf] >= 0.75:
                 signs[leaf] = 1.0 if vote_sum >= 0.0 else -1.0
     return split_thresholds, signs, float(np.mean(agreement))
+
+
+def build_time_split_leaf_tree_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = np.asarray(matrix[:, idx], dtype=float)
+    train_indices = np.flatnonzero(train_mask)
+    if len(train_indices) < max(160, len(idx) * 20):
+        split_thresholds, signs, agreement = fit_leaf_tree(values, spy_returns, train_mask, params, era_consistent=False)
+        params["time_split_fallback"] = True
+        params["split_thresholds"] = [float(x) for x in split_thresholds]
+        params["leaf_signs"] = [float(x) for x in signs]
+        params["leaf_agreement_mean"] = float(agreement)
+        return signs[compute_leaf_ids(values, split_thresholds, params)]
+
+    midpoint = int(len(train_indices) // 2)
+    early_mask = np.zeros(matrix.shape[0], dtype=bool)
+    late_mask = np.zeros(matrix.shape[0], dtype=bool)
+    early_mask[train_indices[:midpoint]] = True
+    late_mask[train_indices[midpoint:]] = True
+    if int(np.sum(early_mask)) < max(80, len(idx) * 10) or int(np.sum(late_mask)) < max(80, len(idx) * 10):
+        split_thresholds, signs, agreement = fit_leaf_tree(values, spy_returns, train_mask, params, era_consistent=False)
+        params["time_split_fallback"] = True
+        params["split_thresholds"] = [float(x) for x in split_thresholds]
+        params["leaf_signs"] = [float(x) for x in signs]
+        params["leaf_agreement_mean"] = float(agreement)
+        return signs[compute_leaf_ids(values, split_thresholds, params)]
+
+    early_thresholds, early_signs, early_agreement = fit_leaf_tree(
+        values, spy_returns, early_mask, params, era_consistent=False
+    )
+    late_thresholds, late_signs, late_agreement = fit_leaf_tree(values, spy_returns, late_mask, params, era_consistent=False)
+    early_leaf = compute_leaf_ids(values, early_thresholds, params)
+    late_leaf = compute_leaf_ids(values, late_thresholds, params)
+    positions = late_signs[late_leaf]
+    positions[train_indices[:midpoint]] = early_signs[early_leaf[train_indices[:midpoint]]]
+    params["time_split_fallback"] = False
+    params["early_split_thresholds"] = [float(x) for x in early_thresholds]
+    params["late_split_thresholds"] = [float(x) for x in late_thresholds]
+    params["early_leaf_signs"] = [float(x) for x in early_signs]
+    params["late_leaf_signs"] = [float(x) for x in late_signs]
+    params["early_leaf_agreement_mean"] = float(early_agreement)
+    params["late_leaf_agreement_mean"] = float(late_agreement)
+    return positions
 
 
 def fit_leaf_tree(
