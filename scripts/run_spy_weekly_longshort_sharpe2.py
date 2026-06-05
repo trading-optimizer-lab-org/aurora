@@ -129,13 +129,13 @@ def run_shard(
             break
         evaluated += 1
         params = sample_params(rng, feature_cols, stage)
-        score = build_score(matrix, params)
-        if int(params["invert"]) == 1:
-            score = -score
-        threshold = float(params["threshold"])
+        raw_score = build_score(matrix, params)
+        threshold, invert, train_metrics = choose_train_only_threshold(raw_score, spy_values, train_mask)
+        params["threshold"] = float(threshold)
+        params["invert"] = int(invert)
+        score = -raw_score if invert == 1 else raw_score
         positions = np.where(score >= threshold, 1.0, -1.0)
         strategy_returns = positions * spy_values
-        train_metrics = metrics(strategy_returns[train_mask])
         if not np.isfinite(train_metrics["sharpe"]):
             continue
         train_score = train_only_score(train_metrics, positions[train_mask], params)
@@ -324,6 +324,33 @@ def build_score(matrix: np.ndarray, params: dict[str, Any]) -> np.ndarray:
         votes = np.where(values * directions >= thresholds, 1.0, -1.0)
         return votes @ weights
     return values @ weights
+
+
+def choose_train_only_threshold(score: np.ndarray, spy_returns: np.ndarray, train_mask: np.ndarray) -> tuple[float, int, dict[str, float]]:
+    train_score = np.asarray(score[train_mask], dtype=float)
+    train_rets = np.asarray(spy_returns[train_mask], dtype=float)
+    finite = np.isfinite(train_score) & np.isfinite(train_rets)
+    train_score = train_score[finite]
+    train_rets = train_rets[finite]
+    if len(train_score) < 20:
+        return 0.0, 0, metrics(np.array([], dtype=float))
+    quantiles = np.unique(np.quantile(train_score, np.linspace(0.03, 0.97, 25)))
+    best_threshold = 0.0
+    best_invert = 0
+    best_metrics = {"sharpe": -np.inf, "cagr": np.nan, "mdd": np.nan, "positive_weeks_pct": np.nan}
+    for invert in [0, 1]:
+        oriented = -train_score if invert == 1 else train_score
+        for threshold in quantiles:
+            positions = np.where(oriented >= threshold, 1.0, -1.0)
+            long_pct = float(np.mean(positions > 0.0))
+            if long_pct < 0.05 or long_pct > 0.95:
+                continue
+            current = metrics(positions * train_rets)
+            if float(current["sharpe"]) > float(best_metrics["sharpe"]):
+                best_threshold = float(threshold)
+                best_invert = int(invert)
+                best_metrics = current
+    return best_threshold, best_invert, best_metrics
 
 
 def metrics(returns: np.ndarray) -> dict[str, float]:

@@ -10,6 +10,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     LOCKED_START,
     build_feature_frame,
     build_score,
+    choose_train_only_threshold,
     metrics,
     position_audit,
     sample_params,
@@ -87,6 +88,17 @@ def test_non_linear_rule_types_produce_finite_scores() -> None:
         score = build_score(matrix, params)
         assert score.shape == (80,)
         assert np.isfinite(score).all()
+
+
+def test_train_only_threshold_selector_returns_valid_policy() -> None:
+    score = np.linspace(-2.0, 2.0, 100)
+    spy_returns = np.where(score > 0.0, 0.01, -0.01)
+    train_mask = np.array([True] * 80 + [False] * 20)
+    threshold, invert, selected = choose_train_only_threshold(score, spy_returns, train_mask)
+    oriented = -score if invert == 1 else score
+    positions = np.where(oriented >= threshold, 1.0, -1.0)
+    assert position_audit(positions[train_mask])["always_invested"] is True
+    assert selected["sharpe"] > 0.0
 
 
 def test_metrics_reports_sharpe_and_mdd() -> None:
