@@ -557,6 +557,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "cv_era_leaf_tree",
                 "split_guard_leaf_tree",
                 "time_split_leaf_tree",
+                "multi_era_leaf_tree",
                 "ridge_model",
                 "quadratic_ridge_model",
                 "bagged_leaf_ensemble",
@@ -564,17 +565,24 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "logic_majority",
                 "logic_all_any",
             ],
-            p=[0.03, 0.05, 0.02, 0.04, 0.05, 0.06, 0.08, 0.10, 0.10, 0.04, 0.10, 0.10, 0.10, 0.08, 0.05],
+            p=[0.025, 0.04, 0.02, 0.035, 0.045, 0.055, 0.075, 0.085, 0.08, 0.12, 0.04, 0.095, 0.095, 0.095, 0.075, 0.02],
         )
     )
     if rule_type in {"logic_majority", "logic_all_any"}:
         k = int(rng.integers(2, min(7, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree", "split_guard_leaf_tree", "time_split_leaf_tree"}:
+    if rule_type in {
+        "train_leaf_tree",
+        "era_leaf_tree",
+        "cv_era_leaf_tree",
+        "split_guard_leaf_tree",
+        "time_split_leaf_tree",
+        "multi_era_leaf_tree",
+    }:
         if rule_type == "split_guard_leaf_tree":
             k = int(rng.integers(3, min(7, len(feature_cols)) + 1))
-        elif rule_type == "time_split_leaf_tree":
+        elif rule_type in {"time_split_leaf_tree", "multi_era_leaf_tree"}:
             k = int(rng.integers(4, min(9, len(feature_cols)) + 1))
         else:
             k = min(max(4, k), min(10, len(feature_cols)))
@@ -705,6 +713,9 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "time_split_leaf_tree":
         positions = build_time_split_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "multi_era_leaf_tree":
+        positions = build_multi_era_leaf_tree_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
@@ -962,6 +973,48 @@ def build_time_split_leaf_tree_positions(
     params["late_leaf_signs"] = [float(x) for x in late_signs]
     params["early_leaf_agreement_mean"] = float(early_agreement)
     params["late_leaf_agreement_mean"] = float(late_agreement)
+    return positions
+
+
+def build_multi_era_leaf_tree_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = np.asarray(matrix[:, idx], dtype=float)
+    train_indices = np.flatnonzero(train_mask)
+    eras = [era for era in np.array_split(train_indices, 4) if len(era) >= max(40, len(idx) * 6)]
+    if len(eras) < 2:
+        return build_time_split_leaf_tree_positions(matrix, spy_returns, train_mask, params)
+
+    positions = np.ones(matrix.shape[0], dtype=float)
+    era_thresholds: list[list[float]] = []
+    era_signs: list[list[float]] = []
+    era_agreements: list[float] = []
+    last_thresholds: np.ndarray | None = None
+    last_signs: np.ndarray | None = None
+    for era in eras:
+        era_mask = np.zeros(matrix.shape[0], dtype=bool)
+        era_mask[era] = True
+        thresholds, signs, agreement = fit_leaf_tree(values, spy_returns, era_mask, params, era_consistent=False)
+        leaf = compute_leaf_ids(values[era], thresholds, params)
+        positions[era] = signs[leaf]
+        era_thresholds.append([float(x) for x in thresholds])
+        era_signs.append([float(x) for x in signs])
+        era_agreements.append(float(agreement))
+        last_thresholds = thresholds
+        last_signs = signs
+
+    if last_thresholds is not None and last_signs is not None:
+        future_mask = ~train_mask
+        future_leaf = compute_leaf_ids(values[future_mask], last_thresholds, params)
+        positions[future_mask] = last_signs[future_leaf]
+    params["multi_era_count"] = int(len(eras))
+    params["multi_era_split_thresholds"] = era_thresholds
+    params["multi_era_leaf_signs"] = era_signs
+    params["multi_era_leaf_agreement_mean"] = float(np.mean(era_agreements)) if era_agreements else 0.0
     return positions
 
 
