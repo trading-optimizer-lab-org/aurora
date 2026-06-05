@@ -326,6 +326,28 @@ def test_quadratic_ridge_model_returns_valid_policy_and_train_only_params() -> N
     assert "feature_stds" in params
 
 
+def test_cv_quadratic_ridge_model_returns_valid_policy_and_cv_params() -> None:
+    rng = np.random.default_rng(33)
+    matrix = rng.normal(size=(340, 7))
+    train_mask = np.array([True] * 260 + [False] * 80)
+    signal = matrix[:, 0] * matrix[:, 1] + 0.5 * matrix[:, 2] - matrix[:, 3] ** 2 * 0.08
+    spy_returns = np.where(signal > 0.0, 0.008, -0.005)
+    params = {
+        "rule_type": "cv_quadratic_ridge_model",
+        "feature_indices": [0, 1, 2, 3, 4],
+        "weights": [0.2] * 5,
+        "ridge_alpha": 0.3,
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert "cv_train_sharpe" in params
+    assert "cv_min_fold_sharpe" in params
+    assert "cv_threshold" in params
+    assert "cv_invert" in params
+
+
 def test_multi_era_leaf_tree_returns_valid_policy_and_era_params() -> None:
     rng = np.random.default_rng(31)
     matrix = rng.normal(size=(360, 8))
