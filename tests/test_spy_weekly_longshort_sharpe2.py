@@ -10,6 +10,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     LOCKED_START,
     build_positions_train_only,
     build_feature_frame,
+    build_bagged_leaf_ensemble_positions,
     build_score,
     choose_train_only_threshold,
     metrics,
@@ -174,6 +175,39 @@ def test_cv_era_leaf_tree_returns_valid_policy_and_cv_metrics() -> None:
     assert np.isfinite(selected["sharpe"])
     assert np.isfinite(params["cv_train_sharpe"])
     assert "leaf_era_agreement_mean" in params
+
+
+def test_cv_bagged_leaf_ensemble_returns_valid_policy_and_cv_metrics() -> None:
+    rng = np.random.default_rng(7)
+    matrix = rng.normal(size=(260, 10))
+    train_mask = np.array([True] * 190 + [False] * 70)
+    spy_returns = np.where(matrix[:, 0] - matrix[:, 4] * 0.5 > 0.0, 0.009, -0.006)
+    params = {
+        "rule_type": "cv_bagged_leaf_ensemble",
+        "feature_indices": [0, 1, 2, 3, 4, 5],
+        "weights": [1.0 / 6.0] * 6,
+        "ensemble_members": [
+            {
+                "feature_indices": [0, 1, 2],
+                "thresholds": [0.0, 0.2, -0.1],
+                "directions": [1.0, -1.0, 1.0],
+            },
+            {
+                "feature_indices": [3, 4, 5],
+                "thresholds": [0.1, -0.2, 0.3],
+                "directions": [1.0, 1.0, -1.0],
+            },
+            {
+                "feature_indices": [0, 4],
+                "thresholds": [0.0, 0.0],
+                "directions": [1.0, -1.0],
+            },
+        ],
+    }
+    positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=True)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(params["cv_train_sharpe"])
 
 
 def test_train_only_stability_penalizes_split_fragility() -> None:
