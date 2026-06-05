@@ -49,7 +49,7 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
-    symbols = [
+    required_symbols = [
         "SPY",
         "^VIX",
         "^TNX",
@@ -66,6 +66,29 @@ def run_data(output_dir: Path) -> None:
         "^GDAXI",
         "^HSI",
     ]
+    optional_symbols = [
+        "QQQ",
+        "DIA",
+        "IWM",
+        "XLY",
+        "XLP",
+        "XLK",
+        "XLU",
+        "XLF",
+        "XLE",
+        "XLV",
+        "XLI",
+        "XLB",
+        "TLT",
+        "IEF",
+        "SHY",
+        "GLD",
+        "LQD",
+        "HYG",
+        "EFA",
+        "EEM",
+    ]
+    symbols = required_symbols + optional_symbols
     raw = yf.download(
         symbols,
         start="1995-01-01",
@@ -78,8 +101,8 @@ def run_data(output_dir: Path) -> None:
     prices = pd.DataFrame()
     for symbol in symbols:
         prices[symbol] = raw[symbol]["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw["Close"]
-    prices = prices.dropna(how="any")
-    weekly_prices = prices.resample("W-FRI").last().dropna(how="any")
+    prices = prices.dropna(subset=required_symbols, how="any")
+    weekly_prices = prices.resample("W-FRI").last().dropna(subset=required_symbols, how="any")
     if isinstance(raw.columns, pd.MultiIndex):
         spy_raw = raw["SPY"].copy()
     else:
@@ -93,10 +116,11 @@ def run_data(output_dir: Path) -> None:
         }
     )
     spy_daily_features = build_spy_daily_weekly_features(spy_raw)
-    weekly_prices = weekly_prices.join(spy_ohlcv, how="left").join(spy_daily_features, how="left").dropna(how="any")
+    weekly_prices = weekly_prices.join(spy_ohlcv, how="left").join(spy_daily_features, how="left")
+    weekly_prices = weekly_prices.dropna(subset=required_symbols + ["SPY_OPEN", "SPY_HIGH", "SPY_LOW", "SPY_VOLUME"], how="any")
     weekly_prices = weekly_prices[weekly_prices.index < LOCKED_START]
     close_cols = symbols
-    weekly_returns = weekly_prices[close_cols].pct_change(fill_method=None).dropna(how="any")
+    weekly_returns = weekly_prices[close_cols].pct_change(fill_method=None).dropna(subset=["SPY"], how="any")
     if weekly_returns.index.max() >= LOCKED_START:
         raise RuntimeError(f"Locked leak: max date {weekly_returns.index.max()}")
     if weekly_returns.index.min() > pd.Timestamp("1995-02-28"):
@@ -111,6 +135,7 @@ def run_data(output_dir: Path) -> None:
             {
                 "traded_asset": "SPY",
                 "context_symbols": "|".join(symbols[1:]),
+                "optional_context_symbols": "|".join(optional_symbols),
                 "frequency": "weekly",
                 "position_policy": "always_long_or_short",
                 "min_position": -1.0,
@@ -410,6 +435,74 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
             mean = raw.rolling(lb).mean()
             std = raw.rolling(lb).std().replace(0.0, np.nan)
             data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
+    optional_feature_cols: list[str] = []
+    optional_context = [
+        ("QQQ", "qqq"),
+        ("DIA", "dia"),
+        ("IWM", "iwm"),
+        ("XLY", "xly"),
+        ("XLP", "xlp"),
+        ("XLK", "xlk"),
+        ("XLU", "xlu"),
+        ("XLF", "xlf"),
+        ("XLE", "xle"),
+        ("XLV", "xlv"),
+        ("XLI", "xli"),
+        ("XLB", "xlb"),
+        ("TLT", "tlt"),
+        ("IEF", "ief"),
+        ("SHY", "shy"),
+        ("GLD", "gld"),
+        ("LQD", "lqd"),
+        ("HYG", "hyg"),
+        ("EFA", "efa"),
+        ("EEM", "eem"),
+    ]
+    for symbol, name in optional_context:
+        if symbol not in prices.columns:
+            continue
+        raw = prices[symbol].reindex(returns.index).ffill()
+        if raw.notna().sum() < 156:
+            continue
+        ret = raw.pct_change(fill_method=None)
+        for lb in [1, 4, 13, 26, 52]:
+            col = f"{name}_ret_{lb}w"
+            data[col] = (1.0 + ret).rolling(lb).apply(np.prod, raw=True).shift(1) - 1.0
+            optional_feature_cols.append(col)
+            rel_col = f"{name}_rel_spy_{lb}w"
+            data[rel_col] = data[col] - data[f"spy_ret_{lb}w"]
+            optional_feature_cols.append(rel_col)
+        for lb in [13, 26, 52]:
+            mean = raw.rolling(lb).mean()
+            std = raw.rolling(lb).std().replace(0.0, np.nan)
+            col = f"{name}_z_{lb}w"
+            data[col] = ((raw - mean) / std).shift(1)
+            optional_feature_cols.append(col)
+    for left, right, spread_name in [
+        ("XLY", "XLP", "xly_xlp"),
+        ("XLK", "XLU", "xlk_xlu"),
+        ("HYG", "LQD", "hyg_lqd"),
+        ("TLT", "SPY", "tlt_spy"),
+        ("GLD", "SPY", "gld_spy"),
+        ("EEM", "EFA", "eem_efa"),
+    ]:
+        if left not in prices.columns or right not in prices.columns:
+            continue
+        left_raw = prices[left].reindex(returns.index).ffill()
+        right_raw = prices[right].reindex(returns.index).ffill()
+        if left_raw.notna().sum() < 156 or right_raw.notna().sum() < 156:
+            continue
+        spread = left_raw / right_raw.replace(0.0, np.nan) - 1.0
+        spread_ret = spread.diff()
+        for lb in [4, 13, 26, 52]:
+            col = f"{spread_name}_diff_{lb}w"
+            data[col] = spread_ret.rolling(lb).sum().shift(1)
+            optional_feature_cols.append(col)
+            mean = spread.rolling(lb).mean()
+            std = spread.rolling(lb).std().replace(0.0, np.nan)
+            z_col = f"{spread_name}_z_{lb}w"
+            data[z_col] = ((spread - mean) / std).shift(1)
+            optional_feature_cols.append(z_col)
     for symbol, name in [("^IRX", "irx"), ("^FVX", "fvx"), ("^TNX", "tnx"), ("^TYX", "tyx")]:
         if symbol not in prices.columns:
             continue
@@ -512,7 +605,11 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
     data["calendar_year_end_week"] = (
         (year != pd.Series((data.index + pd.Timedelta(days=7)).year.astype(float), index=data.index))
     ).astype(float)
-    data = data.replace([np.inf, -np.inf], np.nan).dropna(axis=1, how="all").dropna(how="any")
+    data = data.replace([np.inf, -np.inf], np.nan).dropna(axis=1, how="all")
+    optional_feature_cols = [col for col in optional_feature_cols if col in data.columns]
+    if optional_feature_cols:
+        data[optional_feature_cols] = data[optional_feature_cols].fillna(0.0)
+    data = data.dropna(how="any")
     # Robust per-column scaling, fit using train only to avoid validation leakage.
     train = data[data.index <= TRAIN_END]
     median = train.median()
