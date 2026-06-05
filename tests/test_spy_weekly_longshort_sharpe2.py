@@ -291,6 +291,27 @@ def test_time_split_leaf_tree_returns_valid_policy_and_regime_params() -> None:
     assert "late_split_thresholds" in params
 
 
+def test_quadratic_ridge_model_returns_valid_policy_and_train_only_params() -> None:
+    rng = np.random.default_rng(29)
+    matrix = rng.normal(size=(280, 6))
+    train_mask = np.array([True] * 220 + [False] * 60)
+    signal = matrix[:, 0] * matrix[:, 1] - 0.4 * matrix[:, 2] + matrix[:, 3] ** 2 * 0.1
+    spy_returns = np.where(signal > 0.0, 0.008, -0.005)
+    params = {
+        "rule_type": "quadratic_ridge_model",
+        "feature_indices": [0, 1, 2, 3],
+        "weights": [0.25, 0.25, 0.25, 0.25],
+        "ridge_alpha": 0.1,
+    }
+    positions, selected = build_positions_train_only(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert np.isfinite(selected["sharpe"])
+    assert params["quadratic_feature_count"] > len(params["feature_indices"])
+    assert "feature_means" in params
+    assert "feature_stds" in params
+
+
 def test_cv_bagged_leaf_ensemble_returns_valid_policy_and_cv_metrics() -> None:
     rng = np.random.default_rng(7)
     matrix = rng.normal(size=(260, 10))

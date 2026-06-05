@@ -540,12 +540,13 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "split_guard_leaf_tree",
                 "time_split_leaf_tree",
                 "ridge_model",
+                "quadratic_ridge_model",
                 "bagged_leaf_ensemble",
                 "cv_bagged_leaf_ensemble",
                 "logic_majority",
                 "logic_all_any",
             ],
-            p=[0.035, 0.045, 0.025, 0.045, 0.055, 0.065, 0.09, 0.13, 0.12, 0.045, 0.11, 0.11, 0.075, 0.05],
+            p=[0.03, 0.05, 0.02, 0.04, 0.05, 0.06, 0.08, 0.10, 0.10, 0.04, 0.10, 0.10, 0.10, 0.08, 0.05],
         )
     )
     if rule_type in {"logic_majority", "logic_all_any"}:
@@ -563,6 +564,10 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         weights = np.ones(k, dtype=float) / k
     if rule_type == "ridge_model":
         k = int(rng.integers(4, min(26, len(feature_cols)) + 1))
+        feature_indices = sample_feature_indices(rng, feature_cols, k, family)
+        weights = np.ones(k, dtype=float) / k
+    if rule_type == "quadratic_ridge_model":
+        k = int(rng.integers(4, min(13, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
     ensemble_members: list[dict[str, Any]] = []
@@ -685,6 +690,9 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "quadratic_ridge_model":
+        positions = build_quadratic_ridge_model_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "bagged_leaf_ensemble":
         positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=False)
@@ -1023,6 +1031,64 @@ def build_ridge_model_positions(
     params["invert"] = int(invert)
     oriented = -prediction if invert == 1 else prediction
     return np.where(oriented >= threshold, 1.0, -1.0)
+
+
+def build_quadratic_ridge_model_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> np.ndarray:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    raw = np.asarray(matrix[:, idx], dtype=float)
+    train_raw = raw[train_mask]
+    y_train = np.asarray(spy_returns[train_mask], dtype=float)
+    finite = np.isfinite(train_raw).all(axis=1) & np.isfinite(y_train)
+    train_raw = train_raw[finite]
+    y_train = y_train[finite]
+    if len(y_train) < max(80, len(idx) * 10):
+        return build_ridge_model_positions(matrix, spy_returns, train_mask, params)
+    mean = np.mean(train_raw, axis=0)
+    std = np.std(train_raw, axis=0)
+    std = np.where(std <= 1e-12, 1.0, std)
+    z_full = (raw - mean) / std
+    z_train = z_full[train_mask][finite]
+    x_train = quadratic_design(z_train)
+    x_full = quadratic_design(z_full)
+    if x_train.shape[1] > 90:
+        x_train = x_train[:, :90]
+        x_full = x_full[:, :90]
+    alpha = float(params.get("ridge_alpha", 1.0))
+    x_design = np.c_[np.ones(len(x_train)), x_train]
+    penalty = np.eye(x_design.shape[1]) * alpha
+    penalty[0, 0] = 0.0
+    try:
+        beta = np.linalg.solve(x_design.T @ x_design + penalty, x_design.T @ y_train)
+    except np.linalg.LinAlgError:
+        beta = np.linalg.pinv(x_design.T @ x_design + penalty) @ x_design.T @ y_train
+    full_design = np.c_[np.ones(matrix.shape[0]), x_full]
+    prediction = full_design @ beta
+    threshold, invert, _ = choose_train_only_threshold(prediction, spy_returns, train_mask)
+    params["feature_means"] = [float(x) for x in mean]
+    params["feature_stds"] = [float(x) for x in std]
+    params["quadratic_feature_count"] = int(x_full.shape[1])
+    params["weights"] = [float(x) for x in beta[1:]]
+    params["intercept"] = float(beta[0])
+    params["threshold"] = float(threshold)
+    params["invert"] = int(invert)
+    oriented = -prediction if invert == 1 else prediction
+    return np.where(oriented >= threshold, 1.0, -1.0)
+
+
+def quadratic_design(z: np.ndarray) -> np.ndarray:
+    parts = [z, z * z]
+    pairwise: list[np.ndarray] = []
+    for i in range(z.shape[1]):
+        for j in range(i + 1, z.shape[1]):
+            pairwise.append((z[:, i] * z[:, j])[:, None])
+    if pairwise:
+        parts.append(np.hstack(pairwise))
+    return np.hstack(parts)
 
 
 def build_bagged_leaf_ensemble_positions(
