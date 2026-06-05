@@ -92,7 +92,8 @@ def run_data(output_dir: Path) -> None:
             "SPY_VOLUME": spy_raw["Volume"].resample("W-FRI").sum(),
         }
     )
-    weekly_prices = weekly_prices.join(spy_ohlcv, how="left").dropna(how="any")
+    spy_daily_features = build_spy_daily_weekly_features(spy_raw)
+    weekly_prices = weekly_prices.join(spy_ohlcv, how="left").join(spy_daily_features, how="left").dropna(how="any")
     weekly_prices = weekly_prices[weekly_prices.index < LOCKED_START]
     close_cols = symbols
     weekly_returns = weekly_prices[close_cols].pct_change(fill_method=None).dropna(how="any")
@@ -123,6 +124,48 @@ def run_data(output_dir: Path) -> None:
             }
         ]
     ).to_csv(data_dir / "policy_audit.csv", index=False)
+
+
+def build_spy_daily_weekly_features(spy_raw: pd.DataFrame) -> pd.DataFrame:
+    daily = spy_raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+    daily = daily.replace([np.inf, -np.inf], np.nan).dropna(how="any")
+    daily_ret = daily["Close"].pct_change(fill_method=None)
+    gap = daily["Open"] / daily["Close"].shift(1) - 1.0
+    intraday = daily["Close"] / daily["Open"] - 1.0
+    day_range = daily["High"] / daily["Low"] - 1.0
+    close_location = (daily["Close"] - daily["Low"]) / (daily["High"] - daily["Low"]).replace(0.0, np.nan)
+    features = pd.DataFrame(
+        {
+            "daily_ret": daily_ret,
+            "gap": gap,
+            "intraday": intraday,
+            "day_range": day_range,
+            "close_location": close_location,
+            "volume": daily["Volume"].astype(float),
+        },
+        index=daily.index,
+    ).replace([np.inf, -np.inf], np.nan)
+    grouped = features.resample("W-FRI")
+    out = pd.DataFrame(
+        {
+            "SPY_DAILY_UP_DAYS": grouped["daily_ret"].apply(lambda x: float(np.sum(np.asarray(x) > 0.0))),
+            "SPY_DAILY_DOWN_DAYS": grouped["daily_ret"].apply(lambda x: float(np.sum(np.asarray(x) < 0.0))),
+            "SPY_DAILY_MEAN_RET": grouped["daily_ret"].mean(),
+            "SPY_DAILY_VOL": grouped["daily_ret"].std(),
+            "SPY_DAILY_SKEW": grouped["daily_ret"].skew(),
+            "SPY_DAILY_MAX_RET": grouped["daily_ret"].max(),
+            "SPY_DAILY_MIN_RET": grouped["daily_ret"].min(),
+            "SPY_DAILY_GAP_MEAN": grouped["gap"].mean(),
+            "SPY_DAILY_GAP_MAX": grouped["gap"].max(),
+            "SPY_DAILY_GAP_MIN": grouped["gap"].min(),
+            "SPY_DAILY_INTRADAY_MEAN": grouped["intraday"].mean(),
+            "SPY_DAILY_RANGE_MEAN": grouped["day_range"].mean(),
+            "SPY_DAILY_RANGE_MAX": grouped["day_range"].max(),
+            "SPY_DAILY_CLOSE_LOCATION_MEAN": grouped["close_location"].mean(),
+            "SPY_DAILY_VOLUME_MEAN": grouped["volume"].mean(),
+        }
+    )
+    return out.replace([np.inf, -np.inf], np.nan)
 
 
 def run_shard(
@@ -356,12 +399,34 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
             std = spy_volume.rolling(lb).std().replace(0.0, np.nan)
             data[f"spy_volume_z_{lb}w"] = ((spy_volume - mean) / std).shift(1)
             data[f"spy_volume_ret_{lb}w"] = (1.0 + volume_change).rolling(lb).apply(np.prod, raw=True).shift(1) - 1.0
+    daily_cols = [col for col in prices.columns if col.startswith("SPY_DAILY_")]
+    for col in daily_cols:
+        raw = prices[col].reindex(returns.index).ffill()
+        name = col.lower()
+        data[name] = raw.shift(1)
+        for lb in [4, 13, 26]:
+            mean = raw.rolling(lb).mean()
+            std = raw.rolling(lb).std().replace(0.0, np.nan)
+            data[f"{name}_mean_{lb}w"] = mean.shift(1)
+            data[f"{name}_z_{lb}w"] = ((raw - mean) / std).shift(1)
+    if {"SPY_DAILY_UP_DAYS", "SPY_DAILY_DOWN_DAYS"} <= set(prices.columns):
+        up_days = prices["SPY_DAILY_UP_DAYS"].reindex(returns.index).ffill()
+        down_days = prices["SPY_DAILY_DOWN_DAYS"].reindex(returns.index).ffill()
+        data["spy_daily_up_down_balance"] = ((up_days - down_days) / (up_days + down_days).replace(0.0, np.nan)).shift(1)
+    if {"SPY_DAILY_GAP_MEAN", "SPY_DAILY_INTRADAY_MEAN"} <= set(prices.columns):
+        gap_mean = prices["SPY_DAILY_GAP_MEAN"].reindex(returns.index).ffill()
+        intraday_mean = prices["SPY_DAILY_INTRADAY_MEAN"].reindex(returns.index).ffill()
+        data["spy_daily_gap_intraday_spread"] = (gap_mean - intraday_mean).shift(1)
     data["spy_ret_4w_x_vix_z_26w"] = data["spy_ret_4w"] * data["vix_z_26w"]
     data["spy_ma_20w_x_tnx_z_26w"] = data["spy_ma_gap_20w"] * data["tnx_z_26w"]
     if "nasdaq_rel_spy_13w" in data.columns:
         data["spy_ret_13w_x_nasdaq_rel_spy_13w"] = data["spy_ret_13w"] * data["nasdaq_rel_spy_13w"]
     if "spy_week_range" in data.columns:
         data["spy_week_range_x_vix_z_13w"] = data["spy_week_range"] * data["vix_z_13w"]
+    if "spy_daily_vol_z_13w" in data.columns and "vix_z_13w" in data.columns:
+        data["spy_daily_vol_x_vix_z_13w"] = data["spy_daily_vol_z_13w"] * data["vix_z_13w"]
+    if "spy_daily_close_location_mean_z_13w" in data.columns and "spy_ret_4w" in data.columns:
+        data["spy_close_location_x_ret_4w"] = data["spy_daily_close_location_mean_z_13w"] * data["spy_ret_4w"]
     week = pd.Series(data.index.isocalendar().week.astype(float).to_numpy(), index=data.index)
     month = pd.Series(data.index.month.astype(float), index=data.index)
     quarter = pd.Series(data.index.quarter.astype(float), index=data.index)
@@ -379,7 +444,7 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
     data["calendar_january"] = (month == 1.0).astype(float)
     data["calendar_september"] = (month == 9.0).astype(float)
     data["calendar_q4"] = (quarter == 4.0).astype(float)
-    data = data.replace([np.inf, -np.inf], np.nan).dropna(how="any")
+    data = data.replace([np.inf, -np.inf], np.nan).dropna(axis=1, how="all").dropna(how="any")
     # Robust per-column scaling, fit using train only to avoid validation leakage.
     train = data[data.index <= TRAIN_END]
     median = train.median()
@@ -485,14 +550,14 @@ def sample_feature_indices(
 ) -> np.ndarray:
     groups = {
         0: ["spy_ret_", "spy_ma_gap_", "spy_drawdown_", "spy_vol_", "spy_rsi_"],
-        1: ["vix_", "spy_week_range", "spy_week_close_", "spy_volume_"],
+        1: ["vix_", "spy_week_range", "spy_week_close_", "spy_volume_", "spy_daily_"],
         2: ["tnx_", "irx_", "fvx_", "tyx_", "_spread_"],
         3: ["nasdaq_", "russell_", "dow_", "spx_"],
         4: ["ftse_", "nikkei_", "dax_", "hsi_", "dxy_"],
         5: ["calendar_"],
         6: ["rel_spy_", "spread_"],
         7: ["spy_ret_", "vix_", "tnx_", "calendar_"],
-        8: ["spy_week_", "spy_volume_", "russell_", "nasdaq_"],
+        8: ["spy_week_", "spy_volume_", "spy_daily_", "russell_", "nasdaq_"],
         9: ["dxy_", "tyx_", "irx_", "fvx_", "tnx_"],
     }
     prefixes = groups.get(int(family), [])
