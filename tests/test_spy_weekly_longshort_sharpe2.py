@@ -12,6 +12,7 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     build_feature_frame,
     build_bagged_leaf_ensemble_positions,
     build_spy_daily_weekly_features,
+    build_logic_positions,
     build_score,
     choose_train_only_threshold,
     metrics,
@@ -243,6 +244,25 @@ def test_cv_bagged_leaf_ensemble_returns_valid_policy_and_cv_metrics() -> None:
     assert position_audit(positions)["always_invested"] is True
     assert set(np.unique(positions)).issubset({-1.0, 1.0})
     assert np.isfinite(params["cv_train_sharpe"])
+
+
+def test_logic_rule_returns_valid_policy() -> None:
+    rng = np.random.default_rng(8)
+    matrix = rng.normal(size=(180, 6))
+    train_mask = np.array([True] * 130 + [False] * 50)
+    spy_returns = np.where((matrix[:, 0] > 0.0) & (matrix[:, 1] < 0.3), 0.01, -0.006)
+    params = {
+        "rule_type": "logic_majority",
+        "feature_indices": [0, 1, 2],
+        "weights": [1.0 / 3.0] * 3,
+        "quantiles": [0.5, 0.6, 0.4],
+        "directions": [1.0, -1.0, 1.0],
+        "logic_operator": "majority",
+    }
+    positions = build_logic_positions(matrix, spy_returns, train_mask, params)
+    assert position_audit(positions)["always_invested"] is True
+    assert set(np.unique(positions)).issubset({-1.0, 1.0})
+    assert "split_thresholds" in params
 
 
 def test_train_only_stability_penalizes_split_fragility() -> None:
