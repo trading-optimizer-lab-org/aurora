@@ -393,7 +393,7 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
 
 
 def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int) -> dict[str, Any]:
-    family = stage % 7
+    family = stage % 11
     if family == 0:
         k = 1
     elif family in {1, 2}:
@@ -403,7 +403,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     else:
         k = int(rng.integers(8, min(16, len(feature_cols)) + 1))
     k = min(int(k), len(feature_cols))
-    feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
+    feature_indices = sample_feature_indices(rng, feature_cols, k, family)
     weights = rng.normal(0.0, 1.0, size=k)
     norm = np.sum(np.abs(weights))
     if norm <= 0:
@@ -421,18 +421,39 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "era_leaf_tree",
                 "cv_era_leaf_tree",
                 "ridge_model",
+                "bagged_leaf_ensemble",
+                "cv_bagged_leaf_ensemble",
             ],
-            p=[0.10, 0.12, 0.08, 0.12, 0.14, 0.14, 0.18, 0.12],
+            p=[0.06, 0.08, 0.05, 0.08, 0.10, 0.11, 0.14, 0.08, 0.15, 0.15],
         )
     )
     if rule_type in {"train_leaf_tree", "era_leaf_tree", "cv_era_leaf_tree"}:
         k = min(max(4, k), min(10, len(feature_cols)))
-        feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
+        feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
     if rule_type == "ridge_model":
         k = int(rng.integers(4, min(26, len(feature_cols)) + 1))
-        feature_indices = rng.choice(len(feature_cols), size=k, replace=False)
+        feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
+    ensemble_members: list[dict[str, Any]] = []
+    if rule_type in {"bagged_leaf_ensemble", "cv_bagged_leaf_ensemble"}:
+        member_count = int(rng.integers(5, 15))
+        member_features: list[int] = []
+        for _ in range(member_count):
+            member_k = int(rng.integers(2, 5))
+            member_idx = sample_feature_indices(rng, feature_cols, member_k, family)
+            member_thresholds = rng.normal(0.0, 1.0, size=len(member_idx))
+            member_directions = rng.choice([-1.0, 1.0], size=len(member_idx))
+            ensemble_members.append(
+                {
+                    "feature_indices": [int(i) for i in member_idx],
+                    "thresholds": [float(x) for x in member_thresholds],
+                    "directions": [float(x) for x in member_directions],
+                }
+            )
+            member_features.extend(int(i) for i in member_idx)
+        feature_indices = np.asarray(sorted(set(member_features)), dtype=int)
+        weights = np.ones(len(feature_indices), dtype=float) / max(1, len(feature_indices))
     thresholds = rng.normal(0.0, 1.0, size=k)
     band_widths = rng.uniform(0.25, 2.0, size=k)
     directions = rng.choice([-1.0, 1.0], size=k)
@@ -451,8 +472,38 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         "directions": [float(x) for x in directions],
         "threshold": threshold,
         "ridge_alpha": float(10.0 ** rng.uniform(-3.0, 2.0)),
+        "ensemble_members": ensemble_members,
         "invert": int(rng.integers(0, 2)),
     }
+
+
+def sample_feature_indices(
+    rng: np.random.Generator,
+    feature_cols: list[str],
+    k: int,
+    family: int,
+) -> np.ndarray:
+    groups = {
+        0: ["spy_ret_", "spy_ma_gap_", "spy_drawdown_", "spy_vol_", "spy_rsi_"],
+        1: ["vix_", "spy_week_range", "spy_week_close_", "spy_volume_"],
+        2: ["tnx_", "irx_", "fvx_", "tyx_", "_spread_"],
+        3: ["nasdaq_", "russell_", "dow_", "spx_"],
+        4: ["ftse_", "nikkei_", "dax_", "hsi_", "dxy_"],
+        5: ["calendar_"],
+        6: ["rel_spy_", "spread_"],
+        7: ["spy_ret_", "vix_", "tnx_", "calendar_"],
+        8: ["spy_week_", "spy_volume_", "russell_", "nasdaq_"],
+        9: ["dxy_", "tyx_", "irx_", "fvx_", "tnx_"],
+    }
+    prefixes = groups.get(int(family), [])
+    candidates = [
+        i
+        for i, name in enumerate(feature_cols)
+        if any(token in name for token in prefixes)
+    ]
+    if len(candidates) < max(1, k):
+        candidates = list(range(len(feature_cols)))
+    return rng.choice(candidates, size=min(int(k), len(candidates)), replace=False)
 
 
 def build_score(matrix: np.ndarray, params: dict[str, Any]) -> np.ndarray:
@@ -495,6 +546,12 @@ def build_positions_train_only(
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
         positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "bagged_leaf_ensemble":
+        positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=False)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "cv_bagged_leaf_ensemble":
+        positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=True)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     raw_score = build_score(matrix, params)
     threshold, invert, train_metrics = choose_train_only_threshold(raw_score, spy_returns, train_mask)
@@ -700,6 +757,81 @@ def build_ridge_model_positions(
     params["invert"] = int(invert)
     oriented = -prediction if invert == 1 else prediction
     return np.where(oriented >= threshold, 1.0, -1.0)
+
+
+def build_bagged_leaf_ensemble_positions(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+    *,
+    cv: bool,
+) -> np.ndarray:
+    members = list(params.get("ensemble_members") or [])
+    if not members:
+        return np.ones(matrix.shape[0], dtype=float)
+    if cv:
+        train_indices = np.flatnonzero(train_mask)
+        folds = [fold for fold in np.array_split(train_indices, 5) if len(fold) > 0]
+        cv_score = np.full(matrix.shape[0], np.nan, dtype=float)
+        for fold in folds:
+            fit_mask = train_mask.copy()
+            fit_mask[fold] = False
+            if int(np.sum(fit_mask)) < 120:
+                continue
+            fold_score = ensemble_score(matrix, spy_returns, fit_mask, members)
+            cv_score[fold] = fold_score[fold]
+        cv_train_score = cv_score[train_mask]
+        fill = np.nanmedian(cv_train_score) if np.isfinite(cv_train_score).any() else 0.0
+        cv_score[np.isnan(cv_score)] = fill
+        cv_threshold, cv_invert, _ = choose_train_only_threshold(cv_score, spy_returns, train_mask)
+        cv_oriented = -cv_score if cv_invert == 1 else cv_score
+        cv_positions = np.where(cv_oriented >= cv_threshold, 1.0, -1.0)
+        cv_metrics = metrics(cv_positions[train_mask] * spy_returns[train_mask])
+        params["cv_train_sharpe"] = float(cv_metrics["sharpe"])
+        params["cv_train_cagr"] = float(cv_metrics["cagr"])
+        params["cv_train_mdd"] = float(cv_metrics["mdd"])
+        params["cv_threshold"] = float(cv_threshold)
+        params["cv_invert"] = int(cv_invert)
+    score = ensemble_score(matrix, spy_returns, train_mask, members)
+    threshold, invert, selected = choose_train_only_threshold(score, spy_returns, train_mask)
+    params["threshold"] = float(threshold)
+    params["invert"] = int(invert)
+    params["ensemble_train_sharpe"] = float(selected["sharpe"])
+    oriented = -score if invert == 1 else score
+    return np.where(oriented >= threshold, 1.0, -1.0)
+
+
+def ensemble_score(
+    matrix: np.ndarray,
+    spy_returns: np.ndarray,
+    fit_mask: np.ndarray,
+    members: list[dict[str, Any]],
+) -> np.ndarray:
+    votes: list[np.ndarray] = []
+    weights: list[float] = []
+    for member in members:
+        idx = np.asarray(member.get("feature_indices", []), dtype=int)
+        if len(idx) == 0:
+            continue
+        member_values = np.asarray(matrix[:, idx], dtype=float)
+        split_thresholds, signs, agreement = fit_leaf_tree(member_values, spy_returns, fit_mask, member, era_consistent=True)
+        leaf_ids = compute_leaf_ids(member_values, split_thresholds, member)
+        signal = signs[leaf_ids]
+        fit_rets = signal[fit_mask] * spy_returns[fit_mask]
+        fit_metrics = metrics(fit_rets)
+        sharpe = float(fit_metrics["sharpe"]) if np.isfinite(fit_metrics["sharpe"]) else -2.0
+        if sharpe < 0.0 and agreement < 0.35:
+            continue
+        votes.append(signal)
+        weights.append(max(0.05, min(2.5, sharpe + 0.75)) * max(0.25, agreement))
+    if not votes:
+        default = 1.0 if float(np.sum(spy_returns[fit_mask])) >= 0.0 else -1.0
+        return np.full(matrix.shape[0], default, dtype=float)
+    stacked = np.vstack(votes)
+    w = np.asarray(weights, dtype=float)
+    w = w / np.sum(w)
+    return w @ stacked
 
 
 def choose_train_only_threshold(score: np.ndarray, spy_returns: np.ndarray, train_mask: np.ndarray) -> tuple[float, int, dict[str, float]]:
