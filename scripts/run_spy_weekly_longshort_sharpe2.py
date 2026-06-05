@@ -560,12 +560,33 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
                 "multi_era_leaf_tree",
                 "ridge_model",
                 "quadratic_ridge_model",
+                "cv_ridge_model",
+                "cv_quadratic_ridge_model",
                 "bagged_leaf_ensemble",
                 "cv_bagged_leaf_ensemble",
                 "logic_majority",
                 "logic_all_any",
             ],
-            p=[0.025, 0.04, 0.02, 0.035, 0.045, 0.055, 0.075, 0.085, 0.08, 0.12, 0.04, 0.095, 0.095, 0.095, 0.075, 0.02],
+            p=[
+                0.015,
+                0.025,
+                0.015,
+                0.025,
+                0.035,
+                0.045,
+                0.085,
+                0.085,
+                0.085,
+                0.040,
+                0.030,
+                0.075,
+                0.075,
+                0.075,
+                0.085,
+                0.095,
+                0.055,
+                0.055,
+            ],
         )
     )
     if rule_type in {"logic_majority", "logic_all_any"}:
@@ -588,11 +609,11 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
             k = min(max(4, k), min(10, len(feature_cols)))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type == "ridge_model":
+    if rule_type in {"ridge_model", "cv_ridge_model"}:
         k = int(rng.integers(4, min(26, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
-    if rule_type == "quadratic_ridge_model":
+    if rule_type in {"quadratic_ridge_model", "cv_quadratic_ridge_model"}:
         k = int(rng.integers(4, min(13, len(feature_cols)) + 1))
         feature_indices = sample_feature_indices(rng, feature_cols, k, family)
         weights = np.ones(k, dtype=float) / k
@@ -718,10 +739,16 @@ def build_positions_train_only(
         positions = build_multi_era_leaf_tree_positions(matrix, spy_returns, train_mask, params)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "ridge_model":
-        positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params)
+        positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params, cv_threshold=False)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "quadratic_ridge_model":
-        positions = build_quadratic_ridge_model_positions(matrix, spy_returns, train_mask, params)
+        positions = build_quadratic_ridge_model_positions(matrix, spy_returns, train_mask, params, cv_threshold=False)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "cv_ridge_model":
+        positions = build_ridge_model_positions(matrix, spy_returns, train_mask, params, cv_threshold=True)
+        return positions, metrics(positions[train_mask] * spy_returns[train_mask])
+    if str(params.get("rule_type", "linear")) == "cv_quadratic_ridge_model":
+        positions = build_quadratic_ridge_model_positions(matrix, spy_returns, train_mask, params, cv_threshold=True)
         return positions, metrics(positions[train_mask] * spy_returns[train_mask])
     if str(params.get("rule_type", "linear")) == "bagged_leaf_ensemble":
         positions = build_bagged_leaf_ensemble_positions(matrix, spy_returns, train_mask, params, cv=False)
@@ -1076,6 +1103,8 @@ def build_ridge_model_positions(
     spy_returns: np.ndarray,
     train_mask: np.ndarray,
     params: dict[str, Any],
+    *,
+    cv_threshold: bool,
 ) -> np.ndarray:
     idx = np.asarray(params["feature_indices"], dtype=int)
     x_train = np.asarray(matrix[train_mask][:, idx], dtype=float)
@@ -1086,22 +1115,21 @@ def build_ridge_model_positions(
     if len(y_train) < max(30, len(idx) * 4):
         return np.ones(matrix.shape[0], dtype=float)
     alpha = float(params.get("ridge_alpha", 1.0))
-    x_design = np.c_[np.ones(len(x_train)), x_train]
-    penalty = np.eye(x_design.shape[1]) * alpha
-    penalty[0, 0] = 0.0
-    try:
-        beta = np.linalg.solve(x_design.T @ x_design + penalty, x_design.T @ y_train)
-    except np.linalg.LinAlgError:
-        beta = np.linalg.pinv(x_design.T @ x_design + penalty) @ x_design.T @ y_train
+    beta = fit_ridge_beta(x_train, y_train, alpha)
     full_design = np.c_[np.ones(matrix.shape[0]), np.asarray(matrix[:, idx], dtype=float)]
     prediction = full_design @ beta
-    threshold, invert, _ = choose_train_only_threshold(prediction, spy_returns, train_mask)
+    if cv_threshold:
+        cv_prediction = cross_validated_ridge_prediction(np.asarray(matrix[:, idx], dtype=float), spy_returns, train_mask, alpha)
+        positions, threshold, invert = apply_cv_selected_threshold(prediction, cv_prediction, spy_returns, train_mask, params)
+    else:
+        threshold, invert, _ = choose_train_only_threshold(prediction, spy_returns, train_mask)
+        oriented = -prediction if invert == 1 else prediction
+        positions = np.where(oriented >= threshold, 1.0, -1.0)
     params["weights"] = [float(x) for x in beta[1:]]
     params["intercept"] = float(beta[0])
     params["threshold"] = float(threshold)
     params["invert"] = int(invert)
-    oriented = -prediction if invert == 1 else prediction
-    return np.where(oriented >= threshold, 1.0, -1.0)
+    return positions
 
 
 def build_quadratic_ridge_model_positions(
@@ -1109,6 +1137,8 @@ def build_quadratic_ridge_model_positions(
     spy_returns: np.ndarray,
     train_mask: np.ndarray,
     params: dict[str, Any],
+    *,
+    cv_threshold: bool,
 ) -> np.ndarray:
     idx = np.asarray(params["feature_indices"], dtype=int)
     raw = np.asarray(matrix[:, idx], dtype=float)
@@ -1118,7 +1148,7 @@ def build_quadratic_ridge_model_positions(
     train_raw = train_raw[finite]
     y_train = y_train[finite]
     if len(y_train) < max(80, len(idx) * 10):
-        return build_ridge_model_positions(matrix, spy_returns, train_mask, params)
+        return build_ridge_model_positions(matrix, spy_returns, train_mask, params, cv_threshold=cv_threshold)
     mean = np.mean(train_raw, axis=0)
     std = np.std(train_raw, axis=0)
     std = np.where(std <= 1e-12, 1.0, std)
@@ -1130,16 +1160,16 @@ def build_quadratic_ridge_model_positions(
         x_train = x_train[:, :90]
         x_full = x_full[:, :90]
     alpha = float(params.get("ridge_alpha", 1.0))
-    x_design = np.c_[np.ones(len(x_train)), x_train]
-    penalty = np.eye(x_design.shape[1]) * alpha
-    penalty[0, 0] = 0.0
-    try:
-        beta = np.linalg.solve(x_design.T @ x_design + penalty, x_design.T @ y_train)
-    except np.linalg.LinAlgError:
-        beta = np.linalg.pinv(x_design.T @ x_design + penalty) @ x_design.T @ y_train
+    beta = fit_ridge_beta(x_train, y_train, alpha)
     full_design = np.c_[np.ones(matrix.shape[0]), x_full]
     prediction = full_design @ beta
-    threshold, invert, _ = choose_train_only_threshold(prediction, spy_returns, train_mask)
+    if cv_threshold:
+        cv_prediction = cross_validated_ridge_prediction(x_full, spy_returns, train_mask, alpha)
+        positions, threshold, invert = apply_cv_selected_threshold(prediction, cv_prediction, spy_returns, train_mask, params)
+    else:
+        threshold, invert, _ = choose_train_only_threshold(prediction, spy_returns, train_mask)
+        oriented = -prediction if invert == 1 else prediction
+        positions = np.where(oriented >= threshold, 1.0, -1.0)
     params["feature_means"] = [float(x) for x in mean]
     params["feature_stds"] = [float(x) for x in std]
     params["quadratic_feature_count"] = int(x_full.shape[1])
@@ -1147,8 +1177,73 @@ def build_quadratic_ridge_model_positions(
     params["intercept"] = float(beta[0])
     params["threshold"] = float(threshold)
     params["invert"] = int(invert)
-    oriented = -prediction if invert == 1 else prediction
-    return np.where(oriented >= threshold, 1.0, -1.0)
+    return positions
+
+
+def fit_ridge_beta(x_train: np.ndarray, y_train: np.ndarray, alpha: float) -> np.ndarray:
+    x_design = np.c_[np.ones(len(x_train)), x_train]
+    penalty = np.eye(x_design.shape[1]) * alpha
+    penalty[0, 0] = 0.0
+    try:
+        return np.linalg.solve(x_design.T @ x_design + penalty, x_design.T @ y_train)
+    except np.linalg.LinAlgError:
+        return np.linalg.pinv(x_design.T @ x_design + penalty) @ x_design.T @ y_train
+
+
+def cross_validated_ridge_prediction(
+    x_full: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    alpha: float,
+) -> np.ndarray:
+    train_indices = np.flatnonzero(train_mask)
+    folds = [fold for fold in np.array_split(train_indices, 5) if len(fold) > 0]
+    cv_prediction = np.full(x_full.shape[0], np.nan, dtype=float)
+    for fold in folds:
+        fit_mask = train_mask.copy()
+        fit_mask[fold] = False
+        fit_x = np.asarray(x_full[fit_mask], dtype=float)
+        fit_y = np.asarray(spy_returns[fit_mask], dtype=float)
+        finite = np.isfinite(fit_x).all(axis=1) & np.isfinite(fit_y)
+        fit_x = fit_x[finite]
+        fit_y = fit_y[finite]
+        if len(fit_y) < max(80, x_full.shape[1] * 3):
+            continue
+        beta = fit_ridge_beta(fit_x, fit_y, alpha)
+        cv_prediction[fold] = np.c_[np.ones(len(fold)), x_full[fold]] @ beta
+    train_cv = cv_prediction[train_mask]
+    fill = float(np.nanmedian(train_cv)) if np.isfinite(train_cv).any() else 0.0
+    cv_prediction[np.isnan(cv_prediction)] = fill
+    return cv_prediction
+
+
+def apply_cv_selected_threshold(
+    score: np.ndarray,
+    cv_score: np.ndarray,
+    spy_returns: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[np.ndarray, float, int]:
+    threshold, invert, _ = choose_train_only_threshold(cv_score, spy_returns, train_mask)
+    cv_oriented = -cv_score if invert == 1 else cv_score
+    cv_positions = np.where(cv_oriented >= threshold, 1.0, -1.0)
+    cv_metrics = metrics(cv_positions[train_mask] * spy_returns[train_mask])
+    fold_sharpes: list[float] = []
+    for fold in np.array_split(np.flatnonzero(train_mask), 5):
+        if len(fold) < 20:
+            continue
+        fold_metrics = metrics(cv_positions[fold] * spy_returns[fold])
+        if np.isfinite(fold_metrics["sharpe"]):
+            fold_sharpes.append(float(fold_metrics["sharpe"]))
+    params["cv_train_sharpe"] = float(cv_metrics["sharpe"])
+    params["cv_train_cagr"] = float(cv_metrics["cagr"])
+    params["cv_train_mdd"] = float(cv_metrics["mdd"])
+    params["cv_min_fold_sharpe"] = float(np.min(fold_sharpes)) if fold_sharpes else -99.0
+    params["cv_fold_positive_pct"] = float(np.mean(np.asarray(fold_sharpes) > 0.0)) if fold_sharpes else 0.0
+    params["cv_threshold"] = float(threshold)
+    params["cv_invert"] = int(invert)
+    oriented = -score if invert == 1 else score
+    return np.where(oriented >= threshold, 1.0, -1.0), float(threshold), int(invert)
 
 
 def quadratic_design(z: np.ndarray) -> np.ndarray:
