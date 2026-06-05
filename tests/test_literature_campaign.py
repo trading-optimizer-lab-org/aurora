@@ -278,10 +278,10 @@ def test_curated_sp500_down_paper_campaign_builds_clean_specs() -> None:
     assert cfg.campaign_id == "sp500_down_papers_curated_v1"
     assert cfg.chunks == 355
     assert cfg.max_parallel == 355
-    assert len(specs) >= 10
-    assert len(unsupported) == 1
-    assert unsupported.iloc[0]["primary_family"] == "statistical_safety"
-    assert unsupported.iloc[0]["unsupported_reason"] == "unsupported_not_a_trading_strategy"
+    assert len(specs) >= 300
+    assert len(unsupported) == 21
+    assert set(unsupported["primary_family"]) == {"statistical_safety"}
+    assert set(unsupported["unsupported_reason"]) == {"unsupported_not_a_trading_strategy"}
     assert specs["example_study_id"].str.startswith("curated_").all()
     assert specs["source_exactness"].eq("proxy_or_template_source").all()
     assert specs["paper_exact_replication_claimed"].eq(False).all()

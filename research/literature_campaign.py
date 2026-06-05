@@ -255,48 +255,54 @@ def _load_curated_ideas_json(path: Path) -> pd.DataFrame:
         features = item.get("features") or []
         variants = item.get("variants") or []
         study_id = "curated_" + hashlib.sha256("|".join(map(str, papers or [idea])).encode("utf-8")).hexdigest()[:12]
-        evidence = {
-            "formula": rule,
-            "universe": "SP500/SPY timing rule with listed context features",
-            "direction": rule,
-            "frequency": "monthly",
-            "features": features,
-            "papers": papers,
-            "paper_metadata": paper_meta,
-            "why": str(item.get("why") or ""),
-            "variants": variants,
-        }
-        rows.append(
-            {
-                "study_id": study_id,
-                "idea_id": f"curated_sp500_down_{rank:02d}",
-                "strategy_family": family,
-                "signal_formula": rule,
-                "asset_universe": "SP500 benchmark, SPY tradable target, context features: " + ", ".join(map(str, features)),
-                "tradable_assets": "SPY",
+        for variant_index, lookback in enumerate(_CURATED_MONTHLY_LOOKBACKS, start=1):
+            variant_label = f"lookback_{lookback}m"
+            evidence = {
+                "formula": f"{rule}; variant={variant_label}",
+                "universe": "SP500/SPY timing rule with listed context features",
+                "direction": rule,
                 "frequency": "monthly",
-                "rebalance_rule": "Rebalance monthly with at least one period causal lag.",
-                "position_rule": rule,
-                "thresholds": "; ".join(map(str, variants)),
-                "lookback_windows": _curated_lookbacks(features, variants),
-                "lags_required": ">=1 period",
-                "costs_assumption": "Aurora default cost model",
-                "sample_period": "Requires data from 1995-01-01 through validation end",
-                "benchmark": "SPY",
-                "exactness_status": "proxy_replicable",
-                "missing_fields_json": "[]",
-                "evidence_quote_refs": json.dumps(evidence, ensure_ascii=False),
-                "paper_exact_replication": False,
-                "reviewed_status": "curated_for_sp500_downside_campaign",
-                "can_test_in_aurora": True,
-                "review_reason": "human_curated_literature_idea_not_exact_paper_replica",
-                "exactness_status_after_review": "proxy_replicable",
+                "features": features,
+                "papers": papers,
+                "paper_metadata": paper_meta,
+                "why": str(item.get("why") or ""),
+                "variants": variants,
+                "lookback_months": lookback,
             }
-        )
+            rows.append(
+                {
+                    "study_id": study_id,
+                    "idea_id": f"curated_sp500_down_{rank:02d}_v{variant_index:02d}",
+                    "strategy_family": family,
+                    "signal_formula": f"{rule}; variant={variant_label}",
+                    "asset_universe": "SP500 benchmark, SPY tradable target, context features: " + ", ".join(map(str, features)),
+                    "tradable_assets": "SPY",
+                    "frequency": "monthly",
+                    "rebalance_rule": "Rebalance monthly with at least one period causal lag.",
+                    "position_rule": rule,
+                    "thresholds": "; ".join(map(str, variants)),
+                    "lookback_windows": f"{lookback} months",
+                    "lags_required": ">=1 period",
+                    "costs_assumption": "Aurora default cost model",
+                    "sample_period": "Requires data from 1995-01-01 through validation end",
+                    "benchmark": "SPY",
+                    "exactness_status": "proxy_replicable",
+                    "missing_fields_json": "[]",
+                    "evidence_quote_refs": json.dumps(evidence, ensure_ascii=False),
+                    "paper_exact_replication": False,
+                    "reviewed_status": "curated_for_sp500_downside_campaign",
+                    "can_test_in_aurora": True,
+                    "review_reason": "human_curated_literature_idea_not_exact_paper_replica",
+                    "exactness_status_after_review": "proxy_replicable",
+                }
+            )
     frame = pd.DataFrame(rows)
     if frame.empty:
         raise ValueError("curated_ideas_json produced zero rows")
     return frame
+
+
+_CURATED_MONTHLY_LOOKBACKS = (2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 21, 24, 30, 36, 42, 48, 60, 72, 84, 96, 120)
 
 
 def _curated_lookbacks(features: object, variants: object) -> str:
