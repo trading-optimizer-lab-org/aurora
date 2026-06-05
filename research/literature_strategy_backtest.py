@@ -619,6 +619,16 @@ def _down_month_metrics_for_period(
         f"{prefix}_sp500_down_month_worst_return_pct": float("nan"),
         f"{prefix}_sp500_down_month_beats_sp500_pct": float("nan"),
         f"{prefix}_sp500_down_month_count": 0.0,
+        f"{prefix}_sp500_up_month_avg_return_pct": float("nan"),
+        f"{prefix}_sp500_up_month_positive_pct": float("nan"),
+        f"{prefix}_sp500_up_month_count": 0.0,
+        f"{prefix}_sp500_down_true_positive_count": 0.0,
+        f"{prefix}_sp500_down_false_negative_count": 0.0,
+        f"{prefix}_sp500_down_false_positive_count": 0.0,
+        f"{prefix}_sp500_down_true_negative_count": 0.0,
+        f"{prefix}_sp500_down_precision_pct": float("nan"),
+        f"{prefix}_sp500_down_recall_pct": float("nan"),
+        f"{prefix}_sp500_down_false_positive_rate_pct": float("nan"),
     }
     if strategy_returns.empty or benchmark_returns.empty:
         return keys
@@ -631,14 +641,32 @@ def _down_month_metrics_for_period(
         return keys
     mask = _between(frame.index, start, end) & (frame["sp500"] < 0.0)
     down = frame.loc[mask]
+    up = frame.loc[_between(frame.index, start, end) & (frame["sp500"] >= 0.0)]
     if down.empty:
         return keys
+    true_positive = int((down["strategy"] > 0.0).sum())
+    false_negative = int((down["strategy"] <= 0.0).sum())
+    false_positive = int((up["strategy"] < 0.0).sum()) if not up.empty else 0
+    true_negative = int((up["strategy"] >= 0.0).sum()) if not up.empty else 0
+    precision_den = true_positive + false_positive
+    recall_den = true_positive + false_negative
+    fpr_den = false_positive + true_negative
     keys.update({
         f"{prefix}_sp500_down_month_avg_return_pct": round(float(down["strategy"].mean() * 100.0), 6),
         f"{prefix}_sp500_down_month_positive_pct": round(float((down["strategy"] > 0.0).mean() * 100.0), 6),
         f"{prefix}_sp500_down_month_worst_return_pct": round(float(down["strategy"].min() * 100.0), 6),
         f"{prefix}_sp500_down_month_beats_sp500_pct": round(float((down["strategy"] > down["sp500"]).mean() * 100.0), 6),
         f"{prefix}_sp500_down_month_count": float(len(down)),
+        f"{prefix}_sp500_up_month_avg_return_pct": round(float(up["strategy"].mean() * 100.0), 6) if not up.empty else float("nan"),
+        f"{prefix}_sp500_up_month_positive_pct": round(float((up["strategy"] > 0.0).mean() * 100.0), 6) if not up.empty else float("nan"),
+        f"{prefix}_sp500_up_month_count": float(len(up)),
+        f"{prefix}_sp500_down_true_positive_count": float(true_positive),
+        f"{prefix}_sp500_down_false_negative_count": float(false_negative),
+        f"{prefix}_sp500_down_false_positive_count": float(false_positive),
+        f"{prefix}_sp500_down_true_negative_count": float(true_negative),
+        f"{prefix}_sp500_down_precision_pct": round(float(true_positive / precision_den * 100.0), 6) if precision_den else float("nan"),
+        f"{prefix}_sp500_down_recall_pct": round(float(true_positive / recall_den * 100.0), 6) if recall_den else float("nan"),
+        f"{prefix}_sp500_down_false_positive_rate_pct": round(float(false_positive / fpr_den * 100.0), 6) if fpr_den else float("nan"),
     })
     return keys
 

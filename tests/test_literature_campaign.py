@@ -291,6 +291,17 @@ def test_curated_sp500_down_paper_campaign_builds_clean_specs() -> None:
     assert "ml_cross_section_asset_pricing" in set(specs["primary_family"])
 
 
+def test_curated_precision_campaign_uses_train_only_classification_ranking() -> None:
+    cfg = load_campaign_config("config/literature_campaign_sp500_down_papers_curated_precision_v2.yaml")
+
+    assert cfg.campaign_id == "sp500_down_papers_curated_precision_v2"
+    assert cfg.require_effective_start == "1995-01-01"
+    assert cfg.raw["ranking"]["primary_metric"] == "train_sp500_down_precision_pct"
+    assert all(not metric.startswith("validation_") for metric in cfg.raw["ranking"]["tie_breakers"])
+    assert cfg.chunks == 355
+    assert cfg.max_parallel == 355
+
+
 def test_campaign_merge_reports_empty_top20_when_required_start_filters_all(tmp_path: Path) -> None:
     from scripts.merge_literature_campaign_backtest import merge_campaign
 

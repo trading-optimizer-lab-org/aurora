@@ -151,6 +151,10 @@ def test_evaluate_signature_uses_train_size_and_keeps_validation_report_only() -
     assert out["validation_observations"] > 0
     assert "train_sharpe" in out
     assert "validation_sharpe" in out
+    assert "train_sp500_down_true_positive_count" in out
+    assert "train_sp500_down_false_negative_count" in out
+    assert "train_sp500_down_false_positive_count" in out
+    assert "validation_sp500_down_precision_pct" in out
 
 
 def test_intraday_is_not_backtested_without_intraday_dataset() -> None:
