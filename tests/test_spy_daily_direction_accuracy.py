@@ -13,6 +13,7 @@ from scripts.run_spy_daily_direction_accuracy import (
     choose_threshold_train_only,
     fit_candidate_scores_train_only,
     fit_rule_params_train_only,
+    predict_from_scores,
     select_top,
     train_internal_cv_accuracy,
 )
@@ -96,6 +97,19 @@ def test_train_only_direction_threshold_selector_ignores_validation() -> None:
     assert invert == 0
     assert threshold < 100.0
     assert metrics["accuracy"] == 1.0
+
+
+def test_fallback_up_policy_predicts_down_only_on_extreme_risk() -> None:
+    scores = np.tile(np.linspace(0.0, 1.0, 100), 11)
+    target = np.ones(len(scores))
+    target[scores >= 0.9] = -1.0
+    target[-100:] *= -1.0
+    train_mask = np.array([True] * 1000 + [False] * 100)
+    threshold, invert, metrics = choose_threshold_train_only(scores, target, train_mask, policy="fallback_up")
+    preds = predict_from_scores(scores, threshold, invert, "fallback_up")
+    assert threshold > 0.85
+    assert metrics["accuracy"] > 0.95
+    assert 0.80 < np.mean(preds[train_mask] > 0.0) < 0.95
 
 
 def test_ml_candidate_fits_only_train_rows() -> None:

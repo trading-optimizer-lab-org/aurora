@@ -323,9 +323,13 @@ def run_shard(
         params, scores = fit_candidate_scores_train_only(matrix, target, train_mask.to_numpy(), params)
         if not np.isfinite(scores).any():
             continue
-        threshold, invert, train_metrics = choose_threshold_train_only(scores, target, train_mask.to_numpy())
-        oriented = -scores if invert else scores
-        preds = np.where(oriented >= threshold, 1.0, -1.0)
+        threshold, invert, train_metrics = choose_threshold_train_only(
+            scores,
+            target,
+            train_mask.to_numpy(),
+            policy=str(params.get("threshold_policy", "balanced")),
+        )
+        preds = predict_from_scores(scores, threshold, invert, str(params.get("threshold_policy", "balanced")))
         if not np.isfinite(train_metrics["accuracy"]):
             continue
         if train_metrics["accuracy"] < 0.515 and config_index % 311 != 0:
@@ -380,6 +384,7 @@ def run_shard(
                 "features": "|".join(feature_cols[i] for i in params["feature_indices"]),
                 "threshold": float(threshold),
                 "invert": int(invert),
+                "threshold_policy": str(params.get("threshold_policy", "balanced")),
                 "params_json": json.dumps(params, sort_keys=True),
                 "score": score_candidate(train_metrics, validation_metrics=None, feature_count=len(params["feature_indices"]))
                 + float(train_cv["accuracy"]) * 520_000.0
@@ -472,6 +477,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     return {
         "rule_type": rule_type,
         "family": family,
+        "threshold_policy": str(rng.choice(["balanced", "fallback_up"], p=[0.55, 0.45])),
         "feature_indices": [int(i) for i in idx],
         "weights": [float(x) for x in rng.normal(0.0, 1.0, size=k)],
         "quantiles": [float(x) for x in rng.uniform(0.15, 0.85, size=k)],
@@ -695,6 +701,7 @@ def choose_threshold_train_only(
     scores: np.ndarray,
     target: np.ndarray,
     train_mask: np.ndarray,
+    policy: str = "balanced",
 ) -> tuple[float, int, dict[str, float]]:
     train_scores = scores[train_mask]
     train_target = target[train_mask]
@@ -703,26 +710,42 @@ def choose_threshold_train_only(
     train_target = train_target[finite]
     if len(train_scores) < 100:
         return 0.0, 0, empty_metrics()
-    thresholds = np.unique(np.quantile(train_scores, np.linspace(0.05, 0.95, 31)))
+    if policy == "fallback_up":
+        thresholds = np.unique(np.quantile(train_scores, np.linspace(0.45, 0.995, 34)))
+    else:
+        thresholds = np.unique(np.quantile(train_scores, np.linspace(0.05, 0.95, 31)))
     best_threshold = 0.0
     best_invert = 0
     best = empty_metrics()
     best_score = -np.inf
     for invert in [0, 1]:
-        oriented = -train_scores if invert else train_scores
         for threshold in thresholds:
-            preds = np.where(oriented >= threshold, 1.0, -1.0)
+            preds = predict_from_scores(train_scores, float(threshold), int(invert), policy)
             long_frac = float(np.mean(preds > 0.0))
-            if long_frac < 0.15 or long_frac > 0.85:
+            if policy == "fallback_up":
+                if long_frac < 0.55 or long_frac > 0.995:
+                    continue
+            elif long_frac < 0.15 or long_frac > 0.85:
                 continue
             current = classification_metrics(preds, train_target)
-            score = current["accuracy"] + min(current["up_accuracy"], current["down_accuracy"]) * 0.15
+            if policy == "fallback_up":
+                precision_down = 0.0 if not np.isfinite(current["precision_down"]) else float(current["precision_down"])
+                score = current["accuracy"] + precision_down * 0.18 + float(current["down_accuracy"]) * 0.05
+            else:
+                score = current["accuracy"] + min(current["up_accuracy"], current["down_accuracy"]) * 0.15
             if score > best_score:
                 best_threshold = float(threshold)
                 best_invert = int(invert)
                 best = current
                 best_score = score
     return best_threshold, best_invert, best
+
+
+def predict_from_scores(scores: np.ndarray, threshold: float, invert: int, policy: str = "balanced") -> np.ndarray:
+    oriented = -scores if invert else scores
+    if policy == "fallback_up":
+        return np.where(oriented >= threshold, -1.0, 1.0)
+    return np.where(oriented >= threshold, 1.0, -1.0)
 
 
 def train_internal_cv_accuracy(
@@ -756,11 +779,11 @@ def train_internal_cv_accuracy(
         fitted, scores = fit_candidate_scores_train_only(matrix, target, fit_mask, params)
         if not np.isfinite(scores[eval_mask]).any():
             continue
-        threshold, invert, fit_metrics = choose_threshold_train_only(scores, target, fit_mask)
+        policy = str(params.get("threshold_policy", "balanced"))
+        threshold, invert, fit_metrics = choose_threshold_train_only(scores, target, fit_mask, policy=policy)
         if not np.isfinite(fit_metrics["accuracy"]):
             continue
-        oriented = -scores if invert else scores
-        preds = np.where(oriented[eval_mask] >= threshold, 1.0, -1.0)
+        preds = predict_from_scores(scores[eval_mask], threshold, invert, policy)
         eval_target = target[eval_mask]
         metrics = classification_metrics(preds, eval_target)
         if not np.isfinite(metrics["accuracy"]):
