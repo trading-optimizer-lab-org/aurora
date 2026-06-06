@@ -94,6 +94,34 @@ def test_cboe_put_call_features_are_causal_lagged() -> None:
     assert data.index.max() < LOCKED_START
 
 
+def test_fred_stress_features_use_conservative_publication_lag() -> None:
+    idx = pd.date_range("2020-12-01", periods=12, freq="B")
+    close = pd.DataFrame(
+        {
+            "SPY": np.linspace(100.0, 112.0, len(idx)),
+            "^VIX": np.linspace(20.0, 18.0, len(idx)),
+            "^TNX": [1.0] * len(idx),
+            "^IRX": [0.1] * len(idx),
+        },
+        index=idx,
+    )
+    ohlcv = pd.DataFrame(
+        {
+            "SPY_OPEN": close["SPY"].shift(1).fillna(close["SPY"].iloc[0]),
+            "SPY_HIGH": close["SPY"] * 1.01,
+            "SPY_LOW": close["SPY"] * 0.99,
+            "SPY_CLOSE": close["SPY"],
+            "SPY_VOLUME": np.arange(1_000, 1_000 + len(idx)),
+        },
+        index=idx,
+    )
+    fred = pd.DataFrame({"fred_nfci": np.arange(len(idx), dtype=float)}, index=idx)
+    data = build_dataset(close, ohlcv, fred=fred)
+    assert "fred_nfci" in data.columns
+    assert data.loc[idx[5], "fred_nfci"] == fred.loc[idx[0], "fred_nfci"]
+    assert data.index.max() < LOCKED_START
+
+
 def test_cboe_public_csv_and_daily_html_parse_ratios() -> None:
     csv_text = """
 Cboe Volume and Put/Call Ratio data,,,,
@@ -111,8 +139,9 @@ Trade_date,Call,Put,Total,P/C Ratio
 
 
 def test_cboe_features_have_dedicated_group() -> None:
-    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level"])
+    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level", "fred_nfci"])
     assert groups["cboe_options"] == [0]
+    assert groups["fred_stress"] == [3]
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:

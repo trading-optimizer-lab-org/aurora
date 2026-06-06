@@ -54,6 +54,15 @@ CBOE_RATIO_NAME_MAP = {
     "CBOE VOLATILITY INDEX (VIX) PUT/CALL RATIO": "cboe_vix_pc",
     "SPX + SPXW PUT/CALL RATIO": "cboe_spx_pc",
 }
+FRED_STRESS_URL_TEMPLATE = (
+    "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+    "&cosd=1994-01-01&coed=2020-12-31"
+)
+FRED_STRESS_SERIES = {
+    "NFCI": "fred_nfci",
+    "ANFCI": "fred_anfci",
+    "STLFSI4": "fred_stlfsi4",
+}
 
 
 def main() -> None:
@@ -159,9 +168,12 @@ def run_data(output_dir: Path) -> None:
     close.to_csv(data_dir / "daily_close.csv", index_label="timestamp")
     ohlcv.to_csv(data_dir / "spy_ohlcv.csv", index_label="timestamp")
     cboe, cboe_audit = fetch_cboe_put_call_panel(end=VALIDATION_END)
+    fred, fred_audit = fetch_fred_stress_panel()
     cboe.to_csv(data_dir / "cboe_put_call_panel.csv", index_label="timestamp")
     pd.DataFrame(cboe_audit).to_csv(data_dir / "cboe_put_call_audit.csv", index=False)
-    build_dataset(close, ohlcv, cboe).to_csv(data_dir / "daily_direction_dataset.csv", index_label="timestamp")
+    fred.to_csv(data_dir / "fred_stress_panel.csv", index_label="timestamp")
+    pd.DataFrame(fred_audit).to_csv(data_dir / "fred_stress_audit.csv", index=False)
+    build_dataset(close, ohlcv, cboe, fred).to_csv(data_dir / "daily_direction_dataset.csv", index_label="timestamp")
     pd.DataFrame(
         [
             {
@@ -184,7 +196,12 @@ def run_data(output_dir: Path) -> None:
     ).to_csv(data_dir / "policy_audit.csv", index=False)
 
 
-def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame, cboe: pd.DataFrame | None = None) -> pd.DataFrame:
+def build_dataset(
+    close: pd.DataFrame,
+    ohlcv: pd.DataFrame,
+    cboe: pd.DataFrame | None = None,
+    fred: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     returns = close.pct_change(fill_method=None)
     spy = close["SPY"].astype(float)
     spy_ret = returns["SPY"].astype(float)
@@ -277,6 +294,8 @@ def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame, cboe: pd.DataFrame |
 
     if cboe is not None and not cboe.empty:
         add_cboe_put_call_features(data, cboe)
+    if fred is not None and not fred.empty:
+        add_fred_stress_features(data, fred)
 
     # Calendar features known before next-day trading.
     data["day_of_week"] = data.index.dayofweek.astype(float)
@@ -461,6 +480,55 @@ def add_cboe_put_call_features(data: pd.DataFrame, cboe: pd.DataFrame) -> None:
         data[f"{col}_mean_21d"] = causal.rolling(21, min_periods=7).mean()
     if {"cboe_index_pc", "cboe_equity_pc"}.issubset(aligned.columns):
         data["cboe_index_minus_equity_pc"] = (aligned["cboe_index_pc"] - aligned["cboe_equity_pc"]).shift(1)
+
+
+def fetch_fred_stress_panel() -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    frames: list[pd.DataFrame] = []
+    audit: list[dict[str, Any]] = []
+    for series, clean in FRED_STRESS_SERIES.items():
+        url = FRED_STRESS_URL_TEMPLATE.format(series=series)
+        try:
+            text = fetch_text(url)
+            frame = pd.read_csv(io.StringIO(text))
+            if "observation_date" not in frame or series not in frame:
+                raise ValueError("missing FRED columns")
+            out = pd.DataFrame(index=pd.to_datetime(frame["observation_date"], errors="coerce"))
+            out[clean] = pd.to_numeric(frame[series], errors="coerce").to_numpy(dtype=float)
+            out = out[~out.index.isna()].dropna(how="all").sort_index()
+            out = out.loc[out.index < LOCKED_START]
+            if out.empty:
+                raise ValueError("no usable rows before locked")
+            frames.append(out)
+            audit.append(
+                {
+                    "series": series,
+                    "feature": clean,
+                    "url": url,
+                    "status": "parsed",
+                    "rows": len(out),
+                    "start": str(out.index.min().date()),
+                    "end": str(out.index.max().date()),
+                    "lag_business_days": 5,
+                    "locked_opened": False,
+                }
+            )
+        except Exception as exc:
+            audit.append({"series": series, "feature": clean, "url": url, "status": f"unsupported:{exc}", "locked_opened": False})
+    panel = pd.concat(frames, axis=1).sort_index() if frames else pd.DataFrame()
+    if not panel.empty and panel.index.max() >= LOCKED_START:
+        raise RuntimeError("FRED locked data leaked into stress panel.")
+    return panel, audit
+
+
+def add_fred_stress_features(data: pd.DataFrame, fred: pd.DataFrame) -> None:
+    aligned = fred.reindex(data.index).ffill()
+    for col in [c for c in aligned.columns if c.startswith("fred_")]:
+        causal = aligned[col].shift(5)
+        data[col] = causal
+        data[f"{col}_diff_1w"] = causal.diff(5)
+        data[f"{col}_diff_4w"] = causal.diff(21)
+        data[f"{col}_z_13w"] = zscore(causal, 63)
+        data[f"{col}_z_52w"] = zscore(causal, 252)
 
 
 def zscore(series: pd.Series, window: int) -> pd.Series:
@@ -700,6 +768,7 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
         "vix": [],
         "rates": [],
         "cboe_options": [],
+        "fred_stress": [],
         "relative_assets": [],
         "calendar": [],
         "technical": [],
@@ -719,6 +788,8 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
             groups["rates"].append(i)
         if low.startswith("cboe_"):
             groups["cboe_options"].append(i)
+        if low.startswith("fred_"):
+            groups["fred_stress"].append(i)
         if "_spy_rel" in low or any(low.startswith(prefix.lower()) for prefix in ["QQQ", "IWM", "DIA", "EFA", "EEM", "TLT", "GLD", "HYG", "LQD", "XLY", "XLP"]):
             groups["relative_assets"].append(i)
         if "day_" in low or "month" in low:
