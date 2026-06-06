@@ -28,7 +28,7 @@ TRAIN_END = pd.Timestamp("2010-12-31")
 VALIDATION_START = pd.Timestamp("2011-01-01")
 VALIDATION_END = pd.Timestamp("2020-12-31")
 LOCKED_START = pd.Timestamp("2021-01-01")
-TARGET_ACCURACY = 0.55
+TARGET_ACCURACY = 0.60
 
 
 def main() -> None:
@@ -330,6 +330,11 @@ def run_shard(
             continue
         if train_metrics["accuracy"] < 0.515 and config_index % 311 != 0:
             continue
+        train_cv = train_internal_cv_accuracy(matrix, target, train_mask.to_numpy(), params)
+        if not np.isfinite(train_cv["accuracy"]):
+            continue
+        if train_cv["accuracy"] < 0.515 and config_index % 701 != 0:
+            continue
         validation_metrics = classification_metrics(preds[validation_mask.to_numpy()], target[validation_mask.to_numpy()])
         validation_examined += 1
         train_years = yearly_accuracy(dataset.index[train_mask], preds[train_mask.to_numpy()], target[train_mask.to_numpy()])
@@ -377,8 +382,15 @@ def run_shard(
                 "invert": int(invert),
                 "params_json": json.dumps(params, sort_keys=True),
                 "score": score_candidate(train_metrics, validation_metrics=None, feature_count=len(params["feature_indices"]))
+                + float(train_cv["accuracy"]) * 520_000.0
+                + float(train_cv["min_split_accuracy"]) * 260_000.0
+                + min(float(train_cv["up_accuracy"]), float(train_cv["down_accuracy"])) * 130_000.0
                 + float(train_years["min_accuracy"]) * 140_000.0
                 + float(sub_train["min_accuracy"]) * 220_000.0,
+                "train_internal_cv_accuracy": float(train_cv["accuracy"]),
+                "train_internal_cv_min_split_accuracy": float(train_cv["min_split_accuracy"]),
+                "train_internal_cv_up_accuracy": float(train_cv["up_accuracy"]),
+                "train_internal_cv_down_accuracy": float(train_cv["down_accuracy"]),
                 "train_accuracy": float(train_metrics["accuracy"]),
                 "validation_accuracy": float(validation_metrics["accuracy"]),
                 "train_up_accuracy": float(train_metrics["up_accuracy"]),
@@ -711,6 +723,66 @@ def choose_threshold_train_only(
                 best = current
                 best_score = score
     return best_threshold, best_invert, best
+
+
+def train_internal_cv_accuracy(
+    matrix: np.ndarray,
+    target: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> dict[str, float]:
+    train_positions = np.flatnonzero(train_mask & np.isfinite(target) & (target != 0.0))
+    if len(train_positions) < 1500:
+        return {
+            "accuracy": np.nan,
+            "min_split_accuracy": np.nan,
+            "up_accuracy": np.nan,
+            "down_accuracy": np.nan,
+        }
+    split_specs = [(0.50, 0.25), (0.65, 0.20), (0.80, 0.20)]
+    preds_all: list[np.ndarray] = []
+    target_all: list[np.ndarray] = []
+    split_accuracies: list[float] = []
+    for fit_frac, eval_frac in split_specs:
+        fit_end = max(200, int(len(train_positions) * fit_frac))
+        eval_end = min(len(train_positions), fit_end + max(120, int(len(train_positions) * eval_frac)))
+        if eval_end <= fit_end + 50:
+            continue
+        fit_mask = np.zeros(len(target), dtype=bool)
+        eval_mask = np.zeros(len(target), dtype=bool)
+        fit_mask[train_positions[:fit_end]] = True
+        eval_idx = train_positions[fit_end:eval_end]
+        eval_mask[eval_idx] = True
+        fitted, scores = fit_candidate_scores_train_only(matrix, target, fit_mask, params)
+        if not np.isfinite(scores[eval_mask]).any():
+            continue
+        threshold, invert, fit_metrics = choose_threshold_train_only(scores, target, fit_mask)
+        if not np.isfinite(fit_metrics["accuracy"]):
+            continue
+        oriented = -scores if invert else scores
+        preds = np.where(oriented[eval_mask] >= threshold, 1.0, -1.0)
+        eval_target = target[eval_mask]
+        metrics = classification_metrics(preds, eval_target)
+        if not np.isfinite(metrics["accuracy"]):
+            continue
+        split_accuracies.append(float(metrics["accuracy"]))
+        preds_all.append(preds)
+        target_all.append(eval_target)
+        del fitted
+    if not preds_all:
+        return {
+            "accuracy": np.nan,
+            "min_split_accuracy": np.nan,
+            "up_accuracy": np.nan,
+            "down_accuracy": np.nan,
+        }
+    combined = classification_metrics(np.concatenate(preds_all), np.concatenate(target_all))
+    return {
+        "accuracy": float(combined["accuracy"]),
+        "min_split_accuracy": float(min(split_accuracies)),
+        "up_accuracy": float(combined["up_accuracy"]),
+        "down_accuracy": float(combined["down_accuracy"]),
+    }
 
 
 def empty_metrics() -> dict[str, float]:

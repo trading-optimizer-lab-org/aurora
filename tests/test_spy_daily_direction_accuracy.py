@@ -14,6 +14,7 @@ from scripts.run_spy_daily_direction_accuracy import (
     fit_candidate_scores_train_only,
     fit_rule_params_train_only,
     select_top,
+    train_internal_cv_accuracy,
 )
 
 
@@ -117,6 +118,29 @@ def test_ml_candidate_fits_only_train_rows() -> None:
     assert invert == 0
     assert threshold < np.nanmax(scores[train_mask])
     assert metrics["accuracy"] > 0.95
+
+
+def test_train_internal_cv_uses_only_train_rows() -> None:
+    train_x = np.linspace(-3.0, 3.0, 1800)
+    validation_x = np.linspace(-3.0, 3.0, 80)
+    matrix = np.concatenate([train_x, validation_x])[:, None]
+    target = np.concatenate(
+        [
+            np.where(train_x >= 0.0, 1.0, -1.0),
+            np.where(validation_x >= 0.0, -1.0, 1.0),
+        ]
+    )
+    train_mask = np.array([True] * len(train_x) + [False] * len(validation_x))
+    params = {
+        "rule_type": "train_corr_linear",
+        "feature_indices": [0],
+        "weights": [1.0],
+        "quantiles": [0.5],
+        "directions": [1.0],
+    }
+    metrics = train_internal_cv_accuracy(matrix, target, train_mask, params)
+    assert metrics["accuracy"] > 0.95
+    assert metrics["min_split_accuracy"] > 0.95
 
 
 def test_select_top_does_not_use_validation_for_retention() -> None:
