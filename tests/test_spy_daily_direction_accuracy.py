@@ -44,6 +44,8 @@ def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
             "^VIX": [20.0, 19.0, 21.0, 20.0, 18.0, 19.0, 17.0, 16.0],
             "^TNX": [1.0] * 8,
             "^IRX": [0.1] * 8,
+            "^N225": [20000.0, 20100.0, 19900.0, 20050.0, 20300.0, 20200.0, 20400.0, 20500.0],
+            "^FTSE": [7000.0, 7010.0, 6990.0, 7020.0, 7030.0, 7015.0, 7040.0, 7050.0],
         },
         index=idx,
     )
@@ -71,6 +73,8 @@ def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
         "cal_turn_of_month",
         "cal_is_monthly_opex_week",
         "cal_pre_holiday_3d",
+        "global_cash_mean_ret_1d",
+        "N225_ret_1d",
     ]:
         assert feature in data.columns
 
@@ -148,10 +152,11 @@ Trade_date,Call,Put,Total,P/C Ratio
 
 
 def test_cboe_features_have_dedicated_group() -> None:
-    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level", "fred_nfci", "cal_turn_of_month"])
+    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level", "fred_nfci", "cal_turn_of_month", "global_cash_mean_ret_1d", "N225_ret_1d"])
     assert groups["cboe_options"] == [0]
     assert groups["fred_stress"] == [3]
     assert groups["calendar"] == [4]
+    assert groups["global_cash"] == [5, 6]
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:

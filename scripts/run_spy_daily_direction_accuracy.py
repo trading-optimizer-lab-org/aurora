@@ -119,6 +119,12 @@ def run_data(output_dir: Path) -> None:
         "XLB",
         "UUP",
         "DX-Y.NYB",
+        "^N225",
+        "^HSI",
+        "^FTSE",
+        "^GDAXI",
+        "^FCHI",
+        "^AXJO",
     ]
     symbols = required + optional
     raw = yf.download(
@@ -281,6 +287,8 @@ def build_dataset(
             data[f"{safe}_ret_{window}d"] = s.pct_change(window, fill_method=None)
         data[f"{safe}_spy_rel_21d"] = s.pct_change(21, fill_method=None) - spy.pct_change(21, fill_method=None)
         data[f"{safe}_vol_21d"] = r.rolling(21, min_periods=7).std()
+
+    add_global_cash_index_features(data, returns)
 
     if "^VIX" in close:
         vix = close["^VIX"].astype(float)
@@ -578,6 +586,23 @@ def add_calendar_event_features(data: pd.DataFrame) -> None:
         data[f"cal_month_{month:02d}"] = (idx.month == month).astype(float)
 
 
+def add_global_cash_index_features(data: pd.DataFrame, returns: pd.DataFrame) -> None:
+    global_symbols = [s for s in ["^N225", "^HSI", "^FTSE", "^GDAXI", "^FCHI", "^AXJO"] if s in returns]
+    if not global_symbols:
+        return
+    global_ret = returns[global_symbols].reindex(data.index)
+    data["global_cash_mean_ret_1d"] = global_ret.mean(axis=1, skipna=True)
+    data["global_cash_median_ret_1d"] = global_ret.median(axis=1, skipna=True)
+    data["global_cash_up_fraction_1d"] = (global_ret > 0.0).mean(axis=1)
+    data["global_cash_down_fraction_1d"] = (global_ret < 0.0).mean(axis=1)
+    data["global_cash_min_ret_1d"] = global_ret.min(axis=1, skipna=True)
+    data["global_cash_max_ret_1d"] = global_ret.max(axis=1, skipna=True)
+    for window in [3, 5, 10, 21]:
+        data[f"global_cash_mean_ret_{window}d"] = data["global_cash_mean_ret_1d"].rolling(window, min_periods=2).mean()
+        data[f"global_cash_down_fraction_{window}d"] = data["global_cash_down_fraction_1d"].rolling(window, min_periods=2).mean()
+        data[f"global_cash_stress_z_{window}d"] = zscore(-data["global_cash_mean_ret_1d"], window)
+
+
 def zscore(series: pd.Series, window: int) -> pd.Series:
     min_periods = rolling_min_periods(window)
     mean = series.rolling(window, min_periods=min_periods).mean()
@@ -816,6 +841,7 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
         "rates": [],
         "cboe_options": [],
         "fred_stress": [],
+        "global_cash": [],
         "relative_assets": [],
         "calendar": [],
         "technical": [],
@@ -837,6 +863,8 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
             groups["cboe_options"].append(i)
         if low.startswith("fred_"):
             groups["fred_stress"].append(i)
+        if low.startswith("global_cash") or any(low.startswith(prefix.lower()) for prefix in ["N225", "HSI", "FTSE", "GDAXI", "FCHI", "AXJO"]):
+            groups["global_cash"].append(i)
         if "_spy_rel" in low or any(low.startswith(prefix.lower()) for prefix in ["QQQ", "IWM", "DIA", "EFA", "EEM", "TLT", "GLD", "HYG", "LQD", "XLY", "XLP"]):
             groups["relative_assets"].append(i)
         if "day_" in low or "month" in low or low.startswith("cal_"):
