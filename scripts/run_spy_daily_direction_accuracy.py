@@ -180,6 +180,31 @@ def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame) -> pd.DataFrame:
         data[f"spy_donchian_pos_{window}d"] = (spy - low) / (high - low).replace(0.0, np.nan)
         data[f"spy_drawdown_{window}d"] = spy / high - 1.0
 
+    for lag in range(1, 11):
+        data[f"spy_ret_lag_{lag}d"] = spy_ret.shift(lag - 1)
+
+    for window in [2, 3, 5, 10, 14, 21, 50, 100, 200]:
+        min_periods = rolling_min_periods(window)
+        ma = spy.rolling(window, min_periods=min_periods).mean()
+        data[f"spy_ma_gap_{window}d"] = spy / ma - 1.0
+        data[f"spy_rsi_{window}d"] = rsi(spy_ret, window)
+        high = spy.rolling(window, min_periods=min_periods).max()
+        low = spy.rolling(window, min_periods=min_periods).min()
+        data[f"spy_dist_to_high_{window}d"] = spy / high - 1.0
+        data[f"spy_dist_to_low_{window}d"] = spy / low - 1.0
+
+    ema_12 = spy.ewm(span=12, adjust=False, min_periods=4).mean()
+    ema_26 = spy.ewm(span=26, adjust=False, min_periods=9).mean()
+    macd = ema_12 - ema_26
+    data["spy_macd_line"] = macd / spy
+    data["spy_macd_signal"] = macd.ewm(span=9, adjust=False, min_periods=3).mean() / spy
+    data["spy_macd_hist"] = data["spy_macd_line"] - data["spy_macd_signal"]
+
+    direction = np.sign(spy_ret).replace(0.0, np.nan)
+    for window in [3, 5, 10, 21]:
+        data[f"spy_up_count_{window}d"] = (direction > 0.0).rolling(window, min_periods=1).sum()
+        data[f"spy_down_count_{window}d"] = (direction < 0.0).rolling(window, min_periods=1).sum()
+
     open_ = ohlcv["SPY_OPEN"].reindex(close.index)
     high = ohlcv["SPY_HIGH"].reindex(close.index)
     low = ohlcv["SPY_LOW"].reindex(close.index)
@@ -191,6 +216,16 @@ def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame) -> pd.DataFrame:
     data["spy_close_location"] = (spy - low) / (high - low).replace(0.0, np.nan)
     data["spy_volume_z_21d"] = zscore(volume, 21)
     data["spy_volume_z_63d"] = zscore(volume, 63)
+    true_range = pd.concat(
+        [(high / low - 1.0), (high / prev_close - 1.0).abs(), (low / prev_close - 1.0).abs()],
+        axis=1,
+    ).max(axis=1)
+    for window in [5, 14, 21]:
+        data[f"spy_atr_pct_{window}d"] = true_range.rolling(window, min_periods=rolling_min_periods(window)).mean()
+        mean = spy_ret.rolling(window, min_periods=rolling_min_periods(window)).mean()
+        std = spy_ret.rolling(window, min_periods=rolling_min_periods(window)).std()
+        data[f"spy_bb_ret_z_{window}d"] = (spy_ret - mean) / std.replace(0.0, np.nan)
+        data[f"spy_bb_ret_width_{window}d"] = std
 
     for symbol in [c for c in close.columns if c != "SPY"]:
         s = close[symbol].astype(float)
@@ -234,6 +269,15 @@ def zscore(series: pd.Series, window: int) -> pd.Series:
     mean = series.rolling(window, min_periods=min_periods).mean()
     std = series.rolling(window, min_periods=min_periods).std()
     return (series - mean) / std.replace(0.0, np.nan)
+
+
+def rsi(returns: pd.Series, window: int) -> pd.Series:
+    gains = returns.clip(lower=0.0)
+    losses = -returns.clip(upper=0.0)
+    avg_gain = gains.rolling(window, min_periods=rolling_min_periods(window)).mean()
+    avg_loss = losses.rolling(window, min_periods=rolling_min_periods(window)).mean()
+    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+    return 100.0 - 100.0 / (1.0 + rs)
 
 
 def rolling_min_periods(window: int) -> int:
@@ -332,7 +376,9 @@ def run_shard(
                 "threshold": float(threshold),
                 "invert": int(invert),
                 "params_json": json.dumps(params, sort_keys=True),
-                "score": score_candidate(train_metrics, validation_metrics=None, feature_count=len(params["feature_indices"])),
+                "score": score_candidate(train_metrics, validation_metrics=None, feature_count=len(params["feature_indices"]))
+                + float(train_years["min_accuracy"]) * 140_000.0
+                + float(sub_train["min_accuracy"]) * 220_000.0,
                 "train_accuracy": float(train_metrics["accuracy"]),
                 "validation_accuracy": float(validation_metrics["accuracy"]),
                 "train_up_accuracy": float(train_metrics["up_accuracy"]),
@@ -438,6 +484,7 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
         "rates": [],
         "relative_assets": [],
         "calendar": [],
+        "technical": [],
         "all": list(range(len(feature_cols))),
     }
     for i, name in enumerate(feature_cols):
@@ -456,6 +503,22 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
             groups["relative_assets"].append(i)
         if "day_" in low or "month" in low:
             groups["calendar"].append(i)
+        if any(
+            token in low
+            for token in [
+                "rsi",
+                "macd",
+                "ma_gap",
+                "atr",
+                "bb_",
+                "ret_lag",
+                "up_count",
+                "down_count",
+                "dist_to_high",
+                "dist_to_low",
+            ]
+        ):
+            groups["technical"].append(i)
     return groups
 
 

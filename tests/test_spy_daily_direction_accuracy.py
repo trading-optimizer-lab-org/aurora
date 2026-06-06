@@ -57,6 +57,8 @@ def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
     first = data.index[0]
     expected = np.sign(close["SPY"].pct_change(fill_method=None).shift(-1).loc[first])
     assert data.loc[first, "target_direction"] == expected
+    for feature in ["spy_rsi_14d", "spy_macd_hist", "spy_ma_gap_50d", "spy_ret_lag_3d", "spy_atr_pct_14d"]:
+        assert feature in data.columns
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:
