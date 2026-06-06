@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import math
+import re
 import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +33,27 @@ VALIDATION_START = pd.Timestamp("2011-01-01")
 VALIDATION_END = pd.Timestamp("2020-12-31")
 LOCKED_START = pd.Timestamp("2021-01-01")
 TARGET_ACCURACY = 0.60
+CBOE_PC_URLS = {
+    "total": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv",
+    "total_archive": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpcarchive.csv",
+    "legacy": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/pcratioarchive.csv",
+    "index": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/indexpc.csv",
+    "index_archive": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/indexpcarchive.csv",
+    "equity": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/equitypc.csv",
+    "equity_archive": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/equitypcarchive.csv",
+    "etp": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/etppc.csv",
+    "vix": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/vixpc.csv",
+    "spx": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/spxpc.csv",
+}
+CBOE_DAILY_STATS_URL = "https://www.cboe.com/data/mktstat.aspx?dt={date}"
+CBOE_RATIO_NAME_MAP = {
+    "TOTAL PUT/CALL RATIO": "cboe_total_pc",
+    "INDEX PUT/CALL RATIO": "cboe_index_pc",
+    "EXCHANGE TRADED PRODUCTS PUT/CALL RATIO": "cboe_etp_pc",
+    "EQUITY PUT/CALL RATIO": "cboe_equity_pc",
+    "CBOE VOLATILITY INDEX (VIX) PUT/CALL RATIO": "cboe_vix_pc",
+    "SPX + SPXW PUT/CALL RATIO": "cboe_spx_pc",
+}
 
 
 def main() -> None:
@@ -133,7 +158,10 @@ def run_data(output_dir: Path) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     close.to_csv(data_dir / "daily_close.csv", index_label="timestamp")
     ohlcv.to_csv(data_dir / "spy_ohlcv.csv", index_label="timestamp")
-    build_dataset(close, ohlcv).to_csv(data_dir / "daily_direction_dataset.csv", index_label="timestamp")
+    cboe, cboe_audit = fetch_cboe_put_call_panel(end=VALIDATION_END)
+    cboe.to_csv(data_dir / "cboe_put_call_panel.csv", index_label="timestamp")
+    pd.DataFrame(cboe_audit).to_csv(data_dir / "cboe_put_call_audit.csv", index=False)
+    build_dataset(close, ohlcv, cboe).to_csv(data_dir / "daily_direction_dataset.csv", index_label="timestamp")
     pd.DataFrame(
         [
             {
@@ -156,7 +184,7 @@ def run_data(output_dir: Path) -> None:
     ).to_csv(data_dir / "policy_audit.csv", index=False)
 
 
-def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame) -> pd.DataFrame:
+def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame, cboe: pd.DataFrame | None = None) -> pd.DataFrame:
     returns = close.pct_change(fill_method=None)
     spy = close["SPY"].astype(float)
     spy_ret = returns["SPY"].astype(float)
@@ -247,6 +275,9 @@ def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame) -> pd.DataFrame:
         data["tnx_irx_slope"] = close["^TNX"] - close["^IRX"]
         data["tnx_irx_slope_change_5d"] = data["tnx_irx_slope"].diff(5)
 
+    if cboe is not None and not cboe.empty:
+        add_cboe_put_call_features(data, cboe)
+
     # Calendar features known before next-day trading.
     data["day_of_week"] = data.index.dayofweek.astype(float)
     data["day_of_month"] = data.index.day.astype(float)
@@ -262,6 +293,174 @@ def build_dataset(close: pd.DataFrame, ohlcv: pd.DataFrame) -> pd.DataFrame:
     if data.index.max() >= LOCKED_START:
         raise RuntimeError("Locked data leaked into daily direction dataset.")
     return data
+
+
+def fetch_cboe_put_call_panel(*, end: pd.Timestamp) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    """Fetch public Cboe put/call ratios without touching locked dates."""
+    frames: list[pd.DataFrame] = []
+    audit: list[dict[str, Any]] = []
+    for source_name, url in CBOE_PC_URLS.items():
+        try:
+            text = fetch_text(url)
+            frame = parse_cboe_put_call_csv(text, source_name=source_name)
+            frames.append(frame)
+            audit.append(
+                {
+                    "source": source_name,
+                    "url": url,
+                    "status": "parsed",
+                    "rows": len(frame),
+                    "start": str(frame.index.min().date()) if not frame.empty else "",
+                    "end": str(frame.index.max().date()) if not frame.empty else "",
+                    "locked_opened": False,
+                }
+            )
+        except Exception as exc:
+            audit.append({"source": source_name, "url": url, "status": f"unsupported:{exc}", "locked_opened": False})
+
+    panel = pd.concat(frames, axis=0).sort_index() if frames else pd.DataFrame()
+    if not panel.empty:
+        panel = panel[~panel.index.duplicated(keep="last")]
+        panel = panel.loc[panel.index <= end]
+    if panel.empty or panel.index.max() < end:
+        daily_start = max(panel.index.max() + pd.offsets.BDay(1), pd.Timestamp("2019-10-07")) if not panel.empty else pd.Timestamp("2019-10-07")
+        daily_frames = fetch_cboe_daily_stats_range(daily_start, end, audit)
+        if daily_frames:
+            panel = pd.concat([panel, *daily_frames], axis=0).sort_index()
+            panel = panel[~panel.index.duplicated(keep="last")]
+            panel = panel.loc[panel.index <= end]
+    if not panel.empty and panel.index.max() >= LOCKED_START:
+        raise RuntimeError("CBOE locked data leaked into daily panel.")
+    return panel, audit
+
+
+def fetch_text(url: str) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "aurora-spy-daily-direction/1.0"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def parse_cboe_put_call_csv(text: str, *, source_name: str) -> pd.DataFrame:
+    lines = text.splitlines()
+    header_idx = None
+    for idx, line in enumerate(lines):
+        lowered = line.lower()
+        if ("date" in lowered or "trade_date" in lowered) and ("p/c" in lowered or "ratio" in lowered):
+            header_idx = idx
+            break
+    if header_idx is None:
+        raise ValueError("no CBOE put/call header")
+    frame = pd.read_csv(io.StringIO("\n".join(lines[header_idx:])))
+    if frame.empty:
+        raise ValueError("empty CBOE put/call CSV")
+    cols = {str(c).strip(): c for c in frame.columns}
+    date_col = next((cols[c] for c in cols if c.lower() in {"date", "trade_date", "trade date"}), None)
+    if date_col is None:
+        raise ValueError("missing date column")
+
+    out = pd.DataFrame(index=pd.to_datetime(frame[date_col], errors="coerce"))
+    lower_cols = {str(c).strip().lower(): c for c in frame.columns}
+    if source_name == "legacy":
+        mapping = {
+            "total volume p/c ratio": "cboe_total_pc",
+            "index p/c ratio": "cboe_index_pc",
+            "equity p/c ratio": "cboe_equity_pc",
+        }
+        for raw_col, clean_col in mapping.items():
+            if raw_col in lower_cols:
+                out[clean_col] = pd.to_numeric(frame[lower_cols[raw_col]], errors="coerce").to_numpy(dtype=float)
+    else:
+        ratio_col = next((c for name, c in lower_cols.items() if "p/c" in name or "ratio" in name), None)
+        if ratio_col is None:
+            raise ValueError("missing ratio column")
+        clean = {
+            "total": "cboe_total_pc",
+            "total_archive": "cboe_total_pc",
+            "index": "cboe_index_pc",
+            "index_archive": "cboe_index_pc",
+            "equity": "cboe_equity_pc",
+            "equity_archive": "cboe_equity_pc",
+            "etp": "cboe_etp_pc",
+            "vix": "cboe_vix_pc",
+            "spx": "cboe_spx_pc",
+        }.get(source_name)
+        if clean is None:
+            raise ValueError(f"unsupported source {source_name}")
+        out[clean] = pd.to_numeric(frame[ratio_col], errors="coerce").to_numpy(dtype=float)
+    out = out[~out.index.isna()].sort_index()
+    out = out.dropna(how="all")
+    if out.empty:
+        raise ValueError("no usable CBOE ratio rows")
+    return out
+
+
+def fetch_cboe_daily_stats_range(start: pd.Timestamp, end: pd.Timestamp, audit: list[dict[str, Any]]) -> list[pd.DataFrame]:
+    frames: list[pd.DataFrame] = []
+    dates = [date for date in pd.bdate_range(start, end) if date < LOCKED_START]
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = {executor.submit(fetch_one_cboe_daily_stats, date): date for date in dates}
+        for future in as_completed(futures):
+            try:
+                row = future.result()
+                if not row.empty:
+                    frames.append(row)
+            except Exception:
+                continue
+    if frames:
+        merged = pd.concat(frames, axis=0)
+        audit.append(
+            {
+                "source": "daily_market_statistics_backfill",
+                "url": CBOE_DAILY_STATS_URL,
+                "status": "parsed",
+                "rows": len(merged),
+                "start": str(merged.index.min().date()),
+                "end": str(merged.index.max().date()),
+                "locked_opened": False,
+            }
+        )
+    else:
+        audit.append(
+            {
+                "source": "daily_market_statistics_backfill",
+                "url": CBOE_DAILY_STATS_URL,
+                "status": "unsupported:no_rows",
+                "locked_opened": False,
+            }
+        )
+    return frames
+
+
+def parse_cboe_daily_stats_html(text: str, *, date: pd.Timestamp) -> pd.DataFrame:
+    pattern = r'\\"name\\":\\"([^\\"]*PUT/CALL RATIO[^\\"]*)\\",\\"value\\":\\"([0-9.]+)\\"'
+    row: dict[str, float] = {}
+    for name, value in re.findall(pattern, text):
+        clean = CBOE_RATIO_NAME_MAP.get(name)
+        if clean is not None:
+            row[clean] = float(value)
+    if not row:
+        return pd.DataFrame()
+    return pd.DataFrame([row], index=pd.DatetimeIndex([date]))
+
+
+def fetch_one_cboe_daily_stats(date: pd.Timestamp) -> pd.DataFrame:
+    text = fetch_text(CBOE_DAILY_STATS_URL.format(date=date.strftime("%Y-%m-%d")))
+    return parse_cboe_daily_stats_html(text, date=date)
+
+
+def add_cboe_put_call_features(data: pd.DataFrame, cboe: pd.DataFrame) -> None:
+    aligned = cboe.reindex(data.index).ffill(limit=3)
+    for col in [c for c in aligned.columns if c.startswith("cboe_") and c.endswith("_pc")]:
+        causal = aligned[col].shift(1)
+        data[col] = causal
+        data[f"{col}_diff_1d"] = causal.diff(1)
+        data[f"{col}_diff_5d"] = causal.diff(5)
+        data[f"{col}_z_21d"] = zscore(causal, 21)
+        data[f"{col}_z_63d"] = zscore(causal, 63)
+        data[f"{col}_mean_5d"] = causal.rolling(5, min_periods=2).mean()
+        data[f"{col}_mean_21d"] = causal.rolling(21, min_periods=7).mean()
+    if {"cboe_index_pc", "cboe_equity_pc"}.issubset(aligned.columns):
+        data["cboe_index_minus_equity_pc"] = (aligned["cboe_index_pc"] - aligned["cboe_equity_pc"]).shift(1)
 
 
 def zscore(series: pd.Series, window: int) -> pd.Series:
@@ -500,6 +699,7 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
         "spy_intraday": [],
         "vix": [],
         "rates": [],
+        "cboe_options": [],
         "relative_assets": [],
         "calendar": [],
         "technical": [],
@@ -517,6 +717,8 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
             groups["vix"].append(i)
         if "tnx" in low or "irx" in low or "slope" in low:
             groups["rates"].append(i)
+        if low.startswith("cboe_"):
+            groups["cboe_options"].append(i)
         if "_spy_rel" in low or any(low.startswith(prefix.lower()) for prefix in ["QQQ", "IWM", "DIA", "EFA", "EEM", "TLT", "GLD", "HYG", "LQD", "XLY", "XLP"]):
             groups["relative_assets"].append(i)
         if "day_" in low or "month" in low:
