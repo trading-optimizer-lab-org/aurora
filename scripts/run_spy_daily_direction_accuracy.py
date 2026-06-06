@@ -12,6 +12,15 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+try:
+    from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+except Exception:  # pragma: no cover - optional in minimal installs
+    ExtraTreesClassifier = None
+    HistGradientBoostingClassifier = None
+    RandomForestClassifier = None
+    LogisticRegression = None
+
 
 CAMPAIGN_ID = "spy_daily_direction_accuracy_355jobs"
 TRAIN_START = pd.Timestamp("1995-01-01")
@@ -30,6 +39,7 @@ def main() -> None:
     parser.add_argument("--configs-per-stage", type=int, default=25_000)
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
+    parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -43,9 +53,10 @@ def main() -> None:
             configs_per_stage=int(args.configs_per_stage),
             time_budget_minutes=float(args.time_budget_minutes),
             top_per_stage=int(args.top_per_stage),
+            target_accuracy=float(args.target_accuracy),
         )
     else:
-        run_merge(output_dir)
+        run_merge(output_dir, target_accuracy=float(args.target_accuracy))
 
 
 def run_data(output_dir: Path) -> None:
@@ -236,6 +247,7 @@ def run_shard(
     configs_per_stage: int,
     time_budget_minutes: float,
     top_per_stage: int,
+    target_accuracy: float = TARGET_ACCURACY,
 ) -> None:
     dataset = pd.read_csv(output_dir / "data" / "daily_direction_dataset.csv", parse_dates=["timestamp"]).set_index("timestamp")
     if dataset.index.max() >= LOCKED_START:
@@ -264,8 +276,9 @@ def run_shard(
             break
         evaluated += 1
         params = sample_params(rng, feature_cols, stage)
-        params = fit_rule_params_train_only(matrix, train_mask.to_numpy(), params)
-        scores = build_scores(matrix, params)
+        params, scores = fit_candidate_scores_train_only(matrix, target, train_mask.to_numpy(), params)
+        if not np.isfinite(scores).any():
+            continue
         threshold, invert, train_metrics = choose_threshold_train_only(scores, target, train_mask.to_numpy())
         oriented = -scores if invert else scores
         preds = np.where(oriented >= threshold, 1.0, -1.0)
@@ -289,8 +302,8 @@ def run_shard(
             2,
         )
         accepted = bool(
-            train_metrics["accuracy"] >= TARGET_ACCURACY
-            and validation_metrics["accuracy"] >= TARGET_ACCURACY
+            train_metrics["accuracy"] >= target_accuracy
+            and validation_metrics["accuracy"] >= target_accuracy
         )
         config_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode("utf-8")).hexdigest()
         rows.append(
@@ -300,12 +313,12 @@ def run_shard(
                 "config_index": config_index,
                 "accepted": accepted,
                 "close_to_pass": bool(
-                    train_metrics["accuracy"] >= 0.545
-                    and validation_metrics["accuracy"] >= 0.545
+                    train_metrics["accuracy"] >= max(0.545, target_accuracy - 0.02)
+                    and validation_metrics["accuracy"] >= max(0.545, target_accuracy - 0.02)
                     and not accepted
                 ),
-                "train_pass": bool(train_metrics["accuracy"] >= TARGET_ACCURACY),
-                "validation_pass_report_only": bool(validation_metrics["accuracy"] >= TARGET_ACCURACY),
+                "train_pass": bool(train_metrics["accuracy"] >= target_accuracy),
+                "validation_pass_report_only": bool(validation_metrics["accuracy"] >= target_accuracy),
                 "locked_opened": False,
                 "locked_rows_accessed": 0,
                 "validation_used_for_selection": False,
@@ -368,6 +381,7 @@ def run_shard(
         json.dumps(
             {
                 "stage": stage,
+                "target_accuracy": target_accuracy,
                 "configs_evaluated": evaluated,
                 "validation_examined_report_only": validation_examined,
                 "rows_kept": len(frame),
@@ -390,8 +404,12 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     pool = groups.get(family) or list(range(len(feature_cols)))
     if stage % 11 == 0:
         pool = list(range(len(feature_cols)))
-    rule_type = str(rng.choice(["linear", "threshold_vote", "stump_pair", "rank_vote"]))
-    k = int(rng.integers(2, min(9, len(pool)) + 1))
+    base_rules = ["linear", "threshold_vote", "stump_pair", "rank_vote", "train_corr_linear"]
+    ml_rules = ["ml_logistic", "ml_extra_trees", "ml_random_forest", "ml_hist_gradient"]
+    rule_type = str(rng.choice(base_rules + ml_rules))
+    max_k = min(24 if rule_type.startswith("ml_") else 9, len(pool))
+    min_k = min(4 if rule_type.startswith("ml_") else 2, max_k)
+    k = int(rng.integers(min_k, max_k + 1))
     idx = rng.choice(pool, size=k, replace=False).astype(int)
     return {
         "rule_type": rule_type,
@@ -400,6 +418,14 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         "weights": [float(x) for x in rng.normal(0.0, 1.0, size=k)],
         "quantiles": [float(x) for x in rng.uniform(0.15, 0.85, size=k)],
         "directions": [float(x) for x in rng.choice([-1.0, 1.0], size=k)],
+        "model_c": float(rng.choice([0.05, 0.1, 0.25, 0.5, 1.0, 2.0])),
+        "model_depth": int(rng.choice([2, 3, 4, 5, 6])),
+        "model_estimators": int(rng.choice([32, 48, 64, 96])),
+        "model_leaf": int(rng.choice([10, 20, 40, 80])),
+        "model_lr": float(rng.choice([0.02, 0.03, 0.05, 0.08])),
+        "model_iter": int(rng.choice([24, 40, 64, 96])),
+        "class_weight": str(rng.choice(["none", "balanced"])),
+        "random_state": int(20260606 + stage * 100_003 + rng.integers(0, 1_000_000)),
     }
 
 
@@ -440,6 +466,8 @@ def build_scores(matrix: np.ndarray, params: dict[str, Any]) -> np.ndarray:
     rule_type = params["rule_type"]
     if rule_type == "linear":
         return values @ weights
+    if rule_type == "train_corr_linear":
+        return values @ np.asarray(params.get("fitted_weights", weights), dtype=float)
     thresholds = np.asarray(params["split_thresholds"], dtype=float)
     directions = np.asarray(params["directions"], dtype=float)
     votes = (values * directions >= thresholds * directions).astype(float) * 2.0 - 1.0
@@ -448,6 +476,128 @@ def build_scores(matrix: np.ndarray, params: dict[str, Any]) -> np.ndarray:
     if rule_type == "stump_pair":
         return votes[:, 0] * 0.7 + votes[:, 1:].mean(axis=1) * 0.3 if votes.shape[1] > 1 else votes[:, 0]
     return votes.mean(axis=1)
+
+
+def fit_candidate_scores_train_only(
+    matrix: np.ndarray,
+    target: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], np.ndarray]:
+    rule_type = str(params["rule_type"])
+    if rule_type.startswith("ml_"):
+        return fit_ml_scores_train_only(matrix, target, train_mask, params)
+    fitted = fit_rule_params_train_only(matrix, train_mask, params)
+    if rule_type == "train_corr_linear":
+        fitted = fit_train_corr_linear(matrix, target, train_mask, fitted)
+    return fitted, build_scores(matrix, fitted)
+
+
+def fit_train_corr_linear(
+    matrix: np.ndarray,
+    target: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = matrix[train_mask][:, idx]
+    y = target[train_mask]
+    weights = []
+    for col in range(values.shape[1]):
+        x = values[:, col]
+        finite = np.isfinite(x) & np.isfinite(y)
+        if finite.sum() < 50 or np.nanstd(x[finite]) == 0.0:
+            weights.append(0.0)
+            continue
+        weights.append(float(np.corrcoef(x[finite], y[finite])[0, 1]))
+    fitted = dict(params)
+    fitted["fitted_weights"] = [0.0 if not np.isfinite(w) else float(w) for w in weights]
+    fitted["fitted_on_train_only"] = True
+    return fitted
+
+
+def fit_ml_scores_train_only(
+    matrix: np.ndarray,
+    target: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], np.ndarray]:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = matrix[:, idx].astype(float)
+    train_values = values[train_mask]
+    train_target = target[train_mask]
+    finite_rows = np.isfinite(train_values).all(axis=1) & np.isfinite(train_target) & (train_target != 0.0)
+    if finite_rows.sum() < 500:
+        return params, np.full(matrix.shape[0], np.nan)
+    x_train = train_values[finite_rows]
+    y_train = (train_target[finite_rows] > 0.0).astype(int)
+    median = np.nanmedian(x_train, axis=0)
+    scale = np.nanstd(x_train, axis=0)
+    scale = np.where((~np.isfinite(scale)) | (scale == 0.0), 1.0, scale)
+    clean_values = np.where(np.isfinite(values), values, median)
+    x_all = (clean_values - median) / scale
+    x_fit = x_all[train_mask][finite_rows]
+    rule_type = str(params["rule_type"])
+    class_weight = "balanced" if params.get("class_weight") == "balanced" else None
+    random_state = int(params.get("random_state", 0))
+    try:
+        if rule_type == "ml_logistic":
+            if LogisticRegression is None:
+                return params, np.full(matrix.shape[0], np.nan)
+            model = LogisticRegression(
+                C=float(params.get("model_c", 1.0)),
+                class_weight=class_weight,
+                max_iter=300,
+                solver="liblinear",
+                random_state=random_state,
+            )
+        elif rule_type == "ml_extra_trees":
+            if ExtraTreesClassifier is None:
+                return params, np.full(matrix.shape[0], np.nan)
+            model = ExtraTreesClassifier(
+                n_estimators=int(params.get("model_estimators", 48)),
+                max_depth=int(params.get("model_depth", 4)),
+                min_samples_leaf=int(params.get("model_leaf", 20)),
+                class_weight=class_weight,
+                n_jobs=1,
+                random_state=random_state,
+            )
+        elif rule_type == "ml_random_forest":
+            if RandomForestClassifier is None:
+                return params, np.full(matrix.shape[0], np.nan)
+            model = RandomForestClassifier(
+                n_estimators=int(params.get("model_estimators", 48)),
+                max_depth=int(params.get("model_depth", 4)),
+                min_samples_leaf=int(params.get("model_leaf", 20)),
+                class_weight=class_weight,
+                n_jobs=1,
+                random_state=random_state,
+            )
+        elif rule_type == "ml_hist_gradient":
+            if HistGradientBoostingClassifier is None:
+                return params, np.full(matrix.shape[0], np.nan)
+            model = HistGradientBoostingClassifier(
+                max_iter=int(params.get("model_iter", 40)),
+                learning_rate=float(params.get("model_lr", 0.05)),
+                max_leaf_nodes=max(3, int(params.get("model_depth", 4)) * 2),
+                l2_regularization=float(params.get("model_c", 1.0)),
+                random_state=random_state,
+            )
+        else:
+            return params, np.full(matrix.shape[0], np.nan)
+        model.fit(x_fit, y_train)
+        if hasattr(model, "predict_proba"):
+            scores = model.predict_proba(x_all)[:, 1]
+        else:
+            scores = model.decision_function(x_all)
+    except Exception:
+        return params, np.full(matrix.shape[0], np.nan)
+    fitted = dict(params)
+    fitted["fitted_on_train_only"] = True
+    fitted["train_rows_fit"] = int(finite_rows.sum())
+    fitted["feature_median"] = [float(x) for x in median]
+    fitted["feature_scale"] = [float(x) for x in scale]
+    return fitted, np.asarray(scores, dtype=float)
 
 
 def fit_rule_params_train_only(matrix: np.ndarray, train_mask: np.ndarray, params: dict[str, Any]) -> dict[str, Any]:
@@ -577,7 +727,6 @@ def select_top(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
         return frame.copy()
     pieces = [
         frame.sort_values(["score", "train_accuracy"], ascending=[False, False]).head(top_per_stage),
-        frame.sort_values(["validation_accuracy", "train_accuracy"], ascending=[False, False]).head(max(10, top_per_stage // 5)),
     ]
     if "rule_type" in frame:
         for _, group in frame.groupby("rule_type"):
@@ -585,7 +734,7 @@ def select_top(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
     return pd.concat(pieces, ignore_index=True).drop_duplicates("strategy_id")
 
 
-def run_merge(output_dir: Path) -> None:
+def run_merge(output_dir: Path, target_accuracy: float = TARGET_ACCURACY) -> None:
     top_files = list((output_dir / "shards").glob("**/top_candidates.csv"))
     accepted_files = list((output_dir / "shards").glob("**/accepted.csv"))
     close_files = list((output_dir / "shards").glob("**/close_to_pass.csv"))
@@ -620,7 +769,7 @@ def run_merge(output_dir: Path) -> None:
         "leaderboard_rows": int(len(top)),
         "configs_evaluated": int(sum(item.get("configs_evaluated", 0) for item in summaries)),
         "validation_examined_report_only": int(sum(item.get("validation_examined_report_only", 0) for item in summaries)),
-        "target_accuracy": TARGET_ACCURACY,
+        "target_accuracy": target_accuracy,
         "frequency": "daily",
         "target": "SPY next-day direction",
         "baseline_always_up": baseline,
