@@ -11,6 +11,10 @@ on:
         description: "Clean internal stage runtime before upload"
         required: true
         default: "45"
+      target_accuracy:
+        description: "Train and validation accuracy required for accepted candidates"
+        required: true
+        default: "0.60"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -30,8 +34,8 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - name: Install Aurora and ML deps
+        run: python -m pip install -e . scikit-learn
       - name: Download no-locked daily SPY direction data
         run: python scripts/run_spy_daily_direction_accuracy.py --mode data --output-dir "$OUTPUT_DIR"
       - name: Upload data
@@ -73,8 +77,8 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - name: Install Aurora and ML deps
+        run: python -m pip install -e . scikit-learn
       - name: Download data
         uses: actions/download-artifact@v4
         with:
@@ -87,7 +91,8 @@ jobs:
             --output-dir "$OUTPUT_DIR" \
             --stage "${{ matrix.stage }}" \
             --configs-per-stage "${{ inputs.configs_per_stage }}" \
-            --time-budget-minutes "${{ inputs.time_budget_minutes }}"
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --target-accuracy "${{ inputs.target_accuracy }}"
       - name: Upload stage artifact
         uses: actions/upload-artifact@v4
         with:
@@ -117,8 +122,8 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - name: Install Aurora and ML deps
+        run: python -m pip install -e . scikit-learn
       - name: Download data
         uses: actions/download-artifact@v4
         with:
@@ -130,7 +135,11 @@ jobs:
           pattern: spy-daily-direction-accuracy-stage-*
           path: ${{ env.OUTPUT_DIR }}/shards
       - name: Merge stages
-        run: python scripts/run_spy_daily_direction_accuracy.py --mode merge --output-dir "$OUTPUT_DIR"
+        run: |
+          python scripts/run_spy_daily_direction_accuracy.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --target-accuracy "${{ inputs.target_accuracy }}"
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:

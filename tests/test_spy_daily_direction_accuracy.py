@@ -11,7 +11,9 @@ from scripts.run_spy_daily_direction_accuracy import (
     build_dataset,
     build_scores,
     choose_threshold_train_only,
+    fit_candidate_scores_train_only,
     fit_rule_params_train_only,
+    select_top,
 )
 
 
@@ -25,6 +27,8 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "range(355)" in text
     assert "max-parallel: 178" in text
     assert "max-parallel: 177" in text
+    assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
+    assert "--target-accuracy" in text
 
 
 def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
@@ -89,3 +93,46 @@ def test_train_only_direction_threshold_selector_ignores_validation() -> None:
     assert invert == 0
     assert threshold < 100.0
     assert metrics["accuracy"] == 1.0
+
+
+def test_ml_candidate_fits_only_train_rows() -> None:
+    train_x = np.linspace(-2.0, 2.0, 640)
+    validation_x = np.linspace(-2.0, 2.0, 40)
+    matrix = np.concatenate([train_x, validation_x])[:, None]
+    target = np.concatenate([np.where(train_x >= 0.0, 1.0, -1.0), np.where(validation_x >= 0.0, -1.0, 1.0)])
+    train_mask = np.array([True] * len(train_x) + [False] * len(validation_x))
+    params = {
+        "rule_type": "ml_logistic",
+        "feature_indices": [0],
+        "model_c": 1.0,
+        "class_weight": "none",
+        "random_state": 7,
+    }
+    fitted, scores = fit_candidate_scores_train_only(matrix, target, train_mask, params)
+    threshold, invert, metrics = choose_threshold_train_only(scores, target, train_mask)
+    assert fitted["fitted_on_train_only"] is True
+    assert fitted["train_rows_fit"] == len(train_x)
+    assert invert == 0
+    assert threshold < np.nanmax(scores[train_mask])
+    assert metrics["accuracy"] > 0.95
+
+
+def test_select_top_does_not_use_validation_for_retention() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "strategy_id": "train_winner",
+                "score": 2.0,
+                "train_accuracy": 0.61,
+                "validation_accuracy": 0.51,
+            },
+            {
+                "strategy_id": "validation_winner",
+                "score": 1.0,
+                "train_accuracy": 0.52,
+                "validation_accuracy": 0.99,
+            },
+        ]
+    )
+    top = select_top(frame, top_per_stage=1)
+    assert top["strategy_id"].tolist() == ["train_winner"]
