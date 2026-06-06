@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
 import yfinance as yf
 
 try:
@@ -303,6 +304,7 @@ def build_dataset(
     data["month"] = data.index.month.astype(float)
     data["is_month_end_5d"] = (data.index.days_in_month - data.index.day <= 5).astype(float)
     data["is_month_start_5d"] = (data.index.day <= 5).astype(float)
+    add_calendar_event_features(data)
 
     feature_cols = [c for c in data.columns if c not in {"target_return_next_day", "target_direction"}]
     data[feature_cols] = data[feature_cols].replace([np.inf, -np.inf], np.nan)
@@ -529,6 +531,51 @@ def add_fred_stress_features(data: pd.DataFrame, fred: pd.DataFrame) -> None:
         data[f"{col}_diff_4w"] = causal.diff(21)
         data[f"{col}_z_13w"] = zscore(causal, 63)
         data[f"{col}_z_52w"] = zscore(causal, 252)
+
+
+def add_calendar_event_features(data: pd.DataFrame) -> None:
+    idx = pd.DatetimeIndex(data.index)
+    days_to_month_end = idx.days_in_month - idx.day
+    data["cal_days_to_month_end"] = days_to_month_end.astype(float)
+    data["cal_days_from_month_start"] = (idx.day - 1).astype(float)
+    data["cal_turn_of_month"] = ((idx.day <= 3) | (days_to_month_end <= 3)).astype(float)
+    data["cal_week_of_month"] = (((idx.day - 1) // 7) + 1).astype(float)
+    data["cal_week_of_year"] = idx.isocalendar().week.astype(float).to_numpy()
+    data["cal_quarter"] = idx.quarter.astype(float)
+    data["cal_is_quarter_end_7d"] = ((idx + pd.offsets.Day(7)).quarter != idx.quarter).astype(float)
+    data["cal_is_year_end_10d"] = ((idx.month == 12) & (idx.day >= 20)).astype(float)
+    data["cal_is_january_first_half"] = ((idx.month == 1) & (idx.day <= 15)).astype(float)
+
+    third_friday = []
+    for date in idx:
+        month_days = pd.date_range(date.replace(day=1), date + pd.offsets.MonthEnd(0), freq="D")
+        fridays = month_days[month_days.dayofweek == 4]
+        third_friday.append(fridays[2] if len(fridays) >= 3 else pd.NaT)
+    third_friday_idx = pd.DatetimeIndex(third_friday)
+    days_to_opex = (third_friday_idx - idx).days
+    data["cal_days_to_monthly_opex"] = days_to_opex.astype(float)
+    data["cal_is_monthly_opex_week"] = ((days_to_opex >= 0) & (days_to_opex <= 4)).astype(float)
+    data["cal_is_monthly_opex_day"] = (days_to_opex == 0).astype(float)
+    data["cal_is_post_opex_week"] = ((days_to_opex < 0) & (days_to_opex >= -5)).astype(float)
+
+    holidays = USFederalHolidayCalendar().holidays(start=idx.min() - pd.Timedelta(days=10), end=idx.max() + pd.Timedelta(days=10))
+    holiday_values = holidays.to_numpy(dtype="datetime64[D]")
+    idx_values = idx.to_numpy(dtype="datetime64[D]")
+    days_to_next: list[float] = []
+    days_from_prev: list[float] = []
+    for value in idx_values:
+        future = holiday_values[holiday_values >= value]
+        past = holiday_values[holiday_values <= value]
+        days_to_next.append(float((future[0] - value).astype("timedelta64[D]").astype(int)) if len(future) else np.nan)
+        days_from_prev.append(float((value - past[-1]).astype("timedelta64[D]").astype(int)) if len(past) else np.nan)
+    data["cal_days_to_us_federal_holiday"] = days_to_next
+    data["cal_days_from_us_federal_holiday"] = days_from_prev
+    data["cal_pre_holiday_3d"] = (pd.Series(days_to_next, index=idx) <= 3).astype(float).to_numpy()
+    data["cal_post_holiday_3d"] = (pd.Series(days_from_prev, index=idx) <= 3).astype(float).to_numpy()
+    for dow in range(5):
+        data[f"cal_dow_{dow}"] = (idx.dayofweek == dow).astype(float)
+    for month in range(1, 13):
+        data[f"cal_month_{month:02d}"] = (idx.month == month).astype(float)
 
 
 def zscore(series: pd.Series, window: int) -> pd.Series:
@@ -792,7 +839,7 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
             groups["fred_stress"].append(i)
         if "_spy_rel" in low or any(low.startswith(prefix.lower()) for prefix in ["QQQ", "IWM", "DIA", "EFA", "EEM", "TLT", "GLD", "HYG", "LQD", "XLY", "XLP"]):
             groups["relative_assets"].append(i)
-        if "day_" in low or "month" in low:
+        if "day_" in low or "month" in low or low.startswith("cal_"):
             groups["calendar"].append(i)
         if any(
             token in low

@@ -62,7 +62,16 @@ def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
     first = data.index[0]
     expected = np.sign(close["SPY"].pct_change(fill_method=None).shift(-1).loc[first])
     assert data.loc[first, "target_direction"] == expected
-    for feature in ["spy_rsi_14d", "spy_macd_hist", "spy_ma_gap_50d", "spy_ret_lag_3d", "spy_atr_pct_14d"]:
+    for feature in [
+        "spy_rsi_14d",
+        "spy_macd_hist",
+        "spy_ma_gap_50d",
+        "spy_ret_lag_3d",
+        "spy_atr_pct_14d",
+        "cal_turn_of_month",
+        "cal_is_monthly_opex_week",
+        "cal_pre_holiday_3d",
+    ]:
         assert feature in data.columns
 
 
@@ -139,9 +148,10 @@ Trade_date,Call,Put,Total,P/C Ratio
 
 
 def test_cboe_features_have_dedicated_group() -> None:
-    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level", "fred_nfci"])
+    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level", "fred_nfci", "cal_turn_of_month"])
     assert groups["cboe_options"] == [0]
     assert groups["fred_stress"] == [3]
+    assert groups["calendar"] == [4]
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:
