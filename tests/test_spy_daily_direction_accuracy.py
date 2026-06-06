@@ -75,6 +75,9 @@ def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
         "cal_pre_holiday_3d",
         "global_cash_mean_ret_1d",
         "N225_ret_1d",
+        "spy_sr_dist_prior_high_20d",
+        "spy_sr_failed_breakdown_20d",
+        "spy_lower_wick_pct",
     ]:
         assert feature in data.columns
 
@@ -152,11 +155,24 @@ Trade_date,Call,Put,Total,P/C Ratio
 
 
 def test_cboe_features_have_dedicated_group() -> None:
-    groups = feature_groups(["cboe_total_pc", "spy_ret_5d", "vix_level", "fred_nfci", "cal_turn_of_month", "global_cash_mean_ret_1d", "N225_ret_1d"])
+    groups = feature_groups(
+        [
+            "cboe_total_pc",
+            "spy_ret_5d",
+            "vix_level",
+            "fred_nfci",
+            "cal_turn_of_month",
+            "global_cash_mean_ret_1d",
+            "N225_ret_1d",
+            "spy_sr_dist_prior_high_20d",
+            "spy_lower_wick_pct",
+        ]
+    )
     assert groups["cboe_options"] == [0]
     assert groups["fred_stress"] == [3]
     assert groups["calendar"] == [4]
     assert groups["global_cash"] == [5, 6]
+    assert groups["support_resistance"] == [7, 8]
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:
@@ -206,6 +222,26 @@ def test_fallback_up_policy_predicts_down_only_on_extreme_risk() -> None:
     assert threshold > 0.85
     assert metrics["accuracy"] > 0.95
     assert 0.80 < np.mean(preds[train_mask] > 0.0) < 0.95
+
+
+def test_down_focus_and_class_balance_threshold_policies_are_train_only() -> None:
+    scores = np.tile(np.linspace(0.0, 1.0, 100), 12)
+    target = np.ones(len(scores))
+    target[(scores >= 0.72) & (scores <= 0.92)] = -1.0
+    train_mask = np.array([True] * 1000 + [False] * 200)
+
+    threshold, invert, metrics = choose_threshold_train_only(scores, target, train_mask, policy="down_focus")
+    preds = predict_from_scores(scores, threshold, invert, "down_focus")
+    assert threshold < 0.95
+    assert metrics["down_accuracy"] > 0.70
+    assert 0.45 < np.mean(preds[train_mask] > 0.0) < 0.95
+
+    balanced_target = np.where(scores >= 0.50, 1.0, -1.0)
+    threshold, invert, metrics = choose_threshold_train_only(scores, balanced_target, train_mask, policy="class_balance")
+    preds = predict_from_scores(scores, threshold, invert, "class_balance")
+    assert np.isfinite(metrics["accuracy"])
+    assert min(metrics["up_accuracy"], metrics["down_accuracy"]) > 0.90
+    assert 0.35 < np.mean(preds[train_mask] > 0.0) < 0.65
 
 
 def test_ml_candidate_fits_only_train_rows() -> None:

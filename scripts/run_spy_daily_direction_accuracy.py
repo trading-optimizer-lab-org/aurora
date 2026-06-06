@@ -278,6 +278,7 @@ def build_dataset(
         std = spy_ret.rolling(window, min_periods=rolling_min_periods(window)).std()
         data[f"spy_bb_ret_z_{window}d"] = (spy_ret - mean) / std.replace(0.0, np.nan)
         data[f"spy_bb_ret_width_{window}d"] = std
+    add_support_resistance_features(data, spy, open_, high, low, true_range)
 
     for symbol in [c for c in close.columns if c != "SPY"]:
         s = close[symbol].astype(float)
@@ -603,6 +604,42 @@ def add_global_cash_index_features(data: pd.DataFrame, returns: pd.DataFrame) ->
         data[f"global_cash_stress_z_{window}d"] = zscore(-data["global_cash_mean_ret_1d"], window)
 
 
+def add_support_resistance_features(
+    data: pd.DataFrame,
+    close: pd.Series,
+    open_: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    true_range: pd.Series,
+) -> None:
+    daily_range = (high - low).replace(0.0, np.nan)
+    upper_wick = high - pd.concat([open_, close], axis=1).max(axis=1)
+    lower_wick = pd.concat([open_, close], axis=1).min(axis=1) - low
+    data["spy_upper_wick_pct"] = upper_wick / daily_range
+    data["spy_lower_wick_pct"] = lower_wick / daily_range
+    data["spy_body_pct"] = (close - open_).abs() / daily_range
+    data["spy_close_to_range_mid"] = (close - ((high + low) / 2.0)) / daily_range
+    data["spy_inside_day"] = ((high < high.shift(1)) & (low > low.shift(1))).astype(float)
+    data["spy_outside_day"] = ((high > high.shift(1)) & (low < low.shift(1))).astype(float)
+    for window in [5, 10, 20, 50, 100, 200]:
+        min_periods = rolling_min_periods(window)
+        prior_high = high.rolling(window, min_periods=min_periods).max().shift(1)
+        prior_low = low.rolling(window, min_periods=min_periods).min().shift(1)
+        prior_mid = (prior_high + prior_low) / 2.0
+        atr = true_range.rolling(window, min_periods=min_periods).mean().replace(0.0, np.nan)
+        data[f"spy_sr_dist_prior_high_{window}d"] = close / prior_high - 1.0
+        data[f"spy_sr_dist_prior_low_{window}d"] = close / prior_low - 1.0
+        data[f"spy_sr_dist_prior_mid_{window}d"] = close / prior_mid - 1.0
+        data[f"spy_sr_breakout_{window}d"] = (close > prior_high).astype(float)
+        data[f"spy_sr_breakdown_{window}d"] = (close < prior_low).astype(float)
+        data[f"spy_sr_failed_breakout_{window}d"] = ((high > prior_high) & (close < prior_high)).astype(float)
+        data[f"spy_sr_failed_breakdown_{window}d"] = ((low < prior_low) & (close > prior_low)).astype(float)
+        data[f"spy_sr_rejection_high_atr_{window}d"] = (high - close) / atr
+        data[f"spy_sr_rejection_low_atr_{window}d"] = (close - low) / atr
+        range_rank = true_range.rolling(window, min_periods=min_periods).rank(pct=True)
+        data[f"spy_sr_range_rank_{window}d"] = range_rank
+
+
 def zscore(series: pd.Series, window: int) -> pd.Series:
     min_periods = rolling_min_periods(window)
     mean = series.rolling(window, min_periods=min_periods).mean()
@@ -816,7 +853,12 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     return {
         "rule_type": rule_type,
         "family": family,
-        "threshold_policy": str(rng.choice(["balanced", "fallback_up"], p=[0.55, 0.45])),
+        "threshold_policy": str(
+            rng.choice(
+                ["balanced", "fallback_up", "class_balance", "down_focus", "fallback_down"],
+                p=[0.30, 0.25, 0.20, 0.20, 0.05],
+            )
+        ),
         "feature_indices": [int(i) for i in idx],
         "weights": [float(x) for x in rng.normal(0.0, 1.0, size=k)],
         "quantiles": [float(x) for x in rng.uniform(0.15, 0.85, size=k)],
@@ -843,6 +885,7 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
         "fred_stress": [],
         "global_cash": [],
         "relative_assets": [],
+        "support_resistance": [],
         "calendar": [],
         "technical": [],
         "all": list(range(len(feature_cols))),
@@ -867,6 +910,8 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
             groups["global_cash"].append(i)
         if "_spy_rel" in low or any(low.startswith(prefix.lower()) for prefix in ["QQQ", "IWM", "DIA", "EFA", "EEM", "TLT", "GLD", "HYG", "LQD", "XLY", "XLP"]):
             groups["relative_assets"].append(i)
+        if low.startswith("spy_sr_") or "wick" in low or "inside_day" in low or "outside_day" in low or "range_mid" in low:
+            groups["support_resistance"].append(i)
         if "day_" in low or "month" in low or low.startswith("cal_"):
             groups["calendar"].append(i)
         if any(
@@ -1058,8 +1103,10 @@ def choose_threshold_train_only(
     train_target = train_target[finite]
     if len(train_scores) < 100:
         return 0.0, 0, empty_metrics()
-    if policy == "fallback_up":
+    if policy in {"fallback_up", "down_focus", "fallback_down"}:
         thresholds = np.unique(np.quantile(train_scores, np.linspace(0.45, 0.995, 34)))
+    elif policy == "class_balance":
+        thresholds = np.unique(np.quantile(train_scores, np.linspace(0.15, 0.85, 35)))
     else:
         thresholds = np.unique(np.quantile(train_scores, np.linspace(0.05, 0.95, 31)))
     best_threshold = 0.0
@@ -1073,12 +1120,29 @@ def choose_threshold_train_only(
             if policy == "fallback_up":
                 if long_frac < 0.55 or long_frac > 0.995:
                     continue
+            elif policy == "down_focus":
+                if long_frac < 0.45 or long_frac > 0.95:
+                    continue
+            elif policy == "fallback_down":
+                if long_frac < 0.05 or long_frac > 0.55:
+                    continue
+            elif policy == "class_balance":
+                if long_frac < 0.35 or long_frac > 0.65:
+                    continue
             elif long_frac < 0.15 or long_frac > 0.85:
                 continue
             current = classification_metrics(preds, train_target)
             if policy == "fallback_up":
                 precision_down = 0.0 if not np.isfinite(current["precision_down"]) else float(current["precision_down"])
                 score = current["accuracy"] + precision_down * 0.18 + float(current["down_accuracy"]) * 0.05
+            elif policy == "down_focus":
+                precision_down = 0.0 if not np.isfinite(current["precision_down"]) else float(current["precision_down"])
+                score = current["accuracy"] + float(current["down_accuracy"]) * 0.35 + precision_down * 0.15
+            elif policy == "fallback_down":
+                precision_up = 0.0 if not np.isfinite(current["precision_up"]) else float(current["precision_up"])
+                score = current["accuracy"] + float(current["up_accuracy"]) * 0.18 + precision_up * 0.08
+            elif policy == "class_balance":
+                score = current["accuracy"] * 0.35 + min(current["up_accuracy"], current["down_accuracy"]) * 0.65
             else:
                 score = current["accuracy"] + min(current["up_accuracy"], current["down_accuracy"]) * 0.15
             if score > best_score:
@@ -1091,8 +1155,10 @@ def choose_threshold_train_only(
 
 def predict_from_scores(scores: np.ndarray, threshold: float, invert: int, policy: str = "balanced") -> np.ndarray:
     oriented = -scores if invert else scores
-    if policy == "fallback_up":
+    if policy in {"fallback_up", "down_focus"}:
         return np.where(oriented >= threshold, -1.0, 1.0)
+    if policy == "fallback_down":
+        return np.where(oriented >= threshold, 1.0, -1.0)
     return np.where(oriented >= threshold, 1.0, -1.0)
 
 
