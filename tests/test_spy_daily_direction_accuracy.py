@@ -9,6 +9,7 @@ import yaml
 from scripts.run_spy_daily_direction_accuracy import (
     LOCKED_START,
     build_dataset,
+    build_funnel_context,
     build_scores,
     choose_threshold_train_only,
     feature_groups,
@@ -33,7 +34,10 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 178" in text
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
+    assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
+    assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
     assert "--target-accuracy" in text
+    assert "--search-plan" in text
 
 
 def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
@@ -173,6 +177,28 @@ def test_cboe_features_have_dedicated_group() -> None:
     assert groups["calendar"] == [4]
     assert groups["global_cash"] == [5, 6]
     assert groups["support_resistance"] == [7, 8]
+
+
+def test_funnel_context_uses_train_representatives_and_groups_correlated_features() -> None:
+    idx = pd.date_range("1995-01-01", periods=260, freq="B")
+    base = np.linspace(-1.0, 1.0, len(idx))
+    x = pd.DataFrame(
+        {
+            "spy_ret_1d": base,
+            "spy_mean_1d": base * 1.001,
+            "spy_sr_dist_prior_high_20d": -base,
+            "cboe_total_pc": np.sin(np.arange(len(idx)) / 7.0),
+            "cal_month_01": (idx.month == 1).astype(float),
+        },
+        index=idx,
+    )
+    train_mask = np.ones(len(idx), dtype=bool)
+    context = build_funnel_context(x, list(x.columns), train_mask)
+    assert context["effective_groups"] < len(x.columns)
+    grouped = {name: len(cols) for name, cols in context["groups"].items()}
+    assert grouped["spy_momentum"] >= 1
+    assert grouped["support_resistance"] >= 1
+    assert grouped["cboe_options"] >= 1
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:

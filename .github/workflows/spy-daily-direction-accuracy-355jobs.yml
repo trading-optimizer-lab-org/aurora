@@ -15,6 +15,14 @@ on:
         description: "Train and validation accuracy required for accepted candidates"
         required: true
         default: "0.60"
+      search_plan:
+        description: "Search plan: random or funnel"
+        required: true
+        default: "random"
+      job_timeout_minutes:
+        description: "Hard timeout per search job"
+        required: true
+        default: "65"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -64,7 +72,7 @@ jobs:
   search_a:
     runs-on: ubuntu-latest
     needs: [data, plan]
-    timeout-minutes: 65
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -92,7 +100,8 @@ jobs:
             --stage "${{ matrix.stage }}" \
             --configs-per-stage "${{ inputs.configs_per_stage }}" \
             --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
-            --target-accuracy "${{ inputs.target_accuracy }}"
+            --target-accuracy "${{ inputs.target_accuracy }}" \
+            --search-plan "${{ inputs.search_plan }}"
       - name: Upload stage artifact
         uses: actions/upload-artifact@v4
         with:
@@ -102,7 +111,7 @@ jobs:
   search_b:
     runs-on: ubuntu-latest
     needs: [data, plan]
-    timeout-minutes: 65
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
     continue-on-error: true
     strategy:
       fail-fast: false

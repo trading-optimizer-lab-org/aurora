@@ -75,6 +75,7 @@ def main() -> None:
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
     parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
+    parser.add_argument("--search-plan", choices=["random", "funnel"], default="random")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -89,6 +90,7 @@ def main() -> None:
             time_budget_minutes=float(args.time_budget_minutes),
             top_per_stage=int(args.top_per_stage),
             target_accuracy=float(args.target_accuracy),
+            search_plan=str(args.search_plan),
         )
     else:
         run_merge(output_dir, target_accuracy=float(args.target_accuracy))
@@ -668,6 +670,7 @@ def run_shard(
     time_budget_minutes: float,
     top_per_stage: int,
     target_accuracy: float = TARGET_ACCURACY,
+    search_plan: str = "random",
 ) -> None:
     dataset = pd.read_csv(output_dir / "data" / "daily_direction_dataset.csv", parse_dates=["timestamp"]).set_index("timestamp")
     if dataset.index.max() >= LOCKED_START:
@@ -685,6 +688,7 @@ def run_shard(
     matrix = x.to_numpy(dtype=float)
     target = y.to_numpy(dtype=float)
     rng = np.random.default_rng(20260606 + stage * 1_000_003)
+    funnel_context = build_funnel_context(x, feature_cols, train_mask.to_numpy()) if search_plan == "funnel" else None
     started = time.monotonic()
     deadline = started + max(1.0, time_budget_minutes) * 60.0
     rows: list[dict[str, Any]] = []
@@ -695,7 +699,11 @@ def run_shard(
         if time.monotonic() >= deadline:
             break
         evaluated += 1
-        params = sample_params(rng, feature_cols, stage)
+        params = (
+            sample_funnel_params(rng, feature_cols, stage, config_index, funnel_context)
+            if funnel_context is not None
+            else sample_params(rng, feature_cols, stage)
+        )
         params, scores = fit_candidate_scores_train_only(matrix, target, train_mask.to_numpy(), params)
         if not np.isfinite(scores).any():
             continue
@@ -822,6 +830,9 @@ def run_shard(
                 "stage": stage,
                 "target_accuracy": target_accuracy,
                 "configs_evaluated": evaluated,
+                "search_plan": search_plan,
+                "effective_feature_groups": int(funnel_context["effective_groups"]) if funnel_context is not None else None,
+                "representative_features": int(len(funnel_context["representatives"])) if funnel_context is not None else None,
                 "validation_examined_report_only": validation_examined,
                 "rows_kept": len(frame),
                 "accepted_rows": int(frame.get("accepted", pd.Series(dtype=bool)).astype(bool).sum()) if not frame.empty else 0,
@@ -834,6 +845,148 @@ def run_shard(
         ),
         encoding="utf-8",
     )
+
+
+def build_funnel_context(x: pd.DataFrame, feature_cols: list[str], train_mask: np.ndarray) -> dict[str, Any]:
+    groups = feature_groups(feature_cols)
+    train_x = x.loc[train_mask, feature_cols]
+    usable = [
+        c
+        for c in feature_cols
+        if float(train_x[c].notna().mean()) >= 0.70 and int(train_x[c].nunique(dropna=True)) > 2
+    ]
+    priority = [
+        "cboe_options",
+        "support_resistance",
+        "calendar",
+        "global_cash",
+        "fred_stress",
+        "vix",
+        "rates",
+        "spy_intraday",
+        "spy_volatility",
+        "spy_momentum",
+        "relative_assets",
+        "technical",
+    ]
+    label_by_col: dict[str, str] = {}
+    for label in priority:
+        for idx in groups.get(label, []):
+            label_by_col.setdefault(feature_cols[idx], label)
+    for c in feature_cols:
+        label_by_col.setdefault(c, "other")
+
+    min_corr_periods = min(1000, max(50, int(train_mask.sum() * 0.50)))
+    corr = (
+        train_x[usable].corr(method="pearson", min_periods=min_corr_periods).abs().fillna(0.0)
+        if usable
+        else pd.DataFrame()
+    )
+    parent = {c: c for c in usable}
+
+    def find(name: str) -> str:
+        while parent[name] != name:
+            parent[name] = parent[parent[name]]
+            name = parent[name]
+        return name
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    if not corr.empty:
+        arr = corr.to_numpy()
+        cols = list(corr.columns)
+        for i, left in enumerate(cols):
+            for offset in np.where(arr[i, i + 1 :] >= 0.95)[0]:
+                right = cols[i + 1 + int(offset)]
+                if label_by_col[left] == label_by_col[right]:
+                    union(left, right)
+
+    clusters: dict[str, list[str]] = {}
+    for c in usable:
+        clusters.setdefault(find(c), []).append(c)
+    usable_set = set(usable)
+    for c in feature_cols:
+        if c not in usable_set:
+            clusters[c] = [c]
+
+    feature_index = {name: i for i, name in enumerate(feature_cols)}
+    representatives = []
+    for members in clusters.values():
+        ranked = sorted(
+            members,
+            key=lambda name: (
+                -float(train_x[name].notna().mean()) if name in train_x else 0.0,
+                len(name),
+                name,
+            ),
+        )
+        representatives.append(feature_index[ranked[0]])
+    representatives = sorted(set(representatives))
+
+    primary_groups: dict[str, list[int]] = {}
+    assigned: set[int] = set()
+    representative_set = set(representatives)
+    for name in priority:
+        vals = [i for i in groups.get(name, []) if i in representative_set and i not in assigned]
+        if vals:
+            primary_groups[name] = vals
+            assigned.update(vals)
+    rest = [i for i in representatives if i not in assigned]
+    if rest:
+        primary_groups["other"] = rest
+    return {
+        "groups": primary_groups,
+        "representatives": representatives,
+        "effective_groups": len(representatives),
+    }
+
+
+def sample_funnel_params(
+    rng: np.random.Generator,
+    feature_cols: list[str],
+    stage: int,
+    config_index: int,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    groups: dict[str, list[int]] = context["groups"]
+    group_names = list(groups) or ["all"]
+    reps = list(context["representatives"]) or list(range(len(feature_cols)))
+    phase = config_index % 10
+    if phase in {0, 1}:
+        family = group_names[(stage + config_index) % len(group_names)]
+        pool = groups.get(family, reps)
+        rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+        max_k = min(4 if phase == 0 else 6, len(pool))
+        min_k = min(1 if phase == 0 else 2, max_k)
+    elif phase in {2, 3, 4}:
+        picked_groups = rng.choice(group_names, size=min(3, len(group_names)), replace=False)
+        pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+        family = "cross_group"
+        rule_choices = ["linear", "threshold_vote", "stump_pair", "rank_vote", "train_corr_linear"]
+        max_k = min(8, len(pool))
+        min_k = min(2, max_k)
+    elif phase in {5, 6, 7}:
+        picked_groups = rng.choice(group_names, size=min(5, len(group_names)), replace=False)
+        pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+        family = "funnel_ml"
+        rule_choices = ["ml_logistic", "ml_extra_trees", "ml_random_forest", "ml_hist_gradient"]
+        max_k = min(18, len(pool))
+        min_k = min(4, max_k)
+    else:
+        pool = reps
+        family = "funnel_all_representatives"
+        rule_choices = ["ml_logistic", "ml_extra_trees", "ml_random_forest", "ml_hist_gradient", "train_corr_linear"]
+        max_k = min(24, len(pool))
+        min_k = min(6, max_k)
+    if not pool:
+        pool = list(range(len(feature_cols)))
+    rule_type = str(rng.choice(rule_choices))
+    k = int(rng.integers(min_k, max_k + 1))
+    idx = rng.choice(pool, size=k, replace=False).astype(int)
+    return build_param_dict(rng, idx, rule_type=rule_type, family=family, stage=stage)
 
 
 def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int) -> dict[str, Any]:
@@ -850,6 +1003,11 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     min_k = min(4 if rule_type.startswith("ml_") else 2, max_k)
     k = int(rng.integers(min_k, max_k + 1))
     idx = rng.choice(pool, size=k, replace=False).astype(int)
+    return build_param_dict(rng, idx, rule_type=rule_type, family=family, stage=stage)
+
+
+def build_param_dict(rng: np.random.Generator, idx: np.ndarray, *, rule_type: str, family: str, stage: int) -> dict[str, Any]:
+    k = len(idx)
     return {
         "rule_type": rule_type,
         "family": family,
@@ -892,7 +1050,15 @@ def feature_groups(feature_cols: list[str]) -> dict[str, list[int]]:
     }
     for i, name in enumerate(feature_cols):
         low = name.lower()
-        if low.startswith("spy_ret") or "donchian" in low or "drawdown" in low or "price_z" in low:
+        if (
+            low.startswith("spy_ret")
+            or low.startswith("spy_mean")
+            or low.startswith("spy_min")
+            or low.startswith("spy_max")
+            or "donchian" in low
+            or "drawdown" in low
+            or "price_z" in low
+        ):
             groups["spy_momentum"].append(i)
         if "vol" in low and not low.startswith("spy_volume"):
             groups["spy_volatility"].append(i)
@@ -1326,6 +1492,12 @@ def run_merge(output_dir: Path, target_accuracy: float = TARGET_ACCURACY) -> Non
             summaries.append(json.loads(path.read_text(encoding="utf-8")))
         except json.JSONDecodeError:
             pass
+    effective_groups = [
+        int(item["effective_feature_groups"])
+        for item in summaries
+        if item.get("effective_feature_groups") is not None
+    ]
+    search_plans = sorted({str(item.get("search_plan")) for item in summaries if item.get("search_plan")})
 
     output_dir.mkdir(parents=True, exist_ok=True)
     top.to_csv(output_dir / "spy_daily_direction_leaderboard.csv", index=False)
@@ -1339,8 +1511,13 @@ def run_merge(output_dir: Path, target_accuracy: float = TARGET_ACCURACY) -> Non
         "accepted_count": int(len(accepted)),
         "close_to_pass_count": int(len(close)),
         "leaderboard_rows": int(len(top)),
+        "stages_completed": int(len(summaries)),
         "configs_evaluated": int(sum(item.get("configs_evaluated", 0) for item in summaries)),
         "validation_examined_report_only": int(sum(item.get("validation_examined_report_only", 0) for item in summaries)),
+        "search_plans": search_plans,
+        "effective_feature_groups_min": int(min(effective_groups)) if effective_groups else None,
+        "effective_feature_groups_median": float(np.median(effective_groups)) if effective_groups else None,
+        "effective_feature_groups_max": int(max(effective_groups)) if effective_groups else None,
         "target_accuracy": target_accuracy,
         "frequency": "daily",
         "target": "SPY next-day direction",
