@@ -12,6 +12,7 @@ from scripts.run_spy_daily_direction_accuracy import (
     build_dataset,
     build_funnel_context,
     build_scores,
+    candidate_selection_score,
     choose_threshold_train_only,
     feature_groups,
     fit_candidate_scores_train_only,
@@ -38,7 +39,7 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
     assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
-    assert "random, funnel, or funnel_top" in text
+    assert "random, funnel, funnel_top, or funnel_robust" in text
     assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
     assert "--target-accuracy" in text
     assert "--search-plan" in text
@@ -263,6 +264,63 @@ def test_funnel_top_uses_simple_fast_rules() -> None:
     ]
     assert all(not params["rule_type"].startswith("ml_") for params in seen)
     assert max(len(params["feature_indices"]) for params in seen) <= 10
+
+
+def test_funnel_robust_uses_low_capacity_candidates() -> None:
+    context = {
+        "groups": {
+            "support_resistance": [0, 1, 2, 3],
+            "relative_assets": [4, 5, 6],
+            "cboe_options": [7, 8, 9],
+            "spy_momentum": [10, 11],
+        },
+        "representatives": list(range(12)),
+        "effective_groups": 12,
+    }
+    rng = np.random.default_rng(456)
+    seen = [
+        sample_funnel_params(
+            rng,
+            [f"feature_{i}" for i in range(12)],
+            stage=0,
+            config_index=i,
+            context=context,
+            robust_only=True,
+        )
+        for i in range(32)
+    ]
+    assert max(len(params["feature_indices"]) for params in seen) <= 12
+    assert "ml_hist_gradient" not in {params["rule_type"] for params in seen}
+    for params in seen:
+        if params["rule_type"].startswith("ml_"):
+            assert params["model_depth"] <= 4
+            assert params["model_leaf"] >= 40
+
+
+def test_robust_selection_score_penalizes_train_cv_gap() -> None:
+    train_years = {"min_accuracy": 0.54}
+    sub_train = {"min_accuracy": 0.55}
+    stable_train = {"accuracy": 0.58, "up_accuracy": 0.58, "down_accuracy": 0.58}
+    stable_cv = {"accuracy": 0.56, "min_split_accuracy": 0.54, "up_accuracy": 0.55, "down_accuracy": 0.54}
+    overfit_train = {"accuracy": 0.82, "up_accuracy": 0.82, "down_accuracy": 0.82}
+    overfit_cv = {"accuracy": 0.52, "min_split_accuracy": 0.51, "up_accuracy": 0.53, "down_accuracy": 0.50}
+    stable_score = candidate_selection_score(
+        stable_train,
+        stable_cv,
+        train_years,
+        sub_train,
+        feature_count=6,
+        robust=True,
+    )
+    overfit_score = candidate_selection_score(
+        overfit_train,
+        overfit_cv,
+        train_years,
+        sub_train,
+        feature_count=6,
+        robust=True,
+    )
+    assert stable_score > overfit_score
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:

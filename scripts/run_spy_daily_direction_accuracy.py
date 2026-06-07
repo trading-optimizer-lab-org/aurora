@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
     parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
-    parser.add_argument("--search-plan", choices=["random", "funnel", "funnel_top"], default="random")
+    parser.add_argument("--search-plan", choices=["random", "funnel", "funnel_top", "funnel_robust"], default="random")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -690,7 +690,7 @@ def run_shard(
     rng = np.random.default_rng(20260606 + stage * 1_000_003)
     funnel_context = (
         build_funnel_context(x, feature_cols, train_mask.to_numpy())
-        if search_plan in {"funnel", "funnel_top"}
+        if search_plan in {"funnel", "funnel_top", "funnel_robust"}
         else None
     )
     started = time.monotonic()
@@ -714,6 +714,7 @@ def run_shard(
                 config_index,
                 funnel_context,
                 top_only=search_plan == "funnel_top",
+                robust_only=search_plan == "funnel_robust",
             )
             if funnel_context is not None
             else sample_params(rng, feature_cols, stage)
@@ -737,6 +738,17 @@ def run_shard(
             continue
         if train_cv["accuracy"] < 0.515 and config_index % 701 != 0:
             continue
+        if search_plan == "funnel_robust":
+            cv_class_balance = min(float(train_cv["up_accuracy"]), float(train_cv["down_accuracy"]))
+            train_cv_gap = float(train_metrics["accuracy"]) - float(train_cv["accuracy"])
+            if float(train_cv["accuracy"]) < 0.525 and config_index % 997 != 0:
+                continue
+            if float(train_cv["min_split_accuracy"]) < 0.505 and config_index % 997 != 0:
+                continue
+            if cv_class_balance < 0.25 and config_index % 997 != 0:
+                continue
+            if train_cv_gap > 0.15 and config_index % 997 != 0:
+                continue
         validation_metrics = classification_metrics(preds[validation_mask.to_numpy()], target[validation_mask.to_numpy()])
         validation_examined += 1
         train_years = yearly_accuracy(dataset.index[train_mask], preds[train_mask.to_numpy()], target[train_mask.to_numpy()])
@@ -784,12 +796,14 @@ def run_shard(
                 "invert": int(invert),
                 "threshold_policy": str(params.get("threshold_policy", "balanced")),
                 "params_json": json.dumps(params, sort_keys=True),
-                "score": score_candidate(train_metrics, validation_metrics=None, feature_count=len(params["feature_indices"]))
-                + float(train_cv["accuracy"]) * 520_000.0
-                + float(train_cv["min_split_accuracy"]) * 260_000.0
-                + min(float(train_cv["up_accuracy"]), float(train_cv["down_accuracy"])) * 130_000.0
-                + float(train_years["min_accuracy"]) * 140_000.0
-                + float(sub_train["min_accuracy"]) * 220_000.0,
+                "score": candidate_selection_score(
+                    train_metrics,
+                    train_cv,
+                    train_years,
+                    sub_train,
+                    feature_count=len(params["feature_indices"]),
+                    robust=search_plan == "funnel_robust",
+                ),
                 "train_internal_cv_accuracy": float(train_cv["accuracy"]),
                 "train_internal_cv_min_split_accuracy": float(train_cv["min_split_accuracy"]),
                 "train_internal_cv_up_accuracy": float(train_cv["up_accuracy"]),
@@ -1011,10 +1025,69 @@ def sample_funnel_params(
     context: dict[str, Any],
     *,
     top_only: bool = False,
+    robust_only: bool = False,
 ) -> dict[str, Any]:
     groups: dict[str, list[int]] = context["groups"]
     group_names = list(groups) or ["all"]
     reps = list(context["representatives"]) or list(range(len(feature_cols)))
+    if robust_only:
+        priority = [
+            name
+            for name in [
+                "support_resistance",
+                "relative_assets",
+                "cboe_options",
+                "spy_momentum",
+                "spy_volatility",
+                "global_cash",
+                "technical",
+                "calendar",
+            ]
+            if groups.get(name)
+        ]
+        robust_groups = priority or group_names
+        phase = config_index % 8
+        if phase in {0, 1}:
+            family = robust_groups[(stage + config_index) % len(robust_groups)]
+            pool = groups.get(family, reps)
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(3 if phase == 0 else 5, len(pool))
+            min_k = 1 if phase == 0 else min(2, max_k)
+        elif phase in {2, 3, 4}:
+            picked_groups = rng.choice(robust_groups, size=min(3, len(robust_groups)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            family = "robust_cross_group"
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear", "ml_logistic"]
+            max_k = min(7, len(pool))
+            min_k = min(2, max_k)
+        elif phase in {5, 6}:
+            picked_groups = rng.choice(robust_groups, size=min(4, len(robust_groups)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            family = "robust_low_capacity_ml"
+            rule_choices = ["ml_logistic", "ml_extra_trees", "ml_random_forest"]
+            max_k = min(10, len(pool))
+            min_k = min(3, max_k)
+        else:
+            pool = reps
+            family = "robust_all_representatives"
+            rule_choices = ["linear", "train_corr_linear", "ml_logistic", "threshold_vote"]
+            max_k = min(12, len(pool))
+            min_k = min(3, max_k)
+        if not pool:
+            pool = list(range(len(feature_cols)))
+        rule_type = str(rng.choice(rule_choices))
+        k = int(rng.integers(min_k, max_k + 1))
+        idx = rng.choice(pool, size=k, replace=False).astype(int)
+        params = build_param_dict(rng, idx, rule_type=rule_type, family=family, stage=stage)
+        if rule_type.startswith("ml_"):
+            params["model_depth"] = int(rng.choice([2, 3, 4]))
+            params["model_estimators"] = int(rng.choice([32, 48]))
+            params["model_leaf"] = int(rng.choice([40, 80, 120, 160]))
+            params["model_lr"] = float(rng.choice([0.02, 0.03, 0.05]))
+            params["model_iter"] = int(rng.choice([24, 40, 64]))
+            params["model_c"] = float(rng.choice([0.25, 0.5, 1.0, 2.0]))
+            params["class_weight"] = str(rng.choice(["none", "balanced"], p=[0.65, 0.35]))
+        return params
     if top_only:
         phase = config_index % 4
         if phase == 0:
@@ -1553,6 +1626,43 @@ def score_candidate(train: dict[str, float], validation_metrics: dict[str, float
     del validation_metrics
     balance = min(float(train["up_accuracy"]), float(train["down_accuracy"]))
     return float(train["accuracy"]) * 1_000_000.0 + balance * 180_000.0 - feature_count * 100.0
+
+
+def candidate_selection_score(
+    train: dict[str, float],
+    train_cv: dict[str, float],
+    train_years: dict[str, Any],
+    sub_train: dict[str, Any],
+    *,
+    feature_count: int,
+    robust: bool,
+) -> float:
+    if not robust:
+        return (
+            score_candidate(train, validation_metrics=None, feature_count=feature_count)
+            + float(train_cv["accuracy"]) * 520_000.0
+            + float(train_cv["min_split_accuracy"]) * 260_000.0
+            + min(float(train_cv["up_accuracy"]), float(train_cv["down_accuracy"])) * 130_000.0
+            + float(train_years["min_accuracy"]) * 140_000.0
+            + float(sub_train["min_accuracy"]) * 220_000.0
+        )
+    cv_accuracy = float(train_cv["accuracy"])
+    cv_min_split = float(train_cv["min_split_accuracy"])
+    cv_class_balance = min(float(train_cv["up_accuracy"]), float(train_cv["down_accuracy"]))
+    train_accuracy = float(train["accuracy"])
+    gap_penalty = max(0.0, train_accuracy - cv_accuracy) * 900_000.0
+    memorization_penalty = max(0.0, train_accuracy - 0.68) * 650_000.0
+    return (
+        cv_accuracy * 1_100_000.0
+        + cv_min_split * 900_000.0
+        + cv_class_balance * 500_000.0
+        + float(train_years["min_accuracy"]) * 350_000.0
+        + float(sub_train["min_accuracy"]) * 450_000.0
+        + train_accuracy * 120_000.0
+        - gap_penalty
+        - memorization_penalty
+        - feature_count * 700.0
+    )
 
 
 def select_top(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
