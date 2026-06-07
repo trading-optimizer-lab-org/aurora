@@ -31,6 +31,7 @@ env:
   VALIDATION_START: "2011-01-01"
   VALIDATION_END: "2020-12-31"
   LOCKED_START: "2021-01-01"
+  REQUIRE_DATA_START_LTE: "1995-01-01"
 
 permissions:
   contents: read
@@ -62,7 +63,9 @@ jobs:
             --source "$SOURCE_SIGNATURES" \
             --output "$VARIANT_SIGNATURES" \
             --summary "$OUTPUT_DIR/prepare/paper_strategy_variants_summary.json" \
-            --max-variants "${{ inputs.max_variants || '80000' }}"
+            --max-variants "${{ inputs.max_variants || '80000' }}" \
+            --exclude-asset-bucket equity_single \
+            --exclude-asset-bucket crypto
       - name: Build matrix metadata
         id: meta
         shell: bash
@@ -160,7 +163,8 @@ jobs:
             --train-end "$TRAIN_END" \
             --validation-start "$VALIDATION_START" \
             --validation-end "$VALIDATION_END" \
-            --locked-start "$LOCKED_START"
+            --locked-start "$LOCKED_START" \
+            --require-data-start-lte "$REQUIRE_DATA_START_LTE"
       - name: Upload chunk artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -208,7 +212,8 @@ jobs:
             --train-end "$TRAIN_END" \
             --validation-start "$VALIDATION_START" \
             --validation-end "$VALIDATION_END" \
-            --locked-start "$LOCKED_START"
+            --locked-start "$LOCKED_START" \
+            --require-data-start-lte "$REQUIRE_DATA_START_LTE"
       - name: Upload chunk artifact
         uses: actions/upload-artifact@v4
         if: always()
