@@ -139,15 +139,32 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
-    raw = yf.download(
-        ["SPY", "^VIX"],
-        start="1995-01-01",
-        end="2021-01-01",
-        auto_adjust=True,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
+    cache_dir = output_dir / ".yfinance_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        yf.set_tz_cache_location(str(cache_dir))
+    except Exception:
+        pass
+    raw = pd.DataFrame()
+    last_error: Exception | None = None
+    for attempt in range(4):
+        try:
+            raw = yf.download(
+                ["SPY", "^VIX"],
+                start="1995-01-01",
+                end="2021-01-01",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=False,
+            )
+            if not raw.empty:
+                break
+        except Exception as exc:
+            last_error = exc
+            time.sleep(2.0 + attempt)
+    if raw.empty and last_error is not None:
+        raise RuntimeError(f"SPY/VIX download failed after retries: {last_error}") from last_error
     prices = pd.DataFrame()
     for symbol in ["SPY", "^VIX"]:
         try:
