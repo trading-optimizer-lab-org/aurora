@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import hashlib
 import json
@@ -227,7 +228,7 @@ def run_shard(
                 "paper_strategy_type": PAPER_SOURCES[paper_key]["type"],
                 "source_rule_summary": PAPER_SOURCES[paper_key]["rule"],
                 "family": candidate.family,
-                "params_json": json.dumps(candidate.params, sort_keys=True),
+                "params_json": encode_params(candidate.params),
                 "traded_asset": "SPY",
                 "frequency": "daily",
                 "lag_periods": 1,
@@ -353,6 +354,11 @@ def paper_key_for_family(family: str) -> str:
     if family == "put_call_vix_combo":
         return "giot_vix_extreme"
     return "pan_poteshman_option_volume"
+
+
+def encode_params(params: dict[str, Any]) -> str:
+    raw = json.dumps(params, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
 
 
 def daily_metrics(returns: np.ndarray) -> dict[str, float]:

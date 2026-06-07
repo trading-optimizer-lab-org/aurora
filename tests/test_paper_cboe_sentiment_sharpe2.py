@@ -10,6 +10,7 @@ from scripts.run_paper_cboe_sentiment_sharpe2 import (
     Candidate,
     build_dataset,
     build_positions,
+    encode_params,
 )
 
 
@@ -47,6 +48,13 @@ def test_positions_use_only_existing_features_and_spy_asset() -> None:
     )
     positions = build_positions(candidate, data)
     assert positions.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+
+
+def test_params_encoding_is_csv_safe() -> None:
+    encoded = encode_params({"pc_feature": "cboe_total_pc_z_21d", "pc_threshold": 1.25, "direction": -1})
+    assert "," not in encoded
+    assert '"' not in encoded
+    assert "\n" not in encoded
 
 
 def test_cboe_sentiment_workflow_requests_360_parallel_jobs() -> None:
