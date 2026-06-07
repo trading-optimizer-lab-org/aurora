@@ -82,6 +82,20 @@ PAPER_SOURCES: dict[str, dict[str, str]] = {
         "type": "template",
         "rule": "Contrary sentiment indicators such as put-call ratios and VIX can predict S&P returns.",
     },
+    "calendar_anomalies": {
+        "paper": "Are Seasonal Anomalies Real? A Ninety-Year Perspective",
+        "authors": "Sullivan, Timmermann, White",
+        "year": "2001",
+        "type": "template",
+        "rule": "Calendar effects should be tested causally and out-of-sample, not accepted by data snooping.",
+    },
+    "option_expiration_effect": {
+        "paper": "Stock Index Futures and Options Expiration-Day Effects",
+        "authors": "Stoll, Whaley",
+        "year": "1990",
+        "type": "template",
+        "rule": "Index option/futures expiration windows can change stock-index return behavior.",
+    },
 }
 
 
@@ -222,6 +236,10 @@ def build_event_frame(index: pd.DatetimeIndex, fomc_dates: list[pd.Timestamp]) -
     out = pd.DataFrame(index=index)
     ordinal = pd.Series(np.arange(len(index)), index=index)
     out["turn_of_month_rank"] = turn_of_month_rank(index)
+    out["month_bday_rank"] = month_business_day_rank(index, reverse=False)
+    out["month_bday_from_end"] = month_business_day_rank(index, reverse=True)
+    out["weekday"] = index.weekday.astype(float)
+    out["third_friday_rank"] = third_friday_distance(index)
     out["pre_fomc_days"] = 999.0
     out["post_fomc_days"] = 999.0
     for date in fomc_dates:
@@ -248,6 +266,32 @@ def turn_of_month_rank(index: pd.DatetimeIndex) -> pd.Series:
             from_start = rank
             from_end = rank - (n - 1)
             values.iloc[pos] = from_end if abs(from_end) <= abs(from_start) else from_start + 1
+    return values
+
+
+def month_business_day_rank(index: pd.DatetimeIndex, *, reverse: bool) -> pd.Series:
+    values = pd.Series(index=index, dtype=float)
+    for _, locs in pd.Series(range(len(index)), index=index).groupby([index.year, index.month]):
+        positions = list(locs.values)
+        n = len(positions)
+        for rank, pos in enumerate(positions):
+            values.iloc[pos] = float(n - rank if reverse else rank + 1)
+    return values
+
+
+def third_friday_distance(index: pd.DatetimeIndex) -> pd.Series:
+    values = pd.Series(99.0, index=index)
+    grouped = pd.Series(range(len(index)), index=index).groupby([index.year, index.month])
+    for (_, _), locs in grouped:
+        month_index = index[list(locs.values)]
+        fridays = [d for d in month_index if d.weekday() == 4]
+        if len(fridays) < 3:
+            continue
+        expiry = fridays[2]
+        expiry_loc = int(np.where(index == expiry)[0][0])
+        distances = np.arange(len(index)) - expiry_loc
+        month_mask = (index.year == expiry.year) & (index.month == expiry.month)
+        values.iloc[np.where(month_mask)[0]] = distances[month_mask]
     return values
 
 
@@ -377,7 +421,16 @@ def run_shard(output_dir: Path, *, stage: int, configs_per_stage: int, time_budg
 
 
 def sample_candidate(rng: np.random.Generator, stage: int) -> Candidate:
-    families = ["turn_of_month", "pre_fomc", "fomc_window", "vix_extreme", "vix_momentum_filter"]
+    families = [
+        "turn_of_month",
+        "pre_fomc",
+        "fomc_window",
+        "macro_monthly_rank",
+        "weekday_calendar",
+        "option_expiration_window",
+        "vix_extreme",
+        "vix_momentum_filter",
+    ]
     family = families[stage % len(families)] if rng.random() < 0.65 else str(rng.choice(families))
     if family == "turn_of_month":
         return Candidate(
@@ -396,6 +449,40 @@ def sample_candidate(rng: np.random.Generator, stage: int) -> Candidate:
             {
                 "pre_days": int(rng.integers(1, 8)),
                 "post_days": int(rng.integers(0, 4)),
+                "direction": int(rng.choice([-1, 1])),
+                "outside_position": float(rng.choice([0.0, 0.0, -1.0, 1.0])),
+                "lag_periods": 1,
+            },
+        )
+    if family == "macro_monthly_rank":
+        return Candidate(
+            family,
+            {
+                "rank_column": str(rng.choice(["month_bday_rank", "month_bday_from_end"])),
+                "rank": int(rng.integers(1, 23)),
+                "pre_days": int(rng.integers(0, 4)),
+                "post_days": int(rng.integers(0, 4)),
+                "direction": int(rng.choice([-1, 1])),
+                "outside_position": float(rng.choice([0.0, 0.0, 0.0, -1.0, 1.0])),
+                "lag_periods": 1,
+            },
+        )
+    if family == "weekday_calendar":
+        return Candidate(
+            family,
+            {
+                "weekday": int(rng.integers(0, 5)),
+                "direction": int(rng.choice([-1, 1])),
+                "outside_position": float(rng.choice([0.0, 0.0, -1.0, 1.0])),
+                "lag_periods": 1,
+            },
+        )
+    if family == "option_expiration_window":
+        return Candidate(
+            family,
+            {
+                "start_distance": int(rng.integers(-5, 2)),
+                "end_distance": int(rng.integers(0, 6)),
                 "direction": int(rng.choice([-1, 1])),
                 "outside_position": float(rng.choice([0.0, 0.0, -1.0, 1.0])),
                 "lag_periods": 1,
@@ -420,6 +507,12 @@ def paper_key_for_family(family: str) -> str:
         return "mcconnell_xu_turn_of_month"
     if family in {"pre_fomc", "fomc_window"}:
         return "lucca_moench_pre_fomc"
+    if family == "macro_monthly_rank":
+        return "savor_wilson_macro"
+    if family == "weekday_calendar":
+        return "calendar_anomalies"
+    if family == "option_expiration_window":
+        return "option_expiration_effect"
     if family.startswith("vix"):
         return "giot_vix_extreme"
     return "savor_wilson_macro"
@@ -438,6 +531,25 @@ def build_positions(candidate: Candidate, events: pd.DataFrame, features: pd.Dat
         pre = events["pre_fomc_days"].to_numpy(dtype=float)
         post = events["post_fomc_days"].to_numpy(dtype=float)
         inside = (pre <= float(params["pre_days"])) | (post <= float(params["post_days"]))
+        positions[:] = float(params["outside_position"])
+        positions[inside] = float(params["direction"])
+        return positions
+    if candidate.family == "macro_monthly_rank":
+        rank = events[str(params["rank_column"])].to_numpy(dtype=float)
+        center = float(params["rank"])
+        inside = (rank >= center - float(params["pre_days"])) & (rank <= center + float(params["post_days"]))
+        positions[:] = float(params["outside_position"])
+        positions[inside] = float(params["direction"])
+        return positions
+    if candidate.family == "weekday_calendar":
+        weekday = events["weekday"].to_numpy(dtype=float)
+        inside = weekday == float(params["weekday"])
+        positions[:] = float(params["outside_position"])
+        positions[inside] = float(params["direction"])
+        return positions
+    if candidate.family == "option_expiration_window":
+        distance = events["third_friday_rank"].to_numpy(dtype=float)
+        inside = (distance >= float(params["start_distance"])) & (distance <= float(params["end_distance"]))
         positions[:] = float(params["outside_position"])
         positions[inside] = float(params["direction"])
         return positions
