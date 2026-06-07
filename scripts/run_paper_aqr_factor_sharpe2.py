@@ -512,6 +512,10 @@ def run_merge(output_dir: Path, total_stages: int) -> None:
     else:
         print(f"Accepted AQR paper factor strategies: {len(accepted)}")
         print(accepted[["candidate_id", "strategy_name", "train_sharpe", "validation_sharpe"]].head(20).to_string(index=False))
+    if summary["partial"]:
+        raise RuntimeError(
+            f"Partial AQR paper factor merge: found {summary['stages_found']} of {summary['stages_expected']} stages"
+        )
 
 
 if __name__ == "__main__":
