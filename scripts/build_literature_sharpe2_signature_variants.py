@@ -51,10 +51,15 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", default="")
     parser.add_argument("--max-variants", type=int, default=80_000)
+    parser.add_argument("--exclude-asset-bucket", action="append", default=[])
     args = parser.parse_args()
 
     frame = pd.read_csv(args.source)
-    variants = build_variants(frame, max_variants=int(args.max_variants))
+    variants = build_variants(
+        frame,
+        max_variants=int(args.max_variants),
+        exclude_asset_buckets=set(map(str, args.exclude_asset_bucket or [])),
+    )
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     variants.to_csv(out, index=False)
@@ -67,6 +72,7 @@ def main() -> int:
         "validation_used_for_selection": False,
         "paper_exact_replication_claimed": False,
         "paper_based": True,
+        "excluded_asset_buckets": list(map(str, args.exclude_asset_bucket or [])),
     }
     summary_path = Path(args.summary) if args.summary else out.with_suffix(".summary.json")
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
@@ -74,7 +80,12 @@ def main() -> int:
     return 0
 
 
-def build_variants(frame: pd.DataFrame, *, max_variants: int = 80_000) -> pd.DataFrame:
+def build_variants(
+    frame: pd.DataFrame,
+    *,
+    max_variants: int = 80_000,
+    exclude_asset_buckets: set[str] | None = None,
+) -> pd.DataFrame:
     required = {
         "signature_hash",
         "distinct_strategy_signature",
@@ -96,11 +107,14 @@ def build_variants(frame: pd.DataFrame, *, max_variants: int = 80_000) -> pd.Dat
 
     rows: list[dict[str, object]] = []
     seen: set[str] = set()
+    excluded = exclude_asset_buckets or set()
     for _, source in frame.iterrows():
         signal = str(source.get("signal_bucket") or "")
         action = str(source.get("action_bucket") or "")
         frequency = str(source.get("frequency_bucket") or "")
         asset = str(source.get("asset_bucket") or "")
+        if asset in excluded:
+            continue
         if signal not in SUPPORTED_SIGNALS or action not in SUPPORTED_ACTIONS or frequency not in SUPPORTED_FREQUENCIES:
             continue
         for freq in frequency_variants(frequency):

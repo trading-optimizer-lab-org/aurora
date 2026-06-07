@@ -41,6 +41,7 @@ def main() -> int:
     parser.add_argument("--validation-start", default="2011-01-01")
     parser.add_argument("--validation-end", default="2020-12-31")
     parser.add_argument("--locked-start", default="2021-01-01")
+    parser.add_argument("--require-data-start-lte", default="")
     parser.add_argument("--synthetic-smoke", action="store_true")
     args = parser.parse_args()
 
@@ -52,6 +53,7 @@ def main() -> int:
         validation_end=args.validation_end,
         locked_start=args.locked_start,
         expected_signatures=int(args.expected_signatures),
+        require_data_start_lte=str(args.require_data_start_lte or ""),
     )
     signatures = load_signatures(args.signatures, expected=int(args.expected_signatures))
     dataset = synthetic_dataset() if args.synthetic_smoke else load_dataset(config)

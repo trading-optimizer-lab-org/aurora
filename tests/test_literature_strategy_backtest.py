@@ -339,6 +339,20 @@ def test_sharpe2_variant_builder_preserves_paper_traceability() -> None:
     assert variants["source_text_ref"].str.contains('"paper_based": true').all()
 
 
+def test_sharpe2_variant_builder_can_exclude_survivorship_prone_assets() -> None:
+    source = pd.DataFrame(
+        [
+            _row(signature_hash="paper1", asset_bucket="equity_single"),
+            _row(signature_hash="paper2", asset_bucket="equity_index"),
+        ]
+    )
+
+    variants = build_variants(source, max_variants=50, exclude_asset_buckets={"equity_single"})
+
+    assert not variants.empty
+    assert set(variants["asset_bucket"]) == {"equity_index"}
+
+
 def test_sharpe2_merge_writes_acceptance_file(tmp_path: Path) -> None:
     from scripts.merge_literature_strategy_backtest_chunks import merge
 
@@ -397,9 +411,12 @@ def test_sharpe2_paper_variants_workflow_shape() -> None:
 
     assert data["name"] == "Literature Sharpe2 Paper Variants 360 Jobs"
     assert data["env"]["LOCKED_START"] == "2021-01-01"
+    assert data["env"]["REQUIRE_DATA_START_LTE"] == "1995-01-01"
     assert data["env"]["SOURCE_SIGNATURES"] == "config/literature_strategy_signatures_9419.csv"
     assert data[True]["workflow_dispatch"]["inputs"]["max_parallel_requested"]["default"] == "360"
     assert "scripts/build_literature_sharpe2_signature_variants.py" in text
+    assert "--exclude-asset-bucket equity_single" in text
+    assert "--require-data-start-lte \"$REQUIRE_DATA_START_LTE\"" in text
     assert "literature_strategy_backtest_sharpe2_pass.csv" not in text
     assert "literature-sharpe2-paper-variants-results" in text
 
