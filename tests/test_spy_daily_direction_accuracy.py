@@ -41,7 +41,7 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
     assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
-    assert "random, funnel, funnel_top, funnel_robust, or funnel_ensemble" in text
+    assert "random, funnel, funnel_top, funnel_robust, funnel_ensemble, or funnel_down_override" in text
     assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
     assert "--target-accuracy" in text
     assert "--search-plan" in text
@@ -299,6 +299,34 @@ def test_funnel_robust_uses_low_capacity_candidates() -> None:
             assert params["model_leaf"] >= 40
 
 
+def test_funnel_down_override_uses_fallback_down_policies() -> None:
+    context = {
+        "groups": {
+            "support_resistance": [0, 1, 2, 3],
+            "cboe_options": [4, 5],
+            "spy_volatility": [6, 7],
+            "relative_assets": [8, 9, 10],
+        },
+        "representatives": list(range(11)),
+        "effective_groups": 11,
+    }
+    rng = np.random.default_rng(789)
+    seen = [
+        sample_funnel_params(
+            rng,
+            [f"feature_{i}" for i in range(11)],
+            stage=0,
+            config_index=i,
+            context=context,
+            down_override_only=True,
+        )
+        for i in range(36)
+    ]
+    assert {params["threshold_policy"] for params in seen}.issubset({"fallback_up", "down_focus"})
+    assert max(len(params["feature_indices"]) for params in seen) <= 14
+    assert "ml_hist_gradient" not in {params["rule_type"] for params in seen}
+
+
 def test_robust_selection_score_penalizes_train_cv_gap() -> None:
     train_years = {"min_accuracy": 0.54}
     sub_train = {"min_accuracy": 0.55}
@@ -323,6 +351,41 @@ def test_robust_selection_score_penalizes_train_cv_gap() -> None:
         robust=True,
     )
     assert stable_score > overfit_score
+
+
+def test_down_override_score_rewards_down_precision() -> None:
+    train_years = {"min_accuracy": 0.53}
+    sub_train = {"min_accuracy": 0.54}
+    train_cv = {"accuracy": 0.55, "min_split_accuracy": 0.53, "up_accuracy": 0.90, "down_accuracy": 0.20}
+    low_precision = {
+        "accuracy": 0.56,
+        "up_accuracy": 0.90,
+        "down_accuracy": 0.18,
+        "precision_down": 0.45,
+    }
+    high_precision = {
+        "accuracy": 0.56,
+        "up_accuracy": 0.90,
+        "down_accuracy": 0.18,
+        "precision_down": 0.70,
+    }
+    assert candidate_selection_score(
+        high_precision,
+        train_cv,
+        train_years,
+        sub_train,
+        feature_count=4,
+        robust=False,
+        down_override=True,
+    ) > candidate_selection_score(
+        low_precision,
+        train_cv,
+        train_years,
+        sub_train,
+        feature_count=4,
+        robust=False,
+        down_override=True,
+    )
 
 
 def test_funnel_ensemble_rows_are_train_only_and_audited() -> None:

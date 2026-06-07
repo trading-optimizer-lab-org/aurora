@@ -77,7 +77,14 @@ def main() -> None:
     parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
     parser.add_argument(
         "--search-plan",
-        choices=["random", "funnel", "funnel_top", "funnel_robust", "funnel_ensemble"],
+        choices=[
+            "random",
+            "funnel",
+            "funnel_top",
+            "funnel_robust",
+            "funnel_ensemble",
+            "funnel_down_override",
+        ],
         default="random",
     )
     args = parser.parse_args()
@@ -694,7 +701,7 @@ def run_shard(
     rng = np.random.default_rng(20260606 + stage * 1_000_003)
     funnel_context = (
         build_funnel_context(x, feature_cols, train_mask.to_numpy())
-        if search_plan in {"funnel", "funnel_top", "funnel_robust", "funnel_ensemble"}
+        if search_plan in {"funnel", "funnel_top", "funnel_robust", "funnel_ensemble", "funnel_down_override"}
         else None
     )
     started = time.monotonic()
@@ -720,6 +727,7 @@ def run_shard(
                 funnel_context,
                 top_only=search_plan == "funnel_top",
                 robust_only=search_plan in {"funnel_robust", "funnel_ensemble"},
+                down_override_only=search_plan == "funnel_down_override",
             )
             if funnel_context is not None
             else sample_params(rng, feature_cols, stage)
@@ -781,6 +789,7 @@ def run_shard(
             sub_train,
             feature_count=len(params["feature_indices"]),
             robust=search_plan in {"funnel_robust", "funnel_ensemble"},
+            down_override=search_plan == "funnel_down_override",
         )
         row = {
                 "strategy_id": f"spy_daily_direction_s{stage:03d}_{config_hash[:16]}",
@@ -1048,6 +1057,7 @@ def build_ensemble_rows(
                     sub_train,
                     feature_count=len(components),
                     robust=True,
+                    down_override=False,
                 ),
                 "train_internal_cv_accuracy": avg_cv,
                 "train_internal_cv_min_split_accuracy": min_cv,
@@ -1242,10 +1252,60 @@ def sample_funnel_params(
     *,
     top_only: bool = False,
     robust_only: bool = False,
+    down_override_only: bool = False,
 ) -> dict[str, Any]:
     groups: dict[str, list[int]] = context["groups"]
     group_names = list(groups) or ["all"]
     reps = list(context["representatives"]) or list(range(len(feature_cols)))
+    if down_override_only:
+        priority = [
+            name
+            for name in [
+                "support_resistance",
+                "cboe_options",
+                "spy_volatility",
+                "vix",
+                "rates",
+                "relative_assets",
+                "global_cash",
+                "calendar",
+                "spy_momentum",
+                "technical",
+            ]
+            if groups.get(name)
+        ]
+        down_groups = priority or group_names
+        phase = config_index % 9
+        if phase in {0, 1, 2}:
+            family = down_groups[(stage + config_index) % len(down_groups)]
+            pool = groups.get(family, reps)
+            rule_choices = ["threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(4 if phase == 0 else 6, len(pool))
+            min_k = min(1 if phase == 0 else 2, max_k)
+        elif phase in {3, 4, 5, 6}:
+            picked_groups = rng.choice(down_groups, size=min(4, len(down_groups)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            family = "down_override_cross_group"
+            rule_choices = ["threshold_vote", "rank_vote", "linear", "train_corr_linear"]
+            max_k = min(9, len(pool))
+            min_k = min(2, max_k)
+        else:
+            pool = reps
+            family = "down_override_all_representatives"
+            rule_choices = ["threshold_vote", "rank_vote", "ml_logistic", "train_corr_linear"]
+            max_k = min(14, len(pool))
+            min_k = min(3, max_k)
+        if not pool:
+            pool = list(range(len(feature_cols)))
+        rule_type = str(rng.choice(rule_choices))
+        k = int(rng.integers(min_k, max_k + 1))
+        idx = rng.choice(pool, size=k, replace=False).astype(int)
+        params = build_param_dict(rng, idx, rule_type=rule_type, family=family, stage=stage)
+        params["threshold_policy"] = str(rng.choice(["fallback_up", "down_focus"], p=[0.78, 0.22]))
+        if rule_type.startswith("ml_"):
+            params["model_c"] = float(rng.choice([0.05, 0.1, 0.25, 0.5]))
+            params["class_weight"] = "balanced"
+        return params
     if robust_only:
         priority = [
             name
@@ -1852,7 +1912,30 @@ def candidate_selection_score(
     *,
     feature_count: int,
     robust: bool,
+    down_override: bool = False,
 ) -> float:
+    if down_override:
+        precision_down = 0.0 if not np.isfinite(train["precision_down"]) else float(train["precision_down"])
+        down_recall = 0.0 if not np.isfinite(train["down_accuracy"]) else float(train["down_accuracy"])
+        up_accuracy = 0.0 if not np.isfinite(train["up_accuracy"]) else float(train["up_accuracy"])
+        cv_accuracy = float(train_cv["accuracy"])
+        cv_min_split = float(train_cv["min_split_accuracy"])
+        train_accuracy = float(train["accuracy"])
+        year_floor = float(train_years["min_accuracy"])
+        sub_floor = float(sub_train["min_accuracy"])
+        gap_penalty = max(0.0, train_accuracy - cv_accuracy) * 450_000.0
+        return (
+            train_accuracy * 700_000.0
+            + cv_accuracy * 550_000.0
+            + cv_min_split * 350_000.0
+            + precision_down * 420_000.0
+            + down_recall * 260_000.0
+            + up_accuracy * 160_000.0
+            + year_floor * 180_000.0
+            + sub_floor * 260_000.0
+            - gap_penalty
+            - feature_count * 650.0
+        )
     if not robust:
         return (
             score_candidate(train, validation_metrics=None, feature_count=feature_count)
