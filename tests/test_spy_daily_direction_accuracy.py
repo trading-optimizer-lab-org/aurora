@@ -17,6 +17,7 @@ from scripts.run_spy_daily_direction_accuracy import (
     choose_threshold_train_only,
     feature_groups,
     fit_candidate_scores_train_only,
+    fit_conditional_table_scores_train_only,
     fit_rule_params_train_only,
     maybe_add_ensemble_pool,
     parse_cboe_daily_stats_html,
@@ -41,7 +42,7 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
     assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
-    assert "random, funnel, funnel_top, funnel_robust, funnel_ensemble, or funnel_down_override" in text
+    assert "random, funnel, funnel_top, funnel_robust, funnel_ensemble, funnel_down_override, or funnel_conditional" in text
     assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
     assert "--target-accuracy" in text
     assert "--search-plan" in text
@@ -327,6 +328,34 @@ def test_funnel_down_override_uses_fallback_down_policies() -> None:
     assert "ml_hist_gradient" not in {params["rule_type"] for params in seen}
 
 
+def test_funnel_conditional_uses_small_train_only_tables() -> None:
+    context = {
+        "groups": {
+            "calendar": [0, 1, 2],
+            "support_resistance": [3, 4, 5],
+            "spy_intraday": [6, 7],
+            "cboe_options": [8, 9],
+        },
+        "representatives": list(range(10)),
+        "effective_groups": 10,
+    }
+    rng = np.random.default_rng(890)
+    seen = [
+        sample_funnel_params(
+            rng,
+            [f"feature_{i}" for i in range(10)],
+            stage=0,
+            config_index=i,
+            context=context,
+            conditional_only=True,
+        )
+        for i in range(28)
+    ]
+    assert {params["rule_type"] for params in seen} == {"conditional_table"}
+    assert max(len(params["feature_indices"]) for params in seen) <= 5
+    assert {params["conditional_bins"] for params in seen}.issubset({2, 3, 4})
+
+
 def test_robust_selection_score_penalizes_train_cv_gap() -> None:
     train_years = {"min_accuracy": 0.54}
     sub_train = {"min_accuracy": 0.55}
@@ -351,6 +380,41 @@ def test_robust_selection_score_penalizes_train_cv_gap() -> None:
         robust=True,
     )
     assert stable_score > overfit_score
+
+
+def test_conditional_table_scores_are_fit_on_train_only() -> None:
+    base_matrix = np.array(
+        [
+            [0.0],
+            [0.1],
+            [0.2],
+            [0.3],
+            [0.8],
+            [0.9],
+            [1.0],
+            [1.1],
+            [0.05],
+            [1.05],
+        ],
+        dtype=float,
+    )
+    base_target = np.array([-1, -1, -1, -1, 1, 1, 1, 1, 1, -1], dtype=float)
+    base_train_mask = np.array([True, True, True, True, True, True, True, True, False, False])
+    matrix = np.tile(base_matrix, (80, 1))
+    target = np.tile(base_target, 80)
+    train_mask = np.tile(base_train_mask, 80)
+    params = {
+        "rule_type": "conditional_table",
+        "feature_indices": [0],
+        "conditional_bins": 2,
+        "conditional_min_count": 2,
+        "conditional_smooth": 1.0,
+    }
+    fitted, scores = fit_conditional_table_scores_train_only(matrix, target, train_mask, params)
+    assert fitted["fitted_on_train_only"] is True
+    assert fitted["conditional_state_count"] == 2
+    assert scores[8] < 0.0
+    assert scores[9] > 0.0
 
 
 def test_down_override_score_rewards_down_precision() -> None:

@@ -16,7 +16,7 @@ on:
         required: true
         default: "0.60"
       search_plan:
-        description: "Search plan: random, funnel, funnel_top, funnel_robust, funnel_ensemble, or funnel_down_override"
+        description: "Search plan: random, funnel, funnel_top, funnel_robust, funnel_ensemble, funnel_down_override, or funnel_conditional"
         required: true
         default: "random"
       job_timeout_minutes:

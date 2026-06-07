@@ -84,6 +84,7 @@ def main() -> None:
             "funnel_robust",
             "funnel_ensemble",
             "funnel_down_override",
+            "funnel_conditional",
         ],
         default="random",
     )
@@ -701,7 +702,14 @@ def run_shard(
     rng = np.random.default_rng(20260606 + stage * 1_000_003)
     funnel_context = (
         build_funnel_context(x, feature_cols, train_mask.to_numpy())
-        if search_plan in {"funnel", "funnel_top", "funnel_robust", "funnel_ensemble", "funnel_down_override"}
+        if search_plan in {
+            "funnel",
+            "funnel_top",
+            "funnel_robust",
+            "funnel_ensemble",
+            "funnel_down_override",
+            "funnel_conditional",
+        }
         else None
     )
     started = time.monotonic()
@@ -728,6 +736,7 @@ def run_shard(
                 top_only=search_plan == "funnel_top",
                 robust_only=search_plan in {"funnel_robust", "funnel_ensemble"},
                 down_override_only=search_plan == "funnel_down_override",
+                conditional_only=search_plan == "funnel_conditional",
             )
             if funnel_context is not None
             else sample_params(rng, feature_cols, stage)
@@ -790,6 +799,7 @@ def run_shard(
             feature_count=len(params["feature_indices"]),
             robust=search_plan in {"funnel_robust", "funnel_ensemble"},
             down_override=search_plan == "funnel_down_override",
+            conditional=search_plan == "funnel_conditional",
         )
         row = {
                 "strategy_id": f"spy_daily_direction_s{stage:03d}_{config_hash[:16]}",
@@ -1253,10 +1263,56 @@ def sample_funnel_params(
     top_only: bool = False,
     robust_only: bool = False,
     down_override_only: bool = False,
+    conditional_only: bool = False,
 ) -> dict[str, Any]:
     groups: dict[str, list[int]] = context["groups"]
     group_names = list(groups) or ["all"]
     reps = list(context["representatives"]) or list(range(len(feature_cols)))
+    if conditional_only:
+        priority = [
+            name
+            for name in [
+                "calendar",
+                "support_resistance",
+                "spy_intraday",
+                "cboe_options",
+                "vix",
+                "spy_volatility",
+                "relative_assets",
+                "rates",
+                "spy_momentum",
+                "technical",
+            ]
+            if groups.get(name)
+        ]
+        cond_groups = priority or group_names
+        phase = config_index % 7
+        if phase in {0, 1, 2}:
+            family = cond_groups[(stage + config_index) % len(cond_groups)]
+            pool = groups.get(family, reps)
+            max_k = min(3 if phase == 0 else 4, len(pool))
+            min_k = min(2, max_k)
+        elif phase in {3, 4, 5}:
+            picked_groups = rng.choice(cond_groups, size=min(3, len(cond_groups)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            family = "conditional_cross_group"
+            max_k = min(5, len(pool))
+            min_k = min(2, max_k)
+        else:
+            pool = reps
+            family = "conditional_all_representatives"
+            max_k = min(5, len(pool))
+            min_k = min(3, max_k)
+        if not pool:
+            pool = list(range(len(feature_cols)))
+        k = int(rng.integers(min_k, max_k + 1))
+        idx = rng.choice(pool, size=k, replace=False).astype(int)
+        params = build_param_dict(rng, idx, rule_type="conditional_table", family=family, stage=stage)
+        params["conditional_bins"] = int(rng.choice([2, 3, 4], p=[0.45, 0.40, 0.15]))
+        params["conditional_min_count"] = int(rng.choice([24, 36, 48, 72, 96]))
+        params["conditional_smooth"] = float(rng.choice([12.0, 24.0, 48.0, 96.0]))
+        params["threshold_policy"] = str(rng.choice(["balanced", "class_balance", "fallback_up"], p=[0.35, 0.35, 0.30]))
+        return params
     if down_override_only:
         priority = [
             name
@@ -1569,12 +1625,89 @@ def fit_candidate_scores_train_only(
     params: dict[str, Any],
 ) -> tuple[dict[str, Any], np.ndarray]:
     rule_type = str(params["rule_type"])
+    if rule_type == "conditional_table":
+        return fit_conditional_table_scores_train_only(matrix, target, train_mask, params)
     if rule_type.startswith("ml_"):
         return fit_ml_scores_train_only(matrix, target, train_mask, params)
     fitted = fit_rule_params_train_only(matrix, train_mask, params)
     if rule_type == "train_corr_linear":
         fitted = fit_train_corr_linear(matrix, target, train_mask, fitted)
     return fitted, build_scores(matrix, fitted)
+
+
+def fit_conditional_table_scores_train_only(
+    matrix: np.ndarray,
+    target: np.ndarray,
+    train_mask: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], np.ndarray]:
+    idx = np.asarray(params["feature_indices"], dtype=int)
+    values = matrix[:, idx].astype(float)
+    train_values = values[train_mask]
+    train_target = target[train_mask]
+    finite_target = np.isfinite(train_target) & (train_target != 0.0)
+    if finite_target.sum() < 500 or values.shape[1] == 0:
+        return params, np.full(matrix.shape[0], np.nan)
+    bin_count = int(params.get("conditional_bins", 3))
+    min_count = int(params.get("conditional_min_count", 48))
+    smooth = float(params.get("conditional_smooth", 24.0))
+    thresholds: list[list[float]] = []
+    for col in range(train_values.shape[1]):
+        col_values = train_values[:, col]
+        finite = col_values[np.isfinite(col_values)]
+        if len(finite) < 200 or np.nanstd(finite) == 0.0:
+            thresholds.append([])
+            continue
+        quantiles = np.linspace(0.0, 1.0, bin_count + 1)[1:-1]
+        cuts = np.unique(np.nanquantile(finite, quantiles))
+        thresholds.append([float(x) for x in cuts if np.isfinite(x)])
+    keys = conditional_state_keys(values, thresholds, bin_count)
+    train_keys = keys[train_mask][finite_target]
+    train_y = (train_target[finite_target] > 0.0).astype(float)
+    if len(train_keys) < 500:
+        return params, np.full(matrix.shape[0], np.nan)
+    prior = float(np.mean(train_y))
+    unique_keys, inverse = np.unique(train_keys, return_inverse=True)
+    counts = np.bincount(inverse).astype(float)
+    up_counts = np.bincount(inverse, weights=train_y).astype(float)
+    probabilities = (up_counts + prior * smooth) / (counts + smooth)
+    usable = counts >= min_count
+    if not np.any(usable):
+        return params, np.full(matrix.shape[0], np.nan)
+    table_keys = unique_keys[usable]
+    table_scores = probabilities[usable] - prior
+    order = np.argsort(table_keys)
+    table_keys = table_keys[order]
+    table_scores = table_scores[order]
+    positions = np.searchsorted(table_keys, keys)
+    found = (positions < len(table_keys)) & (table_keys[np.minimum(positions, len(table_keys) - 1)] == keys)
+    scores = np.zeros(len(keys), dtype=float)
+    scores[found] = table_scores[positions[found]]
+    fitted = dict(params)
+    fitted["fitted_on_train_only"] = True
+    fitted["conditional_prior_up"] = prior
+    fitted["conditional_thresholds"] = thresholds
+    fitted["conditional_state_count"] = int(len(table_keys))
+    fitted["conditional_table_keys"] = [int(x) for x in table_keys]
+    fitted["conditional_table_scores"] = [float(x) for x in table_scores]
+    return fitted, scores
+
+
+def conditional_state_keys(values: np.ndarray, thresholds: list[list[float]], bin_count: int) -> np.ndarray:
+    keys = np.zeros(values.shape[0], dtype=np.int64)
+    base = 1
+    radix = int(bin_count) + 1
+    for col, cuts in enumerate(thresholds):
+        x = values[:, col]
+        finite = np.isfinite(x)
+        bins = np.zeros(values.shape[0], dtype=np.int64)
+        if cuts:
+            bins[finite] = np.searchsorted(np.asarray(cuts, dtype=float), x[finite], side="right") + 1
+        else:
+            bins[finite] = 1
+        keys += bins * base
+        base *= radix
+    return keys
 
 
 def fit_train_corr_linear(
@@ -1913,7 +2046,28 @@ def candidate_selection_score(
     feature_count: int,
     robust: bool,
     down_override: bool = False,
+    conditional: bool = False,
 ) -> float:
+    if conditional:
+        cv_accuracy = float(train_cv["accuracy"])
+        cv_min_split = float(train_cv["min_split_accuracy"])
+        cv_balance = min(float(train_cv["up_accuracy"]), float(train_cv["down_accuracy"]))
+        train_accuracy = float(train["accuracy"])
+        train_balance = min(float(train["up_accuracy"]), float(train["down_accuracy"]))
+        year_floor = float(train_years["min_accuracy"])
+        sub_floor = float(sub_train["min_accuracy"])
+        gap_penalty = max(0.0, train_accuracy - cv_accuracy) * 500_000.0
+        return (
+            cv_accuracy * 750_000.0
+            + cv_min_split * 520_000.0
+            + cv_balance * 420_000.0
+            + train_accuracy * 240_000.0
+            + train_balance * 180_000.0
+            + year_floor * 220_000.0
+            + sub_floor * 320_000.0
+            - gap_penalty
+            - feature_count * 900.0
+        )
     if down_override:
         precision_down = 0.0 if not np.isfinite(train["precision_down"]) else float(train["precision_down"])
         down_recall = 0.0 if not np.isfinite(train["down_accuracy"]) else float(train["down_accuracy"])
