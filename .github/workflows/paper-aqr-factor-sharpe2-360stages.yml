@@ -87,9 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: paper-aqr-factor-sharpe2-stage-pair-${{ matrix.stage_a }}-${{ matrix.stage_b }}
-          path: |
-            ${{ env.OUTPUT_DIR }}/shards/stage_${{ matrix.stage_a }}
-            ${{ env.OUTPUT_DIR }}/shards/stage_${{ matrix.stage_b }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
 
   merge:
     runs-on: ubuntu-latest
