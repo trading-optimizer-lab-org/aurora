@@ -16,7 +16,7 @@ on:
         required: true
         default: "0.60"
       search_plan:
-        description: "Search plan: random or funnel"
+        description: "Search plan: random, funnel, or funnel_top"
         required: true
         default: "random"
       job_timeout_minutes:
@@ -103,10 +103,12 @@ jobs:
             --target-accuracy "${{ inputs.target_accuracy }}" \
             --search-plan "${{ inputs.search_plan }}"
       - name: Upload stage artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: spy-daily-direction-accuracy-stage-${{ matrix.stage }}
           path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+          if-no-files-found: warn
 
   search_b:
     runs-on: ubuntu-latest

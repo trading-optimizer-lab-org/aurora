@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +19,10 @@ from scripts.run_spy_daily_direction_accuracy import (
     parse_cboe_daily_stats_html,
     parse_cboe_put_call_csv,
     predict_from_scores,
+    sample_funnel_params,
     select_top,
     train_internal_cv_accuracy,
+    write_shard_outputs,
 )
 
 
@@ -35,9 +38,12 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
     assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
+    assert "random, funnel, or funnel_top" in text
     assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
     assert "--target-accuracy" in text
     assert "--search-plan" in text
+    assert "if: always()" in text
+    assert "if-no-files-found: warn" in text
 
 
 def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:
@@ -199,6 +205,64 @@ def test_funnel_context_uses_train_representatives_and_groups_correlated_feature
     assert grouped["spy_momentum"] >= 1
     assert grouped["support_resistance"] >= 1
     assert grouped["cboe_options"] >= 1
+
+
+def test_shard_checkpoint_writes_partial_outputs(tmp_path: Path) -> None:
+    shard_dir = tmp_path / "stage_000"
+    write_shard_outputs(
+        shard_dir,
+        [
+            {
+                "strategy_id": "candidate_a",
+                "accepted": False,
+                "close_to_pass": False,
+                "score": 1.0,
+                "train_accuracy": 0.55,
+                "validation_accuracy": 0.54,
+                "rule_type": "linear",
+            }
+        ],
+        10,
+        stage=0,
+        target_accuracy=0.60,
+        configs_evaluated=123,
+        search_plan="funnel",
+        funnel_context={"effective_groups": 7, "representatives": list(range(7))},
+        validation_examined=5,
+        elapsed_seconds=12.5,
+        final=False,
+    )
+    assert (shard_dir / "top_candidates.csv").exists()
+    summary = json.loads((shard_dir / "shard_summary.json").read_text(encoding="utf-8"))
+    assert summary["configs_evaluated"] == 123
+    assert summary["search_plan"] == "funnel"
+    assert summary["checkpoint_final"] is False
+
+
+def test_funnel_top_uses_simple_fast_rules() -> None:
+    context = {
+        "groups": {
+            "spy_momentum": [0, 1, 2],
+            "support_resistance": [3, 4],
+            "cboe_options": [5, 6],
+        },
+        "representatives": list(range(7)),
+        "effective_groups": 7,
+    }
+    rng = np.random.default_rng(123)
+    seen = [
+        sample_funnel_params(
+            rng,
+            [f"feature_{i}" for i in range(7)],
+            stage=0,
+            config_index=i,
+            context=context,
+            top_only=True,
+        )
+        for i in range(24)
+    ]
+    assert all(not params["rule_type"].startswith("ml_") for params in seen)
+    assert max(len(params["feature_indices"]) for params in seen) <= 10
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:

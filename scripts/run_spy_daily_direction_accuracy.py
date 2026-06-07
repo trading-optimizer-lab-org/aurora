@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
     parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
-    parser.add_argument("--search-plan", choices=["random", "funnel"], default="random")
+    parser.add_argument("--search-plan", choices=["random", "funnel", "funnel_top"], default="random")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -688,19 +688,33 @@ def run_shard(
     matrix = x.to_numpy(dtype=float)
     target = y.to_numpy(dtype=float)
     rng = np.random.default_rng(20260606 + stage * 1_000_003)
-    funnel_context = build_funnel_context(x, feature_cols, train_mask.to_numpy()) if search_plan == "funnel" else None
+    funnel_context = (
+        build_funnel_context(x, feature_cols, train_mask.to_numpy())
+        if search_plan in {"funnel", "funnel_top"}
+        else None
+    )
     started = time.monotonic()
     deadline = started + max(1.0, time_budget_minutes) * 60.0
     rows: list[dict[str, Any]] = []
     evaluated = 0
     validation_examined = 0
+    shard_dir = output_dir / "shards" / f"stage_{stage:03d}"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    last_checkpoint = started
 
     for config_index in range(configs_per_stage):
         if time.monotonic() >= deadline:
             break
         evaluated += 1
         params = (
-            sample_funnel_params(rng, feature_cols, stage, config_index, funnel_context)
+            sample_funnel_params(
+                rng,
+                feature_cols,
+                stage,
+                config_index,
+                funnel_context,
+                top_only=search_plan == "funnel_top",
+            )
             if funnel_context is not None
             else sample_params(rng, feature_cols, stage)
         )
@@ -814,8 +828,52 @@ def run_shard(
                 "long_prediction_fraction_validation": float(np.mean(preds[validation_mask.to_numpy()] > 0.0)),
             }
         )
+        now = time.monotonic()
+        if now - last_checkpoint >= 300.0:
+            write_shard_outputs(
+                shard_dir,
+                rows,
+                top_per_stage,
+                stage=stage,
+                target_accuracy=target_accuracy,
+                configs_evaluated=evaluated,
+                search_plan=search_plan,
+                funnel_context=funnel_context,
+                validation_examined=validation_examined,
+                elapsed_seconds=now - started,
+                final=False,
+            )
+            last_checkpoint = now
 
-    shard_dir = output_dir / "shards" / f"stage_{stage:03d}"
+    write_shard_outputs(
+        shard_dir,
+        rows,
+        top_per_stage,
+        stage=stage,
+        target_accuracy=target_accuracy,
+        configs_evaluated=evaluated,
+        search_plan=search_plan,
+        funnel_context=funnel_context,
+        validation_examined=validation_examined,
+        elapsed_seconds=time.monotonic() - started,
+        final=True,
+    )
+
+
+def write_shard_outputs(
+    shard_dir: Path,
+    rows: list[dict[str, Any]],
+    top_per_stage: int,
+    *,
+    stage: int,
+    target_accuracy: float,
+    configs_evaluated: int,
+    search_plan: str,
+    funnel_context: dict[str, Any] | None,
+    validation_examined: int,
+    elapsed_seconds: float,
+    final: bool,
+) -> None:
     shard_dir.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame(rows)
     if frame.empty:
@@ -829,7 +887,7 @@ def run_shard(
             {
                 "stage": stage,
                 "target_accuracy": target_accuracy,
-                "configs_evaluated": evaluated,
+                "configs_evaluated": configs_evaluated,
                 "search_plan": search_plan,
                 "effective_feature_groups": int(funnel_context["effective_groups"]) if funnel_context is not None else None,
                 "representative_features": int(len(funnel_context["representatives"])) if funnel_context is not None else None,
@@ -837,7 +895,8 @@ def run_shard(
                 "rows_kept": len(frame),
                 "accepted_rows": int(frame.get("accepted", pd.Series(dtype=bool)).astype(bool).sum()) if not frame.empty else 0,
                 "close_to_pass_rows": int(frame.get("close_to_pass", pd.Series(dtype=bool)).astype(bool).sum()) if not frame.empty else 0,
-                "elapsed_seconds": time.monotonic() - started,
+                "elapsed_seconds": elapsed_seconds,
+                "checkpoint_final": bool(final),
                 "locked_opened": False,
                 "validation_used_for_selection": False,
             },
@@ -950,10 +1009,46 @@ def sample_funnel_params(
     stage: int,
     config_index: int,
     context: dict[str, Any],
+    *,
+    top_only: bool = False,
 ) -> dict[str, Any]:
     groups: dict[str, list[int]] = context["groups"]
     group_names = list(groups) or ["all"]
     reps = list(context["representatives"]) or list(range(len(feature_cols)))
+    if top_only:
+        phase = config_index % 4
+        if phase == 0:
+            family = group_names[(stage + config_index) % len(group_names)]
+            pool = groups.get(family, reps)
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(2, len(pool))
+            min_k = 1
+        elif phase == 1:
+            family = group_names[(stage + config_index) % len(group_names)]
+            pool = groups.get(family, reps)
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(5, len(pool))
+            min_k = min(2, max_k)
+        elif phase == 2:
+            picked_groups = rng.choice(group_names, size=min(3, len(group_names)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            family = "top_cross_group"
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(8, len(pool))
+            min_k = min(2, max_k)
+        else:
+            pool = reps
+            family = "top_all_representatives"
+            rule_choices = ["linear", "train_corr_linear", "threshold_vote", "rank_vote"]
+            max_k = min(10, len(pool))
+            min_k = min(2, max_k)
+        if not pool:
+            pool = list(range(len(feature_cols)))
+        rule_type = str(rng.choice(rule_choices))
+        k = int(rng.integers(min_k, max_k + 1))
+        idx = rng.choice(pool, size=k, replace=False).astype(int)
+        return build_param_dict(rng, idx, rule_type=rule_type, family=family, stage=stage)
+
     phase = config_index % 10
     if phase in {0, 1}:
         family = group_names[(stage + config_index) % len(group_names)]
