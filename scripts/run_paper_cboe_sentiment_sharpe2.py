@@ -72,6 +72,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=["data", "shard", "merge"], required=True)
     parser.add_argument("--output-dir", default=f"outputs/{CAMPAIGN_ID}")
     parser.add_argument("--stage", type=int, default=0)
+    parser.add_argument("--total-stages", type=int, default=360)
     parser.add_argument("--configs-per-stage", type=int, default=25_000)
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=120)
@@ -85,12 +86,13 @@ def main() -> None:
         run_shard(
             output_dir,
             stage=args.stage,
+            total_stages=args.total_stages,
             configs_per_stage=args.configs_per_stage,
             time_budget_minutes=args.time_budget_minutes,
             top_per_stage=args.top_per_stage,
         )
     else:
-        run_merge(output_dir)
+        run_merge(output_dir, total_stages=args.total_stages)
 
 
 def run_data(output_dir: Path) -> None:
@@ -182,6 +184,7 @@ def run_shard(
     output_dir: Path,
     *,
     stage: int,
+    total_stages: int,
     configs_per_stage: int,
     time_budget_minutes: float,
     top_per_stage: int,
@@ -256,13 +259,14 @@ def run_shard(
     top = frame.sort_values(["train_score", "train_sharpe"], ascending=[False, False]).head(int(top_per_stage)) if not frame.empty else frame
     diag = frame.sort_values(["validation_sharpe", "train_sharpe"], ascending=[False, False]).head(int(top_per_stage)) if not frame.empty else frame
     accepted = frame[frame.get("accepted", pd.Series(dtype=bool)).astype(bool)] if not frame.empty else frame
-    top.to_csv(shard_dir / "top_candidates.csv", index=False, quoting=csv.QUOTE_ALL)
-    diag.to_csv(shard_dir / "validation_diagnostic.csv", index=False, quoting=csv.QUOTE_ALL)
-    accepted.to_csv(shard_dir / "accepted_candidates.csv", index=False, quoting=csv.QUOTE_ALL)
+    write_jsonl_frame(top, shard_dir / "top_candidates.jsonl")
+    write_jsonl_frame(diag, shard_dir / "validation_diagnostic.jsonl")
+    write_jsonl_frame(accepted, shard_dir / "accepted_candidates.jsonl")
     (shard_dir / "shard_summary.json").write_text(
         json.dumps(
             {
                 "stage": int(stage),
+                "total_stages": int(total_stages),
                 "configs_requested": int(configs_per_stage),
                 "configs_evaluated": int(evaluated),
                 "rows_kept": int(len(frame)),
@@ -361,6 +365,28 @@ def encode_params(params: dict[str, Any]) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
 
+def write_jsonl_frame(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if frame.empty:
+        path.write_text("", encoding="utf-8")
+        return
+    records = frame.replace({np.nan: None}).to_dict(orient="records")
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for record in records:
+            handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def read_jsonl_frames(paths: list[Path]) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for path in paths:
+        if path.stat().st_size == 0:
+            continue
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if rows:
+            frames.append(pd.DataFrame(rows))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def daily_metrics(returns: np.ndarray) -> dict[str, float]:
     values = np.asarray(returns, dtype=float)
     values = values[np.isfinite(values)]
@@ -380,15 +406,15 @@ def daily_metrics(returns: np.ndarray) -> dict[str, float]:
     }
 
 
-def run_merge(output_dir: Path) -> None:
+def run_merge(output_dir: Path, *, total_stages: int = 360) -> None:
     shard_root = output_dir / "shards"
-    top_files = list(shard_root.glob("**/top_candidates.csv"))
-    diag_files = list(shard_root.glob("**/validation_diagnostic.csv"))
-    accepted_files = list(shard_root.glob("**/accepted_candidates.csv"))
+    top_files = list(shard_root.glob("**/top_candidates.jsonl"))
+    diag_files = list(shard_root.glob("**/validation_diagnostic.jsonl"))
+    accepted_files = list(shard_root.glob("**/accepted_candidates.jsonl"))
     summary_files = list(shard_root.glob("**/shard_summary.json"))
-    top = pd.concat([pd.read_csv(path, engine="python") for path in top_files], ignore_index=True) if top_files else pd.DataFrame()
-    diag = pd.concat([pd.read_csv(path, engine="python") for path in diag_files], ignore_index=True) if diag_files else pd.DataFrame()
-    accepted = pd.concat([pd.read_csv(path, engine="python") for path in accepted_files], ignore_index=True) if accepted_files else pd.DataFrame()
+    top = read_jsonl_frames(top_files)
+    diag = read_jsonl_frames(diag_files)
+    accepted = read_jsonl_frames(accepted_files)
     for frame in (top, diag, accepted):
         if not frame.empty and "candidate_id" in frame:
             frame.drop_duplicates("candidate_id", inplace=True)
@@ -408,9 +434,9 @@ def run_merge(output_dir: Path) -> None:
     fail_reasons.to_csv(final / "paper_cboe_sentiment_fail_reasons.csv", index=False)
     summary = {
         "campaign_id": CAMPAIGN_ID,
-        "stages_expected": 360,
+        "stages_expected": int(total_stages),
         "stages_found": len(summary_files),
-        "partial": len(summary_files) != 360,
+        "partial": len(summary_files) != int(total_stages),
         "configs_evaluated": int(sum(item.get("configs_evaluated", 0) for item in summaries)),
         "accepted_count": int(len(accepted)),
         "best_train_sharpe": float(top["train_sharpe"].max()) if not top.empty else None,
@@ -425,7 +451,7 @@ def run_merge(output_dir: Path) -> None:
     }
     (final / "paper_cboe_sentiment_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if summary["partial"]:
-        raise RuntimeError("partial CBOE sentiment run")
+        raise RuntimeError(f"partial CBOE sentiment run: found {len(summary_files)}/{total_stages} stages")
 
 
 def build_fail_reasons(frame: pd.DataFrame) -> pd.DataFrame:

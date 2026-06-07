@@ -11,6 +11,8 @@ from scripts.run_paper_cboe_sentiment_sharpe2 import (
     build_dataset,
     build_positions,
     encode_params,
+    read_jsonl_frames,
+    write_jsonl_frame,
 )
 
 
@@ -55,6 +57,24 @@ def test_params_encoding_is_csv_safe() -> None:
     assert "," not in encoded
     assert '"' not in encoded
     assert "\n" not in encoded
+
+
+def test_jsonl_shard_roundtrip_handles_commas_and_quotes(tmp_path: Path) -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "candidate_id": "x",
+                "source_rule_summary": 'comma, quote "ok"',
+                "locked_opened": False,
+                "validation_used_for_selection": False,
+            }
+        ]
+    )
+    path = tmp_path / "top_candidates.jsonl"
+    write_jsonl_frame(frame, path)
+    loaded = read_jsonl_frames([path])
+    assert loaded.loc[0, "source_rule_summary"] == 'comma, quote "ok"'
+    assert loaded.loc[0, "locked_opened"] is False or loaded.loc[0, "locked_opened"] == np.False_
 
 
 def test_cboe_sentiment_workflow_requests_360_parallel_jobs() -> None:
