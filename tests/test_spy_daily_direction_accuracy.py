@@ -10,6 +10,7 @@ import yaml
 from scripts.run_spy_daily_direction_accuracy import (
     LOCKED_START,
     build_dataset,
+    build_ensemble_rows,
     build_funnel_context,
     build_scores,
     candidate_selection_score,
@@ -17,6 +18,7 @@ from scripts.run_spy_daily_direction_accuracy import (
     feature_groups,
     fit_candidate_scores_train_only,
     fit_rule_params_train_only,
+    maybe_add_ensemble_pool,
     parse_cboe_daily_stats_html,
     parse_cboe_put_call_csv,
     predict_from_scores,
@@ -39,7 +41,7 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
     assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
-    assert "random, funnel, funnel_top, or funnel_robust" in text
+    assert "random, funnel, funnel_top, funnel_robust, or funnel_ensemble" in text
     assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
     assert "--target-accuracy" in text
     assert "--search-plan" in text
@@ -321,6 +323,54 @@ def test_robust_selection_score_penalizes_train_cv_gap() -> None:
         robust=True,
     )
     assert stable_score > overfit_score
+
+
+def test_funnel_ensemble_rows_are_train_only_and_audited() -> None:
+    idx = pd.date_range("1995-01-01", periods=2200, freq="B")
+    target = np.where(np.arange(len(idx)) % 3 == 0, -1.0, 1.0)
+    dataset = pd.DataFrame({"target_direction": target}, index=idx)
+    train_mask = np.zeros(len(idx), dtype=bool)
+    validation_mask = np.zeros(len(idx), dtype=bool)
+    train_mask[:1600] = True
+    validation_mask[1600:2100] = True
+    pool = []
+    for i in range(3):
+        scores = np.where(target > 0, 1.0 + i * 0.01, -1.0 - i * 0.01)
+        row = {
+            "strategy_id": f"component_{i}",
+            "score": 1000.0 - i,
+            "train_accuracy": 0.61,
+            "validation_accuracy": 0.50,
+        }
+        maybe_add_ensemble_pool(
+            pool,
+            row=row,
+            scores=scores,
+            params={"rule_type": "linear"},
+            train_cv={
+                "accuracy": 0.56,
+                "min_split_accuracy": 0.54,
+                "up_accuracy": 0.55,
+                "down_accuracy": 0.54,
+            },
+            train_mask=train_mask,
+            max_size=5,
+        )
+    rows = build_ensemble_rows(
+        pool,
+        dataset=dataset,
+        feature_cols=[],
+        target=target,
+        train_mask=train_mask,
+        validation_mask=validation_mask,
+        stage=7,
+        target_accuracy=0.60,
+    )
+    assert rows
+    assert rows[0]["rule_type"] == "ensemble_mean_score"
+    assert rows[0]["locked_opened"] is False
+    assert rows[0]["validation_used_for_selection"] is False
+    assert rows[0]["features"].startswith("component_")
 
 
 def test_rule_thresholds_are_fit_on_train_only() -> None:

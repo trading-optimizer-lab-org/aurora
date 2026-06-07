@@ -75,7 +75,11 @@ def main() -> None:
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
     parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
-    parser.add_argument("--search-plan", choices=["random", "funnel", "funnel_top", "funnel_robust"], default="random")
+    parser.add_argument(
+        "--search-plan",
+        choices=["random", "funnel", "funnel_top", "funnel_robust", "funnel_ensemble"],
+        default="random",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -690,12 +694,13 @@ def run_shard(
     rng = np.random.default_rng(20260606 + stage * 1_000_003)
     funnel_context = (
         build_funnel_context(x, feature_cols, train_mask.to_numpy())
-        if search_plan in {"funnel", "funnel_top", "funnel_robust"}
+        if search_plan in {"funnel", "funnel_top", "funnel_robust", "funnel_ensemble"}
         else None
     )
     started = time.monotonic()
     deadline = started + max(1.0, time_budget_minutes) * 60.0
     rows: list[dict[str, Any]] = []
+    ensemble_pool: list[dict[str, Any]] = []
     evaluated = 0
     validation_examined = 0
     shard_dir = output_dir / "shards" / f"stage_{stage:03d}"
@@ -714,7 +719,7 @@ def run_shard(
                 config_index,
                 funnel_context,
                 top_only=search_plan == "funnel_top",
-                robust_only=search_plan == "funnel_robust",
+                robust_only=search_plan in {"funnel_robust", "funnel_ensemble"},
             )
             if funnel_context is not None
             else sample_params(rng, feature_cols, stage)
@@ -769,8 +774,15 @@ def run_shard(
             and validation_metrics["accuracy"] >= target_accuracy
         )
         config_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode("utf-8")).hexdigest()
-        rows.append(
-            {
+        selection_score = candidate_selection_score(
+            train_metrics,
+            train_cv,
+            train_years,
+            sub_train,
+            feature_count=len(params["feature_indices"]),
+            robust=search_plan in {"funnel_robust", "funnel_ensemble"},
+        )
+        row = {
                 "strategy_id": f"spy_daily_direction_s{stage:03d}_{config_hash[:16]}",
                 "stage": stage,
                 "config_index": config_index,
@@ -796,14 +808,7 @@ def run_shard(
                 "invert": int(invert),
                 "threshold_policy": str(params.get("threshold_policy", "balanced")),
                 "params_json": json.dumps(params, sort_keys=True),
-                "score": candidate_selection_score(
-                    train_metrics,
-                    train_cv,
-                    train_years,
-                    sub_train,
-                    feature_count=len(params["feature_indices"]),
-                    robust=search_plan == "funnel_robust",
-                ),
+                "score": selection_score,
                 "train_internal_cv_accuracy": float(train_cv["accuracy"]),
                 "train_internal_cv_min_split_accuracy": float(train_cv["min_split_accuracy"]),
                 "train_internal_cv_up_accuracy": float(train_cv["up_accuracy"]),
@@ -840,8 +845,18 @@ def run_shard(
                 "validation_2y_accuracy_json": json.dumps(sub_valid["by_period"], sort_keys=True),
                 "long_prediction_fraction_train": float(np.mean(preds[train_mask.to_numpy()] > 0.0)),
                 "long_prediction_fraction_validation": float(np.mean(preds[validation_mask.to_numpy()] > 0.0)),
-            }
-        )
+        }
+        rows.append(row)
+        if search_plan == "funnel_ensemble":
+            maybe_add_ensemble_pool(
+                ensemble_pool,
+                row=row,
+                scores=scores,
+                params=params,
+                train_cv=train_cv,
+                train_mask=train_mask.to_numpy(),
+                max_size=80,
+            )
         now = time.monotonic()
         if now - last_checkpoint >= 300.0:
             write_shard_outputs(
@@ -859,6 +874,20 @@ def run_shard(
             )
             last_checkpoint = now
 
+    if search_plan == "funnel_ensemble" and ensemble_pool:
+        rows.extend(
+            build_ensemble_rows(
+                ensemble_pool,
+                dataset=dataset,
+                feature_cols=feature_cols,
+                target=target,
+                train_mask=train_mask.to_numpy(),
+                validation_mask=validation_mask.to_numpy(),
+                stage=stage,
+                target_accuracy=target_accuracy,
+            )
+        )
+
     write_shard_outputs(
         shard_dir,
         rows,
@@ -872,6 +901,193 @@ def run_shard(
         elapsed_seconds=time.monotonic() - started,
         final=True,
     )
+
+
+def maybe_add_ensemble_pool(
+    pool: list[dict[str, Any]],
+    *,
+    row: dict[str, Any],
+    scores: np.ndarray,
+    params: dict[str, Any],
+    train_cv: dict[str, float],
+    train_mask: np.ndarray,
+    max_size: int,
+) -> None:
+    if not np.isfinite(row.get("score", np.nan)):
+        return
+    if float(train_cv["accuracy"]) < 0.525 or float(train_cv["min_split_accuracy"]) < 0.505:
+        return
+    train_scores = np.asarray(scores, dtype=float)[train_mask]
+    finite = np.isfinite(train_scores)
+    if finite.sum() < 500:
+        return
+    center = float(np.nanmedian(train_scores[finite]))
+    scale = float(np.nanstd(train_scores[finite]))
+    if not np.isfinite(scale) or scale == 0.0:
+        return
+    normalized = (np.asarray(scores, dtype=float) - center) / scale
+    pool.append(
+        {
+            "row": dict(row),
+            "scores": normalized,
+            "params": dict(params),
+            "train_cv": dict(train_cv),
+            "score": float(row["score"]),
+        }
+    )
+    pool.sort(key=lambda item: item["score"], reverse=True)
+    del pool[max_size:]
+
+
+def build_ensemble_rows(
+    pool: list[dict[str, Any]],
+    *,
+    dataset: pd.DataFrame,
+    feature_cols: list[str],
+    target: np.ndarray,
+    train_mask: np.ndarray,
+    validation_mask: np.ndarray,
+    stage: int,
+    target_accuracy: float,
+) -> list[dict[str, Any]]:
+    del feature_cols
+    ranked = sorted(pool, key=lambda item: item["score"], reverse=True)[:40]
+    if len(ranked) < 2:
+        return []
+    rng = np.random.default_rng(909090 + stage * 1777)
+    component_sets: list[list[int]] = []
+    for size in [2, 3, 5, 8, 13, 21]:
+        if len(ranked) >= size:
+            component_sets.append(list(range(size)))
+    for _ in range(24):
+        size = int(rng.choice([2, 3, 5, 8, 13]))
+        if len(ranked) >= size:
+            weights = np.asarray([max(0.0, item["score"]) for item in ranked], dtype=float)
+            if not np.isfinite(weights).any() or weights.sum() <= 0:
+                weights = np.ones(len(ranked), dtype=float)
+            weights = weights / weights.sum()
+            component_sets.append(sorted(rng.choice(len(ranked), size=size, replace=False, p=weights).astype(int).tolist()))
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[int, ...]] = set()
+    for ensemble_index, component_idx in enumerate(component_sets):
+        key = tuple(component_idx)
+        if key in seen:
+            continue
+        seen.add(key)
+        components = [ranked[i] for i in component_idx]
+        score_matrix = np.vstack([item["scores"] for item in components])
+        ensemble_scores = np.nanmean(score_matrix, axis=0)
+        threshold, invert, train_metrics = choose_threshold_train_only(
+            ensemble_scores,
+            target,
+            train_mask,
+            policy="balanced",
+        )
+        if not np.isfinite(train_metrics["accuracy"]):
+            continue
+        preds = predict_from_scores(ensemble_scores, threshold, invert, "balanced")
+        validation_metrics = classification_metrics(preds[validation_mask], target[validation_mask])
+        train_years = yearly_accuracy(dataset.index[train_mask], preds[train_mask], target[train_mask])
+        validation_years = yearly_accuracy(dataset.index[validation_mask], preds[validation_mask], target[validation_mask])
+        sub_train = subperiod_accuracy(dataset.index[train_mask], preds[train_mask], target[train_mask], 2)
+        sub_valid = subperiod_accuracy(dataset.index[validation_mask], preds[validation_mask], target[validation_mask], 2)
+        component_ids = [str(item["row"]["strategy_id"]) for item in components]
+        avg_cv = float(np.mean([float(item["train_cv"]["accuracy"]) for item in components]))
+        min_cv = float(min(float(item["train_cv"]["min_split_accuracy"]) for item in components))
+        avg_cv_up = float(np.mean([float(item["train_cv"]["up_accuracy"]) for item in components]))
+        avg_cv_down = float(np.mean([float(item["train_cv"]["down_accuracy"]) for item in components]))
+        train_cv = {
+            "accuracy": avg_cv,
+            "min_split_accuracy": min_cv,
+            "up_accuracy": avg_cv_up,
+            "down_accuracy": avg_cv_down,
+        }
+        params = {
+            "rule_type": "ensemble_mean_score",
+            "component_ids": component_ids,
+            "component_count": len(components),
+            "fitted_on_train_only": True,
+            "threshold_policy": "balanced",
+        }
+        config_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode("utf-8")).hexdigest()
+        accepted = bool(
+            train_metrics["accuracy"] >= target_accuracy
+            and validation_metrics["accuracy"] >= target_accuracy
+        )
+        out.append(
+            {
+                "strategy_id": f"spy_daily_direction_s{stage:03d}_ens{ensemble_index:02d}_{config_hash[:12]}",
+                "stage": stage,
+                "config_index": -1 - ensemble_index,
+                "accepted": accepted,
+                "close_to_pass": bool(
+                    train_metrics["accuracy"] >= max(0.545, target_accuracy - 0.02)
+                    and validation_metrics["accuracy"] >= max(0.545, target_accuracy - 0.02)
+                    and not accepted
+                ),
+                "train_pass": bool(train_metrics["accuracy"] >= target_accuracy),
+                "validation_pass_report_only": bool(validation_metrics["accuracy"] >= target_accuracy),
+                "locked_opened": False,
+                "locked_rows_accessed": 0,
+                "validation_used_for_selection": False,
+                "data_end_max": str(VALIDATION_END.date()),
+                "frequency": "daily",
+                "target": "SPY next-day direction",
+                "ties_excluded_from_accuracy": True,
+                "rule_type": "ensemble_mean_score",
+                "feature_count": len(components),
+                "features": "|".join(component_ids),
+                "threshold": float(threshold),
+                "invert": int(invert),
+                "threshold_policy": "balanced",
+                "params_json": json.dumps(params, sort_keys=True),
+                "score": candidate_selection_score(
+                    train_metrics,
+                    train_cv,
+                    train_years,
+                    sub_train,
+                    feature_count=len(components),
+                    robust=True,
+                ),
+                "train_internal_cv_accuracy": avg_cv,
+                "train_internal_cv_min_split_accuracy": min_cv,
+                "train_internal_cv_up_accuracy": avg_cv_up,
+                "train_internal_cv_down_accuracy": avg_cv_down,
+                "train_accuracy": float(train_metrics["accuracy"]),
+                "validation_accuracy": float(validation_metrics["accuracy"]),
+                "train_up_accuracy": float(train_metrics["up_accuracy"]),
+                "validation_up_accuracy": float(validation_metrics["up_accuracy"]),
+                "train_down_accuracy": float(train_metrics["down_accuracy"]),
+                "validation_down_accuracy": float(validation_metrics["down_accuracy"]),
+                "train_precision_up": float(train_metrics["precision_up"]),
+                "validation_precision_up": float(validation_metrics["precision_up"]),
+                "train_recall_up": float(train_metrics["recall_up"]),
+                "validation_recall_up": float(validation_metrics["recall_up"]),
+                "train_precision_down": float(train_metrics["precision_down"]),
+                "validation_precision_down": float(validation_metrics["precision_down"]),
+                "train_recall_down": float(train_metrics["recall_down"]),
+                "validation_recall_down": float(validation_metrics["recall_down"]),
+                "train_tp": int(train_metrics["tp"]),
+                "train_tn": int(train_metrics["tn"]),
+                "train_fp": int(train_metrics["fp"]),
+                "train_fn": int(train_metrics["fn"]),
+                "validation_tp": int(validation_metrics["tp"]),
+                "validation_tn": int(validation_metrics["tn"]),
+                "validation_fp": int(validation_metrics["fp"]),
+                "validation_fn": int(validation_metrics["fn"]),
+                "train_min_year_accuracy": float(train_years["min_accuracy"]),
+                "validation_min_year_accuracy": float(validation_years["min_accuracy"]),
+                "train_year_accuracy_json": json.dumps(train_years["by_year"], sort_keys=True),
+                "validation_year_accuracy_json": json.dumps(validation_years["by_year"], sort_keys=True),
+                "train_min_2y_accuracy": float(sub_train["min_accuracy"]),
+                "validation_min_2y_accuracy": float(sub_valid["min_accuracy"]),
+                "train_2y_accuracy_json": json.dumps(sub_train["by_period"], sort_keys=True),
+                "validation_2y_accuracy_json": json.dumps(sub_valid["by_period"], sort_keys=True),
+                "long_prediction_fraction_train": float(np.mean(preds[train_mask] > 0.0)),
+                "long_prediction_fraction_validation": float(np.mean(preds[validation_mask] > 0.0)),
+            }
+        )
+    return out
 
 
 def write_shard_outputs(
