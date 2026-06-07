@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -254,9 +255,9 @@ def run_shard(
     top = frame.sort_values(["train_score", "train_sharpe"], ascending=[False, False]).head(int(top_per_stage)) if not frame.empty else frame
     diag = frame.sort_values(["validation_sharpe", "train_sharpe"], ascending=[False, False]).head(int(top_per_stage)) if not frame.empty else frame
     accepted = frame[frame.get("accepted", pd.Series(dtype=bool)).astype(bool)] if not frame.empty else frame
-    top.to_csv(shard_dir / "top_candidates.csv", index=False)
-    diag.to_csv(shard_dir / "validation_diagnostic.csv", index=False)
-    accepted.to_csv(shard_dir / "accepted_candidates.csv", index=False)
+    top.to_csv(shard_dir / "top_candidates.csv", index=False, quoting=csv.QUOTE_ALL)
+    diag.to_csv(shard_dir / "validation_diagnostic.csv", index=False, quoting=csv.QUOTE_ALL)
+    accepted.to_csv(shard_dir / "accepted_candidates.csv", index=False, quoting=csv.QUOTE_ALL)
     (shard_dir / "shard_summary.json").write_text(
         json.dumps(
             {
@@ -379,9 +380,9 @@ def run_merge(output_dir: Path) -> None:
     diag_files = list(shard_root.glob("**/validation_diagnostic.csv"))
     accepted_files = list(shard_root.glob("**/accepted_candidates.csv"))
     summary_files = list(shard_root.glob("**/shard_summary.json"))
-    top = pd.concat([pd.read_csv(path) for path in top_files], ignore_index=True) if top_files else pd.DataFrame()
-    diag = pd.concat([pd.read_csv(path) for path in diag_files], ignore_index=True) if diag_files else pd.DataFrame()
-    accepted = pd.concat([pd.read_csv(path) for path in accepted_files], ignore_index=True) if accepted_files else pd.DataFrame()
+    top = pd.concat([pd.read_csv(path, engine="python") for path in top_files], ignore_index=True) if top_files else pd.DataFrame()
+    diag = pd.concat([pd.read_csv(path, engine="python") for path in diag_files], ignore_index=True) if diag_files else pd.DataFrame()
+    accepted = pd.concat([pd.read_csv(path, engine="python") for path in accepted_files], ignore_index=True) if accepted_files else pd.DataFrame()
     for frame in (top, diag, accepted):
         if not frame.empty and "candidate_id" in frame:
             frame.drop_duplicates("candidate_id", inplace=True)
@@ -394,9 +395,9 @@ def run_merge(output_dir: Path) -> None:
     summaries = [json.loads(path.read_text(encoding="utf-8")) for path in summary_files]
     final = output_dir / "final"
     final.mkdir(parents=True, exist_ok=True)
-    top.to_csv(final / "paper_cboe_sentiment_leaderboard.csv", index=False)
-    diag.head(500).to_csv(final / "paper_cboe_sentiment_validation_top.csv", index=False)
-    accepted.to_csv(final / "paper_cboe_sentiment_accepted.csv", index=False)
+    top.to_csv(final / "paper_cboe_sentiment_leaderboard.csv", index=False, quoting=csv.QUOTE_ALL)
+    diag.head(500).to_csv(final / "paper_cboe_sentiment_validation_top.csv", index=False, quoting=csv.QUOTE_ALL)
+    accepted.to_csv(final / "paper_cboe_sentiment_accepted.csv", index=False, quoting=csv.QUOTE_ALL)
     fail_reasons = build_fail_reasons(top)
     fail_reasons.to_csv(final / "paper_cboe_sentiment_fail_reasons.csv", index=False)
     summary = {
