@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import itertools
 import json
 import math
@@ -19,15 +20,21 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from backtest_sp500_downside_26_paper_replicas import (
-    LOCKED_START,
-    TRAIN_END,
-    TRAIN_START,
-    VALID_END,
-    VALID_START,
-    build_context,
-    build_specs,
-)
+BASE_SCRIPT = SCRIPTS_DIR / "backtest_sp500_downside_26_paper_replicas.py"
+_base_spec = importlib.util.spec_from_file_location("aurora_sp500_downside_26_base", BASE_SCRIPT)
+if _base_spec is None or _base_spec.loader is None:
+    raise ImportError(f"Cannot load base paper backtest script from {BASE_SCRIPT}")
+_base = importlib.util.module_from_spec(_base_spec)
+sys.modules[_base_spec.name] = _base
+_base_spec.loader.exec_module(_base)
+
+LOCKED_START = _base.LOCKED_START
+TRAIN_END = _base.TRAIN_END
+TRAIN_START = _base.TRAIN_START
+VALID_END = _base.VALID_END
+VALID_START = _base.VALID_START
+build_context = _base.build_context
+build_specs = _base.build_specs
 
 CAMPAIGN_ID = "paper_operable_ensemble_sharpe2_360stages"
 TARGET_SHARPE = 2.0
