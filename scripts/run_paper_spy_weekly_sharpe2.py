@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import math
+import re
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from aurora.core.data_providers.cboe_options_public import CboeOptionsPublicProvider
 from scripts.run_spy_weekly_longshort_sharpe2 import (
     build_positions_train_only,
     metrics,
@@ -35,6 +37,13 @@ VALIDATION_START = pd.Timestamp("2011-01-01")
 VALIDATION_END = pd.Timestamp("2020-12-31")
 LOCKED_START = pd.Timestamp("2021-01-01")
 TARGET_SHARPE = 2.0
+
+INDEX_HISTORY_URL_TEMPLATE = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{ticker}_History.csv"
+CBOE_TOTAL_PC_URLS = (
+    "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/pcratioarchive.csv",
+    "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpcarchive.csv",
+    "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv",
+)
 
 
 PAPER_SOURCES: dict[str, dict[str, str]] = {
@@ -206,41 +215,99 @@ def run_data(output_dir: Path) -> None:
 
 
 def fetch_cboe_weekly_panel() -> pd.DataFrame:
-    provider = CboeOptionsPublicProvider()
-    series_names = [
-        "cboe_total_put_call_ratio",
-        "cboe_benchmark_pput",
-        "cboe_benchmark_bxy",
-        "cboe_benchmark_bxmd",
-        "cboe_benchmark_cmbo",
-        "cboe_benchmark_puty",
-        "cboe_options_derived_skew",
-        "cboe_options_derived_vixmo",
-        "cboe_volatility_vix",
-        "cboe_volatility_vxo",
-    ]
     frames: list[pd.DataFrame] = []
-    for name in series_names:
+    for ticker, name in [
+        ("PPUT", "cboe_benchmark_pput"),
+        ("BXY", "cboe_benchmark_bxy"),
+        ("BXMD", "cboe_benchmark_bxmd"),
+        ("CMBO", "cboe_benchmark_cmbo"),
+        ("PUTY", "cboe_benchmark_puty"),
+        ("SKEW", "cboe_options_derived_skew"),
+        ("VIXMO", "cboe_options_derived_vixmo"),
+        ("VIX", "cboe_volatility_vix"),
+        ("VXO", "cboe_volatility_vxo"),
+    ]:
         try:
-            if name.startswith("cboe_benchmark_"):
-                raw = provider.fetch_benchmark_index(name.removeprefix("cboe_benchmark_").upper()).frame
-            elif name.startswith("cboe_options_derived_"):
-                raw = provider.fetch_options_derived_index(name.removeprefix("cboe_options_derived_").upper()).frame
-            elif name.startswith("cboe_volatility_"):
-                raw = provider.fetch_volatility_index(name.removeprefix("cboe_volatility_").upper()).frame
-            else:
-                raw = provider.fetch_public_series(name).frame
+            raw = fetch_cboe_index_history(ticker)
         except Exception:
             continue
-        col = "put_call_ratio" if "put_call_ratio" in raw.columns else "close"
-        if col not in raw.columns:
-            continue
-        frame = raw[[col]].rename(columns={col: name})
-        frames.append(frame)
+        frames.append(raw[["close"]].rename(columns={"close": name}))
+    try:
+        frames.append(fetch_total_put_call_ratio().rename(columns={"put_call_ratio": "cboe_total_put_call_ratio"}))
+    except Exception:
+        pass
     if not frames:
         return pd.DataFrame()
     daily = pd.concat(frames, axis=1).sort_index()
     return daily.resample("W-FRI").last()
+
+
+def fetch_bytes(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "aurora-paper-spy-sharpe2/1.0"})
+    with urllib.request.urlopen(request, timeout=45) as response:
+        return response.read()
+
+
+def fetch_cboe_index_history(ticker: str) -> pd.DataFrame:
+    raw = fetch_bytes(INDEX_HISTORY_URL_TEMPLATE.format(ticker=ticker))
+    text = raw.decode("utf-8-sig", errors="ignore").replace("\x00", "")
+    df = pd.read_csv(io.StringIO(text))
+    if df.empty:
+        raise ValueError(f"{ticker} index history empty")
+    df.columns = [normalise_name(c) for c in df.columns]
+    date_col = first_matching(df.columns, (r"^date$",))
+    value_col = first_matching(df.columns, (r"close$", rf"^{normalise_name(ticker)}$", r"value$"))
+    if date_col is None or value_col is None:
+        raise ValueError(f"{ticker} index history lacks date/value")
+    out = pd.DataFrame(index=pd.to_datetime(df[date_col], errors="coerce"))
+    out.index = pd.DatetimeIndex(out.index).tz_localize(None)
+    out.index.name = "date"
+    out["close"] = pd.to_numeric(df[value_col], errors="coerce").to_numpy(dtype=float)
+    out = out[~out.index.isna()].dropna(subset=["close"]).sort_index()
+    return out[~out.index.duplicated(keep="last")]
+
+
+def fetch_total_put_call_ratio() -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for url in CBOE_TOTAL_PC_URLS:
+        raw = fetch_bytes(url)
+        text = raw.decode("utf-8-sig", errors="ignore").replace("\x00", "")
+        parsed = parse_put_call_csv(text, source_url=url)
+        frames.append(parsed)
+    combined = pd.concat(frames).sort_index()
+    combined = combined[~combined.index.duplicated(keep="last")]
+    return combined.dropna(subset=["put_call_ratio"])
+
+
+def parse_put_call_csv(text: str, *, source_url: str) -> pd.DataFrame:
+    lines = [line for line in text.splitlines() if line.strip()]
+    header_idx = next((i for i, line in enumerate(lines) if "date" in line.lower() and ("ratio" in line.lower() or "p/c" in line.lower())), None)
+    if header_idx is None:
+        raise ValueError(f"put/call file lacks header: {source_url}")
+    df = pd.read_csv(io.StringIO("\n".join(lines[header_idx:])))
+    df.columns = [normalise_name(c) for c in df.columns]
+    date_col = first_matching(df.columns, (r"trade_date", r"^date$"))
+    ratio_col = first_matching(df.columns, (r"total_volume_p_c_ratio", r"put_call", r"p_c", r"ratio"))
+    if date_col is None or ratio_col is None:
+        raise ValueError(f"put/call file lacks date/ratio: {source_url}")
+    out = pd.DataFrame(index=pd.to_datetime(df[date_col], errors="coerce"))
+    out.index = pd.DatetimeIndex(out.index).tz_localize(None)
+    out.index.name = "date"
+    out["put_call_ratio"] = pd.to_numeric(df[ratio_col], errors="coerce").to_numpy(dtype=float)
+    out = out[~out.index.isna()].dropna(subset=["put_call_ratio"]).sort_index()
+    return out
+
+
+def normalise_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+
+
+def first_matching(columns: list[str] | pd.Index, patterns: tuple[str, ...]) -> str | None:
+    for pattern in patterns:
+        for col in columns:
+            if re.search(pattern, str(col)):
+                return str(col)
+    return None
 
 
 def add_feature(out: pd.DataFrame, name: str, values: pd.Series, papers: tuple[str, ...], feature_papers: dict[str, tuple[str, ...]]) -> None:
