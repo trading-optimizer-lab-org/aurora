@@ -42,8 +42,9 @@ def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
     assert "max-parallel: 177" in text
     assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
     assert data[True]["workflow_dispatch"]["inputs"]["search_plan"]["default"] == "random"
-    assert "random, funnel, funnel_top, funnel_robust, funnel_ensemble, funnel_down_override, or funnel_conditional" in text
-    assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "65"
+    assert data[True]["workflow_dispatch"]["inputs"]["time_budget_minutes"]["default"] == "10"
+    assert "random, funnel, funnel_top, funnel_robust, funnel_ensemble, funnel_down_override, funnel_conditional, or funnel_temporal_regime" in text
+    assert data[True]["workflow_dispatch"]["inputs"]["job_timeout_minutes"]["default"] == "20"
     assert "--target-accuracy" in text
     assert "--search-plan" in text
     assert "if: always()" in text
@@ -354,6 +355,42 @@ def test_funnel_conditional_uses_small_train_only_tables() -> None:
     assert {params["rule_type"] for params in seen} == {"conditional_table"}
     assert max(len(params["feature_indices"]) for params in seen) <= 5
     assert {params["conditional_bins"] for params in seen}.issubset({2, 3, 4})
+
+
+def test_funnel_temporal_regime_uses_calendar_and_low_capacity_rules() -> None:
+    context = {
+        "groups": {
+            "calendar": [0, 1, 2],
+            "spy_momentum": [3, 4, 5],
+            "support_resistance": [6, 7],
+            "spy_volatility": [8, 9],
+            "vix": [10, 11],
+            "cboe_options": [12, 13],
+            "rates": [14, 15],
+        },
+        "representatives": list(range(16)),
+        "effective_groups": 16,
+    }
+    rng = np.random.default_rng(901)
+    seen = [
+        sample_funnel_params(
+            rng,
+            [f"feature_{i}" for i in range(16)],
+            stage=0,
+            config_index=i,
+            context=context,
+            temporal_only=True,
+        )
+        for i in range(36)
+    ]
+    assert {params["rule_type"] for params in seen}.issubset(
+        {"linear", "threshold_vote", "rank_vote", "stump_pair", "train_corr_linear"}
+    )
+    assert {params["threshold_policy"] for params in seen}.issubset(
+        {"balanced", "class_balance", "fallback_up", "down_focus"}
+    )
+    assert max(len(params["feature_indices"]) for params in seen) <= 10
+    assert any(set(params["feature_indices"]) & {0, 1, 2} for params in seen)
 
 
 def test_robust_selection_score_penalizes_train_cv_gap() -> None:

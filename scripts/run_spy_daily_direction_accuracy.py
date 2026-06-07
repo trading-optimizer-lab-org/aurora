@@ -85,6 +85,7 @@ def main() -> None:
             "funnel_ensemble",
             "funnel_down_override",
             "funnel_conditional",
+            "funnel_temporal_regime",
         ],
         default="random",
     )
@@ -709,6 +710,7 @@ def run_shard(
             "funnel_ensemble",
             "funnel_down_override",
             "funnel_conditional",
+            "funnel_temporal_regime",
         }
         else None
     )
@@ -737,6 +739,7 @@ def run_shard(
                 robust_only=search_plan in {"funnel_robust", "funnel_ensemble"},
                 down_override_only=search_plan == "funnel_down_override",
                 conditional_only=search_plan == "funnel_conditional",
+                temporal_only=search_plan == "funnel_temporal_regime",
             )
             if funnel_context is not None
             else sample_params(rng, feature_cols, stage)
@@ -797,7 +800,7 @@ def run_shard(
             train_years,
             sub_train,
             feature_count=len(params["feature_indices"]),
-            robust=search_plan in {"funnel_robust", "funnel_ensemble"},
+            robust=search_plan in {"funnel_robust", "funnel_ensemble", "funnel_temporal_regime"},
             down_override=search_plan == "funnel_down_override",
             conditional=search_plan == "funnel_conditional",
         )
@@ -1264,10 +1267,75 @@ def sample_funnel_params(
     robust_only: bool = False,
     down_override_only: bool = False,
     conditional_only: bool = False,
+    temporal_only: bool = False,
 ) -> dict[str, Any]:
     groups: dict[str, list[int]] = context["groups"]
     group_names = list(groups) or ["all"]
     reps = list(context["representatives"]) or list(range(len(feature_cols)))
+    if temporal_only:
+        regime_priority = [
+            name
+            for name in [
+                "calendar",
+                "spy_momentum",
+                "support_resistance",
+                "spy_volatility",
+                "vix",
+                "cboe_options",
+                "rates",
+                "technical",
+                "relative_assets",
+            ]
+            if groups.get(name)
+        ]
+        regime_groups = regime_priority or group_names
+        calendar_pool = groups.get("calendar", [])
+        phase = config_index % 6
+        if phase in {0, 1} and calendar_pool:
+            partner_name = regime_groups[(stage + config_index) % len(regime_groups)]
+            partner_pool = groups.get(partner_name, [])
+            pool = sorted(set(calendar_pool + partner_pool))
+            family = f"temporal_calendar_{partner_name}"
+            rule_choices = ["threshold_vote", "rank_vote", "stump_pair", "train_corr_linear"]
+            max_k = min(6 if phase == 0 else 8, len(pool))
+            min_k = min(2, max_k)
+        elif phase in {2, 3}:
+            picked_groups = rng.choice(regime_groups, size=min(3, len(regime_groups)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            if calendar_pool:
+                pool = sorted(set(pool + calendar_pool))
+            family = "temporal_cross_regime"
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(9, len(pool))
+            min_k = min(3, max_k)
+        elif phase == 4:
+            focus = [
+                name
+                for name in ["spy_volatility", "vix", "cboe_options", "rates", "support_resistance"]
+                if groups.get(name)
+            ] or regime_groups
+            picked_groups = rng.choice(focus, size=min(3, len(focus)), replace=False)
+            pool = sorted({i for name in picked_groups for i in groups.get(str(name), [])})
+            family = "temporal_stress_regime"
+            rule_choices = ["threshold_vote", "rank_vote", "stump_pair", "train_corr_linear"]
+            max_k = min(7, len(pool))
+            min_k = min(2, max_k)
+        else:
+            pool = reps
+            family = "temporal_all_representatives"
+            rule_choices = ["linear", "threshold_vote", "rank_vote", "train_corr_linear"]
+            max_k = min(10, len(pool))
+            min_k = min(3, max_k)
+        if not pool:
+            pool = list(range(len(feature_cols)))
+        rule_type = str(rng.choice(rule_choices))
+        k = int(rng.integers(min_k, max_k + 1))
+        idx = rng.choice(pool, size=k, replace=False).astype(int)
+        params = build_param_dict(rng, idx, rule_type=rule_type, family=family, stage=stage)
+        params["threshold_policy"] = str(
+            rng.choice(["balanced", "class_balance", "fallback_up", "down_focus"], p=[0.25, 0.35, 0.25, 0.15])
+        )
+        return params
     if conditional_only:
         priority = [
             name

@@ -10,19 +10,19 @@ on:
       time_budget_minutes:
         description: "Clean internal stage runtime before upload"
         required: true
-        default: "45"
+        default: "10"
       target_accuracy:
         description: "Train and validation accuracy required for accepted candidates"
         required: true
         default: "0.60"
       search_plan:
-        description: "Search plan: random, funnel, funnel_top, funnel_robust, funnel_ensemble, funnel_down_override, or funnel_conditional"
+        description: "Search plan: random, funnel, funnel_top, funnel_robust, funnel_ensemble, funnel_down_override, funnel_conditional, or funnel_temporal_regime"
         required: true
         default: "random"
       job_timeout_minutes:
         description: "Hard timeout per search job"
         required: true
-        default: "65"
+        default: "20"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
