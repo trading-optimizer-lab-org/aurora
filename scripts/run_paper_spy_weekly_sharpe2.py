@@ -447,6 +447,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     candidates = [i for i, name in enumerate(feature_cols) if any(name.startswith(token) for token in group)]
     if not candidates:
         candidates = list(range(len(feature_cols)))
+    max_candidates = max(1, len(candidates))
     rule_types = [
         "linear",
         "threshold_vote",
@@ -466,11 +467,15 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
     ]
     rule_type = str(rng.choice(rule_types))
     if rule_type in {"linear", "threshold_vote", "signed_stump_vote"}:
-        k = int(rng.integers(1, min(7, len(candidates)) + 1))
+        low = 1
+        high = min(7, max_candidates)
     elif "ridge" in rule_type:
-        k = int(rng.integers(3, min(12, len(candidates)) + 1))
+        low = min(3, max_candidates)
+        high = min(12, max_candidates)
     else:
-        k = int(rng.integers(3, min(8, len(candidates)) + 1))
+        low = min(3, max_candidates)
+        high = min(8, max_candidates)
+    k = int(rng.integers(low, high + 1)) if high >= low else max_candidates
     feature_indices = rng.choice(candidates, size=k, replace=False)
     weights = rng.normal(0.0, 1.0, size=k)
     norm = np.sum(np.abs(weights))
