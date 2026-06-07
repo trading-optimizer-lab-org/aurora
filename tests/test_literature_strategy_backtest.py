@@ -19,6 +19,7 @@ from aurora.research.literature_strategy_backtest import (
     run_chunk,
     signature_to_spec,
 )
+from scripts.build_literature_sharpe2_signature_variants import build_variants
 
 
 def _row(**overrides: object) -> dict[str, object]:
@@ -305,6 +306,102 @@ def test_workflow_shape_for_literature_strategy_backtest_9419() -> None:
     assert "scripts/run_literature_strategy_backtest_chunk.py" in text
     assert "scripts/run_sp500_weekly_hedge_dehb_stage.py" not in text
     assert "literature-strategy-backtest-9419-9h-results" in text
+
+
+def test_sharpe2_variant_builder_preserves_paper_traceability() -> None:
+    source = pd.DataFrame(
+        [
+            _row(
+                signature_hash="paper1",
+                exact_rows=3,
+                template_rows=0,
+                primary_family="momentum",
+                asset_bucket="equity_index",
+                signal_bucket="momentum_trend",
+                action_bucket="market_timing",
+                frequency_bucket="monthly",
+                parameter_bucket="12m",
+                example_study_id="W123",
+                example_idea_id="lit_w123",
+                example_title="A paper-backed timing rule",
+            )
+        ]
+    )
+
+    variants = build_variants(source, max_variants=20)
+
+    assert not variants.empty
+    assert variants["signature_hash"].is_unique
+    assert variants["example_study_id"].eq("W123").all()
+    assert variants["paper_exact_replication_claimed"].eq(False).all()
+    assert variants["locked_opened"].eq(False).all()
+    assert variants["validation_used_for_selection"].eq(False).all()
+    assert variants["source_text_ref"].str.contains('"paper_based": true').all()
+
+
+def test_sharpe2_merge_writes_acceptance_file(tmp_path: Path) -> None:
+    from scripts.merge_literature_strategy_backtest_chunks import merge
+
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    row = {
+        "signature_hash": "pass1",
+        "candidate_id": "lit_pass1",
+        "distinct_strategy_signature": "paper|equity_index|momentum_trend|market_timing|monthly|12m",
+        "primary_family": "momentum",
+        "asset_bucket": "equity_index",
+        "signal_bucket": "momentum_trend",
+        "action_bucket": "market_timing",
+        "frequency_bucket": "monthly",
+        "parameter_bucket": "12m",
+        "example_study_id": "W1",
+        "example_idea_id": "I1",
+        "example_title": "Paper",
+        "source_text_ref": "{}",
+        "rule_summary": "rule",
+        "fidelity_caveat": "paper-derived proxy",
+        "source_exactness": "exact_source",
+        "status": "evaluated",
+        "unsupported_reason": "",
+        "error": "",
+        "locked_opened": False,
+        "validation_used_for_selection": False,
+        "paper_exact_replication_claimed": False,
+        "train_score": 5.0,
+        "train_sharpe": 2.1,
+        "validation_sharpe": 2.2,
+    }
+    pd.DataFrame([row]).to_csv(input_dir / "literature_strategy_backtest_chunk_000.csv", index=False)
+
+    summary = merge(
+        argparse.Namespace(
+            input_dir=str(input_dir),
+            output_dir=str(output_dir),
+            expected_chunks=1,
+            expected_signatures=1,
+            max_parallel_requested=360,
+        )
+    )
+
+    accepted = pd.read_csv(output_dir / "literature_strategy_backtest_sharpe2_pass.csv")
+    assert summary["sharpe2_pass_count"] == 1
+    assert accepted.iloc[0]["candidate_id"] == "lit_pass1"
+    assert "acceptance_reason" in accepted.columns
+
+
+def test_sharpe2_paper_variants_workflow_shape() -> None:
+    path = Path(".github/workflows/literature-sharpe2-paper-variants-360jobs.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+
+    assert data["name"] == "Literature Sharpe2 Paper Variants 360 Jobs"
+    assert data["env"]["LOCKED_START"] == "2021-01-01"
+    assert data["env"]["SOURCE_SIGNATURES"] == "config/literature_strategy_signatures_9419.csv"
+    assert data[True]["workflow_dispatch"]["inputs"]["max_parallel_requested"]["default"] == "360"
+    assert "scripts/build_literature_sharpe2_signature_variants.py" in text
+    assert "literature_strategy_backtest_sharpe2_pass.csv" not in text
+    assert "literature-sharpe2-paper-variants-results" in text
 
 
 def test_scripts_py_compile() -> None:

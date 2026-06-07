@@ -62,6 +62,7 @@ def merge(args: argparse.Namespace) -> dict[str, object]:
     unsupported = data[data["status"] == "unsupported"].copy()
     errors = data[data["status"] == "error"].copy()
     leaderboard = supported.sort_values("train_score", ascending=False).reset_index(drop=True) if not supported.empty else supported
+    sharpe2_pass = _sharpe2_pass(supported)
     train_cols = [c for c in data.columns if c.startswith("train_") or c in _ID_COLS]
     validation_cols = [c for c in data.columns if c.startswith("validation_") or c in _ID_COLS]
     sizing_cols = [c for c in data.columns if c in _ID_COLS or c.endswith("_trades_per_month") or c in {"size_chosen_train", "frequency_tested", "symbols"}]
@@ -89,6 +90,9 @@ def merge(args: argparse.Namespace) -> dict[str, object]:
         "errors": int(len(errors)),
         "exact_source_signatures": int((data["source_exactness"] == "exact_source").sum()) if "source_exactness" in data.columns else 0,
         "template_only_signatures": int((data["source_exactness"] == "template_only").sum()) if "source_exactness" in data.columns else 0,
+        "sharpe2_pass_count": int(len(sharpe2_pass)),
+        "best_train_sharpe": float(pd.to_numeric(supported.get("train_sharpe"), errors="coerce").max()) if not supported.empty else float("nan"),
+        "best_validation_sharpe": float(pd.to_numeric(supported.get("validation_sharpe"), errors="coerce").max()) if not supported.empty else float("nan"),
         "train_start": "1995-01-01",
         "train_end": "2010-12-31",
         "validation_start": "2011-01-01",
@@ -101,6 +105,7 @@ def merge(args: argparse.Namespace) -> dict[str, object]:
     data.loc[:, train_cols].to_csv(output_dir / "literature_strategy_backtest_train_report.csv", index=False)
     data.loc[:, validation_cols].to_csv(output_dir / "literature_strategy_backtest_validation_report.csv", index=False)
     supported.to_csv(output_dir / "literature_strategy_backtest_supported.csv", index=False)
+    sharpe2_pass.to_csv(output_dir / "literature_strategy_backtest_sharpe2_pass.csv", index=False)
     unsupported.to_csv(output_dir / "literature_strategy_backtest_unsupported.csv", index=False)
     fail_reasons.to_csv(output_dir / "literature_strategy_backtest_fail_reasons.csv", index=False)
     data.loc[:, sizing_cols].to_csv(output_dir / "literature_strategy_backtest_sizing.csv", index=False)
@@ -147,6 +152,28 @@ def _merge_manifest(paths: list[str]) -> pd.DataFrame:
 def _fail_reasons(data: pd.DataFrame) -> pd.DataFrame:
     reasons = data["unsupported_reason"].fillna("").replace("", "evaluated_or_error").value_counts()
     return reasons.rename_axis("reason").reset_index(name="count")
+
+
+def _sharpe2_pass(supported: pd.DataFrame) -> pd.DataFrame:
+    if supported.empty or "train_sharpe" not in supported.columns or "validation_sharpe" not in supported.columns:
+        return pd.DataFrame(columns=list(supported.columns))
+    work = supported.copy()
+    train = pd.to_numeric(work["train_sharpe"], errors="coerce")
+    validation = pd.to_numeric(work["validation_sharpe"], errors="coerce")
+    locked = work.get("locked_opened", pd.Series([True] * len(work))).astype(bool)
+    validation_used = work.get("validation_used_for_selection", pd.Series([True] * len(work))).astype(bool)
+    exact_claimed = work.get("paper_exact_replication_claimed", pd.Series([True] * len(work))).astype(bool)
+    passed = work.loc[
+        train.ge(2.0)
+        & validation.ge(2.0)
+        & ~locked
+        & ~validation_used
+        & ~exact_claimed
+    ].copy()
+    if passed.empty:
+        return passed
+    passed["acceptance_reason"] = "train_sharpe>=2;validation_sharpe>=2;locked_opened=false;validation_used_for_selection=false"
+    return passed.sort_values(["validation_sharpe", "train_sharpe"], ascending=False).reset_index(drop=True)
 
 
 def _group_summary(data: pd.DataFrame, column: str) -> pd.DataFrame:

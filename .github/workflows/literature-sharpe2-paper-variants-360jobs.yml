@@ -1,0 +1,259 @@
+name: Literature Sharpe2 Paper Variants 360 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_parallel_requested:
+        description: "Requested parallel chunks"
+        required: true
+        default: "360"
+      chunks:
+        description: "Total chunks"
+        required: true
+        default: "360"
+      max_variants:
+        description: "Maximum paper-derived variants"
+        required: true
+        default: "80000"
+      chunk_timeout_minutes:
+        description: "Timeout per chunk"
+        required: true
+        default: "480"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/literature_sharpe2_paper_variants_360jobs
+  SOURCE_SIGNATURES: config/literature_strategy_signatures_9419.csv
+  VARIANT_SIGNATURES: outputs/literature_sharpe2_paper_variants_360jobs/prepare/paper_strategy_variants.csv
+  TRAIN_START: "1995-01-01"
+  TRAIN_END: "2010-12-31"
+  VALIDATION_START: "2011-01-01"
+  VALIDATION_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      chunks: ${{ steps.meta.outputs.chunks }}
+      expected_signatures: ${{ steps.meta.outputs.expected_signatures }}
+      chunk_list_a: ${{ steps.meta.outputs.chunk_list_a }}
+      chunk_list_b: ${{ steps.meta.outputs.chunk_list_b }}
+      max_parallel: ${{ steps.meta.outputs.max_parallel }}
+      max_parallel_a: ${{ steps.meta.outputs.max_parallel_a }}
+      max_parallel_b: ${{ steps.meta.outputs.max_parallel_b }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Build paper-derived variants
+        run: |
+          python scripts/build_literature_sharpe2_signature_variants.py \
+            --source "$SOURCE_SIGNATURES" \
+            --output "$VARIANT_SIGNATURES" \
+            --summary "$OUTPUT_DIR/prepare/paper_strategy_variants_summary.json" \
+            --max-variants "${{ inputs.max_variants || '80000' }}"
+      - name: Build matrix metadata
+        id: meta
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import csv, json
+          from pathlib import Path
+
+          chunks = int("${{ inputs.chunks || '360' }}")
+          max_parallel = int("${{ inputs.max_parallel_requested || '360' }}")
+          if chunks < 2:
+              raise SystemExit("chunks must be >= 2")
+          if max_parallel > 512:
+              raise SystemExit("max_parallel_requested must be <= 512")
+          with Path("${{ env.VARIANT_SIGNATURES }}").open(newline="", encoding="utf-8") as handle:
+              expected = sum(1 for _ in csv.DictReader(handle))
+          if expected <= 0:
+              raise SystemExit("zero paper-derived variants")
+          split = (chunks + 1) // 2
+          a = list(range(0, split))
+          b = list(range(split, chunks))
+          max_a = min(len(a), 256, max(1, (max_parallel + 1) // 2))
+          max_b = min(len(b), 256, max(1, max_parallel - max_a))
+          print(f"chunks={chunks}")
+          print(f"expected_signatures={expected}")
+          print("chunk_list_a=" + json.dumps(a))
+          print("chunk_list_b=" + json.dumps(b))
+          print(f"max_parallel={max_parallel}")
+          print(f"max_parallel_a={max_a}")
+          print(f"max_parallel_b={max_b}")
+          PY
+      - name: Upload prepared variants
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-prepare
+          path: ${{ env.OUTPUT_DIR }}/prepare/**
+          if-no-files-found: error
+
+  data:
+    runs-on: ubuntu-latest
+    needs: prepare
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Build daily data store through validation only
+        run: python scripts/download_diversified_seed.py --start "$TRAIN_START" --end "$VALIDATION_END"
+      - name: Upload data store
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-data
+          path: .aurora-data/timeseries
+
+  chunks_a:
+    runs-on: ubuntu-latest
+    needs: [prepare, data]
+    timeout-minutes: ${{ fromJSON(inputs.chunk_timeout_minutes || '480') }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel_a) }}
+      matrix:
+        chunk: ${{ fromJSON(needs.prepare.outputs.chunk_list_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download variants
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-prepare
+          path: ${{ env.OUTPUT_DIR }}/prepare
+      - name: Download data store
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-data
+          path: .aurora-data/timeseries
+      - name: Run paper variant chunk
+        run: |
+          python scripts/run_literature_strategy_backtest_chunk.py \
+            --signatures "$VARIANT_SIGNATURES" \
+            --chunk-index "${{ matrix.chunk }}" \
+            --chunks "${{ needs.prepare.outputs.chunks }}" \
+            --expected-signatures "${{ needs.prepare.outputs.expected_signatures }}" \
+            --output-dir "$OUTPUT_DIR/chunks/chunk_${{ matrix.chunk }}" \
+            --train-start "$TRAIN_START" \
+            --train-end "$TRAIN_END" \
+            --validation-start "$VALIDATION_START" \
+            --validation-end "$VALIDATION_END" \
+            --locked-start "$LOCKED_START"
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-sharpe2-paper-variants-chunk-${{ matrix.chunk }}
+          path: ${{ env.OUTPUT_DIR }}/chunks/chunk_${{ matrix.chunk }}
+          if-no-files-found: warn
+
+  chunks_b:
+    runs-on: ubuntu-latest
+    needs: [prepare, data]
+    timeout-minutes: ${{ fromJSON(inputs.chunk_timeout_minutes || '480') }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel_b) }}
+      matrix:
+        chunk: ${{ fromJSON(needs.prepare.outputs.chunk_list_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download variants
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-prepare
+          path: ${{ env.OUTPUT_DIR }}/prepare
+      - name: Download data store
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-data
+          path: .aurora-data/timeseries
+      - name: Run paper variant chunk
+        run: |
+          python scripts/run_literature_strategy_backtest_chunk.py \
+            --signatures "$VARIANT_SIGNATURES" \
+            --chunk-index "${{ matrix.chunk }}" \
+            --chunks "${{ needs.prepare.outputs.chunks }}" \
+            --expected-signatures "${{ needs.prepare.outputs.expected_signatures }}" \
+            --output-dir "$OUTPUT_DIR/chunks/chunk_${{ matrix.chunk }}" \
+            --train-start "$TRAIN_START" \
+            --train-end "$TRAIN_END" \
+            --validation-start "$VALIDATION_START" \
+            --validation-end "$VALIDATION_END" \
+            --locked-start "$LOCKED_START"
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: literature-sharpe2-paper-variants-chunk-${{ matrix.chunk }}
+          path: ${{ env.OUTPUT_DIR }}/chunks/chunk_${{ matrix.chunk }}
+          if-no-files-found: warn
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [prepare, chunks_a, chunks_b]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download all chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.OUTPUT_DIR }}/artifacts
+          pattern: literature-sharpe2-paper-variants-chunk-*
+          merge-multiple: true
+      - name: Merge literature strategy chunks
+        run: |
+          python scripts/merge_literature_strategy_backtest_chunks.py \
+            --input-dir "$OUTPUT_DIR/artifacts" \
+            --output-dir "$OUTPUT_DIR/final" \
+            --expected-chunks "${{ needs.prepare.outputs.chunks }}" \
+            --expected-signatures "${{ needs.prepare.outputs.expected_signatures }}" \
+            --max-parallel-requested "${{ needs.prepare.outputs.max_parallel }}"
+      - name: Download prepared variants
+        uses: actions/download-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-prepare
+          path: ${{ env.OUTPUT_DIR }}/prepare
+      - name: Copy prepare audit into final
+        run: cp "$OUTPUT_DIR"/prepare/* "$OUTPUT_DIR"/final/
+      - name: Upload final literature Sharpe2 paper variant results
+        uses: actions/upload-artifact@v4
+        with:
+          name: literature-sharpe2-paper-variants-results
+          path: ${{ env.OUTPUT_DIR }}/final/**
+          if-no-files-found: error
