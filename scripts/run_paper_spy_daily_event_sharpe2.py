@@ -61,6 +61,13 @@ PAPER_SOURCES: dict[str, dict[str, str]] = {
         "type": "template",
         "rule": "Equities earn abnormal returns before scheduled FOMC announcements.",
     },
+    "cieslak_fomc_cycle": {
+        "paper": "Stock Returns over the FOMC Cycle",
+        "authors": "Cieslak, Morse, Vissing-Jorgensen",
+        "year": "2019",
+        "type": "template",
+        "rule": "Equity premium concentrates in alternating weeks of the FOMC cycle.",
+    },
     "savor_wilson_macro": {
         "paper": "How Much Do Investors Care About Macroeconomic Risk?",
         "authors": "Savor, Wilson",
@@ -242,6 +249,7 @@ def build_event_frame(index: pd.DatetimeIndex, fomc_dates: list[pd.Timestamp]) -
     out["third_friday_rank"] = third_friday_distance(index)
     out["pre_fomc_days"] = 999.0
     out["post_fomc_days"] = 999.0
+    out["days_since_fomc"] = 999.0
     for date in fomc_dates:
         if date not in ordinal.index:
             loc = ordinal.index.searchsorted(date)
@@ -253,7 +261,9 @@ def build_event_frame(index: pd.DatetimeIndex, fomc_dates: list[pd.Timestamp]) -
         distances = np.arange(len(index)) - event_idx
         out["pre_fomc_days"] = np.minimum(out["pre_fomc_days"], np.where(distances <= 0, -distances, 999.0))
         out["post_fomc_days"] = np.minimum(out["post_fomc_days"], np.where(distances >= 0, distances, 999.0))
+        out["days_since_fomc"] = np.minimum(out["days_since_fomc"], np.where(distances >= 0, distances, 999.0))
     out["fomc_event_day"] = (out["post_fomc_days"] == 0).astype(float)
+    out["fomc_cycle_week"] = np.floor(out["days_since_fomc"] / 7.0).mod(8).where(out["days_since_fomc"] < 900, 99.0)
     return out
 
 
@@ -425,7 +435,9 @@ def sample_candidate(rng: np.random.Generator, stage: int) -> Candidate:
         "turn_of_month",
         "pre_fomc",
         "fomc_window",
+        "fomc_cycle",
         "macro_monthly_rank",
+        "macro_rank_weekday",
         "weekday_calendar",
         "option_expiration_window",
         "vix_extreme",
@@ -454,6 +466,19 @@ def sample_candidate(rng: np.random.Generator, stage: int) -> Candidate:
                 "lag_periods": 1,
             },
         )
+    if family == "fomc_cycle":
+        mode = str(rng.choice(["even", "odd", "single", "pair"]))
+        return Candidate(
+            family,
+            {
+                "cycle_mode": mode,
+                "week_a": int(rng.integers(0, 8)),
+                "week_b": int(rng.integers(0, 8)),
+                "direction": int(rng.choice([-1, 1])),
+                "outside_position": float(rng.choice([0.0, 0.0, -1.0, 1.0])),
+                "lag_periods": 1,
+            },
+        )
     if family == "macro_monthly_rank":
         return Candidate(
             family,
@@ -462,6 +487,20 @@ def sample_candidate(rng: np.random.Generator, stage: int) -> Candidate:
                 "rank": int(rng.integers(1, 23)),
                 "pre_days": int(rng.integers(0, 4)),
                 "post_days": int(rng.integers(0, 4)),
+                "direction": int(rng.choice([-1, 1])),
+                "outside_position": float(rng.choice([0.0, 0.0, 0.0, -1.0, 1.0])),
+                "lag_periods": 1,
+            },
+        )
+    if family == "macro_rank_weekday":
+        return Candidate(
+            family,
+            {
+                "rank_column": str(rng.choice(["month_bday_rank", "month_bday_from_end"])),
+                "rank": int(rng.integers(1, 16)),
+                "pre_days": int(rng.integers(0, 3)),
+                "post_days": int(rng.integers(0, 3)),
+                "weekday": int(rng.integers(0, 5)),
                 "direction": int(rng.choice([-1, 1])),
                 "outside_position": float(rng.choice([0.0, 0.0, 0.0, -1.0, 1.0])),
                 "lag_periods": 1,
@@ -507,7 +546,9 @@ def paper_key_for_family(family: str) -> str:
         return "mcconnell_xu_turn_of_month"
     if family in {"pre_fomc", "fomc_window"}:
         return "lucca_moench_pre_fomc"
-    if family == "macro_monthly_rank":
+    if family == "fomc_cycle":
+        return "cieslak_fomc_cycle"
+    if family in {"macro_monthly_rank", "macro_rank_weekday"}:
         return "savor_wilson_macro"
     if family == "weekday_calendar":
         return "calendar_anomalies"
@@ -534,10 +575,36 @@ def build_positions(candidate: Candidate, events: pd.DataFrame, features: pd.Dat
         positions[:] = float(params["outside_position"])
         positions[inside] = float(params["direction"])
         return positions
+    if candidate.family == "fomc_cycle":
+        cycle = events["fomc_cycle_week"].to_numpy(dtype=float)
+        mode = str(params["cycle_mode"])
+        if mode == "even":
+            inside = np.isin(cycle, [0.0, 2.0, 4.0, 6.0])
+        elif mode == "odd":
+            inside = np.isin(cycle, [1.0, 3.0, 5.0, 7.0])
+        elif mode == "pair":
+            inside = np.isin(cycle, [float(params["week_a"]), float(params["week_b"])])
+        else:
+            inside = cycle == float(params["week_a"])
+        positions[:] = float(params["outside_position"])
+        positions[inside] = float(params["direction"])
+        return positions
     if candidate.family == "macro_monthly_rank":
         rank = events[str(params["rank_column"])].to_numpy(dtype=float)
         center = float(params["rank"])
         inside = (rank >= center - float(params["pre_days"])) & (rank <= center + float(params["post_days"]))
+        positions[:] = float(params["outside_position"])
+        positions[inside] = float(params["direction"])
+        return positions
+    if candidate.family == "macro_rank_weekday":
+        rank = events[str(params["rank_column"])].to_numpy(dtype=float)
+        weekday = events["weekday"].to_numpy(dtype=float)
+        center = float(params["rank"])
+        inside = (
+            (rank >= center - float(params["pre_days"]))
+            & (rank <= center + float(params["post_days"]))
+            & (weekday == float(params["weekday"]))
+        )
         positions[:] = float(params["outside_position"])
         positions[inside] = float(params["direction"])
         return positions
