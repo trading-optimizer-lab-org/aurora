@@ -19,6 +19,10 @@ on:
         description: "Stage offset for new non-repeated rounds"
         required: true
         default: "0"
+      search_style:
+        description: "regime = richer train-regime models, simple = small transparent paper-rule votes"
+        required: true
+        default: "regime"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -98,7 +102,8 @@ jobs:
             --stage "$STAGE" \
             --configs-per-stage 5000000 \
             --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
-            --top-per-stage "${{ inputs.top_per_stage }}"
+            --top-per-stage "${{ inputs.top_per_stage }}" \
+            --search-style "${{ inputs.search_style }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

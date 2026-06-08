@@ -41,6 +41,7 @@ def main() -> None:
     parser.add_argument("--configs-per-stage", type=int, default=5_000_000)
     parser.add_argument("--time-budget-minutes", type=float, default=2.0)
     parser.add_argument("--top-per-stage", type=int, default=120)
+    parser.add_argument("--search-style", choices=["regime", "simple"], default="regime")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -54,6 +55,7 @@ def main() -> None:
             configs_per_stage=args.configs_per_stage,
             time_budget_minutes=args.time_budget_minutes,
             top_per_stage=args.top_per_stage,
+            search_style=args.search_style,
         )
     else:
         run_merge(output_dir)
@@ -128,6 +130,50 @@ def sample_regime_params(rng: np.random.Generator, feature_cols: list[str], stag
     }
 
 
+def sample_simple_params(rng: np.random.Generator, feature_cols: list[str], stage: int) -> dict[str, Any]:
+    groups = [
+        ["spy_mom_", "spy_ma_gap_"],
+        ["vix_", "vxo_", "vixmo_", "vix_term_"],
+        ["total_pc_", "skew_"],
+        ["pput_", "bxy_", "bxmd_", "cmbo_", "puty_"],
+        ["vrp_", "iv_rv_", "spy_realized_vol_"],
+        ["yield_curve_", "spy_drawdown_"],
+        ["spy_mom_", "vix_", "total_pc_"],
+        ["skew_", "vix_", "spy_ma_gap_"],
+    ]
+    group = groups[stage % len(groups)]
+    candidates = [i for i, name in enumerate(feature_cols) if any(name.startswith(token) for token in group)]
+    if not candidates:
+        candidates = list(range(len(feature_cols)))
+    max_candidates = max(1, len(candidates))
+    rule_type = str(rng.choice(["linear", "threshold_vote", "signed_stump_vote", "logic_majority"], p=[0.35, 0.25, 0.25, 0.15]))
+    high = min(4 if rule_type != "linear" else 5, max_candidates)
+    low = min(1 if rule_type != "logic_majority" else 2, high)
+    k = int(rng.integers(low, high + 1))
+    feature_indices = rng.choice(candidates, size=k, replace=False)
+    weights = rng.normal(0.0, 1.0, size=k)
+    norm = np.sum(np.abs(weights))
+    weights = weights / norm if norm > 0 else np.ones(k) / k
+    return {
+        "family": int(stage % len(groups)),
+        "rule_type": rule_type,
+        "feature_indices": [int(i) for i in feature_indices],
+        "weights": [float(w) for w in weights],
+        "thresholds": [float(x) for x in rng.normal(0.0, 0.75, size=k)],
+        "quantiles": [float(x) for x in rng.uniform(0.2, 0.8, size=k)],
+        "band_widths": [float(x) for x in rng.uniform(0.5, 1.5, size=k)],
+        "directions": [float(x) for x in rng.choice([-1.0, 1.0], size=k)],
+        "logic_operator": "majority",
+        "threshold": float(rng.normal(0.0, 0.12)),
+        "ridge_alpha": 1.0,
+        "walk_forward_min_train": 260,
+        "walk_forward_refit_step": 4,
+        "walk_forward_window": 0,
+        "ensemble_members": [],
+        "invert": int(rng.integers(0, 2)),
+    }
+
+
 def regime_stability(strategy_returns: np.ndarray, dates: pd.DatetimeIndex) -> dict[str, float]:
     eras = [
         ("1995_1998", pd.Timestamp("1995-01-01"), pd.Timestamp("1998-12-31")),
@@ -195,7 +241,15 @@ def regime_score(train_metrics: dict[str, float], positions: np.ndarray, params:
     return float(score)
 
 
-def run_shard(output_dir: Path, *, stage: int, configs_per_stage: int, time_budget_minutes: float, top_per_stage: int) -> None:
+def run_shard(
+    output_dir: Path,
+    *,
+    stage: int,
+    configs_per_stage: int,
+    time_budget_minutes: float,
+    top_per_stage: int,
+    search_style: str,
+) -> None:
     returns = pd.read_csv(output_dir / "weekly_returns.csv", parse_dates=["timestamp"]).set_index("timestamp")
     feature_frame = pd.read_csv(output_dir / "paper_feature_frame.csv", parse_dates=["timestamp"]).set_index("timestamp")
     feature_audit = pd.read_csv(output_dir / "paper_feature_audit.csv")
@@ -216,7 +270,10 @@ def run_shard(output_dir: Path, *, stage: int, configs_per_stage: int, time_budg
         if time.monotonic() >= deadline:
             break
         evaluated += 1
-        params = sample_regime_params(rng, feature_cols, stage)
+        if search_style == "simple":
+            params = sample_simple_params(rng, feature_cols, stage)
+        else:
+            params = sample_regime_params(rng, feature_cols, stage)
         positions, train_metrics = build_positions_train_only(matrix, spy_values, train_mask, params)
         if not np.isfinite(train_metrics["sharpe"]):
             continue
@@ -234,7 +291,7 @@ def run_shard(output_dir: Path, *, stage: int, configs_per_stage: int, time_budg
         validation_position = position_audit(positions[validation_mask])
         pass_train = bool(train_metrics["sharpe"] >= TARGET_SHARPE and train_position["always_invested"])
         pass_validation = bool(validation_metrics["sharpe"] >= TARGET_SHARPE and validation_position["always_invested"])
-        payload = {"params": params, "paper_keys": paper_keys, "features": features, "regime": True}
+        payload = {"params": params, "paper_keys": paper_keys, "features": features, "search_style": search_style}
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         row = {
             "strategy_id": f"paper_spy_weekly_regime_sharpe2_s{stage:03d}_{digest}",
@@ -248,6 +305,7 @@ def run_shard(output_dir: Path, *, stage: int, configs_per_stage: int, time_budg
             "locked_rows_accessed": 0,
             "paper_exact_replication_claimed": False,
             "paper_strategy_type": "template_or_proxy",
+            "search_style": search_style,
             "paper_keys": "|".join(paper_keys),
             "paper_titles": "|".join(base.PAPER_SOURCES[k]["paper"] for k in paper_keys),
             "paper_authors": "|".join(base.PAPER_SOURCES[k]["authors"] for k in paper_keys),
@@ -299,6 +357,7 @@ def run_shard(output_dir: Path, *, stage: int, configs_per_stage: int, time_budg
                 "locked_opened": False,
                 "validation_used_for_selection": False,
                 "paper_exact_replication_claimed": False,
+                "search_style": search_style,
             },
             indent=2,
         ),
