@@ -97,7 +97,7 @@ jobs:
               "train_only_paper_selector",
           ]
           now = datetime.now(ZoneInfo("Europe/Madrid"))
-          should_run = now.hour < stop_hour
+          should_run = now.hour >= 18 or now.hour < stop_hour
           guard_dir = Path("${{ env.OUTPUT_DIR }}") / "guards"
           guard_dir.mkdir(parents=True, exist_ok=True)
           payload = {
@@ -281,7 +281,7 @@ jobs:
           next_round = round_index + 1
           stop_hour = int("${{ inputs.stop_new_round_hour }}")
           now = datetime.now(ZoneInfo("Europe/Madrid"))
-          should_dispatch = next_round < 15 and now.hour < stop_hour
+          should_dispatch = next_round < 15 and (now.hour >= 18 or now.hour < stop_hour)
           data_run_id = "${{ inputs.data_run_id }}" or "${{ github.run_id }}"
           print(f"SHOULD_DISPATCH={'true' if should_dispatch else 'false'}")
           print(f"NEXT_ROUND={next_round}")

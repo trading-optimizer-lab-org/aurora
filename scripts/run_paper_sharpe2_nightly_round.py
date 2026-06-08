@@ -119,7 +119,7 @@ def prepare_data(output_dir: Path) -> None:
 
 def time_guard(output_dir: Path, round_index: int, stop_new_round_hour: int) -> None:
     now = datetime.now(TZ)
-    should_run = now.hour < int(stop_new_round_hour)
+    should_run = now.hour >= 18 or now.hour < int(stop_new_round_hour)
     guard_dir = output_dir / "guards"
     guard_dir.mkdir(parents=True, exist_ok=True)
     payload = {
