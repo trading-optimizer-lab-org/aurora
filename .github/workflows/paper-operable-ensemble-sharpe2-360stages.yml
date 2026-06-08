@@ -11,6 +11,10 @@ on:
         description: "Base configs per stage before one volatility-managed variant is added."
         required: true
         default: "2500"
+      stage_offset:
+        description: "Stage offset for non-repeated random ensemble seeds"
+        required: true
+        default: "0"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -81,10 +85,11 @@ jobs:
       - name: Run paired operable paper ensemble stages
         run: |
           for STAGE in "${{ matrix.stage_a }}" "${{ matrix.stage_b }}"; do
+            OFFSET_STAGE=$(( STAGE + ${{ inputs.stage_offset }} ))
             python scripts/run_paper_operable_ensemble_sharpe2.py \
               --mode shard \
               --output-dir "$OUTPUT_DIR" \
-              --stage "$STAGE" \
+              --stage "$OFFSET_STAGE" \
               --total-stages 360 \
               --configs-per-stage "${{ inputs.configs_per_stage }}"
           done
