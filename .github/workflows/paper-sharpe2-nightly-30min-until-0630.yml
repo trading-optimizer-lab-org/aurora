@@ -71,11 +71,45 @@ jobs:
       - id: guard
         name: Decide whether this round may start
         run: |
-          python scripts/run_paper_sharpe2_nightly_round.py \
-            --mode time-guard \
-            --output-dir "$OUTPUT_DIR" \
-            --round-index "${{ inputs.round_index }}" \
-            --stop-new-round-hour "${{ inputs.stop_new_round_hour }}"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          round_index = int("${{ inputs.round_index }}")
+          stop_hour = int("${{ inputs.stop_new_round_hour }}")
+          names = [
+              "operable_paper_ensemble",
+              "spy_weekly_paper_rules",
+              "spy_weekly_regime_simple",
+              "spy_weekly_regime_rich",
+              "cboe_put_call_sentiment",
+              "vix_term_structure",
+              "cboe_option_benchmark_timing",
+              "trend_following_crisis_alpha",
+              "defensive_etf_risk_parity_proxy",
+              "yield_curve_stress",
+              "credit_stress",
+              "gold_commodity_safe_haven",
+              "dollar_fx_safe_haven",
+              "macro_recession_liquidity",
+              "train_only_paper_selector",
+          ]
+          now = datetime.now(ZoneInfo("Europe/Madrid"))
+          should_run = now.hour < stop_hour
+          guard_dir = Path("${{ env.OUTPUT_DIR }}") / "guards"
+          guard_dir.mkdir(parents=True, exist_ok=True)
+          payload = {
+              "round_index": round_index,
+              "round_name": names[round_index] if 0 <= round_index < len(names) else "unknown",
+              "checked_at_madrid": now.isoformat(),
+              "stop_new_round_hour": stop_hour,
+              "should_run": bool(should_run),
+          }
+          (guard_dir / f"round_{round_index:02d}_guard.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+          print(f"should_run={'true' if should_run else 'false'}")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
