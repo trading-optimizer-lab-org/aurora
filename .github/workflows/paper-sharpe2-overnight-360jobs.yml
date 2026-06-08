@@ -246,4 +246,4 @@ jobs:
         if: always()
         with:
           name: paper-sharpe2-overnight-360jobs-results
-          path: ${{ env.OUTPUT_DIR }}
+          path: ${{ env.OUTPUT_DIR }}/final
