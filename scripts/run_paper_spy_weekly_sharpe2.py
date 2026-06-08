@@ -150,6 +150,9 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
+    yf_cache_dir = output_dir / ".yfinance_cache"
+    yf_cache_dir.mkdir(parents=True, exist_ok=True)
+    yf.set_tz_cache_location(str(yf_cache_dir))
     symbols = ["SPY", "^GSPC", "^VIX", "^VIX3M", "^VXO", "^SKEW", "^TNX", "^IRX"]
     raw = yf.download(
         symbols,
@@ -158,7 +161,7 @@ def run_data(output_dir: Path) -> None:
         auto_adjust=True,
         progress=False,
         group_by="ticker",
-        threads=True,
+        threads=False,
     )
     prices = pd.DataFrame()
     for symbol in symbols:
