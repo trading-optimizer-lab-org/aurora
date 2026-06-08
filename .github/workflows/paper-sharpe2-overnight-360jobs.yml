@@ -19,6 +19,10 @@ on:
         description: "SPY paper-rule minutes per stage"
         required: true
         default: "75"
+      compact_artifact:
+        description: "Upload compact final tables for short iterative runs"
+        required: true
+        default: "true"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -233,7 +237,11 @@ jobs:
           python scripts/run_paper_cboe_sentiment_sharpe2.py --mode merge --output-dir "$CBOE_DIR" --total-stages 720 --allow-partial
           python scripts/run_paper_operable_ensemble_sharpe2.py --mode merge --output-dir "$ENSEMBLE_DIR" --total-stages 1080 --allow-partial
           python scripts/run_paper_spy_weekly_sharpe2.py --mode merge --output-dir "$SPY_DIR"
-          python scripts/merge_paper_sharpe2_overnight.py --output-dir "$OUTPUT_DIR"
+          COMPACT_FLAG=""
+          if [ "${{ inputs.compact_artifact }}" = "true" ]; then
+            COMPACT_FLAG="--compact"
+          fi
+          python scripts/merge_paper_sharpe2_overnight.py --output-dir "$OUTPUT_DIR" $COMPACT_FLAG
       - uses: actions/upload-artifact@v4
         if: always()
         with:

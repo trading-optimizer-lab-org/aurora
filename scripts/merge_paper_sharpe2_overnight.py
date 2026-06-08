@@ -16,11 +16,16 @@ CAMPAIGN_ID = "paper_sharpe2_overnight_360jobs"
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default=f"outputs/{CAMPAIGN_ID}")
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Keep only compact final tables suitable for short iterative runs.",
+    )
     args = parser.parse_args()
-    merge_overnight(Path(args.output_dir))
+    merge_overnight(Path(args.output_dir), compact=args.compact)
 
 
-def merge_overnight(output_dir: Path) -> None:
+def merge_overnight(output_dir: Path, *, compact: bool = False) -> None:
     final = output_dir / "final"
     final.mkdir(parents=True, exist_ok=True)
 
@@ -88,10 +93,13 @@ def merge_overnight(output_dir: Path) -> None:
         else False,
     }
 
-    leaderboard.to_csv(final / "leaderboard_all.csv", index=False)
+    leaderboard_out = leaderboard.head(2000).copy() if compact else leaderboard
+    rejected_out = rejected.head(2000).copy() if compact else rejected
+
+    leaderboard_out.to_csv(final / "leaderboard_all.csv", index=False)
     accepted.to_csv(final / "accepted_strategies.csv", index=False)
     near_misses.to_csv(final / "near_misses.csv", index=False)
-    rejected.to_csv(final / "unsupported_or_rejected.csv", index=False)
+    rejected_out.to_csv(final / "unsupported_or_rejected.csv", index=False)
     campaign_summary.to_csv(final / "leaderboard_by_campaign.csv", index=False)
     fail_reasons.to_csv(final / "fail_reasons.csv", index=False)
     paper_audit.to_csv(final / "paper_source_audit.csv", index=False)
@@ -110,6 +118,9 @@ def merge_overnight(output_dir: Path) -> None:
         "uses_individual_stocks": False,
         "paper_exact_replication_claimed": False,
         "artifact_main_table": "accepted_strategies.csv" if len(accepted) else "near_misses.csv",
+        "compact_artifact": bool(compact),
+        "leaderboard_rows_written": int(len(leaderboard_out)),
+        "rejected_rows_written": int(len(rejected_out)),
     }
     (final / "overnight_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
