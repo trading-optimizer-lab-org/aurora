@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 TARGET_SHARPE = 2.0
 CAMPAIGN_ID = "paper_sharpe2_overnight_360jobs"
@@ -130,10 +131,15 @@ def load_campaign(root: Path, *, campaign: str, leaderboard_name: str, summary_n
             summary["status"] = "summary_found"
         except Exception as exc:  # pragma: no cover - defensive audit path
             summary["status"] = f"summary_parse_failed:{exc}"
-    if not leaderboard_path.exists():
+    if not leaderboard_path.exists() or leaderboard_path.stat().st_size == 0:
+        summary["status"] = "leaderboard_missing_or_empty"
         return {"summary": summary, "frame": pd.DataFrame(columns=canonical_columns())}
 
-    frame = pd.read_csv(leaderboard_path)
+    try:
+        frame = pd.read_csv(leaderboard_path)
+    except EmptyDataError:
+        summary["status"] = "leaderboard_empty"
+        return {"summary": summary, "frame": pd.DataFrame(columns=canonical_columns())}
     normalized = normalize_frame(frame, campaign=campaign, id_col=id_col)
     summary["status"] = "loaded"
     summary["rows"] = int(len(normalized))

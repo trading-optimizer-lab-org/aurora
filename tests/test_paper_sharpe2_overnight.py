@@ -10,14 +10,14 @@ from scripts.merge_paper_sharpe2_overnight import merge_overnight
 
 def test_overnight_workflow_uses_360_jobs_without_aqr() -> None:
     workflow = Path(".github/workflows/paper-sharpe2-overnight-360jobs.yml").read_text(encoding="utf-8")
-    assert workflow.count("max-parallel: 180") == 14
+    assert workflow.count("max-parallel: 180") == 2
     assert "paper_aqr" not in workflow.lower()
     assert "aqr-factor" not in workflow.lower()
     assert "--total-stages 720" in workflow
     assert "--total-stages 1080" in workflow
-    assert "path: ${{ env.CBOE_DIR }}/shards/stage_*" in workflow
-    assert "path: ${{ env.ENSEMBLE_DIR }}/shards/stage_*" in workflow
-    assert "path: ${{ env.SPY_DIR }}/shards/stage_*" in workflow
+    assert "overnight-bundle-stage-${{ matrix.stage }}" in workflow
+    assert "pattern: overnight-bundle-stage-*" in workflow
+    assert "--allow-partial" in workflow
     assert "paper-sharpe2-overnight-360jobs-results" in workflow
 
 
@@ -71,3 +71,19 @@ def test_overnight_aggregator_accepts_only_policy_clean_sharpe2(tmp_path: Path) 
     assert summary["accepted_count"] == 1
     assert summary["locked_opened"] is False
     assert summary["validation_used_for_selection"] is False
+
+
+def test_overnight_aggregator_tolerates_empty_leaderboard(tmp_path: Path) -> None:
+    root = tmp_path / "overnight"
+    final = root / "cboe_vix_sentiment_deep" / "final"
+    final.mkdir(parents=True)
+    (final / "paper_cboe_sentiment_leaderboard.csv").write_text("", encoding="utf-8")
+    (final / "paper_cboe_sentiment_summary.json").write_text(
+        json.dumps({"campaign": "cboe_vix_sentiment_deep", "locked_opened": False}),
+        encoding="utf-8",
+    )
+    merge_overnight(root)
+    summary = json.loads((root / "final" / "overnight_summary.json").read_text(encoding="utf-8"))
+    by_campaign = pd.read_csv(root / "final" / "leaderboard_by_campaign.csv")
+    assert summary["accepted_count"] == 0
+    assert "leaderboard" in str(by_campaign.loc[0, "status"])

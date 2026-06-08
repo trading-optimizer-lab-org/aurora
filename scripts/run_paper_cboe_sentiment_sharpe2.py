@@ -76,6 +76,7 @@ def main() -> None:
     parser.add_argument("--configs-per-stage", type=int, default=25_000)
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=120)
+    parser.add_argument("--allow-partial", action="store_true")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -92,7 +93,7 @@ def main() -> None:
             top_per_stage=args.top_per_stage,
         )
     else:
-        run_merge(output_dir, total_stages=args.total_stages)
+        run_merge(output_dir, total_stages=args.total_stages, allow_partial=args.allow_partial)
 
 
 def run_data(output_dir: Path) -> None:
@@ -406,7 +407,7 @@ def daily_metrics(returns: np.ndarray) -> dict[str, float]:
     }
 
 
-def run_merge(output_dir: Path, *, total_stages: int = 360) -> None:
+def run_merge(output_dir: Path, *, total_stages: int = 360, allow_partial: bool = False) -> None:
     shard_root = output_dir / "shards"
     top_files = list(shard_root.glob("**/top_candidates.jsonl"))
     diag_files = list(shard_root.glob("**/validation_diagnostic.jsonl"))
@@ -450,7 +451,7 @@ def run_merge(output_dir: Path, *, total_stages: int = 360) -> None:
         "paper_sourced_only": True,
     }
     (final / "paper_cboe_sentiment_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    if summary["partial"]:
+    if summary["partial"] and not allow_partial:
         raise RuntimeError(f"partial CBOE sentiment run: found {len(summary_files)}/{total_stages} stages")
 
 

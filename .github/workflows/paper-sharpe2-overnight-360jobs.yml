@@ -8,7 +8,7 @@ on:
         required: true
         default: "360"
       cboe_time_budget_minutes:
-        description: "CBOE/VIX minutes per job"
+        description: "CBOE/VIX minutes per stage"
         required: true
         default: "70"
       ensemble_configs_per_stage:
@@ -16,7 +16,7 @@ on:
         required: true
         default: "6500"
       spy_time_budget_minutes:
-        description: "SPY paper-rule minutes per job"
+        description: "SPY paper-rule minutes per stage"
         required: true
         default: "75"
 
@@ -36,21 +36,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      r0: ${{ steps.matrix.outputs.r0 }}
-      r1: ${{ steps.matrix.outputs.r1 }}
-      r2: ${{ steps.matrix.outputs.r2 }}
-      r3: ${{ steps.matrix.outputs.r3 }}
-      r4: ${{ steps.matrix.outputs.r4 }}
-      r5: ${{ steps.matrix.outputs.r5 }}
+      first_half: ${{ steps.matrix.outputs.first_half }}
+      second_half: ${{ steps.matrix.outputs.second_half }}
     steps:
       - id: matrix
-        name: Build 180-stage ranges
+        name: Build 360 bundle matrix split into 2 x 180
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          for i in range(6):
-              start = i * 180
-              print(f"r{i}=" + json.dumps(list(range(start, start + 180))))
+          print("first_half=" + json.dumps(list(range(180))))
+          print("second_half=" + json.dumps(list(range(180, 360))))
           PY
 
   data_cboe:
@@ -62,8 +57,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - run: python -m pip install -e .
       - name: Build CBOE/VIX paper data
         run: python scripts/run_paper_cboe_sentiment_sharpe2.py --mode data --output-dir "$CBOE_DIR"
       - uses: actions/upload-artifact@v4
@@ -80,8 +74,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - run: python -m pip install -e .
       - name: Build operable paper ensemble data
         run: python scripts/run_paper_operable_ensemble_sharpe2.py --mode data --output-dir "$ENSEMBLE_DIR"
       - uses: actions/upload-artifact@v4
@@ -98,8 +91,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - run: python -m pip install -e .
       - name: Build SPY paper-rule data
         run: python scripts/run_paper_spy_weekly_sharpe2.py --mode data --output-dir "$SPY_DIR"
       - uses: actions/upload-artifact@v4
@@ -107,376 +99,141 @@ jobs:
           name: overnight-spy-data
           path: ${{ env.SPY_DIR }}/*
 
-  cboe_wave0_a:
+  search_bundle_a:
     runs-on: ubuntu-latest
-    needs: [plan, data_cboe]
-    timeout-minutes: 95
+    needs: [plan, data_cboe, data_ensemble, data_spy]
+    timeout-minutes: 560
     continue-on-error: true
     strategy:
       fail-fast: false
       max-parallel: 180
       matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r0) }}
-    steps: &cboe_steps
+        stage: ${{ fromJSON(needs.plan.outputs.first_half) }}
+    steps: &bundle_steps
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
-      - uses: actions/download-artifact@v4
-        with:
-          name: overnight-cboe-data
-          path: ${{ env.CBOE_DIR }}
-      - name: Run CBOE/VIX sentiment stage
-        run: |
-          python scripts/run_paper_cboe_sentiment_sharpe2.py \
-            --mode shard \
-            --output-dir "$CBOE_DIR" \
-            --stage "${{ matrix.stage }}" \
-            --total-stages 720 \
-            --configs-per-stage 5000000 \
-            --time-budget-minutes "${{ inputs.cboe_time_budget_minutes }}" \
-            --top-per-stage 160
-      - uses: actions/upload-artifact@v4
-        with:
-          name: overnight-cboe-stage-${{ matrix.stage }}
-          path: ${{ env.CBOE_DIR }}/shards/stage_*
-
-  cboe_wave0_b:
-    runs-on: ubuntu-latest
-    needs: [plan, data_cboe]
-    timeout-minutes: 95
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r1) }}
-    steps: *cboe_steps
-
-  cboe_wave1_a:
-    runs-on: ubuntu-latest
-    needs: [plan, cboe_wave0_a, cboe_wave0_b]
-    timeout-minutes: 95
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r2) }}
-    steps: *cboe_steps
-
-  cboe_wave1_b:
-    runs-on: ubuntu-latest
-    needs: [plan, cboe_wave0_a, cboe_wave0_b]
-    timeout-minutes: 95
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r3) }}
-    steps: *cboe_steps
-
-  merge_cboe:
-    runs-on: ubuntu-latest
-    needs: [data_cboe, cboe_wave1_a, cboe_wave1_b]
-    if: always()
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - run: python -m pip install -e .
       - uses: actions/download-artifact@v4
         with:
           name: overnight-cboe-data
           path: ${{ env.CBOE_DIR }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: overnight-cboe-stage-*
-          path: ${{ env.CBOE_DIR }}/shards
-          merge-multiple: true
-      - name: Merge CBOE stages
-        run: python scripts/run_paper_cboe_sentiment_sharpe2.py --mode merge --output-dir "$CBOE_DIR" --total-stages 720
+          name: overnight-ensemble-data
+          path: ${{ env.ENSEMBLE_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: overnight-spy-data
+          path: ${{ env.SPY_DIR }}
+      - name: Run bundled paper stages
+        run: |
+          set -e
+          for STAGE in "${{ matrix.stage }}" "$(( ${{ matrix.stage }} + 360 ))"; do
+            python scripts/run_paper_cboe_sentiment_sharpe2.py \
+              --mode shard \
+              --output-dir "$CBOE_DIR" \
+              --stage "$STAGE" \
+              --total-stages 720 \
+              --configs-per-stage 5000000 \
+              --time-budget-minutes "${{ inputs.cboe_time_budget_minutes }}" \
+              --top-per-stage 160
+          done
+
+          for STAGE in "${{ matrix.stage }}" "$(( ${{ matrix.stage }} + 360 ))" "$(( ${{ matrix.stage }} + 720 ))"; do
+            python scripts/run_paper_operable_ensemble_sharpe2.py \
+              --mode shard \
+              --output-dir "$ENSEMBLE_DIR" \
+              --stage "$STAGE" \
+              --total-stages 1080 \
+              --configs-per-stage "${{ inputs.ensemble_configs_per_stage }}"
+          done
+
+          for STAGE in "${{ matrix.stage }}" "$(( ${{ matrix.stage }} + 360 ))"; do
+            python scripts/run_paper_spy_weekly_sharpe2.py \
+              --mode shard \
+              --output-dir "$SPY_DIR" \
+              --stage "$STAGE" \
+              --configs-per-stage 5000000 \
+              --time-budget-minutes "${{ inputs.spy_time_budget_minutes }}" \
+              --top-per-stage 180
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: overnight-cboe-results
-          path: ${{ env.CBOE_DIR }}
+          name: overnight-bundle-stage-${{ matrix.stage }}
+          path: |
+            ${{ env.CBOE_DIR }}/shards/stage_*
+            ${{ env.ENSEMBLE_DIR }}/shards/stage_*
+            ${{ env.SPY_DIR }}/shards/stage_*
 
-  ensemble_wave0_a:
+  search_bundle_b:
     runs-on: ubuntu-latest
-    needs: [plan, merge_cboe, data_ensemble]
-    if: always()
-    timeout-minutes: 85
+    needs: [plan, data_cboe, data_ensemble, data_spy]
+    timeout-minutes: 560
     continue-on-error: true
     strategy:
       fail-fast: false
       max-parallel: 180
       matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r0) }}
-    steps: &ensemble_steps
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
-      - uses: actions/download-artifact@v4
-        with:
-          name: overnight-ensemble-data
-          path: ${{ env.ENSEMBLE_DIR }}
-      - name: Run operable paper ensemble stage
-        run: |
-          python scripts/run_paper_operable_ensemble_sharpe2.py \
-            --mode shard \
-            --output-dir "$ENSEMBLE_DIR" \
-            --stage "${{ matrix.stage }}" \
-            --total-stages 1080 \
-            --configs-per-stage "${{ inputs.ensemble_configs_per_stage }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: overnight-ensemble-stage-${{ matrix.stage }}
-          path: ${{ env.ENSEMBLE_DIR }}/shards/stage_*
+        stage: ${{ fromJSON(needs.plan.outputs.second_half) }}
+    steps: *bundle_steps
 
-  ensemble_wave0_b:
+  merge_all:
     runs-on: ubuntu-latest
-    needs: [plan, merge_cboe, data_ensemble]
+    needs: [data_cboe, data_ensemble, data_spy, search_bundle_a, search_bundle_b]
     if: always()
-    timeout-minutes: 85
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r1) }}
-    steps: *ensemble_steps
-
-  ensemble_wave1_a:
-    runs-on: ubuntu-latest
-    needs: [plan, ensemble_wave0_a, ensemble_wave0_b]
-    if: always()
-    timeout-minutes: 85
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r2) }}
-    steps: *ensemble_steps
-
-  ensemble_wave1_b:
-    runs-on: ubuntu-latest
-    needs: [plan, ensemble_wave0_a, ensemble_wave0_b]
-    if: always()
-    timeout-minutes: 85
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r3) }}
-    steps: *ensemble_steps
-
-  ensemble_wave2_a:
-    runs-on: ubuntu-latest
-    needs: [plan, ensemble_wave1_a, ensemble_wave1_b]
-    if: always()
-    timeout-minutes: 85
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r4) }}
-    steps: *ensemble_steps
-
-  ensemble_wave2_b:
-    runs-on: ubuntu-latest
-    needs: [plan, ensemble_wave1_a, ensemble_wave1_b]
-    if: always()
-    timeout-minutes: 85
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r5) }}
-    steps: *ensemble_steps
-
-  merge_ensemble:
-    runs-on: ubuntu-latest
-    needs: [data_ensemble, ensemble_wave2_a, ensemble_wave2_b]
-    if: always()
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: overnight-cboe-data
+          path: ${{ env.CBOE_DIR }}
       - uses: actions/download-artifact@v4
         with:
           name: overnight-ensemble-data
           path: ${{ env.ENSEMBLE_DIR }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: overnight-ensemble-stage-*
-          path: ${{ env.ENSEMBLE_DIR }}/shards
-          merge-multiple: true
-      - name: Merge ensemble stages
-        run: python scripts/run_paper_operable_ensemble_sharpe2.py --mode merge --output-dir "$ENSEMBLE_DIR" --total-stages 1080
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: overnight-ensemble-results
-          path: ${{ env.ENSEMBLE_DIR }}
-
-  spy_wave0_a:
-    runs-on: ubuntu-latest
-    needs: [plan, merge_ensemble, data_spy]
-    if: always()
-    timeout-minutes: 100
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r0) }}
-    steps: &spy_steps
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
-      - uses: actions/download-artifact@v4
-        with:
           name: overnight-spy-data
           path: ${{ env.SPY_DIR }}
-      - name: Run SPY paper-rule stage
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: overnight-bundle-stage-*
+          path: ${{ env.OUTPUT_DIR }}/bundles
+          merge-multiple: true
+      - name: Move bundled shards into campaign folders
         run: |
-          python scripts/run_paper_spy_weekly_sharpe2.py \
-            --mode shard \
-            --output-dir "$SPY_DIR" \
-            --stage "${{ matrix.stage }}" \
-            --configs-per-stage 5000000 \
-            --time-budget-minutes "${{ inputs.spy_time_budget_minutes }}" \
-            --top-per-stage 180
-      - uses: actions/upload-artifact@v4
-        with:
-          name: overnight-spy-stage-${{ matrix.stage }}
-          path: ${{ env.SPY_DIR }}/shards/stage_*
-
-  spy_wave0_b:
-    runs-on: ubuntu-latest
-    needs: [plan, merge_ensemble, data_spy]
-    if: always()
-    timeout-minutes: 100
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r1) }}
-    steps: *spy_steps
-
-  spy_wave1_a:
-    runs-on: ubuntu-latest
-    needs: [plan, spy_wave0_a, spy_wave0_b]
-    if: always()
-    timeout-minutes: 100
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r2) }}
-    steps: *spy_steps
-
-  spy_wave1_b:
-    runs-on: ubuntu-latest
-    needs: [plan, spy_wave0_a, spy_wave0_b]
-    if: always()
-    timeout-minutes: 100
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      max-parallel: 180
-      matrix:
-        stage: ${{ fromJSON(needs.plan.outputs.r3) }}
-    steps: *spy_steps
-
-  merge_spy:
-    runs-on: ubuntu-latest
-    needs: [data_spy, spy_wave1_a, spy_wave1_b]
-    if: always()
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
-      - uses: actions/download-artifact@v4
-        with:
-          name: overnight-spy-data
-          path: ${{ env.SPY_DIR }}
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: overnight-spy-stage-*
-          path: ${{ env.SPY_DIR }}/shards
-          merge-multiple: true
-      - name: Merge SPY paper-rule stages
-        run: python scripts/run_paper_spy_weekly_sharpe2.py --mode merge --output-dir "$SPY_DIR"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: overnight-spy-results
-          path: ${{ env.SPY_DIR }}
-
-  aggregate:
-    runs-on: ubuntu-latest
-    needs: [merge_cboe, merge_ensemble, merge_spy]
-    if: always()
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install Aurora
-        run: python -m pip install -e .
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: overnight-cboe-results
-          path: ${{ env.CBOE_DIR }}
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: overnight-ensemble-results
-          path: ${{ env.ENSEMBLE_DIR }}
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: overnight-spy-results
-          path: ${{ env.SPY_DIR }}
-      - name: Aggregate overnight result
-        run: python scripts/merge_paper_sharpe2_overnight.py --output-dir "$OUTPUT_DIR"
+          mkdir -p "$CBOE_DIR/shards" "$ENSEMBLE_DIR/shards" "$SPY_DIR/shards"
+          if [ -d "$OUTPUT_DIR/bundles/cboe_vix_sentiment_deep/shards" ]; then
+            cp -R "$OUTPUT_DIR/bundles/cboe_vix_sentiment_deep/shards/"* "$CBOE_DIR/shards/" || true
+          fi
+          if [ -d "$OUTPUT_DIR/bundles/operable_paper_ensemble_deep/shards" ]; then
+            cp -R "$OUTPUT_DIR/bundles/operable_paper_ensemble_deep/shards/"* "$ENSEMBLE_DIR/shards/" || true
+          fi
+          if [ -d "$OUTPUT_DIR/bundles/spy_paper_rules_deep/shards" ]; then
+            cp -R "$OUTPUT_DIR/bundles/spy_paper_rules_deep/shards/"* "$SPY_DIR/shards/" || true
+          fi
+          find "$OUTPUT_DIR/bundles" -path "*/cboe_vix_sentiment_deep/shards/stage_*" -type d -exec cp -R {} "$CBOE_DIR/shards/" \; || true
+          find "$OUTPUT_DIR/bundles" -path "*/operable_paper_ensemble_deep/shards/stage_*" -type d -exec cp -R {} "$ENSEMBLE_DIR/shards/" \; || true
+          find "$OUTPUT_DIR/bundles" -path "*/spy_paper_rules_deep/shards/stage_*" -type d -exec cp -R {} "$SPY_DIR/shards/" \; || true
+          echo "CBOE shards: $(find "$CBOE_DIR/shards" -name shard_summary.json | wc -l)"
+          echo "Ensemble shards: $(find "$ENSEMBLE_DIR/shards" -name stage_summary.json | wc -l)"
+          echo "SPY shards: $(find "$SPY_DIR/shards" -name shard_summary.json | wc -l)"
+      - name: Merge campaigns
+        run: |
+          python scripts/run_paper_cboe_sentiment_sharpe2.py --mode merge --output-dir "$CBOE_DIR" --total-stages 720 --allow-partial
+          python scripts/run_paper_operable_ensemble_sharpe2.py --mode merge --output-dir "$ENSEMBLE_DIR" --total-stages 1080 --allow-partial
+          python scripts/run_paper_spy_weekly_sharpe2.py --mode merge --output-dir "$SPY_DIR"
+          python scripts/merge_paper_sharpe2_overnight.py --output-dir "$OUTPUT_DIR"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

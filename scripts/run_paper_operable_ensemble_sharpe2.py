@@ -48,6 +48,7 @@ def main() -> None:
     parser.add_argument("--stage", type=int, default=0)
     parser.add_argument("--total-stages", type=int, default=360)
     parser.add_argument("--configs-per-stage", type=int, default=2500)
+    parser.add_argument("--allow-partial", action="store_true")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -62,7 +63,7 @@ def main() -> None:
             configs_per_stage=args.configs_per_stage,
         )
     else:
-        run_merge(output_dir, total_stages=args.total_stages)
+        run_merge(output_dir, total_stages=args.total_stages, allow_partial=args.allow_partial)
 
 
 def run_data(output_dir: Path) -> None:
@@ -182,7 +183,7 @@ def run_shard(output_dir: Path, *, stage: int, total_stages: int, configs_per_st
     )
 
 
-def run_merge(output_dir: Path, *, total_stages: int) -> None:
+def run_merge(output_dir: Path, *, total_stages: int, allow_partial: bool = False) -> None:
     result_files = list((output_dir / "shards").glob("**/stage_results.csv"))
     summary_files = list((output_dir / "shards").glob("**/stage_summary.json"))
     if not result_files:
@@ -229,7 +230,7 @@ def run_merge(output_dir: Path, *, total_stages: int) -> None:
         "paper_exact_replication_claimed": False,
     }
     (final_dir / "paper_operable_ensemble_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    if partial:
+    if partial and not allow_partial:
         raise RuntimeError(f"Partial merge: found {len(set(found_stages))}/{total_stages} stages")
 
 
