@@ -1,0 +1,155 @@
+name: Paper SPY Monthly Sharpe2 Quick 360 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_parallel_requested:
+        description: "Global intended standard runner concurrency"
+        required: true
+        default: "360"
+      time_budget_minutes:
+        description: "Monthly paper-rule minutes per stage"
+        required: true
+        default: "2"
+      top_per_stage:
+        description: "Rows kept per stage"
+        required: true
+        default: "120"
+      stage_offset:
+        description: "Stage offset for new non-repeated rounds"
+        required: true
+        default: "0"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/paper_spy_monthly_sharpe2_quick_360jobs
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      first_half: ${{ steps.matrix.outputs.first_half }}
+      second_half: ${{ steps.matrix.outputs.second_half }}
+    steps:
+      - id: matrix
+        name: Build 360 matrix split into 2 x 180
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print("first_half=" + json.dumps(list(range(180))))
+          print("second_half=" + json.dumps(list(range(180, 360))))
+          PY
+
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Build SPY monthly paper data
+        run: python scripts/run_paper_spy_monthly_sharpe2.py --mode data --output-dir "$OUTPUT_DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spy-monthly-quick-data
+          path: |
+            ${{ env.OUTPUT_DIR }}/paper_monthly_feature_frame.csv
+            ${{ env.OUTPUT_DIR }}/monthly_returns.csv
+            ${{ env.OUTPUT_DIR }}/monthly_prices.csv
+            ${{ env.OUTPUT_DIR }}/paper_feature_audit.csv
+            ${{ env.OUTPUT_DIR }}/paper_sources.csv
+            ${{ env.OUTPUT_DIR }}/policy_audit.json
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [plan, data]
+    timeout-minutes: 14
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        stage: ${{ fromJSON(needs.plan.outputs.first_half) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: spy-monthly-quick-data
+          path: ${{ env.OUTPUT_DIR }}
+      - name: Run SPY monthly paper stage
+        run: |
+          STAGE=$(( ${{ matrix.stage }} + ${{ inputs.stage_offset }} ))
+          python scripts/run_paper_spy_monthly_sharpe2.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "$STAGE" \
+            --configs-per-stage 2000000 \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --top-per-stage "${{ inputs.top_per_stage }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spy-monthly-quick-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [plan, data]
+    timeout-minutes: 14
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        stage: ${{ fromJSON(needs.plan.outputs.second_half) }}
+    steps: *search_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, search_a, search_b]
+    if: always()
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: spy-monthly-quick-data
+          path: ${{ env.OUTPUT_DIR }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: spy-monthly-quick-stage-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+          merge-multiple: true
+      - name: Merge SPY monthly paper stages
+        run: python scripts/run_paper_spy_monthly_sharpe2.py --mode merge --output-dir "$OUTPUT_DIR"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paper-spy-monthly-sharpe2-quick-360jobs-results
+          path: |
+            ${{ env.OUTPUT_DIR }}/paper_spy_monthly_sharpe2_summary.json
+            ${{ env.OUTPUT_DIR }}/paper_spy_monthly_sharpe2_leaderboard.csv
+            ${{ env.OUTPUT_DIR }}/paper_spy_monthly_sharpe2_verified.csv
+            ${{ env.OUTPUT_DIR }}/paper_spy_monthly_sharpe2_validation_ceiling_diagnostic.csv
+            ${{ env.OUTPUT_DIR }}/paper_spy_monthly_sharpe2_fail_reasons.csv
+            ${{ env.OUTPUT_DIR }}/paper_feature_audit.csv
+            ${{ env.OUTPUT_DIR }}/paper_sources.csv
+            ${{ env.OUTPUT_DIR }}/policy_audit.json
