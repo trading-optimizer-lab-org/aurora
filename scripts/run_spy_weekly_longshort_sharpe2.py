@@ -844,7 +844,14 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
     optional_feature_cols = [col for col in optional_feature_cols if col in data.columns]
     if optional_feature_cols:
         data[optional_feature_cols] = data[optional_feature_cols].fillna(0.0)
-    data = data.dropna(how="any")
+    # This search must judge every train year from 1995. Keep the early rows
+    # and neutral-fill feature warm-up gaps after train-only scaling instead
+    # of silently moving the whole backtest start to 1999+.
+    feature_start_cutoff = pd.Timestamp("1995-02-28")
+    requires_1995_coverage = bool(len(data.index) > 0 and data.index.min() <= pd.Timestamp("1995-03-31"))
+    data = data[data.index >= feature_start_cutoff]
+    if requires_1995_coverage and (data.empty or data.index.min() > pd.Timestamp("1995-03-31")):
+        raise RuntimeError(f"Feature frame starts too late for 1995 annual test: {data.index.min() if not data.empty else 'empty'}")
     # Robust per-column scaling, fit using train only to avoid validation leakage.
     train = data[data.index <= TRAIN_END]
     median = train.median()
@@ -856,7 +863,7 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
     median = median[valid_cols]
     scale = scale[valid_cols]
     scaled = (data - median) / scale
-    return scaled.replace([np.inf, -np.inf], np.nan).dropna(how="any").clip(-8.0, 8.0)
+    return scaled.replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(-8.0, 8.0)
 
 
 def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int) -> dict[str, Any]:

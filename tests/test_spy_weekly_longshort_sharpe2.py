@@ -63,8 +63,9 @@ def test_feature_frame_uses_lagged_features_and_no_locked() -> None:
     features = build_feature_frame(prices, returns)
     assert not features.empty
     assert features.index.max() < LOCKED_START
-    # The first feature row must appear only after enough prior data exists.
-    assert features.index.min() > returns.index.min()
+    # Early warm-up values are neutral-filled so every train year can be judged.
+    assert features.index.min() >= returns.index.min()
+    assert features.isna().sum().sum() == 0
     assert "calendar_month_end_week" in features.columns
     assert "calendar_options_expiry_week" in features.columns
     assert "sr_distance_to_high_52w" in features.columns
@@ -104,7 +105,9 @@ def test_spy_daily_weekly_features_are_lagged_into_feature_frame() -> None:
     assert "spy_daily_vol_z_13w" in features.columns
     assert "spy_daily_up_down_balance" in features.columns
     assert "sr_pivot_r1_gap" in features.columns
-    assert features.index.min() > returns.index.min()
+    # Early warm-up values are neutral-filled; individual feature builders still lag signals.
+    assert features.index.min() >= returns.index.min()
+    assert features.isna().sum().sum() == 0
 
 
 def test_support_resistance_family_is_sampled_directly() -> None:
