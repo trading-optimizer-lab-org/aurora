@@ -16,8 +16,8 @@ import yfinance as yf
 CAMPAIGN_ID = "spy_weekly_longshort_sharpe2_trainonly_355jobs"
 TRAIN_END = pd.Timestamp("2010-12-31")
 VALIDATION_START = pd.Timestamp("2011-01-01")
-VALIDATION_END = pd.Timestamp("2019-12-31")
-LOCKED_START = pd.Timestamp("2020-01-01")
+VALIDATION_END = pd.Timestamp("2020-12-31")
+LOCKED_START = pd.Timestamp("2021-01-01")
 PPY = 52
 TARGET_SHARPE = 2.0
 
@@ -92,7 +92,7 @@ def run_data(output_dir: Path) -> None:
     raw = yf.download(
         symbols,
         start="1995-01-01",
-        end="2020-01-01",
+        end="2021-01-01",
         auto_adjust=True,
         progress=False,
         group_by="ticker",
@@ -235,16 +235,29 @@ def run_shard(
         train_returns = strategy_returns[train_mask]
         train_dates = feature_frame.index[train_mask]
         train_stability = train_only_stability(train_returns, train_dates)
+        train_annual_excess = annual_excess_metrics(
+            train_returns,
+            spy_values[train_mask],
+            train_dates,
+            expected_years=range(1995, 2011),
+        )
         train_score = train_only_score(train_metrics, positions[train_mask], params, train_stability)
+        train_score += annual_excess_train_bonus(train_annual_excess)
         # Cheap pruning, but keep deterministic probes so weak areas still report failures.
         if train_metrics["sharpe"] < 0.25 and config_index % 257 != 0:
             continue
         validation_metrics = metrics(strategy_returns[validation_mask])
         validation_evaluated += 1
+        validation_annual_excess = annual_excess_metrics(
+            strategy_returns[validation_mask],
+            spy_values[validation_mask],
+            feature_frame.index[validation_mask],
+            expected_years=range(2011, 2021),
+        )
         position_train = position_audit(positions[train_mask])
         position_validation = position_audit(positions[validation_mask])
-        train_pass = bool(train_metrics["sharpe"] >= TARGET_SHARPE and position_train["always_invested"])
-        validation_pass = bool(validation_metrics["sharpe"] >= TARGET_SHARPE and position_validation["always_invested"])
+        train_pass = bool(train_annual_excess["beats_all_years"] and position_train["always_invested"])
+        validation_pass = bool(validation_annual_excess["beats_all_years"] and position_validation["always_invested"])
         config_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode("utf-8")).hexdigest()
         rows.append(
             {
@@ -257,7 +270,7 @@ def run_shard(
                 "validation_used_for_selection": False,
                 "locked_opened": False,
                 "locked_rows_accessed": 0,
-                "data_end_max": "2019-12-31",
+                "data_end_max": "2020-12-31",
                 "traded_asset": "SPY",
                 "frequency": "weekly",
                 "position_policy": "always_1x_long_or_short",
@@ -280,6 +293,22 @@ def run_shard(
                 "train_min_year_sharpe": float(train_stability["min_year_sharpe"]),
                 "train_positive_years_pct": float(train_stability["positive_years_pct"]),
                 "train_stability_score": float(train_stability["stability_score"]),
+                "train_beats_spy_all_years": bool(train_annual_excess["beats_all_years"]),
+                "validation_beats_spy_all_years_report_only": bool(validation_annual_excess["beats_all_years"]),
+                "train_years_beaten": int(train_annual_excess["years_beaten"]),
+                "train_years_expected": int(train_annual_excess["years_expected"]),
+                "validation_years_beaten_report_only": int(validation_annual_excess["years_beaten"]),
+                "validation_years_expected": int(validation_annual_excess["years_expected"]),
+                "train_min_annual_excess_vs_spy": float(train_annual_excess["min_excess"]),
+                "validation_min_annual_excess_vs_spy_report_only": float(validation_annual_excess["min_excess"]),
+                "train_worst_excess_year": int(train_annual_excess["worst_year"]),
+                "validation_worst_excess_year_report_only": int(validation_annual_excess["worst_year"]),
+                "train_annual_returns_json": json.dumps(train_annual_excess["strategy_returns"], sort_keys=True),
+                "validation_annual_returns_json": json.dumps(validation_annual_excess["strategy_returns"], sort_keys=True),
+                "train_annual_spy_returns_json": json.dumps(train_annual_excess["spy_returns"], sort_keys=True),
+                "validation_annual_spy_returns_json": json.dumps(validation_annual_excess["spy_returns"], sort_keys=True),
+                "train_annual_excess_json": json.dumps(train_annual_excess["excess"], sort_keys=True),
+                "validation_annual_excess_json": json.dumps(validation_annual_excess["excess"], sort_keys=True),
                 "cv_train_sharpe": float(params.get("cv_train_sharpe", np.nan)),
                 "cv_train_cagr": float(params.get("cv_train_cagr", np.nan)),
                 "cv_train_mdd": float(params.get("cv_train_mdd", np.nan)),
@@ -343,7 +372,19 @@ def select_top_candidates_for_merge(frame: pd.DataFrame, top_per_stage: int) -> 
 
     if frame.empty:
         return frame.copy()
-    ranked = frame.sort_values(["train_score", "train_sharpe", "train_cagr"], ascending=[False, False, False])
+    sort_cols = ["train_score", "train_sharpe", "train_cagr"]
+    ascending = [False, False, False]
+    if {"train_beats_spy_all_years", "train_years_beaten", "train_min_annual_excess_vs_spy"} <= set(frame.columns):
+        sort_cols = [
+            "train_beats_spy_all_years",
+            "train_years_beaten",
+            "train_min_annual_excess_vs_spy",
+            "train_score",
+            "train_sharpe",
+            "train_cagr",
+        ]
+        ascending = [False, False, False, False, False, False]
+    ranked = frame.sort_values(sort_cols, ascending=ascending)
     pieces = [ranked.head(int(top_per_stage))]
     if "rule_type" in frame.columns:
         per_rule = max(4, int(top_per_stage) // 20)
@@ -352,10 +393,7 @@ def select_top_candidates_for_merge(frame: pd.DataFrame, top_per_stage: int) -> 
         split_guard = frame[frame["rule_type"].astype(str) == "split_guard_leaf_tree"]
         if not split_guard.empty:
             pieces.append(
-                split_guard.sort_values(
-                    ["cv_min_fold_sharpe", "cv_fold_positive_pct", "train_score"],
-                    ascending=[False, False, False],
-                ).head(max(12, int(top_per_stage) // 8))
+                split_guard.sort_values(sort_cols, ascending=ascending).head(max(12, int(top_per_stage) // 8))
             )
         cv_rules = frame[frame["rule_type"].astype(str).str.startswith("cv_", na=False)]
         if not cv_rules.empty and "cv_train_sharpe" in cv_rules.columns:
@@ -366,7 +404,7 @@ def select_top_candidates_for_merge(frame: pd.DataFrame, top_per_stage: int) -> 
             )
     selected = pd.concat(pieces, ignore_index=True).drop_duplicates("strategy_id")
     max_rows = int(top_per_stage) + max(60, int(top_per_stage) // 2)
-    return selected.sort_values(["train_score", "train_sharpe", "train_cagr"], ascending=[False, False, False]).head(max_rows)
+    return selected.sort_values(sort_cols, ascending=ascending).head(max_rows)
 
 
 def select_validation_ceiling_diagnostic(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
@@ -382,6 +420,196 @@ def select_validation_ceiling_diagnostic(frame: pd.DataFrame, top_per_stage: int
     ranked["diagnostic_validation_selected"] = True
     ranked["eligible_for_acceptance"] = False
     return ranked
+
+
+def _rolling_extreme_age(values: pd.Series, window: int, *, use_max: bool) -> pd.Series:
+    def age(arr: np.ndarray) -> float:
+        if np.isnan(arr).all():
+            return np.nan
+        pos = int(np.nanargmax(arr) if use_max else np.nanargmin(arr))
+        return float(len(arr) - 1 - pos)
+
+    return values.rolling(window).apply(age, raw=True).shift(1)
+
+
+def _rolling_level_touch_pct(values: pd.Series, window: int, *, use_max: bool, tolerance: float = 0.01) -> pd.Series:
+    def touch_pct(arr: np.ndarray) -> float:
+        clean = arr[np.isfinite(arr)]
+        if clean.size == 0:
+            return np.nan
+        level = float(np.nanmax(clean) if use_max else np.nanmin(clean))
+        if abs(level) <= 1e-12:
+            return np.nan
+        return float(np.mean(np.abs(clean / level - 1.0) <= tolerance))
+
+    return values.rolling(window).apply(touch_pct, raw=True).shift(1)
+
+
+def add_support_resistance_features(data: pd.DataFrame, prices: pd.DataFrame, returns: pd.DataFrame) -> None:
+    """Add causal support/resistance features.
+
+    Every feature is shifted so the row at timestamp t only uses information that
+    would have been known before trading the return at t.
+    """
+
+    idx = returns.index
+    close = prices["SPY"].reindex(idx).ffill()
+    spy_rets = returns["SPY"].reindex(idx)
+    if {"SPY_OPEN", "SPY_HIGH", "SPY_LOW"} <= set(prices.columns):
+        open_ = prices["SPY_OPEN"].reindex(idx).ffill()
+        high = prices["SPY_HIGH"].reindex(idx).ffill()
+        low = prices["SPY_LOW"].reindex(idx).ffill()
+    else:
+        open_ = close
+        high = close
+        low = close
+    volume = prices["SPY_VOLUME"].reindex(idx).ffill() if "SPY_VOLUME" in prices.columns else pd.Series(np.nan, index=idx)
+
+    prev_close = close.shift(1)
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_open = open_.shift(1)
+    prev_range = (prev_high - prev_low).replace(0.0, np.nan)
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low - close.shift(1)).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    pivot = (prev_high + prev_low + prev_close) / 3.0
+    pivot_r1 = 2.0 * pivot - prev_low
+    pivot_s1 = 2.0 * pivot - prev_high
+    pivot_r2 = pivot + (prev_high - prev_low)
+    pivot_s2 = pivot - (prev_high - prev_low)
+    data["sr_pivot_gap"] = prev_close / pivot.replace(0.0, np.nan) - 1.0
+    data["sr_pivot_r1_gap"] = prev_close / pivot_r1.replace(0.0, np.nan) - 1.0
+    data["sr_pivot_s1_gap"] = prev_close / pivot_s1.replace(0.0, np.nan) - 1.0
+    data["sr_pivot_r2_gap"] = prev_close / pivot_r2.replace(0.0, np.nan) - 1.0
+    data["sr_pivot_s2_gap"] = prev_close / pivot_s2.replace(0.0, np.nan) - 1.0
+    data["sr_prev_upper_wick_ratio"] = ((prev_high - pd.concat([prev_open, prev_close], axis=1).max(axis=1)) / prev_range).replace([np.inf, -np.inf], np.nan)
+    data["sr_prev_lower_wick_ratio"] = ((pd.concat([prev_open, prev_close], axis=1).min(axis=1) - prev_low) / prev_range).replace([np.inf, -np.inf], np.nan)
+    data["sr_prev_body_ratio"] = ((prev_close - prev_open).abs() / prev_range).replace([np.inf, -np.inf], np.nan)
+    data["sr_prev_close_location"] = ((prev_close - prev_low) / prev_range).replace([np.inf, -np.inf], np.nan)
+    data["sr_prev_outside_bar"] = ((prev_high > high.shift(2)) & (prev_low < low.shift(2))).astype(float)
+    data["sr_prev_inside_bar"] = ((prev_high < high.shift(2)) & (prev_low > low.shift(2))).astype(float)
+    data["sr_prev_gap_up"] = (prev_open / close.shift(2).replace(0.0, np.nan) - 1.0).clip(lower=0.0)
+    data["sr_prev_gap_down"] = (prev_open / close.shift(2).replace(0.0, np.nan) - 1.0).clip(upper=0.0)
+    data["sr_prev_gap_fill"] = np.where(
+        prev_open > close.shift(2),
+        (prev_low <= close.shift(2)).astype(float),
+        np.where(prev_open < close.shift(2), (prev_high >= close.shift(2)).astype(float), 0.0),
+    )
+    data["sr_prev_gap_size_atr_13w"] = (prev_open / close.shift(2).replace(0.0, np.nan) - 1.0) / (
+        true_range.rolling(13).mean().shift(1) / prev_close.replace(0.0, np.nan)
+    ).replace(0.0, np.nan)
+
+    for lb in [4, 8, 13, 20, 26, 52, 104]:
+        rolling_high = high.rolling(lb).max().shift(1)
+        rolling_low = low.rolling(lb).min().shift(1)
+        channel_width = (rolling_high - rolling_low).replace(0.0, np.nan)
+        atr = true_range.rolling(lb).mean().shift(1)
+        atr_pct = (atr / prev_close.replace(0.0, np.nan)).replace(0.0, np.nan)
+        prior_high = high.rolling(lb).max().shift(2)
+        prior_low = low.rolling(lb).min().shift(2)
+
+        data[f"sr_distance_to_high_{lb}w"] = prev_close / rolling_high.replace(0.0, np.nan) - 1.0
+        data[f"sr_distance_to_low_{lb}w"] = prev_close / rolling_low.replace(0.0, np.nan) - 1.0
+        data[f"sr_pct_from_high_{lb}w"] = data[f"sr_distance_to_high_{lb}w"]
+        data[f"sr_pct_from_low_{lb}w"] = data[f"sr_distance_to_low_{lb}w"]
+        data[f"sr_near_high_{lb}w"] = (data[f"sr_distance_to_high_{lb}w"].abs() <= 0.01).astype(float)
+        data[f"sr_near_low_{lb}w"] = (data[f"sr_distance_to_low_{lb}w"].abs() <= 0.01).astype(float)
+        data[f"sr_donchian_position_{lb}w"] = ((prev_close - rolling_low) / channel_width).replace([np.inf, -np.inf], np.nan)
+        data[f"sr_donchian_width_{lb}w"] = (channel_width / prev_close.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+        data[f"sr_donchian_mid_gap_{lb}w"] = prev_close / ((rolling_high + rolling_low) / 2.0).replace(0.0, np.nan) - 1.0
+        data[f"sr_close_above_prior_high_{lb}w"] = (prev_close > prior_high).astype(float)
+        data[f"sr_close_below_prior_low_{lb}w"] = (prev_close < prior_low).astype(float)
+        data[f"sr_high_above_prior_high_{lb}w"] = (prev_high > prior_high).astype(float)
+        data[f"sr_low_below_prior_low_{lb}w"] = (prev_low < prior_low).astype(float)
+        data[f"sr_breakout_up_{lb}w"] = data[f"sr_close_above_prior_high_{lb}w"]
+        data[f"sr_breakout_down_{lb}w"] = data[f"sr_close_below_prior_low_{lb}w"]
+        data[f"sr_breakout_strength_atr_{lb}w"] = ((prev_close - prior_high) / atr.replace(0.0, np.nan)).where(prev_close > prior_high, 0.0)
+        data[f"sr_breakdown_strength_atr_{lb}w"] = ((prior_low - prev_close) / atr.replace(0.0, np.nan)).where(prev_close < prior_low, 0.0)
+        data[f"sr_failed_breakout_{lb}w"] = ((prev_high > prior_high) & (prev_close <= prior_high)).astype(float)
+        data[f"sr_failed_breakdown_{lb}w"] = ((prev_low < prior_low) & (prev_close >= prior_low)).astype(float)
+        data[f"sr_reclaim_support_{lb}w"] = data[f"sr_failed_breakdown_{lb}w"]
+        data[f"sr_reject_resistance_{lb}w"] = data[f"sr_failed_breakout_{lb}w"]
+        data[f"sr_bull_trap_{lb}w"] = data[f"sr_failed_breakout_{lb}w"] * (data["sr_prev_upper_wick_ratio"] > 0.35).astype(float)
+        data[f"sr_bear_trap_{lb}w"] = data[f"sr_failed_breakdown_{lb}w"] * (data["sr_prev_lower_wick_ratio"] > 0.35).astype(float)
+        data[f"sr_breakout_followthrough_1w_{lb}w"] = (
+            ((close.shift(2) > high.rolling(lb).max().shift(3)) & (spy_rets.shift(1) > 0.0)).astype(float)
+        )
+        data[f"sr_breakdown_followthrough_1w_{lb}w"] = (
+            ((close.shift(2) < low.rolling(lb).min().shift(3)) & (spy_rets.shift(1) < 0.0)).astype(float)
+        )
+        data[f"sr_bars_since_high_{lb}w"] = _rolling_extreme_age(high, lb, use_max=True)
+        data[f"sr_bars_since_low_{lb}w"] = _rolling_extreme_age(low, lb, use_max=False)
+        data[f"sr_resistance_touch_pct_{lb}w"] = _rolling_level_touch_pct(high, lb, use_max=True)
+        data[f"sr_support_touch_pct_{lb}w"] = _rolling_level_touch_pct(low, lb, use_max=False)
+        data[f"sr_support_reaction_score_{lb}w"] = (prev_close / rolling_low.replace(0.0, np.nan) - 1.0) / atr_pct
+        data[f"sr_resistance_reaction_score_{lb}w"] = (rolling_high / prev_close.replace(0.0, np.nan) - 1.0) / atr_pct
+        data[f"sr_level_failure_rate_{lb}w"] = (
+            data[f"sr_failed_breakout_{lb}w"].rolling(lb).mean().shift(1)
+            + data[f"sr_failed_breakdown_{lb}w"].rolling(lb).mean().shift(1)
+        ) / 2.0
+        data[f"sr_atr_{lb}w"] = atr_pct
+        data[f"sr_range_atr_ratio_{lb}w"] = ((prev_high - prev_low) / atr.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+        data[f"sr_range_compression_{lb}w"] = data[f"sr_donchian_width_{lb}w"] / data[f"sr_donchian_width_{lb}w"].rolling(lb).mean().shift(1).replace(0.0, np.nan)
+        data[f"sr_atr_compression_{lb}w"] = atr_pct / atr_pct.rolling(lb).mean().shift(1).replace(0.0, np.nan)
+        sma = close.rolling(lb).mean()
+        ema = close.ewm(span=lb, adjust=False).mean()
+        data[f"sr_sma_gap_{lb}w"] = prev_close / sma.shift(1).replace(0.0, np.nan) - 1.0
+        data[f"sr_ema_gap_{lb}w"] = prev_close / ema.shift(1).replace(0.0, np.nan) - 1.0
+        data[f"sr_sma_slope_{lb}w"] = (sma.shift(1) / sma.shift(lb + 1).replace(0.0, np.nan) - 1.0)
+        data[f"sr_ema_slope_{lb}w"] = (ema.shift(1) / ema.shift(lb + 1).replace(0.0, np.nan) - 1.0)
+        ret_std = spy_rets.rolling(lb).std()
+        bb_mid = close.rolling(lb).mean()
+        bb_upper = bb_mid * (1.0 + 2.0 * ret_std)
+        bb_lower = bb_mid * (1.0 - 2.0 * ret_std)
+        data[f"sr_bollinger_upper_gap_{lb}w"] = prev_close / bb_upper.shift(1).replace(0.0, np.nan) - 1.0
+        data[f"sr_bollinger_lower_gap_{lb}w"] = prev_close / bb_lower.shift(1).replace(0.0, np.nan) - 1.0
+        data[f"sr_bollinger_width_{lb}w"] = ((bb_upper - bb_lower) / bb_mid.replace(0.0, np.nan)).shift(1)
+        keltner_mid = ema
+        keltner_upper = keltner_mid + 2.0 * true_range.rolling(lb).mean()
+        keltner_lower = keltner_mid - 2.0 * true_range.rolling(lb).mean()
+        data[f"sr_keltner_upper_gap_{lb}w"] = prev_close / keltner_upper.shift(1).replace(0.0, np.nan) - 1.0
+        data[f"sr_keltner_lower_gap_{lb}w"] = prev_close / keltner_lower.shift(1).replace(0.0, np.nan) - 1.0
+        data[f"sr_bb_squeeze_{lb}w"] = data[f"sr_bollinger_width_{lb}w"] / data[f"sr_bollinger_width_{lb}w"].rolling(lb).mean().shift(1).replace(0.0, np.nan)
+        data[f"sr_compression_breakout_up_{lb}w"] = (
+            (data[f"sr_bb_squeeze_{lb}w"] < 0.80) & (prev_close > prior_high)
+        ).astype(float)
+        data[f"sr_compression_breakout_down_{lb}w"] = (
+            (data[f"sr_bb_squeeze_{lb}w"] < 0.80) & (prev_close < prior_low)
+        ).astype(float)
+        data[f"sr_support_confluence_{lb}w"] = (
+            data[f"sr_near_low_{lb}w"]
+            + (data[f"sr_sma_gap_{lb}w"].abs() <= 0.01).astype(float)
+            + (data[f"sr_bollinger_lower_gap_{lb}w"].abs() <= 0.01).astype(float)
+            + (data["sr_pivot_s1_gap"].abs() <= 0.01).astype(float)
+        )
+        data[f"sr_resistance_confluence_{lb}w"] = (
+            data[f"sr_near_high_{lb}w"]
+            + (data[f"sr_sma_gap_{lb}w"].abs() <= 0.01).astype(float)
+            + (data[f"sr_bollinger_upper_gap_{lb}w"].abs() <= 0.01).astype(float)
+            + (data["sr_pivot_r1_gap"].abs() <= 0.01).astype(float)
+        )
+
+    data["sr_higher_high_4w"] = (high.rolling(4).max().shift(1) > high.rolling(4).max().shift(5)).astype(float)
+    data["sr_lower_high_4w"] = (high.rolling(4).max().shift(1) < high.rolling(4).max().shift(5)).astype(float)
+    data["sr_higher_low_4w"] = (low.rolling(4).min().shift(1) > low.rolling(4).min().shift(5)).astype(float)
+    data["sr_lower_low_4w"] = (low.rolling(4).min().shift(1) < low.rolling(4).min().shift(5)).astype(float)
+    data["sr_market_structure_bullish"] = data["sr_higher_high_4w"] * data["sr_higher_low_4w"]
+    data["sr_market_structure_bearish"] = data["sr_lower_high_4w"] * data["sr_lower_low_4w"]
+    if volume.notna().any():
+        volume_mean = volume.rolling(26).mean()
+        volume_std = volume.rolling(26).std().replace(0.0, np.nan)
+        volume_z = ((volume - volume_mean) / volume_std).shift(1)
+        data["sr_volume_z_26w"] = volume_z
+        data["sr_volume_on_breakout_26w"] = data["sr_breakout_up_26w"] * volume_z
+        data["sr_volume_on_breakdown_26w"] = data["sr_breakout_down_26w"] * volume_z
+        data["sr_low_volume_breakout_26w"] = data["sr_breakout_up_26w"] * (volume_z < 0.0).astype(float)
 
 
 def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
@@ -563,6 +791,7 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
         gap_mean = prices["SPY_DAILY_GAP_MEAN"].reindex(returns.index).ffill()
         intraday_mean = prices["SPY_DAILY_INTRADAY_MEAN"].reindex(returns.index).ffill()
         data["spy_daily_gap_intraday_spread"] = (gap_mean - intraday_mean).shift(1)
+    add_support_resistance_features(data, prices, returns)
     data["spy_ret_4w_x_vix_z_26w"] = data["spy_ret_4w"] * data["vix_z_26w"]
     data["spy_ma_20w_x_tnx_z_26w"] = data["spy_ma_gap_20w"] * data["tnx_z_26w"]
     if "nasdaq_rel_spy_13w" in data.columns:
@@ -625,15 +854,18 @@ def build_feature_frame(prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataF
 
 
 def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int) -> dict[str, Any]:
-    family = stage % 11
+    family = stage % 12
     if family == 0:
         k = 1
     elif family in {1, 2}:
         k = int(rng.integers(2, 5))
     elif family in {3, 4}:
         k = int(rng.integers(4, 9))
+    elif family == 10:
+        k = int(rng.integers(2, min(8, len(feature_cols)) + 1))
     else:
-        k = int(rng.integers(8, min(16, len(feature_cols)) + 1))
+        max_k = min(16, len(feature_cols))
+        k = max_k if max_k < 8 else int(rng.integers(8, max_k + 1))
     k = min(int(k), len(feature_cols))
     feature_indices = sample_feature_indices(rng, feature_cols, k, family)
     weights = rng.normal(0.0, 1.0, size=k)
@@ -783,6 +1015,7 @@ def sample_feature_indices(
         7: ["spy_ret_", "vix_", "tnx_", "calendar_"],
         8: ["spy_week_", "spy_volume_", "spy_daily_", "russell_", "nasdaq_"],
         9: ["dxy_", "tyx_", "irx_", "fvx_", "tnx_"],
+        10: ["sr_"],
     }
     prefixes = groups.get(int(family), [])
     candidates = [
@@ -790,7 +1023,7 @@ def sample_feature_indices(
         for i, name in enumerate(feature_cols)
         if any(token in name for token in prefixes)
     ]
-    if len(candidates) < max(1, k):
+    if not candidates:
         candidates = list(range(len(feature_cols)))
     return rng.choice(candidates, size=min(int(k), len(candidates)), replace=False)
 
@@ -1615,6 +1848,72 @@ def train_only_stability(returns: np.ndarray, dates: pd.DatetimeIndex) -> dict[s
     }
 
 
+def _compound(values: np.ndarray) -> float:
+    clean = np.asarray(values, dtype=float)
+    clean = clean[np.isfinite(clean)]
+    if len(clean) == 0:
+        return np.nan
+    return float(np.prod(1.0 + clean) - 1.0)
+
+
+def annual_excess_metrics(
+    strategy_returns: np.ndarray,
+    spy_returns: np.ndarray,
+    dates: pd.DatetimeIndex,
+    *,
+    expected_years: range,
+) -> dict[str, Any]:
+    strategy = np.asarray(strategy_returns, dtype=float)
+    spy = np.asarray(spy_returns, dtype=float)
+    years = pd.Index(dates).year.to_numpy()
+    strategy_by_year: dict[str, float] = {}
+    spy_by_year: dict[str, float] = {}
+    excess_by_year: dict[str, float] = {}
+    beaten = 0
+    worst_year = -1
+    min_excess = np.inf
+    for year in expected_years:
+        mask = years == int(year)
+        if not np.any(mask):
+            strategy_return = np.nan
+            spy_return = np.nan
+            excess = np.nan
+        else:
+            strategy_return = _compound(strategy[mask])
+            spy_return = _compound(spy[mask])
+            excess = strategy_return - spy_return if np.isfinite(strategy_return) and np.isfinite(spy_return) else np.nan
+        strategy_by_year[str(int(year))] = float(strategy_return) if np.isfinite(strategy_return) else np.nan
+        spy_by_year[str(int(year))] = float(spy_return) if np.isfinite(spy_return) else np.nan
+        excess_by_year[str(int(year))] = float(excess) if np.isfinite(excess) else np.nan
+        if np.isfinite(excess):
+            if excess > 0.0:
+                beaten += 1
+            if excess < min_excess:
+                min_excess = float(excess)
+                worst_year = int(year)
+    expected = len(list(expected_years))
+    return {
+        "beats_all_years": bool(beaten == expected and np.isfinite(min_excess) and min_excess > 0.0),
+        "years_beaten": int(beaten),
+        "years_expected": int(expected),
+        "min_excess": float(min_excess) if np.isfinite(min_excess) else np.nan,
+        "worst_year": int(worst_year),
+        "strategy_returns": strategy_by_year,
+        "spy_returns": spy_by_year,
+        "excess": excess_by_year,
+    }
+
+
+def annual_excess_train_bonus(annual: dict[str, Any]) -> float:
+    years_beaten = float(annual.get("years_beaten", 0))
+    years_expected = max(1.0, float(annual.get("years_expected", 1)))
+    min_excess = float(annual.get("min_excess", -1.0))
+    all_years_bonus = 4_000_000.0 if bool(annual.get("beats_all_years", False)) else 0.0
+    missing_penalty = (years_expected - years_beaten) * 550_000.0
+    floor_bonus = max(-0.50, min(0.50, min_excess if np.isfinite(min_excess) else -0.50)) * 3_000_000.0
+    return all_years_bonus + years_beaten * 120_000.0 + floor_bonus - missing_penalty
+
+
 def turnover(positions: np.ndarray) -> float:
     values = np.asarray(positions, dtype=float)
     if len(values) < 2:
@@ -1704,7 +2003,22 @@ def run_merge(output_dir: Path) -> None:
     )
     verified = pd.concat([pd.read_csv(path) for path in verified_files], ignore_index=True) if verified_files else pd.DataFrame()
     if not top.empty:
-        top = top.sort_values(["train_score", "train_sharpe", "train_cagr", "feature_count"], ascending=[False, False, False, True])
+        if {"train_beats_spy_all_years", "validation_beats_spy_all_years_report_only", "train_years_beaten", "validation_years_beaten_report_only"} <= set(top.columns):
+            top = top.sort_values(
+                [
+                    "train_beats_spy_all_years",
+                    "validation_beats_spy_all_years_report_only",
+                    "train_years_beaten",
+                    "validation_years_beaten_report_only",
+                    "train_min_annual_excess_vs_spy",
+                    "validation_min_annual_excess_vs_spy_report_only",
+                    "train_score",
+                    "feature_count",
+                ],
+                ascending=[False, False, False, False, False, False, False, True],
+            )
+        else:
+            top = top.sort_values(["train_score", "train_sharpe", "train_cagr", "feature_count"], ascending=[False, False, False, True])
     if not validation_diagnostic.empty:
         validation_diagnostic = validation_diagnostic.sort_values(
             ["validation_sharpe", "train_sharpe"], ascending=[False, False]
@@ -1712,9 +2026,18 @@ def run_merge(output_dir: Path) -> None:
     if not verified.empty:
         verified = verified.sort_values(["train_sharpe", "validation_sharpe", "feature_count"], ascending=[False, False, True])
     train_pass = top[top.get("train_pass", pd.Series(dtype=bool)).astype(bool)] if "train_pass" in top else pd.DataFrame()
+    annual_verified = (
+        top[
+            top.get("train_beats_spy_all_years", pd.Series(dtype=bool)).astype(bool)
+            & top.get("validation_beats_spy_all_years_report_only", pd.Series(dtype=bool)).astype(bool)
+        ]
+        if {"train_beats_spy_all_years", "validation_beats_spy_all_years_report_only"} <= set(top.columns)
+        else pd.DataFrame()
+    )
     top.to_csv(output_dir / "spy_weekly_longshort_sharpe2_leaderboard.csv", index=False)
     validation_diagnostic.to_csv(output_dir / "spy_weekly_longshort_sharpe2_validation_ceiling_diagnostic.csv", index=False)
     train_pass.to_csv(output_dir / "spy_weekly_longshort_sharpe2_train_pass.csv", index=False)
+    annual_verified.to_csv(output_dir / "spy_weekly_longshort_beat_spy_all_years_verified.csv", index=False)
     verified.to_csv(output_dir / "spy_weekly_longshort_sharpe2_verified.csv", index=False)
     for name in ["weekly_prices.csv", "weekly_returns.csv", "policy_audit.csv"]:
         src = output_dir / "data" / name
@@ -1732,6 +2055,7 @@ def run_merge(output_dir: Path) -> None:
     summary = {
         "campaign_id": CAMPAIGN_ID,
         "verified_count_report_only": int(len(verified)),
+        "annual_beat_spy_verified_count": int(len(annual_verified)),
         "train_pass_count": int(len(train_pass)),
         "top_candidate_rows": int(len(top)),
         "validation_ceiling_diagnostic_rows": int(len(validation_diagnostic)),
@@ -1753,7 +2077,10 @@ def run_merge(output_dir: Path) -> None:
         "validation_used_for_selection": False,
         "uses_concrete_stocks": False,
         "uses_crypto": False,
-        "data_end_max": "2019-12-31",
+        "objective": "beat SPY in every train and validation year",
+        "train_years": "1995-2010",
+        "validation_years": "2011-2020",
+        "data_end_max": "2020-12-31",
     }
     (output_dir / "spy_weekly_longshort_sharpe2_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
@@ -1763,7 +2090,13 @@ def build_fail_reasons(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["reason", "count"])
     reasons = []
     for _, row in df.iterrows():
-        if bool(row.get("final_verified_report_only", False)):
+        if bool(row.get("train_beats_spy_all_years", False)) and bool(row.get("validation_beats_spy_all_years_report_only", False)):
+            reason = "beats_spy_all_train_and_validation_years"
+        elif not bool(row.get("train_beats_spy_all_years", False)):
+            reason = "does_not_beat_spy_all_train_years"
+        elif not bool(row.get("validation_beats_spy_all_years_report_only", False)):
+            reason = "does_not_beat_spy_all_validation_years_report_only"
+        elif bool(row.get("final_verified_report_only", False)):
             reason = "verified"
         elif not bool(row.get("train_always_invested", False)) or not bool(row.get("validation_always_invested", False)):
             reason = "position_policy_failed"

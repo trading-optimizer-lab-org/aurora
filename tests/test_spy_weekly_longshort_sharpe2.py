@@ -67,6 +67,9 @@ def test_feature_frame_uses_lagged_features_and_no_locked() -> None:
     assert features.index.min() > returns.index.min()
     assert "calendar_month_end_week" in features.columns
     assert "calendar_options_expiry_week" in features.columns
+    assert "sr_distance_to_high_52w" in features.columns
+    assert "sr_donchian_position_26w" in features.columns
+    assert "sr_support_confluence_26w" in features.columns
 
 
 def test_spy_daily_weekly_features_are_lagged_into_feature_frame() -> None:
@@ -79,8 +82,8 @@ def test_spy_daily_weekly_features_are_lagged_into_feature_frame() -> None:
     raw = pd.DataFrame(
         {
             "Open": close.shift(1).fillna(close.iloc[0]) * 1.001,
-            "High": close * 1.01,
-            "Low": close * 0.99,
+            "High": close * (1.008 + 0.002 * np.sin(np.arange(len(idx)) / 9.0)),
+            "Low": close * (0.992 - 0.002 * np.cos(np.arange(len(idx)) / 7.0)),
             "Close": close,
             "Volume": np.linspace(1_000_000, 2_000_000, len(idx)),
         },
@@ -100,7 +103,23 @@ def test_spy_daily_weekly_features_are_lagged_into_feature_frame() -> None:
     features = build_feature_frame(weekly_prices, returns)
     assert "spy_daily_vol_z_13w" in features.columns
     assert "spy_daily_up_down_balance" in features.columns
+    assert "sr_pivot_r1_gap" in features.columns
     assert features.index.min() > returns.index.min()
+
+
+def test_support_resistance_family_is_sampled_directly() -> None:
+    rng = np.random.default_rng(41)
+    feature_cols = [
+        "spy_ret_1w",
+        "vix_z_13w",
+        "sr_distance_to_high_52w",
+        "sr_failed_breakout_26w",
+        "sr_support_confluence_13w",
+    ]
+    idx = sample_params(rng, feature_cols, stage=10)["feature_indices"]
+    selected = [feature_cols[i] for i in idx]
+    assert selected
+    assert all(name.startswith("sr_") for name in selected)
 
 
 def test_sampled_rule_produces_only_plus_or_minus_one_positions() -> None:
