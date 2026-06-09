@@ -75,6 +75,10 @@ def main() -> None:
     parser.add_argument("--time-budget-minutes", type=float, default=45.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
     parser.add_argument("--target-accuracy", type=float, default=TARGET_ACCURACY)
+    parser.add_argument("--waves", type=int, default=1)
+    parser.add_argument("--jobs-per-wave", type=int, default=355)
+    parser.add_argument("--ranking-only", action="store_true")
+    parser.add_argument("--search-plan-summary", default="")
     parser.add_argument(
         "--search-plan",
         choices=[
@@ -106,7 +110,14 @@ def main() -> None:
             search_plan=str(args.search_plan),
         )
     else:
-        run_merge(output_dir, target_accuracy=float(args.target_accuracy))
+        run_merge(
+            output_dir,
+            target_accuracy=float(args.target_accuracy),
+            waves=int(args.waves),
+            jobs_per_wave=int(args.jobs_per_wave),
+            ranking_only=bool(args.ranking_only),
+            search_plan_summary=str(args.search_plan_summary),
+        )
 
 
 def run_data(output_dir: Path) -> None:
@@ -195,7 +206,27 @@ def run_data(output_dir: Path) -> None:
     pd.DataFrame(cboe_audit).to_csv(data_dir / "cboe_put_call_audit.csv", index=False)
     fred.to_csv(data_dir / "fred_stress_panel.csv", index_label="timestamp")
     pd.DataFrame(fred_audit).to_csv(data_dir / "fred_stress_audit.csv", index=False)
-    build_dataset(close, ohlcv, cboe, fred).to_csv(data_dir / "daily_direction_dataset.csv", index_label="timestamp")
+    dataset = build_dataset(close, ohlcv, cboe, fred)
+    dataset.to_csv(data_dir / "daily_direction_dataset.csv", index_label="timestamp")
+    feature_cols = [c for c in dataset.columns if c not in {"target_return_next_day", "target_direction"}]
+    groups = feature_groups(feature_cols)
+    x = dataset[feature_cols].replace([np.inf, -np.inf], np.nan)
+    x = x.fillna(x.loc[x.index <= TRAIN_END].median(numeric_only=True)).fillna(0.0)
+    y = dataset["target_direction"].astype(float)
+    train_mask = (dataset.index >= TRAIN_START) & (dataset.index <= TRAIN_END) & (y != 0.0)
+    funnel_context = build_funnel_context(x, feature_cols, np.asarray(train_mask))
+    feature_audit = {
+        "feature_count": int(len(feature_cols)),
+        "feature_groups": {name: int(len(cols)) for name, cols in groups.items()},
+        "funnel_effective_feature_groups": int(funnel_context["effective_groups"]),
+        "funnel_representative_features": int(len(funnel_context["representatives"])),
+        "search_plan": "funnel_top",
+        "locked_opened": False,
+        "locked_rows_accessed": 0,
+        "validation_used_for_selection": False,
+        "data_end_max": str(close.index.max().date()),
+    }
+    (data_dir / "feature_audit.json").write_text(json.dumps(feature_audit, indent=2), encoding="utf-8")
     pd.DataFrame(
         [
             {
@@ -2198,7 +2229,15 @@ def select_top(frame: pd.DataFrame, top_per_stage: int) -> pd.DataFrame:
     return pd.concat(pieces, ignore_index=True).drop_duplicates("strategy_id")
 
 
-def run_merge(output_dir: Path, target_accuracy: float = TARGET_ACCURACY) -> None:
+def run_merge(
+    output_dir: Path,
+    target_accuracy: float = TARGET_ACCURACY,
+    *,
+    waves: int = 1,
+    jobs_per_wave: int = 355,
+    ranking_only: bool = False,
+    search_plan_summary: str = "",
+) -> None:
     top_files = list((output_dir / "shards").glob("**/top_candidates.csv"))
     accepted_files = list((output_dir / "shards").glob("**/accepted.csv"))
     close_files = list((output_dir / "shards").glob("**/close_to_pass.csv"))
@@ -2234,10 +2273,17 @@ def run_merge(output_dir: Path, target_accuracy: float = TARGET_ACCURACY) -> Non
     baseline = compute_baseline(output_dir / "data" / "daily_direction_dataset.csv")
     summary = {
         "campaign_id": CAMPAIGN_ID,
+        "waves": int(waves),
+        "jobs_per_wave": int(jobs_per_wave),
+        "total_stage_jobs": int(waves) * int(jobs_per_wave),
+        "search_plan": search_plan_summary or (search_plans[0] if len(search_plans) == 1 else None),
+        "ranking_only": bool(ranking_only),
         "accepted_count": int(len(accepted)),
         "close_to_pass_count": int(len(close)),
         "leaderboard_rows": int(len(top)),
         "stages_completed": int(len(summaries)),
+        "stages_expected": int(waves) * int(jobs_per_wave),
+        "partial": int(len(summaries)) != int(waves) * int(jobs_per_wave),
         "configs_evaluated": int(sum(item.get("configs_evaluated", 0) for item in summaries)),
         "validation_examined_report_only": int(sum(item.get("validation_examined_report_only", 0) for item in summaries)),
         "search_plans": search_plans,
