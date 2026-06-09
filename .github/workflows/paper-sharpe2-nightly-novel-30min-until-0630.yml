@@ -82,9 +82,9 @@ jobs:
           names = [
               "calendar_crash_seasonality",
               "international_lead_lag_stress",
-              "sector_etf_disagreement",
-              "bond_equity_regime_switch",
-              "gold_dollar_stress_mix",
+              "spy_spx_basis_disagreement",
+              "rates_equity_regime_switch",
+              "skew_vix_stress_mix",
               "volume_range_pressure",
               "volatility_acceleration",
               "put_call_regime_transitions",
