@@ -58,28 +58,28 @@ ROUND_SPECS: list[dict[str, Any]] = [
         "novelty": "Uses international public index/ETF lead-lag stress only; no individual stocks.",
     },
     {
-        "name": "sector_etf_disagreement",
+        "name": "spy_spx_basis_disagreement",
         "engine": "generic",
-        "prefixes": ["xly_", "xlp_", "xlk_", "xlu_", "xlf_", "xle_", "xlv_", "xli_", "xlb_"],
-        "novelty": "Uses disagreement among liquid sector ETFs instead of broad market momentum.",
+        "prefixes": ["spx_", "spy_", "sr_"],
+        "novelty": "Uses SPY/SPX and support-resistance disagreement because sector ETF features are not present in the prepared paper dataset.",
     },
     {
-        "name": "bond_equity_regime_switch",
+        "name": "rates_equity_regime_switch",
         "engine": "generic",
-        "prefixes": ["tlt_", "ief_", "shy_", "lqd_", "hyg_", "yield_curve_", "spy_realized_vol_"],
-        "novelty": "Focuses on bond-equity regime switches and duration/credit stress.",
+        "prefixes": ["yield_curve_", "tnx_", "irx_", "spy_realized_vol_", "spy_drawdown_"],
+        "novelty": "Focuses on rates/equity regime switches using available public yield and SPY volatility features.",
     },
     {
-        "name": "gold_dollar_stress_mix",
+        "name": "skew_vix_stress_mix",
         "engine": "generic",
-        "prefixes": ["gld_", "dxy_", "vix_"],
-        "novelty": "Combines gold/dollar/commodity stress signals rather than pure equity timing.",
+        "prefixes": ["skew_", "vix_", "vxo_", "vixmo_"],
+        "novelty": "Combines SKEW, VIX, VXO and VIXMO stress signals rather than pure equity timing.",
     },
     {
         "name": "volume_range_pressure",
         "engine": "generic",
-        "prefixes": ["spy_daily_", "spy_volume_", "spy_week_", "spy_gap_"],
-        "novelty": "Uses weekly aggregates of daily SPY pressure, range and gap features.",
+        "prefixes": ["sr_prev_gap_", "sr_range_", "sr_atr_", "sr_breakout_", "sr_breakdown_"],
+        "novelty": "Uses available support/resistance range, ATR, gap and breakout pressure features.",
     },
     {
         "name": "volatility_acceleration",
@@ -96,8 +96,8 @@ ROUND_SPECS: list[dict[str, Any]] = [
     {
         "name": "credit_rates_squeeze",
         "engine": "generic",
-        "prefixes": ["hyg_", "lqd_", "hyg_lqd_", "yield_curve_", "tyx_", "tnx_", "fvx_", "irx_"],
-        "novelty": "Combines credit proxy stress with rate-curve squeeze features.",
+        "prefixes": ["yield_curve_", "tnx_", "irx_", "spy_realized_vol_", "vix_"],
+        "novelty": "Credit ETF features are unavailable here, so this tests rates/volatility squeeze using available public features.",
     },
     {
         "name": "drawdown_recovery_asymmetry",
@@ -108,7 +108,7 @@ ROUND_SPECS: list[dict[str, Any]] = [
     {
         "name": "cross_asset_voting_sparse",
         "engine": "generic",
-        "prefixes": ["spy_", "vix_", "yield_curve_", "gld_", "tlt_", "ief_", "xlp_", "xlu_"],
+        "prefixes": ["spy_", "vix_", "yield_curve_", "skew_", "total_pc_", "pput_"],
         "novelty": "Sparse cross-asset voting with low feature count to reduce overfit.",
     },
     {
@@ -126,7 +126,7 @@ ROUND_SPECS: list[dict[str, Any]] = [
     {
         "name": "anti_2022_train_filter",
         "engine": "generic",
-        "prefixes": ["yield_curve_", "tyx_", "tnx_", "fvx_", "irx_", "dxy_", "vix_", "spy_mom_"],
+        "prefixes": ["yield_curve_", "tnx_", "irx_", "vix_", "spy_mom_", "spy_realized_vol_"],
         "novelty": "Train-only inflation/rates stress filter designed to avoid 2022-style failure modes without reading locked.",
     },
     {
