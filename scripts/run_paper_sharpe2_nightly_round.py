@@ -98,9 +98,14 @@ def round_spec(round_index: int) -> dict[str, Any]:
 def prepare_data(output_dir: Path) -> None:
     data_root = output_dir / "data"
     data_root.mkdir(parents=True, exist_ok=True)
-    weekly.run_data(data_root / "weekly")
-    cboe.run_data(data_root / "cboe")
-    ensemble.run_data(data_root / "ensemble")
+    weekly_dir = data_root / "weekly"
+    cboe_dir = data_root / "cboe"
+    ensemble_dir = data_root / "ensemble"
+    for folder in (weekly_dir, cboe_dir, ensemble_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    weekly.run_data(weekly_dir)
+    cboe.run_data(cboe_dir)
+    ensemble.run_data(ensemble_dir)
     audit = {
         "campaign_id": CAMPAIGN_ID,
         "rounds": ROUND_SPECS,

@@ -142,7 +142,7 @@ jobs:
   search_a:
     runs-on: ubuntu-latest
     needs: [plan, time_guard, prepare_data]
-    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' }}
+    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' && (inputs.data_run_id != '' || needs.prepare_data.result == 'success') }}
     timeout-minutes: 30
     continue-on-error: true
     strategy:
@@ -191,7 +191,7 @@ jobs:
   search_b:
     runs-on: ubuntu-latest
     needs: [plan, time_guard, prepare_data]
-    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' }}
+    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' && (inputs.data_run_id != '' || needs.prepare_data.result == 'success') }}
     timeout-minutes: 30
     continue-on-error: true
     strategy:
@@ -266,8 +266,8 @@ jobs:
 
   dispatch_next:
     runs-on: ubuntu-latest
-    needs: [plan, time_guard, merge_round]
-    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' }}
+    needs: [plan, time_guard, prepare_data, merge_round]
+    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' && needs.merge_round.result == 'success' && (inputs.data_run_id != '' || needs.prepare_data.result == 'success') }}
     timeout-minutes: 5
     steps:
       - name: Dispatch next 30-minute round if still before stop hour
@@ -291,6 +291,11 @@ jobs:
           cat next_env.sh
           source next_env.sh
           if [ "$SHOULD_DISPATCH" = "true" ]; then
+            rm -rf "$RUNNER_TEMP/nightly_data_probe"
+            gh run download "$DATA_RUN_ID" \
+              --repo "${{ github.repository }}" \
+              --name nightly-prepared-data \
+              --dir "$RUNNER_TEMP/nightly_data_probe"
             gh workflow run "$WORKFLOW_FILE" \
               --repo "${{ github.repository }}" \
               --ref "$RUN_BRANCH" \
