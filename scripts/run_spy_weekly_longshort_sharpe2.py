@@ -137,11 +137,12 @@ def run_data(output_dir: Path) -> None:
                 "context_symbols": "|".join(symbols[1:]),
                 "optional_context_symbols": "|".join(optional_symbols),
                 "frequency": "weekly",
-                "position_policy": "always_long_or_short",
-                "min_position": -1.0,
-                "max_position": 1.0,
+                "position_policy": "always_scaled_long_or_short",
+                "min_position": -3.0,
+                "max_position": 3.0,
                 "cash_allowed": False,
-                "leverage_allowed": False,
+                "leverage_allowed": True,
+                "max_leverage": 3.0,
                 "locked_opened": False,
                 "locked_rows_accessed": 0,
                 "validation_used_for_selection": False,
@@ -229,6 +230,9 @@ def run_shard(
         evaluated += 1
         params = sample_params(rng, feature_cols, stage)
         positions, train_metrics = build_positions_train_only(matrix, spy_values, train_mask, params)
+        exposure_scale = float(params.get("exposure_scale", 1.0))
+        positions = positions * exposure_scale
+        train_metrics = metrics(positions[train_mask] * spy_values[train_mask])
         strategy_returns = positions * spy_values
         if not np.isfinite(train_metrics["sharpe"]):
             continue
@@ -273,9 +277,11 @@ def run_shard(
                 "data_end_max": "2020-12-31",
                 "traded_asset": "SPY",
                 "frequency": "weekly",
-                "position_policy": "always_1x_long_or_short",
+                "position_policy": "always_scaled_long_or_short",
                 "cash_allowed": False,
-                "leverage_allowed": False,
+                "leverage_allowed": True,
+                "max_leverage": 3.0,
+                "exposure_scale": exposure_scale,
                 "uses_crypto": False,
                 "uses_concrete_stocks": False,
                 "proxy_corr_min": 1.0,
@@ -359,7 +365,7 @@ def run_shard(
                 "time_budget_minutes": float(time_budget_minutes),
                 "locked_opened": False,
                 "validation_used_for_selection": False,
-                "position_policy": "always_1x_long_or_short",
+                "position_policy": "always_scaled_long_or_short",
             },
             indent=2,
         ),
@@ -994,6 +1000,7 @@ def sample_params(rng: np.random.Generator, feature_cols: list[str], stage: int)
         "walk_forward_refit_step": int(rng.choice([1, 2, 4, 8, 13])),
         "walk_forward_window": int(rng.choice([0, 260, 390, 520])),
         "ensemble_members": ensemble_members,
+        "exposure_scale": float(rng.choice([1.0, 1.25, 1.5, 2.0, 2.5, 3.0])),
         "invert": int(rng.integers(0, 2)),
     }
 
@@ -1923,6 +1930,7 @@ def turnover(positions: np.ndarray) -> float:
 
 def position_audit(positions: np.ndarray) -> dict[str, Any]:
     values = np.asarray(positions, dtype=float)
+    finite = values[np.isfinite(values)]
     return {
         "min_position": float(np.min(values)) if len(values) else np.nan,
         "max_position": float(np.max(values)) if len(values) else np.nan,
@@ -1931,7 +1939,7 @@ def position_audit(positions: np.ndarray) -> dict[str, Any]:
         "long_weeks": int(np.sum(values > 0.0)),
         "short_weeks": int(np.sum(values < 0.0)),
         "cash_weeks": int(np.sum(np.isclose(values, 0.0))),
-        "always_invested": bool(len(values) > 0 and np.all(np.isin(values, [-1.0, 1.0]))),
+        "always_invested": bool(len(values) > 0 and len(finite) == len(values) and np.min(np.abs(finite)) > 0.0),
     }
 
 
@@ -2069,9 +2077,10 @@ def run_merge(output_dir: Path) -> None:
         "target_train_sharpe": TARGET_SHARPE,
         "target_validation_sharpe_report_only": TARGET_SHARPE,
         "traded_asset": "SPY",
-        "position_policy": "always_1x_long_or_short",
+        "position_policy": "always_scaled_long_or_short",
         "cash_allowed": False,
-        "leverage_allowed": False,
+        "leverage_allowed": True,
+        "max_leverage": 3.0,
         "locked_opened": False,
         "locked_rows_accessed": 0,
         "validation_used_for_selection": False,
