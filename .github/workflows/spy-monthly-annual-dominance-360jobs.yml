@@ -15,8 +15,6 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,14 +41,6 @@ jobs:
           cp "$OUT/feature_family_audit_source.csv" artifact-data/
           cp "$OUT/policy_audit.json" artifact-data/
 
-      - name: Build 360-worker matrix
-        id: matrix
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          print("matrix=" + json.dumps({"worker": list(range(360))}))
-          PY
-
       - uses: actions/upload-artifact@v4
         with:
           name: spy-monthly-scan-data
@@ -58,14 +48,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  scan:
+  scan_000_089:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      max-parallel: 360
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 90
+      matrix:
+        worker: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
     steps:
       - uses: actions/checkout@v4
 
@@ -90,16 +81,167 @@ jobs:
           QF_DATA_DIR: ${{ runner.temp }}/aurora-data
           QF_CACHE_DIR: ${{ runner.temp }}/aurora-data/cache
         run: |
+          WORKER_INDEX="${{ matrix.worker }}"
           python scripts/scan_spy_only_monthly_github_annual_dominance_worker.py \
             --output-dir outputs/spy_only_monthly_lsc_nightly_funnel_20260610 \
             --stage-summary-csv config/spy_only_monthly_lsc_annual_dominance_stage_counts_20260612.csv \
             --scan-name github360_annual_dominance \
-            --worker-index "${{ matrix.worker }}" \
+            --worker-index "$WORKER_INDEX" \
             --worker-count 360
 
       - uses: actions/upload-artifact@v4
         with:
-          name: github360-worker-${{ matrix.worker }}
+          name: github360-worker-000-${{ matrix.worker }}
+          path: |
+            outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_matches.csv
+            outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_summary.json
+          if-no-files-found: error
+          retention-days: 7
+
+  scan_090_179:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 90
+      matrix:
+        worker: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Download prepared data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-monthly-scan-data
+          path: outputs/spy_only_monthly_lsc_nightly_funnel_20260610
+
+      - name: Scan worker ${{ matrix.worker }} offset 90
+        env:
+          QF_DATA_DIR: ${{ runner.temp }}/aurora-data
+          QF_CACHE_DIR: ${{ runner.temp }}/aurora-data/cache
+        run: |
+          WORKER_INDEX=$(( ${{ matrix.worker }} + 90 ))
+          python scripts/scan_spy_only_monthly_github_annual_dominance_worker.py \
+            --output-dir outputs/spy_only_monthly_lsc_nightly_funnel_20260610 \
+            --stage-summary-csv config/spy_only_monthly_lsc_annual_dominance_stage_counts_20260612.csv \
+            --scan-name github360_annual_dominance \
+            --worker-index "$WORKER_INDEX" \
+            --worker-count 360
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: github360-worker-090-${{ matrix.worker }}
+          path: |
+            outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_matches.csv
+            outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_summary.json
+          if-no-files-found: error
+          retention-days: 7
+
+  scan_180_269:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 90
+      matrix:
+        worker: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Download prepared data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-monthly-scan-data
+          path: outputs/spy_only_monthly_lsc_nightly_funnel_20260610
+
+      - name: Scan worker ${{ matrix.worker }} offset 180
+        env:
+          QF_DATA_DIR: ${{ runner.temp }}/aurora-data
+          QF_CACHE_DIR: ${{ runner.temp }}/aurora-data/cache
+        run: |
+          WORKER_INDEX=$(( ${{ matrix.worker }} + 180 ))
+          python scripts/scan_spy_only_monthly_github_annual_dominance_worker.py \
+            --output-dir outputs/spy_only_monthly_lsc_nightly_funnel_20260610 \
+            --stage-summary-csv config/spy_only_monthly_lsc_annual_dominance_stage_counts_20260612.csv \
+            --scan-name github360_annual_dominance \
+            --worker-index "$WORKER_INDEX" \
+            --worker-count 360
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: github360-worker-180-${{ matrix.worker }}
+          path: |
+            outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_matches.csv
+            outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_summary.json
+          if-no-files-found: error
+          retention-days: 7
+
+  scan_270_359:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 90
+      matrix:
+        worker: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Download prepared data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-monthly-scan-data
+          path: outputs/spy_only_monthly_lsc_nightly_funnel_20260610
+
+      - name: Scan worker ${{ matrix.worker }} offset 270
+        env:
+          QF_DATA_DIR: ${{ runner.temp }}/aurora-data
+          QF_CACHE_DIR: ${{ runner.temp }}/aurora-data/cache
+        run: |
+          WORKER_INDEX=$(( ${{ matrix.worker }} + 270 ))
+          python scripts/scan_spy_only_monthly_github_annual_dominance_worker.py \
+            --output-dir outputs/spy_only_monthly_lsc_nightly_funnel_20260610 \
+            --stage-summary-csv config/spy_only_monthly_lsc_annual_dominance_stage_counts_20260612.csv \
+            --scan-name github360_annual_dominance \
+            --worker-index "$WORKER_INDEX" \
+            --worker-count 360
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: github360-worker-270-${{ matrix.worker }}
           path: |
             outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_matches.csv
             outputs/spy_only_monthly_lsc_nightly_funnel_20260610/annual_dominance_scan/github360_annual_dominance_worker_*_summary.json
@@ -107,10 +249,14 @@ jobs:
           retention-days: 7
 
   combine:
-    needs: scan
+    needs:
+      - scan_000_089
+      - scan_090_179
+      - scan_180_269
+      - scan_270_359
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: ${{ needs.scan.result == 'success' }}
+    if: ${{ success() }}
     steps:
       - uses: actions/checkout@v4
 
