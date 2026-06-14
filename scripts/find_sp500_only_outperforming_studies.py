@@ -297,6 +297,38 @@ MANUAL_WEB_SEEDS = [
         "rule": "Applies a bear-market timing threshold to S&P 500 equity exposure.",
         "outperform": "Reports that under the proposed threshold an investor could outperform the S&P 500 while avoiding major bear markets.",
     },
+    {
+        "study_id": "manual_intraday_momentum_first_half_hour_spy_2014",
+        "title": "Intraday Momentum: The First Half-Hour Return Predicts the Last Half-Hour Return",
+        "year": "2014",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2440866",
+        "rule": "Trades the S&P 500 ETF intraday using the first half-hour return to predict and trade the last half-hour return.",
+        "outperform": "Reports that the SPY intraday timing strategy has a much higher Sharpe ratio than long-term buy-and-hold.",
+    },
+    {
+        "study_id": "manual_stock_market_investing_guided_by_risk_management_2026",
+        "title": "Stock Market Investing Guided by Risk Management",
+        "year": "2026",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6782958",
+        "rule": "Uses a risk-management timing rule to vary SPY/S&P 500 market exposure.",
+        "outperform": "Reports risk-management guided SPY performance superior to buy-and-hold SPY.",
+    },
+    {
+        "study_id": "manual_micro_alphas_hull_2024",
+        "title": "Micro Alphas",
+        "year": "2024",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5035294",
+        "rule": "Combines weak short-horizon predictors into a market-timing model for S&P 500 exposure.",
+        "outperform": "Reports that the market-timing strategy improves performance and performs better when combined with earlier S&P 500 timing models.",
+    },
+    {
+        "study_id": "manual_reinforcement_learning_sp500_market_timing_2024",
+        "title": "Market Timing Strategy Through Reinforcement Learning",
+        "year": "2024",
+        "url": "https://scholarshare.temple.edu/items/3802f12a-a040-4478-8d4f-33175c49ad52",
+        "rule": "Uses reinforcement learning to time exposure to the S&P 500 index.",
+        "outperform": "Reports that the S&P 500 timing model beats the buy-and-hold benchmark and improves Sharpe ratio.",
+    },
 ]
 
 

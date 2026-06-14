@@ -27,6 +27,8 @@ from scripts.find_sp500_only_outperforming_studies import (  # noqa: E402
 csv.field_size_limit(sys.maxsize)
 
 MANUAL_PDF_URLS = {
+    "W3121966254": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID445920_code031001670.pdf?abstractid=445920&mirid=1",
+    "W3123379466": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID2609814_code87814.pdf?abstractid=2609814",
     "manual_dichtl_sp500_buy_hold_2020": "https://www.boerse-institut.de/fileadmin/pdf/Dichtl_SP500-Investing.pdf",
     "manual_gayed_leverage_long_run_2016": "https://foro.masdividendos.com/uploads/default/original/1X/a8ba34a1c6b2ff3dc74ca0689eda699a7d99a1cd.pdf",
     "manual_trend_stop_loss_frequency_sp500": "https://openaccess.city.ac.uk/id/eprint/17842/8/BLACKBOX%20%20%20SSRN-id2126476.pdf",
@@ -42,6 +44,10 @@ MANUAL_PDF_URLS = {
     "manual_vix_forward_return_autocorrelation_sp500_2021": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID4682416_code2870840.pdf?abstractid=3810878&mirid=1",
     "manual_spy_ml_technical_classification_2024": "https://papers.ssrn.com/sol3/Delivery.cfm/7077c6a6-a5cf-4b79-a6b1-60a94fa59651-MECA.pdf?abstractid=4765615",
     "manual_avoid_equity_bear_markets_timing_2023": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID4524171_code4811196.pdf?abstractid=4397638&mirid=1&type=2",
+    "manual_intraday_momentum_first_half_hour_spy_2014": "https://www.smallake.kr/wp-content/uploads/2015/01/SSRN-id2440866.pdf",
+    "manual_stock_market_investing_guided_by_risk_management_2026": "https://papers.ssrn.com/sol3/Delivery.cfm/6782958.pdf?abstractid=6782958&mirid=1",
+    "manual_micro_alphas_hull_2024": "https://papers.ssrn.com/sol3/Delivery.cfm/5035294.pdf?abstractid=5035294&mirid=1",
+    "manual_reinforcement_learning_sp500_market_timing_2024": "https://scholarshare.temple.edu/server/api/core/bitstreams/d76f6578-4908-49f9-a20c-e2d474d38f69/content",
 }
 
 
