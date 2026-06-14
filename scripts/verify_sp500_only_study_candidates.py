@@ -26,6 +26,13 @@ from scripts.find_sp500_only_outperforming_studies import (  # noqa: E402
 
 csv.field_size_limit(sys.maxsize)
 
+MANUAL_PDF_URLS = {
+    "manual_dichtl_sp500_buy_hold_2020": "https://www.boerse-institut.de/fileadmin/pdf/Dichtl_SP500-Investing.pdf",
+    "manual_gayed_leverage_long_run_2016": "https://foro.masdividendos.com/uploads/default/original/1X/a8ba34a1c6b2ff3dc74ca0689eda699a7d99a1cd.pdf",
+    "manual_trend_stop_loss_frequency_sp500": "https://openaccess.city.ac.uk/id/eprint/17842/8/BLACKBOX%20%20%20SSRN-id2126476.pdf",
+    "manual_hull_qiao_bakosova_one_month_2019": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID3050254_code1752693.pdf?abstractid=3050254",
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     require_github_actions_or_explicit_local_permission("SP500-only full-text verification")
@@ -66,6 +73,7 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
     if openalex:
         text = _join(text, _abstract(openalex.get("abstract_inverted_index")))
         pdf_url = _first_pdf_url(openalex)
+    pdf_url = pdf_url or MANUAL_PDF_URLS.get(str(row.get("study_id") or ""), "")
     if pdf_url:
         pdf_text = _download_pdf_text(pdf_url, max_bytes=max_pdf_bytes)
         if pdf_text:
