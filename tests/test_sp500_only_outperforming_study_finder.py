@@ -182,6 +182,44 @@ def test_classify_rejects_cost_adjusted_momentum_loss() -> None:
     assert "negative_or_non_outperform_result" in candidate.reject_reasons
 
 
+def test_classify_rejects_outperforming_non_benchmark_method() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W13",
+        title="S&P 500 option-implied prediction device",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="prediction",
+        rule_or_abstract="Market timing strategies based on recovered moments outperform those based on risk-neutral moments.",
+        tradable_assets="SPY",
+        benchmark="S&P 500",
+        text="Using options on the S&P 500, market timing strategies based on recovered moments outperform those based on risk-neutral moments.",
+    )
+
+    assert "no_outperform_vs_sp500_or_buyhold_claim_found" in candidate.reject_reasons
+
+
+def test_classify_accepts_outperform_the_market_phrase() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W14",
+        title="S&P 500 timing strategy",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="A SPY timing strategy can outperform the market.",
+        tradable_assets="SPY",
+        benchmark="S&P 500",
+        text="The SPY market timing strategy can outperform the market.",
+    )
+
+    assert candidate.reject_reasons == ""
+
+
 def test_classify_rejects_cannot_beat_market_language() -> None:
     candidate = _classify(
         source="test",

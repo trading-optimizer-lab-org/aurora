@@ -58,14 +58,14 @@ OUTPERFORM_RE = re.compile(
 )
 OUTPERFORM_BENCHMARK_RE = re.compile(
     r"\b("
-    r"outperform[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"out.?performance[^.]{0,160}(over|versus|vs\.?|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"(beat|beats|beaten|beating|substantially beats?)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"(improve|improves|improved|improving)[^.]{0,120}(returns?|performance|investment returns?)[^.]{0,80}(versus|vs\.?|over|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"(higher|larger|superior)[^.]{0,80}(returns?|performance|excess expected returns?)[^.]{0,80}(than|versus|vs\.?|over|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
+    r"outperform[^.]{0,160}(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index|s&p\s*500|sp500|spy|index)|"
+    r"out.?performance[^.]{0,160}(over|versus|vs\.?|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index|s&p\s*500|sp500|spy|index)|"
+    r"(beat|beats|beaten|beating|substantially beats?)[^.]{0,160}(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index|s&p\s*500|sp500|spy|index)|"
+    r"(improve|improves|improved|improving)[^.]{0,120}(returns?|performance|investment returns?)[^.]{0,80}(versus|vs\.?|over|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index|s&p\s*500|sp500|spy|index)|"
+    r"(higher|larger|superior)[^.]{0,80}(returns?|performance|excess expected returns?)[^.]{0,80}(than|versus|vs\.?|over|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index|s&p\s*500|sp500|spy|index)|"
     r"(annual returns?|sharpe ratio|maximum drawdown)[^.]{0,120}whereas[^.]{0,120}(s&p\s*500|sp500|spy|buy.?and.?hold)|"
-    r"(higher sharpe|lower drawdown|superior risk.?adjusted|improve.?risk.?adjusted)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)[^.]{0,160}(outperform|beat|beats|beaten|beating|higher returns?|higher sharpe|lower drawdown|superior)"
+    r"(higher sharpe|lower drawdown|superior risk.?adjusted|improve.?risk.?adjusted)[^.]{0,160}(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index|s&p\s*500|sp500|spy|index)|"
+    r"(buy.?and.?hold|benchmark|the market|overall market|market benchmark|market index)[^.]{0,160}(outperform|beat|beats|beaten|beating|higher returns?|higher sharpe|lower drawdown|superior)"
     r")\b",
     re.I,
 )
@@ -118,7 +118,8 @@ NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"leveraged and inverse etfs?|multi.?market|stock, bond, and forex|eur/usd|"
     r"treasury bond|additional assets such as commodities|commodities|ftse\s*100|nikkei\s*225|"
     r"enhanced index tracking|portfolio construction|portfolio trading|companies listed|"
-    r"30 companies|stock returns for companies|stocks based on this approach)\b",
+    r"30 companies|stock returns for companies|stocks based on this approach|multi.?factor portfolio|"
+    r"twelve chosen securities|stocks\.csv)\b",
     re.I,
 )
 
