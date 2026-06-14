@@ -19,7 +19,7 @@ from core.execution_policy import require_github_actions_or_explicit_local_permi
 from scripts.find_sp500_only_outperforming_studies import (  # noqa: E402
     NEGATIVE_OUTPERFORM_RE,
     OTHER_TRADED_ASSET_RE,
-    OUTPERFORM_RE,
+    OUTPERFORM_BENCHMARK_RE,
     SP500_RE,
     STRATEGY_RE,
 )
@@ -77,8 +77,8 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
         reasons.append("no_sp500_in_text")
     if not STRATEGY_RE.search(text):
         reasons.append("no_strategy_rule_in_text")
-    if not OUTPERFORM_RE.search(text):
-        reasons.append("no_outperform_evidence_in_text")
+    if not OUTPERFORM_BENCHMARK_RE.search(text):
+        reasons.append("no_outperform_vs_sp500_or_buyhold_evidence_in_text")
     if NEGATIVE_OUTPERFORM_RE.search(text):
         reasons.append("negative_or_non_outperform_result")
     if OTHER_TRADED_ASSET_RE.search(cleaned_assets):
@@ -95,7 +95,7 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
             "pdf_url_used": pdf_url,
             "sp500_quote": _snippet(text, SP500_RE),
             "strategy_quote": _snippet(text, STRATEGY_RE),
-            "outperform_quote": _snippet(text, OUTPERFORM_RE),
+            "outperform_quote": _snippet(text, OUTPERFORM_BENCHMARK_RE),
             "locked_opened": "false",
             "backtest_enabled": "false",
         }

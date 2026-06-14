@@ -56,6 +56,15 @@ OUTPERFORM_RE = re.compile(
     r"improve.?risk.?adjusted|lower drawdown|drawdown reduction|better performance|profitable)\b",
     re.I,
 )
+OUTPERFORM_BENCHMARK_RE = re.compile(
+    r"\b("
+    r"outperform[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
+    r"(beat|beats|beating|substantially beats?)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
+    r"(higher sharpe|lower drawdown|superior risk.?adjusted|improve.?risk.?adjusted)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
+    r"(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)[^.]{0,160}(outperform|beat|beats|beating|higher sharpe|lower drawdown|superior)"
+    r")\b",
+    re.I,
+)
 NEGATIVE_OUTPERFORM_RE = re.compile(
     r"\b(no evidence[^.]{0,120}outperform|none[^.]{0,120}outperform|does not[^.]{0,80}outperform|"
     r"do not[^.]{0,80}outperform|did not[^.]{0,80}outperform|would not[^.]{0,80}beat|"
@@ -69,6 +78,12 @@ OTHER_TRADED_ASSET_RE = re.compile(
     r"tlt|ief|agg|bnd|ewy|bond etf|treasury etf|gold|gld|commodity etf|dbc|forex|currency pair|futures markets|"
     r"multi.?asset|cross.?asset|sector etf|sector rotation|individual stocks|single stocks|stock portfolio|"
     r"equities portfolio|vix futures|option portfolio|options strategy|put option|call option|credit portfolio|reit)\b",
+    re.I,
+)
+NON_SP500_ONLY_CONTEXT_RE = re.compile(
+    r"\b(mutual fund|mutual funds|fund managers|stock picking|individual stocks|single stocks|big tech stocks|"
+    r"sector etfs|sector excess returns|cryptocurrency|crypto|covariance estimator|portfolio optimization|"
+    r"pension systems|hedge fund etf|alternative assets|options strategy|protective puts)\b",
     re.I,
 )
 
@@ -464,12 +479,14 @@ def _classify(
         reasons.append("no_financial_market_context")
     if not STRATEGY_RE.search(full_text):
         reasons.append("no_explicit_trading_strategy_rule")
-    if not OUTPERFORM_RE.search(text):
-        reasons.append("no_outperform_claim_found")
+    if not OUTPERFORM_BENCHMARK_RE.search(text):
+        reasons.append("no_outperform_vs_sp500_or_buyhold_claim_found")
     if NEGATIVE_OUTPERFORM_RE.search(full_text):
         reasons.append("negative_or_non_outperform_result")
     if NON_FINANCE_RE.search(full_text):
         reasons.append("non_finance_or_non_trading_context")
+    if NON_SP500_ONLY_CONTEXT_RE.search(full_text):
+        reasons.append("non_sp500_only_strategy_context")
     cleaned_assets = SP500_RE.sub(" ", _join(tradable_assets, rule_or_abstract))
     if OTHER_TRADED_ASSET_RE.search(cleaned_assets):
         reasons.append("mentions_other_traded_assets")
@@ -477,7 +494,7 @@ def _classify(
         reasons.append("generic_template_rule_not_paper_specific")
     if source.startswith("local_") and not _clean(title):
         reasons.append("local_row_missing_clean_title")
-    strength = "strong" if not reasons and OUTPERFORM_RE.search(rule_or_abstract) else "medium" if not reasons else "rejected"
+    strength = "strong" if not reasons and OUTPERFORM_BENCHMARK_RE.search(rule_or_abstract) else "medium" if not reasons else "rejected"
     return Candidate(
         source=source,
         study_id=study_id,
@@ -492,7 +509,7 @@ def _classify(
         benchmark=_clean(benchmark)[:500],
         evidence_strength=strength,
         sp500_only_evidence=_snippet(title_rule_assets, SP500_RE),
-        outperform_evidence=_snippet(text, OUTPERFORM_RE),
+        outperform_evidence=_snippet(text, OUTPERFORM_BENCHMARK_RE),
         reject_reasons=";".join(reasons),
     )
 
