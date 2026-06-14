@@ -7,11 +7,10 @@ _AURORA_POLICY_ROOT = _AuroraPolicyPath(__file__).resolve().parents[1]
 if str(_AURORA_POLICY_ROOT) not in sys.path:
     sys.path.insert(0, str(_AURORA_POLICY_ROOT))
 
-from core.execution_policy import require_github_actions_or_explicit_local_permission
-
 import argparse
 import json
 import math
+import os
 import time
 import warnings
 from pathlib import Path
@@ -21,6 +20,20 @@ import numpy as np
 import pandas as pd
 from pandas.errors import PerformanceWarning
 import yfinance as yf
+
+
+try:
+    from core.execution_policy import require_github_actions_or_explicit_local_permission
+except ModuleNotFoundError:
+    def require_github_actions_or_explicit_local_permission(run_kind: str = "research run") -> None:
+        if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+            return
+        if os.environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT") == "USER_REQUESTED_LOCAL_RUN_THIS_TURN":
+            return
+        raise RuntimeError(
+            "Run local bloqueado por politica Aurora. "
+            f"Lanzalo en GitHub Actions o pide explicitamente ejecucion local. Tipo: {run_kind}."
+        )
 
 
 CAMPAIGN_ID = "spy_15m_support_resistance_355jobs"
