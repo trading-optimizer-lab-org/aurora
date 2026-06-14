@@ -860,7 +860,13 @@ def run_retest_shard(
             retested["source_focus_family"] = str(row.get("focus_family", ""))
             rows.append(retested)
 
-    top = select_top(rows, top_per_stage)
+    top: list[dict[str, Any]] = []
+    if rows and "dataset_id" in rows[0]:
+        for dataset_id in sorted({str(row.get("dataset_id", "")) for row in rows}):
+            top.extend(select_top([row for row in rows if str(row.get("dataset_id", "")) == dataset_id], top_per_stage))
+        top = sorted(top, key=lambda row: (str(row.get("dataset_id", "")), bool(row.get("accepted")), float(row.get("score", 0.0))), reverse=True)
+    else:
+        top = select_top(rows, top_per_stage)
     shard_dir = output_dir / "shards" / f"stage_{stage:03d}"
     shard_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(top).to_csv(shard_dir / "top_candidates.csv", index=False)

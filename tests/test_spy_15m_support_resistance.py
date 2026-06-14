@@ -226,7 +226,7 @@ def test_run_retest_shard_revalidates_source_candidates(tmp_path: Path) -> None:
         stage=0,
         source_candidates=source_dir / "accepted.csv",
         candidates_per_stage=100,
-        top_per_stage=100,
+        top_per_stage=1,
         target_sharpe=1.5,
         cost_bps=1.0,
         validation_fraction=0.30,
@@ -297,3 +297,4 @@ def test_run_retest_shard_revalidates_all_dataset_directories(tmp_path: Path) ->
     out = pd.read_csv(output_dir / "shards" / "stage_000" / "top_candidates.csv")
     assert set(out["dataset_id"]) == set(panels)
     assert set(out["dataset_symbol"]) == {"SPY", "IVE"}
+    assert len(out) == 2
