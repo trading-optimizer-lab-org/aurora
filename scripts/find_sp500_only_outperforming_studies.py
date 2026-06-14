@@ -59,7 +59,7 @@ OUTPERFORM_RE = re.compile(
 GENERIC_RULE_RE = re.compile(r"convert the documented signal into a causal rule", re.I)
 OTHER_TRADED_ASSET_RE = re.compile(
     r"\b(qqq|nasdaq|iwm|russell|efa|eem|acwi|world|global equity|international|developed markets|emerging markets|"
-    r"tlt|ief|agg|bnd|bond etf|treasury etf|gold|gld|commodity etf|dbc|forex|currency pair|futures markets|"
+    r"tlt|ief|agg|bnd|ewy|bond etf|treasury etf|gold|gld|commodity etf|dbc|forex|currency pair|futures markets|"
     r"multi.?asset|cross.?asset|sector etf|sector rotation|individual stocks|single stocks|stock portfolio|"
     r"equities portfolio|vix futures|option portfolio|options strategy|put option|call option|credit portfolio|reit)\b",
     re.I,
@@ -332,6 +332,8 @@ def _classify(
     full_text = _join(text, title_rule_assets)
     if not SP500_RE.search(full_text):
         reasons.append("no_explicit_sp500_spy_spx_in_source_text")
+    if not SP500_RE.search(title_rule_assets):
+        reasons.append("no_explicit_sp500_spy_spx_in_rule_title_assets")
     if not MARKET_CONTEXT_RE.search(full_text):
         reasons.append("no_financial_market_context")
     if not STRATEGY_RE.search(full_text):
@@ -345,6 +347,8 @@ def _classify(
         reasons.append("mentions_other_traded_assets")
     if GENERIC_RULE_RE.search(rule_or_abstract):
         reasons.append("generic_template_rule_not_paper_specific")
+    if source.startswith("local_") and not _clean(title):
+        reasons.append("local_row_missing_clean_title")
     strength = "strong" if not reasons and OUTPERFORM_RE.search(rule_or_abstract) else "medium" if not reasons else "rejected"
     return Candidate(
         source=source,
