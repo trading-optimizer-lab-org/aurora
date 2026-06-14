@@ -10,8 +10,10 @@ import yaml
 from scripts.run_spy_15m_support_resistance import (
     build_feature_frame,
     feature_families,
+    filter_regular_session,
     normalise_yfinance_ohlcv,
     prepare_matrix,
+    run_retest_shard,
     sample_params,
 )
 
@@ -49,6 +51,21 @@ def test_spy_15m_support_resistance_workflow_is_manual_355_jobs() -> None:
     assert data[True]["workflow_dispatch"]["inputs"]["period"]["default"] == "60d"
     assert data[True]["workflow_dispatch"]["inputs"]["target_bars"]["default"] == "4"
     assert "--interval 15m" in text
+
+
+def test_spy_15m_2015_retest_workflow_uses_polygon_and_source_artifact() -> None:
+    path = Path(".github/workflows/spy-15m-support-resistance-2015-retest.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    assert data["name"] == "SPY 15m Support Resistance 2015 Retest"
+    assert "workflow_dispatch" in data[True]
+    assert data[True]["workflow_dispatch"]["inputs"]["start_date"]["default"] == "2015-01-01"
+    assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27494610826"
+    assert "POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}" in text
+    assert "--data-source polygon" in text
+    assert "--mode retest-shard" in text
+    assert "range(355)" in text
+    assert "spy-15m-support-resistance-2015-retest-results" in text
 
 
 def test_build_feature_frame_contains_all_support_resistance_families() -> None:
@@ -108,6 +125,24 @@ def test_normalise_yfinance_price_ticker_multiindex() -> None:
     assert out.loc[idx[-1], "Volume"] == 1_200_000
 
 
+def test_filter_regular_session_keeps_only_us_cash_bars() -> None:
+    idx = pd.DatetimeIndex(
+        [
+            "2026-01-02 08:00",
+            "2026-01-02 09:30",
+            "2026-01-02 15:45",
+            "2026-01-02 16:00",
+            "2026-01-03 09:30",
+        ]
+    )
+    bars = pd.DataFrame(
+        {"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1.0},
+        index=idx,
+    )
+    out = filter_regular_session(bars)
+    assert list(out.index) == [idx[1], idx[2]]
+
+
 def test_prepare_matrix_uses_last_fraction_as_validation() -> None:
     panel = build_feature_frame(make_spy_15m_bars(), target_bars=4)
     feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
@@ -132,3 +167,48 @@ def test_sample_params_can_focus_directly_on_rolling_levels() -> None:
     assert params["focus_family"] == "rolling_levels"
     selected = [feature_cols[i] for i in params["feature_indices"]]
     assert selected == ["sr_roll_dist_prior_high_26b"]
+
+
+def test_run_retest_shard_revalidates_source_candidates(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    data_dir = output_dir / "data"
+    data_dir.mkdir(parents=True)
+    panel = build_feature_frame(make_spy_15m_bars(days=55), target_bars=4)
+    panel.to_csv(data_dir / "spy_15m_sr_feature_panel.csv", index_label="timestamp")
+    (data_dir / "feature_audit.json").write_text(
+        '{"target_bars": 4, "data_source": "polygon", "start_date_requested": "2015-01-01"}',
+        encoding="utf-8",
+    )
+    feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
+    params = sample_params(np.random.default_rng(3), feature_cols, stage=0, config_index=1)
+    source_dir = output_dir / "source" / "final"
+    source_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "sr15m_source_000001",
+                "score": 3.0,
+                "train_sharpe": 2.0,
+                "validation_sharpe": 2.5,
+                "validation_trades": 7,
+                "focus_family": params["focus_family"],
+                "params_json": __import__("json").dumps(params),
+            }
+        ]
+    ).to_csv(source_dir / "accepted.csv", index=False)
+
+    run_retest_shard(
+        output_dir,
+        stage=0,
+        source_candidates=source_dir / "accepted.csv",
+        candidates_per_stage=100,
+        top_per_stage=100,
+        target_sharpe=1.5,
+        cost_bps=1.0,
+        validation_fraction=0.30,
+    )
+
+    out = pd.read_csv(output_dir / "shards" / "stage_000" / "top_candidates.csv")
+    assert list(out["strategy_id"]) == ["sr15m_source_000001"]
+    assert "source_validation_sharpe" in out.columns
+    assert "validation_sharpe" in out.columns

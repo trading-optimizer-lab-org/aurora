@@ -8,10 +8,13 @@ if str(_AURORA_POLICY_ROOT) not in sys.path:
     sys.path.insert(0, str(_AURORA_POLICY_ROOT))
 
 import argparse
+import datetime as dt
 import json
 import math
 import os
 import time
+import urllib.parse
+import urllib.request
 import warnings
 from pathlib import Path
 from typing import Any
@@ -50,13 +53,20 @@ warnings.simplefilter("ignore", PerformanceWarning)
 def main() -> None:
     require_github_actions_or_explicit_local_permission("SPY 15m support/resistance run")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["data", "shard", "merge"], required=True)
+    parser.add_argument("--mode", choices=["data", "shard", "merge", "retest-shard"], required=True)
     parser.add_argument("--output-dir", default=f"outputs/{CAMPAIGN_ID}")
+    parser.add_argument("--data-source", choices=["yfinance", "polygon"], default="yfinance")
+    parser.add_argument("--symbol", default="SPY")
     parser.add_argument("--period", default=DEFAULT_PERIOD)
+    parser.add_argument("--start-date", default="")
+    parser.add_argument("--end-date", default="")
+    parser.add_argument("--api-key-env", default="POLYGON_API_KEY")
     parser.add_argument("--interval", choices=[INTERVAL], default=INTERVAL)
     parser.add_argument("--target-bars", type=int, default=DEFAULT_TARGET_BARS)
     parser.add_argument("--stage", type=int, default=0)
     parser.add_argument("--configs-per-stage", type=int, default=15_000)
+    parser.add_argument("--candidates-per-stage", type=int, default=100)
+    parser.add_argument("--source-candidates", default="")
     parser.add_argument("--time-budget-minutes", type=float, default=12.0)
     parser.add_argument("--top-per-stage", type=int, default=100)
     parser.add_argument("--target-sharpe", type=float, default=DEFAULT_TARGET_SHARPE)
@@ -69,7 +79,12 @@ def main() -> None:
     if args.mode == "data":
         run_data(
             output_dir,
+            data_source=str(args.data_source),
+            symbol=str(args.symbol),
             period=str(args.period),
+            start_date=str(args.start_date),
+            end_date=str(args.end_date),
+            api_key_env=str(args.api_key_env),
             interval=str(args.interval),
             target_bars=int(args.target_bars),
         )
@@ -84,26 +99,60 @@ def main() -> None:
             cost_bps=float(args.cost_bps),
             validation_fraction=float(args.validation_fraction),
         )
+    elif args.mode == "retest-shard":
+        run_retest_shard(
+            output_dir,
+            stage=int(args.stage),
+            source_candidates=Path(args.source_candidates) if args.source_candidates else output_dir / "source" / "final" / "accepted.csv",
+            candidates_per_stage=int(args.candidates_per_stage),
+            top_per_stage=int(args.top_per_stage),
+            target_sharpe=float(args.target_sharpe),
+            cost_bps=float(args.cost_bps),
+            validation_fraction=float(args.validation_fraction),
+        )
     else:
         run_merge(output_dir, target_sharpe=float(args.target_sharpe))
 
 
-def run_data(output_dir: Path, *, period: str, interval: str, target_bars: int) -> None:
-    raw = yf.download(
-        "SPY",
-        period=period,
-        interval=interval,
-        auto_adjust=True,
-        progress=False,
-        prepost=False,
-        threads=False,
-        timeout=30,
-    )
-    bars = normalise_yfinance_ohlcv(raw)
+def run_data(
+    output_dir: Path,
+    *,
+    data_source: str,
+    symbol: str,
+    period: str,
+    start_date: str,
+    end_date: str,
+    api_key_env: str,
+    interval: str,
+    target_bars: int,
+) -> None:
+    if data_source == "polygon":
+        if not start_date:
+            raise ValueError("--start-date is required for polygon historical data")
+        bars = fetch_polygon_15m_ohlcv(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date or dt.date.today().isoformat(),
+            api_key=os.environ.get(api_key_env, ""),
+        )
+    else:
+        raw = yf.download(
+            symbol,
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            prepost=False,
+            threads=False,
+            timeout=30,
+        )
+        bars = normalise_yfinance_ohlcv(raw, symbol=symbol)
     if len(bars) < 300:
-        raise RuntimeError(f"Insufficient SPY {interval} bars: {len(bars)}")
+        raise RuntimeError(f"Insufficient {symbol} {interval} bars: {len(bars)}")
     if target_bars <= 0:
         raise ValueError("target_bars must be positive")
+    if start_date:
+        assert_requested_coverage(bars, start_date=start_date, end_date=end_date or dt.date.today().isoformat())
 
     panel = build_feature_frame(bars, target_bars=target_bars)
     if len(panel) < 200:
@@ -117,9 +166,12 @@ def run_data(output_dir: Path, *, period: str, interval: str, target_bars: int) 
     feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
     families = feature_families(feature_cols)
     audit = {
-        "symbol": "SPY",
+        "symbol": symbol,
         "interval": interval,
+        "data_source": data_source,
         "period": period,
+        "start_date_requested": start_date,
+        "end_date_requested": end_date or dt.date.today().isoformat(),
         "target_bars": int(target_bars),
         "target_horizon_minutes": int(target_bars * 15),
         "rows_raw": int(len(bars)),
@@ -134,15 +186,15 @@ def run_data(output_dir: Path, *, period: str, interval: str, target_bars: int) 
     (data_dir / "feature_audit.json").write_text(json.dumps(audit, indent=2), encoding="utf-8")
 
 
-def normalise_yfinance_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
+def normalise_yfinance_ohlcv(raw: pd.DataFrame, *, symbol: str = "SPY") -> pd.DataFrame:
     if raw.empty:
-        raise RuntimeError("yfinance returned no SPY data")
+        raise RuntimeError(f"yfinance returned no {symbol} data")
     frame = raw.copy()
     if isinstance(frame.columns, pd.MultiIndex):
-        if "SPY" in frame.columns.get_level_values(0):
-            frame = frame["SPY"]
-        elif "SPY" in frame.columns.get_level_values(-1):
-            frame = frame.xs("SPY", axis=1, level=-1)
+        if symbol in frame.columns.get_level_values(0):
+            frame = frame[symbol]
+        elif symbol in frame.columns.get_level_values(-1):
+            frame = frame.xs(symbol, axis=1, level=-1)
         elif all(name in frame.columns.get_level_values(0) for name in ["Open", "High", "Low", "Close", "Volume"]):
             frame = frame.droplevel(-1, axis=1)
         else:
@@ -161,6 +213,78 @@ def normalise_yfinance_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
     out = out.replace([np.inf, -np.inf], np.nan).dropna(how="any")
     out = out[out["Volume"] > 0]
     return out.astype(float)
+
+
+def fetch_polygon_15m_ohlcv(*, symbol: str, start_date: str, end_date: str, api_key: str) -> pd.DataFrame:
+    if not api_key:
+        raise RuntimeError(
+            "POLYGON_API_KEY no esta configurado. Para SPY 15m desde 2015 hace falta un proveedor historico intradia; "
+            "yfinance no cubre ese rango."
+        )
+    base = (
+        f"https://api.polygon.io/v2/aggs/ticker/{urllib.parse.quote(symbol.upper())}"
+        f"/range/15/minute/{start_date}/{end_date}"
+    )
+    params = {
+        "adjusted": "true",
+        "sort": "asc",
+        "limit": "50000",
+        "apiKey": api_key,
+    }
+    url = base + "?" + urllib.parse.urlencode(params)
+    rows: list[dict[str, Any]] = []
+    while url:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        status = str(payload.get("status", ""))
+        if status.lower() in {"error", "not_authorized"}:
+            raise RuntimeError(f"Polygon error: {payload.get('error') or payload.get('message') or status}")
+        rows.extend(payload.get("results") or [])
+        next_url = payload.get("next_url")
+        if next_url and "apiKey=" not in next_url:
+            joiner = "&" if "?" in next_url else "?"
+            next_url = f"{next_url}{joiner}{urllib.parse.urlencode({'apiKey': api_key})}"
+        url = next_url
+    if not rows:
+        raise RuntimeError(f"Polygon returned no {symbol} 15m bars for {start_date}..{end_date}")
+    frame = pd.DataFrame(rows)
+    required = ["t", "o", "h", "l", "c", "v"]
+    missing = [c for c in required if c not in frame.columns]
+    if missing:
+        raise RuntimeError(f"Polygon OHLCV missing columns: {missing}")
+    idx = pd.to_datetime(frame["t"], unit="ms", utc=True).dt.tz_convert("America/New_York").dt.tz_localize(None)
+    out = pd.DataFrame(
+        {
+            "Open": frame["o"].astype(float).to_numpy(),
+            "High": frame["h"].astype(float).to_numpy(),
+            "Low": frame["l"].astype(float).to_numpy(),
+            "Close": frame["c"].astype(float).to_numpy(),
+            "Volume": frame["v"].astype(float).to_numpy(),
+        },
+        index=pd.DatetimeIndex(idx, name="timestamp"),
+    )
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    out = filter_regular_session(out)
+    return out.replace([np.inf, -np.inf], np.nan).dropna(how="any")
+
+
+def filter_regular_session(bars: pd.DataFrame) -> pd.DataFrame:
+    index = pd.DatetimeIndex(bars.index)
+    minutes = index.hour * 60 + index.minute
+    regular = (minutes >= 9 * 60 + 30) & (minutes < 16 * 60)
+    weekdays = index.dayofweek < 5
+    return bars.loc[regular & weekdays].copy()
+
+
+def assert_requested_coverage(bars: pd.DataFrame, *, start_date: str, end_date: str) -> None:
+    first = pd.Timestamp(bars.index.min()).date()
+    last = pd.Timestamp(bars.index.max()).date()
+    requested_start = pd.Timestamp(start_date).date()
+    requested_end = pd.Timestamp(end_date).date()
+    if first > requested_start + dt.timedelta(days=10):
+        raise RuntimeError(f"Historical data starts too late: first={first}, requested_start={requested_start}")
+    if last < requested_end - dt.timedelta(days=10):
+        raise RuntimeError(f"Historical data ends too early: last={last}, requested_end={requested_end}")
 
 
 def build_feature_frame(bars: pd.DataFrame, *, target_bars: int = DEFAULT_TARGET_BARS) -> pd.DataFrame:
@@ -507,6 +631,78 @@ def run_shard(
         "cost_bps": float(cost_bps),
         "validation_fraction": float(validation_fraction),
         "target_bars": int(target_bars),
+    }
+    (shard_dir / "shard_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
+def run_retest_shard(
+    output_dir: Path,
+    *,
+    stage: int,
+    source_candidates: Path,
+    candidates_per_stage: int,
+    top_per_stage: int,
+    target_sharpe: float,
+    cost_bps: float,
+    validation_fraction: float,
+) -> None:
+    if not source_candidates.exists():
+        raise RuntimeError(f"Source candidates file not found: {source_candidates}")
+    panel = pd.read_csv(output_dir / "data" / "spy_15m_sr_feature_panel.csv", parse_dates=["timestamp"]).set_index("timestamp")
+    candidates = pd.read_csv(source_candidates)
+    audit_path = output_dir / "data" / "feature_audit.json"
+    target_bars = DEFAULT_TARGET_BARS
+    if audit_path.exists():
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        target_bars = int(audit.get("target_bars", DEFAULT_TARGET_BARS))
+    feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
+    if not feature_cols:
+        raise RuntimeError("No support/resistance features found")
+    matrix, target, train_mask, validation_mask = prepare_matrix(panel, feature_cols, validation_fraction=validation_fraction)
+    start = max(0, int(stage) * int(candidates_per_stage))
+    stop = min(len(candidates), start + int(candidates_per_stage))
+    shard_rows = candidates.iloc[start:stop]
+
+    rows: list[dict[str, Any]] = []
+    for _, row in shard_rows.iterrows():
+        params = json.loads(str(row["params_json"]))
+        score = build_score(matrix, params)
+        retested = evaluate_candidate(
+            score,
+            target,
+            train_mask,
+            validation_mask,
+            params,
+            feature_cols,
+            cost_bps=cost_bps,
+            target_sharpe=target_sharpe,
+            target_bars=target_bars,
+        )
+        retested["strategy_id"] = str(row.get("strategy_id", retested["strategy_id"]))
+        retested["source_score"] = float(row.get("score", np.nan))
+        retested["source_train_sharpe"] = float(row.get("train_sharpe", np.nan))
+        retested["source_validation_sharpe"] = float(row.get("validation_sharpe", np.nan))
+        retested["source_validation_trades"] = int(row.get("validation_trades", 0))
+        retested["source_focus_family"] = str(row.get("focus_family", ""))
+        rows.append(retested)
+
+    top = select_top(rows, top_per_stage)
+    shard_dir = output_dir / "shards" / f"stage_{stage:03d}"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(top).to_csv(shard_dir / "top_candidates.csv", index=False)
+    summary = {
+        "stage": int(stage),
+        "source_candidates": str(source_candidates),
+        "source_rows_total": int(len(candidates)),
+        "candidate_start": int(start),
+        "candidate_stop": int(stop),
+        "configs_evaluated": int(len(rows)),
+        "top_rows": int(len(top)),
+        "target_sharpe": float(target_sharpe),
+        "cost_bps": float(cost_bps),
+        "validation_fraction": float(validation_fraction),
+        "target_bars": int(target_bars),
+        "mode": "historical_retest_fixed_candidate_features",
     }
     (shard_dir / "shard_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 

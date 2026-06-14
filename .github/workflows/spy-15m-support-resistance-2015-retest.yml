@@ -1,0 +1,220 @@
+name: SPY 15m Support Resistance 2015 Retest
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "GitHub Actions run id with the 60d accepted candidates"
+        required: true
+        default: "27494610826"
+      source_artifact:
+        description: "Artifact containing final/accepted.csv"
+        required: true
+        default: "spy-15m-support-resistance-355jobs-results"
+      start_date:
+        description: "Historical SPY 15m start date"
+        required: true
+        default: "2015-01-01"
+      end_date:
+        description: "Historical end date, YYYY-MM-DD. Empty means today"
+        required: false
+        default: ""
+      target_bars:
+        description: "Forward 15m bars to score, 4 means next hour"
+        required: true
+        default: "4"
+      candidates_per_stage:
+        description: "Accepted candidates retested per stage"
+        required: true
+        default: "100"
+      target_sharpe:
+        description: "Train and validation Sharpe required for historical acceptance"
+        required: true
+        default: "1.50"
+      cost_bps:
+        description: "One-way turnover cost in basis points"
+        required: true
+        default: "1.0"
+      validation_fraction:
+        description: "Last fraction of 2015-today data used as validation"
+        required: true
+        default: "0.30"
+      job_timeout_minutes:
+        description: "Hard timeout per retest job"
+        required: true
+        default: "25"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_15m_support_resistance_2015_retest
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download previous accepted candidates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$OUTPUT_DIR/source"
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "${{ inputs.source_artifact }}" \
+            --dir "$OUTPUT_DIR/source"
+          test -f "$OUTPUT_DIR/source/final/accepted.csv"
+      - name: Upload source candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-source-candidates
+          path: ${{ env.OUTPUT_DIR }}/source/final/accepted.csv
+
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download SPY 15m 2015-today and build support/resistance panel
+        env:
+          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+        run: |
+          END_ARG=""
+          if [ -n "${{ inputs.end_date }}" ]; then
+            END_ARG="--end-date ${{ inputs.end_date }}"
+          fi
+          python scripts/run_spy_15m_support_resistance.py \
+            --mode data \
+            --output-dir "$OUTPUT_DIR" \
+            --data-source polygon \
+            --symbol SPY \
+            --start-date "${{ inputs.start_date }}" \
+            $END_ARG \
+            --interval 15m \
+            --target-bars "${{ inputs.target_bars }}"
+      - name: Upload historical data
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-2015-data
+          path: ${{ env.OUTPUT_DIR }}/data
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - name: Build 355-stage retest matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          full = [{"stage": stage} for stage in range(355)]
+          print("matrix_a=" + json.dumps(full[:178]))
+          print("matrix_b=" + json.dumps(full[178:]))
+          PY
+
+  retest_a:
+    runs-on: ubuntu-latest
+    needs: [source, data, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 178
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &retest_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download historical data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-15m-support-resistance-2015-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Download source candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-15m-support-resistance-source-candidates
+          path: ${{ env.OUTPUT_DIR }}/source/final
+      - name: Retest candidate shard on 2015-today history
+        run: |
+          python scripts/run_spy_15m_support_resistance.py \
+            --mode retest-shard \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --source-candidates "$OUTPUT_DIR/source/final/accepted.csv" \
+            --candidates-per-stage "${{ inputs.candidates_per_stage }}" \
+            --top-per-stage "${{ inputs.candidates_per_stage }}" \
+            --target-sharpe "${{ inputs.target_sharpe }}" \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --validation-fraction "${{ inputs.validation_fraction }}"
+      - name: Upload retest stage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-2015-retest-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+          if-no-files-found: warn
+
+  retest_b:
+    runs-on: ubuntu-latest
+    needs: [source, data, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 177
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *retest_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [source, data, retest_a, retest_b]
+    if: always()
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download historical data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-15m-support-resistance-2015-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Download retest stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: spy-15m-support-resistance-2015-retest-stage-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+      - name: Merge retest stages
+        run: |
+          python scripts/run_spy_15m_support_resistance.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --target-sharpe "${{ inputs.target_sharpe }}"
+      - name: Upload final retest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-2015-retest-results
+          path: ${{ env.OUTPUT_DIR }}
