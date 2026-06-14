@@ -50,8 +50,11 @@ def test_verify_marks_pdf_positive_and_negative_as_needs_review(monkeypatch) -> 
         verifier,
         "_download_pdf_text",
         lambda url, max_bytes: (
-            "The S&P 500 trend following trading rule outperforms buy-and-hold by a considerable margin. "
-            "However, once costs are included profits disappear for the shortest technical rule variant."
+            (
+                "The S&P 500 trend following trading rule outperforms buy-and-hold by a considerable margin. "
+                "However, once costs are included profits disappear for the shortest technical rule variant."
+            ),
+            "text_extracted",
         ),
     )
 

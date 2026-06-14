@@ -81,16 +81,26 @@ def main(argv: list[str] | None = None) -> int:
 
 def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
     text_source = "metadata"
-    text = _join(row.get("title"), row.get("rule_or_abstract"), row.get("tradable_assets"), row.get("benchmark"))
+    text = _join(
+        row.get("title"),
+        row.get("rule_or_abstract"),
+        row.get("tradable_assets"),
+        row.get("benchmark"),
+        row.get("sp500_only_evidence"),
+        row.get("outperform_evidence"),
+    )
     openalex = _openalex_work(row)
     pdf_url = ""
+    pdf_status = "not_attempted"
+    pdf_text_chars = 0
     if openalex:
         text = _join(text, _abstract(openalex.get("abstract_inverted_index")))
         pdf_url = _first_pdf_url(openalex)
     pdf_url = pdf_url or MANUAL_PDF_URLS.get(str(row.get("study_id") or ""), "")
     if pdf_url:
-        pdf_text = _download_pdf_text(pdf_url, max_bytes=max_pdf_bytes)
+        pdf_text, pdf_status = _download_pdf_text(pdf_url, max_bytes=max_pdf_bytes)
         if pdf_text:
+            pdf_text_chars = len(pdf_text)
             text = _join(text, pdf_text)
             text_source = "pdf"
     cleaned_assets = SP500_RE.sub(" ", _join(row.get("tradable_assets"), row.get("rule_or_abstract")))
@@ -121,6 +131,8 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
             "verification_reasons": ";".join(reasons),
             "text_source": text_source,
             "pdf_url_used": pdf_url,
+            "pdf_status": pdf_status,
+            "pdf_text_chars": str(pdf_text_chars),
             "sp500_quote": _snippet(text, SP500_RE),
             "strategy_quote": _snippet(text, STRATEGY_RE),
             "outperform_quote": _snippet(text, OUTPERFORM_BENCHMARK_RE),
@@ -181,25 +193,26 @@ def _first_pdf_url(work: dict[str, Any]) -> str:
     return ""
 
 
-def _download_pdf_text(url: str, *, max_bytes: int) -> str:
+def _download_pdf_text(url: str, *, max_bytes: int) -> tuple[str, str]:
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "Aurora SP500 study verifier/1.0"})
         with urllib.request.urlopen(request, timeout=45) as response:
             content_type = response.headers.get("content-type", "")
             payload = response.read(max_bytes + 1)
         if len(payload) > max_bytes:
-            return ""
+            return "", "too_large"
         if not (payload.startswith(b"%PDF") or "pdf" in content_type.lower()):
-            return ""
+            return "", f"not_pdf:{content_type[:80]}"
         try:
             import pypdf
 
             reader = pypdf.PdfReader(io.BytesIO(payload))
-            return "\n".join((page.extract_text() or "") for page in reader.pages)
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            return text, "text_extracted" if text.strip() else "empty_text"
         except Exception:
-            return ""
+            return "", "parse_failed"
     except Exception:
-        return ""
+        return "", "download_failed"
 
 
 def _abstract(index: Any) -> str:
