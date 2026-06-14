@@ -935,11 +935,17 @@ def _abstract(index: Any) -> str:
 def _dedupe(rows: list[Candidate]) -> list[Candidate]:
     seen: set[str] = set()
     out: list[Candidate] = []
-    for row in sorted(rows, key=lambda item: (item.study_id or item.doi or item.title).lower()):
-        key = (row.doi or row.study_id or re.sub(r"\W+", " ", row.title).lower()).strip().lower()
-        if not key or key in seen:
+    for row in sorted(rows, key=lambda item: (item.doi or item.title or item.study_id).lower()):
+        keys = [
+            ("doi", row.doi.strip().lower()),
+            ("title", re.sub(r"\W+", " ", row.title).strip().lower()),
+            ("study_id", row.study_id.strip().lower()),
+        ]
+        keys = [(kind, value) for kind, value in keys if value]
+        if not keys or any(f"{kind}:{value}" in seen for kind, value in keys):
             continue
-        seen.add(key)
+        for kind, value in keys:
+            seen.add(f"{kind}:{value}")
         out.append(row)
     return out
 

@@ -451,6 +451,42 @@ def test_dedupe_prefers_unique_doi_or_id() -> None:
     assert len(_dedupe([one, two])) == 1
 
 
+def test_dedupe_removes_same_title_with_different_ids() -> None:
+    one = _classify(
+        source="openalex",
+        study_id="W2123286055",
+        title="Evidence on a New Stock Trading Rule that Produces Higher Returns with Lower Risk",
+        year="2001",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="The S&P 500 trading rule produces higher returns with lower risk than buy-and-hold.",
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text="The S&P 500 trading rule produces higher returns with lower risk than buy-and-hold.",
+    )
+    two = _classify(
+        source="openalex",
+        study_id="W3212888096",
+        title="Evidence on a New Stock Trading Rule that Produces Higher Returns with Lower Risk",
+        year="2001",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="The S&P 500 trading rule produces higher returns with lower risk than buy-and-hold.",
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text="The S&P 500 trading rule produces higher returns with lower risk than buy-and-hold.",
+    )
+
+    deduped = _dedupe([one, two])
+
+    assert len(deduped) == 1
+    assert deduped[0].title == one.title
+
+
 def test_openalex_search_handles_http_error(monkeypatch) -> None:
     def raise_http_error(*args, **kwargs):
         raise urllib.error.HTTPError("https://api.openalex.org/works", 400, "Bad Request", {}, None)
