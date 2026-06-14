@@ -31,6 +31,11 @@ MANUAL_PDF_URLS = {
     "manual_gayed_leverage_long_run_2016": "https://foro.masdividendos.com/uploads/default/original/1X/a8ba34a1c6b2ff3dc74ca0689eda699a7d99a1cd.pdf",
     "manual_trend_stop_loss_frequency_sp500": "https://openaccess.city.ac.uk/id/eprint/17842/8/BLACKBOX%20%20%20SSRN-id2126476.pdf",
     "manual_hull_qiao_bakosova_one_month_2019": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID3050254_code1752693.pdf?abstractid=3050254",
+    "manual_trainor_buy_hold_market_timer_2018": "https://www.westga.edu/~bquest/2018/buy%26hold2018.pdf",
+    "manual_tang_whitelaw_time_varying_sharpe_2011": "https://pages.stern.nyu.edu/~rwhitela/papers/tv%20sharpe%20qjf%202011.pdf",
+    "manual_zarattini_intraday_momentum_spy_2024": "https://alexandria.unisg.ch/bitstreams/a99aba00-f967-49b3-aceb-f544dc386e0b/download",
+    "manual_spy_intraday_momentum_improvements_2025": "https://papers.ssrn.com/sol3/Delivery.cfm/5095349.pdf?abstractid=5095349&mirid=1",
+    "manual_probability_weighting_equity_premium_2024": "https://papers.ssrn.com/sol3/Delivery.cfm/4592479.pdf?abstractid=4592479&mirid=1",
 }
 
 

@@ -205,6 +205,46 @@ MANUAL_WEB_SEEDS = [
         "rule": "Applies moving-average market-timing rules to equity-market exposure, including S&P 500 related tests cited by later S&P 500 buy-and-hold comparisons.",
         "outperform": "Reports economically and statistically significant alphas after transaction costs for moving-average timing rules; needs full-text confirmation for SP500-only subset.",
     },
+    {
+        "study_id": "manual_trainor_buy_hold_market_timer_2018",
+        "title": "The Buy-and-Hold Market Timer",
+        "year": "2018",
+        "url": "https://www.westga.edu/~bquest/2018/buy%26hold2018.pdf",
+        "rule": "Uses the S&P 500 earnings yield minus 10-year Treasury yield versus its trailing average to justify exiting or reducing S&P 500 exposure when overvaluation risk is high.",
+        "outperform": "Reports that selected valuation-spread thresholds generate higher excess expected returns than plain S&P 500 buy-and-hold over the long historical sample.",
+    },
+    {
+        "study_id": "manual_tang_whitelaw_time_varying_sharpe_2011",
+        "title": "Time-Varying Sharpe Ratios and Market Timing",
+        "year": "2011",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1938613",
+        "rule": "Estimates conditional mean and volatility of equity returns using predetermined variables, then times S&P 500 market exposure using the estimated conditional Sharpe ratio.",
+        "outperform": "Reports economically meaningful market-timing gains versus static S&P 500 buy-and-hold exposure.",
+    },
+    {
+        "study_id": "manual_zarattini_intraday_momentum_spy_2024",
+        "title": "Beat the Market: An Effective Intraday Momentum Strategy for S&P500 ETF (SPY)",
+        "year": "2024",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4824172",
+        "rule": "Trades SPY intraday using an opening-range/noise-boundary momentum rule with end-of-day exit.",
+        "outperform": "The paper title and abstract claim the SPY intraday momentum strategy beats the market and outperforms SPY buy-and-hold.",
+    },
+    {
+        "study_id": "manual_spy_intraday_momentum_improvements_2025",
+        "title": "Improvements to Intraday Momentum Strategies Using Parameter Optimization",
+        "year": "2025",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5095349",
+        "rule": "Builds on the SPY intraday momentum strategy by optimizing exit and noise-boundary parameters for the S&P 500 ETF.",
+        "outperform": "Reports that optimized SPY intraday momentum variants significantly improve the returns of the base strategy.",
+    },
+    {
+        "study_id": "manual_probability_weighting_equity_premium_2024",
+        "title": "Probability Weighting and Equity Premium Prediction: Investing with Optimism",
+        "year": "2024",
+        "url": "https://onlinelibrary.wiley.com/doi/10.1111/fima.12477",
+        "rule": "Uses a probability-weighting optimism measure to forecast the S&P 500 equity premium and allocate dynamically to the market portfolio.",
+        "outperform": "Reports dynamic S&P 500 market strategies that outperform buy-and-hold and leading equity-premium predictor strategies.",
+    },
 ]
 
 
