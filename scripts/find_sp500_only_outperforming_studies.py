@@ -433,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     rejected: list[Candidate] = []
     candidates.extend(_scan_exactness(Path(args.exactness_csv), rejected))
     candidates.extend(_scan_import_manifest(Path(args.import_manifest), rejected))
-    candidates.extend(_manual_web_seed_candidates())
+    candidates.extend(_manual_web_seed_candidates(rejected))
     if not args.local_only:
         external_candidates = _search_openalex(
             pages_per_query=int(args.pages_per_query),
@@ -756,28 +756,28 @@ def _resolve_seed_work(seed: Candidate) -> dict[str, Any] | None:
     return None
 
 
-def _manual_web_seed_candidates() -> list[Candidate]:
+def _manual_web_seed_candidates(rejected: list[Candidate]) -> list[Candidate]:
     rows: list[Candidate] = []
     for seed in MANUAL_WEB_SEEDS:
         text = _join(seed["title"], seed["rule"], seed["outperform"])
-        rows.append(
-            Candidate(
-                source="manual_web_seed",
-                study_id=seed["study_id"],
-                title=seed["title"],
-                year=seed["year"],
-                doi="",
-                url=seed["url"],
-                query="manual web seed",
-                strategy_family="sp500_only_market_timing",
-                rule_or_abstract=seed["rule"],
-                tradable_assets="S&P 500 / SPY exposure only; cash or risk-free alternative may appear as out-of-market leg",
-                benchmark="S&P 500 buy-and-hold",
-                evidence_strength="manual_seed_needs_full_text",
-                sp500_only_evidence=_snippet(text, SP500_RE),
-                outperform_evidence=seed["outperform"],
-            )
+        candidate = _classify(
+            source="manual_web_seed",
+            study_id=seed["study_id"],
+            title=seed["title"],
+            year=seed["year"],
+            doi="",
+            url=seed["url"],
+            query="manual web seed",
+            strategy_family="sp500_only_market_timing",
+            rule_or_abstract=seed["rule"],
+            tradable_assets="S&P 500 / SPY exposure only; cash or risk-free alternative may appear as out-of-market leg",
+            benchmark="S&P 500 buy-and-hold",
+            text=text,
         )
+        if candidate.reject_reasons:
+            rejected.append(candidate)
+        else:
+            rows.append(candidate)
     return rows
 
 

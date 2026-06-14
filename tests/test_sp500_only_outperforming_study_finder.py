@@ -358,6 +358,19 @@ def test_classify_rejects_theoretical_timing_threshold_without_found_strategy() 
     assert "theoretical_framework_no_found_strategy" in candidate.reject_reasons
 
 
+def test_manual_web_seeds_are_classified_before_acceptance() -> None:
+    rejected: list[finder.Candidate] = []
+    candidates = finder._manual_web_seed_candidates(rejected)
+
+    candidate_ids = {row.study_id for row in candidates}
+    rejected_by_id = {row.study_id: row.reject_reasons for row in rejected}
+
+    assert "manual_market_timing_information_required_2018" not in candidate_ids
+    assert "theoretical_framework_no_found_strategy" in rejected_by_id[
+        "manual_market_timing_information_required_2018"
+    ]
+
+
 def test_classify_accepts_improve_returns_versus_buy_hold_language() -> None:
     candidate = _classify(
         source="test",
