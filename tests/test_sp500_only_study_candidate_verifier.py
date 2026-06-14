@@ -32,3 +32,30 @@ def test_verify_rejects_negative_outperform_result() -> None:
 
     assert out["verification_status"] == "rejected"
     assert "negative_or_non_outperform_result" in out["verification_reasons"]
+
+
+def test_verify_marks_pdf_positive_and_negative_as_needs_review(monkeypatch) -> None:
+    row = {
+        "study_id": "manual_pdf",
+        "title": "Trend following rules for the S&P 500",
+        "rule_or_abstract": "Tests moving average trading rules on SPY.",
+        "tradable_assets": "SPY",
+        "benchmark": "S&P 500 buy-and-hold",
+    }
+
+    import scripts.verify_sp500_only_study_candidates as verifier
+
+    monkeypatch.setitem(verifier.MANUAL_PDF_URLS, "manual_pdf", "https://example.test/paper.pdf")
+    monkeypatch.setattr(
+        verifier,
+        "_download_pdf_text",
+        lambda url, max_bytes: (
+            "The S&P 500 trend following trading rule outperforms buy-and-hold by a considerable margin. "
+            "However, once costs are included profits disappear for the shortest technical rule variant."
+        ),
+    )
+
+    out = _verify(row, max_pdf_bytes=1024)
+
+    assert out["verification_status"] == "needs_review_conflicting_evidence"
+    assert "negative_or_non_outperform_result" in out["verification_reasons"]

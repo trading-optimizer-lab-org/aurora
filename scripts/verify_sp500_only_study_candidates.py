@@ -52,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
         "confirmed": sum(1 for row in rows if row["verification_status"] == "confirmed"),
         "confirmed_from_metadata": sum(1 for row in rows if row["verification_status"] == "confirmed_from_metadata"),
         "needs_full_text": sum(1 for row in rows if row["verification_status"] == "needs_full_text"),
+        "needs_review_conflicting_evidence": sum(
+            1 for row in rows if row["verification_status"] == "needs_review_conflicting_evidence"
+        ),
         "rejected": sum(1 for row in rows if row["verification_status"] == "rejected"),
         "pdf_text_extracted": sum(1 for row in rows if row["text_source"] == "pdf"),
         "locked_opened": False,
@@ -91,8 +94,14 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
         reasons.append("negative_or_non_outperform_result")
     if OTHER_TRADED_ASSET_RE.search(cleaned_assets):
         reasons.append("other_traded_assets_in_candidate_rule")
+    has_positive_evidence = bool(OUTPERFORM_BENCHMARK_RE.search(text))
+    has_core_evidence = bool(SP500_RE.search(text) and STRATEGY_RE.search(text) and has_positive_evidence)
     status = "confirmed" if not reasons and text_source == "pdf" else "confirmed_from_metadata" if not reasons else "needs_full_text"
-    if "other_traded_assets_in_candidate_rule" in reasons or "negative_or_non_outperform_result" in reasons:
+    if "other_traded_assets_in_candidate_rule" in reasons:
+        status = "rejected"
+    elif "negative_or_non_outperform_result" in reasons and text_source == "pdf" and has_core_evidence:
+        status = "needs_review_conflicting_evidence"
+    elif "negative_or_non_outperform_result" in reasons:
         status = "rejected"
     out = dict(row)
     out.update(
@@ -104,6 +113,7 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
             "sp500_quote": _snippet(text, SP500_RE),
             "strategy_quote": _snippet(text, STRATEGY_RE),
             "outperform_quote": _snippet(text, OUTPERFORM_BENCHMARK_RE),
+            "negative_quote": _snippet(text, NEGATIVE_OUTPERFORM_RE),
             "locked_opened": "false",
             "backtest_enabled": "false",
         }
