@@ -53,8 +53,22 @@ permissions:
   actions: read
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check historical intraday provider secret
+        env:
+          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+        run: |
+          if [ -z "$POLYGON_API_KEY" ]; then
+            echo "::error::POLYGON_API_KEY is not configured. SPY 15m from 2015 requires a historical intraday provider; yfinance cannot cover this range."
+            exit 1
+          fi
+
   source:
     runs-on: ubuntu-latest
+    needs: [preflight]
     timeout-minutes: 10
     steps:
       - name: Download previous accepted candidates
@@ -79,6 +93,7 @@ jobs:
 
   data:
     runs-on: ubuntu-latest
+    needs: [preflight]
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -191,7 +206,7 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     needs: [source, data, retest_a, retest_b]
-    if: always()
+    if: ${{ always() && needs.data.result == 'success' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

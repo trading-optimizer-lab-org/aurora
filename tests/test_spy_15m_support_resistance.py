@@ -61,7 +61,12 @@ def test_spy_15m_2015_retest_workflow_uses_polygon_and_source_artifact() -> None
     assert "workflow_dispatch" in data[True]
     assert data[True]["workflow_dispatch"]["inputs"]["start_date"]["default"] == "2015-01-01"
     assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27494610826"
+    assert "preflight" in data["jobs"]
+    assert data["jobs"]["source"]["needs"] == ["preflight"]
+    assert data["jobs"]["data"]["needs"] == ["preflight"]
+    assert "needs.data.result == 'success'" in str(data["jobs"]["merge"]["if"])
     assert "POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}" in text
+    assert "yfinance cannot cover this range" in text
     assert 'find "$OUTPUT_DIR/source" -path "*/final/accepted.csv"' in text
     assert "--data-source polygon" in text
     assert "--mode retest-shard" in text
