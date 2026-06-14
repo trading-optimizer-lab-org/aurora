@@ -35,9 +35,20 @@ SP500_RE = re.compile(
     re.I,
 )
 STRATEGY_RE = re.compile(
-    r"\b(strategy|strategies|trading rule|trading rules|market timing|timing|tactical|trend|moving average|"
-    r"momentum|seasonal|seasonality|volatility managed|volatility timing|vix|risk-on|risk-off|long|short|cash|"
-    r"buy.?and.?hold|allocation rule|switching rule)\b",
+    r"\b(trading rule|trading rules|market timing|tactical allocation|trend following|moving average|"
+    r"time.series momentum|momentum rule|seasonal trading|seasonality effect|volatility managed|volatility timing|"
+    r"vix.*timing|risk-on|risk-off|long.*s&p|short.*s&p|long.*spy|short.*spy|cash.*s&p|"
+    r"buy.?and.?hold|allocation rule|switching rule|technical trading|technical rule)\b",
+    re.I,
+)
+MARKET_CONTEXT_RE = re.compile(
+    r"\b(stock market|equity market|market return|market returns|index return|index returns|portfolio return|"
+    r"s&p\s*500|sp500|spy|spx|buy.?and.?hold|market timing|trading rule)\b",
+    re.I,
+)
+NON_FINANCE_RE = re.compile(
+    r"\b(bacterial|streptococc|neonatal|clinical|patient|consumer engagement|brand affinity|business strategy|"
+    r"mass customization|infrastructure policy|climate resilient infrastructure)\b",
     re.I,
 )
 OUTPERFORM_RE = re.compile(
@@ -289,8 +300,8 @@ def _search_openalex(*, pages_per_query: int, per_page: int, sleep_seconds: floa
                     query=query,
                     strategy_family="external_search",
                     rule_or_abstract=abstract,
-                    tradable_assets="S&P 500/SPY/SPX inferred from title/abstract",
-                    benchmark="S&P 500",
+                    tradable_assets="",
+                    benchmark="",
                     text=text,
                 )
                 if candidate.reject_reasons:
@@ -318,12 +329,17 @@ def _classify(
 ) -> Candidate:
     reasons: list[str] = []
     title_rule_assets = _join(title, rule_or_abstract, tradable_assets, benchmark)
-    if not SP500_RE.search(title_rule_assets):
-        reasons.append("no_explicit_sp500_spy_spx_rule")
-    if not STRATEGY_RE.search(title_rule_assets):
+    full_text = _join(text, title_rule_assets)
+    if not SP500_RE.search(full_text):
+        reasons.append("no_explicit_sp500_spy_spx_in_source_text")
+    if not MARKET_CONTEXT_RE.search(full_text):
+        reasons.append("no_financial_market_context")
+    if not STRATEGY_RE.search(full_text):
         reasons.append("no_explicit_trading_strategy_rule")
     if not OUTPERFORM_RE.search(text):
         reasons.append("no_outperform_claim_found")
+    if NON_FINANCE_RE.search(full_text):
+        reasons.append("non_finance_or_non_trading_context")
     cleaned_assets = SP500_RE.sub(" ", _join(tradable_assets, rule_or_abstract))
     if OTHER_TRADED_ASSET_RE.search(cleaned_assets):
         reasons.append("mentions_other_traded_assets")
