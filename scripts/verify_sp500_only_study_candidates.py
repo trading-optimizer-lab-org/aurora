@@ -93,6 +93,8 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
     pdf_url = ""
     pdf_status = "not_attempted"
     pdf_text_chars = 0
+    landing_status = "not_attempted"
+    landing_text_chars = 0
     if openalex:
         text = _join(text, _abstract(openalex.get("abstract_inverted_index")))
         pdf_url = _first_pdf_url(openalex)
@@ -103,6 +105,13 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
             pdf_text_chars = len(pdf_text)
             text = _join(text, pdf_text)
             text_source = "pdf"
+    landing_url = str(row.get("url") or "")
+    if text_source != "pdf" and landing_url:
+        landing_text, landing_status = _download_landing_text(landing_url, max_bytes=min(max_pdf_bytes, 2 * 1024 * 1024))
+        if landing_text:
+            landing_text_chars = len(landing_text)
+            text = _join(text, landing_text)
+            text_source = "landing_page"
     cleaned_assets = SP500_RE.sub(" ", _join(row.get("tradable_assets"), row.get("rule_or_abstract")))
     reasons: list[str] = []
     if not SP500_RE.search(text):
@@ -133,6 +142,8 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
             "pdf_url_used": pdf_url,
             "pdf_status": pdf_status,
             "pdf_text_chars": str(pdf_text_chars),
+            "landing_status": landing_status,
+            "landing_text_chars": str(landing_text_chars),
             "sp500_quote": _snippet(text, SP500_RE),
             "strategy_quote": _snippet(text, STRATEGY_RE),
             "outperform_quote": _snippet(text, OUTPERFORM_BENCHMARK_RE),
@@ -211,6 +222,27 @@ def _download_pdf_text(url: str, *, max_bytes: int) -> tuple[str, str]:
             return text, "text_extracted" if text.strip() else "empty_text"
         except Exception:
             return "", "parse_failed"
+    except Exception:
+        return "", "download_failed"
+
+
+def _download_landing_text(url: str, *, max_bytes: int) -> tuple[str, str]:
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "Aurora SP500 study verifier/1.0"})
+        with urllib.request.urlopen(request, timeout=45) as response:
+            content_type = response.headers.get("content-type", "")
+            payload = response.read(max_bytes + 1)
+        if len(payload) > max_bytes:
+            return "", "too_large"
+        if "html" not in content_type.lower() and "text" not in content_type.lower():
+            return "", f"not_text:{content_type[:80]}"
+        raw = payload.decode("utf-8", errors="replace")
+        raw = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", raw)
+        raw = re.sub(r"(?is)<[^>]+>", " ", raw)
+        raw = re.sub(r"&nbsp;|&#160;", " ", raw)
+        raw = re.sub(r"&amp;", "&", raw)
+        text = re.sub(r"\s+", " ", raw).strip()
+        return text, "text_extracted" if text else "empty_text"
     except Exception:
         return "", "download_failed"
 

@@ -62,3 +62,32 @@ def test_verify_marks_pdf_positive_and_negative_as_needs_review(monkeypatch) -> 
 
     assert out["verification_status"] == "needs_review_conflicting_evidence"
     assert "negative_or_non_outperform_result" in out["verification_reasons"]
+
+
+def test_verify_uses_landing_page_when_pdf_fails(monkeypatch) -> None:
+    row = {
+        "study_id": "manual_landing",
+        "title": "Optimal market timing for the S&P 500",
+        "url": "https://example.test/paper",
+        "rule_or_abstract": "Uses a market timing trading rule on SPY.",
+        "tradable_assets": "SPY",
+        "benchmark": "S&P 500 buy-and-hold",
+    }
+
+    import scripts.verify_sp500_only_study_candidates as verifier
+
+    monkeypatch.setitem(verifier.MANUAL_PDF_URLS, "manual_landing", "https://example.test/paper.pdf")
+    monkeypatch.setattr(verifier, "_download_pdf_text", lambda url, max_bytes: ("", "download_failed"))
+    monkeypatch.setattr(
+        verifier,
+        "_download_landing_text",
+        lambda url, max_bytes: (
+            "The S&P 500 strategy indicates out-performance over the buy-and-hold approach.",
+            "text_extracted",
+        ),
+    )
+
+    out = _verify(row, max_pdf_bytes=1024)
+
+    assert out["verification_status"] == "confirmed_from_metadata"
+    assert out["text_source"] == "landing_page"
