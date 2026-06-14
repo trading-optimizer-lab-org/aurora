@@ -72,10 +72,17 @@ class StrategyVariant:
     touch_rule: str
     confirmation_rule: str
     invalidation_rule: str
+    max_zone_age_bars: int
     exit_rule: str
     hold_bars: int
     stop_buffer_atr: float
     target_r: float
+
+
+@dataclass(frozen=True)
+class ActiveZone:
+    zone: Zone
+    setup_pos: int
 
 
 def main() -> None:
@@ -164,32 +171,35 @@ def build_variant_catalog() -> list[StrategyVariant]:
                             "engulf_touch_body",
                         ):
                             for invalidation_rule in ("wick_break", "close_break"):
-                                for exit_rule in ("time", "zone_stop_time", "zone_stop_target"):
-                                    for hold_bars in (2, 4, 8, 13):
-                                        target_rs = (1.0, 1.5) if exit_rule == "zone_stop_target" else (1.0,)
-                                        for target_r in target_rs:
-                                            variant_id = (
-                                                f"{side}__{zone_method}__{setup_candle}"
-                                                f"__atr{min_range_atr:g}__{touch_rule}"
-                                                f"__{confirmation_rule}__{invalidation_rule}"
-                                                f"__{exit_rule}__h{hold_bars}__r{target_r:g}"
-                                            )
-                                            variants.append(
-                                                StrategyVariant(
-                                                    variant_id=variant_id,
-                                                    side=side,
-                                                    zone_method=zone_method,
-                                                    setup_candle=setup_candle,
-                                                    min_range_atr=min_range_atr,
-                                                    touch_rule=touch_rule,
-                                                    confirmation_rule=confirmation_rule,
-                                                    invalidation_rule=invalidation_rule,
-                                                    exit_rule=exit_rule,
-                                                    hold_bars=hold_bars,
-                                                    stop_buffer_atr=0.0,
-                                                    target_r=target_r,
+                                for max_zone_age_bars in (26, 78, 156):
+                                    for exit_rule in ("time", "zone_stop_time", "zone_stop_target"):
+                                        for hold_bars in (2, 4, 8, 13):
+                                            target_rs = (1.0, 1.5) if exit_rule == "zone_stop_target" else (1.0,)
+                                            for target_r in target_rs:
+                                                variant_id = (
+                                                    f"{side}__{zone_method}__{setup_candle}"
+                                                    f"__atr{min_range_atr:g}__{touch_rule}"
+                                                    f"__{confirmation_rule}__{invalidation_rule}"
+                                                    f"__age{max_zone_age_bars}__{exit_rule}"
+                                                    f"__h{hold_bars}__r{target_r:g}"
                                                 )
-                                            )
+                                                variants.append(
+                                                    StrategyVariant(
+                                                        variant_id=variant_id,
+                                                        side=side,
+                                                        zone_method=zone_method,
+                                                        setup_candle=setup_candle,
+                                                        min_range_atr=min_range_atr,
+                                                        touch_rule=touch_rule,
+                                                        confirmation_rule=confirmation_rule,
+                                                        invalidation_rule=invalidation_rule,
+                                                        max_zone_age_bars=max_zone_age_bars,
+                                                        exit_rule=exit_rule,
+                                                        hold_bars=hold_bars,
+                                                        stop_buffer_atr=0.0,
+                                                        target_r=target_r,
+                                                    )
+                                                )
     return variants
 
 
@@ -345,49 +355,72 @@ def detect_trades_for_symbol(
     atr = ranges.rolling(14, min_periods=1).mean().replace(0.0, np.nan).ffill().fillna(ranges.mean())
     split_by_pos = split_labels(len(frame))
     trades: list[dict[str, Any]] = []
+    active_zones: list[ActiveZone] = []
 
-    for setup_pos in range(0, len(frame) - 2):
-        setup = frame.iloc[setup_pos]
-        setup_atr = float(atr.iloc[setup_pos]) if np.isfinite(atr.iloc[setup_pos]) else float(ranges.mean())
-        if not is_setup_candle(frame, setup_pos, variant, setup_atr):
-            continue
-        zone = compute_zone_from_candle(
-            setup,
-            side=variant.side,
-            zone_method=variant.zone_method,
-            atr=setup_atr,
-        )
-        if zone is None:
-            continue
-
-        for touch_pos in range(setup_pos + 1, len(frame) - 1):
-            touch = frame.iloc[touch_pos]
-            if breaks_zone(touch, zone, side=variant.side, invalidation_rule=variant.invalidation_rule):
-                break
-            if not touches_zone(touch, zone, touch_rule=variant.touch_rule):
+    for pos in range(0, len(frame) - 1):
+        current = frame.iloc[pos]
+        still_active: list[ActiveZone] = []
+        for active in active_zones:
+            age = pos - active.setup_pos
+            if age > variant.max_zone_age_bars:
                 continue
-            confirm_pos = touch_pos + 1
-            confirm = frame.iloc[confirm_pos]
-            if breaks_zone(confirm, zone, side=variant.side, invalidation_rule=variant.invalidation_rule):
-                break
-            if not confirms_entry(confirm, touch, side=variant.side, confirmation_rule=variant.confirmation_rule):
-                break
+            if breaks_zone(
+                current,
+                active.zone,
+                side=variant.side,
+                invalidation_rule=variant.invalidation_rule,
+            ):
+                continue
+            if not touches_zone(current, active.zone, touch_rule=variant.touch_rule):
+                still_active.append(active)
+                continue
 
+            confirm_pos = pos + 1
+            confirm = frame.iloc[confirm_pos]
+            if breaks_zone(
+                confirm,
+                active.zone,
+                side=variant.side,
+                invalidation_rule=variant.invalidation_rule,
+            ):
+                continue
+            if not confirms_entry(
+                confirm,
+                current,
+                side=variant.side,
+                confirmation_rule=variant.confirmation_rule,
+            ):
+                continue
+            entry_atr = float(atr.iloc[confirm_pos]) if np.isfinite(atr.iloc[confirm_pos]) else float(ranges.mean())
             trade = build_trade(
                 frame,
                 symbol,
                 variant,
-                zone,
-                setup_pos=setup_pos,
-                touch_pos=touch_pos,
+                active.zone,
+                setup_pos=active.setup_pos,
+                touch_pos=pos,
                 entry_pos=confirm_pos,
                 split=split_by_pos[confirm_pos],
-                atr=float(atr.iloc[confirm_pos]) if np.isfinite(atr.iloc[confirm_pos]) else setup_atr,
+                atr=entry_atr,
                 cost_bps=cost_bps,
             )
             if trade is not None:
                 trades.append(trade)
-            break
+        active_zones = still_active
+
+        if pos >= len(frame) - 2:
+            continue
+        setup_atr = float(atr.iloc[pos]) if np.isfinite(atr.iloc[pos]) else float(ranges.mean())
+        if not is_setup_candle(frame, pos, variant, setup_atr):
+            continue
+        zone = compute_zone_from_candle(
+            current,
+            side=variant.side,
+            zone_method=variant.zone_method,
+            atr=setup_atr,
+        )
+        if zone is not None:
+            active_zones.append(ActiveZone(zone=zone, setup_pos=pos))
     return trades
 
 

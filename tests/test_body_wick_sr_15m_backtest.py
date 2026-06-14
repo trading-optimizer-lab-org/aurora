@@ -35,6 +35,7 @@ def base_variant(**overrides: object) -> StrategyVariant:
         "touch_rule": "wick_intersects",
         "confirmation_rule": "color_and_close_beyond_touch_close",
         "invalidation_rule": "wick_break",
+        "max_zone_age_bars": 26,
         "exit_rule": "time",
         "hold_bars": 2,
         "stop_buffer_atr": 0.0,
@@ -147,7 +148,24 @@ def test_variant_catalog_contains_zone_entry_invalidation_and_exit_versions() ->
     assert {v.side for v in catalog} == {"long", "short"}
     assert {"body_wick", "deep_half", "atr_buffered"} <= {v.zone_method for v in catalog}
     assert {"wick_break", "close_break"} <= {v.invalidation_rule for v in catalog}
+    assert {26, 78, 156} <= {v.max_zone_age_bars for v in catalog}
     assert {"time", "zone_stop_target", "zone_stop_time"} <= {v.exit_rule for v in catalog}
+
+
+def test_zone_expires_after_max_age_without_entry() -> None:
+    rows = [("2026-01-02 09:30", 105, 106, 99, 101)]
+    for i in range(1, 6):
+        rows.append((f"2026-01-02 {9 + i // 2:02d}:{30 if i % 2 == 0 else 45}", 103, 104, 102, 103))
+    rows.extend(
+        [
+            ("2026-01-02 12:30", 103, 104, 100.5, 102),
+            ("2026-01-02 12:45", 102, 105, 101.8, 104),
+        ]
+    )
+
+    trades = detect_trades_for_symbol(bars=make_bars(rows), symbol="AAA", variant=base_variant(max_zone_age_bars=2))
+
+    assert trades == []
 
 
 def test_shard_and_merge_write_expected_outputs_without_using_locked_for_selection(tmp_path: Path) -> None:
@@ -198,6 +216,7 @@ def test_merge_handles_empty_trade_shards(tmp_path: Path) -> None:
                 "touch_rule": "wick_intersects",
                 "confirmation_rule": "color_only",
                 "invalidation_rule": "wick_break",
+                "max_zone_age_bars": 26,
                 "exit_rule": "time",
                 "hold_bars": 2,
                 "stop_buffer_atr": 0.0,
