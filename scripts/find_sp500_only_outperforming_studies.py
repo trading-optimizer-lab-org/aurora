@@ -147,6 +147,46 @@ MANUAL_WEB_SEEDS = [
         "rule": "Tests S&P 500 moving average, crossover, breakout and stop-loss trend-following rules at daily and end-of-month frequencies.",
         "outperform": "Reports most daily and end-of-month trend-following rules outperform buy-and-hold with lower volatility, except very short-term rules.",
     },
+    {
+        "study_id": "manual_hull_qiao_bakosova_one_month_2019",
+        "title": "Return Predictability and Market-Timing: A One-Month Model",
+        "year": "2019",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3050254",
+        "rule": "Monthly model chooses S&P 500 exposure using predictors known before the trade; compares one-month, six-month, and combined S&P 500 timing models versus buy-and-hold.",
+        "outperform": "Reports 16.6% annual returns, 0.92 Sharpe and 20.3% max drawdown versus S&P 500 buy-and-hold at 10% annual return, 0.46 Sharpe and 55.2% max drawdown from 2003 to 2017.",
+    },
+    {
+        "study_id": "manual_hensel_ziemba_turn_month_1996",
+        "title": "Investment Results from Exploiting Turn-of-the-Month Effects: Should You Pay Attention to the Turn of the Month?",
+        "year": "1996",
+        "url": "https://doi.org/10.3905/jpm.1996.409554",
+        "rule": "Invest in S&P 500 index exposure during turn-of-the-month windows and use T-bills or cash-like exposure outside that window.",
+        "outperform": "Reports turn-of-the-month switching strategy based on the S&P 500 generated higher annualized returns than buying and holding the S&P 500 over the historical sample.",
+    },
+    {
+        "study_id": "manual_hensel_sick_ziemba_tom_sp500_2000",
+        "title": "A Long Term Examination of the Turn-of-the-Month Effect in the S&P 500",
+        "year": "2000",
+        "url": "https://www.cambridge.org/core/books/security-market-imperfections-in-world-wide-equity-markets/3D0839B064735C13D1485B372C55986D",
+        "rule": "Examines S&P 500 turn-of-the-month effect using long historical S&P 500 daily returns.",
+        "outperform": "Documents significantly positive S&P 500 returns during turn-of-the-month and first-half-of-month windows, forming the basis for S&P 500 timing strategies.",
+    },
+    {
+        "study_id": "manual_liu_tom_sp500_2013",
+        "title": "The Turn-Of-The-Month Effect In The S&P 500 (2001-2011)",
+        "year": "2013",
+        "url": "https://www.researchgate.net/publication/297594842_The_Turn-Of-The-Month_Effect_In_The_SP_500_2001-2011",
+        "rule": "Tests whether adjusting S&P 500 investment timing around turn-of-the-month windows improves performance.",
+        "outperform": "Reports that using knowledge of the S&P 500 turn-of-the-month effect can improve investment performance over the same period.",
+    },
+    {
+        "study_id": "manual_glabadanidis_moving_averages_2015",
+        "title": "Market Timing With Moving Averages",
+        "year": "2015",
+        "url": "https://ideas.repec.org/a/bla/irvfin/v15y2015i3p387-425.html",
+        "rule": "Applies moving-average market-timing rules to equity-market exposure, including S&P 500 related tests cited by later S&P 500 buy-and-hold comparisons.",
+        "outperform": "Reports economically and statistically significant alphas after transaction costs for moving-average timing rules; needs full-text confirmation for SP500-only subset.",
+    },
 ]
 
 
