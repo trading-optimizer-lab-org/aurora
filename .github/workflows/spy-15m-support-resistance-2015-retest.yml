@@ -66,6 +66,10 @@ jobs:
             --repo "${{ github.repository }}" \
             --pattern "${{ inputs.source_artifact }}" \
             --dir "$OUTPUT_DIR/source"
+          FOUND="$(find "$OUTPUT_DIR/source" -path "*/final/accepted.csv" -print -quit)"
+          test -n "$FOUND"
+          mkdir -p "$OUTPUT_DIR/source/final"
+          cp "$FOUND" "$OUTPUT_DIR/source/final/accepted.csv"
           test -f "$OUTPUT_DIR/source/final/accepted.csv"
       - name: Upload source candidates
         uses: actions/upload-artifact@v4
