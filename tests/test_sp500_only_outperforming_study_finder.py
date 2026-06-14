@@ -74,6 +74,31 @@ def test_classify_rejects_cannot_beat_market_language() -> None:
     assert "negative_or_non_outperform_result" in candidate.reject_reasons
 
 
+def test_classify_accepts_improve_returns_versus_buy_hold_language() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W4",
+        title="Optimal probabilistic market timing using S&P 500 cycles",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract=(
+            "Uses historical bull and bear regime probabilities on the daily S&P 500 price index "
+            "to time market exposure."
+        ),
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "The S&P 500 market-timing strategy is designed to improve long-run investment returns "
+            "versus buy-and-hold."
+        ),
+    )
+
+    assert candidate.reject_reasons == ""
+
+
 def test_dedupe_prefers_unique_doi_or_id() -> None:
     one = _classify(
         source="test",
