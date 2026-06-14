@@ -630,8 +630,12 @@ def _openalex_search(query: str, *, page: int, per_page: int) -> dict[str, Any]:
         }
     )
     url = f"https://api.openalex.org/works?{params}"
-    with urllib.request.urlopen(url, timeout=45) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(url, timeout=45) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _openalex_work(work_id: str) -> dict[str, Any] | None:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import urllib.error
 from pathlib import Path
 
 import yaml
 
+import scripts.find_sp500_only_outperforming_studies as finder
 from scripts.find_sp500_only_outperforming_studies import _classify, _dedupe
 
 
@@ -103,6 +105,15 @@ def test_dedupe_prefers_unique_doi_or_id() -> None:
     )
 
     assert len(_dedupe([one, two])) == 1
+
+
+def test_openalex_search_handles_http_error(monkeypatch) -> None:
+    def raise_http_error(*args, **kwargs):
+        raise urllib.error.HTTPError("https://api.openalex.org/works", 400, "Bad Request", {}, None)
+
+    monkeypatch.setattr(finder.urllib.request, "urlopen", raise_http_error)
+
+    assert finder._openalex_search("bad query", page=1, per_page=1) == {}
 
 
 def test_workflow_shape() -> None:
