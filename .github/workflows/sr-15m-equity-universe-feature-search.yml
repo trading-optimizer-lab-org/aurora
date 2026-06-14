@@ -1,0 +1,352 @@
+name: Free 15m S/R Equity Universe Feature Search
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id containing the aligned free 15m equity universe artifact"
+        required: true
+        default: "27498064404"
+      source_artifact:
+        description: "Artifact with data/*.csv for the 20 aligned equities"
+        required: true
+        default: "free-15m-equity-universe-yfinance-data"
+      target_bars:
+        description: "Default forward 15m bars to score"
+        required: true
+        default: "4"
+      cost_bps:
+        description: "One-way turnover cost in basis points"
+        required: true
+        default: "1.0"
+      screen_jobs:
+        description: "Parallel jobs for univariate screening"
+        required: true
+        default: "80"
+      family_search_jobs:
+        description: "Parallel jobs for within-family search"
+        required: true
+        default: "260"
+      mixed_search_jobs:
+        description: "Parallel jobs for mixed-family confluence search"
+        required: true
+        default: "120"
+      job_timeout_minutes:
+        description: "Hard timeout per search job"
+        required: true
+        default: "20"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/sr_15m_equity_universe_feature_search
+  FINAL_ARTIFACT: sr-15m-equity-universe-feature-search-results
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download aligned 20-equity 15m data artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$OUTPUT_DIR/source"
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "${{ inputs.source_artifact }}" \
+            --dir "$OUTPUT_DIR/source"
+          FOUND="$(find "$OUTPUT_DIR/source" -path "*/data/*_15m.csv" -print -quit)"
+          test -n "$FOUND"
+      - name: Upload source data
+        uses: actions/upload-artifact@v4
+        with:
+          name: sr-15m-equity-universe-source-data
+          path: ${{ env.OUTPUT_DIR }}/source
+
+  features:
+    runs-on: ubuntu-latest
+    needs: [data]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download source data
+        uses: actions/download-artifact@v4
+        with:
+          name: sr-15m-equity-universe-source-data
+          path: ${{ env.OUTPUT_DIR }}/source
+      - name: Build support/resistance feature panels
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode features \
+            --output-dir "$OUTPUT_DIR" \
+            --input-dir "$OUTPUT_DIR/source" \
+            --min-symbols 20 \
+            --target-bars "${{ inputs.target_bars }}"
+      - name: Upload feature panels
+        uses: actions/upload-artifact@v4
+        with:
+          name: sr-15m-equity-universe-features
+          path: ${{ env.OUTPUT_DIR }}/data/features
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      screen: ${{ steps.matrix.outputs.screen }}
+      family_a: ${{ steps.matrix.outputs.family_a }}
+      family_b: ${{ steps.matrix.outputs.family_b }}
+      mixed: ${{ steps.matrix.outputs.mixed }}
+    steps:
+      - name: Build matrices
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          def full_matrix(name):
+              n = int(os.environ[name])
+              return [{"stage": i, "total": n} for i in range(n)]
+          screen = full_matrix("SCREEN_JOBS")
+          family = full_matrix("FAMILY_JOBS")
+          mixed = full_matrix("MIXED_JOBS")
+          midpoint = (len(family) + 1) // 2
+          print("screen=" + json.dumps(screen))
+          print("family_a=" + json.dumps(family[:midpoint]))
+          print("family_b=" + json.dumps(family[midpoint:]))
+          print("mixed=" + json.dumps(mixed))
+          PY
+        env:
+          SCREEN_JOBS: ${{ inputs.screen_jobs }}
+          FAMILY_JOBS: ${{ inputs.family_search_jobs }}
+          MIXED_JOBS: ${{ inputs.mixed_search_jobs }}
+
+  screen:
+    runs-on: ubuntu-latest
+    needs: [features, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 80
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.screen) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download feature panels
+        uses: actions/download-artifact@v4
+        with:
+          name: sr-15m-equity-universe-features
+          path: ${{ env.OUTPUT_DIR }}/data/features
+      - name: Run screen stage
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode screen \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages "${{ matrix.total }}" \
+            --top-n 1000 \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --target-bars "${{ inputs.target_bars }}"
+      - name: Upload search artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sr-15m-equity-universe-${{ github.job }}-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/${{ github.job }}/stage_*
+          if-no-files-found: warn
+
+  family_search_a:
+    runs-on: ubuntu-latest
+    needs: [features, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 130
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.family_a) }}
+    steps: &family_search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download feature panels
+        uses: actions/download-artifact@v4
+        with:
+          name: sr-15m-equity-universe-features
+          path: ${{ env.OUTPUT_DIR }}/data/features
+      - name: Run family search stage
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode family-search \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages "${{ matrix.total }}" \
+            --top-n 1000 \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --target-bars "${{ inputs.target_bars }}" \
+            --time-budget-minutes 10
+      - name: Upload family search artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sr-15m-equity-universe-family-search-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/family_search/stage_*
+          if-no-files-found: warn
+
+  family_search_b:
+    runs-on: ubuntu-latest
+    needs: [features, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 130
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.family_b) }}
+    steps: *family_search_steps
+
+  mixed_search:
+    runs-on: ubuntu-latest
+    needs: [features, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 120
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.mixed) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download feature panels
+        uses: actions/download-artifact@v4
+        with:
+          name: sr-15m-equity-universe-features
+          path: ${{ env.OUTPUT_DIR }}/data/features
+      - name: Run mixed search stage
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode mixed-search \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages "${{ matrix.total }}" \
+            --top-n 1000 \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --target-bars "${{ inputs.target_bars }}" \
+            --time-budget-minutes 10
+      - name: Upload mixed search artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sr-15m-equity-universe-mixed-search-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/mixed_search/stage_*
+          if-no-files-found: warn
+
+  merge_candidates:
+    runs-on: ubuntu-latest
+    needs: [features, screen, family_search_a, family_search_b, mixed_search]
+    if: ${{ always() && needs.features.result == 'success' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download feature panels
+        uses: actions/download-artifact@v4
+        with:
+          name: sr-15m-equity-universe-features
+          path: ${{ env.OUTPUT_DIR }}/data/features
+      - name: Download search artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sr-15m-equity-universe-*
+          path: ${{ env.OUTPUT_DIR }}/_downloaded
+      - name: Arrange search artifacts
+        run: |
+          mkdir -p "$OUTPUT_DIR/screen" "$OUTPUT_DIR/family_search" "$OUTPUT_DIR/mixed_search"
+          find "$OUTPUT_DIR/_downloaded" -path "*/screen/stage_*" -type d -exec cp -r {} "$OUTPUT_DIR/screen/" \; || true
+          find "$OUTPUT_DIR/_downloaded" -path "*/family_search/stage_*" -type d -exec cp -r {} "$OUTPUT_DIR/family_search/" \; || true
+          find "$OUTPUT_DIR/_downloaded" -path "*/mixed_search/stage_*" -type d -exec cp -r {} "$OUTPUT_DIR/mixed_search/" \; || true
+      - name: Merge train/validation candidates
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --target-sharpe 0.5 \
+            --top-n 5000 \
+            --min-validation-symbols 8
+      - name: Upload prelocked candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: sr-15m-equity-universe-prelocked-candidates
+          path: ${{ env.OUTPUT_DIR }}
+
+  locked_retest:
+    runs-on: ubuntu-latest
+    needs: [merge_candidates]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download prelocked candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: sr-15m-equity-universe-prelocked-candidates
+          path: ${{ env.OUTPUT_DIR }}
+      - name: Open locked split once and retest finalists
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode retest \
+            --output-dir "$OUTPUT_DIR" \
+            --source-candidates "$OUTPUT_DIR/final/accepted.csv" \
+            --stage 0 \
+            --candidates-per-stage 5000 \
+            --top-n 5000 \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --target-bars "${{ inputs.target_bars }}"
+      - name: Merge final locked results
+        run: |
+          python scripts/run_sr_15m_equity_universe.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --target-sharpe 0.5 \
+            --top-n 5000 \
+            --min-validation-symbols 8
+      - name: Upload final S/R feature search artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FINAL_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}
