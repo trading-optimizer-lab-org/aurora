@@ -61,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "input_candidates": len(candidates),
         "confirmed": sum(1 for row in rows if row["verification_status"] == "confirmed"),
+        "confirmed_with_caveat": sum(1 for row in rows if row["verification_status"] == "confirmed_with_caveat"),
         "confirmed_from_metadata": sum(1 for row in rows if row["verification_status"] == "confirmed_from_metadata"),
         "needs_full_text": sum(1 for row in rows if row["verification_status"] == "needs_full_text"),
         "needs_review_conflicting_evidence": sum(
@@ -130,7 +131,7 @@ def _verify(row: dict[str, str], *, max_pdf_bytes: int) -> dict[str, str]:
     if "other_traded_assets_in_candidate_rule" in reasons:
         status = "rejected"
     elif "negative_or_non_outperform_result" in reasons and text_source == "pdf" and has_core_evidence:
-        status = "needs_review_conflicting_evidence"
+        status = "confirmed_with_caveat"
     elif "negative_or_non_outperform_result" in reasons:
         status = "rejected"
     out = dict(row)

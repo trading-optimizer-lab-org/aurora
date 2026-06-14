@@ -34,7 +34,7 @@ def test_verify_rejects_negative_outperform_result() -> None:
     assert "negative_or_non_outperform_result" in out["verification_reasons"]
 
 
-def test_verify_marks_pdf_positive_and_negative_as_needs_review(monkeypatch) -> None:
+def test_verify_marks_pdf_positive_and_negative_as_confirmed_with_caveat(monkeypatch) -> None:
     row = {
         "study_id": "manual_pdf",
         "title": "Trend following rules for the S&P 500",
@@ -60,7 +60,7 @@ def test_verify_marks_pdf_positive_and_negative_as_needs_review(monkeypatch) -> 
 
     out = _verify(row, max_pdf_bytes=1024)
 
-    assert out["verification_status"] == "needs_review_conflicting_evidence"
+    assert out["verification_status"] == "confirmed_with_caveat"
     assert "negative_or_non_outperform_result" in out["verification_reasons"]
 
 
