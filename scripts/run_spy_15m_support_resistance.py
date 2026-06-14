@@ -141,6 +141,10 @@ def normalise_yfinance_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
     if isinstance(frame.columns, pd.MultiIndex):
         if "SPY" in frame.columns.get_level_values(0):
             frame = frame["SPY"]
+        elif "SPY" in frame.columns.get_level_values(-1):
+            frame = frame.xs("SPY", axis=1, level=-1)
+        elif all(name in frame.columns.get_level_values(0) for name in ["Open", "High", "Low", "Close", "Volume"]):
+            frame = frame.droplevel(-1, axis=1)
         else:
             frame.columns = frame.columns.get_level_values(-1)
     rename = {c: str(c).strip().title() for c in frame.columns}

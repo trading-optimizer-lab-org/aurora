@@ -10,6 +10,7 @@ import yaml
 from scripts.run_spy_15m_support_resistance import (
     build_feature_frame,
     feature_families,
+    normalise_yfinance_ohlcv,
     prepare_matrix,
     sample_params,
 )
@@ -87,6 +88,24 @@ def test_build_feature_frame_contains_all_support_resistance_families() -> None:
         "confluence",
     ]:
         assert families[family], family
+
+
+def test_normalise_yfinance_price_ticker_multiindex() -> None:
+    idx = pd.date_range("2026-01-02 09:30", periods=3, freq="15min")
+    columns = pd.MultiIndex.from_product([["Open", "High", "Low", "Close", "Volume"], ["SPY"]])
+    raw = pd.DataFrame(
+        [
+            [100.0, 101.0, 99.0, 100.5, 1_000_000],
+            [100.5, 102.0, 100.0, 101.5, 1_100_000],
+            [101.5, 103.0, 101.0, 102.5, 1_200_000],
+        ],
+        index=idx,
+        columns=columns,
+    )
+    out = normalise_yfinance_ohlcv(raw)
+    assert list(out.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert out.loc[idx[0], "Close"] == 100.5
+    assert out.loc[idx[-1], "Volume"] == 1_200_000
 
 
 def test_prepare_matrix_uses_last_fraction_as_validation() -> None:
