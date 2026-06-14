@@ -148,7 +148,7 @@ def test_variant_catalog_contains_zone_entry_invalidation_and_exit_versions() ->
     assert {v.side for v in catalog} == {"long", "short"}
     assert {"body_wick", "deep_half", "atr_buffered"} <= {v.zone_method for v in catalog}
     assert {"wick_break", "close_break"} <= {v.invalidation_rule for v in catalog}
-    assert {26, 78, 156} <= {v.max_zone_age_bars for v in catalog}
+    assert {26, 78} == {v.max_zone_age_bars for v in catalog}
     assert {"time", "zone_stop_target", "zone_stop_time"} <= {v.exit_rule for v in catalog}
 
 

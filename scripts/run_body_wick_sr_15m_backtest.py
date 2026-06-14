@@ -160,9 +160,7 @@ def compute_zone_from_candle(
 def build_variant_catalog() -> list[StrategyVariant]:
     variants: list[StrategyVariant] = []
     exit_versions = (
-        ("time", 2, 1.0),
         ("time", 4, 1.0),
-        ("time", 8, 1.0),
         ("zone_stop_time", 8, 1.0),
         ("zone_stop_target", 8, 1.5),
     )
@@ -170,14 +168,14 @@ def build_variant_catalog() -> list[StrategyVariant]:
         for zone_method in ("body_wick", "deep_half", "atr_buffered"):
             for setup_candle in ("color", "range_expansion"):
                 for min_range_atr in (0.0, 1.0):
-                    for touch_rule in ("wick_intersects", "close_inside", "body_overlaps"):
+                    for touch_rule in ("wick_intersects", "close_inside"):
                         for confirmation_rule in (
                             "color_only",
                             "color_and_close_beyond_touch_close",
                             "break_touch_extreme",
                         ):
                             for invalidation_rule in ("wick_break", "close_break"):
-                                for max_zone_age_bars in (26, 78, 156):
+                                for max_zone_age_bars in (26, 78):
                                     for exit_rule, hold_bars, target_r in exit_versions:
                                         variant_id = (
                                             f"{side}__{zone_method}__{setup_candle}"
