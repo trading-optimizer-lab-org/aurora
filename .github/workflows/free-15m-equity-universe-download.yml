@@ -1,0 +1,54 @@
+name: Free 15m Equity Universe Download
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Comma-separated US equity tickers"
+        required: true
+        default: "AAPL,MSFT,NVDA,AMZN,META,GOOGL,AVGO,LLY,JPM,TSLA,V,UNH,XOM,MA,COST,NFLX,WMT,PG,HD,KO"
+      period:
+        description: "Maximum free yfinance intraday window"
+        required: true
+        default: "60d"
+      interval:
+        description: "Intraday bar interval"
+        required: true
+        default: "15m"
+      min_symbols:
+        description: "Minimum aligned symbols required"
+        required: true
+        default: "20"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/free_15m_equity_universe_yfinance
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download free aligned 15m equity universe
+        run: |
+          python scripts/download_free_15m_equity_universe.py \
+            --output-dir "$OUTPUT_DIR" \
+            --symbols "${{ inputs.symbols }}" \
+            --period "${{ inputs.period }}" \
+            --interval 15m \
+            --min-symbols "${{ inputs.min_symbols }}"
+      - name: Upload aligned 15m universe
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-15m-equity-universe-yfinance-data
+          path: ${{ env.OUTPUT_DIR }}
