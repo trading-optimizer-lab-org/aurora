@@ -159,47 +159,50 @@ def compute_zone_from_candle(
 
 def build_variant_catalog() -> list[StrategyVariant]:
     variants: list[StrategyVariant] = []
+    exit_versions = (
+        ("time", 2, 1.0),
+        ("time", 4, 1.0),
+        ("time", 8, 1.0),
+        ("zone_stop_time", 8, 1.0),
+        ("zone_stop_target", 8, 1.5),
+    )
     for side in ("long", "short"):
         for zone_method in ("body_wick", "deep_half", "atr_buffered"):
             for setup_candle in ("color", "range_expansion"):
-                for min_range_atr in (0.0, 0.75, 1.25):
+                for min_range_atr in (0.0, 1.0):
                     for touch_rule in ("wick_intersects", "close_inside", "body_overlaps"):
                         for confirmation_rule in (
                             "color_only",
                             "color_and_close_beyond_touch_close",
                             "break_touch_extreme",
-                            "engulf_touch_body",
                         ):
                             for invalidation_rule in ("wick_break", "close_break"):
                                 for max_zone_age_bars in (26, 78, 156):
-                                    for exit_rule in ("time", "zone_stop_time", "zone_stop_target"):
-                                        for hold_bars in (2, 4, 8, 13):
-                                            target_rs = (1.0, 1.5) if exit_rule == "zone_stop_target" else (1.0,)
-                                            for target_r in target_rs:
-                                                variant_id = (
-                                                    f"{side}__{zone_method}__{setup_candle}"
-                                                    f"__atr{min_range_atr:g}__{touch_rule}"
-                                                    f"__{confirmation_rule}__{invalidation_rule}"
-                                                    f"__age{max_zone_age_bars}__{exit_rule}"
-                                                    f"__h{hold_bars}__r{target_r:g}"
-                                                )
-                                                variants.append(
-                                                    StrategyVariant(
-                                                        variant_id=variant_id,
-                                                        side=side,
-                                                        zone_method=zone_method,
-                                                        setup_candle=setup_candle,
-                                                        min_range_atr=min_range_atr,
-                                                        touch_rule=touch_rule,
-                                                        confirmation_rule=confirmation_rule,
-                                                        invalidation_rule=invalidation_rule,
-                                                        max_zone_age_bars=max_zone_age_bars,
-                                                        exit_rule=exit_rule,
-                                                        hold_bars=hold_bars,
-                                                        stop_buffer_atr=0.0,
-                                                        target_r=target_r,
-                                                    )
-                                                )
+                                    for exit_rule, hold_bars, target_r in exit_versions:
+                                        variant_id = (
+                                            f"{side}__{zone_method}__{setup_candle}"
+                                            f"__atr{min_range_atr:g}__{touch_rule}"
+                                            f"__{confirmation_rule}__{invalidation_rule}"
+                                            f"__age{max_zone_age_bars}__{exit_rule}"
+                                            f"__h{hold_bars}__r{target_r:g}"
+                                        )
+                                        variants.append(
+                                            StrategyVariant(
+                                                variant_id=variant_id,
+                                                side=side,
+                                                zone_method=zone_method,
+                                                setup_candle=setup_candle,
+                                                min_range_atr=min_range_atr,
+                                                touch_rule=touch_rule,
+                                                confirmation_rule=confirmation_rule,
+                                                invalidation_rule=invalidation_rule,
+                                                max_zone_age_bars=max_zone_age_bars,
+                                                exit_rule=exit_rule,
+                                                hold_bars=hold_bars,
+                                                stop_buffer_atr=0.0,
+                                                target_r=target_r,
+                                            )
+                                        )
     return variants
 
 
