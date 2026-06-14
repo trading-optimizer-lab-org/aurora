@@ -90,7 +90,11 @@ OTHER_TRADED_ASSET_RE = re.compile(
 NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"\b(mutual fund|mutual funds|fund managers|stock picking|individual stocks|single stocks|big tech stocks|"
     r"sector etfs|sector excess returns|cryptocurrency|crypto|covariance estimator|portfolio optimization|"
-    r"pension systems|hedge fund etf|alternative assets|options strategy|protective puts)\b",
+    r"pension systems|hedge fund etf|alternative assets|options strategy|protective puts|"
+    r"stock recommendation|stock trading signals?|stock price movement|oil and gas industry|delta air lines|"
+    r"congressional trading|option data|option hedging|options trading|passive sectors|sector rotation|"
+    r"equity indices|asset ranking|multi.?asset|futures markets|cross.?sectional|"
+    r"croatian stock market|financial bubbles from option|support and resistance levels)\b",
     re.I,
 )
 

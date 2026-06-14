@@ -49,6 +49,25 @@ def test_classify_rejects_other_traded_assets() -> None:
     assert "mentions_other_traded_assets" in candidate.reject_reasons
 
 
+def test_classify_rejects_stock_recommendation_context() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W6",
+        title="A practical machine learning approach for dynamic stock recommendation",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="ml",
+        rule_or_abstract="The model ranks individual stocks and reports outperformance versus the S&P 500 benchmark.",
+        tradable_assets="",
+        benchmark="S&P 500",
+        text="A stock recommendation strategy outperforms the S&P 500 benchmark.",
+    )
+
+    assert "non_sp500_only_strategy_context" in candidate.reject_reasons
+
+
 def test_classify_rejects_cannot_beat_market_language() -> None:
     candidate = _classify(
         source="test",
