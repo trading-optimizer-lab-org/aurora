@@ -68,6 +68,44 @@ def test_classify_rejects_stock_recommendation_context() -> None:
     assert "non_sp500_only_strategy_context" in candidate.reject_reasons
 
 
+def test_classify_rejects_esg_portfolio_against_sp500() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W7",
+        title="ESG corporate practices and stock performance",
+        year="2025",
+        doi="",
+        url="",
+        query="",
+        strategy_family="portfolio",
+        rule_or_abstract="A portfolio of top 30 listed companies outperforms the S&P 500 index.",
+        tradable_assets="",
+        benchmark="S&P 500",
+        text="The ESG portfolio outperforms the S&P 500 benchmark.",
+    )
+
+    assert "non_sp500_only_strategy_context" in candidate.reject_reasons
+
+
+def test_classify_rejects_sp500_constituent_stock_strategy() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W8",
+        title="Directional movements of S&P 500 constituent stocks",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="stock_selection",
+        rule_or_abstract="Buy the top S&P 500 constituents and sell short the bottom constituents.",
+        tradable_assets="",
+        benchmark="S&P 500",
+        text="The constituent stock strategy outperforms the market.",
+    )
+
+    assert "non_sp500_only_strategy_context" in candidate.reject_reasons
+
+
 def test_classify_rejects_cannot_beat_market_language() -> None:
     candidate = _classify(
         source="test",

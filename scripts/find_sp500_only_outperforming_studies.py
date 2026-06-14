@@ -94,7 +94,12 @@ NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"stock recommendation|stock trading signals?|stock price movement|oil and gas industry|delta air lines|"
     r"congressional trading|option data|option hedging|options trading|passive sectors|sector rotation|"
     r"equity indices|asset ranking|multi.?asset|futures markets|cross.?sectional|"
-    r"croatian stock market|financial bubbles from option|support and resistance levels)\b",
+    r"croatian stock market|financial bubbles from option|support and resistance levels|"
+    r"esg|listed companies|top 30 listed companies|top innovators|individual equity options|"
+    r"stock selection|asset selection|constituent stocks|s&p\s*500 constituents|constituents of the s&p|"
+    r"per.?stock|stock portfolios?|equity portfolios?|leveraged etf pairs|inverse leveraged|"
+    r"twitter|sentiment-driven|asset allocation decisions|bond allocation|increased bond|"
+    r"hang seng|msci uk|brent crude|ark innovation)\b",
     re.I,
 )
 
