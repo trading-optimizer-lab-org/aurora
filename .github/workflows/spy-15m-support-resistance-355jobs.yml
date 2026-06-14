@@ -1,0 +1,172 @@
+name: SPY 15m Support Resistance 355 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      period:
+        description: "yfinance intraday period for SPY 15m data"
+        required: true
+        default: "60d"
+      target_bars:
+        description: "Forward 15m bars to score, 4 means next hour"
+        required: true
+        default: "4"
+      configs_per_stage:
+        description: "Configs tested per stage"
+        required: true
+        default: "15000"
+      time_budget_minutes:
+        description: "Clean internal stage runtime before upload"
+        required: true
+        default: "12"
+      target_sharpe:
+        description: "Train and validation Sharpe required for accepted candidates"
+        required: true
+        default: "1.50"
+      cost_bps:
+        description: "One-way turnover cost in basis points"
+        required: true
+        default: "1.0"
+      job_timeout_minutes:
+        description: "Hard timeout per search job"
+        required: true
+        default: "25"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_15m_support_resistance_355jobs
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download SPY 15m and build support/resistance panel
+        run: |
+          python scripts/run_spy_15m_support_resistance.py \
+            --mode data \
+            --output-dir "$OUTPUT_DIR" \
+            --period "${{ inputs.period }}" \
+            --interval 15m \
+            --target-bars "${{ inputs.target_bars }}"
+      - name: Upload data
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-data
+          path: ${{ env.OUTPUT_DIR }}/data
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - name: Build 355-stage balanced matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          full = [{"stage": stage} for stage in range(355)]
+          print("matrix_a=" + json.dumps(full[:178]))
+          print("matrix_b=" + json.dumps(full[178:]))
+          PY
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 178
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-15m-support-resistance-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Run SPY 15m support/resistance stage
+        run: |
+          python scripts/run_spy_15m_support_resistance.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --configs-per-stage "${{ inputs.configs_per_stage }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --target-sharpe "${{ inputs.target_sharpe }}" \
+            --cost-bps "${{ inputs.cost_bps }}"
+      - name: Upload stage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+          if-no-files-found: warn
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 177
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *search_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, search_a, search_b]
+    if: always()
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-15m-support-resistance-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Download stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: spy-15m-support-resistance-stage-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+      - name: Merge stages
+        run: |
+          python scripts/run_spy_15m_support_resistance.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --target-sharpe "${{ inputs.target_sharpe }}"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-15m-support-resistance-355jobs-results
+          path: ${{ env.OUTPUT_DIR }}
