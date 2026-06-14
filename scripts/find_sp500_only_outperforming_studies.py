@@ -80,7 +80,12 @@ NEGATIVE_OUTPERFORM_RE = re.compile(
     r"could not yield higher[^.]{0,120}(market|s&p\s*500|sp500|spy|index)|"
     r"struggle[^.]{0,80}real market conditions|"
     r"loss when[^.]{0,80}(transaction fees|transaction costs)|"
-    r"should not use[^.]{0,120}moving averages)\b",
+    r"should not use[^.]{0,120}moving averages|"
+    r"neither[^.]{0,120}can beat[^.]{0,80}(buy.?and.?hold|the market|s&p\s*500|sp500|spy|index)|"
+    r"not possible[^.]{0,120}trading strategies[^.]{0,120}outperform|"
+    r"not evidence against[^.]{0,80}random walk|"
+    r"not incompatible[^.]{0,80}random walk|"
+    r"erroneous rejection[^.]{0,80}random walk)\b",
     re.I,
 )
 PREDICTION_ONLY_RE = re.compile(

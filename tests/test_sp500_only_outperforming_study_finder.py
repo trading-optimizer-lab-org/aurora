@@ -264,6 +264,50 @@ def test_classify_rejects_cannot_beat_market_language() -> None:
     assert "negative_or_non_outperform_result" in candidate.reject_reasons
 
 
+def test_classify_rejects_neither_ai_can_beat_buy_hold() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W16",
+        title="Why neither traditional ML nor agentic AI can beat buy-and-hold",
+        year="2026",
+        doi="",
+        url="",
+        query="",
+        strategy_family="ml",
+        rule_or_abstract="The S&P 500 strategy shows neither ML nor AI can beat buy-and-hold.",
+        tradable_assets="SPY",
+        benchmark="S&P 500",
+        text="The study finds neither traditional ML nor agentic AI can beat buy-and-hold.",
+    )
+
+    assert "negative_or_non_outperform_result" in candidate.reject_reasons
+
+
+def test_classify_rejects_random_walk_non_rejection_language() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W17",
+        title="Random walks, Hurst exponent, and market efficiency",
+        year="2010",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_efficiency",
+        rule_or_abstract=(
+            "The S&P 500 analysis is not evidence against the random walk hypothesis "
+            "and is not a documented trading strategy outperforming buy-and-hold."
+        ),
+        tradable_assets="SPY",
+        benchmark="S&P 500",
+        text=(
+            "The S&P 500 results are not evidence against random walk behaviour and "
+            "are not incompatible with random walk market efficiency."
+        ),
+    )
+
+    assert "negative_or_non_outperform_result" in candidate.reject_reasons
+
+
 def test_classify_accepts_improve_returns_versus_buy_hold_language() -> None:
     candidate = _classify(
         source="test",
