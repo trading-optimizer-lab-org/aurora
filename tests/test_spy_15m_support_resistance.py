@@ -9,6 +9,7 @@ import yaml
 
 from scripts.run_spy_15m_support_resistance import (
     build_feature_frame,
+    ensure_15m_ohlcv,
     feature_families,
     filter_regular_session,
     normalise_yfinance_ohlcv,
@@ -57,21 +58,16 @@ def test_spy_15m_2015_retest_workflow_uses_polygon_and_source_artifact() -> None
     path = Path(".github/workflows/spy-15m-support-resistance-2015-retest.yml")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     text = path.read_text(encoding="utf-8")
-    assert data["name"] == "SPY 15m Support Resistance 2015 Retest"
+    assert data["name"] == "SPY 15m Support Resistance Free Max Retest"
     assert "workflow_dispatch" in data[True]
-    assert data[True]["workflow_dispatch"]["inputs"]["start_date"]["default"] == "2015-01-01"
     assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27494610826"
-    assert "preflight" in data["jobs"]
-    assert data["jobs"]["source"]["needs"] == ["preflight"]
-    assert data["jobs"]["data"]["needs"] == ["preflight"]
     assert "needs.data.result == 'success'" in str(data["jobs"]["merge"]["if"])
-    assert "POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}" in text
-    assert "yfinance cannot cover this range" in text
+    assert "--data-source free-max" in text
     assert 'find "$OUTPUT_DIR/source" -path "*/final/accepted.csv"' in text
-    assert "--data-source polygon" in text
     assert "--mode retest-shard" in text
     assert "range(355)" in text
-    assert "spy-15m-support-resistance-2015-retest-results" in text
+    assert "spy-15m-support-resistance-free-max-data" in text
+    assert "spy-15m-support-resistance-free-max-retest-results" in text
 
 
 def test_build_feature_frame_contains_all_support_resistance_families() -> None:
@@ -149,6 +145,28 @@ def test_filter_regular_session_keeps_only_us_cash_bars() -> None:
     assert list(out.index) == [idx[1], idx[2]]
 
 
+def test_ensure_15m_ohlcv_resamples_one_minute_data() -> None:
+    idx = pd.date_range("2026-01-02 09:30", periods=30, freq="1min")
+    close = pd.Series(np.arange(30, dtype=float) + 100.0, index=idx)
+    bars = pd.DataFrame(
+        {
+            "Open": close,
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close + 0.5,
+            "Volume": 10.0,
+        },
+        index=idx,
+    )
+    out = ensure_15m_ohlcv(bars)
+    assert list(out.index) == [idx[0], idx[15]]
+    assert out.iloc[0]["Open"] == pytest.approx(100.0)
+    assert out.iloc[0]["High"] == pytest.approx(115.0)
+    assert out.iloc[0]["Low"] == pytest.approx(99.0)
+    assert out.iloc[0]["Close"] == pytest.approx(114.5)
+    assert out.iloc[0]["Volume"] == pytest.approx(150.0)
+
+
 def test_prepare_matrix_uses_last_fraction_as_validation() -> None:
     panel = build_feature_frame(make_spy_15m_bars(), target_bars=4)
     feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
@@ -218,3 +236,64 @@ def test_run_retest_shard_revalidates_source_candidates(tmp_path: Path) -> None:
     assert list(out["strategy_id"]) == ["sr15m_source_000001"]
     assert "source_validation_sharpe" in out.columns
     assert "validation_sharpe" in out.columns
+
+
+def test_run_retest_shard_revalidates_all_dataset_directories(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    datasets_dir = output_dir / "data" / "datasets"
+    panels = {
+        "SPY_YFINANCE_15M": ("SPY", make_spy_15m_bars(days=55)),
+        "IVE_KIBOT_BIDASK_1M_RESAMPLED_15M": ("IVE", make_spy_15m_bars(days=60)),
+    }
+    for dataset_id, (symbol, bars) in panels.items():
+        dataset_dir = datasets_dir / dataset_id
+        dataset_dir.mkdir(parents=True)
+        panel = build_feature_frame(bars, target_bars=4)
+        panel.to_csv(dataset_dir / "feature_panel.csv", index_label="timestamp")
+        dataset_dir.joinpath("feature_audit.json").write_text(
+            __import__("json").dumps(
+                {
+                    "dataset_id": dataset_id,
+                    "symbol": symbol,
+                    "data_source": "test",
+                    "target_bars": 4,
+                    "first_timestamp": str(panel.index.min()),
+                    "last_timestamp": str(panel.index.max()),
+                    "rows_panel": len(panel),
+                }
+            ),
+            encoding="utf-8",
+        )
+    first_panel = build_feature_frame(next(iter(panels.values()))[1], target_bars=4)
+    feature_cols = [c for c in first_panel.columns if c not in {"target_return", "target_direction"}]
+    params = sample_params(np.random.default_rng(3), feature_cols, stage=0, config_index=1)
+    source_dir = output_dir / "source" / "final"
+    source_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "sr15m_source_000001",
+                "score": 3.0,
+                "train_sharpe": 2.0,
+                "validation_sharpe": 2.5,
+                "validation_trades": 7,
+                "focus_family": params["focus_family"],
+                "params_json": __import__("json").dumps(params),
+            }
+        ]
+    ).to_csv(source_dir / "accepted.csv", index=False)
+
+    run_retest_shard(
+        output_dir,
+        stage=0,
+        source_candidates=source_dir / "accepted.csv",
+        candidates_per_stage=100,
+        top_per_stage=100,
+        target_sharpe=1.5,
+        cost_bps=1.0,
+        validation_fraction=0.30,
+    )
+
+    out = pd.read_csv(output_dir / "shards" / "stage_000" / "top_candidates.csv")
+    assert set(out["dataset_id"]) == set(panels)
+    assert set(out["dataset_symbol"]) == {"SPY", "IVE"}

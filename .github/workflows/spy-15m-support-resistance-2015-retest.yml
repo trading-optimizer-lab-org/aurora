@@ -1,4 +1,4 @@
-name: SPY 15m Support Resistance 2015 Retest
+name: SPY 15m Support Resistance Free Max Retest
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
         required: true
         default: "spy-15m-support-resistance-355jobs-results"
       start_date:
-        description: "Historical SPY 15m start date"
+        description: "Kept for compatibility; free-max mode uses every no-premium source available"
         required: true
         default: "2015-01-01"
       end_date:
@@ -46,29 +46,15 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  OUTPUT_DIR: outputs/spy_15m_support_resistance_2015_retest
+  OUTPUT_DIR: outputs/spy_15m_support_resistance_free_max_retest
 
 permissions:
   contents: read
   actions: read
 
 jobs:
-  preflight:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Check historical intraday provider secret
-        env:
-          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
-        run: |
-          if [ -z "$POLYGON_API_KEY" ]; then
-            echo "::error::POLYGON_API_KEY is not configured. SPY 15m from 2015 requires a historical intraday provider; yfinance cannot cover this range."
-            exit 1
-          fi
-
   source:
     runs-on: ubuntu-latest
-    needs: [preflight]
     timeout-minutes: 10
     steps:
       - name: Download previous accepted candidates
@@ -93,8 +79,7 @@ jobs:
 
   data:
     runs-on: ubuntu-latest
-    needs: [preflight]
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -103,27 +88,19 @@ jobs:
           cache: pip
       - name: Install Aurora deps
         run: python -m pip install -e .
-      - name: Download SPY 15m 2015-today and build support/resistance panel
-        env:
-          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+      - name: Download every free 15m source and build support/resistance panels
         run: |
-          END_ARG=""
-          if [ -n "${{ inputs.end_date }}" ]; then
-            END_ARG="--end-date ${{ inputs.end_date }}"
-          fi
           python scripts/run_spy_15m_support_resistance.py \
             --mode data \
             --output-dir "$OUTPUT_DIR" \
-            --data-source polygon \
+            --data-source free-max \
             --symbol SPY \
-            --start-date "${{ inputs.start_date }}" \
-            $END_ARG \
             --interval 15m \
             --target-bars "${{ inputs.target_bars }}"
-      - name: Upload historical data
+      - name: Upload free max data
         uses: actions/upload-artifact@v4
         with:
-          name: spy-15m-support-resistance-2015-data
+          name: spy-15m-support-resistance-free-max-data
           path: ${{ env.OUTPUT_DIR }}/data
 
   plan:
@@ -133,7 +110,7 @@ jobs:
       matrix_a: ${{ steps.matrix.outputs.matrix_a }}
       matrix_b: ${{ steps.matrix.outputs.matrix_b }}
     steps:
-      - name: Build 355-stage retest matrix
+      - name: Build 355-stage free max retest matrix
         id: matrix
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
@@ -164,14 +141,14 @@ jobs:
       - name: Download historical data
         uses: actions/download-artifact@v4
         with:
-          name: spy-15m-support-resistance-2015-data
+          name: spy-15m-support-resistance-free-max-data
           path: ${{ env.OUTPUT_DIR }}/data
       - name: Download source candidates
         uses: actions/download-artifact@v4
         with:
           name: spy-15m-support-resistance-source-candidates
           path: ${{ env.OUTPUT_DIR }}/source/final
-      - name: Retest candidate shard on 2015-today history
+      - name: Retest candidate shard on free max 15m datasets
         run: |
           python scripts/run_spy_15m_support_resistance.py \
             --mode retest-shard \
@@ -187,7 +164,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: spy-15m-support-resistance-2015-retest-stage-${{ matrix.stage }}
+          name: spy-15m-support-resistance-free-max-retest-stage-${{ matrix.stage }}
           path: ${{ env.OUTPUT_DIR }}/shards/stage_*
           if-no-files-found: warn
 
@@ -219,12 +196,12 @@ jobs:
       - name: Download historical data
         uses: actions/download-artifact@v4
         with:
-          name: spy-15m-support-resistance-2015-data
+          name: spy-15m-support-resistance-free-max-data
           path: ${{ env.OUTPUT_DIR }}/data
       - name: Download retest stage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: spy-15m-support-resistance-2015-retest-stage-*
+          pattern: spy-15m-support-resistance-free-max-retest-stage-*
           path: ${{ env.OUTPUT_DIR }}/shards
       - name: Merge retest stages
         run: |
@@ -235,5 +212,5 @@ jobs:
       - name: Upload final retest artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spy-15m-support-resistance-2015-retest-results
+          name: spy-15m-support-resistance-free-max-retest-results
           path: ${{ env.OUTPUT_DIR }}

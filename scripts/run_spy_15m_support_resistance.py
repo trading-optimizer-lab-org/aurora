@@ -9,6 +9,7 @@ if str(_AURORA_POLICY_ROOT) not in sys.path:
 
 import argparse
 import datetime as dt
+import io
 import json
 import math
 import os
@@ -55,7 +56,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["data", "shard", "merge", "retest-shard"], required=True)
     parser.add_argument("--output-dir", default=f"outputs/{CAMPAIGN_ID}")
-    parser.add_argument("--data-source", choices=["yfinance", "polygon"], default="yfinance")
+    parser.add_argument("--data-source", choices=["yfinance", "polygon", "free-max"], default="yfinance")
     parser.add_argument("--symbol", default="SPY")
     parser.add_argument("--period", default=DEFAULT_PERIOD)
     parser.add_argument("--start-date", default="")
@@ -126,6 +127,9 @@ def run_data(
     interval: str,
     target_bars: int,
 ) -> None:
+    if data_source == "free-max":
+        run_free_max_data(output_dir, period=period, target_bars=target_bars)
+        return
     if data_source == "polygon":
         if not start_date:
             raise ValueError("--start-date is required for polygon historical data")
@@ -184,6 +188,172 @@ def run_data(
         "selection_policy": "train_only_threshold_selection_validation_diagnostic",
     }
     (data_dir / "feature_audit.json").write_text(json.dumps(audit, indent=2), encoding="utf-8")
+
+
+def run_free_max_data(output_dir: Path, *, period: str, target_bars: int) -> None:
+    datasets: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    fetchers = [
+        ("SPY_YFINANCE_15M", "SPY", "yfinance", lambda: fetch_yfinance_15m("SPY", period=period)),
+        ("IBM_KIBOT_1M_RESAMPLED_15M", "IBM", "kibot_free_adjusted_1m", lambda: fetch_kibot_minute_ohlcv("https://api.kibot.com/?get=XHuKFdi7")),
+        ("OIH_KIBOT_1M_RESAMPLED_15M", "OIH", "kibot_free_adjusted_1m", lambda: fetch_kibot_minute_ohlcv("https://api.kibot.com/?get=HaJS3GR4")),
+        (
+            "IVE_KIBOT_BIDASK_1M_RESAMPLED_15M",
+            "IVE",
+            "kibot_free_adjusted_1m_bidask_mid",
+            lambda: fetch_kibot_bidask_ohlc("https://api.kibot.com/?action=history&bp=1&interval=tickbidask1&symbol=IVE&user=guest"),
+        ),
+    ]
+    datasets_dir = output_dir / "data" / "datasets"
+    datasets_dir.mkdir(parents=True, exist_ok=True)
+    primary: tuple[pd.DataFrame, pd.DataFrame] | None = None
+    for dataset_id, symbol, source, fetcher in fetchers:
+        try:
+            raw_bars = fetcher()
+            bars = ensure_15m_ohlcv(raw_bars)
+            panel = build_feature_frame(bars, target_bars=target_bars)
+            if len(panel) < 200:
+                raise RuntimeError(f"Insufficient feature rows after warmup: {len(panel)}")
+            dataset_dir = datasets_dir / dataset_id
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            bars.to_csv(dataset_dir / "ohlcv_15m.csv", index_label="timestamp")
+            panel.to_csv(dataset_dir / "feature_panel.csv", index_label="timestamp")
+            audit = build_data_audit(
+                symbol=symbol,
+                interval="15m",
+                data_source=source,
+                period=period if source == "yfinance" else "",
+                start_date="",
+                end_date="",
+                target_bars=target_bars,
+                bars=bars,
+                panel=panel,
+            )
+            audit["dataset_id"] = dataset_id
+            (dataset_dir / "feature_audit.json").write_text(json.dumps(audit, indent=2), encoding="utf-8")
+            datasets.append(audit)
+            if primary is None:
+                primary = (bars, panel)
+        except Exception as exc:
+            failures.append({"dataset_id": dataset_id, "symbol": symbol, "source": source, "error": str(exc)})
+    if primary is None:
+        raise RuntimeError(f"No free 15m datasets could be built: {failures}")
+    data_dir = output_dir / "data"
+    bars, panel = primary
+    bars.to_csv(data_dir / "spy_15m_ohlcv.csv", index_label="timestamp")
+    panel.to_csv(data_dir / "spy_15m_sr_feature_panel.csv", index_label="timestamp")
+    manifest = {
+        "mode": "free_max_15m",
+        "target_bars": int(target_bars),
+        "datasets_built": datasets,
+        "failures": failures,
+        "free_data_policy": "Use all no-registration/no-premium sources available to this workflow; SPY exact is limited to recent yfinance intraday history.",
+    }
+    (data_dir / "free_max_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (data_dir / "feature_audit.json").write_text(json.dumps(datasets[0], indent=2), encoding="utf-8")
+
+
+def build_data_audit(
+    *,
+    symbol: str,
+    interval: str,
+    data_source: str,
+    period: str,
+    start_date: str,
+    end_date: str,
+    target_bars: int,
+    bars: pd.DataFrame,
+    panel: pd.DataFrame,
+) -> dict[str, Any]:
+    feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
+    families = feature_families(feature_cols)
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "data_source": data_source,
+        "period": period,
+        "start_date_requested": start_date,
+        "end_date_requested": end_date or dt.date.today().isoformat(),
+        "target_bars": int(target_bars),
+        "target_horizon_minutes": int(target_bars * 15),
+        "rows_raw": int(len(bars)),
+        "rows_panel": int(len(panel)),
+        "first_timestamp": str(panel.index.min()),
+        "last_timestamp": str(panel.index.max()),
+        "feature_count": int(len(feature_cols)),
+        "feature_families": {name: int(len(cols)) for name, cols in families.items()},
+        "feature_policy": "support_resistance_only_all_features_known_at_bar_close",
+        "selection_policy": "train_only_threshold_selection_validation_diagnostic",
+    }
+
+
+def fetch_yfinance_15m(symbol: str, *, period: str) -> pd.DataFrame:
+    raw = yf.download(
+        symbol,
+        period=period,
+        interval=INTERVAL,
+        auto_adjust=True,
+        progress=False,
+        prepost=False,
+        threads=False,
+        timeout=30,
+    )
+    return normalise_yfinance_ohlcv(raw, symbol=symbol)
+
+
+def fetch_kibot_minute_ohlcv(url: str) -> pd.DataFrame:
+    frame = pd.read_csv(
+        url,
+        header=None,
+        names=["date", "time", "Open", "High", "Low", "Close", "Volume"],
+    )
+    index = pd.to_datetime(frame["date"].astype(str) + " " + frame["time"].astype(str), format="%m/%d/%Y %H:%M", errors="coerce")
+    out = frame[["Open", "High", "Low", "Close", "Volume"]].apply(pd.to_numeric, errors="coerce")
+    out.index = pd.DatetimeIndex(index, name="timestamp")
+    return out.dropna(how="any")
+
+
+def fetch_kibot_bidask_ohlc(url: str) -> pd.DataFrame:
+    frame = pd.read_csv(url, header=None)
+    if frame.shape[1] < 10:
+        raise RuntimeError(f"Kibot bid/ask file has too few columns: {frame.shape[1]}")
+    index = pd.to_datetime(frame[0].astype(str) + " " + frame[1].astype(str), format="%m/%d/%Y %H:%M", errors="coerce")
+    bid = frame[[2, 3, 4, 5]].apply(pd.to_numeric, errors="coerce")
+    ask = frame[[6, 7, 8, 9]].apply(pd.to_numeric, errors="coerce")
+    out = pd.DataFrame(
+        {
+            "Open": (bid[2] + ask[6]) / 2.0,
+            "High": (bid[3] + ask[7]) / 2.0,
+            "Low": (bid[4] + ask[8]) / 2.0,
+            "Close": (bid[5] + ask[9]) / 2.0,
+            "Volume": 1.0,
+        },
+        index=pd.DatetimeIndex(index, name="timestamp"),
+    )
+    return out.dropna(how="any")
+
+
+def ensure_15m_ohlcv(bars: pd.DataFrame) -> pd.DataFrame:
+    bars = bars[["Open", "High", "Low", "Close", "Volume"]].copy()
+    bars.index = pd.to_datetime(bars.index)
+    bars = bars[~bars.index.duplicated(keep="last")].sort_index()
+    bars = filter_regular_session(bars)
+    bars = bars.replace([np.inf, -np.inf], np.nan).dropna(how="any")
+    bars = bars[bars["Volume"] > 0]
+    if len(bars) < 2:
+        return bars.astype(float)
+    deltas = pd.Series(bars.index).diff().dropna()
+    if not deltas.empty and deltas.dt.total_seconds().median() <= 60 * 5:
+        bars = bars.resample("15min").agg(
+            Open=("Open", "first"),
+            High=("High", "max"),
+            Low=("Low", "min"),
+            Close=("Close", "last"),
+            Volume=("Volume", "sum"),
+        )
+        bars = bars.dropna(how="any")
+        bars = filter_regular_session(bars)
+    return bars.astype(float)
 
 
 def normalise_yfinance_ohlcv(raw: pd.DataFrame, *, symbol: str = "SPY") -> pd.DataFrame:
@@ -648,43 +818,47 @@ def run_retest_shard(
 ) -> None:
     if not source_candidates.exists():
         raise RuntimeError(f"Source candidates file not found: {source_candidates}")
-    panel = pd.read_csv(output_dir / "data" / "spy_15m_sr_feature_panel.csv", parse_dates=["timestamp"]).set_index("timestamp")
     candidates = pd.read_csv(source_candidates)
-    audit_path = output_dir / "data" / "feature_audit.json"
-    target_bars = DEFAULT_TARGET_BARS
-    if audit_path.exists():
-        audit = json.loads(audit_path.read_text(encoding="utf-8"))
-        target_bars = int(audit.get("target_bars", DEFAULT_TARGET_BARS))
-    feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
-    if not feature_cols:
-        raise RuntimeError("No support/resistance features found")
-    matrix, target, train_mask, validation_mask = prepare_matrix(panel, feature_cols, validation_fraction=validation_fraction)
     start = max(0, int(stage) * int(candidates_per_stage))
     stop = min(len(candidates), start + int(candidates_per_stage))
     shard_rows = candidates.iloc[start:stop]
 
+    datasets = load_retest_datasets(output_dir)
     rows: list[dict[str, Any]] = []
-    for _, row in shard_rows.iterrows():
-        params = json.loads(str(row["params_json"]))
-        score = build_score(matrix, params)
-        retested = evaluate_candidate(
-            score,
-            target,
-            train_mask,
-            validation_mask,
-            params,
-            feature_cols,
-            cost_bps=cost_bps,
-            target_sharpe=target_sharpe,
-            target_bars=target_bars,
-        )
-        retested["strategy_id"] = str(row.get("strategy_id", retested["strategy_id"]))
-        retested["source_score"] = float(row.get("score", np.nan))
-        retested["source_train_sharpe"] = float(row.get("train_sharpe", np.nan))
-        retested["source_validation_sharpe"] = float(row.get("validation_sharpe", np.nan))
-        retested["source_validation_trades"] = int(row.get("validation_trades", 0))
-        retested["source_focus_family"] = str(row.get("focus_family", ""))
-        rows.append(retested)
+    for dataset in datasets:
+        panel = dataset["panel"]
+        target_bars = int(dataset["target_bars"])
+        feature_cols = [c for c in panel.columns if c not in {"target_return", "target_direction"}]
+        if not feature_cols:
+            raise RuntimeError(f"No support/resistance features found for {dataset['dataset_id']}")
+        matrix, target, train_mask, validation_mask = prepare_matrix(panel, feature_cols, validation_fraction=validation_fraction)
+        for _, row in shard_rows.iterrows():
+            params = json.loads(str(row["params_json"]))
+            score = build_score(matrix, params)
+            retested = evaluate_candidate(
+                score,
+                target,
+                train_mask,
+                validation_mask,
+                params,
+                feature_cols,
+                cost_bps=cost_bps,
+                target_sharpe=target_sharpe,
+                target_bars=target_bars,
+            )
+            retested["strategy_id"] = str(row.get("strategy_id", retested["strategy_id"]))
+            retested["dataset_id"] = str(dataset["dataset_id"])
+            retested["dataset_symbol"] = str(dataset["symbol"])
+            retested["dataset_source"] = str(dataset["data_source"])
+            retested["dataset_first_timestamp"] = str(dataset["first_timestamp"])
+            retested["dataset_last_timestamp"] = str(dataset["last_timestamp"])
+            retested["dataset_rows_panel"] = int(dataset["rows_panel"])
+            retested["source_score"] = float(row.get("score", np.nan))
+            retested["source_train_sharpe"] = float(row.get("train_sharpe", np.nan))
+            retested["source_validation_sharpe"] = float(row.get("validation_sharpe", np.nan))
+            retested["source_validation_trades"] = int(row.get("validation_trades", 0))
+            retested["source_focus_family"] = str(row.get("focus_family", ""))
+            rows.append(retested)
 
     top = select_top(rows, top_per_stage)
     shard_dir = output_dir / "shards" / f"stage_{stage:03d}"
@@ -696,6 +870,7 @@ def run_retest_shard(
         "source_rows_total": int(len(candidates)),
         "candidate_start": int(start),
         "candidate_stop": int(stop),
+        "datasets_evaluated": [str(d["dataset_id"]) for d in datasets],
         "configs_evaluated": int(len(rows)),
         "top_rows": int(len(top)),
         "target_sharpe": float(target_sharpe),
@@ -705,6 +880,51 @@ def run_retest_shard(
         "mode": "historical_retest_fixed_candidate_features",
     }
     (shard_dir / "shard_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+
+def load_retest_datasets(output_dir: Path) -> list[dict[str, Any]]:
+    datasets_root = output_dir / "data" / "datasets"
+    datasets: list[dict[str, Any]] = []
+    if datasets_root.exists():
+        for dataset_dir in sorted(p for p in datasets_root.iterdir() if p.is_dir()):
+            panel_path = dataset_dir / "feature_panel.csv"
+            audit_path = dataset_dir / "feature_audit.json"
+            if not panel_path.exists():
+                continue
+            panel = pd.read_csv(panel_path, parse_dates=["timestamp"]).set_index("timestamp")
+            audit = json.loads(audit_path.read_text(encoding="utf-8")) if audit_path.exists() else {}
+            audit.update(
+                {
+                    "dataset_id": audit.get("dataset_id", dataset_dir.name),
+                    "symbol": audit.get("symbol", dataset_dir.name),
+                    "data_source": audit.get("data_source", ""),
+                    "first_timestamp": audit.get("first_timestamp", str(panel.index.min())),
+                    "last_timestamp": audit.get("last_timestamp", str(panel.index.max())),
+                    "rows_panel": int(audit.get("rows_panel", len(panel))),
+                    "target_bars": int(audit.get("target_bars", DEFAULT_TARGET_BARS)),
+                    "panel": panel,
+                }
+            )
+            datasets.append(audit)
+    if datasets:
+        return datasets
+
+    panel = pd.read_csv(output_dir / "data" / "spy_15m_sr_feature_panel.csv", parse_dates=["timestamp"]).set_index("timestamp")
+    audit_path = output_dir / "data" / "feature_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8")) if audit_path.exists() else {}
+    audit.update(
+        {
+            "dataset_id": audit.get("dataset_id", "SPY_SINGLE"),
+            "symbol": audit.get("symbol", "SPY"),
+            "data_source": audit.get("data_source", ""),
+            "first_timestamp": audit.get("first_timestamp", str(panel.index.min())),
+            "last_timestamp": audit.get("last_timestamp", str(panel.index.max())),
+            "rows_panel": int(audit.get("rows_panel", len(panel))),
+            "target_bars": int(audit.get("target_bars", DEFAULT_TARGET_BARS)),
+            "panel": panel,
+        }
+    )
+    return [audit]
 
 
 def prepare_matrix(
