@@ -60,11 +60,12 @@ OUTPERFORM_BENCHMARK_RE = re.compile(
     r"\b("
     r"outperform[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
     r"out.?performance[^.]{0,160}(over|versus|vs\.?|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"(beat|beats|beating|substantially beats?)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
+    r"(beat|beats|beaten|beating|substantially beats?)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
     r"(improve|improves|improved|improving)[^.]{0,120}(returns?|performance|investment returns?)[^.]{0,80}(versus|vs\.?|over|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
     r"(higher|larger|superior)[^.]{0,80}(returns?|performance|excess expected returns?)[^.]{0,80}(than|versus|vs\.?|over|relative to)[^.]{0,80}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
+    r"(annual returns?|sharpe ratio|maximum drawdown)[^.]{0,120}whereas[^.]{0,120}(s&p\s*500|sp500|spy|buy.?and.?hold)|"
     r"(higher sharpe|lower drawdown|superior risk.?adjusted|improve.?risk.?adjusted)[^.]{0,160}(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)|"
-    r"(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)[^.]{0,160}(outperform|beat|beats|beating|higher sharpe|lower drawdown|superior)"
+    r"(buy.?and.?hold|benchmark|market|s&p\s*500|sp500|spy|index)[^.]{0,160}(outperform|beat|beats|beaten|beating|higher returns?|higher sharpe|lower drawdown|superior)"
     r")\b",
     re.I,
 )

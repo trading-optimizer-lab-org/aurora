@@ -99,6 +99,28 @@ def test_classify_accepts_improve_returns_versus_buy_hold_language() -> None:
     assert candidate.reject_reasons == ""
 
 
+def test_classify_accepts_whereas_sp500_metric_comparison() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W5",
+        title="Return predictability and market timing on the S&P 500",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="Transforms forecasts into an investable SPY market timing trading strategy.",
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "The strategy results in 16.6% annual returns with a 0.92 Sharpe ratio, "
+            "whereas the S&P 500 has annual returns of 10% and a 0.46 Sharpe ratio."
+        ),
+    )
+
+    assert candidate.reject_reasons == ""
+
+
 def test_dedupe_prefers_unique_doi_or_id() -> None:
     one = _classify(
         source="test",
