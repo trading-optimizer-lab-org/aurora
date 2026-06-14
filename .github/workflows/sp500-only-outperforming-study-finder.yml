@@ -1,0 +1,61 @@
+name: SP500 Only Outperforming Study Finder
+
+on:
+  workflow_dispatch:
+    inputs:
+      code_ref:
+        description: "Branch/ref to run"
+        required: false
+        default: "codex/universal-robustness"
+      pages_per_query:
+        description: "OpenAlex pages per query"
+        required: false
+        default: "8"
+      per_page:
+        description: "OpenAlex rows per page"
+        required: false
+        default: "100"
+      local_only:
+        description: "Only scan local Aurora literature corpus"
+        required: false
+        default: "false"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/sp500_only_outperforming_study_finder
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  find_studies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml,pdf]"
+      - name: Find SP500-only outperforming studies
+        shell: bash
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.local_only }}" = "true" ]; then EXTRA="--local-only"; fi
+          python scripts/find_sp500_only_outperforming_studies.py \
+            --output-dir "$OUTPUT_DIR" \
+            --pages-per-query "${{ inputs.pages_per_query }}" \
+            --per-page "${{ inputs.per_page }}" \
+            $EXTRA
+      - name: Upload study finder artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sp500-only-outperforming-study-finder-results
+          path: ${{ env.OUTPUT_DIR }}/**
+          if-no-files-found: error
