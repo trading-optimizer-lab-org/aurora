@@ -292,9 +292,16 @@ jobs:
       - name: Arrange search artifacts
         run: |
           mkdir -p "$OUTPUT_DIR/screen" "$OUTPUT_DIR/family_search" "$OUTPUT_DIR/mixed_search"
-          find "$OUTPUT_DIR/_downloaded" -path "*/screen/stage_*" -type d -exec cp -r {} "$OUTPUT_DIR/screen/" \; || true
-          find "$OUTPUT_DIR/_downloaded" -path "*/family_search/stage_*" -type d -exec cp -r {} "$OUTPUT_DIR/family_search/" \; || true
-          find "$OUTPUT_DIR/_downloaded" -path "*/mixed_search/stage_*" -type d -exec cp -r {} "$OUTPUT_DIR/mixed_search/" \; || true
+          for artifact in "$OUTPUT_DIR"/_downloaded/sr-15m-equity-universe-screen-*; do
+            test -d "$artifact" && find "$artifact" -maxdepth 1 -type d -name "stage_*" -exec cp -r {} "$OUTPUT_DIR/screen/" \;
+          done
+          for artifact in "$OUTPUT_DIR"/_downloaded/sr-15m-equity-universe-family-search-*; do
+            test -d "$artifact" && find "$artifact" -maxdepth 1 -type d -name "stage_*" -exec cp -r {} "$OUTPUT_DIR/family_search/" \;
+          done
+          for artifact in "$OUTPUT_DIR"/_downloaded/sr-15m-equity-universe-mixed-search-*; do
+            test -d "$artifact" && find "$artifact" -maxdepth 1 -type d -name "stage_*" -exec cp -r {} "$OUTPUT_DIR/mixed_search/" \;
+          done
+          test "$(find "$OUTPUT_DIR/screen" "$OUTPUT_DIR/family_search" "$OUTPUT_DIR/mixed_search" -name top_candidates.csv | wc -l)" -gt 0
       - name: Merge train/validation candidates
         run: |
           python scripts/run_sr_15m_equity_universe.py \

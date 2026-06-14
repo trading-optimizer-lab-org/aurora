@@ -181,4 +181,8 @@ def test_workflow_is_manual_and_has_expected_artifact() -> None:
     assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27498064404"
     assert data[True]["workflow_dispatch"]["inputs"]["source_artifact"]["default"] == "free-15m-equity-universe-yfinance-data"
     assert "locked_retest" in data["jobs"]
+    assert "sr-15m-equity-universe-screen-*" in text
+    assert "sr-15m-equity-universe-family-search-*" in text
+    assert "sr-15m-equity-universe-mixed-search-*" in text
+    assert "top_candidates.csv | wc -l" in text
     assert FINAL_ARTIFACT_NAME in text
