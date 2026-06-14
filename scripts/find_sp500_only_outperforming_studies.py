@@ -69,7 +69,10 @@ NEGATIVE_OUTPERFORM_RE = re.compile(
     r"\b(no evidence[^.]{0,120}outperform|none[^.]{0,120}outperform|does not[^.]{0,80}outperform|"
     r"do not[^.]{0,80}outperform|did not[^.]{0,80}outperform|would not[^.]{0,80}beat|"
     r"not beat[^.]{0,80}buy.?and.?hold|under.?performs?[^.]{0,120}buy.?and.?hold|"
-    r"fails?[^.]{0,120}beat|struggle[^.]{0,120}surpass)\b",
+    r"fails?[^.]{0,120}beat|struggle[^.]{0,120}surpass|"
+    r"(can.?t|cannot|can not)[^.]{0,80}beat[^.]{0,80}(market|s&p\s*500|sp500|spy|index)|"
+    r"profits?[^.]{0,120}(vanish|disappear)[^.]{0,120}(cost|costs|transaction)|"
+    r"once costs?[^.]{0,120}(deducted|included)[^.]{0,120}(profits?[^.]{0,80}(vanish|disappear)|not profitable))\b",
     re.I,
 )
 GENERIC_RULE_RE = re.compile(r"convert the documented signal into a causal rule", re.I)
@@ -253,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--per-page", type=int, default=100)
     parser.add_argument("--sleep-seconds", type=float, default=0.15)
     parser.add_argument("--local-only", action="store_true")
+    parser.add_argument("--disable-snowball", action="store_true")
+    parser.add_argument("--snowball-per-seed", type=int, default=20)
     args = parser.parse_args(argv)
 
     out = Path(args.output_dir)
@@ -263,14 +268,22 @@ def main(argv: list[str] | None = None) -> int:
     candidates.extend(_scan_import_manifest(Path(args.import_manifest), rejected))
     candidates.extend(_manual_web_seed_candidates())
     if not args.local_only:
-        candidates.extend(
-            _search_openalex(
-                pages_per_query=int(args.pages_per_query),
-                per_page=int(args.per_page),
-                sleep_seconds=float(args.sleep_seconds),
-                rejected=rejected,
-            )
+        external_candidates = _search_openalex(
+            pages_per_query=int(args.pages_per_query),
+            per_page=int(args.per_page),
+            sleep_seconds=float(args.sleep_seconds),
+            rejected=rejected,
         )
+        candidates.extend(external_candidates)
+        if not args.disable_snowball:
+            candidates.extend(
+                _snowball_openalex(
+                    seed_candidates=_dedupe(candidates),
+                    per_seed=int(args.snowball_per_seed),
+                    sleep_seconds=float(args.sleep_seconds),
+                    rejected=rejected,
+                )
+            )
     candidates = _dedupe(candidates)
     rejected = _dedupe(rejected)
 
@@ -305,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
         "pages_per_query": int(args.pages_per_query),
         "per_page": int(args.per_page),
         "local_only": bool(args.local_only),
+        "snowball_enabled": bool(not args.local_only and not args.disable_snowball),
+        "snowball_per_seed": int(args.snowball_per_seed),
         "locked_opened": False,
         "backtest_enabled": False,
         "definition": "Study must mention an S&P 500/SPY/SPX tradable rule and evidence of outperforming/beating/improving versus S&P 500 or buy-and-hold. Other traded assets reject it.",
@@ -402,30 +417,120 @@ def _search_openalex(*, pages_per_query: int, per_page: int, sleep_seconds: floa
             for work in payload.get("results", []) or []:
                 if not isinstance(work, dict):
                     continue
-                abstract = _abstract(work.get("abstract_inverted_index"))
-                text = _join(work.get("display_name"), abstract)
-                doi = str(work.get("doi") or "")
-                url = str(work.get("primary_location", {}).get("landing_page_url") or work.get("id") or "")
-                candidate = _classify(
-                    source="openalex",
-                    study_id=str(work.get("id", "")).rsplit("/", 1)[-1],
-                    title=str(work.get("display_name") or ""),
-                    year=str(work.get("publication_year") or ""),
-                    doi=doi,
-                    url=url,
-                    query=query,
-                    strategy_family="external_search",
-                    rule_or_abstract=abstract,
-                    tradable_assets="",
-                    benchmark="",
-                    text=text,
-                )
+                candidate = _candidate_from_openalex_work(work, source="openalex", query=query)
                 if candidate.reject_reasons:
                     rejected.append(candidate)
                 else:
                     rows.append(candidate)
             time.sleep(sleep_seconds)
     return rows
+
+
+def _snowball_openalex(
+    *,
+    seed_candidates: list[Candidate],
+    per_seed: int,
+    sleep_seconds: float,
+    rejected: list[Candidate],
+) -> list[Candidate]:
+    rows: list[Candidate] = []
+    if per_seed <= 0:
+        return rows
+    seen_work_ids: set[str] = set()
+    for seed in seed_candidates:
+        seed_work = _resolve_seed_work(seed)
+        if not seed_work:
+            continue
+        seed_id = _work_id(seed_work.get("id"))
+        if seed_id:
+            seen_work_ids.add(seed_id)
+
+        related_ids = [_work_id(item) for item in seed_work.get("related_works", []) or []]
+        referenced_ids = [_work_id(item) for item in seed_work.get("referenced_works", []) or []]
+        neighbor_ids = [item for item in related_ids + referenced_ids if item]
+        for work_id in neighbor_ids[:per_seed]:
+            if work_id in seen_work_ids:
+                continue
+            seen_work_ids.add(work_id)
+            work = _openalex_work(work_id)
+            if work:
+                _append_openalex_candidate(
+                    rows,
+                    rejected,
+                    work,
+                    source="openalex_snowball_related_or_referenced",
+                    query=f"snowball:{seed.study_id or seed.title}",
+                )
+            time.sleep(sleep_seconds)
+
+        for work in _openalex_cited_by(seed_work, limit=per_seed):
+            work_id = _work_id(work.get("id"))
+            if work_id and work_id in seen_work_ids:
+                continue
+            if work_id:
+                seen_work_ids.add(work_id)
+            _append_openalex_candidate(
+                rows,
+                rejected,
+                work,
+                source="openalex_snowball_cited_by",
+                query=f"cited_by:{seed.study_id or seed.title}",
+            )
+        time.sleep(sleep_seconds)
+    return rows
+
+
+def _append_openalex_candidate(
+    rows: list[Candidate],
+    rejected: list[Candidate],
+    work: dict[str, Any],
+    *,
+    source: str,
+    query: str,
+) -> None:
+    candidate = _candidate_from_openalex_work(work, source=source, query=query)
+    if candidate.reject_reasons:
+        rejected.append(candidate)
+    else:
+        rows.append(candidate)
+
+
+def _candidate_from_openalex_work(work: dict[str, Any], *, source: str, query: str) -> Candidate:
+    abstract = _abstract(work.get("abstract_inverted_index"))
+    text = _join(work.get("display_name"), abstract)
+    return _classify(
+        source=source,
+        study_id=_work_id(work.get("id")),
+        title=str(work.get("display_name") or ""),
+        year=str(work.get("publication_year") or ""),
+        doi=str(work.get("doi") or ""),
+        url=str(work.get("primary_location", {}).get("landing_page_url") or work.get("id") or ""),
+        query=query,
+        strategy_family="external_search",
+        rule_or_abstract=abstract,
+        tradable_assets="",
+        benchmark="",
+        text=text,
+    )
+
+
+def _resolve_seed_work(seed: Candidate) -> dict[str, Any] | None:
+    work_id = _work_id(seed.study_id)
+    if work_id:
+        return _openalex_work(work_id)
+    if not seed.title:
+        return None
+    payload = _openalex_search(seed.title, page=1, per_page=3)
+    title_norm = _norm_title(seed.title)
+    for work in payload.get("results", []) or []:
+        if not isinstance(work, dict):
+            continue
+        if _norm_title(work.get("display_name")) == title_norm:
+            return work
+    for work in payload.get("results", []) or []:
+        if isinstance(work, dict):
+            return work
+    return None
 
 
 def _manual_web_seed_candidates() -> list[Candidate]:
@@ -527,6 +632,42 @@ def _openalex_search(query: str, *, page: int, per_page: int) -> dict[str, Any]:
     url = f"https://api.openalex.org/works?{params}"
     with urllib.request.urlopen(url, timeout=45) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _openalex_work(work_id: str) -> dict[str, Any] | None:
+    work_id = _work_id(work_id)
+    if not work_id:
+        return None
+    url = f"https://api.openalex.org/works/{urllib.parse.quote(work_id)}?mailto=aurora-research@example.com"
+    try:
+        with urllib.request.urlopen(url, timeout=45) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _openalex_cited_by(work: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
+    url = str(work.get("cited_by_api_url") or "")
+    if not url or limit <= 0:
+        return []
+    separator = "&" if "?" in url else "?"
+    url = f"{url}{separator}{urllib.parse.urlencode({'per-page': min(200, limit), 'page': 1, 'mailto': 'aurora-research@example.com'})}"
+    try:
+        with urllib.request.urlopen(url, timeout=45) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return []
+    return [item for item in payload.get("results", []) or [] if isinstance(item, dict)]
+
+
+def _work_id(value: object) -> str:
+    text = str(value or "").strip().rsplit("/", 1)[-1]
+    return text if re.fullmatch(r"W\d+", text) else ""
+
+
+def _norm_title(value: object) -> str:
+    return re.sub(r"\W+", " ", str(value or "").lower()).strip()
 
 
 def _abstract(index: Any) -> str:

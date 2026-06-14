@@ -47,6 +47,31 @@ def test_classify_rejects_other_traded_assets() -> None:
     assert "mentions_other_traded_assets" in candidate.reject_reasons
 
 
+def test_classify_rejects_cannot_beat_market_language() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W3",
+        title="The ups and downs of the S&P 500",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract=(
+            "A filter trading rule on the S&P 500 may look profitable, but once costs are deducted "
+            "profits vanish and investors cannot beat the market."
+        ),
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "The S&P 500 filter strategy can appear to beat buy-and-hold before costs, "
+            "but once costs are deducted profits vanish. You cannot beat the market."
+        ),
+    )
+
+    assert "negative_or_non_outperform_result" in candidate.reject_reasons
+
+
 def test_dedupe_prefers_unique_doi_or_id() -> None:
     one = _classify(
         source="test",
