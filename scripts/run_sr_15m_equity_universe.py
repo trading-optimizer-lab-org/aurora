@@ -826,6 +826,11 @@ def run_merge(
         data = pd.DataFrame()
     data.to_csv(final_dir / "leaderboard.csv", index=False)
     accepted = data[data["accepted"].astype(bool)].copy() if not data.empty and "accepted" in data else data
+    if not data.empty and accepted.empty:
+        accepted = data.head(top_n).copy()
+        accepted["prelocked_fallback"] = True
+    elif not accepted.empty:
+        accepted["prelocked_fallback"] = False
     accepted.to_csv(final_dir / "accepted.csv", index=False)
     write_summary_files(output_dir, data)
 
@@ -919,16 +924,20 @@ def run_locked_retest(
 ) -> None:
     if not source_candidates.exists():
         raise RuntimeError(f"Source candidates not found: {source_candidates}")
-    candidates = pd.read_csv(source_candidates)
+    try:
+        candidates = pd.read_csv(source_candidates)
+    except pd.errors.EmptyDataError:
+        candidates = pd.DataFrame()
     start = int(stage) * int(candidates_per_stage)
     stop = min(len(candidates), start + int(candidates_per_stage))
     universe = load_feature_universe(output_dir)
     rows: list[dict[str, Any]] = []
-    for _, row in candidates.iloc[start:stop].iterrows():
-        task = json.loads(str(row["params_json"]))
-        evaluated = evaluate_candidate_on_universe(task, universe, cost_bps=cost_bps, include_locked=True)
-        evaluated["strategy_id"] = str(row.get("strategy_id", evaluated["strategy_id"]))
-        rows.append(evaluated)
+    if not candidates.empty and "params_json" in candidates.columns:
+        for _, row in candidates.iloc[start:stop].iterrows():
+            task = json.loads(str(row["params_json"]))
+            evaluated = evaluate_candidate_on_universe(task, universe, cost_bps=cost_bps, include_locked=True)
+            evaluated["strategy_id"] = str(row.get("strategy_id", evaluated["strategy_id"]))
+            rows.append(evaluated)
     out_dir = output_dir / "locked" / f"stage_{stage:03d}"
     out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(select_top(rows, top_n)).to_csv(out_dir / "locked_results.csv", index=False)

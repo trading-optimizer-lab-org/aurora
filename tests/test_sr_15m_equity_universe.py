@@ -148,6 +148,28 @@ def test_pipeline_keeps_locked_out_of_screen_and_retests_at_end(tmp_path: Path) 
     assert "locked_positive_symbols" in locked.columns
 
 
+def test_merge_uses_top_leaderboard_as_prelocked_fallback_when_filter_is_empty(tmp_path: Path) -> None:
+    symbols = [f"S{i:02d}" for i in range(3)]
+    input_dir = write_raw_universe(tmp_path, symbols)
+    output_dir = tmp_path / "out"
+
+    run_features(output_dir, input_dir=input_dir, min_symbols=3, target_bars=4)
+    run_screen(
+        output_dir,
+        stage=0,
+        total_stages=100,
+        top_n=10,
+        cost_bps=1.0,
+        target_bars=4,
+    )
+    run_merge(output_dir, target_sharpe=999.0, top_n=10, min_validation_symbols=99)
+
+    accepted = pd.read_csv(output_dir / "final" / "accepted.csv")
+    assert not accepted.empty
+    assert "prelocked_fallback" in accepted.columns
+    assert accepted["prelocked_fallback"].astype(bool).all()
+
+
 def test_workflow_is_manual_and_has_expected_artifact() -> None:
     path = Path(".github/workflows/sr-15m-equity-universe-feature-search.yml")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
