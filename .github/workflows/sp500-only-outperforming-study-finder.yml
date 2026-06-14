@@ -52,6 +52,11 @@ jobs:
             --pages-per-query "${{ inputs.pages_per_query }}" \
             --per-page "${{ inputs.per_page }}" \
             $EXTRA
+      - name: Verify candidate full text where possible
+        run: |
+          python scripts/verify_sp500_only_study_candidates.py \
+            --candidates "$OUTPUT_DIR/sp500_only_outperforming_study_candidates.csv" \
+            --output-dir "$OUTPUT_DIR/verification"
       - name: Upload study finder artifact
         uses: actions/upload-artifact@v4
         if: always()
