@@ -98,12 +98,18 @@ TRADING_ECONOMIC_RE = re.compile(
     r"buy.?and.?hold strategy|annualized return|sharpe ratio|maximum drawdown|terminal portfolio value)\b",
     re.I,
 )
+THEORETICAL_FRAMEWORK_ONLY_RE = re.compile(
+    r"\b(minimum required information coefficient|theoretical nonzero information threshold|"
+    r"how much information is required to time the market|derive formulas to estimate[^.]{0,80}timing strategy)\b",
+    re.I,
+)
 GENERIC_RULE_RE = re.compile(r"convert the documented signal into a causal rule", re.I)
 OTHER_TRADED_ASSET_RE = re.compile(
     r"\b(qqq|nasdaq|iwm|russell|efa|eem|acwi|world|global equity|international|developed markets|emerging markets|"
     r"tlt|ief|agg|bnd|ewy|bond etf|treasury etf|gold|gld|commodity etf|dbc|forex|currency pair|futures markets|"
     r"multi.?asset|cross.?asset|sector etf|sector rotation|individual stocks|single stocks|stock portfolio|"
-    r"equities portfolio|vix futures|option portfolio|options strategy|put option|call option|credit portfolio|reit)\b",
+    r"equities portfolio|vix futures|option portfolio|options strategy|put option|call option|credit portfolio|reit|"
+    r"treasury issues|t-?bills?)\b",
     re.I,
 )
 NON_SP500_ONLY_CONTEXT_RE = re.compile(
@@ -121,7 +127,8 @@ NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"hang seng|msci uk|brent crude|ark innovation|aapl|apple inc|major us stocks|"
     r"blue.?chip stocks|indonesian blue.?chip|same stocks|multiple trading strategies|"
     r"leveraged and inverse etfs?|multi.?market|stock, bond, and forex|eur/usd|"
-    r"treasury bond|additional assets such as commodities|commodities|ftse\s*100|nikkei\s*225|"
+    r"treasury bond|treasury issues|investing in treasury|t-?bills?|"
+    r"additional assets such as commodities|commodities|ftse\s*100|nikkei\s*225|"
     r"enhanced index tracking|portfolio construction|portfolio trading|companies listed|"
     r"30 companies|stock returns for companies|stocks based on this approach|multi.?factor portfolio|"
     r"twelve chosen securities|stocks\.csv|size and/or value strategies|smart beta|factor.?based investing|"
@@ -808,6 +815,8 @@ def _classify(
         reasons.append("non_finance_or_non_trading_context")
     if NON_SP500_ONLY_CONTEXT_RE.search(full_text):
         reasons.append("non_sp500_only_strategy_context")
+    if THEORETICAL_FRAMEWORK_ONLY_RE.search(full_text):
+        reasons.append("theoretical_framework_no_found_strategy")
     if PREDICTION_ONLY_RE.search(full_text) and not TRADING_ECONOMIC_RE.search(full_text):
         reasons.append("prediction_only_no_trading_backtest")
     cleaned_assets = SP500_RE.sub(" ", _join(tradable_assets, rule_or_abstract))

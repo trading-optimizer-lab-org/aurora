@@ -308,6 +308,56 @@ def test_classify_rejects_random_walk_non_rejection_language() -> None:
     assert "negative_or_non_outperform_result" in candidate.reject_reasons
 
 
+def test_classify_rejects_treasury_issue_operating_leg() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W18",
+        title="Super Bowl Stock Market Predictor",
+        year="2024",
+        doi="",
+        url="",
+        query="",
+        strategy_family="seasonality",
+        rule_or_abstract=(
+            "Buy the S&P 500 in NFC years and invest in Treasury issues in AFC years; "
+            "the switching strategy beats buy-and-hold."
+        ),
+        tradable_assets="S&P 500 and Treasury issues",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "An investment policy of buying the S&P 500 in NFC years and investing in "
+            "Treasury issues in AFC years beats a buy-and-hold strategy."
+        ),
+    )
+
+    assert "mentions_other_traded_assets" in candidate.reject_reasons
+
+
+def test_classify_rejects_theoretical_timing_threshold_without_found_strategy() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W19",
+        title="How Much Information Is Required to Time the Market?",
+        year="2018",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract=(
+            "Derives the minimum required information coefficient for a timing strategy "
+            "to outperform a buy-and-hold market benchmark."
+        ),
+        tradable_assets="S&P 500",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "The authors derive formulas to estimate the minimum required information "
+            "coefficient for a timing strategy to outperform a buy-and-hold market benchmark."
+        ),
+    )
+
+    assert "theoretical_framework_no_found_strategy" in candidate.reject_reasons
+
+
 def test_classify_accepts_improve_returns_versus_buy_hold_language() -> None:
     candidate = _classify(
         source="test",
