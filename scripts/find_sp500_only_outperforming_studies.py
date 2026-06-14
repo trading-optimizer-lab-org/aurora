@@ -381,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sleep-seconds", type=float, default=0.15)
     parser.add_argument("--local-only", action="store_true")
     parser.add_argument("--disable-snowball", action="store_true")
+    parser.add_argument("--disable-semantic-scholar", action="store_true")
     parser.add_argument("--snowball-per-seed", type=int, default=20)
     args = parser.parse_args(argv)
 
@@ -399,6 +400,15 @@ def main(argv: list[str] | None = None) -> int:
             rejected=rejected,
         )
         candidates.extend(external_candidates)
+        if not args.disable_semantic_scholar:
+            candidates.extend(
+                _search_semantic_scholar(
+                    pages_per_query=int(args.pages_per_query),
+                    per_page=int(args.per_page),
+                    sleep_seconds=float(args.sleep_seconds),
+                    rejected=rejected,
+                )
+            )
         if not args.disable_snowball:
             candidates.extend(
                 _snowball_openalex(
@@ -443,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
         "per_page": int(args.per_page),
         "local_only": bool(args.local_only),
         "snowball_enabled": bool(not args.local_only and not args.disable_snowball),
+        "semantic_scholar_enabled": bool(not args.local_only and not args.disable_semantic_scholar),
         "snowball_per_seed": int(args.snowball_per_seed),
         "locked_opened": False,
         "backtest_enabled": False,
@@ -548,6 +559,52 @@ def _search_openalex(*, pages_per_query: int, per_page: int, sleep_seconds: floa
                     rows.append(candidate)
             time.sleep(sleep_seconds)
     return rows
+
+
+def _search_semantic_scholar(
+    *,
+    pages_per_query: int,
+    per_page: int,
+    sleep_seconds: float,
+    rejected: list[Candidate],
+) -> list[Candidate]:
+    rows: list[Candidate] = []
+    limit = max(1, min(100, per_page))
+    for query in QUERY_BANK:
+        for page in range(1, pages_per_query + 1):
+            payload = _semantic_scholar_search(query, offset=(page - 1) * limit, limit=limit)
+            for paper in payload.get("data", []) or []:
+                if not isinstance(paper, dict):
+                    continue
+                candidate = _candidate_from_semantic_scholar_paper(paper, query=query)
+                if candidate.reject_reasons:
+                    rejected.append(candidate)
+                else:
+                    rows.append(candidate)
+            time.sleep(max(sleep_seconds, 0.25))
+    return rows
+
+
+def _candidate_from_semantic_scholar_paper(paper: dict[str, Any], *, query: str) -> Candidate:
+    external_ids = paper.get("externalIds") if isinstance(paper.get("externalIds"), dict) else {}
+    open_pdf = paper.get("openAccessPdf") if isinstance(paper.get("openAccessPdf"), dict) else {}
+    url = str(open_pdf.get("url") or paper.get("url") or "")
+    abstract = str(paper.get("abstract") or "")
+    title = str(paper.get("title") or "")
+    return _classify(
+        source="semantic_scholar",
+        study_id=str(paper.get("paperId") or external_ids.get("CorpusId") or ""),
+        title=title,
+        year=str(paper.get("year") or ""),
+        doi=str(external_ids.get("DOI") or ""),
+        url=url,
+        query=query,
+        strategy_family="external_search",
+        rule_or_abstract=abstract,
+        tradable_assets="",
+        benchmark="",
+        text=_join(title, abstract),
+    )
 
 
 def _snowball_openalex(
@@ -756,6 +813,25 @@ def _openalex_search(query: str, *, page: int, per_page: int) -> dict[str, Any]:
     url = f"https://api.openalex.org/works?{params}"
     try:
         with urllib.request.urlopen(url, timeout=45) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _semantic_scholar_search(query: str, *, offset: int, limit: int) -> dict[str, Any]:
+    params = urllib.parse.urlencode(
+        {
+            "query": query,
+            "offset": max(0, offset),
+            "limit": max(1, min(100, limit)),
+            "fields": "title,abstract,year,url,externalIds,openAccessPdf",
+        }
+    )
+    url = f"https://api.semanticscholar.org/graph/v1/paper/search?{params}"
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "Aurora SP500 study finder/1.0"})
+        with urllib.request.urlopen(request, timeout=45) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception:
         return {}

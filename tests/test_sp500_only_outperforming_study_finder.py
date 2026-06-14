@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 import scripts.find_sp500_only_outperforming_studies as finder
-from scripts.find_sp500_only_outperforming_studies import _classify, _dedupe
+from scripts.find_sp500_only_outperforming_studies import _candidate_from_semantic_scholar_paper, _classify, _dedupe
 
 
 def test_classify_accepts_sp500_only_outperform_claim() -> None:
@@ -161,6 +161,32 @@ def test_openalex_search_handles_http_error(monkeypatch) -> None:
     monkeypatch.setattr(finder.urllib.request, "urlopen", raise_http_error)
 
     assert finder._openalex_search("bad query", page=1, per_page=1) == {}
+
+
+def test_semantic_scholar_search_handles_http_error(monkeypatch) -> None:
+    def raise_http_error(*args, **kwargs):
+        raise urllib.error.HTTPError("https://api.semanticscholar.org", 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(finder.urllib.request, "urlopen", raise_http_error)
+
+    assert finder._semantic_scholar_search("bad query", offset=0, limit=1) == {}
+
+
+def test_semantic_scholar_candidate_classification() -> None:
+    candidate = _candidate_from_semantic_scholar_paper(
+        {
+            "paperId": "abc",
+            "title": "S&P 500 market timing strategy",
+            "year": 2020,
+            "abstract": "A SPY trading rule outperforms buy-and-hold S&P 500.",
+            "externalIds": {"DOI": "10.1/test"},
+            "openAccessPdf": {"url": "https://example.test/paper.pdf"},
+        },
+        query="test",
+    )
+
+    assert candidate.source == "semantic_scholar"
+    assert candidate.reject_reasons == ""
 
 
 def test_workflow_shape() -> None:
