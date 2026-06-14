@@ -144,6 +144,44 @@ def test_classify_rejects_leveraged_inverse_etf_pairs() -> None:
     assert "non_sp500_only_strategy_context" in candidate.reject_reasons
 
 
+def test_classify_rejects_prediction_only_without_trading_backtest() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W11",
+        title="S&P 500 price forecasting with N-BEATS",
+        year="2024",
+        doi="",
+        url="",
+        query="",
+        strategy_family="forecasting",
+        rule_or_abstract="Predicts S&P 500 price and reports superior RMSE and predictive accuracy.",
+        tradable_assets="SPY",
+        benchmark="S&P 500",
+        text="The model uses S&P 500 data and surpasses other models in RMSE, MAE and predictive accuracy.",
+    )
+
+    assert "prediction_only_no_trading_backtest" in candidate.reject_reasons
+
+
+def test_classify_rejects_cost_adjusted_momentum_loss() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W12",
+        title="Application of Momentum Strategy to S&P 500",
+        year="2024",
+        doi="",
+        url="",
+        query="",
+        strategy_family="momentum",
+        rule_or_abstract="Some S&P 500 momentum strategies beat the benchmark under ideal conditions.",
+        tradable_assets="SPY",
+        benchmark="S&P 500",
+        text="There are some strategies that beat the benchmark under ideal conditions, but all of them loss when transaction fees are taken into account.",
+    )
+
+    assert "negative_or_non_outperform_result" in candidate.reject_reasons
+
+
 def test_classify_rejects_cannot_beat_market_language() -> None:
     candidate = _classify(
         source="test",

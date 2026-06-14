@@ -76,7 +76,21 @@ NEGATIVE_OUTPERFORM_RE = re.compile(
     r"fails?[^.]{0,120}beat|struggle[^.]{0,120}surpass|"
     r"(can.?t|cannot|can not)[^.]{0,80}beat[^.]{0,80}(market|s&p\s*500|sp500|spy|index)|"
     r"profits?[^.]{0,120}(vanish|disappear)[^.]{0,120}(cost|costs|transaction)|"
-    r"once costs?[^.]{0,120}(deducted|included)[^.]{0,120}(profits?[^.]{0,80}(vanish|disappear)|not profitable))\b",
+    r"once costs?[^.]{0,120}(deducted|included)[^.]{0,120}(profits?[^.]{0,80}(vanish|disappear)|not profitable)|"
+    r"could not yield higher[^.]{0,120}(market|s&p\s*500|sp500|spy|index)|"
+    r"struggle[^.]{0,80}real market conditions|"
+    r"loss when[^.]{0,80}(transaction fees|transaction costs)|"
+    r"should not use[^.]{0,120}moving averages)\b",
+    re.I,
+)
+PREDICTION_ONLY_RE = re.compile(
+    r"\b(forecasting accuracy|predictive accuracy|rmse|mape|mae|mean square error|"
+    r"forecasting performance|outperforms? other models|surpasses? (the )?other models)\b",
+    re.I,
+)
+TRADING_ECONOMIC_RE = re.compile(
+    r"\b(trading backtest|real.?life trading simulation|market.?timing strategy|trading strategy|"
+    r"buy.?and.?hold strategy|annualized return|sharpe ratio|maximum drawdown|terminal portfolio value)\b",
     re.I,
 )
 GENERIC_RULE_RE = re.compile(r"convert the documented signal into a causal rule", re.I)
@@ -102,7 +116,9 @@ NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"hang seng|msci uk|brent crude|ark innovation|aapl|apple inc|major us stocks|"
     r"blue.?chip stocks|indonesian blue.?chip|same stocks|multiple trading strategies|"
     r"leveraged and inverse etfs?|multi.?market|stock, bond, and forex|eur/usd|"
-    r"treasury bond|additional assets such as commodities|commodities)\b",
+    r"treasury bond|additional assets such as commodities|commodities|ftse\s*100|nikkei\s*225|"
+    r"enhanced index tracking|portfolio construction|portfolio trading|companies listed|"
+    r"30 companies|stock returns for companies|stocks based on this approach)\b",
     re.I,
 )
 
@@ -785,6 +801,8 @@ def _classify(
         reasons.append("non_finance_or_non_trading_context")
     if NON_SP500_ONLY_CONTEXT_RE.search(full_text):
         reasons.append("non_sp500_only_strategy_context")
+    if PREDICTION_ONLY_RE.search(full_text) and not TRADING_ECONOMIC_RE.search(full_text):
+        reasons.append("prediction_only_no_trading_backtest")
     cleaned_assets = SP500_RE.sub(" ", _join(tradable_assets, rule_or_abstract))
     if OTHER_TRADED_ASSET_RE.search(cleaned_assets):
         reasons.append("mentions_other_traded_assets")
