@@ -106,6 +106,49 @@ QUERY_BANK = [
     "S&P 500 technical analysis relative maxima minima buy and hold",
 ]
 
+MANUAL_WEB_SEEDS = [
+    {
+        "study_id": "manual_dichtl_sp500_buy_hold_2020",
+        "title": "Investing in the S&P 500 Index: Can Anything Beat the Buy-and-Hold Strategy?",
+        "year": "2020",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3502741",
+        "rule": "Comprehensive test of S&P 500 monthly seasonality, technical indicator, and fundamental timing strategies versus buy-and-hold.",
+        "outperform": "Finds that only strategies exploiting underreaction and overreaction with technical indicators dominate buy-and-hold in some setups.",
+    },
+    {
+        "study_id": "manual_gayed_leverage_long_run_2016",
+        "title": "Leverage for the Long Run - A Systematic Approach to Managing Risk and Magnifying Returns in Stocks",
+        "year": "2016",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2741701",
+        "rule": "Use the S&P 500 200-day moving average as a risk signal; own S&P 500 exposure when above trend and move out when below trend.",
+        "outperform": "Reports improved long-run risk-adjusted performance for S&P 500 moving-average rotation versus plain buy-and-hold/leverage.",
+    },
+    {
+        "study_id": "manual_becker_seshadri_gp_2003",
+        "title": "GP-Evolved Technical Trading Rules Can Outperform Buy and Hold",
+        "year": "2003",
+        "url": "https://www.semanticscholar.org/paper/112d7d2b38272a275d2721b4194e73e856c97cff",
+        "rule": "Genetic programming evolves technical trading rules for the S&P 500 index.",
+        "outperform": "Reports GP-evolved technical trading rules outperform buy-and-hold on the S&P 500 even after transaction costs.",
+    },
+    {
+        "study_id": "manual_data_snooping_market_timing_2010",
+        "title": "Data Snooping and Market-Timing Rule Performance",
+        "year": "2010",
+        "url": "https://doi.org/10.1093/jjfinec/nbq032",
+        "rule": "Applies a comprehensive set of simple and complex market-timing rules to the S&P 500 index.",
+        "outperform": "Individual rules outperform buy-and-hold before data-snooping correction; best monthly rules retain significance versus risk-free alternative.",
+    },
+    {
+        "study_id": "manual_trend_stop_loss_frequency_sp500",
+        "title": "Trend Following, Stop Losses and the Frequency of Trading: The Case of the S&P 500",
+        "year": "",
+        "url": "https://openaccess.city.ac.uk/id/eprint/17842/",
+        "rule": "Tests S&P 500 moving average, crossover, breakout and stop-loss trend-following rules at daily and end-of-month frequencies.",
+        "outperform": "Reports most daily and end-of-month trend-following rules outperform buy-and-hold with lower volatility, except very short-term rules.",
+    },
+]
+
 
 @dataclass(frozen=True)
 class Candidate:
@@ -163,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     rejected: list[Candidate] = []
     candidates.extend(_scan_exactness(Path(args.exactness_csv), rejected))
     candidates.extend(_scan_import_manifest(Path(args.import_manifest), rejected))
+    candidates.extend(_manual_web_seed_candidates())
     if not args.local_only:
         candidates.extend(
             _search_openalex(
@@ -326,6 +370,31 @@ def _search_openalex(*, pages_per_query: int, per_page: int, sleep_seconds: floa
                 else:
                     rows.append(candidate)
             time.sleep(sleep_seconds)
+    return rows
+
+
+def _manual_web_seed_candidates() -> list[Candidate]:
+    rows: list[Candidate] = []
+    for seed in MANUAL_WEB_SEEDS:
+        text = _join(seed["title"], seed["rule"], seed["outperform"])
+        rows.append(
+            Candidate(
+                source="manual_web_seed",
+                study_id=seed["study_id"],
+                title=seed["title"],
+                year=seed["year"],
+                doi="",
+                url=seed["url"],
+                query="manual web seed",
+                strategy_family="sp500_only_market_timing",
+                rule_or_abstract=seed["rule"],
+                tradable_assets="S&P 500 / SPY exposure only; cash or risk-free alternative may appear as out-of-market leg",
+                benchmark="S&P 500 buy-and-hold",
+                evidence_strength="manual_seed_needs_full_text",
+                sp500_only_evidence=_snippet(text, SP500_RE),
+                outperform_evidence=seed["outperform"],
+            )
+        )
     return rows
 
 
