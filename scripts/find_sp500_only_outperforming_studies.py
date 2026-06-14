@@ -99,7 +99,10 @@ NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"stock selection|asset selection|constituent stocks|s&p\s*500 constituents|constituents of the s&p|"
     r"per.?stock|stock portfolios?|equity portfolios?|leveraged etf pairs|inverse leveraged|"
     r"twitter|sentiment-driven|asset allocation decisions|bond allocation|increased bond|"
-    r"hang seng|msci uk|brent crude|ark innovation)\b",
+    r"hang seng|msci uk|brent crude|ark innovation|aapl|apple inc|major us stocks|"
+    r"blue.?chip stocks|indonesian blue.?chip|same stocks|multiple trading strategies|"
+    r"leveraged and inverse etfs?|multi.?market|stock, bond, and forex|eur/usd|"
+    r"treasury bond|additional assets such as commodities|commodities)\b",
     re.I,
 )
 

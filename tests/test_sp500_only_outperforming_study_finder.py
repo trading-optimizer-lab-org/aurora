@@ -106,6 +106,44 @@ def test_classify_rejects_sp500_constituent_stock_strategy() -> None:
     assert "non_sp500_only_strategy_context" in candidate.reject_reasons
 
 
+def test_classify_rejects_aapl_or_multi_market_context() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W9",
+        title="Adaptive reinforcement learning for S&P 500 and AAPL",
+        year="2024",
+        doi="",
+        url="",
+        query="",
+        strategy_family="ml",
+        rule_or_abstract="Uses historical data from the S&P 500 Index and AAPL stock.",
+        tradable_assets="",
+        benchmark="S&P 500",
+        text="The S&P 500 and AAPL stock strategy outperforms buy-and-hold.",
+    )
+
+    assert "non_sp500_only_strategy_context" in candidate.reject_reasons
+
+
+def test_classify_rejects_leveraged_inverse_etf_pairs() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W10",
+        title="Leveraged and inverse ETF pairs",
+        year="2024",
+        doi="",
+        url="",
+        query="",
+        strategy_family="etf_pairs",
+        rule_or_abstract="Leveraged and inverse ETFs mimic the S&P 500 and outperform the index.",
+        tradable_assets="leveraged and inverse ETFs",
+        benchmark="S&P 500",
+        text="Leveraged and inverse ETFs outperform the S&P 500 on a risk-adjusted basis.",
+    )
+
+    assert "non_sp500_only_strategy_context" in candidate.reject_reasons
+
+
 def test_classify_rejects_cannot_beat_market_language() -> None:
     candidate = _classify(
         source="test",
