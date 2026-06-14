@@ -56,6 +56,13 @@ OUTPERFORM_RE = re.compile(
     r"improve.?risk.?adjusted|lower drawdown|drawdown reduction|better performance|profitable)\b",
     re.I,
 )
+NEGATIVE_OUTPERFORM_RE = re.compile(
+    r"\b(no evidence[^.]{0,120}outperform|none[^.]{0,120}outperform|does not[^.]{0,80}outperform|"
+    r"do not[^.]{0,80}outperform|did not[^.]{0,80}outperform|would not[^.]{0,80}beat|"
+    r"not beat[^.]{0,80}buy.?and.?hold|under.?performs?[^.]{0,120}buy.?and.?hold|"
+    r"fails?[^.]{0,120}beat|struggle[^.]{0,120}surpass)\b",
+    re.I,
+)
 GENERIC_RULE_RE = re.compile(r"convert the documented signal into a causal rule", re.I)
 OTHER_TRADED_ASSET_RE = re.compile(
     r"\b(qqq|nasdaq|iwm|russell|efa|eem|acwi|world|global equity|international|developed markets|emerging markets|"
@@ -87,6 +94,16 @@ QUERY_BANK = [
     "S&P 500 crash prediction trading strategy outperforms",
     "S&P 500 risk on risk off market timing strategy",
     "S&P 500 macro market timing strategy outperform",
+    "Investing in the S&P 500 index can anything beat buy and hold",
+    "Leverage for the Long Run S&P 500 200-day moving average rotation",
+    "S&P 500 Halloween indicator strategy buy and hold paper",
+    "S&P 500 sell in May go away strategy buy and hold study",
+    "S&P 500 turn of the month effect switching strategy outperform",
+    "S&P 500 futures Halloween effect buy and hold Maberly Pierce",
+    "S&P 500 200 day moving average rotation buy and hold study",
+    "S&P 500 fed model market timing strategy buy and hold",
+    "S&P 500 earnings yield interest rates market timing strategy worked",
+    "S&P 500 technical analysis relative maxima minima buy and hold",
 ]
 
 
@@ -340,6 +357,8 @@ def _classify(
         reasons.append("no_explicit_trading_strategy_rule")
     if not OUTPERFORM_RE.search(text):
         reasons.append("no_outperform_claim_found")
+    if NEGATIVE_OUTPERFORM_RE.search(full_text):
+        reasons.append("negative_or_non_outperform_result")
     if NON_FINANCE_RE.search(full_text):
         reasons.append("non_finance_or_non_trading_context")
     cleaned_assets = SP500_RE.sub(" ", _join(tradable_assets, rule_or_abstract))
