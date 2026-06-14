@@ -87,6 +87,25 @@ def test_classify_rejects_esg_portfolio_against_sp500() -> None:
     assert "non_sp500_only_strategy_context" in candidate.reject_reasons
 
 
+def test_classify_rejects_factor_strategy_within_sp500() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W15",
+        title="Can Simple Strategies Beat S&P 500?",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="factor",
+        rule_or_abstract="Size and/or value strategies applied within the S&P 500 index outperform the S&P 500.",
+        tradable_assets="",
+        benchmark="S&P 500",
+        text="Size, value and smart beta strategies within the index outperform the S&P 500.",
+    )
+
+    assert "non_sp500_only_strategy_context" in candidate.reject_reasons
+
+
 def test_classify_rejects_sp500_constituent_stock_strategy() -> None:
     candidate = _classify(
         source="test",

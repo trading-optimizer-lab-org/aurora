@@ -119,7 +119,8 @@ NON_SP500_ONLY_CONTEXT_RE = re.compile(
     r"treasury bond|additional assets such as commodities|commodities|ftse\s*100|nikkei\s*225|"
     r"enhanced index tracking|portfolio construction|portfolio trading|companies listed|"
     r"30 companies|stock returns for companies|stocks based on this approach|multi.?factor portfolio|"
-    r"twelve chosen securities|stocks\.csv)\b",
+    r"twelve chosen securities|stocks\.csv|size and/or value strategies|smart beta|factor.?based investing|"
+    r"value generated positive excess returns|size, value)\b",
     re.I,
 )
 
