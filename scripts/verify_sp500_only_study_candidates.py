@@ -36,6 +36,12 @@ MANUAL_PDF_URLS = {
     "manual_zarattini_intraday_momentum_spy_2024": "https://alexandria.unisg.ch/bitstreams/a99aba00-f967-49b3-aceb-f544dc386e0b/download",
     "manual_spy_intraday_momentum_improvements_2025": "https://papers.ssrn.com/sol3/Delivery.cfm/5095349.pdf?abstractid=5095349&mirid=1",
     "manual_probability_weighting_equity_premium_2024": "https://papers.ssrn.com/sol3/Delivery.cfm/4592479.pdf?abstractid=4592479&mirid=1",
+    "manual_sp500_moving_average_crossover_2015": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID2604461_code2145832.pdf?abstractid=2578302&mirid=1",
+    "manual_probabilistic_bull_bear_market_timing_2014": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID2465453_code1653984.pdf?abstractid=2453507&mirid=1",
+    "manual_market_timing_information_required_2018": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID3739405_code2416826.pdf?abstractid=3222469&mirid=1",
+    "manual_vix_forward_return_autocorrelation_sp500_2021": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID4682416_code2870840.pdf?abstractid=3810878&mirid=1",
+    "manual_spy_ml_technical_classification_2024": "https://papers.ssrn.com/sol3/Delivery.cfm/7077c6a6-a5cf-4b79-a6b1-60a94fa59651-MECA.pdf?abstractid=4765615",
+    "manual_avoid_equity_bear_markets_timing_2023": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID4524171_code4811196.pdf?abstractid=4397638&mirid=1&type=2",
 }
 
 
