@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 import re
 import sys
@@ -145,25 +146,46 @@ QUERY_BANK = [
     "S&P 500 market timing strategy outperforms buy and hold",
     "S&P 500 trading rule beats buy and hold",
     "SPY trading strategy outperforms S&P 500",
+    "SPY ETF trading rule beats buy and hold",
+    "SPY ETF market timing strategy outperforms buy and hold",
     "S&P 500 moving average trading rule outperform",
     "S&P 500 200 day moving average strategy study",
     "S&P 500 10 month moving average strategy paper",
+    "S&P 500 simple moving average strategy Sharpe ratio buy and hold",
+    "S&P 500 moving average crossover strategy Sharpe buy and hold",
     "S&P 500 trend following strategy paper",
     "S&P 500 time series momentum strategy paper",
+    "S&P 500 trend following stop loss frequency trading paper",
     "S&P 500 volatility managed portfolio outperform",
     "S&P 500 volatility timing strategy paper",
     "VIX market timing S&P 500 strategy outperform",
     "VIX predicts S&P 500 returns trading strategy",
+    "VIX derivatives S&P 500 market timing strategy buy and hold",
     "S&P 500 seasonal trading strategy sell in May outperform",
     "S&P 500 turn of the month strategy paper",
     "S&P 500 presidential cycle trading strategy",
     "S&P 500 technical trading rules outperform paper",
+    "S&P 500 technical analysis trading rule buy and hold Sharpe",
     "S&P 500 long short market timing strategy paper",
     "S&P 500 crash prediction trading strategy outperforms",
     "S&P 500 risk on risk off market timing strategy",
     "S&P 500 macro market timing strategy outperform",
+    "S&P 500 return predictability market timing Sharpe buy and hold",
+    "S&P 500 equity premium prediction market timing strategy",
+    "S&P 500 probabilistic market timing bull bear strategy",
+    "S&P 500 reinforcement learning market timing strategy",
+    "SPY machine learning classification trading strategy buy and hold",
+    "S&P 500 fuzzy system direction forecasting trading strategy",
+    "S&P 500 genetic programming trading rules outperform buy and hold",
+    "S&P 500 wavelet trading strategy beats market",
+    "S&P 500 first half hour predicts last half hour SPY strategy",
+    "S&P 500 intraday momentum SPY strategy beats market",
     "Investing in the S&P 500 index can anything beat buy and hold",
     "Leverage for the Long Run S&P 500 200-day moving average rotation",
+    "Return Predictability and Market-Timing A One-Month Model S&P 500",
+    "Market Timing Strategies That Worked S&P 500",
+    "Evidence on a New Stock Trading Rule higher returns lower risk S&P 500",
+    "The Buy-and-Hold Market Timer S&P 500",
     "S&P 500 Halloween indicator strategy buy and hold paper",
     "S&P 500 sell in May go away strategy buy and hold study",
     "S&P 500 turn of the month effect switching strategy outperform",
@@ -428,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local-only", action="store_true")
     parser.add_argument("--disable-snowball", action="store_true")
     parser.add_argument("--disable-semantic-scholar", action="store_true")
+    parser.add_argument("--disable-crossref", action="store_true")
     parser.add_argument("--snowball-per-seed", type=int, default=20)
     args = parser.parse_args(argv)
 
@@ -449,6 +472,15 @@ def main(argv: list[str] | None = None) -> int:
         if not args.disable_semantic_scholar:
             candidates.extend(
                 _search_semantic_scholar(
+                    pages_per_query=int(args.pages_per_query),
+                    per_page=int(args.per_page),
+                    sleep_seconds=float(args.sleep_seconds),
+                    rejected=rejected,
+                )
+            )
+        if not args.disable_crossref:
+            candidates.extend(
+                _search_crossref(
                     pages_per_query=int(args.pages_per_query),
                     per_page=int(args.per_page),
                     sleep_seconds=float(args.sleep_seconds),
@@ -500,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
         "local_only": bool(args.local_only),
         "snowball_enabled": bool(not args.local_only and not args.disable_snowball),
         "semantic_scholar_enabled": bool(not args.local_only and not args.disable_semantic_scholar),
+        "crossref_enabled": bool(not args.local_only and not args.disable_crossref),
         "snowball_per_seed": int(args.snowball_per_seed),
         "locked_opened": False,
         "backtest_enabled": False,
@@ -650,6 +683,48 @@ def _candidate_from_semantic_scholar_paper(paper: dict[str, Any], *, query: str)
         tradable_assets="",
         benchmark="",
         text=_join(title, abstract),
+    )
+
+
+def _search_crossref(*, pages_per_query: int, per_page: int, sleep_seconds: float, rejected: list[Candidate]) -> list[Candidate]:
+    rows: list[Candidate] = []
+    limit = max(1, min(100, per_page))
+    for query in QUERY_BANK:
+        for page in range(1, pages_per_query + 1):
+            payload = _crossref_search(query, offset=(page - 1) * limit, rows=limit)
+            message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+            for item in message.get("items", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                candidate = _candidate_from_crossref_item(item, query=query)
+                if candidate.reject_reasons:
+                    rejected.append(candidate)
+                else:
+                    rows.append(candidate)
+            time.sleep(max(sleep_seconds, 0.1))
+    return rows
+
+
+def _candidate_from_crossref_item(item: dict[str, Any], *, query: str) -> Candidate:
+    title = _first_text(item.get("title"))
+    subtitle = _first_text(item.get("subtitle"))
+    abstract = _clean_crossref_text(item.get("abstract"))
+    container = _first_text(item.get("container-title"))
+    subject = " ".join(str(part) for part in item.get("subject", []) if isinstance(part, str))
+    text = _join(title, subtitle, abstract, container, subject)
+    return _classify(
+        source="crossref",
+        study_id=str(item.get("DOI") or item.get("URL") or ""),
+        title=_join(title, subtitle).strip() or str(item.get("DOI") or ""),
+        year=_crossref_year(item),
+        doi=str(item.get("DOI") or ""),
+        url=str(item.get("URL") or ""),
+        query=query,
+        strategy_family="external_search",
+        rule_or_abstract=abstract,
+        tradable_assets="",
+        benchmark="",
+        text=text,
     )
 
 
@@ -869,6 +944,25 @@ def _openalex_search(query: str, *, page: int, per_page: int) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _crossref_search(query: str, *, offset: int, rows: int) -> dict[str, Any]:
+    params = urllib.parse.urlencode(
+        {
+            "query.bibliographic": query,
+            "rows": max(1, min(100, rows)),
+            "offset": max(0, offset),
+            "mailto": "aurora-research@example.com",
+        }
+    )
+    url = f"https://api.crossref.org/works?{params}"
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "Aurora SP500 study finder/1.0"})
+        with urllib.request.urlopen(request, timeout=45) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _semantic_scholar_search(query: str, *, offset: int, limit: int) -> dict[str, Any]:
     params = urllib.parse.urlencode(
         {
@@ -922,6 +1016,38 @@ def _work_id(value: object) -> str:
 
 def _norm_title(value: object) -> str:
     return re.sub(r"\W+", " ", str(value or "").lower()).strip()
+
+
+def _first_text(value: object) -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = _clean(item)
+            if text:
+                return text
+        return ""
+    return _clean(value)
+
+
+def _clean_crossref_text(value: object) -> str:
+    text = str(value or "")
+    text = re.sub(r"<[^>]+>", " ", text)
+    return _clean(html.unescape(text))
+
+
+def _crossref_year(item: dict[str, Any]) -> str:
+    for key in ("published-print", "published-online", "published", "created", "deposited", "issued"):
+        value = item.get(key)
+        if not isinstance(value, dict):
+            continue
+        date_parts = value.get("date-parts")
+        if not isinstance(date_parts, list) or not date_parts:
+            continue
+        first = date_parts[0]
+        if isinstance(first, list) and first:
+            year = str(first[0] or "")
+            if year:
+                return year
+    return ""
 
 
 def _abstract(index: Any) -> str:

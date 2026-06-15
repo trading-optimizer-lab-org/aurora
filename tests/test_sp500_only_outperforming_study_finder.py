@@ -598,6 +598,37 @@ def test_semantic_scholar_candidate_classification() -> None:
     assert candidate.reject_reasons == ""
 
 
+def test_crossref_candidate_parses_sp500_strategy_item() -> None:
+    candidate = finder._candidate_from_crossref_item(
+        {
+            "DOI": "10.1234/sp500",
+            "URL": "https://doi.org/10.1234/sp500",
+            "title": ["A S&P 500 market timing rule"],
+            "abstract": (
+                "<jats:p>We test a market timing strategy on the S&amp;P 500. "
+                "The strategy outperforms buy-and-hold with a higher Sharpe ratio.</jats:p>"
+            ),
+            "issued": {"date-parts": [[2024, 1, 1]]},
+            "container-title": ["Journal of Trading"],
+        },
+        query="S&P 500 market timing strategy outperforms buy and hold",
+    )
+
+    assert candidate.source == "crossref"
+    assert candidate.doi == "10.1234/sp500"
+    assert candidate.year == "2024"
+    assert candidate.reject_reasons == ""
+
+
+def test_crossref_search_handles_http_error(monkeypatch) -> None:
+    def raise_http_error(*args, **kwargs):
+        raise urllib.error.HTTPError("https://api.crossref.org/works", 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(finder.urllib.request, "urlopen", raise_http_error)
+
+    assert finder._crossref_search("bad query", offset=0, rows=1) == {}
+
+
 def test_workflow_shape() -> None:
     path = Path(".github/workflows/sp500-only-outperforming-study-finder.yml")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
