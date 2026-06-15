@@ -1,0 +1,171 @@
+name: Body Wick S/R 15m Overnight Age Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id containing the aligned free 15m 20-equity artifact"
+        required: true
+        default: "27498064404"
+      source_artifact:
+        description: "Artifact with data/*.csv for the 20 aligned equities"
+        required: true
+        default: "free-15m-equity-universe-yfinance-data"
+      jobs:
+        description: "Parallel shards for the expanded variant catalog"
+        required: true
+        default: "240"
+      cost_bps:
+        description: "Round-trip model uses two one-way costs, in bps"
+        required: true
+        default: "1.0"
+      target_sharpe:
+        description: "Minimum train and validation Sharpe for accepted.csv"
+        required: true
+        default: "1.0"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/body_wick_sr_15m_overnight_age_sweep
+  FINAL_ARTIFACT: body-wick-sr-15m-overnight-age-sweep-results
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install data deps
+        run: python -m pip install -e .
+      - name: Download aligned 20-equity source artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$OUTPUT_DIR/source"
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "${{ inputs.source_artifact }}" \
+            --dir "$OUTPUT_DIR/source"
+          FOUND="$(find "$OUTPUT_DIR/source" -path "*/data/*_15m.csv" -print -quit)"
+          test -n "$FOUND"
+      - name: Download SPY 15m with free yfinance
+        run: |
+          python scripts/download_free_15m_equity_universe.py \
+            --output-dir "$OUTPUT_DIR/spy_source" \
+            --symbols SPY \
+            --min-symbols 1 \
+            --period 60d \
+            --interval 15m
+          SOURCE_DATA_DIR="$(find "$OUTPUT_DIR/source" -type d -name data | head -n 1)"
+          test -n "$SOURCE_DATA_DIR"
+          cp "$OUTPUT_DIR/spy_source/data/SPY_15m.csv" "$SOURCE_DATA_DIR/SPY_15m.csv"
+          test -f "$SOURCE_DATA_DIR/SPY_15m.csv"
+          COUNT="$(find "$SOURCE_DATA_DIR" -name "*_15m.csv" | wc -l)"
+          test "$COUNT" -ge 21
+      - name: Upload 21-symbol source data
+        uses: actions/upload-artifact@v4
+        with:
+          name: body-wick-sr-15m-overnight-source-data
+          path: ${{ env.OUTPUT_DIR }}/source
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.matrix.outputs.shards }}
+    steps:
+      - name: Build matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          jobs = int(os.environ["JOBS"])
+          print("shards=" + json.dumps([{"stage": i, "total": jobs} for i in range(jobs)]))
+          PY
+        env:
+          JOBS: ${{ inputs.jobs }}
+
+  backtest:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 360
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 240
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download source data
+        uses: actions/download-artifact@v4
+        with:
+          name: body-wick-sr-15m-overnight-source-data
+          path: ${{ env.OUTPUT_DIR }}/source
+      - name: Run expanded body-wick S/R shard
+        run: |
+          python scripts/run_body_wick_sr_15m_backtest.py \
+            --mode shard \
+            --input-dir "$OUTPUT_DIR/source" \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --total-stages "${{ matrix.total }}" \
+            --min-symbols 21 \
+            --cost-bps "${{ inputs.cost_bps }}"
+      - name: Upload shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: body-wick-sr-15m-overnight-shard-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+          if-no-files-found: warn
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [backtest]
+    if: always()
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Download shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: body-wick-sr-15m-overnight-shard-*
+          path: ${{ env.OUTPUT_DIR }}/downloaded
+          merge-multiple: true
+      - name: Arrange shards
+        run: |
+          mkdir -p "$OUTPUT_DIR/shards"
+          find "$OUTPUT_DIR/downloaded" -maxdepth 1 -type d -name "stage_*" -exec cp -r {} "$OUTPUT_DIR/shards/" \;
+          find "$OUTPUT_DIR/shards" -name leaderboard.csv | wc -l
+      - name: Merge results
+        run: |
+          python scripts/run_body_wick_sr_15m_backtest.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --target-sharpe "${{ inputs.target_sharpe }}"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FINAL_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}/final

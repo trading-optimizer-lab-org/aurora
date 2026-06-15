@@ -72,6 +72,7 @@ class StrategyVariant:
     touch_rule: str
     confirmation_rule: str
     invalidation_rule: str
+    min_zone_age_bars: int
     max_zone_age_bars: int
     exit_rule: str
     hold_bars: int
@@ -175,32 +176,36 @@ def build_variant_catalog() -> list[StrategyVariant]:
                             "break_touch_extreme",
                         ):
                             for invalidation_rule in ("wick_break", "close_break"):
-                                for max_zone_age_bars in (26, 78):
-                                    for exit_rule, hold_bars, target_r in exit_versions:
-                                        variant_id = (
-                                            f"{side}__{zone_method}__{setup_candle}"
-                                            f"__atr{min_range_atr:g}__{touch_rule}"
-                                            f"__{confirmation_rule}__{invalidation_rule}"
-                                            f"__age{max_zone_age_bars}__{exit_rule}"
-                                            f"__h{hold_bars}__r{target_r:g}"
-                                        )
-                                        variants.append(
-                                            StrategyVariant(
-                                                variant_id=variant_id,
-                                                side=side,
-                                                zone_method=zone_method,
-                                                setup_candle=setup_candle,
-                                                min_range_atr=min_range_atr,
-                                                touch_rule=touch_rule,
-                                                confirmation_rule=confirmation_rule,
-                                                invalidation_rule=invalidation_rule,
-                                                max_zone_age_bars=max_zone_age_bars,
-                                                exit_rule=exit_rule,
-                                                hold_bars=hold_bars,
-                                                stop_buffer_atr=0.0,
-                                                target_r=target_r,
+                                for min_zone_age_bars in (0, 5, 10, 20, 30):
+                                    for max_zone_age_bars in (26, 78, 156):
+                                        if min_zone_age_bars > max_zone_age_bars:
+                                            continue
+                                        for exit_rule, hold_bars, target_r in exit_versions:
+                                            variant_id = (
+                                                f"{side}__{zone_method}__{setup_candle}"
+                                                f"__atr{min_range_atr:g}__{touch_rule}"
+                                                f"__{confirmation_rule}__{invalidation_rule}"
+                                                f"__minage{min_zone_age_bars}__age{max_zone_age_bars}__{exit_rule}"
+                                                f"__h{hold_bars}__r{target_r:g}"
                                             )
-                                        )
+                                            variants.append(
+                                                StrategyVariant(
+                                                    variant_id=variant_id,
+                                                    side=side,
+                                                    zone_method=zone_method,
+                                                    setup_candle=setup_candle,
+                                                    min_range_atr=min_range_atr,
+                                                    touch_rule=touch_rule,
+                                                    confirmation_rule=confirmation_rule,
+                                                    invalidation_rule=invalidation_rule,
+                                                    min_zone_age_bars=min_zone_age_bars,
+                                                    max_zone_age_bars=max_zone_age_bars,
+                                                    exit_rule=exit_rule,
+                                                    hold_bars=hold_bars,
+                                                    stop_buffer_atr=0.0,
+                                                    target_r=target_r,
+                                                )
+                                            )
     return variants
 
 
@@ -371,6 +376,9 @@ def detect_trades_for_symbol(
                 side=variant.side,
                 invalidation_rule=variant.invalidation_rule,
             ):
+                continue
+            if age < variant.min_zone_age_bars:
+                still_active.append(active)
                 continue
             if not touches_zone(current, active.zone, touch_rule=variant.touch_rule):
                 still_active.append(active)
