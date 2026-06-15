@@ -434,6 +434,31 @@ def test_classify_rejects_pre_cost_outperformance_that_fails_after_costs() -> No
     assert "negative_or_non_outperform_result" in candidate.reject_reasons
 
 
+def test_classify_rejects_unable_to_outperform_buy_hold() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W23",
+        title="Revisiting trend following on the S&P 500",
+        year="2022",
+        doi="",
+        url="",
+        query="",
+        strategy_family="trend_following",
+        rule_or_abstract=(
+            "The S&P500 fund's strong uptrend resulted in trend-following strategies "
+            "being unable to outperform the passive buy-and-hold strategy."
+        ),
+        tradable_assets="S&P 500",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "The S&P500 fund's consistent and strong uptrend over the period resulted "
+            "in TFS being unable to outperform the passive buy-and-hold strategy."
+        ),
+    )
+
+    assert "negative_or_non_outperform_result" in candidate.reject_reasons
+
+
 def test_manual_web_seeds_are_classified_before_acceptance() -> None:
     rejected: list[finder.Candidate] = []
     candidates = finder._manual_web_seed_candidates(rejected)
@@ -561,6 +586,68 @@ def test_dedupe_removes_same_title_with_different_ids() -> None:
 
     assert len(deduped) == 1
     assert deduped[0].title == one.title
+
+
+def test_dedupe_handles_html_entities_and_mojibake_titles() -> None:
+    one = _classify(
+        source="manual",
+        study_id="manual_dichtl",
+        title="Investing in the S&P 500 Index: Can Anything Beat the Buy-and-Hold Strategy?",
+        year="2020",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="S&P 500 timing strategies can beat buy-and-hold.",
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text="S&P 500 timing strategies can beat buy-and-hold.",
+    )
+    two = _classify(
+        source="crossref",
+        study_id="10.1002/rfe.1078",
+        title="Investing in the S&amp;P 500 index: Can anything beat the buy‐and‐hold strategy?",
+        year="2020",
+        doi="10.1002/rfe.1078",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="S&P 500 timing strategies can beat buy-and-hold.",
+        tradable_assets="SPY",
+        benchmark="S&P 500 buy-and-hold",
+        text="S&P 500 timing strategies can beat buy-and-hold.",
+    )
+    three = _classify(
+        source="openalex",
+        study_id="W7112925257",
+        title="Whatâ€™s so special about time series momentum?",
+        year="",
+        doi="",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="S&P 500 SMA strategy outperformed TSM in the past and has a higher Sharpe than buy-and-hold.",
+        tradable_assets="S&P 500",
+        benchmark="S&P 500 buy-and-hold",
+        text="S&P 500 SMA strategy outperformed TSM in the past and has a higher Sharpe than buy-and-hold.",
+    )
+    four = _classify(
+        source="openalex",
+        study_id="W3112092632",
+        title="What’s so special about time series momentum?",
+        year="2020",
+        doi="https://doi.org/10.21314/jois.2020.122",
+        url="",
+        query="",
+        strategy_family="market_timing",
+        rule_or_abstract="S&P 500 SMA strategy outperformed TSM in the past and has a higher Sharpe than buy-and-hold.",
+        tradable_assets="S&P 500",
+        benchmark="S&P 500 buy-and-hold",
+        text="S&P 500 SMA strategy outperformed TSM in the past and has a higher Sharpe than buy-and-hold.",
+    )
+
+    assert len(_dedupe([one, two])) == 1
+    assert len(_dedupe([three, four])) == 1
 
 
 def test_openalex_search_handles_http_error(monkeypatch) -> None:

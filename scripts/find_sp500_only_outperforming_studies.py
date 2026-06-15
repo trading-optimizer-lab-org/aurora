@@ -73,6 +73,7 @@ OUTPERFORM_BENCHMARK_RE = re.compile(
 NEGATIVE_OUTPERFORM_RE = re.compile(
     r"\b(no evidence[^.]{0,120}outperform|none[^.]{0,120}outperform|does not[^.]{0,80}outperform|"
     r"do not[^.]{0,80}outperform|did not[^.]{0,80}outperform|would not[^.]{0,80}beat|"
+    r"unable[^.]{0,80}outperform|"
     r"not beat[^.]{0,80}buy.?and.?hold|under.?performs?[^.]{0,120}buy.?and.?hold|"
     r"fails?[^.]{0,120}beat|struggle[^.]{0,120}surpass|"
     r"(can.?t|cannot|can not)[^.]{0,80}beat[^.]{0,80}(market|s&p\s*500|sp500|spy|index)|"
@@ -1015,7 +1016,7 @@ def _work_id(value: object) -> str:
 
 
 def _norm_title(value: object) -> str:
-    return re.sub(r"\W+", " ", str(value or "").lower()).strip()
+    return re.sub(r"\W+", " ", _clean(value).lower()).strip()
 
 
 def _first_text(value: object) -> str:
@@ -1094,7 +1095,19 @@ def _join(*parts: object) -> str:
 
 
 def _clean(text: object) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip()
+    value = html.unescape(str(text or ""))
+    for bad, good in {
+        "â€™": "'",
+        "â€˜": "'",
+        "â€œ": '"',
+        "â€": '"',
+        "â€“": "-",
+        "â€”": "-",
+        "â€": '"',
+        "Â": "",
+    }.items():
+        value = value.replace(bad, good)
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _snippet(text: str, pattern: re.Pattern[str]) -> str:
