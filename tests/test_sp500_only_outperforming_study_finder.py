@@ -358,6 +358,82 @@ def test_classify_rejects_theoretical_timing_threshold_without_found_strategy() 
     assert "theoretical_framework_no_found_strategy" in candidate.reject_reasons
 
 
+def test_classify_rejects_master_limited_partnerships_vs_sp500() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W20",
+        title="Master limited partnerships: Is it a smart investment vehicle?",
+        year="2018",
+        doi="",
+        url="",
+        query="",
+        strategy_family="alternative_assets",
+        rule_or_abstract=(
+            "Master limited partnerships provide higher returns, lower risk, and higher Sharpe "
+            "than buy-and-hold the S&P 500 index fund."
+        ),
+        tradable_assets="Master limited partnerships",
+        benchmark="S&P 500",
+        text=(
+            "Master limited partnerships in the energy sector provide higher returns, lower risk, "
+            "and a higher Sharpe ratio than buy-and-hold the S&P 500 index fund."
+        ),
+    )
+
+    assert "mentions_other_traded_assets_or_non_sp500_context" in candidate.reject_reasons
+
+
+def test_classify_rejects_cot_futures_strategy_vs_sp500() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W21",
+        title="The Commitment of Traders report as a trading signal",
+        year="2023",
+        doi="",
+        url="",
+        query="",
+        strategy_family="cot",
+        rule_or_abstract=(
+            "The CoT long-only strategy generated significant results in futures markets "
+            "against a S&P 500 buy-and-hold benchmark."
+        ),
+        tradable_assets="Commodity futures and derivatives markets",
+        benchmark="S&P 500",
+        text=(
+            "The Commitment of Traders report is used to build strategies in futures markets; "
+            "some individual markets outperform the S&P 500 buy-and-hold benchmark."
+        ),
+    )
+
+    assert "mentions_other_traded_assets_or_non_sp500_context" in candidate.reject_reasons
+
+
+def test_classify_rejects_pre_cost_outperformance_that_fails_after_costs() -> None:
+    candidate = _classify(
+        source="test",
+        study_id="W22",
+        title="Genetic programming on the S&P 500",
+        year="2016",
+        doi="",
+        url="",
+        query="",
+        strategy_family="genetic_programming",
+        rule_or_abstract=(
+            "Applied to the S&P 500, the proposed approach beat buy and hold before costs. "
+            "No approach tested beat the benchmark return when factoring in transaction costs."
+        ),
+        tradable_assets="S&P 500",
+        benchmark="S&P 500 buy-and-hold",
+        text=(
+            "Applied to financial time series prediction, the proposed approach beat a buy and hold "
+            "return on the S&P 500 index. No approach tested beat the benchmark return when factoring "
+            "in transaction costs."
+        ),
+    )
+
+    assert "negative_or_non_outperform_result" in candidate.reject_reasons
+
+
 def test_manual_web_seeds_are_classified_before_acceptance() -> None:
     rejected: list[finder.Candidate] = []
     candidates = finder._manual_web_seed_candidates(rejected)
