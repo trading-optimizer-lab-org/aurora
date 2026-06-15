@@ -15,6 +15,10 @@ on:
         description: "OpenAlex rows per page"
         required: false
         default: "100"
+      crossref_pages_per_query:
+        description: "Crossref pages per query"
+        required: false
+        default: "5"
       local_only:
         description: "Only scan local Aurora literature corpus"
         required: false
@@ -51,6 +55,7 @@ jobs:
             --output-dir "$OUTPUT_DIR" \
             --pages-per-query "${{ inputs.pages_per_query }}" \
             --per-page "${{ inputs.per_page }}" \
+            --crossref-pages-per-query "${{ inputs.crossref_pages_per_query }}" \
             $EXTRA
       - name: Verify candidate full text where possible
         run: |

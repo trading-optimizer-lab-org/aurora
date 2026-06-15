@@ -452,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-snowball", action="store_true")
     parser.add_argument("--disable-semantic-scholar", action="store_true")
     parser.add_argument("--disable-crossref", action="store_true")
+    parser.add_argument("--crossref-pages-per-query", type=int, default=5)
     parser.add_argument("--snowball-per-seed", type=int, default=20)
     args = parser.parse_args(argv)
 
@@ -482,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.disable_crossref:
             candidates.extend(
                 _search_crossref(
-                    pages_per_query=int(args.pages_per_query),
+                    pages_per_query=int(args.crossref_pages_per_query),
                     per_page=int(args.per_page),
                     sleep_seconds=float(args.sleep_seconds),
                     rejected=rejected,
@@ -534,6 +535,7 @@ def main(argv: list[str] | None = None) -> int:
         "snowball_enabled": bool(not args.local_only and not args.disable_snowball),
         "semantic_scholar_enabled": bool(not args.local_only and not args.disable_semantic_scholar),
         "crossref_enabled": bool(not args.local_only and not args.disable_crossref),
+        "crossref_pages_per_query": int(args.crossref_pages_per_query),
         "snowball_per_seed": int(args.snowball_per_seed),
         "locked_opened": False,
         "backtest_enabled": False,

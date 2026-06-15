@@ -726,3 +726,4 @@ def test_workflow_shape() -> None:
     assert "find_studies" in data["jobs"]
     assert "scripts/find_sp500_only_outperforming_studies.py" in text
     assert "--local-only" in text
+    assert "--crossref-pages-per-query" in text
