@@ -19,6 +19,10 @@ on:
         description: "Crossref pages per query"
         required: false
         default: "5"
+      snowball_per_seed:
+        description: "OpenAlex related/cited works per seed"
+        required: false
+        default: "5"
       local_only:
         description: "Only scan local Aurora literature corpus"
         required: false
@@ -56,6 +60,7 @@ jobs:
             --pages-per-query "${{ inputs.pages_per_query }}" \
             --per-page "${{ inputs.per_page }}" \
             --crossref-pages-per-query "${{ inputs.crossref_pages_per_query }}" \
+            --snowball-per-seed "${{ inputs.snowball_per_seed }}" \
             $EXTRA
       - name: Verify candidate full text where possible
         run: |
