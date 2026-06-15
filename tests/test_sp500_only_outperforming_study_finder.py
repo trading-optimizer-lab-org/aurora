@@ -726,5 +726,9 @@ def test_workflow_shape() -> None:
     assert "find_studies" in data["jobs"]
     assert "scripts/find_sp500_only_outperforming_studies.py" in text
     assert "--local-only" in text
+    assert "--disable-openalex" in text
+    assert "--disable-semantic-scholar" in text
+    assert "--disable-crossref" in text
+    assert "--disable-snowball" in text
     assert "--crossref-pages-per-query" in text
     assert "--snowball-per-seed" in text

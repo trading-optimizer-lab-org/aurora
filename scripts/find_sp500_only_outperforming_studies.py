@@ -449,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--per-page", type=int, default=100)
     parser.add_argument("--sleep-seconds", type=float, default=0.15)
     parser.add_argument("--local-only", action="store_true")
+    parser.add_argument("--disable-openalex", action="store_true")
     parser.add_argument("--disable-snowball", action="store_true")
     parser.add_argument("--disable-semantic-scholar", action="store_true")
     parser.add_argument("--disable-crossref", action="store_true")
@@ -464,13 +465,14 @@ def main(argv: list[str] | None = None) -> int:
     candidates.extend(_scan_import_manifest(Path(args.import_manifest), rejected))
     candidates.extend(_manual_web_seed_candidates(rejected))
     if not args.local_only:
-        external_candidates = _search_openalex(
-            pages_per_query=int(args.pages_per_query),
-            per_page=int(args.per_page),
-            sleep_seconds=float(args.sleep_seconds),
-            rejected=rejected,
-        )
-        candidates.extend(external_candidates)
+        if not args.disable_openalex:
+            external_candidates = _search_openalex(
+                pages_per_query=int(args.pages_per_query),
+                per_page=int(args.per_page),
+                sleep_seconds=float(args.sleep_seconds),
+                rejected=rejected,
+            )
+            candidates.extend(external_candidates)
         if not args.disable_semantic_scholar:
             candidates.extend(
                 _search_semantic_scholar(
@@ -532,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         "pages_per_query": int(args.pages_per_query),
         "per_page": int(args.per_page),
         "local_only": bool(args.local_only),
+        "openalex_enabled": bool(not args.local_only and not args.disable_openalex),
         "snowball_enabled": bool(not args.local_only and not args.disable_snowball),
         "semantic_scholar_enabled": bool(not args.local_only and not args.disable_semantic_scholar),
         "crossref_enabled": bool(not args.local_only and not args.disable_crossref),

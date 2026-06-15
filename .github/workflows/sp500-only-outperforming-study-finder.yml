@@ -23,6 +23,22 @@ on:
         description: "OpenAlex related/cited works per seed"
         required: false
         default: "5"
+      disable_openalex:
+        description: "Disable OpenAlex search"
+        required: false
+        default: "false"
+      disable_semantic_scholar:
+        description: "Disable Semantic Scholar search"
+        required: false
+        default: "false"
+      disable_crossref:
+        description: "Disable Crossref search"
+        required: false
+        default: "false"
+      disable_snowball:
+        description: "Disable OpenAlex snowball search"
+        required: false
+        default: "false"
       local_only:
         description: "Only scan local Aurora literature corpus"
         required: false
@@ -55,6 +71,10 @@ jobs:
         run: |
           EXTRA=""
           if [ "${{ inputs.local_only }}" = "true" ]; then EXTRA="--local-only"; fi
+          if [ "${{ inputs.disable_openalex }}" = "true" ]; then EXTRA="$EXTRA --disable-openalex"; fi
+          if [ "${{ inputs.disable_semantic_scholar }}" = "true" ]; then EXTRA="$EXTRA --disable-semantic-scholar"; fi
+          if [ "${{ inputs.disable_crossref }}" = "true" ]; then EXTRA="$EXTRA --disable-crossref"; fi
+          if [ "${{ inputs.disable_snowball }}" = "true" ]; then EXTRA="$EXTRA --disable-snowball"; fi
           python scripts/find_sp500_only_outperforming_studies.py \
             --output-dir "$OUTPUT_DIR" \
             --pages-per-query "${{ inputs.pages_per_query }}" \
