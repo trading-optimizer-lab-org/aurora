@@ -1,0 +1,348 @@
+campaign_id: sp500_26_paper_replication
+train_start: "1995-01-01"
+train_end: "2010-12-31"
+validation_start: "2011-01-01"
+validation_end: "2020-12-31"
+locked_start: "2021-01-01"
+benchmark: SPY
+min_lag_periods: 1
+paper_exact_replication_claimed: false
+specs:
+  - paper_id: 1
+    slug: forecasting_multinomial_gbm
+    title: Forecasting multinomial stock returns using machine learning methods
+    strategy_name: Gradient Boosting multinomial
+    fidelity_status: aurora_proxy
+    strategy_type: ml_daily_direction_proxy
+    frequency: daily
+    symbols: [SPY, IEF, SHY]
+    paper_start: "1990-01-01"
+    paper_end: "2018-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses deterministic tree-like score over available causal features, not the paper's exact GBM/classes.
+  - paper_id: 2
+    slug: avoid_equity_bear_markets_trendycmacro
+    title: Avoid Equity Bear Markets with a Market Timing Strategy
+    strategy_name: TrendYCMacro
+    fidelity_status: near_replica
+    strategy_type: trend_yc_macro
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "1927-01-01"
+    paper_end: "2023-12-31"
+    primary: true
+    required_data: [SPY, T10Y2Y, UNRATE, CPIAUCSL]
+    proxy_notes: Rachev and macro block are approximated with available FRED series.
+  - paper_id: 3
+    slug: intraday_momentum_spy
+    title: Beat the Market Effective Intraday Momentum Strategy for SPY
+    strategy_name: Intraday momentum with trailing stop
+    fidelity_status: unsupported
+    strategy_type: unsupported_intraday
+    frequency: intraday
+    symbols: [SPY]
+    paper_start: "2007-01-01"
+    paper_end: "2024-12-31"
+    primary: true
+    required_data: [SPY_1MIN]
+    proxy_notes: Requires SPY 1-minute bars; no daily fake is allowed.
+  - paper_id: 4
+    slug: data_snooping_spa
+    title: Data Snooping and Market-Timing Rule Performance
+    strategy_name: Reality Check / SPA methodology
+    fidelity_status: methodology_only
+    strategy_type: methodology_only
+    frequency: monthly
+    symbols: [SPY]
+    paper_start: "1900-01-01"
+    paper_end: "2010-12-31"
+    primary: false
+    required_data: [SPY]
+    proxy_notes: This is an audit paper, not a standalone trading rule.
+  - paper_id: 5
+    slug: relative_extrema_smoothed
+    title: Evidence on a New Stock Trading Rule that Produces Higher Returns with Lower Risk
+    strategy_name: Smoothed relative maxima/minima
+    fidelity_status: near_replica
+    strategy_type: relative_extrema
+    frequency: weekly
+    symbols: [SPY, SHY]
+    paper_start: "1950-01-01"
+    paper_end: "2010-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses smoothed local extrema because exact smoothing recipe is not fully specified.
+  - paper_id: 6
+    slug: gp_evolved_rule
+    title: GP-Evolved Technical Trading Rules Can Outperform Buy and Hold
+    strategy_name: Published GP technical rule
+    fidelity_status: aurora_proxy
+    strategy_type: gp_published_rule
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1950-01-01"
+    paper_end: "2010-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Implements the published example rule; does not rerun genetic programming.
+  - paper_id: 7
+    slug: time_series_momentum_sma
+    title: What is so special about time series momentum?
+    strategy_name: Monthly SMA / TSM
+    fidelity_status: paper_like_exact
+    strategy_type: time_series_momentum
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1950-01-01"
+    paper_end: "2019-04-30"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: SPY is used as investable S&P 500 proxy.
+  - paper_id: 8
+    slug: ep_short_rate_spread
+    title: Market Timing Strategies That Worked
+    strategy_name: Earnings yield minus short rate spread
+    fidelity_status: near_replica
+    strategy_type: ep_rate_proxy
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1970-01-01"
+    paper_end: "2000-12-31"
+    primary: true
+    required_data: [SPY, FEDFUNDS]
+    proxy_notes: Earnings yield is approximated from price trend if no earnings yield series exists.
+  - paper_id: 9
+    slug: expected_risk_premium
+    title: A Practitioner's Defense of Return Predictability
+    strategy_name: Expected risk premium model
+    fidelity_status: near_replica
+    strategy_type: expected_premium_proxy
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "2001-01-01"
+    paper_end: "2015-12-31"
+    primary: true
+    required_data: [SPY, VIXCLS, DGS10]
+    proxy_notes: Uses available causal trend, volatility and rates features.
+  - paper_id: 10
+    slug: wave_wavelet_trading
+    title: How Wave-Wavelet Trading Wins and Beats the Market
+    strategy_name: Wave-wavelet trading proxy
+    fidelity_status: aurora_proxy
+    strategy_type: wavelet_proxy
+    frequency: weekly
+    symbols: [SPY, SHY]
+    paper_start: "1993-01-01"
+    paper_end: "2016-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses smoothed cycle/turning-point proxy; exact wavelet implementation is not claimed.
+  - paper_id: 11
+    slug: fuzzy_direction_system
+    title: S&P 500 Index Direction Forecasting from 1976 to 2010
+    strategy_name: Fuzzy direction system
+    fidelity_status: aurora_proxy
+    strategy_type: fuzzy_direction_proxy
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "1976-01-01"
+    paper_end: "2010-12-31"
+    primary: true
+    required_data: [SPY, VIXCLS]
+    proxy_notes: Uses simplified fuzzy score from trend, volatility and drawdown.
+  - paper_id: 12
+    slug: first_half_hour_intraday
+    title: Intraday Momentum First Half-Hour Predicts Last Half-Hour
+    strategy_name: First-half-hour momentum
+    fidelity_status: unsupported
+    strategy_type: unsupported_intraday
+    frequency: intraday
+    symbols: [SPY]
+    paper_start: "1993-01-01"
+    paper_end: "2018-12-31"
+    primary: true
+    required_data: [SPY_INTRADAY_OPEN_HALF_HOUR]
+    proxy_notes: Requires intraday first/last half-hour bars; no daily fake is allowed.
+  - paper_id: 13
+    slug: technical_timing_rules
+    title: Investing in the S&P 500 Index Can Anything Beat Buy-and-Hold
+    strategy_name: Monthly technical timing
+    fidelity_status: paper_like_exact
+    strategy_type: monthly_technical_timing
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1931-01-01"
+    paper_end: "2014-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses investable SPY proxy and paper-style technical timing.
+  - paper_id: 14
+    slug: leverage_for_long_run_ma
+    title: Leverage for the Long Run
+    strategy_name: Moving-average timing without leverage
+    fidelity_status: paper_like_exact
+    strategy_type: ma_timing
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "1885-01-01"
+    paper_end: "2019-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Unlevered version; SPY investable proxy replaces long S&P history.
+  - paper_id: 15
+    slug: rl_evt_tail_risk
+    title: Market Timing Strategy Through Reinforcement Learning
+    strategy_name: Tail-risk timing proxy
+    fidelity_status: aurora_proxy
+    strategy_type: tail_risk_proxy
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1956-08-01"
+    paper_end: "2016-07-31"
+    primary: true
+    required_data: [SPY, VIXCLS]
+    proxy_notes: Uses deterministic tail-risk proxy; no RL exact replica claimed.
+  - paper_id: 16
+    slug: probabilistic_bull_bear
+    title: Optimal Probabilistic Market Timing using Bull Bear Cycle Statistics
+    strategy_name: Bull/bear probability timing
+    fidelity_status: near_replica
+    strategy_type: bull_bear_probability
+    frequency: weekly
+    symbols: [SPY, SHY]
+    paper_start: "1885-01-01"
+    paper_end: "2013-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses rolling bull/bear probability proxy, not exact Wonham filter.
+  - paper_id: 17
+    slug: probability_weighting_premium
+    title: Probability Weighting and Equity Premium Prediction
+    strategy_name: Optimism equity premium proxy
+    fidelity_status: aurora_proxy
+    strategy_type: optimism_premium_proxy
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1950-01-01"
+    paper_end: "2020-12-31"
+    primary: true
+    required_data: [SPY, VIXCLS]
+    proxy_notes: Uses drawdown recovery and volatility proxy for optimism.
+  - paper_id: 18
+    slug: technical_ml_classification
+    title: Technical Analysis with Machine Learning Classification Algorithms
+    strategy_name: Technical ML classification proxy
+    fidelity_status: aurora_proxy
+    strategy_type: technical_ml_proxy
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "2011-01-01"
+    paper_end: "2022-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Deterministic classifier-like technical score, not exact LGBM/RF.
+  - paper_id: 19
+    slug: buy_and_hold_market_timer
+    title: The Buy-and-Hold Market Timer
+    strategy_name: Fed model market timer
+    fidelity_status: near_replica
+    strategy_type: fed_model_proxy
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1946-01-01"
+    paper_end: "2016-12-31"
+    primary: true
+    required_data: [SPY, DGS10]
+    proxy_notes: Earnings yield is proxied unless an explicit earnings yield series exists.
+  - paper_id: 20
+    slug: moving_average_crossover
+    title: Moving Average Crossover Strategy S&P500
+    strategy_name: Optimized moving-average crossover
+    fidelity_status: paper_like_exact
+    strategy_type: ma_crossover
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "1993-01-01"
+    paper_end: "2014-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: SPY investable proxy and paper-style crossover.
+  - paper_id: 21
+    slug: trend_following_breakout_250
+    title: Trend Following Stop Losses and Frequency
+    strategy_name: Monthly breakout 250d
+    fidelity_status: paper_like_exact
+    strategy_type: breakout_250
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1950-01-01"
+    paper_end: "2020-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses published 250-day breakout family.
+  - paper_id: 22
+    slug: yield_curve_probit
+    title: Resnick Shoesmith Yield Curve Timing
+    strategy_name: Yield curve bear probability
+    fidelity_status: near_replica
+    strategy_type: yield_curve_probit_proxy
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1971-01-01"
+    paper_end: "1999-12-31"
+    primary: true
+    required_data: [SPY, T10Y3M]
+    proxy_notes: Uses logistic/probit-style curve proxy from FRED.
+  - paper_id: 23
+    slug: enke_nn_portfolio_class
+    title: Enke Thawornwong Neural Network Portfolio Class
+    strategy_name: Neural Network Portfolio Class proxy
+    fidelity_status: aurora_proxy
+    strategy_type: monthly_classifier_proxy
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1976-01-01"
+    paper_end: "1999-12-31"
+    primary: true
+    required_data: [SPY, DGS10, VIXCLS]
+    proxy_notes: Deterministic classifier proxy, not exact neural network.
+  - paper_id: 24
+    slug: equivolume_grnn
+    title: Chavarnakul Enke Equivolume Neural Networks
+    strategy_name: GRNN + VAMA/EMV proxy
+    fidelity_status: aurora_proxy
+    strategy_type: equivolume_proxy
+    frequency: daily
+    symbols: [SPY, SHY]
+    paper_start: "1993-01-01"
+    paper_end: "2008-12-31"
+    primary: true
+    required_data: [SPY_VOLUME]
+    proxy_notes: Uses OHLCV equivolume-style pressure, not exact GRNN.
+  - paper_id: 25
+    slug: lei_sma200
+    title: Feldman Jung Klein Buy and Hold Versus Timing
+    strategy_name: LEI1 + SMA 200
+    fidelity_status: near_replica_if_data
+    strategy_type: missing_lei
+    frequency: monthly
+    symbols: [SPY, SHY]
+    paper_start: "1970-01-01"
+    paper_end: "2012-12-31"
+    primary: true
+    required_data: [SPY, CONFERENCE_BOARD_LEI]
+    proxy_notes: Requires Conference Board LEI; do not replace with fake LEI.
+  - paper_id: 26
+    slug: nn_high_confidence_spy_sh
+    title: Soukko Lohrmann Luukka Neural Network Multi-class
+    strategy_name: High-confidence NN proxy
+    fidelity_status: aurora_proxy
+    strategy_type: high_confidence_proxy
+    frequency: daily
+    symbols: [SPY, SH]
+    paper_start: "2011-01-01"
+    paper_end: "2022-12-31"
+    primary: true
+    required_data: [SPY]
+    proxy_notes: Uses confidence threshold proxy; SH fallback to cash if unavailable.
