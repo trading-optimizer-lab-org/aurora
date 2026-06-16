@@ -1,0 +1,60 @@
+name: Body Wick Selected Prior Period
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Prior-period inclusive start date"
+        required: true
+        default: "2026-01-20"
+      end:
+        description: "Prior-period exclusive end date"
+        required: true
+        default: "2026-03-19"
+      cost_bps:
+        description: "One-way transaction cost in bps; round trip subtracts twice this"
+        required: true
+        default: "1.0"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/body_wick_selected_prior_period
+  FINAL_ARTIFACT: body-wick-selected-prior-period-results
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  selected-prior-period:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora deps
+        run: python -m pip install -e .
+      - name: Run selected strategy against prior 15m period
+        run: |
+          python scripts/run_body_wick_selected_prior_period.py \
+            --output-dir "$OUTPUT_DIR" \
+            --start "${{ inputs.start }}" \
+            --end "${{ inputs.end }}" \
+            --interval 15m \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --min-symbols 21 \
+            --min-bars 300
+      - name: Show summary
+        if: always()
+        run: |
+          test -f "$OUTPUT_DIR/summary.json"
+          cat "$OUTPUT_DIR/summary.json"
+      - name: Upload selected prior-period artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FINAL_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}
