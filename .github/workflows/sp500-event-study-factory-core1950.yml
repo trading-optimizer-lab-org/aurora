@@ -1,0 +1,158 @@
+name: SP500 Event Study Factory Core 1950
+
+on:
+  workflow_dispatch:
+    inputs:
+      stages:
+        description: "Number of event-study shards"
+        required: true
+        default: "360"
+      max_events_per_stage:
+        description: "Safety cap per shard"
+        required: true
+        default: "250"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/sp500_event_study_factory_core1950_v1
+  STAGES: ${{ inputs.stages }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Build SP500 core-1950 event dataset
+        run: python scripts/run_sp500_event_study_factory.py --mode data --output-dir "$OUTPUT_DIR"
+      - name: Upload prepared data
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp500-event-study-core1950-data
+          path: ${{ env.OUTPUT_DIR }}/data
+          if-no-files-found: error
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - name: Build split matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          stages = int("${{ inputs.stages }}")
+          full = [{"stage": stage} for stage in range(stages)]
+          mid = (stages + 1) // 2
+          print("matrix_a=" + json.dumps(full[:mid]))
+          print("matrix_b=" + json.dumps(full[mid:]))
+          PY
+
+  shard_a:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &shard_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download prepared data
+        uses: actions/download-artifact@v4
+        with:
+          name: sp500-event-study-core1950-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Run event-study shard
+        run: |
+          python scripts/run_sp500_event_study_factory.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --stages "$STAGES" \
+            --max-events-per-stage "${{ inputs.max_events_per_stage }}"
+      - name: Upload shard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp500-event-study-core1950-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+          if-no-files-found: warn
+
+  shard_b:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *shard_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, shard_a, shard_b]
+    if: always()
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download prepared data
+        uses: actions/download-artifact@v4
+        with:
+          name: sp500-event-study-core1950-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sp500-event-study-core1950-stage-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+      - name: Merge event studies
+        run: python scripts/run_sp500_event_study_factory.py --mode merge --output-dir "$OUTPUT_DIR" --stages "$STAGES"
+      - name: Validate final artifact
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("${{ env.OUTPUT_DIR }}")
+          summary = json.loads((root / "event_study_summary.json").read_text(encoding="utf-8"))
+          if int(summary.get("events_tested", 0)) <= 0:
+              raise SystemExit("no events tested")
+          if int(summary.get("leaderboard_rows", 0)) <= 0:
+              raise SystemExit("empty leaderboard")
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp500-event-study-factory-core1950-results
+          path: ${{ env.OUTPUT_DIR }}
+          if-no-files-found: error
