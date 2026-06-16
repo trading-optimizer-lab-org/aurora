@@ -114,7 +114,16 @@ def merge(args: argparse.Namespace) -> dict[str, object]:
 
 
 def concat_csvs(paths: list[str]) -> pd.DataFrame:
-    frames = [pd.read_csv(path) for path in paths if Path(path).exists()]
+    frames: list[pd.DataFrame] = []
+    for path in paths:
+        csv_path = Path(path)
+        if not csv_path.exists() or csv_path.stat().st_size == 0:
+            continue
+        try:
+            frame = pd.read_csv(csv_path)
+        except pd.errors.EmptyDataError:
+            continue
+        frames.append(frame)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
