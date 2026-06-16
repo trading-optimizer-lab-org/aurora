@@ -11,6 +11,10 @@ on:
         description: "Strategy id to open in locked"
         required: true
         default: "spy_weekly_longshort_sharpe2_s090_a5615dfb8ffc7479"
+      code_ref:
+        description: "Code ref to checkout for the report implementation"
+        required: true
+        default: "codex/universal-robustness"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -26,6 +30,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
 
       - uses: actions/setup-python@v5
         with:
