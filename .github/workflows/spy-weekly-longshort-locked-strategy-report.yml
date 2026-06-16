@@ -1,0 +1,58 @@
+name: SPY Weekly LongShort Locked Strategy Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id containing the original SPY weekly long/short artifacts"
+        required: true
+        default: "27222114316"
+      strategy_id:
+        description: "Strategy id to open in locked"
+        required: true
+        default: "spy_weekly_longshort_sharpe2_s090_a5615dfb8ffc7479"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_weekly_longshort_locked_strategy_report
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Aurora
+        run: python -m pip install -e .
+
+      - name: Download source run artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .tmp/source-run
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --dir .tmp/source-run
+
+      - name: Report locked strategy
+        run: |
+          python scripts/report_spy_weekly_longshort_locked_strategy.py \
+            --source-dir .tmp/source-run \
+            --strategy-id "${{ inputs.strategy_id }}" \
+            --output-dir "$OUTPUT_DIR"
+
+      - name: Upload locked report
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-weekly-longshort-locked-strategy-report-${{ inputs.strategy_id }}
+          path: ${{ env.OUTPUT_DIR }}
