@@ -1,0 +1,179 @@
+name: SP500 26 Paper Replication Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      code_ref:
+        description: "Branch/ref to run"
+        required: false
+        default: "codex/universal-robustness"
+      chunks:
+        description: "Total paper chunks"
+        required: true
+        default: "26"
+      max_parallel:
+        description: "Max parallel paper chunks"
+        required: true
+        default: "26"
+      synthetic_smoke:
+        description: "Use synthetic data instead of real downloaded store"
+        required: false
+        default: "false"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/sp500_26_paper_replication_backtest
+  SPECS: config/sp500_26_paper_replication_specs.yaml
+  TRAIN_START: "1995-01-01"
+  VALIDATION_END: "2020-12-31"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      chunks: ${{ steps.meta.outputs.chunks }}
+      chunk_list: ${{ steps.meta.outputs.chunk_list }}
+      max_parallel: ${{ steps.meta.outputs.max_parallel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Validate 26 paper specs
+        id: meta
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from aurora.research.sp500_26_paper_replication_backtest import load_paper26_config
+
+          chunks = int("${{ inputs.chunks }}")
+          max_parallel = int("${{ inputs.max_parallel }}")
+          if chunks != 26:
+              raise SystemExit("chunks must be 26 for this workflow")
+          if max_parallel > 26:
+              raise SystemExit("max_parallel must be <= 26")
+          config, specs, _ = load_paper26_config("config/sp500_26_paper_replication_specs.yaml")
+          if len(specs) != 26:
+              raise SystemExit("expected 26 specs")
+          print(f"chunks={chunks}")
+          print("chunk_list=" + json.dumps(list(range(chunks))))
+          print(f"max_parallel={max_parallel}")
+          PY
+
+  data:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ inputs.synthetic_smoke != 'true' }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Build daily data store through validation only
+        run: python scripts/download_diversified_seed.py --start "$TRAIN_START" --end "$VALIDATION_END"
+      - name: Upload data store
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp500-26-paper-data
+          path: .aurora-data/timeseries
+          if-no-files-found: error
+
+  chunk:
+    runs-on: ubuntu-latest
+    needs: [validate, data]
+    if: ${{ always() && needs.validate.result == 'success' && (inputs.synthetic_smoke == 'true' || needs.data.result == 'success') }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.validate.outputs.max_parallel) }}
+      matrix:
+        chunk: ${{ fromJson(needs.validate.outputs.chunk_list) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download data store
+        if: ${{ inputs.synthetic_smoke != 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: sp500-26-paper-data
+          path: .aurora-data/timeseries
+      - name: Run paper chunk
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.synthetic_smoke }}" = "true" ]; then EXTRA="--synthetic-smoke"; fi
+          python scripts/run_sp500_26_paper_backtest_chunk.py \
+            --specs "$SPECS" \
+            --chunk-index "${{ matrix.chunk }}" \
+            --chunks "${{ needs.validate.outputs.chunks }}" \
+            --output-dir "$OUTPUT_DIR/chunks/chunk_${{ matrix.chunk }}" \
+            $EXTRA
+      - name: Upload chunk artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sp500-26-paper-chunk-${{ matrix.chunk }}
+          path: ${{ env.OUTPUT_DIR }}/chunks/chunk_${{ matrix.chunk }}/**
+          if-no-files-found: warn
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [validate, chunk]
+    if: ${{ always() && needs.validate.result == 'success' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Download chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.OUTPUT_DIR }}/artifacts
+          pattern: sp500-26-paper-chunk-*
+          merge-multiple: true
+      - name: Merge 26 paper results
+        run: |
+          python scripts/merge_sp500_26_paper_backtests.py \
+            --input-dir "$OUTPUT_DIR/artifacts" \
+            --output-dir "$OUTPUT_DIR/final" \
+            --specs "$SPECS" \
+            --expected-chunks 26 \
+            --expected-specs 26
+      - name: Show summary
+        run: cat "$OUTPUT_DIR/final/sp500_26_summary.json"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp500-26-paper-replication-backtest-results
+          path: ${{ env.OUTPUT_DIR }}/final/**
+          if-no-files-found: error
