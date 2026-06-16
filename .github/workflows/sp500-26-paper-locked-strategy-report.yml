@@ -1,0 +1,65 @@
+name: SP500 26 Paper Locked Strategy Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      code_ref:
+        description: "Branch/ref to run"
+        required: false
+        default: "codex/universal-robustness"
+      slug:
+        description: "Strategy slug"
+        required: true
+        default: "rl_evt_tail_risk"
+      end_date:
+        description: "Locked end date, empty means today"
+        required: false
+        default: ""
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AU_DATA_DIR: ${{ github.workspace }}/.aurora-data
+  OUTPUT_DIR: outputs/sp500_26_paper_locked_strategy_report
+  SPECS: config/sp500_26_paper_replication_specs.yaml
+  START_DATE: "1995-01-01"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[ml]"
+      - name: Resolve end date
+        id: dates
+        shell: bash
+        run: |
+          END_DATE="${{ inputs.end_date }}"
+          if [ -z "$END_DATE" ]; then END_DATE="$(date +%F)"; fi
+          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
+      - name: Build data store through locked end
+        run: python scripts/download_diversified_seed.py --start "$START_DATE" --end "${{ steps.dates.outputs.end_date }}"
+      - name: Report locked strategy
+        run: |
+          python scripts/report_sp500_26_paper_locked_strategy.py \
+            --specs "$SPECS" \
+            --slug "${{ inputs.slug }}" \
+            --end-date "${{ steps.dates.outputs.end_date }}" \
+            --output-dir "$OUTPUT_DIR/final"
+      - name: Upload locked report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp500-26-paper-locked-strategy-report-${{ inputs.slug }}
+          path: ${{ env.OUTPUT_DIR }}/final/**
+          if-no-files-found: error
