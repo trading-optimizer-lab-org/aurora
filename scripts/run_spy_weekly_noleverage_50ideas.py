@@ -19,7 +19,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.execution_policy import require_github_actions_or_explicit_local_permission
+try:
+    from core.execution_policy import require_github_actions_or_explicit_local_permission
+except ModuleNotFoundError:
+
+    def require_github_actions_or_explicit_local_permission(reason: str | None = None) -> None:
+        import os
+
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            return
+        if os.environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT") == "USER_REQUESTED_LOCAL_RUN_THIS_TURN":
+            return
+        detail = f" for {reason}" if reason else ""
+        raise RuntimeError(
+            "Local research runs are blocked"
+            f"{detail}; run in GitHub Actions or set explicit local override."
+        )
 
 
 CAMPAIGN_ID = "spy_weekly_noleverage_50ideas_nightly_until_0700"
