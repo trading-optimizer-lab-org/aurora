@@ -1,0 +1,284 @@
+name: SPY Weekly No-Leverage Global Random Nightly Until 0700
+
+on:
+  workflow_dispatch:
+    inputs:
+      round_index:
+        description: "Nightly round index"
+        required: true
+        default: "0"
+      data_run_id:
+        description: "Run id containing prepared weekly data. Empty means prepare data here."
+        required: false
+        default: ""
+      stop_at_madrid:
+        description: "Stop dispatching new rounds after this Madrid timestamp"
+        required: true
+        default: "2026-06-19T07:00:00+02:00"
+      stages:
+        description: "Fixed shard count"
+        required: true
+        default: "360"
+      configs_per_stage:
+        description: "Random configs tested per shard"
+        required: true
+        default: "30000"
+      time_budget_minutes:
+        description: "Internal runtime per shard"
+        required: true
+        default: "24"
+      job_timeout_minutes:
+        description: "Hard timeout per shard job"
+        required: true
+        default: "30"
+      top_per_stage:
+        description: "Rows kept per shard"
+        required: true
+        default: "175"
+      cost_bps:
+        description: "Round-trip proportional cost basis points per position change unit"
+        required: true
+        default: "1.0"
+      locked_retest_top_n:
+        description: "Top train-selected candidates retested on locked in merge"
+        required: true
+        default: "7500"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_weekly_noleverage_global_random_nightly_until_0700
+  WORKFLOW_FILE: spy-weekly-noleverage-global-random-nightly-until-0700.yml
+  DATA_ARTIFACT: spy-weekly-noleverage-global-random-data
+  FINAL_ARTIFACT: spy-weekly-noleverage-global-random-nightly-until-0700-results
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  time_guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run: ${{ steps.guard.outputs.should_run }}
+    steps:
+      - id: guard
+        name: Check Madrid stop time
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          stop = datetime.fromisoformat("${{ inputs.stop_at_madrid }}")
+          now = datetime.now(ZoneInfo("Europe/Madrid"))
+          print(f"now_madrid={now.isoformat()}")
+          print(f"stop_at_madrid={stop.isoformat()}")
+          print("should_run=" + ("true" if now < stop else "false"))
+          PY
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - id: matrix
+        name: Build 360 shard matrix
+        run: |
+          test "${{ inputs.stages }}" = "360"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          full = [{"stage": stage} for stage in range(360)]
+          print("matrix_a=" + json.dumps(full[:180]))
+          print("matrix_b=" + json.dumps(full[180:]))
+          PY
+
+  data:
+    runs-on: ubuntu-latest
+    needs: [time_guard]
+    if: ${{ needs.time_guard.outputs.should_run == 'true' && inputs.data_run_id == '' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e .
+      - name: Prepare weekly SPY no-locked/all panels
+        run: |
+          python scripts/run_spy_weekly_noleverage_global_random.py \
+            --mode data \
+            --output-dir "$OUTPUT_DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DATA_ARTIFACT }}
+          path: |
+            ${{ env.OUTPUT_DIR }}/weekly_panel_no_locked.csv
+            ${{ env.OUTPUT_DIR }}/weekly_panel_all.csv
+            ${{ env.OUTPUT_DIR }}/idea_catalog.csv
+            ${{ env.OUTPUT_DIR }}/position_policy_audit.json
+          if-no-files-found: error
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [time_guard, plan, data]
+    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' && (inputs.data_run_id != '' || needs.data.result == 'success') }}
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e .
+      - name: Download data from current run
+        if: ${{ inputs.data_run_id == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.DATA_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}
+      - name: Download data from initial run
+        if: ${{ inputs.data_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "$DATA_ARTIFACT" \
+            --dir "$OUTPUT_DIR"
+      - name: Run one SPY weekly no-leverage global-random shard
+        run: |
+          python scripts/run_spy_weekly_noleverage_global_random.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --configs-per-stage "${{ inputs.configs_per_stage }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --top-per-stage "${{ inputs.top_per_stage }}" \
+            --cost-bps "${{ inputs.cost_bps }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spy-weekly-noleverage-global-random-r${{ inputs.round_index }}-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+          if-no-files-found: warn
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [time_guard, plan, data]
+    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' && (inputs.data_run_id != '' || needs.data.result == 'success') }}
+    timeout-minutes: ${{ fromJSON(inputs.job_timeout_minutes) }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *search_steps
+
+  merge_round:
+    runs-on: ubuntu-latest
+    needs: [time_guard, data, search_a, search_b]
+    if: always()
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e .
+      - name: Download data from current run
+        if: ${{ inputs.data_run_id == '' && needs.data.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.DATA_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}
+      - name: Download data from initial run
+        if: ${{ inputs.data_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "$DATA_ARTIFACT" \
+            --dir "$OUTPUT_DIR"
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: spy-weekly-noleverage-global-random-r${{ inputs.round_index }}-stage-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+          merge-multiple: true
+      - name: Merge round and locked retest
+        run: |
+          python scripts/run_spy_weekly_noleverage_global_random.py \
+            --mode merge \
+            --output-dir "$OUTPUT_DIR" \
+            --locked-retest-top-n "${{ inputs.locked_retest_top_n }}" \
+            --cost-bps "${{ inputs.cost_bps }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spy-weekly-noleverage-global-random-round-${{ inputs.round_index }}-final
+          path: ${{ env.OUTPUT_DIR }}/final
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.FINAL_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}/final
+          if-no-files-found: warn
+
+  dispatch_next:
+    runs-on: ubuntu-latest
+    needs: [time_guard, data, merge_round]
+    if: ${{ always() && needs.time_guard.outputs.should_run == 'true' && needs.merge_round.result == 'success' && (inputs.data_run_id != '' || needs.data.result == 'success') }}
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch next round before 07:00 Madrid
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY' > next_env.sh
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          now = datetime.now(ZoneInfo("Europe/Madrid"))
+          stop = datetime.fromisoformat("${{ inputs.stop_at_madrid }}")
+          next_round = int("${{ inputs.round_index }}") + 1
+          data_run_id = "${{ inputs.data_run_id }}" or "${{ github.run_id }}"
+          should_dispatch = now < stop
+          print(f"SHOULD_DISPATCH={'true' if should_dispatch else 'false'}")
+          print(f"NEXT_ROUND={next_round}")
+          print(f"DATA_RUN_ID={data_run_id}")
+          print(f"NOW_MADRID={now.isoformat()}")
+          PY
+          cat next_env.sh
+          source next_env.sh
+          if [ "$SHOULD_DISPATCH" = "true" ]; then
+            gh workflow run "$WORKFLOW_FILE" \
+              --repo "${{ github.repository }}" \
+              --ref "${{ github.ref_name }}" \
+              -f round_index="$NEXT_ROUND" \
+              -f data_run_id="$DATA_RUN_ID" \
+              -f stop_at_madrid="${{ inputs.stop_at_madrid }}" \
+              -f stages="${{ inputs.stages }}" \
+              -f configs_per_stage="${{ inputs.configs_per_stage }}" \
+              -f time_budget_minutes="${{ inputs.time_budget_minutes }}" \
+              -f job_timeout_minutes="${{ inputs.job_timeout_minutes }}" \
+              -f top_per_stage="${{ inputs.top_per_stage }}" \
+              -f cost_bps="${{ inputs.cost_bps }}" \
+              -f locked_retest_top_n="${{ inputs.locked_retest_top_n }}"
+          else
+            echo "No next round dispatched."
+          fi
