@@ -62,6 +62,16 @@ jobs:
     if: always()
     timeout-minutes: 15
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install merge dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -73,6 +83,7 @@ jobs:
           import json
           from pathlib import Path
           import pandas as pd
+          from pandas.errors import EmptyDataError
 
           root = Path("region_artifacts")
           out = Path("outputs/minervini_sepa_usa_europe_50m_daily_screener")
@@ -94,7 +105,10 @@ jobs:
               ]:
                   p = d / name
                   if p.exists() and p.stat().st_size > 0:
-                      df = pd.read_csv(p)
+                      try:
+                          df = pd.read_csv(p)
+                      except EmptyDataError:
+                          continue
                       df["artifact"] = d.name
                       bucket.append(df)
               s = d / "minervini_sepa_marketcap2b_summary.json"
