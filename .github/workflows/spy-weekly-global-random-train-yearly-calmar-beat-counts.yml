@@ -1,0 +1,73 @@
+name: SPY Weekly Global Random Train Yearly Calmar Beat Counts
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_run_id:
+        description: "Run id containing spy-weekly-noleverage-global-random-data"
+        required: true
+        default: "27809257841"
+      survivors_run_id:
+        description: "Run id containing spy-weekly-global-random-train-yearly-calmar-results"
+        required: true
+        default: "27873129720"
+      cost_bps:
+        description: "Round-trip proportional cost basis points per position change unit"
+        required: true
+        default: "1.0"
+      top_n:
+        description: "Rows kept in top_yearly_beat_counts.csv"
+        required: true
+        default: "250"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_weekly_global_random_train_yearly_calmar_beat_counts
+  DATA_ARTIFACT: spy-weekly-noleverage-global-random-data
+  SURVIVORS_ARTIFACT: spy-weekly-global-random-train-yearly-calmar-results
+  FINAL_ARTIFACT: spy-weekly-global-random-train-yearly-calmar-beat-counts
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e .
+      - name: Download data artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "$DATA_ARTIFACT" \
+            --dir "$OUTPUT_DIR"
+      - name: Download survivor artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.survivors_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "$SURVIVORS_ARTIFACT" \
+            --dir "$OUTPUT_DIR"
+      - name: Count strict annual SPY beat years among survivors
+        run: |
+          python scripts/summarize_spy_train_yearly_calmar_survivors.py \
+            --output-dir "$OUTPUT_DIR" \
+            --cost-bps "${{ inputs.cost_bps }}" \
+            --top-n "${{ inputs.top_n }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.FINAL_ARTIFACT }}
+          path: ${{ env.OUTPUT_DIR }}/beat_counts
+          if-no-files-found: error
