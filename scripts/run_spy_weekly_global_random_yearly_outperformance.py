@@ -27,6 +27,9 @@ from scripts.run_spy_weekly_noleverage_global_random import (
 
 CAMPAIGN_ID = "spy_weekly_global_random_yearly_outperformance"
 ARTIFACT_NAME = "spy-weekly-global-random-yearly-outperformance-results"
+TRAIN_YEARLY_CALMAR_ARTIFACT_NAME = "spy-weekly-global-random-train-yearly-calmar-results"
+FILTER_TRAIN_VALID_YEARLY_GT_SPY = "train_valid_yearly_gt_spy"
+FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY = "train_yearly_ge_spy_and_train_calmar_ge_spy"
 TRAIN_START = base.TRAIN_START
 TRAIN_END = base.TRAIN_END
 VALIDATION_START = base.VALIDATION_START
@@ -43,6 +46,11 @@ def main() -> None:
     parser.add_argument("--configs-per-stage", type=int, default=30_000)
     parser.add_argument("--time-budget-minutes", type=float, default=24.0)
     parser.add_argument("--cost-bps", type=float, default=1.0)
+    parser.add_argument(
+        "--filter-mode",
+        choices=[FILTER_TRAIN_VALID_YEARLY_GT_SPY, FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY],
+        default=FILTER_TRAIN_VALID_YEARLY_GT_SPY,
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -54,9 +62,10 @@ def main() -> None:
             configs_per_stage=int(args.configs_per_stage),
             time_budget_minutes=float(args.time_budget_minutes),
             cost_bps=float(args.cost_bps),
+            filter_mode=str(args.filter_mode),
         )
     else:
-        merge(output_dir)
+        merge(output_dir, filter_mode=str(args.filter_mode))
 
 
 def relaxed_acceptance(train: dict[str, float], validation: dict[str, float]) -> bool:
@@ -72,6 +81,8 @@ def yearly_outperformance(
     strategy_returns: np.ndarray,
     spy_returns: np.ndarray,
     mask: np.ndarray,
+    *,
+    inclusive: bool = False,
 ) -> dict[str, Any]:
     if not bool(np.any(mask)):
         return {"pass": False, "years": "", "min_excess": np.nan}
@@ -85,10 +96,31 @@ def yearly_outperformance(
     annual = frame.groupby("year", sort=True)[["strategy", "spy"]].sum()
     excess = annual["strategy"] - annual["spy"]
     return {
-        "pass": bool((excess > 0.0).all()),
+        "pass": bool((excess >= 0.0).all() if inclusive else (excess > 0.0).all()),
         "years": "|".join(str(int(year)) for year in annual.index),
         "min_excess": float(excess.min()) if len(excess) else np.nan,
     }
+
+
+def calmar_ratio(returns: np.ndarray) -> float:
+    values = np.asarray(returns, dtype=float)
+    values = values[np.isfinite(values)]
+    if len(values) < 3:
+        return np.nan
+    total_return = float(np.prod(1.0 + values) - 1.0)
+    nav = np.cumprod(1.0 + values)
+    mdd = float(np.min(nav / np.maximum.accumulate(nav) - 1.0))
+    if mdd == 0.0:
+        return np.inf if total_return > 0.0 else 0.0
+    years = len(values) / float(base.PPY)
+    cagr = float((1.0 + total_return) ** (1.0 / years) - 1.0) if total_return > -1.0 and years > 0.0 else -1.0
+    return float(cagr / abs(mdd))
+
+
+def filter_rule_text(filter_mode: str) -> str:
+    if filter_mode == FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY:
+        return "strategy annual simple return >= SPY annual simple return for every calendar year in train, and train Calmar >= SPY train Calmar"
+    return "strategy annual simple return > SPY annual simple return for every calendar year in train and validation"
 
 
 def run_shard(
@@ -98,6 +130,7 @@ def run_shard(
     configs_per_stage: int,
     time_budget_minutes: float,
     cost_bps: float,
+    filter_mode: str = FILTER_TRAIN_VALID_YEARLY_GT_SPY,
 ) -> None:
     panel = pd.read_csv(output_dir / "weekly_panel_no_locked.csv", parse_dates=["timestamp"]).set_index("timestamp")
     if panel.index.max() >= LOCKED_START:
@@ -109,6 +142,7 @@ def run_shard(
         validation_mask = np.asarray((panel.index >= VALIDATION_START) & (panel.index <= VALIDATION_END), dtype=bool)
         matrix = panel[feature_cols].to_numpy(dtype=float)
         spy_returns = panel["spy_return"].to_numpy(dtype=float)
+        spy_train_calmar = calmar_ratio(spy_returns[train_mask])
         idea = GLOBAL_RANDOM_IDEA_SPECS[stage % len(GLOBAL_RANDOM_IDEA_SPECS)]
         rng = np.random.default_rng(20260618 + int(stage) * 1_000_003)
         deadline = time.monotonic() + max(0.01, float(time_budget_minutes)) * 60.0
@@ -122,6 +156,8 @@ def run_shard(
             "policy_pass_rows": 0,
             "relaxed_rows": 0,
             "yearly_outperform_rows": 0,
+            "filter_mode": filter_mode,
+            "spy_train_calmar": spy_train_calmar,
             "locked_opened": False,
             "validation_used_for_selection": False,
         }
@@ -145,9 +181,20 @@ def run_shard(
                 continue
             summary["relaxed_rows"] += 1
 
-            train_years = yearly_outperformance(panel.index, strategy_returns, spy_returns, train_mask)
+            train_years = yearly_outperformance(
+                panel.index,
+                strategy_returns,
+                spy_returns,
+                train_mask,
+                inclusive=filter_mode == FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY,
+            )
             validation_years = yearly_outperformance(panel.index, strategy_returns, spy_returns, validation_mask)
-            if not (train_years["pass"] and validation_years["pass"]):
+            train_calmar = calmar_ratio(strategy_returns[train_mask])
+            if filter_mode == FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY:
+                rule_pass = bool(train_years["pass"] and train_calmar >= spy_train_calmar)
+            else:
+                rule_pass = bool(train_years["pass"] and validation_years["pass"])
+            if not rule_pass:
                 continue
             summary["yearly_outperform_rows"] += 1
 
@@ -178,6 +225,9 @@ def run_shard(
                     "validation_total_return": validation_metrics["total_return"],
                     "train_profit_factor": train_metrics["profit_factor"],
                     "validation_profit_factor": validation_metrics["profit_factor"],
+                    "train_calmar": train_calmar,
+                    "spy_train_calmar": spy_train_calmar,
+                    "train_calmar_excess_vs_spy": float(train_calmar - spy_train_calmar),
                     "train_mdd": train_metrics["mdd"],
                     "validation_mdd": validation_metrics["mdd"],
                     "train_trades": train_metrics["trades"],
@@ -200,7 +250,7 @@ def run_shard(
     (shard_dir / "yearly_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
-def merge(output_dir: Path) -> None:
+def merge(output_dir: Path, *, filter_mode: str = FILTER_TRAIN_VALID_YEARLY_GT_SPY) -> None:
     final = output_dir / "final"
     final.mkdir(parents=True, exist_ok=True)
     rows = concat_csv(list((output_dir / "shards").glob("**/yearly_outperform.csv")))
@@ -211,9 +261,11 @@ def merge(output_dir: Path) -> None:
         except Exception:
             continue
     if not rows.empty:
+        sort_cols = ["train_calmar_excess_vs_spy", "train_min_annual_excess_vs_spy", "validation_total_return"]
+        sort_cols = [col for col in sort_cols if col in rows.columns]
         rows = rows.drop_duplicates("strategy_id").sort_values(
-            ["validation_total_return", "train_total_return", "validation_profit_factor"],
-            ascending=[False, False, False],
+            sort_cols or ["validation_total_return", "train_total_return", "validation_profit_factor"],
+            ascending=[False] * len(sort_cols) if sort_cols else [False, False, False],
         )
     rows.to_csv(final / "yearly_outperform.csv", index=False)
     pd.DataFrame(summaries).to_csv(final / "stage_summaries.csv", index=False)
@@ -226,11 +278,13 @@ def merge(output_dir: Path) -> None:
         "relaxed_rows": int(summary_frame["relaxed_rows"].sum()) if not summary_frame.empty else 0,
         "yearly_outperform_rows": int(len(rows)),
         "stages_seen": int(len(summary_frame)),
+        "filter_mode": filter_mode,
+        "spy_train_calmar": float(summary_frame["spy_train_calmar"].dropna().iloc[0]) if not summary_frame.empty and "spy_train_calmar" in summary_frame else np.nan,
         "traded_asset": "SPY",
         "frequency": "weekly",
         "position_policy": "discrete_long_flat_short_no_leverage",
         "filters_removed": ["validation_trades_min_40", "validation_abs_exposure_015_090"],
-        "yearly_rule": "strategy annual simple return > SPY annual simple return for every calendar year in train and validation",
+        "yearly_rule": filter_rule_text(filter_mode),
         "locked_opened": False,
         "validation_used_for_selection": False,
     }
@@ -243,6 +297,7 @@ def merge(output_dir: Path) -> None:
             "locked_opened": False,
             "validation_used_for_selection": False,
             "filters_removed": ["validation_trades_min_40", "validation_abs_exposure_015_090"],
+            "filter_mode": filter_mode,
             "yearly_rule": summary["yearly_rule"],
         }
     )
@@ -296,6 +351,9 @@ def yearly_columns() -> list[str]:
         "validation_total_return",
         "train_profit_factor",
         "validation_profit_factor",
+        "train_calmar",
+        "spy_train_calmar",
+        "train_calmar_excess_vs_spy",
         "train_mdd",
         "validation_mdd",
         "train_trades",
