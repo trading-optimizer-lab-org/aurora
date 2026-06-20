@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
+from yfinance import EquityQuery
 
 
 NASDAQ_SCREENER_URL = (
@@ -29,6 +30,8 @@ class ScreenerConfig:
     sleep_seconds: float
     period: str
     benchmark: str
+    universe: str
+    regions: tuple[str, ...]
 
 
 def _parse_market_cap(value: Any) -> float:
@@ -106,6 +109,114 @@ def fetch_us_stock_universe(min_market_cap: float) -> pd.DataFrame:
     if out.empty:
         raise RuntimeError("No symbols survived market cap filter")
     return out.reset_index(drop=True)
+
+
+def _first_present(row: dict[str, Any], names: tuple[str, ...]) -> Any:
+    for name in names:
+        if name in row and row[name] not in (None, ""):
+            return row[name]
+    return None
+
+
+def _extract_yahoo_quotes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("quotes", "records"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    finance = payload.get("finance")
+    if isinstance(finance, dict):
+        result = finance.get("result")
+        if isinstance(result, list) and result:
+            quotes = result[0].get("quotes")
+            if isinstance(quotes, list):
+                return quotes
+    return []
+
+
+def fetch_yahoo_region_universe(min_market_cap: float, regions: tuple[str, ...]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for region in regions:
+        query = EquityQuery(
+            "and",
+            [
+                EquityQuery("eq", ["region", region]),
+                EquityQuery("gte", ["intradaymarketcap", min_market_cap]),
+                EquityQuery("gt", ["intradayprice", 0]),
+            ],
+        )
+        for offset in range(0, 10000, 250):
+            try:
+                payload = yf.screen(
+                    query,
+                    offset=offset,
+                    size=250,
+                    sortField="intradaymarketcap",
+                    sortAsc=False,
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"region": region, "error": str(exc)})
+                break
+            quotes = _extract_yahoo_quotes(payload)
+            if not quotes:
+                break
+            for quote in quotes:
+                symbol = str(_first_present(quote, ("symbol", "ticker")) or "").strip()
+                if not symbol:
+                    continue
+                market_cap = _first_present(
+                    quote,
+                    (
+                        "intradaymarketcap",
+                        "marketCap",
+                        "marketcap",
+                        "lastclosemarketcap.lasttwelvemonths",
+                    ),
+                )
+                try:
+                    cap = float(market_cap)
+                except (TypeError, ValueError):
+                    cap = float("nan")
+                if not math.isfinite(cap) or cap < min_market_cap:
+                    continue
+                quote_type = str(_first_present(quote, ("quoteType", "typeDisp")) or "").upper()
+                if quote_type and quote_type not in {"EQUITY", "COMMON STOCK", "ADR"}:
+                    continue
+                name = str(_first_present(quote, ("longName", "shortName", "name")) or "")
+                rows.append(
+                    {
+                        "symbol": _clean_symbol(symbol),
+                        "name": name,
+                        "market_cap": cap,
+                        "region": region,
+                        "exchange": _first_present(quote, ("exchange", "fullExchangeName", "exchangeName")),
+                        "currency": _first_present(quote, ("currency", "financialCurrency")),
+                    }
+                )
+            if len(quotes) < 250:
+                break
+            time.sleep(0.2)
+    out = pd.DataFrame(rows)
+    if out.empty:
+        detail = "; ".join(f"{e['region']}={e['error']}" for e in errors[:10])
+        raise RuntimeError(f"Yahoo screener returned no usable rows. {detail}")
+    out = out.drop_duplicates("symbol").sort_values(["market_cap", "symbol"], ascending=[False, True])
+    return out.reset_index(drop=True)
+
+
+def fetch_universe(config: ScreenerConfig) -> pd.DataFrame:
+    if config.universe == "nasdaq_us":
+        return fetch_us_stock_universe(config.min_market_cap)
+    if config.universe == "yahoo_regions":
+        return fetch_yahoo_region_universe(config.min_market_cap, config.regions)
+    if config.universe == "combined":
+        frames = [
+            fetch_us_stock_universe(config.min_market_cap),
+            fetch_yahoo_region_universe(config.min_market_cap, config.regions),
+        ]
+        out = pd.concat(frames, ignore_index=True, sort=False)
+        return out.drop_duplicates("symbol").sort_values("market_cap", ascending=False).reset_index(drop=True)
+    raise ValueError(f"Unknown universe: {config.universe}")
 
 
 def _flatten_yfinance_prices(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -263,8 +374,8 @@ def download_prices(symbols: list[str], period: str, batch_size: int, sleep_seco
 
 def run(config: ScreenerConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    universe = fetch_us_stock_universe(config.min_market_cap)
-    universe.to_csv(config.output_dir / "universe_marketcap_gt_2b.csv", index=False)
+    universe = fetch_universe(config)
+    universe.to_csv(config.output_dir / "universe_marketcap_filtered.csv", index=False)
 
     benchmark_raw = yf.download(
         config.benchmark,
@@ -310,6 +421,8 @@ def run(config: ScreenerConfig) -> None:
         "min_market_cap": config.min_market_cap,
         "period": config.period,
         "benchmark": config.benchmark,
+        "universe": config.universe,
+        "regions": list(config.regions),
         "universe_count": int(len(universe)),
         "downloaded_count": int(len(prices)),
         "evaluated_count": int(len(results)),
@@ -353,6 +466,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sleep-seconds", type=float, default=1.0)
     parser.add_argument("--period", default="3y")
     parser.add_argument("--benchmark", default="SPY")
+    parser.add_argument("--universe", choices=["nasdaq_us", "yahoo_regions", "combined"], default="nasdaq_us")
+    parser.add_argument(
+        "--regions",
+        default="us,gb,de,fr,es,it,nl,se,ch,no,dk,fi,be,at,ie,pt,pl",
+        help="Yahoo Finance region codes separated by comma",
+    )
     return parser.parse_args()
 
 
@@ -366,5 +485,7 @@ if __name__ == "__main__":
             sleep_seconds=args.sleep_seconds,
             period=args.period,
             benchmark=args.benchmark,
+            universe=args.universe,
+            regions=tuple(r.strip().lower() for r in args.regions.split(",") if r.strip()),
         )
     )

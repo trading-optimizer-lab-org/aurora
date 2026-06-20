@@ -6,7 +6,15 @@ on:
       min_market_cap:
         description: "Market cap minimo"
         required: true
-        default: "2000000000"
+        default: "50000000"
+      universe:
+        description: "Universo: nasdaq_us, yahoo_regions o combined"
+        required: true
+        default: "combined"
+      regions:
+        description: "Yahoo region codes separados por coma"
+        required: true
+        default: "us,gb,de,fr,es,it,nl,se,ch,no,dk,fi,be,at,ie,pt,pl"
       period:
         description: "Historico diario para calcular senales"
         required: true
@@ -38,6 +46,8 @@ jobs:
         run: |
           python scripts/screen_minervini_sepa_marketcap2b.py \
             --min-market-cap "${{ inputs.min_market_cap }}" \
+            --universe "${{ inputs.universe }}" \
+            --regions "${{ inputs.regions }}" \
             --period "${{ inputs.period }}" \
             --batch-size "${{ inputs.batch_size }}" \
             --output-dir outputs/minervini_sepa_marketcap2b_daily_screener
