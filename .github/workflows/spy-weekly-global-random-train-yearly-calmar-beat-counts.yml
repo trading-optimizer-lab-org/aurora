@@ -50,7 +50,7 @@ jobs:
           gh run download "${{ inputs.data_run_id }}" \
             --repo "${{ github.repository }}" \
             --name "$DATA_ARTIFACT" \
-            --dir "$OUTPUT_DIR"
+            --dir "$OUTPUT_DIR/data"
       - name: Download survivor artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,7 +58,11 @@ jobs:
           gh run download "${{ inputs.survivors_run_id }}" \
             --repo "${{ github.repository }}" \
             --name "$SURVIVORS_ARTIFACT" \
-            --dir "$OUTPUT_DIR"
+            --dir "$OUTPUT_DIR/survivors"
+      - name: Stage postprocess inputs
+        run: |
+          cp "$OUTPUT_DIR/data/weekly_panel_no_locked.csv" "$OUTPUT_DIR/weekly_panel_no_locked.csv"
+          cp "$OUTPUT_DIR/survivors/yearly_outperform.csv" "$OUTPUT_DIR/yearly_outperform.csv"
       - name: Count strict annual SPY beat years among survivors
         run: |
           python scripts/summarize_spy_train_yearly_calmar_survivors.py \
