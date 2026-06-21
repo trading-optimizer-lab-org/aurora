@@ -336,6 +336,9 @@ def build_signal(params: dict[str, Any], daily_price: pd.Series, monthly_price: 
     daily_ma = daily_price.rolling(daily_window, min_periods=max(20, daily_window // 3)).mean().resample("ME").last()
     daily_high = daily_price.rolling(daily_window, min_periods=max(20, daily_window // 3)).max().resample("ME").last()
     monthly_ma = monthly_price.rolling(monthly_window, min_periods=max(3, monthly_window // 2)).mean()
+    daily_ma = daily_ma.reindex(monthly_price.index).ffill()
+    daily_high = daily_high.reindex(monthly_price.index).ffill()
+    monthly_ma = monthly_ma.reindex(monthly_price.index)
 
     ma_daily = monthly_price > daily_ma * (1.0 + buffer)
     ma_monthly = monthly_price > monthly_ma * (1.0 + buffer)
@@ -445,6 +448,8 @@ def run_merge(output_dir: Path) -> None:
             "lag_months": list(LAG_MONTHS),
         },
     }
+    if summary["stages_reported"] == 0 or summary["candidates"] == 0:
+        raise RuntimeError("No shard candidates were merged; refusing false-green final artifact.")
     (final_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
 

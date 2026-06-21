@@ -46,6 +46,25 @@ def test_signals_are_monthly_and_no_locked() -> None:
         assert signal.dropna().isin([True, False]).all()
 
 
+def test_daily_derived_signals_align_to_monthly_calendar() -> None:
+    daily_idx = pd.date_range("1999-01-04", periods=700, freq="B")
+    daily = pd.Series(np.linspace(100.0, 180.0, len(daily_idx)), index=daily_idx)
+    monthly = daily.resample("ME").last()
+    monthly = monthly.iloc[2:]
+    params = {
+        "family": "breakout_daily_high",
+        "daily_window": 250,
+        "monthly_window": 12,
+        "confirm_months": 1,
+        "buffer": 0.0,
+        "cash_source": "tbill",
+        "lag_months": 1,
+    }
+    signal = build_signal(params, daily, monthly)
+    assert signal.index.equals(monthly.index)
+    assert signal.dropna().isin([True, False]).all()
+
+
 def test_metrics_are_finite_for_positive_path() -> None:
     idx = pd.date_range("2000-01-31", periods=36, freq="ME")
     values = pd.Series([0.01] * len(idx), index=idx)
