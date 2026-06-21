@@ -81,6 +81,7 @@ def main() -> None:
         {"SPY": monthly_spy_ret, "CASH_TBILL": monthly_cash},
         index=monthly_spy_ret.index,
     ).dropna(subset=["SPY"])
+    monthly = monthly[monthly.index >= TRAIN_START]
     monthly_price = monthly_price.reindex(monthly.index)
 
     params = {
