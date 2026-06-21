@@ -1049,6 +1049,19 @@ def register(subparsers, parent_parser=None) -> None:
     p_crypto_metrics_fetch.set_defaults(func=cmd_data_crypto_metrics_fetch)
 
     # ------------------------------------------------------------------
+    # Optional local data lakes
+    # ------------------------------------------------------------------
+    try:
+        from aurora.cli.cmd_data_eodhd import register_eodhd
+    except ModuleNotFoundError:
+        register_eodhd = None
+    from aurora.cli.cmd_data_free_us_daily import register_free_us_daily
+
+    if register_eodhd is not None:
+        register_eodhd(data_sub)
+    register_free_us_daily(data_sub)
+
+    # ------------------------------------------------------------------
     # R157 + R158: bootstrap / manifest-summary / freeze
     # ------------------------------------------------------------------
     from aurora.cli.cmd_data_r157_r158 import (
