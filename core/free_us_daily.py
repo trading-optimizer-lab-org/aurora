@@ -1407,12 +1407,23 @@ def download_one_symbol(
         return result
 
     retrieved_at = pd.Timestamp.utcnow().isoformat()
-    normalised = normalise_yfinance_history(
-        raw,
-        symbol=symbol,
-        retrieved_at=retrieved_at,
-    )
-    validation = validate_price_frame(normalised, min_rows=min_rows)
+    try:
+        normalised = normalise_yfinance_history(
+            raw,
+            symbol=symbol,
+            retrieved_at=retrieved_at,
+        )
+        validation = validate_price_frame(normalised, min_rows=min_rows)
+    except Exception as exc:
+        result = DownloadResult(
+            symbol=symbol,
+            provider_symbol=provider_symbol,
+            yfinance_symbol=yfinance_symbol,
+            status="error",
+            error=f"normalisation failed: {exc}",
+        )
+        _record_download(paths["catalog_path"], result)
+        return result
     if validation.status == "no_data":
         result = DownloadResult(
             symbol=symbol,
@@ -1425,8 +1436,31 @@ def download_one_symbol(
         return result
     raw_path = paths["raw_dir"] / f"{symbol}.parquet"
     normalised_path = paths["normalized_dir"] / f"{symbol}.parquet"
-    _raw_to_parquet(raw, raw_path)
-    normalised.to_parquet(normalised_path, index=False)
+    extra_warnings: list[str] = []
+    raw_path_value: Optional[str] = str(raw_path)
+    try:
+        _raw_to_parquet(raw, raw_path)
+    except Exception as exc:
+        raw_path_value = None
+        extra_warnings.append(f"raw parquet write failed: {exc}")
+    try:
+        normalised.to_parquet(normalised_path, index=False)
+    except Exception as exc:
+        result = DownloadResult(
+            symbol=symbol,
+            provider_symbol=provider_symbol,
+            yfinance_symbol=yfinance_symbol,
+            status="error",
+            rows=validation.rows,
+            first_date=validation.first_date,
+            last_date=validation.last_date,
+            years=validation.years,
+            error=f"normalised parquet write failed: {exc}",
+            warnings=tuple(validation.warnings) + tuple(extra_warnings),
+            raw_path=raw_path_value,
+        )
+        _record_download(paths["catalog_path"], result)
+        return result
     result = DownloadResult(
         symbol=symbol,
         provider_symbol=provider_symbol,
@@ -1437,8 +1471,8 @@ def download_one_symbol(
         last_date=validation.last_date,
         years=validation.years,
         error="; ".join(validation.errors) if validation.errors else None,
-        warnings=validation.warnings,
-        raw_path=str(raw_path),
+        warnings=tuple(validation.warnings) + tuple(extra_warnings),
+        raw_path=raw_path_value,
         normalized_path=str(normalised_path),
     )
     _record_download(paths["catalog_path"], result)
@@ -1450,7 +1484,24 @@ def _raw_to_parquet(raw: pd.DataFrame, path: Path) -> None:
     if isinstance(raw_out.columns, pd.MultiIndex):
         raw_out.columns = ["|".join(map(str, c)).strip() for c in raw_out.columns]
     raw_out = raw_out.reset_index()
-    raw_out.to_parquet(path, index=False)
+    try:
+        raw_out.to_parquet(path, index=False)
+    except Exception:
+        safe = raw_out.copy()
+        for col in safe.columns:
+            if safe[col].dtype == "object":
+                safe[col] = safe[col].map(
+                    lambda value: value.decode("utf-8", errors="replace")
+                    if isinstance(value, bytes)
+                    else value
+                )
+                numeric = pd.to_numeric(safe[col], errors="coerce")
+                non_null = safe[col].notna().sum()
+                if non_null and int(numeric.notna().sum()) == int(non_null):
+                    safe[col] = numeric
+                else:
+                    safe[col] = safe[col].astype("string")
+        safe.to_parquet(path, index=False)
 
 
 def _record_download(path: Path, result: DownloadResult) -> None:

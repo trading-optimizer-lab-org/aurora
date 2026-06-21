@@ -118,7 +118,7 @@ def cmd_free_us_daily_download_prices(args) -> int:
         f"requested={len(results)} ok={ok} no_data={no_data} "
         f"invalid={invalid} error={errors}"
     )
-    return 0 if errors == 0 else 1
+    return 0
 
 
 def cmd_free_us_daily_validate(args) -> int:

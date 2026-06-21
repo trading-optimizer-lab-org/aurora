@@ -194,6 +194,30 @@ def test_download_one_symbol_persists_catalog_and_reports(tmp_path):
     assert report["downloaded_ok"] == 1
 
 
+def test_download_one_symbol_tolerates_mixed_object_raw_columns(tmp_path):
+    universe = build_us_stock_like_universe(
+        client=_nasdaq_fixture,
+        retrieved_at="2026-06-21T00:00:00Z",
+    )
+    persist_universe(universe, root=tmp_path)
+    loaded = load_universe(root=tmp_path)
+    raw = _yf_frame(40)
+    raw["Adj Close"] = raw["Adj Close"].astype("object")
+    raw.iloc[0, raw.columns.get_loc("Adj Close")] = b"100.4"
+    raw.columns = pd.MultiIndex.from_product([raw.columns, ["AAPL"]])
+
+    result = download_one_symbol(
+        loaded.iloc[0],
+        root=tmp_path,
+        client=lambda *args, **kwargs: raw,
+        retry_wait_seconds=0,
+    )
+
+    assert result.status == "ok"
+    assert result.raw_path is not None
+    assert result.normalized_path is not None
+
+
 def test_rebuilding_universe_prunes_out_of_scope_download_catalog(tmp_path):
     universe = build_us_stock_like_universe(
         client=_nasdaq_fixture,

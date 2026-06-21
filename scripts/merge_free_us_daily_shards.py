@@ -29,6 +29,14 @@ def _copy_tree_files(src: Path, dst: Path, pattern: str) -> int:
 
 def _candidate_roots(shards_dir: Path) -> list[Path]:
     roots: list[Path] = []
+    if shards_dir.exists():
+        for path in shards_dir.iterdir():
+            if (
+                path.is_dir()
+                and (path / "catalog.sqlite").exists()
+                and ((path / "raw").exists() or (path / "normalized").exists())
+            ):
+                roots.append(path)
     for path in shards_dir.rglob("prices/free_us_daily"):
         if path.is_dir():
             roots.append(path)
