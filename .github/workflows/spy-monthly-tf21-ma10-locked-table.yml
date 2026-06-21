@@ -1,0 +1,36 @@
+name: SPY Monthly TF21 MA10 Locked Table
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_monthly_tf21_ma10_locked_table
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spy-monthly-tf21-ma10-locked-table
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Build locked annual return table
+        run: python scripts/report_spy_monthly_tf21_ma10_locked_table.py
+      - name: Upload locked table
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-monthly-tf21-ma10-locked-table
+          path: ${{ env.OUTPUT_DIR }}/**
+          if-no-files-found: error
