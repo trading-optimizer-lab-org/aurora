@@ -76,16 +76,34 @@ def main() -> None:
 
 
 def run_data(output_dir: Path) -> None:
-    raw = yf.download(
-        ["SPY", "^IRX"],
-        start="1994-01-01",
-        end="2021-01-01",
-        auto_adjust=True,
-        progress=False,
-        group_by="ticker",
-        threads=True,
-    )
+    cache_dir = output_dir / "yfinance_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if hasattr(yf, "set_tz_cache_location"):
+        yf.set_tz_cache_location(str(cache_dir))
+    if hasattr(yf, "cache") and hasattr(yf.cache, "set_cache_location"):
+        yf.cache.set_cache_location(str(cache_dir))
+
+    raw = pd.DataFrame()
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            raw = yf.download(
+                ["SPY", "^IRX"],
+                start="1994-01-01",
+                end="2021-01-01",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=False,
+            )
+            if not raw.empty and not _close(raw, "SPY").dropna().empty:
+                break
+        except Exception as exc:  # yfinance may raise on transient cache/network faults.
+            last_error = exc
+        time.sleep(2.0 * (attempt + 1))
     if raw.empty:
+        if last_error is not None:
+            raise RuntimeError("yfinance returned no data") from last_error
         raise RuntimeError("yfinance returned no data")
 
     spy = _close(raw, "SPY").dropna()
