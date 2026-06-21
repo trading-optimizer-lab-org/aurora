@@ -1,0 +1,139 @@
+name: SPY Monthly Trend Following Paper21 355 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      configs_per_stage:
+        description: "Configs tested per stage"
+        required: true
+        default: "1000"
+      time_budget_minutes:
+        description: "Internal runtime per shard before upload"
+        required: true
+        default: "8"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OUTPUT_DIR: outputs/spy_monthly_trend_following_paper21_355jobs
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: spy-monthly-trend-following-paper21-355jobs
+  cancel-in-progress: false
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download no-locked SPY monthly data
+        run: python scripts/run_spy_monthly_trend_following_paper21.py --mode data --output-dir "$OUTPUT_DIR"
+      - name: Upload data
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-monthly-trend-following-paper21-data
+          path: ${{ env.OUTPUT_DIR }}/data
+          if-no-files-found: error
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - name: Build 355-stage balanced matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          full = [{"stage": stage} for stage in range(355)]
+          print("matrix_a=" + json.dumps(full[:178]))
+          print("matrix_b=" + json.dumps(full[178:]))
+          PY
+
+  search_a:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 25
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 178
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps: &search_steps
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download data
+        uses: actions/download-artifact@v4
+        with:
+          name: spy-monthly-trend-following-paper21-data
+          path: ${{ env.OUTPUT_DIR }}/data
+      - name: Run trend-following stage
+        run: |
+          python scripts/run_spy_monthly_trend_following_paper21.py \
+            --mode shard \
+            --output-dir "$OUTPUT_DIR" \
+            --stage "${{ matrix.stage }}" \
+            --configs-per-stage "${{ inputs.configs_per_stage }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}"
+      - name: Upload stage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-monthly-trend-following-paper21-stage-${{ matrix.stage }}
+          path: ${{ env.OUTPUT_DIR }}/shards/stage_*
+
+  search_b:
+    runs-on: ubuntu-latest
+    needs: [data, plan]
+    timeout-minutes: 25
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 177
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps: *search_steps
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: [data, search_a, search_b]
+    if: always()
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Download stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: spy-monthly-trend-following-paper21-stage-*
+          path: ${{ env.OUTPUT_DIR }}/shards
+      - name: Merge stages
+        run: python scripts/run_spy_monthly_trend_following_paper21.py --mode merge --output-dir "$OUTPUT_DIR"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-monthly-trend-following-paper21-355jobs-results
+          path: ${{ env.OUTPUT_DIR }}/final/**
+          if-no-files-found: error
