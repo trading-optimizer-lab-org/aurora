@@ -400,10 +400,10 @@ def safe(value: float) -> float:
 def run_merge(output_dir: Path) -> None:
     frames = []
     summaries = []
-    for shard in sorted((output_dir / "shards").glob("stage_*/candidates.csv")):
+    for shard in sorted((output_dir / "shards").glob("**/candidates.csv")):
         if shard.stat().st_size > 0:
             frames.append(pd.read_csv(shard))
-    for summary_path in sorted((output_dir / "shards").glob("stage_*/shard_summary.json")):
+    for summary_path in sorted((output_dir / "shards").glob("**/shard_summary.json")):
         summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
 
     final_dir = output_dir / "final"

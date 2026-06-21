@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from scripts.run_spy_monthly_trend_following_paper21 import (
     build_signal,
     exact_configs,
     metrics,
+    run_merge,
 )
 
 
@@ -72,3 +74,33 @@ def test_metrics_are_finite_for_positive_path() -> None:
     assert out["cagr"] > 0.0
     assert np.isfinite(out["sharpe"])
     assert out["final_nav"] > 1.0
+
+
+def test_merge_finds_nested_github_artifact_layout(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "shards" / "spy-monthly-trend-following-paper21-stage-7" / "stage_007"
+    stage_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "test_strategy",
+                "family": "ma_monthly_close",
+                "validation_score": 2.0,
+                "train_score": 1.0,
+                "validation_sharpe": 1.4,
+                "train_sharpe": 1.1,
+                "validation_cagr": 0.12,
+                "validation_mdd": -0.15,
+                "train_cagr": 0.10,
+            }
+        ]
+    ).to_csv(stage_dir / "candidates.csv", index=False)
+    (stage_dir / "shard_summary.json").write_text(
+        json.dumps({"stage": 7, "candidates": 1}),
+        encoding="utf-8",
+    )
+
+    run_merge(tmp_path)
+
+    summary = json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["stages_reported"] == 1
+    assert summary["candidates"] == 1
