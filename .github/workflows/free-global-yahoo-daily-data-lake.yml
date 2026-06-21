@@ -1,0 +1,145 @@
+name: Free Global Yahoo Daily Data Lake
+
+on:
+  workflow_dispatch:
+    inputs:
+      priorities:
+        description: "Foreign market priority groups"
+        required: true
+        default: "alta,media,baja"
+      shard_count:
+        description: "Fixed at 32 for this workflow; kept for run notes"
+        required: true
+        default: "32"
+
+jobs:
+  build_universe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      QF_DATA_DIR: ${{ runner.temp }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud]"
+      - name: Build US universe
+        run: python -m aurora.cli.forge data free-us-daily build-universe --output json
+      - name: Add filtered foreign universe
+        run: |
+          python -m aurora.cli.forge data free-us-daily build-foreign-universe \
+            --priorities "${{ github.event.inputs.priorities }}" \
+            --min-market-cap-usd 50000000 \
+            --min-price-usd 1 \
+            --min-avg-dollar-volume-3m 100000 \
+            --max-quote-age-days 10 \
+            --output json
+      - name: Coverage after universe build
+        run: python -m aurora.cli.forge data free-us-daily coverage-report --output json
+      - name: Upload universe and metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-global-yahoo-universe
+          path: |
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/universe
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/metadata
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/reports
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 14
+
+  download_prices:
+    needs: build_universe
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    env:
+      QF_DATA_DIR: ${{ runner.temp }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud]"
+      - name: Download universe artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: free-global-yahoo-universe
+          path: ${{ runner.temp }}/qf-data/prices/free_us_daily
+      - name: Download this shard
+        run: |
+          python -m aurora.cli.forge data free-us-daily download-prices \
+            --start max \
+            --workers 1 \
+            --batch-size 15 \
+            --sleep-between-batches 1.5 \
+            --retries 3 \
+            --retry-wait-seconds 2 \
+            --shard-count 32 \
+            --shard-index ${{ matrix.shard }}
+      - name: Upload shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-global-yahoo-price-shard-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/raw
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/normalized
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/reports
+            ${{ runner.temp }}/qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 14
+
+  merge_dataset:
+    needs: [build_universe, download_prices]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      QF_DATA_DIR: ${{ runner.temp }}/final-qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud]"
+      - name: Download universe artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: free-global-yahoo-universe
+          path: ${{ runner.temp }}/final-qf-data/prices/free_us_daily
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: free-global-yahoo-price-shard-*
+          path: ${{ runner.temp }}/downloaded-shards
+      - name: Merge shards
+        run: |
+          python scripts/merge_free_us_daily_shards.py \
+            --root "$QF_DATA_DIR" \
+            --shards-dir "${{ runner.temp }}/downloaded-shards"
+      - name: Final reports
+        run: |
+          python -m aurora.cli.forge data free-us-daily coverage-report --output json
+          python -m aurora.cli.forge data free-us-daily quality-report --output json
+      - name: Upload final data lake
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-global-yahoo-daily-data-lake
+          path: ${{ runner.temp }}/final-qf-data/prices/free_us_daily
+          retention-days: 14
