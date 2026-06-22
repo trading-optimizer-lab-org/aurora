@@ -302,6 +302,36 @@ def test_strict_quality_filter_accepts_only_full_stability() -> None:
     assert "train_2003_2010_avg_return_negative" in bad["strict_quality_failures"]
 
 
+def test_frequency_quality_score_keeps_high_frequency_near_misses_auditable() -> None:
+    rare = {
+        "strict_quality_pass": False,
+        "strict_quality_failure_count": 2,
+        "validation_min_yearly_trades": 15,
+        "validation_trades_per_year": 30.0,
+        "validation_positive_years": 10,
+        "validation_median_positive_years": 8,
+        "train_2003_2010_positive_years": 8,
+        "validation_profit_factor": 2.0,
+        "validation_min_yearly_profit_factor": 1.2,
+        "train_2003_2010_min_profit_factor": 1.1,
+        "validation_median_trade_return_pct": 1.1,
+        "validation_avg_trade_return_pct": 2.5,
+        "validation_max_profit_contribution_share": 0.20,
+    }
+    frequent = {
+        **rare,
+        "strict_quality_failure_count": 4,
+        "validation_min_yearly_trades": 120,
+        "validation_trades_per_year": 180.0,
+        "validation_profit_factor": 1.45,
+        "validation_min_yearly_profit_factor": 1.08,
+        "validation_median_trade_return_pct": 0.20,
+        "validation_avg_trade_return_pct": 0.35,
+    }
+
+    assert gtbi._frequency_quality_score(frequent) > gtbi._frequency_quality_score(rare)
+
+
 def test_merge_stage_outputs_writes_filtered_leaderboard(tmp_path: Path) -> None:
     stage = tmp_path / "stage"
     stage.mkdir()

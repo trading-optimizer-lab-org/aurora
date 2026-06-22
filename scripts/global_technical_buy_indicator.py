@@ -28,7 +28,7 @@ SEARCH_METHODS = ("surrogate_ml", "dehb_real")
 DEFAULT_SELECTION_SPLIT = "train"
 SELECTION_SPLITS = ("train", "validation")
 DEFAULT_SCORING_PROFILE = "default"
-SCORING_PROFILES = ("default", "strict_quality")
+SCORING_PROFILES = ("default", "strict_quality", "frequency_quality")
 DEFAULT_FAMILIES = ("minervini_sepa", "oneil_canslim", "quallamaggie")
 TRADINGVIEW_MINERVINI_FAMILIES = (
     "tv_minervini_qualifier",
@@ -783,6 +783,38 @@ def _strict_quality_score(row: dict[str, Any]) -> float:
     )
 
 
+def _frequency_quality_score(row: dict[str, Any]) -> float:
+    if bool(row.get("strict_quality_pass")):
+        return _strict_quality_score(row)
+    min_trades = _finite_float(row.get("validation_min_yearly_trades"), default=0.0)
+    trades_per_year = _finite_float(row.get("validation_trades_per_year"), default=0.0)
+    val_pos = _finite_float(row.get("validation_positive_years"), default=0.0)
+    med_pos = _finite_float(row.get("validation_median_positive_years"), default=0.0)
+    train_pos = _finite_float(row.get("train_2003_2010_positive_years"), default=0.0)
+    val_pf = min(_finite_float(row.get("validation_profit_factor"), default=0.0), 5.0)
+    yearly_pf = min(_finite_float(row.get("validation_min_yearly_profit_factor"), default=0.0), 2.0)
+    train_pf = min(_finite_float(row.get("train_2003_2010_min_profit_factor"), default=0.0), 2.0)
+    med = _finite_float(row.get("validation_median_trade_return_pct"), default=0.0)
+    avg = _finite_float(row.get("validation_avg_trade_return_pct"), default=0.0)
+    concentration = _finite_float(row.get("validation_max_profit_contribution_share"), default=1.0)
+    fail_count = _finite_float(row.get("strict_quality_failure_count"), default=99.0)
+    return (
+        -1_000_000.0
+        - fail_count * 3_000.0
+        + min(min_trades, 150.0) * 85.0
+        + min(trades_per_year, 300.0) * 20.0
+        + val_pos * 1_250.0
+        + med_pos * 650.0
+        + train_pos * 800.0
+        + val_pf * 1_500.0
+        + yearly_pf * 1_200.0
+        + train_pf * 1_200.0
+        + med * 500.0
+        + avg * 100.0
+        - max(concentration - 0.25, 0.0) * 4_000.0
+    )
+
+
 def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
     payload = {"config": config.to_dict(), "stage": int(stage), "sequence": int(sequence)}
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -891,6 +923,8 @@ def evaluate_candidate(
     )
     if scoring_profile == "strict_quality":
         score = _strict_quality_score(row)
+    elif scoring_profile == "frequency_quality":
+        score = _frequency_quality_score(row)
     elif scoring_profile != "default":
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score

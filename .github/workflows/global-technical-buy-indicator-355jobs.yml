@@ -47,6 +47,7 @@ on:
         options:
           - default
           - strict_quality
+          - frequency_quality
       family_set:
         description: "Signal family set"
         required: true
