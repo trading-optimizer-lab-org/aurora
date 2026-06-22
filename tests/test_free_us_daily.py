@@ -13,6 +13,7 @@ from aurora.core.free_us_daily import (
     build_metadata_coverage,
     build_quality_report,
     build_us_stock_like_universe,
+    build_yahoo_us_stock_universe,
     build_yahoo_foreign_stock_universe,
     download_one_symbol,
     download_prices,
@@ -24,7 +25,9 @@ from aurora.core.free_us_daily import (
     load_universe,
     normalise_symbol_for_yfinance,
     normalise_yfinance_history,
+    persist_company_metadata_frame,
     persist_universe,
+    prune_universe_to_valid_prices,
     update_daily_prices,
     validate_price_frame,
     write_metadata_coverage,
@@ -51,6 +54,8 @@ def _nasdaq_fixture(name: str) -> str:
         "BF.B|Brown Forman Inc. Class B Common Stock|N|BF.B|N|100|N|BF.B\n"
         "NVO|Novo Nordisk A/S American Depositary Shares|N|NVO|N|100|N|NVO\n"
         "SAP|SAP SE ADS|N|SAP|N|100|N|SAP\n"
+        "AACI|Armada Acquisition Corp. III - Class A Ordinary Share|N|AACI|N|100|N|AACI\n"
+        "ABR|Arbor Realty Trust Common Stock|N|ABR|N|100|N|ABR\n"
         "ALL$B|Allstate Corporation Depositary Shares|N|ALLpB|N|100|N|ALL-B\n"
         "DPSD|Example Corp Depositary Shares|N|DPSD|N|100|N|DPSD\n"
         "UABC|Example Acquisition Corp. Units|N|UABC|N|100|N|UABC\n"
@@ -110,12 +115,14 @@ def test_stock_like_universe_filters_noise_and_normalises_symbols():
         retrieved_at="2026-06-21T00:00:00Z",
     )
 
-    assert df["canonical_symbol"].tolist() == ["AAPL", "BF-B", "BRK-B", "NVO", "SAP"]
+    assert df["canonical_symbol"].tolist() == ["AAPL", "BF-B", "BRK-B"]
     assert df.set_index("canonical_symbol").loc["BRK-B", "yfinance_symbol"] == "BRK-B"
-    assert df.set_index("canonical_symbol").loc["NVO", "asset_type"] == "ADR"
-    assert df.set_index("canonical_symbol").loc["SAP", "asset_type"] == "ADR"
     assert df.set_index("canonical_symbol").loc["AAPL", "asset_type"] == "COMMON_STOCK"
     assert "QQQ" not in set(df["canonical_symbol"])
+    assert "NVO" not in set(df["canonical_symbol"])
+    assert "SAP" not in set(df["canonical_symbol"])
+    assert "AACI" not in set(df["canonical_symbol"])
+    assert "ABR" not in set(df["canonical_symbol"])
     assert "WXYZW" not in set(df["canonical_symbol"])
     assert "WXYZS" not in set(df["canonical_symbol"])
     assert "UABC" not in set(df["canonical_symbol"])
@@ -123,6 +130,121 @@ def test_stock_like_universe_filters_noise_and_normalises_symbols():
     assert "ALL$B" not in set(df["canonical_symbol"])
     assert "DPSD" not in set(df["canonical_symbol"])
     assert "PREF-P" not in set(df["canonical_symbol"])
+
+
+def test_yahoo_us_stock_universe_applies_cleaning_filters():
+    now = pd.Timestamp("2026-06-21T12:00:00Z")
+
+    def screen_client(region, *, size, offset):
+        assert region == "us"
+        quotes = [
+            {
+                "symbol": "AAPL",
+                "quoteType": "EQUITY",
+                "marketCap": 3_000_000_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 200,
+                "currency": "USD",
+                "averageDailyVolume3Month": 50_000_000,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Apple Inc. Common Stock",
+                "exchange": "NMS",
+            },
+            {
+                "symbol": "PENNY",
+                "quoteType": "EQUITY",
+                "marketCap": 100_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 0.5,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1_000_000,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Penny Corp Common Stock",
+            },
+            {
+                "symbol": "MICRO",
+                "quoteType": "EQUITY",
+                "marketCap": 10_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 10,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1_000_000,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Micro Corp Common Stock",
+            },
+            {
+                "symbol": "ILLIQ",
+                "quoteType": "EQUITY",
+                "marketCap": 100_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 10,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Illiquid Corp Common Stock",
+            },
+            {
+                "symbol": "OLD",
+                "quoteType": "EQUITY",
+                "marketCap": 100_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 10,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1_000_000,
+                "regularMarketTime": (now - pd.Timedelta(days=30)).timestamp(),
+                "longName": "Old Quote Corp Common Stock",
+            },
+            {
+                "symbol": "SPAC",
+                "quoteType": "EQUITY",
+                "marketCap": 100_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 10,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1_000_000,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Example Acquisition Corp. Class A Ordinary Shares",
+            },
+            {
+                "symbol": "ADR",
+                "quoteType": "EQUITY",
+                "marketCap": 100_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 10,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1_000_000,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Example SA American Depositary Shares",
+            },
+            {
+                "symbol": "ETF",
+                "quoteType": "ETF",
+                "marketCap": 100_000_000,
+                "financialCurrency": "USD",
+                "regularMarketPrice": 10,
+                "currency": "USD",
+                "averageDailyVolume3Month": 1_000_000,
+                "regularMarketTime": now.timestamp(),
+                "longName": "Example ETF",
+            },
+        ]
+        return {"total": len(quotes), "quotes": quotes[offset:offset + size]}
+
+    universe, metadata, report = build_yahoo_us_stock_universe(
+        reference_time=now,
+        screen_client=screen_client,
+        page_size=50,
+    )
+
+    assert universe["canonical_symbol"].tolist() == ["AAPL"]
+    assert metadata["symbol"].tolist() == ["AAPL"]
+    assert report["us_symbols"] == 1
+    assert report["rejected"]["not_equity"] == 1
+    assert report["rejected"]["market_cap"] == 1
+    assert report["rejected"]["price"] == 1
+    assert report["rejected"]["liquidity"] == 1
+    assert report["rejected"]["stale"] == 1
+    assert report["rejected"]["name"] == 2
 
 
 def test_symbol_normalisation_for_yfinance_special_classes():
@@ -190,7 +312,7 @@ def test_download_one_symbol_persists_catalog_and_reports(tmp_path):
     assert result.raw_path is not None
     assert result.normalized_path is not None
     report = build_coverage_report(root=tmp_path)
-    assert report["universe_symbols"] == 5
+    assert report["universe_symbols"] == 3
     assert report["downloaded_ok"] == 1
 
 
@@ -239,6 +361,150 @@ def test_rebuilding_universe_prunes_out_of_scope_download_catalog(tmp_path):
     with sqlite3.connect(catalog) as con:
         count = con.execute("SELECT COUNT(*) FROM downloads").fetchone()[0]
     assert count == 0
+
+
+def test_prune_universe_to_valid_prices_removes_bad_symbols_and_files(tmp_path):
+    universe = build_us_stock_like_universe(
+        client=_nasdaq_fixture,
+        retrieved_at="2026-06-21T00:00:00Z",
+    )
+    persist_universe(universe, root=tmp_path)
+    persist_company_metadata_frame(
+        pd.DataFrame(
+            {
+                "symbol": ["AAPL", "BF-B", "BRK-B"],
+                "provider_symbol": ["AAPL", "BF.B", "BRK.B"],
+                "yfinance_symbol": ["AAPL", "BF-B", "BRK-B"],
+                "company_name": ["Apple", "Brown Forman", "Berkshire"],
+                "status": ["ok", "ok", "ok"],
+            }
+        ),
+        root=tmp_path,
+    )
+    paths = tmp_path / "prices" / "free_us_daily"
+    normalized = paths / "normalized"
+    raw = paths / "raw" / "yfinance"
+    normalized.mkdir(parents=True, exist_ok=True)
+    raw.mkdir(parents=True, exist_ok=True)
+    for symbol in ("AAPL", "BF-B", "BRK-B"):
+        normalise_yfinance_history(_yf_frame(40), symbol=symbol).to_parquet(
+            normalized / f"{symbol}.parquet",
+            index=False,
+        )
+        _yf_frame(40).to_parquet(raw / f"{symbol}.parquet", index=False)
+    with sqlite3.connect(paths / "catalog.sqlite") as con:
+        con.executemany(
+            """
+            INSERT INTO downloads (
+                symbol, provider_symbol, yfinance_symbol, status, rows,
+                first_date, last_date, years, error, warnings_json,
+                raw_path, normalized_path, retrieved_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("AAPL", "AAPL", "AAPL", "ok", 40, "2020-01-01", "2020-02-25", 0.15, None, "[]", str(raw / "AAPL.parquet"), str(normalized / "AAPL.parquet"), "now"),
+                ("BF-B", "BF.B", "BF-B", "invalid", 10, "2020-01-01", "2020-01-15", 0.04, "row count below minimum 30", "[]", str(raw / "BF-B.parquet"), str(normalized / "BF-B.parquet"), "now"),
+                ("BRK-B", "BRK.B", "BRK-B", "no_data", 0, None, None, None, None, "[]", str(raw / "BRK-B.parquet"), str(normalized / "BRK-B.parquet"), "now"),
+            ],
+        )
+
+    report = prune_universe_to_valid_prices(root=tmp_path, reference_date="2020-02-26")
+
+    assert report["removed_total"] == 2
+    assert load_universe(root=tmp_path)["canonical_symbol"].tolist() == ["AAPL"]
+    assert load_company_metadata(root=tmp_path)["symbol"].tolist() == ["AAPL"]
+    assert (normalized / "AAPL.parquet").exists()
+    assert not (normalized / "BF-B.parquet").exists()
+    assert not (normalized / "BRK-B.parquet").exists()
+
+
+def test_prune_universe_to_valid_prices_applies_price_quality_filters(tmp_path):
+    universe = pd.DataFrame(
+        {
+            "provider_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"],
+            "canonical_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"],
+            "yfinance_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"],
+            "security_name": ["Good", "Penny", "Stale", "Illiquid"],
+            "asset_type": ["COMMON_STOCK"] * 4,
+            "exchange": ["NMS"] * 4,
+            "source_file": ["test"] * 4,
+            "source": ["test"] * 4,
+            "retrieved_at": ["now"] * 4,
+        }
+    )
+    persist_universe(universe, root=tmp_path)
+    persist_company_metadata_frame(
+        pd.DataFrame({"symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"], "status": ["ok"] * 4}),
+        root=tmp_path,
+    )
+    paths = tmp_path / "prices" / "free_us_daily"
+    normalized = paths / "normalized"
+    raw = paths / "raw" / "yfinance"
+    normalized.mkdir(parents=True, exist_ok=True)
+    raw.mkdir(parents=True, exist_ok=True)
+
+    def write_price(symbol, close, volume, end_date):
+        frame = normalise_yfinance_history(_yf_frame(40), symbol=symbol)
+        frame["date"] = pd.date_range(end=pd.Timestamp(end_date), periods=40, freq="B").date
+        frame["close"] = close
+        frame["adj_close"] = close
+        frame["volume"] = volume
+        frame.to_parquet(normalized / f"{symbol}.parquet", index=False)
+        _yf_frame(40).to_parquet(raw / f"{symbol}.parquet", index=False)
+        return frame
+
+    frames = {
+        "GOOD": write_price("GOOD", 10.0, 20_000, "2026-06-19"),
+        "PENNY": write_price("PENNY", 0.5, 1_000_000, "2026-06-19"),
+        "STALE": write_price("STALE", 10.0, 20_000, "2026-05-01"),
+        "ILLIQ": write_price("ILLIQ", 10.0, 10, "2026-06-19"),
+    }
+    with sqlite3.connect(paths / "catalog.sqlite") as con:
+        rows = []
+        for symbol, frame in frames.items():
+            rows.append(
+                (
+                    symbol,
+                    symbol,
+                    symbol,
+                    "ok",
+                    len(frame),
+                    str(frame["date"].min()),
+                    str(frame["date"].max()),
+                    0.15,
+                    None,
+                    "[]",
+                    str(raw / f"{symbol}.parquet"),
+                    str(normalized / f"{symbol}.parquet"),
+                    "now",
+                )
+            )
+        con.executemany(
+            """
+            INSERT INTO downloads (
+                symbol, provider_symbol, yfinance_symbol, status, rows,
+                first_date, last_date, years, error, warnings_json,
+                raw_path, normalized_path, retrieved_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    report = prune_universe_to_valid_prices(
+        root=tmp_path,
+        min_last_close=1.0,
+        min_median_dollar_volume_90d=100_000,
+        max_last_date_age_days=10,
+        reference_date="2026-06-22",
+    )
+
+    assert report["removed_total"] == 3
+    assert report["removed_by_reason"] == {
+        "last_close_below_min": 1,
+        "last_date_too_old": 1,
+        "median_dollar_volume_below_min": 1,
+    }
+    assert load_universe(root=tmp_path)["canonical_symbol"].tolist() == ["GOOD"]
 
 
 def test_download_prices_handles_no_data_separately(tmp_path):
@@ -597,7 +863,7 @@ def test_filter_universe_by_market_cap_prunes_low_caps_and_metadata(tmp_path):
     assert "BRK-B" not in set(filtered_metadata["symbol"])
     assert "AAPL" in set(filtered["canonical_symbol"])
     assert "BF-B" in set(filtered["canonical_symbol"])
-    assert report["kept_missing_market_cap"] == 3
+    assert report["kept_missing_market_cap"] == 1
 
 
 def test_export_duckdb_and_combined_parquet(tmp_path):

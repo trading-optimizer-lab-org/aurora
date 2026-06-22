@@ -147,6 +147,8 @@ jobs:
           python scripts/merge_free_us_daily_shards.py \
             --root "$QF_DATA_DIR" \
             --shards-dir "${{ github.workspace }}/downloaded-shards"
+      - name: Prune non-valid price histories
+        run: python -m aurora.cli.forge data free-us-daily prune-valid-prices --output json
       - name: Final reports
         run: |
           python -m aurora.cli.forge data free-us-daily coverage-report --output json

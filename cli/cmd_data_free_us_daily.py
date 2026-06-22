@@ -14,13 +14,15 @@ def _root_from_args(args):
 
 def cmd_free_us_daily_build_universe(args) -> int:
     from aurora.core.free_us_daily import (
-        build_us_stock_like_universe,
+        build_yahoo_us_stock_universe,
+        persist_company_metadata_frame,
         persist_universe,
     )
 
     try:
-        df = build_us_stock_like_universe()
+        df, metadata, report = build_yahoo_us_stock_universe()
         path = persist_universe(df, root=_root_from_args(args))
+        persist_company_metadata_frame(metadata, root=_root_from_args(args))
     except Exception as exc:
         return _runtime_error(f"free-us-daily build-universe: {exc}")
     print(f"Wrote {path}")
@@ -31,6 +33,7 @@ def cmd_free_us_daily_build_universe(args) -> int:
                 {
                     "path": str(path),
                     "stock_like_symbols": int(len(df)),
+                    "report": report,
                 },
                 indent=2,
                 sort_keys=True,
@@ -246,6 +249,32 @@ def cmd_free_us_daily_quality_report(args) -> int:
     return 0
 
 
+def cmd_free_us_daily_prune_valid_prices(args) -> int:
+    from aurora.core.free_us_daily import prune_universe_to_valid_prices
+
+    try:
+        payload = prune_universe_to_valid_prices(
+            root=_root_from_args(args),
+            min_last_close=getattr(args, "min_last_close", 1.0),
+            min_median_dollar_volume_90d=getattr(
+                args,
+                "min_median_dollar_volume_90d",
+                100_000,
+            ),
+            max_last_date_age_days=getattr(args, "max_last_date_age_days", 10),
+            reference_date=getattr(args, "reference_date", None),
+        )
+    except Exception as exc:
+        return _runtime_error(f"free-us-daily prune-valid-prices: {exc}")
+    if getattr(args, "output", "table") == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    print(f"universe_before: {payload['universe_before']}")
+    print(f"removed_total:   {payload['removed_total']}")
+    print(f"universe_after:  {payload['universe_after']}")
+    return 0
+
+
 def cmd_free_us_daily_enrich_metadata(args) -> int:
     from aurora.core.free_us_daily import (
         build_metadata_coverage,
@@ -358,10 +387,10 @@ def cmd_free_us_daily_build_benchmarks(args) -> int:
 def register_free_us_daily(data_sub) -> None:
     p = data_sub.add_parser(
         "free-us-daily",
-        help="Free active-US-stock daily price lake",
+        help="Free active-stock daily price lake",
         description=(
-            "Build a zero-cost active-US-stock daily history lake from "
-            "Nasdaq Trader symbols and yfinance daily prices. Active "
+            "Build a zero-cost active-stock daily history lake from "
+            "Yahoo screener universes and yfinance daily prices. Active "
             "listings only; not survivorship-bias free."
         ),
     )
@@ -379,7 +408,7 @@ def register_free_us_daily(data_sub) -> None:
 
     p_uni = sub.add_parser(
         "build-universe",
-        help="Download Nasdaq Trader symbol files and persist stock-like universe",
+        help="Build filtered US common-stock universe from Yahoo screener",
     )
     add_root(p_uni)
     p_uni.add_argument("--output", default="table", choices=["table", "json"])
@@ -555,6 +584,28 @@ def register_free_us_daily(data_sub) -> None:
     p_quality.add_argument("--output", default="table", choices=["table", "json"])
     p_quality.set_defaults(func=cmd_free_us_daily_quality_report)
 
+    p_prune = sub.add_parser(
+        "prune-valid-prices",
+        help="Keep only symbols with validated ok price histories",
+    )
+    add_root(p_prune)
+    p_prune.add_argument("--min-last-close", dest="min_last_close", default=1.0, type=float)
+    p_prune.add_argument(
+        "--min-median-dollar-volume-90d",
+        dest="min_median_dollar_volume_90d",
+        default=100_000,
+        type=float,
+    )
+    p_prune.add_argument(
+        "--max-last-date-age-days",
+        dest="max_last_date_age_days",
+        default=10,
+        type=int,
+    )
+    p_prune.add_argument("--reference-date", dest="reference_date", default=None)
+    p_prune.add_argument("--output", default="table", choices=["table", "json"])
+    p_prune.set_defaults(func=cmd_free_us_daily_prune_valid_prices)
+
     p_meta = sub.add_parser(
         "enrich-metadata",
         help="Fetch current company metadata, sectors, industries and market caps",
@@ -649,6 +700,7 @@ __all__ = [
     "cmd_free_us_daily_quality_report",
     "cmd_free_us_daily_enrich_metadata",
     "cmd_free_us_daily_filter_market_cap",
+    "cmd_free_us_daily_prune_valid_prices",
     "cmd_free_us_daily_build_benchmarks",
     "register_free_us_daily",
 ]

@@ -59,7 +59,9 @@ METADATA_COLUMNS = [
 _EXCLUDE_SECURITY_RE = re.compile(
     r"\b("
     r"warrants?|rights?|units?|preferred|preferences?|depositary|"
-    r"notes?|bonds?|funds?|etfs?|etns?"
+    r"depository|notes?|bonds?|funds?|etfs?|etns?|trusts?|"
+    r"certificates?|adr|gdr|ads|receipts?|spac|"
+    r"acquisition\s+(corp|company)"
     r")\b",
     re.IGNORECASE,
 )
@@ -273,6 +275,8 @@ def layout(root: Optional[Path] = None) -> dict[str, Path]:
         "metadata_failures_csv": base / "reports" / "metadata_failures.csv",
         "market_cap_filter_report": base / "reports" / "market_cap_filter_report.json",
         "foreign_universe_report": base / "reports" / "foreign_universe_report.json",
+        "valid_price_prune_report": base / "reports" / "valid_price_prune_report.json",
+        "valid_price_prune_csv": base / "reports" / "valid_price_prune_removed.csv",
         "duckdb_path": base / "exports" / "free_us_daily.duckdb",
         "all_prices_path": base / "exports" / "all_prices.parquet",
         "benchmark_manifest": base / "benchmarks" / "benchmark_manifest.json",
@@ -334,7 +338,7 @@ def _is_stock_like(row: dict[str, Any]) -> bool:
         return False
     security_name = str(row.get("Security Name", ""))
     if is_adr_security_name(security_name):
-        return True
+        return False
     if _EXCLUDE_SECURITY_RE.search(security_name):
         return False
     return True
@@ -482,6 +486,172 @@ def _default_yahoo_screen_client(
         sortField="ticker",
         sortAsc=True,
     )
+
+
+def build_yahoo_us_stock_universe(
+    *,
+    min_market_cap_usd: float = 50_000_000,
+    min_price_usd: float = 1.0,
+    min_avg_dollar_volume_3m: float = 100_000,
+    max_quote_age_days: int = 10,
+    page_size: int = 250,
+    retrieved_at: Optional[str] = None,
+    reference_time: Optional[pd.Timestamp | str] = None,
+    screen_client: Optional[Callable[..., dict[str, Any]]] = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Build a filtered Yahoo US common-stock universe and metadata snapshot."""
+
+    timestamp = retrieved_at or pd.Timestamp.utcnow().isoformat()
+    ref = (
+        pd.Timestamp(reference_time)
+        if reference_time is not None
+        else pd.Timestamp.utcnow()
+    )
+    if getattr(ref, "tz", None) is not None:
+        ref = ref.tz_convert(None)
+    cutoff = ref - pd.Timedelta(days=int(max_quote_age_days))
+    client = screen_client or _default_yahoo_screen_client
+    universe_rows: dict[str, dict[str, Any]] = {}
+    metadata_rows: dict[str, dict[str, Any]] = {}
+    rejected: dict[str, int] = {
+        "not_equity": 0,
+        "market_cap": 0,
+        "price": 0,
+        "liquidity": 0,
+        "stale": 0,
+        "name": 0,
+    }
+    scanned = 0
+    offset = 0
+    seen: set[str] = set()
+    while True:
+        payload = client("us", size=int(page_size), offset=offset)
+        total = int(payload.get("total") or 0)
+        quotes = payload.get("quotes") or []
+        if not quotes:
+            break
+        page_new = 0
+        for quote in quotes:
+            symbol = str(quote.get("symbol") or "").strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            page_new += 1
+            scanned += 1
+            if str(quote.get("quoteType") or "").upper() != "EQUITY":
+                rejected["not_equity"] += 1
+                continue
+            market_cap = (
+                quote.get("marketCap")
+                or quote.get("intradayMarketCap")
+                or quote.get("intradaymarketcap")
+            )
+            market_cap_usd = _usd_value(
+                market_cap,
+                quote.get("financialCurrency") or quote.get("currency") or "USD",
+                DEFAULT_USD_PER_UNIT,
+            )
+            if market_cap_usd is None or market_cap_usd < min_market_cap_usd:
+                rejected["market_cap"] += 1
+                continue
+            price = (
+                quote.get("regularMarketPrice")
+                or quote.get("regularMarketPreviousClose")
+            )
+            price_usd = _usd_value(price, quote.get("currency") or "USD", DEFAULT_USD_PER_UNIT)
+            if price_usd is None or price_usd < min_price_usd:
+                rejected["price"] += 1
+                continue
+            try:
+                avg_volume = float(quote.get("averageDailyVolume3Month"))
+            except (TypeError, ValueError):
+                avg_volume = 0.0
+            if price_usd * avg_volume < min_avg_dollar_volume_3m:
+                rejected["liquidity"] += 1
+                continue
+            quote_time = _quote_timestamp(quote.get("regularMarketTime"))
+            if quote_time is None or quote_time < cutoff:
+                rejected["stale"] += 1
+                continue
+            security_name = (
+                _clean_optional_str(quote.get("longName"))
+                or _clean_optional_str(quote.get("shortName"))
+                or symbol
+            )
+            if _EXCLUDE_SECURITY_RE.search(security_name) or is_adr_security_name(security_name):
+                rejected["name"] += 1
+                continue
+            canonical = normalise_symbol_for_yfinance(symbol)
+            universe_rows[canonical] = {
+                "provider_symbol": symbol,
+                "canonical_symbol": canonical,
+                "yfinance_symbol": normalise_symbol_for_yfinance(symbol),
+                "security_name": security_name,
+                "asset_type": ASSET_TYPE_COMMON_STOCK,
+                "exchange": _clean_optional_str(quote.get("exchange"))
+                or _clean_optional_str(quote.get("fullExchangeName"))
+                or "US",
+                "source_file": "yahoo_region:us",
+                "source": SOURCE_YAHOO_SCREENER,
+                "retrieved_at": timestamp,
+            }
+            metadata_rows[canonical] = {
+                "symbol": canonical,
+                "provider_symbol": symbol,
+                "yfinance_symbol": normalise_symbol_for_yfinance(symbol),
+                "company_name": security_name,
+                "security_name": security_name,
+                "sector": pd.NA,
+                "industry": pd.NA,
+                "exchange": universe_rows[canonical]["exchange"],
+                "quote_type": _clean_optional_str(quote.get("quoteType")),
+                "market_cap": market_cap_usd,
+                "shares_outstanding": _numeric_or_none(
+                    quote.get("sharesOutstanding")
+                ),
+                "country": "United States",
+                "website": pd.NA,
+                "status": "ok",
+                "source": SOURCE_YAHOO_SCREENER,
+                "retrieved_at": timestamp,
+                "error": None,
+            }
+        offset += len(quotes)
+        if offset >= total or len(quotes) < page_size or page_new == 0:
+            break
+        time.sleep(0.05)
+    universe_columns = [
+        "provider_symbol",
+        "canonical_symbol",
+        "yfinance_symbol",
+        "security_name",
+        "asset_type",
+        "exchange",
+        "source_file",
+        "source",
+        "retrieved_at",
+    ]
+    universe = pd.DataFrame(universe_rows.values(), columns=universe_columns)
+    metadata = pd.DataFrame(metadata_rows.values(), columns=METADATA_COLUMNS)
+    if not universe.empty:
+        universe = universe.sort_values("canonical_symbol").reset_index(drop=True)
+    if not metadata.empty:
+        metadata = metadata.sort_values("symbol").reset_index(drop=True)
+    report = {
+        "dataset": DATASET_NAME,
+        "source": SOURCE_YAHOO_SCREENER,
+        "created_at": timestamp,
+        "filters": {
+            "min_market_cap_usd": float(min_market_cap_usd),
+            "min_price_usd": float(min_price_usd),
+            "min_avg_dollar_volume_3m": float(min_avg_dollar_volume_3m),
+            "max_quote_age_days": int(max_quote_age_days),
+        },
+        "scanned_quotes": int(scanned),
+        "us_symbols": int(len(universe)),
+        "rejected": rejected,
+    }
+    return universe, metadata, report
 
 
 def build_yahoo_foreign_stock_universe(
@@ -1094,6 +1264,184 @@ def filter_universe_by_market_cap(
         "removed_symbols": sorted(removed_symbols),
     }
     paths["market_cap_filter_report"].write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    write_coverage_report(root=root)
+    return payload
+
+
+def prune_universe_to_valid_prices(
+    *,
+    root: Optional[Path] = None,
+    min_last_close: float = 1.0,
+    min_median_dollar_volume_90d: float = 100_000,
+    max_last_date_age_days: int = 10,
+    reference_date: Optional[str | pd.Timestamp] = None,
+) -> dict[str, Any]:
+    """Keep only universe symbols with valid downloaded prices."""
+
+    paths = ensure_layout(root)
+    universe = load_universe(root=root)
+    downloads = read_download_results(root=root)
+    if downloads.empty:
+        raise FileNotFoundError(
+            "download catalog not found. Run "
+            "`forge data free-us-daily download-prices` first."
+        )
+    ref = pd.Timestamp(reference_date) if reference_date is not None else pd.Timestamp.utcnow()
+    if getattr(ref, "tz", None) is not None:
+        ref = ref.tz_convert(None)
+    ref_date = ref.normalize()
+    ok_downloads = downloads[downloads["status"] == "ok"].copy()
+    removal_reasons: dict[str, str] = {}
+    for row in ok_downloads.itertuples(index=False):
+        symbol = str(row.symbol)
+        normalized_path = getattr(row, "normalized_path", None)
+        if pd.isna(normalized_path) or not str(normalized_path).strip():
+            removal_reasons[symbol] = "missing_normalized_path"
+            continue
+        path = Path(str(normalized_path))
+        if not path.exists():
+            removal_reasons[symbol] = "missing_normalized_file"
+            continue
+        try:
+            frame = pd.read_parquet(
+                path,
+                columns=["date", "close", "volume"],
+            )
+        except Exception as exc:
+            removal_reasons[symbol] = f"price_read_failed:{exc}"
+            continue
+        if frame.empty:
+            removal_reasons[symbol] = "empty_price_file"
+            continue
+        frame = frame.copy()
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        frame = frame.dropna(subset=["date"]).sort_values("date")
+        if frame.empty:
+            removal_reasons[symbol] = "empty_valid_dates"
+            continue
+        close = pd.to_numeric(frame["close"], errors="coerce")
+        volume = pd.to_numeric(frame["volume"], errors="coerce").fillna(0)
+        last_close = close.iloc[-1]
+        last_date = frame["date"].iloc[-1]
+        if pd.isna(last_close) or float(last_close) < float(min_last_close):
+            removal_reasons[symbol] = "last_close_below_min"
+            continue
+        age_days = int((ref_date - pd.Timestamp(last_date).normalize()).days)
+        if age_days > int(max_last_date_age_days):
+            removal_reasons[symbol] = "last_date_too_old"
+            continue
+        dollar_volume = (close.tail(90) * volume.tail(90)).dropna()
+        median_dollar_volume = (
+            float(dollar_volume.median()) if not dollar_volume.empty else 0.0
+        )
+        if median_dollar_volume < float(min_median_dollar_volume_90d):
+            removal_reasons[symbol] = "median_dollar_volume_below_min"
+            continue
+    if removal_reasons:
+        ok_downloads = ok_downloads[
+            ~ok_downloads["symbol"].astype(str).isin(removal_reasons)
+        ].copy()
+    ok_symbols = set(ok_downloads["symbol"].astype(str))
+    before_symbols = set(universe["canonical_symbol"].astype(str))
+    kept_universe = universe[
+        universe["canonical_symbol"].astype(str).isin(ok_symbols)
+    ].copy()
+    removed_universe = universe[
+        ~universe["canonical_symbol"].astype(str).isin(ok_symbols)
+    ].copy()
+    removed_symbols = set(removed_universe["canonical_symbol"].astype(str))
+    removed_downloads = downloads[
+        downloads["symbol"].astype(str).isin(removed_symbols)
+        | ~downloads["symbol"].astype(str).isin(before_symbols)
+        | (downloads["status"] != "ok")
+    ].copy()
+    if not removed_downloads.empty:
+        removed_downloads["prune_reason"] = removed_downloads["symbol"].astype(str).map(
+            removal_reasons
+        ).fillna(removed_downloads["status"].astype(str))
+
+    for _, row in removed_downloads.iterrows():
+        for column in ("raw_path", "normalized_path"):
+            raw_path = row.get(column)
+            if pd.isna(raw_path) or not str(raw_path).strip():
+                continue
+            path = Path(str(raw_path))
+            if path.exists():
+                path.unlink()
+
+    kept_metadata = load_company_metadata(root=root)
+    if not kept_metadata.empty and "symbol" in kept_metadata.columns:
+        kept_metadata = kept_metadata[
+            kept_metadata["symbol"].astype(str).isin(
+                set(kept_universe["canonical_symbol"].astype(str))
+            )
+        ].copy()
+    persist_universe(kept_universe.reset_index(drop=True), root=root)
+    persist_company_metadata_frame(kept_metadata, root=root)
+
+    _init_catalog(paths["catalog_path"])
+    keep_download_symbols = set(kept_universe["canonical_symbol"].astype(str))
+    with sqlite3.connect(paths["catalog_path"]) as con:
+        con.execute("DELETE FROM downloads")
+        rows = [
+            (
+                r.symbol,
+                r.provider_symbol,
+                r.yfinance_symbol,
+                r.status,
+                r.rows,
+                r.first_date,
+                r.last_date,
+                r.years,
+                r.error,
+                r.warnings_json,
+                r.raw_path,
+                r.normalized_path,
+                r.retrieved_at,
+            )
+            for r in ok_downloads[
+                ok_downloads["symbol"].astype(str).isin(keep_download_symbols)
+            ].itertuples(index=False)
+        ]
+        con.executemany(
+            """
+            INSERT INTO downloads (
+                symbol, provider_symbol, yfinance_symbol, status, rows,
+                first_date, last_date, years, error, warnings_json,
+                raw_path, normalized_path, retrieved_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    if not removed_downloads.empty:
+        removed_downloads.to_csv(paths["valid_price_prune_csv"], index=False)
+    else:
+        pd.DataFrame().to_csv(paths["valid_price_prune_csv"], index=False)
+    payload = {
+        "dataset": DATASET_NAME,
+        "created_at": pd.Timestamp.utcnow().isoformat(),
+        "universe_before": int(len(universe)),
+        "catalog_before": int(len(downloads)),
+        "removed_total": int(len(removed_symbols)),
+        "removed_by_status": removed_downloads["status"].value_counts().to_dict()
+        if "status" in removed_downloads
+        else {},
+        "removed_by_reason": pd.Series(list(removal_reasons.values())).value_counts().to_dict()
+        if removal_reasons
+        else {},
+        "min_last_close": float(min_last_close),
+        "min_median_dollar_volume_90d": float(min_median_dollar_volume_90d),
+        "max_last_date_age_days": int(max_last_date_age_days),
+        "reference_date": ref_date.date().isoformat(),
+        "universe_after": int(len(kept_universe)),
+        "catalog_after": int(len(rows)),
+        "removed_symbols": sorted(removed_symbols),
+    }
+    paths["valid_price_prune_report"].write_text(
         json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )
