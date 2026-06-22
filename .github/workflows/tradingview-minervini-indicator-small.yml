@@ -63,6 +63,10 @@ on:
         description: "Locked/OOS start date, excluded from pack"
         required: true
         default: "2021-01-01"
+      min_market_cap:
+        description: "Minimum market cap in USD, 0 disables the filter"
+        required: true
+        default: "0"
 
 jobs:
   plan:
@@ -154,7 +158,8 @@ jobs:
             --stage-count 64 \
             --group-count 8 \
             --locked-start "${{ inputs.locked_start }}" \
-            --min-rows 260
+            --min-rows 260 \
+            --min-market-cap "${{ inputs.min_market_cap }}"
       - uses: actions/upload-artifact@v4
         with: { name: tradingview-minervini-indicator-pack-group-000, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-000", if-no-files-found: error, retention-days: 3 }
       - uses: actions/upload-artifact@v4
