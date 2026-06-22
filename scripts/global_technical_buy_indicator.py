@@ -156,6 +156,7 @@ class IndicatorConfig:
     take_profit_pct: float = 0.0
     max_holding_days: int = 60
     use_exit_ma: bool = True
+    use_market_exit: bool = False
     exit_ma_days: int = 20
     market_ma_days: int = 200
     market_momentum_days: int = 21
@@ -223,6 +224,15 @@ def _families_for_set(family_set: str) -> tuple[str, ...]:
     raise ValueError(f"unknown family_set {family_set!r}; expected one of {FAMILY_SETS}")
 
 
+def _market_trend_ok(index: pd.Index, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+    benchmark = _prepare_ohlcv(benchmark_prices)
+    if benchmark.empty:
+        return _safe_bool_series(True, index)
+    spy_close = benchmark["close"].reindex(index).ffill()
+    market_ma = spy_close.rolling(config.market_ma_days, min_periods=min(config.market_ma_days, len(spy_close))).mean()
+    return ((spy_close > market_ma) & (spy_close > spy_close.shift(config.market_momentum_days))).fillna(False)
+
+
 def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
     """Return same-day buy indicator. Execution happens next session."""
 
@@ -268,9 +278,8 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         spy_close = pd.Series(np.nan, index=index)
     if not config.require_rs:
         rs_ok = _safe_bool_series(True, index)
-    if config.require_market_trend and not benchmark.empty:
-        market_ma = spy_close.rolling(config.market_ma_days, min_periods=min(config.market_ma_days, len(frame))).mean()
-        market_trend = (spy_close > market_ma) & (spy_close > spy_close.shift(config.market_momentum_days))
+    if config.require_market_trend:
+        market_trend = _market_trend_ok(index, benchmark_prices, config)
     else:
         market_trend = _safe_bool_series(True, index)
 
@@ -451,6 +460,7 @@ def simulate_trades(
     *,
     split: str,
     candidate_id: str = "",
+    exit_signal: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Simulate long/cash trades from a buy indicator, executing next session."""
 
@@ -458,6 +468,11 @@ def simulate_trades(
     if frame.empty or len(frame) < 3:
         return pd.DataFrame(columns=TRADE_COLUMNS)
     signal = signal.reindex(frame.index).fillna(False).astype(bool)
+    exit_signal = (
+        exit_signal.reindex(frame.index).fillna(False).astype(bool)
+        if exit_signal is not None
+        else _safe_bool_series(False, frame.index)
+    )
     exit_ma = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
 
     trades: list[dict[str, Any]] = []
@@ -488,6 +503,8 @@ def simulate_trades(
             reason = "trailing_stop"
         elif config.use_exit_ma and pd.notna(exit_ma.iloc[i]) and float(frame["close"].iloc[i]) < float(exit_ma.iloc[i]):
             reason = "exit_ma"
+        elif config.use_market_exit and bool(exit_signal.iloc[i]):
+            reason = "market_exit"
         elif min(i + 1, len(frame) - 1) - entry_idx >= config.max_holding_days:
             reason = "max_holding"
 
@@ -870,7 +887,17 @@ def evaluate_candidate(
     all_trades: list[pd.DataFrame] = []
     for symbol, frame in symbol_frames.items():
         signal = entry_signal(frame, benchmark_prices, config)
-        raw_trades = simulate_trades(symbol, frame, signal, config, split="unassigned", candidate_id=candidate_id)
+        prepared_frame = _prepare_ohlcv(frame)
+        market_exit = ~_market_trend_ok(prepared_frame.index, benchmark_prices, config) if config.use_market_exit else None
+        raw_trades = simulate_trades(
+            symbol,
+            frame,
+            signal,
+            config,
+            split="unassigned",
+            candidate_id=candidate_id,
+            exit_signal=market_exit,
+        )
         trades = split_trade_frame(
             raw_trades,
             train_end=train_end,
@@ -1003,6 +1030,7 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
         "exit_ma_days": int(rng.choice([10, 20, 21, 50])),
         "use_exit_ma": bool(rng.random() < 0.90),
         "require_market_trend": bool(rng.random() < 0.55),
+        "use_market_exit": bool(rng.random() < 0.35),
         "market_ma_days": int(rng.choice([50, 100, 150, 200])),
         "market_momentum_days": int(rng.choice([10, 21, 42, 63, 126])),
     }
@@ -1154,6 +1182,7 @@ def sample_config(
         "exit_ma_days": int(rng.choice([10, 20, 21, 50])),
         "use_exit_ma": bool(rng.random() < 0.80),
         "require_market_trend": bool(rng.random() < 0.45),
+        "use_market_exit": bool(rng.random() < 0.30),
         "market_ma_days": int(rng.choice([50, 100, 150, 200])),
         "market_momentum_days": int(rng.choice([10, 21, 42, 63, 126])),
     }

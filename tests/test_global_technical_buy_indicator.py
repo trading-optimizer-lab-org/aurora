@@ -209,6 +209,32 @@ def test_simulate_trades_exits_on_ma_and_max_holding() -> None:
     assert trades.iloc[0]["holding_days"] <= 10
 
 
+def test_simulate_trades_exits_on_market_regime_next_session() -> None:
+    idx = pd.date_range("2011-01-03", periods=8, freq="B")
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": [100.0, 101.0, 102.0, 99.0, 98.0, 98.0, 98.0, 98.0],
+            "high": [101.0, 103.0, 104.0, 100.0, 99.0, 99.0, 99.0, 99.0],
+            "low": [99.0, 100.0, 101.0, 98.0, 97.0, 97.0, 97.0, 97.0],
+            "close": [100.0, 102.0, 103.0, 99.0, 98.0, 98.0, 98.0, 98.0],
+            "adj_close": [100.0, 102.0, 103.0, 99.0, 98.0, 98.0, 98.0, 98.0],
+            "volume": [1000.0] * 8,
+            "symbol": "AAA",
+        }
+    )
+    signal = pd.Series([True, False, False, False, False, False, False, False], index=idx)
+    exit_signal = pd.Series([False, False, True, False, False, False, False, False], index=idx)
+    config = gtbi.IndicatorConfig(stop_loss_pct=0.50, trailing_stop_pct=0.50, max_holding_days=20, use_market_exit=True)
+
+    trades = gtbi.simulate_trades("AAA", frame, signal, config, split="validation", exit_signal=exit_signal)
+
+    assert len(trades) == 1
+    assert trades.iloc[0]["exit_reason"] == "market_exit"
+    assert trades.iloc[0]["exit_date"] == "2011-01-06"
+    assert trades.iloc[0]["exit_price"] == pytest.approx(99.0)
+
+
 def test_yearly_trade_performance_groups_closed_trades_and_adds_spy_return() -> None:
     trades = pd.DataFrame(
         [
