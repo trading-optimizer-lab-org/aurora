@@ -1,0 +1,228 @@
+name: Global Technical Buy Indicator Final Recheck Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id containing global-technical-buy-indicator-stage-* artifacts"
+        required: true
+      data_run_id:
+        description: "Run id containing free-global-yahoo-daily-data-lake"
+        required: true
+        default: "27936694743"
+      data_artifact_name:
+        description: "Source data lake artifact"
+        required: true
+        default: "free-global-yahoo-daily-data-lake"
+      final_top_n:
+        description: "Top shard candidates kept before global recheck"
+        required: true
+        default: "2000"
+      candidate_count:
+        description: "Number of top candidates to re-evaluate in parallel"
+        required: true
+        default: "10"
+      min_market_cap:
+        description: "Minimum market cap in USD"
+        required: true
+        default: "2000000000"
+      locked_start:
+        description: "Locked/OOS start date, excluded from pack"
+        required: true
+        default: "2021-01-01"
+      train_end:
+        description: "Train end date"
+        required: true
+        default: "2010-12-31"
+      validation_start:
+        description: "Validation start date"
+        required: true
+        default: "2011-01-01"
+      validation_end:
+        description: "Validation end date"
+        required: true
+        default: "2020-12-31"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          count = int("${{ inputs.candidate_count }}")
+          rows = [{"offset": i, "offset_padded": f"{i:03d}"} for i in range(count)]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}\n")
+          PY
+
+  merge_shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download source stage artifacts
+        run: |
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "global-technical-buy-indicator-stage-*" \
+            --dir downloaded-stages
+      - name: Merge shard candidates
+        run: |
+          python scripts/merge_global_technical_buy_indicator_results.py \
+            --stages-root downloaded-stages \
+            --output-dir merged \
+            --top-n "${{ inputs.final_top_n }}"
+      - name: Upload merged candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-merged-candidates
+          path: merged
+          if-no-files-found: error
+          retention-days: 3
+
+  recheck_candidate:
+    needs: [plan, merge_shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download merged candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: global-technical-buy-indicator-merged-candidates
+          path: merged
+      - name: Download clean global data lake
+        run: |
+          mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "${{ inputs.data_artifact_name }}" \
+            --dir "$QF_DATA_DIR/prices/free_us_daily"
+      - name: Ensure SPY benchmark exists
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+          import yfinance as yf
+
+          data_root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
+          out_dir = data_root / "benchmarks"
+          out_dir.mkdir(parents=True, exist_ok=True)
+          frame = yf.download("SPY", period="max", interval="1d", auto_adjust=False, actions=True, progress=False, threads=False)
+          if frame.empty:
+              raise SystemExit("SPY benchmark download returned no rows")
+          if isinstance(frame.columns, pd.MultiIndex):
+              frame.columns = [str(col[0]).strip().lower().replace(" ", "_") for col in frame.columns]
+          else:
+              frame.columns = [str(col).strip().lower().replace(" ", "_") for col in frame.columns]
+          frame = frame.reset_index()
+          if "date" not in frame.columns:
+              frame = frame.rename(columns={frame.columns[0]: "date"})
+          if "adj_close" not in frame.columns:
+              frame["adj_close"] = frame["close"]
+          if "volume" not in frame.columns:
+              frame["volume"] = 0
+          frame["date"] = pd.to_datetime(frame["date"], errors="coerce", utc=True).dt.tz_convert(None)
+          frame = frame.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date")
+          frame["symbol"] = "SPY"
+          cols = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+          out_path = out_dir / "SPY.parquet"
+          frame[cols].to_parquet(out_path, index=False)
+          print(json.dumps({"symbol": "SPY", "rows": int(len(frame)), "path": str(out_path)}, indent=2, sort_keys=True))
+          PY
+      - name: Recheck candidate globally
+        run: |
+          python scripts/reevaluate_global_technical_buy_indicator_results.py \
+            --merged-dir merged \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --output-dir "candidate-${{ matrix.offset_padded }}" \
+            --candidate-offset "${{ matrix.offset }}" \
+            --candidate-limit 1 \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --scoring-profile strict_quality
+      - name: Upload candidate recheck
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-recheck-candidate-${{ matrix.offset_padded }}
+          path: candidate-${{ matrix.offset_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  merge_rechecks:
+    needs: [recheck_candidate]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download candidate rechecks
+        uses: actions/download-artifact@v4
+        with:
+          pattern: global-technical-buy-indicator-recheck-candidate-*
+          path: candidate-rechecks
+      - name: Merge candidate rechecks
+        run: |
+          python scripts/merge_global_technical_buy_indicator_results.py \
+            --stages-root candidate-rechecks \
+            --output-dir final \
+            --top-n "${{ inputs.candidate_count }}"
+      - name: Upload final parallel recheck results
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-final-recheck-parallel-results
+          path: final
+          if-no-files-found: error
+          retention-days: 14

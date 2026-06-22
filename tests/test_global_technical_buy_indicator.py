@@ -552,3 +552,17 @@ def test_final_recheck_workflow_reuses_stage_artifacts() -> None:
     assert "merge_global_technical_buy_indicator_results.py" in text
     assert "reevaluate_global_technical_buy_indicator_results.py" in text
     assert "global-technical-buy-indicator-final-recheck-results" in text
+
+
+def test_parallel_final_recheck_workflow_splits_candidates() -> None:
+    path = Path(".github/workflows/global-technical-buy-indicator-final-recheck-parallel.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["name"] == "Global Technical Buy Indicator Final Recheck Parallel"
+    assert "workflow_dispatch" in data[True]
+
+    text = path.read_text(encoding="utf-8")
+    assert "candidate_count" in text
+    assert "--candidate-offset" in text
+    assert "--candidate-limit 1" in text
+    assert "global-technical-buy-indicator-recheck-candidate-" in text
+    assert "global-technical-buy-indicator-final-recheck-parallel-results" in text
