@@ -23,11 +23,16 @@ DEFAULT_TRAIN_END = "2010-12-31"
 DEFAULT_VALIDATION_START = "2011-01-01"
 DEFAULT_VALIDATION_END = "2020-12-31"
 DEFAULT_LOCKED_START = "2021-01-01"
+DEFAULT_SEARCH_METHOD = "surrogate_ml"
+SEARCH_METHODS = ("surrogate_ml", "dehb_real")
+DEFAULT_SELECTION_SPLIT = "train"
+SELECTION_SPLITS = ("train", "validation")
 
 PRICE_COLUMNS = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
 LEADERBOARD_COLUMNS = [
     "candidate_id",
     "stage",
+    "search_method",
     "family",
     "score",
     "train_trades",
@@ -49,6 +54,8 @@ LEADERBOARD_COLUMNS = [
     "train_trades_per_year",
     "validation_trades_per_year",
     "selection_split",
+    "selection_min_yearly_trades",
+    "min_selection_trades_per_year",
     "locked_opened",
 ]
 YEARLY_COLUMNS = [
@@ -532,6 +539,28 @@ def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
     return f"gtbi_s{stage:03d}_{digest}"
 
 
+def _min_yearly_trades_for_selection(
+    yearly: pd.DataFrame,
+    *,
+    selection_split: str,
+    train_end: str,
+    validation_start: str,
+    validation_end: str,
+) -> int:
+    if yearly.empty:
+        return 0
+    selected = yearly[yearly["split"] == selection_split].copy()
+    if selected.empty:
+        return 0
+    if selection_split == "validation":
+        years = range(_dt(validation_start).year, _dt(validation_end).year + 1)
+    else:
+        first_year = int(selected["year"].min())
+        years = range(first_year, _dt(train_end).year + 1)
+    trades = selected.set_index("year")["trades"].reindex(list(years), fill_value=0)
+    return int(trades.min()) if len(trades) else 0
+
+
 def evaluate_candidate(
     *,
     config: IndicatorConfig,
@@ -542,6 +571,9 @@ def evaluate_candidate(
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
+    search_method: str = DEFAULT_SEARCH_METHOD,
+    selection_split: str = DEFAULT_SELECTION_SPLIT,
+    min_selection_trades_per_year: int = 0,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
     all_trades: list[pd.DataFrame] = []
     for symbol, frame in symbol_frames.items():
@@ -564,13 +596,27 @@ def evaluate_candidate(
     validation_years = max((_dt(validation_end) - _dt(validation_start)).days / 365.25, 1.0)
     train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
     validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
-    score = _candidate_score(train)
+    yearly = yearly_trade_performance(trades_df, benchmark_prices)
+    selected_metrics = validation if selection_split == "validation" else train
+    score = _candidate_score(selected_metrics)
+    selection_min_yearly_trades = _min_yearly_trades_for_selection(
+        yearly,
+        selection_split=selection_split,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    if int(min_selection_trades_per_year) > 0 and selection_min_yearly_trades < int(min_selection_trades_per_year):
+        score = -1e9 + float(selection_min_yearly_trades)
     row = {
         "candidate_id": candidate_id,
         "stage": int(stage),
+        "search_method": str(search_method),
         "family": config.family,
         "score": score,
-        "selection_split": "train",
+        "selection_split": str(selection_split),
+        "selection_min_yearly_trades": int(selection_min_yearly_trades),
+        "min_selection_trades_per_year": int(min_selection_trades_per_year),
         "locked_opened": False,
     }
     for prefix, metrics in (("train", train), ("validation", validation)):
@@ -583,11 +629,126 @@ def evaluate_candidate(
         row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
         row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
         row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
-    yearly = yearly_trade_performance(trades_df, benchmark_prices)
     return row, trades_df, yearly
 
 
-def sample_config(rng: np.random.Generator) -> IndicatorConfig:
+_NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
+    "breakout_lookback": (10, 126, True),
+    "base_lookback": (5, 80, True),
+    "volume_lookback": (10, 100, True),
+    "rs_lookback": (10, 126, True),
+    "high_lookback": (63, 252, True),
+    "low_lookback": (63, 252, True),
+    "ma_short": (20, 80, True),
+    "ma_mid": (80, 180, True),
+    "ma_long": (120, 220, True),
+    "oneil_fast_ma": (5, 20, True),
+    "oneil_mid_ma": (10, 40, True),
+    "volume_multiple": (1.0, 3.0, False),
+    "max_base_range_pct": (0.06, 0.40, False),
+    "rs_near_high_pct": (0.85, 1.0, False),
+    "near_high_pct": (0.60, 0.98, False),
+    "above_low_multiple": (1.0, 1.90, False),
+    "rsi_period": (7, 21, True),
+    "rsi_max": (55.0, 98.0, False),
+    "prior_runup_lookback": (15, 126, True),
+    "prior_runup_min_pct": (0.05, 1.20, False),
+    "volume_dryup_lookback": (3, 30, True),
+    "volume_dryup_max_ratio": (0.30, 1.10, False),
+    "episodic_gap_pct": (0.02, 0.18, False),
+    "min_adr_pct": (0.002, 0.08, False),
+    "adr_lookback": (5, 40, True),
+    "stop_loss_pct": (0.03, 0.16, False),
+    "trailing_stop_pct": (0.04, 0.30, False),
+    "take_profit_pct": (0.0, 1.50, False),
+    "max_holding_days": (3, 90, True),
+    "exit_ma_days": (5, 50, True),
+}
+
+
+def _sample_dehb_real_config(rng: np.random.Generator) -> IndicatorConfig:
+    family = str(rng.choice(["minervini_sepa", "oneil_canslim", "quallamaggie"], p=[0.25, 0.35, 0.40]))
+    params: dict[str, Any] = {
+        "family": family,
+        "breakout_lookback": int(rng.choice([10, 15, 20, 30, 50, 63, 100])),
+        "base_lookback": int(rng.choice([5, 10, 15, 20, 30, 40])),
+        "volume_lookback": int(rng.choice([10, 20, 30, 50, 80])),
+        "rs_lookback": int(rng.choice([21, 42, 63, 126])),
+        "volume_multiple": float(rng.uniform(1.0, 2.0)),
+        "max_base_range_pct": float(rng.uniform(0.10, 0.32)),
+        "rs_near_high_pct": float(rng.uniform(0.88, 1.0)),
+        "near_high_pct": float(rng.uniform(0.65, 0.92)),
+        "above_low_multiple": float(rng.uniform(1.00, 1.60)),
+        "rsi_max": float(rng.uniform(65.0, 95.0)),
+        "prior_runup_lookback": int(rng.choice([20, 30, 42, 63, 90])),
+        "prior_runup_min_pct": float(rng.uniform(0.08, 0.65)),
+        "volume_dryup_lookback": int(rng.choice([5, 10, 15, 20])),
+        "volume_dryup_max_ratio": float(rng.uniform(0.45, 1.0)),
+        "episodic_gap_pct": float(rng.uniform(0.03, 0.10)),
+        "min_adr_pct": float(rng.uniform(0.003, 0.045)),
+        "stop_loss_pct": float(rng.uniform(0.04, 0.12)),
+        "trailing_stop_pct": float(rng.uniform(0.05, 0.22)),
+        "take_profit_pct": float(rng.choice([0.0, 0.0, rng.uniform(0.18, 0.80)])),
+        "max_holding_days": int(rng.choice([5, 8, 10, 15, 20, 30, 45, 60])),
+        "exit_ma_days": int(rng.choice([10, 20, 21, 50])),
+        "use_exit_ma": bool(rng.random() < 0.90),
+    }
+    if family == "minervini_sepa":
+        params.update(
+            minervini_trend=bool(rng.random() < 0.75),
+            require_rs=bool(rng.random() < 0.55),
+            require_base_tight=bool(rng.random() < 0.60),
+            require_breakout=bool(rng.random() < 0.80),
+            require_pocket_pivot=bool(rng.random() < 0.20),
+        )
+    elif family == "oneil_canslim":
+        params.update(
+            minervini_trend=bool(rng.random() < 0.35),
+            require_rs=bool(rng.random() < 0.50),
+            require_oneil_stack=bool(rng.random() < 0.85),
+            require_base_tight=bool(rng.random() < 0.50),
+            require_breakout=bool(rng.random() < 0.80),
+        )
+    else:
+        params.update(
+            minervini_trend=bool(rng.random() < 0.20),
+            require_rs=bool(rng.random() < 0.25),
+            require_base_tight=bool(rng.random() < 0.45),
+            require_breakout=bool(rng.random() < 0.70),
+            require_prior_runup=bool(rng.random() < 0.55),
+            require_volume_dryup=bool(rng.random() < 0.35),
+            require_episodic_gap=bool(rng.random() < 0.08),
+        )
+    return IndicatorConfig(**params)
+
+
+def _mutate_config(rng: np.random.Generator, base: IndicatorConfig) -> IndicatorConfig:
+    data = base.to_dict()
+    field_names = [field.name for field in fields(IndicatorConfig) if field.name != "family"]
+    for name in rng.choice(field_names, size=int(rng.integers(3, 8)), replace=False):
+        value = data[name]
+        if isinstance(value, bool):
+            if rng.random() < 0.35:
+                data[name] = not value
+            continue
+        if name not in _NUMERIC_BOUNDS:
+            continue
+        low, high, is_int = _NUMERIC_BOUNDS[name]
+        if isinstance(value, int) or is_int:
+            step = int(max(1, round((high - low) * rng.uniform(-0.18, 0.18))))
+            data[name] = int(np.clip(int(value) + step, low, high))
+        else:
+            scale = float(rng.uniform(0.75, 1.25))
+            jitter = float(rng.normal(0.0, (high - low) * 0.04))
+            data[name] = float(np.clip(float(value) * scale + jitter, low, high))
+    if rng.random() < 0.08:
+        data["family"] = str(rng.choice(["minervini_sepa", "oneil_canslim", "quallamaggie"]))
+    return IndicatorConfig(**data)
+
+
+def sample_config(rng: np.random.Generator, search_method: str = DEFAULT_SEARCH_METHOD) -> IndicatorConfig:
+    if search_method == "dehb_real":
+        return _sample_dehb_real_config(rng)
     family = str(rng.choice(["minervini_sepa", "oneil_canslim", "quallamaggie"]))
     params: dict[str, Any] = {
         "family": family,
@@ -661,16 +822,29 @@ def _choose_surrogate_configs(
     rng: np.random.Generator,
     observed: list[tuple[IndicatorConfig, float]],
     count: int,
+    search_method: str = DEFAULT_SEARCH_METHOD,
 ) -> tuple[list[IndicatorConfig], bool]:
     if count <= 0:
         return [], False
+    if search_method == "dehb_real":
+        if not observed:
+            return [sample_config(rng, search_method=search_method) for _ in range(count)], False
+        ranked = sorted(observed, key=lambda item: item[1], reverse=True)
+        parents = [cfg for cfg, _score in ranked[: min(12, max(3, len(ranked) // 4))]]
+        configs: list[IndicatorConfig] = []
+        for _ in range(count):
+            if parents and rng.random() < 0.75:
+                configs.append(_mutate_config(rng, parents[int(rng.integers(0, len(parents)))]))
+            else:
+                configs.append(sample_config(rng, search_method=search_method))
+        return configs, True
     if len(observed) < 12:
-        return [sample_config(rng) for _ in range(count)], False
+        return [sample_config(rng, search_method=search_method) for _ in range(count)], False
     try:
         from sklearn.ensemble import ExtraTreesRegressor
     except Exception:
-        return [sample_config(rng) for _ in range(count)], False
-    pool = [sample_config(rng) for _ in range(max(count * 5, 50))]
+        return [sample_config(rng, search_method=search_method) for _ in range(count)], False
+    pool = [sample_config(rng, search_method=search_method) for _ in range(max(count * 5, 50))]
     x = np.asarray([_config_vector(cfg) for cfg, _score in observed], dtype=float)
     y = np.asarray([score for _cfg, score in observed], dtype=float)
     model = ExtraTreesRegressor(n_estimators=96, max_depth=8, random_state=int(rng.integers(0, 2**31 - 1)))
@@ -704,10 +878,17 @@ def run_stage(
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
+    search_method: str = DEFAULT_SEARCH_METHOD,
+    selection_split: str = DEFAULT_SELECTION_SPLIT,
+    min_selection_trades_per_year: int = 0,
 ) -> dict[str, Any]:
     pack_dir = Path(pack_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if search_method not in SEARCH_METHODS:
+        raise ValueError(f"unknown search_method {search_method!r}; expected one of {SEARCH_METHODS}")
+    if selection_split not in SELECTION_SPLITS:
+        raise ValueError(f"unknown selection_split {selection_split!r}; expected one of {SELECTION_SPLITS}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
     rng = np.random.default_rng(int(seed) + int(stage) * 1009)
@@ -715,7 +896,7 @@ def run_stage(
     deadline = start + max(float(time_budget_minutes), 0.01) * 60.0
     initial = min(int(configs_per_stage), max(24, int(configs_per_stage * 0.35)))
     remaining = max(int(configs_per_stage) - initial, 0)
-    configs = [sample_config(rng) for _ in range(initial)]
+    configs = [sample_config(rng, search_method=search_method) for _ in range(initial)]
     observed: list[tuple[IndicatorConfig, float]] = []
     rows: list[dict[str, Any]] = []
     trade_frames: list[pd.DataFrame] = []
@@ -736,6 +917,9 @@ def run_stage(
             train_end=train_end,
             validation_start=validation_start,
             validation_end=validation_end,
+            search_method=search_method,
+            selection_split=selection_split,
+            min_selection_trades_per_year=min_selection_trades_per_year,
         )
         rows.append(row)
         observed.append((config, float(row["score"])))
@@ -743,10 +927,19 @@ def run_stage(
             trade_frames.append(trades)
         if not yearly.empty:
             yearly_frames.append(yearly)
-        rules.append({"candidate_id": candidate_id, "stage": int(stage), "config": config.to_dict(), "score": row["score"]})
+        rules.append(
+            {
+                "candidate_id": candidate_id,
+                "stage": int(stage),
+                "search_method": str(search_method),
+                "selection_split": str(selection_split),
+                "config": config.to_dict(),
+                "score": row["score"],
+            }
+        )
         sequence += 1
         if sequence == initial and remaining > 0:
-            extra, used = _choose_surrogate_configs(rng, observed, remaining)
+            extra, used = _choose_surrogate_configs(rng, observed, remaining, search_method=search_method)
             surrogate_used = surrogate_used or used
             configs.extend(extra)
     leaderboard = pd.DataFrame(rows, columns=LEADERBOARD_COLUMNS)
@@ -780,8 +973,10 @@ def run_stage(
         "configs_requested": int(configs_per_stage),
         "configs_evaluated": int(len(rows)),
         "surrogate_used": bool(surrogate_used),
+        "search_method": str(search_method),
         "locked_opened": False,
-        "selection_split": "train",
+        "selection_split": str(selection_split),
+        "min_selection_trades_per_year": int(min_selection_trades_per_year),
         "elapsed_seconds": round(time.monotonic() - start, 3),
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
@@ -947,7 +1142,12 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
         "candidates": candidates_before,
         "top_n": int(len(leaderboard)),
         "locked_opened": False,
-        "selection_split": "train",
+        "selection_split": (
+            None if leaderboard.empty or "selection_split" not in leaderboard.columns else str(leaderboard.iloc[0]["selection_split"])
+        ),
+        "search_method": (
+            None if leaderboard.empty or "search_method" not in leaderboard.columns else str(leaderboard.iloc[0]["search_method"])
+        ),
         "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
         "best_score": None if leaderboard.empty else float(leaderboard.iloc[0]["score"]),
     }
@@ -992,6 +1192,9 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
     parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
     parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
+    parser.add_argument("--search-method", choices=SEARCH_METHODS, default=DEFAULT_SEARCH_METHOD)
+    parser.add_argument("--selection-split", choices=SELECTION_SPLITS, default=DEFAULT_SELECTION_SPLIT)
+    parser.add_argument("--min-selection-trades-per-year", type=int, default=0)
     args = parser.parse_args(argv)
     summary = run_stage(
         pack_dir=args.pack_dir,
@@ -1004,6 +1207,9 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
         train_end=args.train_end,
         validation_start=args.validation_start,
         validation_end=args.validation_end,
+        search_method=args.search_method,
+        selection_split=args.selection_split,
+        min_selection_trades_per_year=args.min_selection_trades_per_year,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

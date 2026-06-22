@@ -245,6 +245,39 @@ def test_run_stage_smoke_writes_outputs_from_synthetic_pack(tmp_path: Path) -> N
     assert (out / "top_indicator_rules.jsonl").exists()
 
 
+def test_run_stage_supports_dehb_real_validation_selection(tmp_path: Path) -> None:
+    pack = tmp_path / "pack" / "stage-000"
+    pack.mkdir(parents=True)
+    frame = _breakout_frame(360)
+    frame["date"] = pd.date_range("2009-01-02", periods=len(frame), freq="B")
+    frame.to_parquet(pack / "prices.parquet", index=False)
+    spy = _spy_frame(360)
+    spy["date"] = pd.date_range("2009-01-02", periods=len(spy), freq="B")
+    spy.to_parquet(pack / "benchmark.parquet", index=False)
+
+    out = tmp_path / "stage-output"
+    summary = gtbi.run_stage(
+        pack_dir=pack,
+        output_dir=out,
+        stage=0,
+        configs_per_stage=4,
+        time_budget_minutes=0.05,
+        top_per_stage=2,
+        train_end="2009-09-30",
+        validation_start="2009-10-01",
+        validation_end="2010-06-30",
+        search_method="dehb_real",
+        selection_split="validation",
+        min_selection_trades_per_year=0,
+    )
+
+    leaderboard = pd.read_csv(out / "leaderboard.csv")
+    assert summary["search_method"] == "dehb_real"
+    assert summary["selection_split"] == "validation"
+    assert set(leaderboard["search_method"].dropna()) <= {"dehb_real"}
+    assert set(leaderboard["selection_split"].dropna()) <= {"validation"}
+
+
 def test_workflow_is_manual_355_job_indicator_run() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-355jobs.yml")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -258,3 +291,7 @@ def test_workflow_is_manual_355_job_indicator_run() -> None:
     assert "max-parallel: 177" in text
     assert "27936694743" in text
     assert "global-technical-buy-indicator-355jobs-results" in text
+    assert "search_method" in text
+    assert "--search-method" in text
+    assert "--selection-split" in text
+    assert "--min-selection-trades-per-year" in text
