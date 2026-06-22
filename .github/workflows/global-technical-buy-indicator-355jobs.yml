@@ -106,10 +106,50 @@ jobs:
           import os
           from pathlib import Path
 
-          from aurora.core.free_us_daily import build_benchmarks
+          import pandas as pd
+          import yfinance as yf
 
           data_root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
-          payload = build_benchmarks(root=data_root, symbols=["SPY"])
+          out_dir = data_root / "benchmarks"
+          out_dir.mkdir(parents=True, exist_ok=True)
+          frame = yf.download(
+              "SPY",
+              period="max",
+              interval="1d",
+              auto_adjust=False,
+              actions=True,
+              progress=False,
+              threads=False,
+          )
+          if frame.empty:
+              raise SystemExit("SPY benchmark download returned no rows")
+          if isinstance(frame.columns, pd.MultiIndex):
+              frame.columns = [str(col[0]).strip().lower().replace(" ", "_") for col in frame.columns]
+          else:
+              frame.columns = [str(col).strip().lower().replace(" ", "_") for col in frame.columns]
+          frame = frame.reset_index().rename(columns={"date": "date", "adj_close": "adj_close"})
+          if "date" not in frame.columns:
+              frame = frame.rename(columns={frame.columns[0]: "date"})
+          for col in ("open", "high", "low", "close"):
+              if col not in frame.columns:
+                  raise SystemExit(f"SPY benchmark missing {col}")
+          if "adj_close" not in frame.columns:
+              frame["adj_close"] = frame["close"]
+          if "volume" not in frame.columns:
+              frame["volume"] = 0
+          frame["date"] = pd.to_datetime(frame["date"], errors="coerce", utc=True).dt.tz_convert(None)
+          frame = frame.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date")
+          frame["symbol"] = "SPY"
+          cols = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+          out_path = out_dir / "SPY.parquet"
+          frame[cols].to_parquet(out_path, index=False)
+          payload = {
+              "symbol": "SPY",
+              "rows": int(len(frame)),
+              "first_date": str(frame["date"].min().date()),
+              "last_date": str(frame["date"].max().date()),
+              "path": str(out_path),
+          }
           print(json.dumps(payload, indent=2, sort_keys=True))
           PY
       - name: Build grouped stage packs
