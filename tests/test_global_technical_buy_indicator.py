@@ -262,6 +262,45 @@ def test_pack_builder_excludes_locked_rows_and_splits_symbols(tmp_path: Path) ->
     assert pd.to_datetime(shard["date"]).max() < pd.Timestamp("2020-01-01")
 
 
+def test_pack_builder_filters_symbols_by_min_market_cap(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    normalized = lake / "normalized"
+    metadata = lake / "metadata"
+    normalized.mkdir(parents=True)
+    metadata.mkdir(parents=True)
+    for symbol in ("BIG", "SMALL", "MISSING", "SPY"):
+        frame = _breakout_frame(300)
+        frame["symbol"] = symbol
+        frame["date"] = pd.date_range("2019-01-02", periods=len(frame), freq="B")
+        frame.to_parquet(normalized / f"{symbol}.parquet", index=False)
+    pd.DataFrame(
+        {
+            "canonical_symbol": ["BIG", "SMALL", "MISSING"],
+            "security_name": ["Big", "Small", "Missing"],
+        }
+    ).to_parquet(lake / "universe.parquet", index=False)
+    pd.DataFrame(
+        {
+            "symbol": ["BIG", "SMALL"],
+            "market_cap": [3_000_000_000, 500_000_000],
+        }
+    ).to_parquet(metadata / "company_metadata.parquet", index=False)
+
+    out = tmp_path / "pack"
+    manifest = gtbi.build_stage_packs(
+        lake,
+        out,
+        stage_count=1,
+        locked_start="2020-06-01",
+        min_market_cap=2_000_000_000,
+    )
+
+    shard = pd.read_parquet(out / "stage-000" / "prices.parquet")
+    assert sorted(shard["symbol"].unique()) == ["BIG"]
+    assert manifest["min_market_cap"] == 2_000_000_000
+    assert manifest["symbols_requested"] == 1
+
+
 def test_run_stage_smoke_writes_outputs_from_synthetic_pack(tmp_path: Path) -> None:
     pack = tmp_path / "pack" / "stage-000"
     pack.mkdir(parents=True)
@@ -353,5 +392,6 @@ def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
     text = path.read_text(encoding="utf-8")
     assert "range(64)" in text
     assert "--family-set" in text
+    assert "--min-market-cap" in text
     assert "tradingview_minervini" in text
     assert "tradingview-minervini-indicator-small-results" in text

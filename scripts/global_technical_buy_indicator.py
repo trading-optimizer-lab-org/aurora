@@ -1186,6 +1186,27 @@ def _read_universe_symbols(lake_root: Path) -> list[str]:
     raise FileNotFoundError(f"could not find universe under {lake_root}")
 
 
+def _filter_symbols_by_market_cap(lake_root: Path, symbols: list[str], min_market_cap: float) -> list[str]:
+    if float(min_market_cap) <= 0:
+        return symbols
+    candidates = [
+        lake_root / "metadata" / "company_metadata.parquet",
+        lake_root / "company_metadata.parquet",
+    ]
+    metadata_path = next((path for path in candidates if path.exists()), None)
+    if metadata_path is None:
+        raise FileNotFoundError(f"min_market_cap requested but company metadata not found under {lake_root}")
+    metadata = pd.read_parquet(metadata_path)
+    if "market_cap" not in metadata.columns:
+        raise ValueError(f"{metadata_path} does not contain market_cap")
+    symbol_column = next((column for column in ("symbol", "canonical_symbol", "yfinance_symbol") if column in metadata.columns), None)
+    if symbol_column is None:
+        raise ValueError(f"{metadata_path} does not contain a symbol column")
+    cap = pd.to_numeric(metadata["market_cap"], errors="coerce")
+    eligible = set(metadata.loc[cap >= float(min_market_cap), symbol_column].dropna().astype(str))
+    return [symbol for symbol in symbols if symbol in eligible]
+
+
 def _load_benchmark(lake_root: Path, locked_start: str) -> pd.DataFrame:
     candidates = [
         lake_root / "normalized" / "SPY.parquet",
@@ -1207,11 +1228,13 @@ def build_stage_packs(
     group_count: int = 1,
     locked_start: str = DEFAULT_LOCKED_START,
     min_rows: int = 260,
+    min_market_cap: float = 0.0,
 ) -> dict[str, Any]:
     lake_root = Path(lake_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    symbols = _read_universe_symbols(lake_root)
+    all_symbols = _read_universe_symbols(lake_root)
+    symbols = _filter_symbols_by_market_cap(lake_root, all_symbols, min_market_cap)
     normalized = lake_root / "normalized"
     benchmark = _load_benchmark(lake_root, locked_start)
     grouped: dict[int, list[str]] = {stage: [] for stage in range(stage_count)}
@@ -1257,6 +1280,8 @@ def build_stage_packs(
         "stage_count": int(stage_count),
         "group_count": int(group_count),
         "locked_start": str(locked_start),
+        "min_market_cap": float(min_market_cap),
+        "symbols_before_market_cap_filter": int(len(all_symbols)),
         "symbols_requested": int(len(symbols)),
         "stages": stage_rows,
         "locked_opened": False,
@@ -1353,6 +1378,7 @@ def build_pack_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--group-count", type=int, default=32)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--min-rows", type=int, default=260)
+    parser.add_argument("--min-market-cap", type=float, default=0.0)
     args = parser.parse_args(argv)
     manifest = build_stage_packs(
         args.data_lake_root,
@@ -1361,6 +1387,7 @@ def build_pack_cli(argv: list[str] | None = None) -> int:
         group_count=args.group_count,
         locked_start=args.locked_start,
         min_rows=args.min_rows,
+        min_market_cap=args.min_market_cap,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
