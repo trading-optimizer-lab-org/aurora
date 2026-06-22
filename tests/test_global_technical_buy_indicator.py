@@ -538,3 +538,17 @@ def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
     assert "--scoring-profile" in text
     assert "tradingview_minervini" in text
     assert "tradingview-minervini-indicator-small-results" in text
+
+
+def test_final_recheck_workflow_reuses_stage_artifacts() -> None:
+    path = Path(".github/workflows/global-technical-buy-indicator-final-recheck.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["name"] == "Global Technical Buy Indicator Final Recheck"
+    assert "workflow_dispatch" in data[True]
+
+    text = path.read_text(encoding="utf-8")
+    assert "source_run_id" in text
+    assert "global-technical-buy-indicator-stage-*" in text
+    assert "merge_global_technical_buy_indicator_results.py" in text
+    assert "reevaluate_global_technical_buy_indicator_results.py" in text
+    assert "global-technical-buy-indicator-final-recheck-results" in text
