@@ -1,0 +1,259 @@
+name: TradingView Minervini Indicator Small
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_run_id:
+        description: "Run id containing free-global-yahoo-daily-data-lake"
+        required: true
+        default: "27936694743"
+      data_artifact_name:
+        description: "Source data lake artifact"
+        required: true
+        default: "free-global-yahoo-daily-data-lake"
+      configs_per_stage:
+        description: "Indicator configs per stage"
+        required: true
+        default: "300"
+      time_budget_minutes:
+        description: "Per-stage search budget"
+        required: true
+        default: "5"
+      search_method:
+        description: "Search method"
+        required: true
+        default: "dehb_real"
+        type: choice
+        options:
+          - surrogate_ml
+          - dehb_real
+      selection_split:
+        description: "Split used for scoring"
+        required: true
+        default: "validation"
+        type: choice
+        options:
+          - train
+          - validation
+      min_selection_trades_per_year:
+        description: "Minimum closed trades in every selected split year"
+        required: true
+        default: "50"
+      top_per_stage:
+        description: "Top candidates kept per stage"
+        required: true
+        default: "20"
+      final_top_n:
+        description: "Top candidates kept in final merge"
+        required: true
+        default: "100"
+      train_end:
+        description: "Train end date"
+        required: true
+        default: "2010-12-31"
+      validation_start:
+        description: "Validation start date"
+        required: true
+        default: "2011-01-01"
+      validation_end:
+        description: "Validation end date"
+        required: true
+        default: "2020-12-31"
+      locked_start:
+        description: "Locked/OOS start date, excluded from pack"
+        required: true
+        default: "2021-01-01"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        name: Build 64-stage matrix
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          rows = [
+              {"stage": i, "stage_padded": f"{i:03d}", "group": f"{i % 8:03d}"}
+              for i in range(64)
+          ]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}\n")
+          PY
+
+  build_pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download clean global data lake
+        run: |
+          mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "${{ inputs.data_artifact_name }}" \
+            --dir "$QF_DATA_DIR/prices/free_us_daily"
+      - name: Ensure SPY benchmark exists
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+          import yfinance as yf
+
+          data_root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
+          out_dir = data_root / "benchmarks"
+          out_dir.mkdir(parents=True, exist_ok=True)
+          frame = yf.download("SPY", period="max", interval="1d", auto_adjust=False, actions=True, progress=False, threads=False)
+          if frame.empty:
+              raise SystemExit("SPY benchmark download returned no rows")
+          if isinstance(frame.columns, pd.MultiIndex):
+              frame.columns = [str(col[0]).strip().lower().replace(" ", "_") for col in frame.columns]
+          else:
+              frame.columns = [str(col).strip().lower().replace(" ", "_") for col in frame.columns]
+          frame = frame.reset_index()
+          if "date" not in frame.columns:
+              frame = frame.rename(columns={frame.columns[0]: "date"})
+          if "adj_close" not in frame.columns:
+              frame["adj_close"] = frame["close"]
+          if "volume" not in frame.columns:
+              frame["volume"] = 0
+          frame["date"] = pd.to_datetime(frame["date"], errors="coerce", utc=True).dt.tz_convert(None)
+          frame = frame.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date")
+          frame["symbol"] = "SPY"
+          cols = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+          out_path = out_dir / "SPY.parquet"
+          frame[cols].to_parquet(out_path, index=False)
+          print(json.dumps({"symbol": "SPY", "rows": int(len(frame)), "path": str(out_path)}, indent=2, sort_keys=True))
+          PY
+      - name: Build grouped stage packs
+        run: |
+          python scripts/build_global_technical_buy_indicator_pack.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --output-dir "$QF_DATA_DIR/runs/tradingview_minervini_indicator_small/pack" \
+            --stage-count 64 \
+            --group-count 8 \
+            --locked-start "${{ inputs.locked_start }}" \
+            --min-rows 260
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-000, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-000", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-001, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-001", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-002, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-002", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-003, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-003", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-004, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-004", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-005, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-005", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-006, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-006", if-no-files-found: error, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: tradingview-minervini-indicator-pack-group-007, path: "${{ env.QF_DATA_DIR }}/runs/tradingview_minervini_indicator_small/pack/group-007", if-no-files-found: error, retention-days: 3 }
+
+  search:
+    needs: [plan, build_pack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 64
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download pack group
+        uses: actions/download-artifact@v4
+        with:
+          name: tradingview-minervini-indicator-pack-group-${{ matrix.group }}
+          path: pack-group
+      - name: Run stage
+        run: |
+          python scripts/run_global_technical_buy_indicator_stage.py \
+            --pack-dir "pack-group/stage-${{ matrix.stage_padded }}" \
+            --output-dir "outputs/stage-${{ matrix.stage_padded }}" \
+            --stage "${{ matrix.stage }}" \
+            --configs-per-stage "${{ inputs.configs_per_stage }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --top-per-stage "${{ inputs.top_per_stage }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --search-method "${{ inputs.search_method }}" \
+            --selection-split "${{ inputs.selection_split }}" \
+            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}" \
+            --family-set tradingview_minervini
+      - name: Upload stage output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingview-minervini-indicator-stage-${{ matrix.stage_padded }}
+          path: outputs/stage-${{ matrix.stage_padded }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  merge:
+    needs: [search]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tradingview-minervini-indicator-stage-*
+          path: downloaded-stages
+      - name: Merge
+        run: |
+          python scripts/merge_global_technical_buy_indicator_results.py \
+            --stages-root downloaded-stages \
+            --output-dir final \
+            --top-n "${{ inputs.final_top_n }}"
+      - name: Upload final results
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingview-minervini-indicator-small-results
+          path: final
+          if-no-files-found: error
+          retention-days: 14
