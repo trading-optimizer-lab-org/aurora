@@ -116,9 +116,8 @@ jobs:
           retention-days: 14
 
   merge_dataset:
-    if: ${{ github.event.inputs.mode != 'audit' }}
     needs: [build_universe, download_prices]
-    if: always()
+    if: ${{ always() && github.event.inputs.mode != 'audit' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
