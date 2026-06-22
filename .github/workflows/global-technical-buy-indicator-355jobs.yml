@@ -19,6 +19,26 @@ on:
         description: "Per-stage search budget"
         required: true
         default: "25"
+      search_method:
+        description: "Search method"
+        required: true
+        default: "surrogate_ml"
+        type: choice
+        options:
+          - surrogate_ml
+          - dehb_real
+      selection_split:
+        description: "Split used for scoring"
+        required: true
+        default: "train"
+        type: choice
+        options:
+          - train
+          - validation
+      min_selection_trades_per_year:
+        description: "Minimum closed trades in every selected split year"
+        required: true
+        default: "0"
       top_per_stage:
         description: "Top candidates kept per stage"
         required: true
@@ -295,7 +315,10 @@ jobs:
             --top-per-stage "${{ inputs.top_per_stage }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}"
+            --validation-end "${{ inputs.validation_end }}" \
+            --search-method "${{ inputs.search_method }}" \
+            --selection-split "${{ inputs.selection_split }}" \
+            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4
@@ -342,7 +365,10 @@ jobs:
             --top-per-stage "${{ inputs.top_per_stage }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}"
+            --validation-end "${{ inputs.validation_end }}" \
+            --search-method "${{ inputs.search_method }}" \
+            --selection-split "${{ inputs.selection_split }}" \
+            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4
