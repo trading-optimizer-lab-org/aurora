@@ -125,6 +125,32 @@ def test_tradingview_pocket_pivot_signal_uses_minervini_and_volume_breakout() ->
     assert bool(signal.iloc[-1]) is True
 
 
+def test_market_trend_filter_blocks_buys_when_spy_regime_is_down() -> None:
+    frame = _breakout_frame(260)
+    frame["date"] = pd.date_range("2010-01-04", periods=len(frame), freq="B")
+    spy = _spy_frame(260)
+    spy["date"] = frame["date"]
+    spy["close"] = np.linspace(120.0, 80.0, len(spy))
+    spy["open"] = spy["close"]
+    spy["high"] = spy["close"] * 1.002
+    spy["low"] = spy["close"] * 0.998
+    config = gtbi.IndicatorConfig(
+        family="minervini_sepa",
+        minervini_trend=False,
+        require_rs=False,
+        require_base_tight=False,
+        require_breakout=False,
+        require_market_trend=True,
+        market_ma_days=50,
+        market_momentum_days=21,
+        rsi_max=100.0,
+    )
+
+    signal = gtbi.entry_signal(frame, spy, config)
+
+    assert not bool(signal.iloc[-1])
+
+
 def test_simulate_trades_uses_next_session_open_and_stop_loss() -> None:
     idx = pd.date_range("2011-01-03", periods=8, freq="B")
     frame = pd.DataFrame(

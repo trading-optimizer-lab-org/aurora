@@ -125,6 +125,7 @@ class IndicatorConfig:
     require_volume_dryup: bool = False
     require_prior_runup: bool = False
     require_episodic_gap: bool = False
+    require_market_trend: bool = False
     breakout_lookback: int = 50
     base_lookback: int = 20
     volume_lookback: int = 50
@@ -156,6 +157,8 @@ class IndicatorConfig:
     max_holding_days: int = 60
     use_exit_ma: bool = True
     exit_ma_days: int = 20
+    market_ma_days: int = 200
+    market_momentum_days: int = 21
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -262,8 +265,14 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         rs_ok = (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
     else:
         rs_ok = _safe_bool_series(True, index)
+        spy_close = pd.Series(np.nan, index=index)
     if not config.require_rs:
         rs_ok = _safe_bool_series(True, index)
+    if config.require_market_trend and not benchmark.empty:
+        market_ma = spy_close.rolling(config.market_ma_days, min_periods=min(config.market_ma_days, len(frame))).mean()
+        market_trend = (spy_close > market_ma) & (spy_close > spy_close.shift(config.market_momentum_days))
+    else:
+        market_trend = _safe_bool_series(True, index)
 
     resistance = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
     avg_vol = volume.rolling(config.volume_lookback, min_periods=min(config.volume_lookback, len(frame))).mean()
@@ -396,7 +405,7 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         signal = rsi_rebound
     else:
         signal = trend_ok & rs_ok & breakout & pocket_pivot & rsi_ok
-    return signal.fillna(False).astype(bool)
+    return (signal & market_trend).fillna(False).astype(bool)
 
 
 def _open_or_close(frame: pd.DataFrame, idx: int) -> float:
@@ -962,6 +971,8 @@ _NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
     "take_profit_pct": (0.0, 1.50, False),
     "max_holding_days": (3, 90, True),
     "exit_ma_days": (5, 50, True),
+    "market_ma_days": (50, 250, True),
+    "market_momentum_days": (5, 126, True),
 }
 
 
@@ -991,6 +1002,9 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
         "max_holding_days": int(rng.choice([5, 8, 10, 15, 20, 30, 45, 60])),
         "exit_ma_days": int(rng.choice([10, 20, 21, 50])),
         "use_exit_ma": bool(rng.random() < 0.90),
+        "require_market_trend": bool(rng.random() < 0.55),
+        "market_ma_days": int(rng.choice([50, 100, 150, 200])),
+        "market_momentum_days": int(rng.choice([10, 21, 42, 63, 126])),
     }
     if family == "minervini_sepa":
         params.update(
@@ -1139,6 +1153,9 @@ def sample_config(
         "max_holding_days": int(rng.integers(10, 181)),
         "exit_ma_days": int(rng.choice([10, 20, 21, 50])),
         "use_exit_ma": bool(rng.random() < 0.80),
+        "require_market_trend": bool(rng.random() < 0.45),
+        "market_ma_days": int(rng.choice([50, 100, 150, 200])),
+        "market_momentum_days": int(rng.choice([10, 21, 42, 63, 126])),
     }
     if family == "minervini_sepa":
         params.update(
