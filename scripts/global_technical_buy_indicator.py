@@ -27,6 +27,20 @@ DEFAULT_SEARCH_METHOD = "surrogate_ml"
 SEARCH_METHODS = ("surrogate_ml", "dehb_real")
 DEFAULT_SELECTION_SPLIT = "train"
 SELECTION_SPLITS = ("train", "validation")
+DEFAULT_FAMILIES = ("minervini_sepa", "oneil_canslim", "quallamaggie")
+TRADINGVIEW_MINERVINI_FAMILIES = (
+    "tv_minervini_qualifier",
+    "tv_minervini_trend_template_ema",
+    "tv_minervini_trend_template_sepa_pro",
+    "tv_pocket_pivot_breakout",
+    "tv_5ma_oneil_minervini",
+    "tv_minervini_mtc",
+    "tv_weinstein_stage",
+    "tv_breakout_finder",
+    "tv_rsi_strategy",
+)
+ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES
+FAMILY_SETS = ("default", "tradingview_minervini", "all")
 
 PRICE_COLUMNS = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
 LEADERBOARD_COLUMNS = [
@@ -181,6 +195,16 @@ def _safe_bool_series(value: bool, index: pd.Index) -> pd.Series:
     return pd.Series(bool(value), index=index, dtype=bool)
 
 
+def _families_for_set(family_set: str) -> tuple[str, ...]:
+    if family_set == "default":
+        return DEFAULT_FAMILIES
+    if family_set == "tradingview_minervini":
+        return TRADINGVIEW_MINERVINI_FAMILIES
+    if family_set == "all":
+        return ALL_FAMILIES
+    raise ValueError(f"unknown family_set {family_set!r}; expected one of {FAMILY_SETS}")
+
+
 def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
     """Return same-day buy indicator. Execution happens next session."""
 
@@ -197,6 +221,9 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
     sma_short = close.rolling(config.ma_short, min_periods=config.ma_short).mean()
     sma_mid = close.rolling(config.ma_mid, min_periods=config.ma_mid).mean()
     sma_long = close.rolling(config.ma_long, min_periods=config.ma_long).mean()
+    ema_short = close.ewm(span=config.ma_short, adjust=False, min_periods=config.ma_short).mean()
+    ema_mid = close.ewm(span=config.ma_mid, adjust=False, min_periods=config.ma_mid).mean()
+    ema_long = close.ewm(span=config.ma_long, adjust=False, min_periods=config.ma_long).mean()
     high_n = high.rolling(config.high_lookback, min_periods=min(config.high_lookback, len(frame))).max()
     low_n = low.rolling(config.low_lookback, min_periods=min(config.low_lookback, len(frame))).min()
     trend_ok = (
@@ -266,11 +293,92 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         gap = _safe_bool_series(True, index)
 
     rsi_ok = _rsi(close, config.rsi_period).fillna(50.0) <= config.rsi_max
+    rsi_line = _rsi(close, config.rsi_period).fillna(50.0)
+    ema_trend_ok = (
+        (close > ema_short)
+        & (close > ema_mid)
+        & (close > ema_long)
+        & (ema_short > ema_mid)
+        & (ema_mid > ema_long)
+        & (ema_long > ema_long.shift(21))
+        & (close >= high_n * config.near_high_pct)
+        & (close >= low_n * config.above_low_multiple)
+    )
+    sma50 = close.rolling(50, min_periods=50).mean()
+    sma150 = close.rolling(150, min_periods=150).mean()
+    sma200 = close.rolling(200, min_periods=200).mean()
+    ma10_sma = close.rolling(10, min_periods=10).mean()
+    ma21_sma = close.rolling(21, min_periods=21).mean()
+    oneil_buy = (
+        (close > sma50)
+        & (close > sma200)
+        & (sma50 > sma50.shift(20))
+        & (sma200 > sma200.shift(20))
+        & (close >= high_n * max(config.near_high_pct, 0.85))
+    )
+    minervini_5ma_buy = (
+        (ma10_sma > ma21_sma)
+        & (ma21_sma > sma50)
+        & (ma10_sma > ma10_sma.shift(5))
+        & (ma21_sma > ma21_sma.shift(5))
+        & (close >= high_n * max(config.near_high_pct, 0.75))
+        & (close >= low_n * max(config.above_low_multiple, 1.25))
+    )
+    mtc_ok = (
+        (close > sma50)
+        & (close > sma150)
+        & (close > sma200)
+        & (sma50 > sma150)
+        & (sma150 > sma200)
+        & (sma200 > sma200.shift(21))
+        & (close >= low_n * config.above_low_multiple)
+        & (close >= high_n * config.near_high_pct)
+    )
+    stage2 = (close > sma150) & (sma150 > sma150.shift(20)) & (sma50 > sma150)
+    stage2_minervini = stage2 & (close > sma50) & (sma50 > sma150) & (sma150 > sma200) & (sma200 > sma200.shift(21))
+    pocket_pivot_3pct = (
+        ((close / frame["open"].replace(0.0, np.nan) - 1.0) >= 0.03)
+        & (volume > max_down_vol)
+        & (close > ema_short)
+        & (close > ema_long)
+    )
+    channel_high = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
+    channel_low = low.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).min()
+    channel_width = ((channel_high - channel_low) / close).fillna(np.inf)
+    tests = (high.shift(1) >= channel_high * (1.0 - max(config.max_base_range_pct, 0.02))).rolling(
+        config.base_lookback, min_periods=max(2, min(config.base_lookback, 5))
+    ).sum()
+    breakout_finder = (
+        (close > channel_high)
+        & (tests >= 2)
+        & (channel_width <= max(config.max_base_range_pct, 0.02))
+        & (volume >= avg_vol * max(config.volume_multiple, 1.0))
+    )
+    oversold_level = max(15.0, min(45.0, 100.0 - float(config.rsi_max)))
+    rsi_rebound = (rsi_line.shift(1) <= oversold_level) & (rsi_line > oversold_level) & (close > sma_long)
 
     if config.family == "oneil_canslim":
         signal = oneil_stack & rs_ok & breakout & rsi_ok
     elif config.family == "quallamaggie":
         signal = (trend_ok | (close > sma_short)) & prior_runup & dryup & (breakout | gap) & adr_ok & rsi_ok
+    elif config.family == "tv_minervini_qualifier":
+        signal = trend_ok & rs_ok & (close > close.rolling(20, min_periods=20).mean()) & rsi_ok
+    elif config.family == "tv_minervini_trend_template_ema":
+        signal = ema_trend_ok & (breakout if config.require_breakout else _safe_bool_series(True, index)) & rsi_ok
+    elif config.family == "tv_minervini_trend_template_sepa_pro":
+        signal = ema_trend_ok & rs_ok & (base_tight | dryup) & (breakout | gap) & rsi_ok
+    elif config.family == "tv_pocket_pivot_breakout":
+        signal = ema_trend_ok & (pocket_pivot | pocket_pivot_3pct) & rsi_ok
+    elif config.family == "tv_5ma_oneil_minervini":
+        signal = ((oneil_buy & minervini_5ma_buy) | (config.require_breakout and breakout)) & rsi_ok
+    elif config.family == "tv_minervini_mtc":
+        signal = mtc_ok & rsi_ok
+    elif config.family == "tv_weinstein_stage":
+        signal = (stage2_minervini if config.minervini_trend else stage2) & rsi_ok
+    elif config.family == "tv_breakout_finder":
+        signal = breakout_finder & rsi_ok
+    elif config.family == "tv_rsi_strategy":
+        signal = rsi_rebound
     else:
         signal = trend_ok & rs_ok & breakout & pocket_pivot & rsi_ok
     return signal.fillna(False).astype(bool)
@@ -666,8 +774,8 @@ _NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
 }
 
 
-def _sample_dehb_real_config(rng: np.random.Generator) -> IndicatorConfig:
-    family = str(rng.choice(["minervini_sepa", "oneil_canslim", "quallamaggie"], p=[0.25, 0.35, 0.40]))
+def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "default") -> IndicatorConfig:
+    family = str(rng.choice(_families_for_set(family_set)))
     params: dict[str, Any] = {
         "family": family,
         "breakout_lookback": int(rng.choice([10, 15, 20, 30, 50, 63, 100])),
@@ -709,7 +817,7 @@ def _sample_dehb_real_config(rng: np.random.Generator) -> IndicatorConfig:
             require_base_tight=bool(rng.random() < 0.50),
             require_breakout=bool(rng.random() < 0.80),
         )
-    else:
+    elif family == "quallamaggie":
         params.update(
             minervini_trend=bool(rng.random() < 0.20),
             require_rs=bool(rng.random() < 0.25),
@@ -719,10 +827,72 @@ def _sample_dehb_real_config(rng: np.random.Generator) -> IndicatorConfig:
             require_volume_dryup=bool(rng.random() < 0.35),
             require_episodic_gap=bool(rng.random() < 0.08),
         )
+    elif family in {"tv_minervini_qualifier", "tv_minervini_mtc"}:
+        params.update(
+            minervini_trend=True,
+            require_rs=bool(rng.random() < 0.45),
+            require_base_tight=False,
+            require_breakout=False,
+            near_high_pct=float(rng.uniform(0.70, 0.85)),
+            above_low_multiple=float(rng.uniform(1.15, 1.45)),
+        )
+    elif family in {"tv_minervini_trend_template_ema", "tv_minervini_trend_template_sepa_pro"}:
+        params.update(
+            minervini_trend=True,
+            require_rs=bool(rng.random() < 0.50),
+            require_base_tight=bool(rng.random() < 0.60),
+            require_breakout=bool(rng.random() < 0.70),
+            require_volume_dryup=bool(rng.random() < 0.40),
+            near_high_pct=float(rng.uniform(0.70, 0.85)),
+            above_low_multiple=float(rng.uniform(1.15, 1.45)),
+        )
+    elif family == "tv_pocket_pivot_breakout":
+        params.update(
+            minervini_trend=True,
+            require_rs=bool(rng.random() < 0.35),
+            require_pocket_pivot=True,
+            require_breakout=False,
+            near_high_pct=float(rng.uniform(0.65, 0.85)),
+            above_low_multiple=float(rng.uniform(1.05, 1.45)),
+        )
+    elif family == "tv_5ma_oneil_minervini":
+        params.update(
+            minervini_trend=False,
+            require_rs=False,
+            require_breakout=bool(rng.random() < 0.35),
+            near_high_pct=float(rng.uniform(0.75, 0.90)),
+            above_low_multiple=float(rng.uniform(1.20, 1.50)),
+        )
+    elif family == "tv_weinstein_stage":
+        params.update(
+            minervini_trend=bool(rng.random() < 0.70),
+            require_rs=False,
+            require_breakout=False,
+            near_high_pct=float(rng.uniform(0.70, 0.85)),
+            above_low_multiple=float(rng.uniform(1.05, 1.35)),
+        )
+    elif family == "tv_breakout_finder":
+        params.update(
+            minervini_trend=False,
+            require_rs=False,
+            require_base_tight=True,
+            require_breakout=True,
+            breakout_lookback=int(rng.choice([20, 30, 50, 80, 100])),
+            base_lookback=int(rng.choice([10, 20, 30, 50])),
+            max_base_range_pct=float(rng.uniform(0.05, 0.18)),
+        )
+    elif family == "tv_rsi_strategy":
+        params.update(
+            minervini_trend=False,
+            require_rs=False,
+            require_breakout=False,
+            rsi_max=float(rng.uniform(60.0, 80.0)),
+            use_exit_ma=bool(rng.random() < 0.70),
+        )
     return IndicatorConfig(**params)
 
 
-def _mutate_config(rng: np.random.Generator, base: IndicatorConfig) -> IndicatorConfig:
+def _mutate_config(rng: np.random.Generator, base: IndicatorConfig, family_set: str = "default") -> IndicatorConfig:
     data = base.to_dict()
     field_names = [field.name for field in fields(IndicatorConfig) if field.name != "family"]
     for name in rng.choice(field_names, size=int(rng.integers(3, 8)), replace=False):
@@ -742,14 +912,18 @@ def _mutate_config(rng: np.random.Generator, base: IndicatorConfig) -> Indicator
             jitter = float(rng.normal(0.0, (high - low) * 0.04))
             data[name] = float(np.clip(float(value) * scale + jitter, low, high))
     if rng.random() < 0.08:
-        data["family"] = str(rng.choice(["minervini_sepa", "oneil_canslim", "quallamaggie"]))
+        data["family"] = str(rng.choice(_families_for_set(family_set)))
     return IndicatorConfig(**data)
 
 
-def sample_config(rng: np.random.Generator, search_method: str = DEFAULT_SEARCH_METHOD) -> IndicatorConfig:
+def sample_config(
+    rng: np.random.Generator,
+    search_method: str = DEFAULT_SEARCH_METHOD,
+    family_set: str = "default",
+) -> IndicatorConfig:
     if search_method == "dehb_real":
-        return _sample_dehb_real_config(rng)
-    family = str(rng.choice(["minervini_sepa", "oneil_canslim", "quallamaggie"]))
+        return _sample_dehb_real_config(rng, family_set=family_set)
+    family = str(rng.choice(_families_for_set(family_set)))
     params: dict[str, Any] = {
         "family": family,
         "breakout_lookback": int(rng.integers(20, 126)),
@@ -791,7 +965,7 @@ def sample_config(rng: np.random.Generator, search_method: str = DEFAULT_SEARCH_
             require_base_tight=bool(rng.random() < 0.70),
             require_breakout=True,
         )
-    else:
+    elif family == "quallamaggie":
         params.update(
             minervini_trend=bool(rng.random() < 0.35),
             require_rs=bool(rng.random() < 0.50),
@@ -801,12 +975,13 @@ def sample_config(rng: np.random.Generator, search_method: str = DEFAULT_SEARCH_
             require_volume_dryup=bool(rng.random() < 0.70),
             require_episodic_gap=bool(rng.random() < 0.20),
         )
+    else:
+        return _sample_dehb_real_config(rng, family_set=family_set)
     return IndicatorConfig(**params)
 
 
 def _config_vector(config: IndicatorConfig) -> list[float]:
-    family_names = ["minervini_sepa", "oneil_canslim", "quallamaggie"]
-    vector = [1.0 if config.family == name else 0.0 for name in family_names]
+    vector = [1.0 if config.family == name else 0.0 for name in ALL_FAMILIES]
     for field in fields(IndicatorConfig):
         if field.name == "family":
             continue
@@ -823,28 +998,29 @@ def _choose_surrogate_configs(
     observed: list[tuple[IndicatorConfig, float]],
     count: int,
     search_method: str = DEFAULT_SEARCH_METHOD,
+    family_set: str = "default",
 ) -> tuple[list[IndicatorConfig], bool]:
     if count <= 0:
         return [], False
     if search_method == "dehb_real":
         if not observed:
-            return [sample_config(rng, search_method=search_method) for _ in range(count)], False
+            return [sample_config(rng, search_method=search_method, family_set=family_set) for _ in range(count)], False
         ranked = sorted(observed, key=lambda item: item[1], reverse=True)
         parents = [cfg for cfg, _score in ranked[: min(12, max(3, len(ranked) // 4))]]
         configs: list[IndicatorConfig] = []
         for _ in range(count):
             if parents and rng.random() < 0.75:
-                configs.append(_mutate_config(rng, parents[int(rng.integers(0, len(parents)))]))
+                configs.append(_mutate_config(rng, parents[int(rng.integers(0, len(parents)))], family_set=family_set))
             else:
-                configs.append(sample_config(rng, search_method=search_method))
+                configs.append(sample_config(rng, search_method=search_method, family_set=family_set))
         return configs, True
     if len(observed) < 12:
-        return [sample_config(rng, search_method=search_method) for _ in range(count)], False
+        return [sample_config(rng, search_method=search_method, family_set=family_set) for _ in range(count)], False
     try:
         from sklearn.ensemble import ExtraTreesRegressor
     except Exception:
-        return [sample_config(rng, search_method=search_method) for _ in range(count)], False
-    pool = [sample_config(rng, search_method=search_method) for _ in range(max(count * 5, 50))]
+        return [sample_config(rng, search_method=search_method, family_set=family_set) for _ in range(count)], False
+    pool = [sample_config(rng, search_method=search_method, family_set=family_set) for _ in range(max(count * 5, 50))]
     x = np.asarray([_config_vector(cfg) for cfg, _score in observed], dtype=float)
     y = np.asarray([score for _cfg, score in observed], dtype=float)
     model = ExtraTreesRegressor(n_estimators=96, max_depth=8, random_state=int(rng.integers(0, 2**31 - 1)))
@@ -881,6 +1057,7 @@ def run_stage(
     search_method: str = DEFAULT_SEARCH_METHOD,
     selection_split: str = DEFAULT_SELECTION_SPLIT,
     min_selection_trades_per_year: int = 0,
+    family_set: str = "default",
 ) -> dict[str, Any]:
     pack_dir = Path(pack_dir)
     output_dir = Path(output_dir)
@@ -889,6 +1066,7 @@ def run_stage(
         raise ValueError(f"unknown search_method {search_method!r}; expected one of {SEARCH_METHODS}")
     if selection_split not in SELECTION_SPLITS:
         raise ValueError(f"unknown selection_split {selection_split!r}; expected one of {SELECTION_SPLITS}")
+    _families_for_set(family_set)
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
     rng = np.random.default_rng(int(seed) + int(stage) * 1009)
@@ -896,7 +1074,7 @@ def run_stage(
     deadline = start + max(float(time_budget_minutes), 0.01) * 60.0
     initial = min(int(configs_per_stage), max(24, int(configs_per_stage * 0.35)))
     remaining = max(int(configs_per_stage) - initial, 0)
-    configs = [sample_config(rng, search_method=search_method) for _ in range(initial)]
+    configs = [sample_config(rng, search_method=search_method, family_set=family_set) for _ in range(initial)]
     observed: list[tuple[IndicatorConfig, float]] = []
     rows: list[dict[str, Any]] = []
     trade_frames: list[pd.DataFrame] = []
@@ -933,13 +1111,20 @@ def run_stage(
                 "stage": int(stage),
                 "search_method": str(search_method),
                 "selection_split": str(selection_split),
+                "family_set": str(family_set),
                 "config": config.to_dict(),
                 "score": row["score"],
             }
         )
         sequence += 1
         if sequence == initial and remaining > 0:
-            extra, used = _choose_surrogate_configs(rng, observed, remaining, search_method=search_method)
+            extra, used = _choose_surrogate_configs(
+                rng,
+                observed,
+                remaining,
+                search_method=search_method,
+                family_set=family_set,
+            )
             surrogate_used = surrogate_used or used
             configs.extend(extra)
     leaderboard = pd.DataFrame(rows, columns=LEADERBOARD_COLUMNS)
@@ -976,6 +1161,7 @@ def run_stage(
         "search_method": str(search_method),
         "locked_opened": False,
         "selection_split": str(selection_split),
+        "family_set": str(family_set),
         "min_selection_trades_per_year": int(min_selection_trades_per_year),
         "elapsed_seconds": round(time.monotonic() - start, 3),
     }
@@ -1195,6 +1381,7 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--search-method", choices=SEARCH_METHODS, default=DEFAULT_SEARCH_METHOD)
     parser.add_argument("--selection-split", choices=SELECTION_SPLITS, default=DEFAULT_SELECTION_SPLIT)
     parser.add_argument("--min-selection-trades-per-year", type=int, default=0)
+    parser.add_argument("--family-set", choices=FAMILY_SETS, default="default")
     args = parser.parse_args(argv)
     summary = run_stage(
         pack_dir=args.pack_dir,
@@ -1210,6 +1397,7 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
         search_method=args.search_method,
         selection_split=args.selection_split,
         min_selection_trades_per_year=args.min_selection_trades_per_year,
+        family_set=args.family_set,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

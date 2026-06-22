@@ -78,6 +78,53 @@ def test_entry_signal_is_minervini_style_and_has_no_lookahead() -> None:
     pd.testing.assert_series_equal(signal.iloc[:61], shuffled_signal.iloc[:61])
 
 
+def test_tradingview_minervini_family_set_samples_only_requested_families() -> None:
+    rng = np.random.default_rng(7)
+
+    configs = [gtbi.sample_config(rng, search_method="dehb_real", family_set="tradingview_minervini") for _ in range(40)]
+
+    assert {cfg.family for cfg in configs}
+    assert {cfg.family for cfg in configs} <= set(gtbi.TRADINGVIEW_MINERVINI_FAMILIES)
+
+
+def test_tradingview_pocket_pivot_signal_uses_minervini_and_volume_breakout() -> None:
+    rows = 260
+    idx = pd.date_range("2010-01-04", periods=rows, freq="B")
+    close = np.linspace(50.0, 100.0, rows)
+    open_ = close * 0.995
+    high = close * 1.01
+    low = close * 0.99
+    volume = np.full(rows, 100_000.0)
+    close[-1] = open_[-1] * 1.04
+    high[-1] = close[-1] * 1.01
+    volume[-1] = 600_000.0
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "adj_close": close,
+            "volume": volume,
+            "symbol": "AAA",
+        }
+    )
+    spy = _spy_frame(rows)
+    spy["date"] = idx
+    config = gtbi.IndicatorConfig(
+        family="tv_pocket_pivot_breakout",
+        require_rs=False,
+        near_high_pct=0.70,
+        above_low_multiple=1.05,
+        rsi_max=100.0,
+    )
+
+    signal = gtbi.entry_signal(frame, spy, config)
+
+    assert bool(signal.iloc[-1]) is True
+
+
 def test_simulate_trades_uses_next_session_open_and_stop_loss() -> None:
     idx = pd.date_range("2011-01-03", periods=8, freq="B")
     frame = pd.DataFrame(
@@ -295,3 +342,16 @@ def test_workflow_is_manual_355_job_indicator_run() -> None:
     assert "--search-method" in text
     assert "--selection-split" in text
     assert "--min-selection-trades-per-year" in text
+
+
+def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
+    path = Path(".github/workflows/tradingview-minervini-indicator-small.yml")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["name"] == "TradingView Minervini Indicator Small"
+    assert "workflow_dispatch" in data[True]
+
+    text = path.read_text(encoding="utf-8")
+    assert "range(64)" in text
+    assert "--family-set" in text
+    assert "tradingview_minervini" in text
+    assert "tradingview-minervini-indicator-small-results" in text
