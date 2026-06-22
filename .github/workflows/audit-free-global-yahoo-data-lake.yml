@@ -1,0 +1,52 @@
+name: Audit Free Global Yahoo Daily Data Lake
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run id containing free-global-yahoo-daily-data-lake"
+        required: true
+        default: "27915802072"
+      artifact_name:
+        description: "Data lake artifact name"
+        required: true
+        default: "free-global-yahoo-daily-data-lake"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud]"
+      - name: Download final data lake artifact
+        run: |
+          mkdir -p downloaded-data
+          gh run download "${{ github.event.inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "${{ github.event.inputs.artifact_name }}" \
+            --dir downloaded-data
+          find downloaded-data -maxdepth 2 -type d | sort
+      - name: Audit data lake
+        run: |
+          python scripts/audit_free_us_daily_dataset.py \
+            --dataset-root downloaded-data \
+            --output-dir audit-output
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-global-yahoo-daily-data-lake-audit
+          path: audit-output
+          retention-days: 14
