@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+from core.execution_policy import require_github_actions_or_explicit_local_permission
 from aurora.core.free_us_daily import (
     ensure_layout,
     read_download_results,
@@ -89,6 +90,7 @@ def _merge_catalog(src_catalog: Path, dst_catalog: Path) -> int:
 
 
 def main() -> int:
+    require_github_actions_or_explicit_local_permission("free_us_daily shard merge")
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, help="QF_DATA_DIR-style root")
     parser.add_argument("--shards-dir", required=True)

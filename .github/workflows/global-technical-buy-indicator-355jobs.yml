@@ -1,0 +1,338 @@
+name: Global Technical Buy Indicator 355 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_run_id:
+        description: "Run id containing free-global-yahoo-daily-data-lake"
+        required: true
+        default: "27936694743"
+      data_artifact_name:
+        description: "Source data lake artifact"
+        required: true
+        default: "free-global-yahoo-daily-data-lake"
+      configs_per_stage:
+        description: "Indicator configs per stage"
+        required: true
+        default: "1500"
+      time_budget_minutes:
+        description: "Per-stage search budget"
+        required: true
+        default: "25"
+      top_per_stage:
+        description: "Top candidates kept per stage"
+        required: true
+        default: "50"
+      final_top_n:
+        description: "Top candidates kept in final merge"
+        required: true
+        default: "250"
+      train_end:
+        description: "Train end date"
+        required: true
+        default: "2010-12-31"
+      validation_start:
+        description: "Validation start date"
+        required: true
+        default: "2011-01-01"
+      validation_end:
+        description: "Validation end date"
+        required: true
+        default: "2020-12-31"
+      locked_start:
+        description: "Locked/OOS start date, excluded from pack"
+        required: true
+        default: "2021-01-01"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
+    steps:
+      - id: plan
+        name: Build 355-stage matrices
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          def row(stage: int) -> dict:
+              return {
+                  "stage": stage,
+                  "stage_padded": f"{stage:03d}",
+                  "group": f"{stage % 32:03d}",
+              }
+
+          all_rows = [row(i) for i in range(355)]
+          matrix_a = {"include": all_rows[:178]}
+          matrix_b = {"include": all_rows[178:]}
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"matrix_a={json.dumps(matrix_a, separators=(',', ':'))}\n")
+              handle.write(f"matrix_b={json.dumps(matrix_b, separators=(',', ':'))}\n")
+          PY
+
+  build_pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download clean global data lake
+        run: |
+          mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "${{ inputs.data_artifact_name }}" \
+            --dir "$QF_DATA_DIR/prices/free_us_daily"
+      - name: Ensure SPY benchmark exists
+        run: python -m aurora.cli.forge data free-us-daily build-benchmarks --symbols SPY --output json
+      - name: Build grouped stage packs
+        run: |
+          python scripts/build_global_technical_buy_indicator_pack.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --output-dir "$QF_DATA_DIR/runs/global_technical_buy_indicator_355jobs/pack" \
+            --stage-count 355 \
+            --group-count 32 \
+            --locked-start "${{ inputs.locked_start }}" \
+            --min-rows 260
+      - name: Upload pack group 000
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-000, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-000", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 001
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-001, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-001", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 002
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-002, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-002", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 003
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-003, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-003", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 004
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-004, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-004", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 005
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-005, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-005", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 006
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-006, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-006", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 007
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-007, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-007", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 008
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-008, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-008", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 009
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-009, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-009", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 010
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-010, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-010", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 011
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-011, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-011", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 012
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-012, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-012", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 013
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-013, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-013", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 014
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-014, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-014", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 015
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-015, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-015", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 016
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-016, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-016", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 017
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-017, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-017", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 018
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-018, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-018", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 019
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-019, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-019", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 020
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-020, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-020", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 021
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-021, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-021", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 022
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-022, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-022", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 023
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-023, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-023", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 024
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-024, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-024", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 025
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-025, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-025", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 026
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-026, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-026", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 027
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-027, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-027", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 028
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-028, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-028", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 029
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-029, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-029", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 030
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-030, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-030", if-no-files-found: error, retention-days: 3 }
+      - name: Upload pack group 031
+        uses: actions/upload-artifact@v4
+        with: { name: global-technical-buy-indicator-pack-group-031, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-031", if-no-files-found: error, retention-days: 3 }
+
+  search_a:
+    needs: [plan, build_pack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 178
+      matrix: ${{ fromJson(needs.plan.outputs.matrix_a) }}
+    env:
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download pack group
+        uses: actions/download-artifact@v4
+        with:
+          name: global-technical-buy-indicator-pack-group-${{ matrix.group }}
+          path: pack-group
+      - name: Run stage
+        run: |
+          python scripts/run_global_technical_buy_indicator_stage.py \
+            --pack-dir "pack-group/stage-${{ matrix.stage_padded }}" \
+            --output-dir "outputs/stage-${{ matrix.stage_padded }}" \
+            --stage "${{ matrix.stage }}" \
+            --configs-per-stage "${{ inputs.configs_per_stage }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --top-per-stage "${{ inputs.top_per_stage }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}"
+      - name: Upload stage output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-stage-${{ matrix.stage_padded }}
+          path: outputs/stage-${{ matrix.stage_padded }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  search_b:
+    needs: [plan, build_pack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 177
+      matrix: ${{ fromJson(needs.plan.outputs.matrix_b) }}
+    env:
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download pack group
+        uses: actions/download-artifact@v4
+        with:
+          name: global-technical-buy-indicator-pack-group-${{ matrix.group }}
+          path: pack-group
+      - name: Run stage
+        run: |
+          python scripts/run_global_technical_buy_indicator_stage.py \
+            --pack-dir "pack-group/stage-${{ matrix.stage_padded }}" \
+            --output-dir "outputs/stage-${{ matrix.stage_padded }}" \
+            --stage "${{ matrix.stage }}" \
+            --configs-per-stage "${{ inputs.configs_per_stage }}" \
+            --time-budget-minutes "${{ inputs.time_budget_minutes }}" \
+            --top-per-stage "${{ inputs.top_per_stage }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}"
+      - name: Upload stage output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-stage-${{ matrix.stage_padded }}
+          path: outputs/stage-${{ matrix.stage_padded }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  merge:
+    needs: [search_a, search_b]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download stage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: global-technical-buy-indicator-stage-*
+          path: downloaded-stages
+      - name: Merge
+        run: |
+          python scripts/merge_global_technical_buy_indicator_results.py \
+            --stages-root downloaded-stages \
+            --output-dir final \
+            --top-n "${{ inputs.final_top_n }}"
+      - name: Upload final results
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-355jobs-results
+          path: final
+          if-no-files-found: error
+          retention-days: 14
