@@ -154,7 +154,9 @@ def _audit_catalog_and_files(dataset_root: Path, universe: pd.DataFrame) -> tupl
     issues: list[dict[str, Any]] = []
     catalog = _read_catalog(dataset_root)
     normalized_dir = dataset_root / "normalized"
+    raw_dir = dataset_root / "raw" / "yfinance"
     normalized_files = {p.stem: p for p in normalized_dir.glob("*.parquet")} if normalized_dir.exists() else {}
+    raw_files = {p.stem: p for p in raw_dir.glob("*.parquet")} if raw_dir.exists() else {}
     if catalog.empty:
         issues.append(_issue("catalog", "critical", "missing or empty downloads catalog"))
         return catalog, issues
@@ -174,6 +176,9 @@ def _audit_catalog_and_files(dataset_root: Path, universe: pd.DataFrame) -> tupl
     files_without_catalog = sorted(set(normalized_files) - set(catalog["symbol"].astype(str)))
     if files_without_catalog:
         issues.append(_issue("files", "medium", "normalized parquet files outside catalog", count=len(files_without_catalog)))
+    raw_without_catalog = sorted(set(raw_files) - set(catalog["symbol"].astype(str)))
+    if raw_without_catalog:
+        issues.append(_issue("files", "medium", "raw parquet files outside catalog", count=len(raw_without_catalog)))
     return catalog, issues
 
 

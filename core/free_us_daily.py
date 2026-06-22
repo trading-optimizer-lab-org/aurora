@@ -1370,6 +1370,7 @@ def prune_universe_to_valid_prices(
         ).fillna(removed_downloads["status"].astype(str))
 
     for _, row in removed_downloads.iterrows():
+        symbol = str(row.get("symbol", "")).strip()
         for column in ("raw_path", "normalized_path"):
             raw_path = row.get(column)
             if pd.isna(raw_path) or not str(raw_path).strip():
@@ -1377,6 +1378,13 @@ def prune_universe_to_valid_prices(
             path = Path(str(raw_path))
             if path.exists():
                 path.unlink()
+        if symbol:
+            for path in (
+                paths["raw_dir"] / f"{symbol}.parquet",
+                paths["normalized_dir"] / f"{symbol}.parquet",
+            ):
+                if path.exists():
+                    path.unlink()
 
     kept_metadata = load_company_metadata(root=root)
     if not kept_metadata.empty and "symbol" in kept_metadata.columns:

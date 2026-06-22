@@ -414,8 +414,11 @@ def test_prune_universe_to_valid_prices_removes_bad_symbols_and_files(tmp_path):
     assert load_universe(root=tmp_path)["canonical_symbol"].tolist() == ["AAPL"]
     assert load_company_metadata(root=tmp_path)["symbol"].tolist() == ["AAPL"]
     assert (normalized / "AAPL.parquet").exists()
+    assert (raw / "AAPL.parquet").exists()
     assert not (normalized / "BF-B.parquet").exists()
     assert not (normalized / "BRK-B.parquet").exists()
+    assert not (raw / "BF-B.parquet").exists()
+    assert not (raw / "BRK-B.parquet").exists()
 
 
 def test_prune_universe_to_valid_prices_applies_price_quality_filters(tmp_path):
