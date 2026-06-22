@@ -421,20 +421,20 @@ def test_prune_universe_to_valid_prices_removes_bad_symbols_and_files(tmp_path):
 def test_prune_universe_to_valid_prices_applies_price_quality_filters(tmp_path):
     universe = pd.DataFrame(
         {
-            "provider_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"],
-            "canonical_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"],
-            "yfinance_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"],
-            "security_name": ["Good", "Penny", "Stale", "Illiquid"],
-            "asset_type": ["COMMON_STOCK"] * 4,
-            "exchange": ["NMS"] * 4,
-            "source_file": ["test"] * 4,
-            "source": ["test"] * 4,
-            "retrieved_at": ["now"] * 4,
+            "provider_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ", "GAPPY"],
+            "canonical_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ", "GAPPY"],
+            "yfinance_symbol": ["GOOD", "PENNY", "STALE", "ILLIQ", "GAPPY"],
+            "security_name": ["Good", "Penny", "Stale", "Illiquid", "Gappy"],
+            "asset_type": ["COMMON_STOCK"] * 5,
+            "exchange": ["NMS"] * 5,
+            "source_file": ["test"] * 5,
+            "source": ["test"] * 5,
+            "retrieved_at": ["now"] * 5,
         }
     )
     persist_universe(universe, root=tmp_path)
     persist_company_metadata_frame(
-        pd.DataFrame({"symbol": ["GOOD", "PENNY", "STALE", "ILLIQ"], "status": ["ok"] * 4}),
+        pd.DataFrame({"symbol": ["GOOD", "PENNY", "STALE", "ILLIQ", "GAPPY"], "status": ["ok"] * 5}),
         root=tmp_path,
     )
     paths = tmp_path / "prices" / "free_us_daily"
@@ -443,9 +443,13 @@ def test_prune_universe_to_valid_prices_applies_price_quality_filters(tmp_path):
     normalized.mkdir(parents=True, exist_ok=True)
     raw.mkdir(parents=True, exist_ok=True)
 
-    def write_price(symbol, close, volume, end_date):
+    def write_price(symbol, close, volume, end_date, *, long_gap=False):
         frame = normalise_yfinance_history(_yf_frame(40), symbol=symbol)
         frame["date"] = pd.date_range(end=pd.Timestamp(end_date), periods=40, freq="B").date
+        if long_gap:
+            dates = list(pd.date_range(end=pd.Timestamp(end_date), periods=39, freq="B").date)
+            dates.insert(20, pd.Timestamp("2026-01-01").date())
+            frame["date"] = dates
         frame["close"] = close
         frame["adj_close"] = close
         frame["volume"] = volume
@@ -458,6 +462,7 @@ def test_prune_universe_to_valid_prices_applies_price_quality_filters(tmp_path):
         "PENNY": write_price("PENNY", 0.5, 1_000_000, "2026-06-19"),
         "STALE": write_price("STALE", 10.0, 20_000, "2026-05-01"),
         "ILLIQ": write_price("ILLIQ", 10.0, 10, "2026-06-19"),
+        "GAPPY": write_price("GAPPY", 10.0, 20_000, "2026-06-19", long_gap=True),
     }
     with sqlite3.connect(paths / "catalog.sqlite") as con:
         rows = []
@@ -495,11 +500,13 @@ def test_prune_universe_to_valid_prices_applies_price_quality_filters(tmp_path):
         min_last_close=1.0,
         min_median_dollar_volume_90d=100_000,
         max_last_date_age_days=10,
+        max_calendar_gap_days=31,
         reference_date="2026-06-22",
     )
 
-    assert report["removed_total"] == 3
+    assert report["removed_total"] == 4
     assert report["removed_by_reason"] == {
+        "calendar_gap_above_max": 1,
         "last_close_below_min": 1,
         "last_date_too_old": 1,
         "median_dollar_volume_below_min": 1,

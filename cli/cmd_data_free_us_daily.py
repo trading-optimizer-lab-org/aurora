@@ -262,6 +262,7 @@ def cmd_free_us_daily_prune_valid_prices(args) -> int:
                 100_000,
             ),
             max_last_date_age_days=getattr(args, "max_last_date_age_days", 10),
+            max_calendar_gap_days=getattr(args, "max_calendar_gap_days", 31),
             reference_date=getattr(args, "reference_date", None),
         )
     except Exception as exc:
@@ -600,6 +601,12 @@ def register_free_us_daily(data_sub) -> None:
         "--max-last-date-age-days",
         dest="max_last_date_age_days",
         default=10,
+        type=int,
+    )
+    p_prune.add_argument(
+        "--max-calendar-gap-days",
+        dest="max_calendar_gap_days",
+        default=31,
         type=int,
     )
     p_prune.add_argument("--reference-date", dest="reference_date", default=None)

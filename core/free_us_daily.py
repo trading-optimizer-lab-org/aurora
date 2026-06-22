@@ -1277,6 +1277,7 @@ def prune_universe_to_valid_prices(
     min_last_close: float = 1.0,
     min_median_dollar_volume_90d: float = 100_000,
     max_last_date_age_days: int = 10,
+    max_calendar_gap_days: int = 31,
     reference_date: Optional[str | pd.Timestamp] = None,
 ) -> dict[str, Any]:
     """Keep only universe symbols with valid downloaded prices."""
@@ -1322,6 +1323,11 @@ def prune_universe_to_valid_prices(
         if frame.empty:
             removal_reasons[symbol] = "empty_valid_dates"
             continue
+        if len(frame) >= 2:
+            max_gap = int(frame["date"].diff().dt.days.dropna().max())
+            if max_gap > int(max_calendar_gap_days):
+                removal_reasons[symbol] = "calendar_gap_above_max"
+                continue
         close = pd.to_numeric(frame["close"], errors="coerce")
         volume = pd.to_numeric(frame["volume"], errors="coerce").fillna(0)
         last_close = close.iloc[-1]
@@ -1436,6 +1442,7 @@ def prune_universe_to_valid_prices(
         "min_last_close": float(min_last_close),
         "min_median_dollar_volume_90d": float(min_median_dollar_volume_90d),
         "max_last_date_age_days": int(max_last_date_age_days),
+        "max_calendar_gap_days": int(max_calendar_gap_days),
         "reference_date": ref_date.date().isoformat(),
         "universe_after": int(len(kept_universe)),
         "catalog_after": int(len(rows)),

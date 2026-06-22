@@ -246,7 +246,7 @@ def _audit_price_files(
             issues.append(_issue("prices", "high", "normalized price files with data problems", count=problem_count))
         if read_errors:
             issues.append(_issue("prices", "critical", "normalized price files with read errors", count=read_errors))
-    return report.head(max_rows_out), issues
+    return report, issues
 
 
 def main() -> int:
@@ -297,7 +297,14 @@ def main() -> int:
         catalog.to_csv(output_dir / "catalog_downloads.csv", index=False)
         catalog[catalog["status"] != "ok"].to_csv(output_dir / "non_ok_downloads.csv", index=False)
     if not price_report.empty:
-        price_report.to_csv(output_dir / "price_file_audit_sample.csv", index=False)
+        price_report.head(args.max_price_issue_rows).to_csv(
+            output_dir / "price_file_audit_sample.csv",
+            index=False,
+        )
+        price_report[price_report["status"] != "ok"].to_csv(
+            output_dir / "price_file_audit_problems.csv",
+            index=False,
+        )
     if not universe.empty and "security_name" in universe:
         suspicious = universe[universe["security_name"].fillna("").astype(str).str.contains(BAD_NAME_RE)].copy()
         suspicious.to_csv(output_dir / "suspicious_names.csv", index=False)
