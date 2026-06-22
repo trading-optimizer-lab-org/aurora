@@ -1614,6 +1614,7 @@ def reevaluate_global_candidates(
     data_lake_root: Path,
     output_dir: Path,
     candidate_limit: int = 200,
+    candidate_offset: int = 0,
     min_market_cap: float = 0.0,
     locked_start: str = DEFAULT_LOCKED_START,
     train_end: str = DEFAULT_TRAIN_END,
@@ -1670,7 +1671,12 @@ def reevaluate_global_candidates(
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
 
-    ordered_ids = [str(value) for value in shard_leaderboard["candidate_id"].head(int(candidate_limit)).tolist()]
+    ordered_ids = [
+        str(value)
+        for value in shard_leaderboard["candidate_id"]
+        .iloc[int(candidate_offset) : int(candidate_offset) + int(candidate_limit)]
+        .tolist()
+    ]
     rows: list[dict[str, Any]] = []
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
@@ -1758,6 +1764,8 @@ def reevaluate_global_candidates(
         "artifact_name": ARTIFACT_NAME,
         "global_recheck": True,
         "global_recheck_candidates": int(len(leaderboard)),
+        "candidate_offset": int(candidate_offset),
+        "candidate_limit": int(candidate_limit),
         "symbols": int(len(symbol_frames)),
         "min_market_cap": float(min_market_cap),
         "locked_opened": False,
@@ -1856,6 +1864,7 @@ def reevaluate_global_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-lake-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--candidate-limit", type=int, default=200)
+    parser.add_argument("--candidate-offset", type=int, default=0)
     parser.add_argument("--min-market-cap", type=float, default=0.0)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
@@ -1868,6 +1877,7 @@ def reevaluate_global_cli(argv: list[str] | None = None) -> int:
         data_lake_root=args.data_lake_root,
         output_dir=args.output_dir,
         candidate_limit=args.candidate_limit,
+        candidate_offset=args.candidate_offset,
         min_market_cap=args.min_market_cap,
         locked_start=args.locked_start,
         train_end=args.train_end,
