@@ -39,6 +39,14 @@ on:
         description: "Minimum closed trades in every selected split year"
         required: true
         default: "50"
+      scoring_profile:
+        description: "Candidate scoring profile"
+        required: true
+        default: "default"
+        type: choice
+        options:
+          - default
+          - strict_quality
       top_per_stage:
         description: "Top candidates kept per stage"
         required: true
@@ -218,7 +226,8 @@ jobs:
             --search-method "${{ inputs.search_method }}" \
             --selection-split "${{ inputs.selection_split }}" \
             --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}" \
-            --family-set tradingview_minervini
+            --family-set tradingview_minervini \
+            --scoring-profile "${{ inputs.scoring_profile }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4

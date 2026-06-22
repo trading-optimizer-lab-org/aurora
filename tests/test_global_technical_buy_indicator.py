@@ -236,6 +236,113 @@ def test_merge_stage_outputs_is_deterministic(tmp_path: Path) -> None:
     assert (out / "top_indicator_rules.jsonl").exists()
 
 
+def _quality_yearly(candidate_id: str = "ok", *, bad_train: bool = False) -> pd.DataFrame:
+    rows = []
+    for year in range(2011, 2021):
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "split": "validation",
+                "year": year,
+                "trades": 160,
+                "avg_trade_return_pct": 0.30,
+                "median_trade_return_pct": 0.12,
+                "win_rate": 0.56,
+                "profit_factor": 1.35,
+                "avg_holding_days": 6.0,
+                "spy_return_pct": 8.0,
+            }
+        )
+    for year in range(2003, 2011):
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "split": "train",
+                "year": year,
+                "trades": 120,
+                "avg_trade_return_pct": -0.10 if bad_train and year == 2008 else 0.20,
+                "median_trade_return_pct": 0.08,
+                "win_rate": 0.54,
+                "profit_factor": 0.95 if bad_train and year == 2008 else 1.20,
+                "avg_holding_days": 6.0,
+                "spy_return_pct": 7.0,
+            }
+        )
+    return pd.DataFrame(rows, columns=gtbi.YEARLY_COLUMNS)
+
+
+def test_strict_quality_filter_accepts_only_full_stability() -> None:
+    row = {
+        "validation_avg_trade_return_pct": 0.30,
+        "validation_median_trade_return_pct": 0.12,
+        "validation_profit_factor": 1.60,
+        "validation_trades_per_year": 160.0,
+        "validation_avg_holding_days": 6.0,
+        "validation_max_drawdown_pct": -12.0,
+    }
+
+    metrics = gtbi._strict_quality_metrics(
+        row=row,
+        yearly=_quality_yearly(),
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+    bad = gtbi._strict_quality_metrics(
+        row=row,
+        yearly=_quality_yearly(bad_train=True),
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+
+    assert metrics["strict_quality_pass"] is True
+    assert metrics["validation_positive_years"] == 10
+    assert metrics["train_2003_2010_positive_years"] == 8
+    assert metrics["adjusted_return_time_risk"] == pytest.approx(0.30 / (6.0 * 12.0))
+    assert bad["strict_quality_pass"] is False
+    assert "train_2003_2010_avg_return_negative" in bad["strict_quality_failures"]
+
+
+def test_merge_stage_outputs_writes_filtered_leaderboard(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "pass",
+                "family": "tv_5ma_oneil_minervini",
+                "score": 1_000_010.0,
+                "strict_quality_pass": True,
+                "adjusted_return_time_risk": 0.004,
+                "validation_median_trade_return_pct": 0.20,
+                "validation_median_positive_years": 9,
+                "validation_max_profit_contribution_share": 0.15,
+                "validation_max_drawdown_pct": -8.0,
+                "validation_trades_per_year": 220.0,
+            },
+            {
+                "candidate_id": "fail",
+                "family": "tv_breakout_finder",
+                "score": -1.0,
+                "strict_quality_pass": False,
+                "adjusted_return_time_risk": 0.010,
+                "validation_median_trade_return_pct": 0.40,
+                "validation_median_positive_years": 6,
+                "validation_max_profit_contribution_share": 0.40,
+                "validation_max_drawdown_pct": -20.0,
+                "validation_trades_per_year": 80.0,
+            },
+        ]
+    ).to_csv(stage / "leaderboard.csv", index=False)
+
+    out = tmp_path / "merged"
+    summary = gtbi.merge_stage_outputs([stage], out, top_n=10)
+
+    filtered = pd.read_csv(out / "filtered_leaderboard.csv")
+    assert summary["filtered_candidates"] == 1
+    assert summary["best_filtered_candidate_id"] == "pass"
+    assert filtered["candidate_id"].tolist() == ["pass"]
+
+
 def test_pack_builder_excludes_locked_rows_and_splits_symbols(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     normalized = lake / "normalized"
@@ -381,6 +488,9 @@ def test_workflow_is_manual_355_job_indicator_run() -> None:
     assert "--search-method" in text
     assert "--selection-split" in text
     assert "--min-selection-trades-per-year" in text
+    assert "--family-set" in text
+    assert "--min-market-cap" in text
+    assert "--scoring-profile" in text
 
 
 def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
@@ -393,5 +503,6 @@ def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
     assert "range(64)" in text
     assert "--family-set" in text
     assert "--min-market-cap" in text
+    assert "--scoring-profile" in text
     assert "tradingview_minervini" in text
     assert "tradingview-minervini-indicator-small-results" in text
