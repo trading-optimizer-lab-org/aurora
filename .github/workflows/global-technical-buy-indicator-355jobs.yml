@@ -100,7 +100,18 @@ jobs:
             --name "${{ inputs.data_artifact_name }}" \
             --dir "$QF_DATA_DIR/prices/free_us_daily"
       - name: Ensure SPY benchmark exists
-        run: python -m aurora.cli.forge data free-us-daily build-benchmarks --symbols SPY --output json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from aurora.core.free_us_daily import build_benchmarks
+
+          data_root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
+          payload = build_benchmarks(root=data_root, symbols=["SPY"])
+          print(json.dumps(payload, indent=2, sort_keys=True))
+          PY
       - name: Build grouped stage packs
         run: |
           python scripts/build_global_technical_buy_indicator_pack.py \
