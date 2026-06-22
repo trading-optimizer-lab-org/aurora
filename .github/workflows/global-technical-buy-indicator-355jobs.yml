@@ -69,6 +69,10 @@ on:
         description: "Top candidates kept in final merge"
         required: true
         default: "250"
+      final_global_recheck_top_n:
+        description: "Top merged candidates re-evaluated on the full filtered universe, 0 disables"
+        required: true
+        default: "0"
       train_end:
         description: "Train end date"
         required: true
@@ -409,8 +413,12 @@ jobs:
     needs: [search_a, search_b]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
     env:
+      GH_TOKEN: ${{ github.token }}
       QF_DATA_DIR: ${{ github.workspace }}/qf-data
       PYTHONUNBUFFERED: "1"
     steps:
@@ -433,6 +441,72 @@ jobs:
             --stages-root downloaded-stages \
             --output-dir final \
             --top-n "${{ inputs.final_top_n }}"
+      - name: Download clean global data lake for final global recheck
+        if: ${{ inputs.final_global_recheck_top_n != '0' }}
+        run: |
+          mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "${{ inputs.data_artifact_name }}" \
+            --dir "$QF_DATA_DIR/prices/free_us_daily"
+      - name: Ensure SPY benchmark exists for final global recheck
+        if: ${{ inputs.final_global_recheck_top_n != '0' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+          import yfinance as yf
+
+          data_root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
+          out_dir = data_root / "benchmarks"
+          out_dir.mkdir(parents=True, exist_ok=True)
+          frame = yf.download(
+              "SPY",
+              period="max",
+              interval="1d",
+              auto_adjust=False,
+              actions=True,
+              progress=False,
+              threads=False,
+          )
+          if frame.empty:
+              raise SystemExit("SPY benchmark download returned no rows")
+          if isinstance(frame.columns, pd.MultiIndex):
+              frame.columns = [str(col[0]).strip().lower().replace(" ", "_") for col in frame.columns]
+          else:
+              frame.columns = [str(col).strip().lower().replace(" ", "_") for col in frame.columns]
+          frame = frame.reset_index()
+          if "date" not in frame.columns:
+              frame = frame.rename(columns={frame.columns[0]: "date"})
+          if "adj_close" not in frame.columns:
+              frame["adj_close"] = frame["close"]
+          if "volume" not in frame.columns:
+              frame["volume"] = 0
+          frame["date"] = pd.to_datetime(frame["date"], errors="coerce", utc=True).dt.tz_convert(None)
+          frame = frame.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date")
+          frame["symbol"] = "SPY"
+          cols = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+          out_path = out_dir / "SPY.parquet"
+          frame[cols].to_parquet(out_path, index=False)
+          print(json.dumps({"symbol": "SPY", "rows": int(len(frame)), "path": str(out_path)}, indent=2, sort_keys=True))
+          PY
+      - name: Final global recheck
+        if: ${{ inputs.final_global_recheck_top_n != '0' }}
+        run: |
+          python scripts/reevaluate_global_technical_buy_indicator_results.py \
+            --merged-dir final \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --output-dir final \
+            --candidate-limit "${{ inputs.final_global_recheck_top_n }}" \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --scoring-profile strict_quality
       - name: Upload final results
         uses: actions/upload-artifact@v4
         with:
