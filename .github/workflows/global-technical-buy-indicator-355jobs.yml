@@ -39,6 +39,27 @@ on:
         description: "Minimum closed trades in every selected split year"
         required: true
         default: "0"
+      scoring_profile:
+        description: "Candidate scoring profile"
+        required: true
+        default: "default"
+        type: choice
+        options:
+          - default
+          - strict_quality
+      family_set:
+        description: "Signal family set"
+        required: true
+        default: "default"
+        type: choice
+        options:
+          - default
+          - tradingview_minervini
+          - all
+      min_market_cap:
+        description: "Minimum market cap in USD, 0 disables the filter"
+        required: true
+        default: "0"
       top_per_stage:
         description: "Top candidates kept per stage"
         required: true
@@ -180,7 +201,8 @@ jobs:
             --stage-count 355 \
             --group-count 32 \
             --locked-start "${{ inputs.locked_start }}" \
-            --min-rows 260
+            --min-rows 260 \
+            --min-market-cap "${{ inputs.min_market_cap }}"
       - name: Upload pack group 000
         uses: actions/upload-artifact@v4
         with: { name: global-technical-buy-indicator-pack-group-000, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-000", if-no-files-found: error, retention-days: 3 }
@@ -318,7 +340,9 @@ jobs:
             --validation-end "${{ inputs.validation_end }}" \
             --search-method "${{ inputs.search_method }}" \
             --selection-split "${{ inputs.selection_split }}" \
-            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}"
+            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}" \
+            --family-set "${{ inputs.family_set }}" \
+            --scoring-profile "${{ inputs.scoring_profile }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4
@@ -368,7 +392,9 @@ jobs:
             --validation-end "${{ inputs.validation_end }}" \
             --search-method "${{ inputs.search_method }}" \
             --selection-split "${{ inputs.selection_split }}" \
-            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}"
+            --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}" \
+            --family-set "${{ inputs.family_set }}" \
+            --scoring-profile "${{ inputs.scoring_profile }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4

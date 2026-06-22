@@ -27,6 +27,8 @@ DEFAULT_SEARCH_METHOD = "surrogate_ml"
 SEARCH_METHODS = ("surrogate_ml", "dehb_real")
 DEFAULT_SELECTION_SPLIT = "train"
 SELECTION_SPLITS = ("train", "validation")
+DEFAULT_SCORING_PROFILE = "default"
+SCORING_PROFILES = ("default", "strict_quality")
 DEFAULT_FAMILIES = ("minervini_sepa", "oneil_canslim", "quallamaggie")
 TRADINGVIEW_MINERVINI_FAMILIES = (
     "tv_minervini_qualifier",
@@ -70,6 +72,19 @@ LEADERBOARD_COLUMNS = [
     "selection_split",
     "selection_min_yearly_trades",
     "min_selection_trades_per_year",
+    "strict_quality_pass",
+    "strict_quality_failure_count",
+    "strict_quality_failures",
+    "validation_positive_years",
+    "validation_median_positive_years",
+    "validation_min_yearly_trades",
+    "validation_min_yearly_profit_factor",
+    "validation_max_profit_contribution_share",
+    "train_2003_2010_positive_years",
+    "train_2003_2010_min_profit_factor",
+    "train_2003_2010_min_avg_trade_return_pct",
+    "adjusted_return_time_risk",
+    "scoring_profile",
     "locked_opened",
 ]
 YEARLY_COLUMNS = [
@@ -641,6 +656,133 @@ def _candidate_score(train: dict[str, float]) -> float:
     )
 
 
+def _finite_float(value: Any, default: float = float("nan")) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    return out if math.isfinite(out) else default
+
+
+def _yearly_for_split(yearly: pd.DataFrame, split: str, years: range) -> pd.DataFrame:
+    cols = [col for col in YEARLY_COLUMNS if col != "candidate_id"]
+    if yearly.empty:
+        base = pd.DataFrame({"year": list(years)})
+    else:
+        selected = yearly[yearly["split"] == split].copy()
+        base = selected.set_index("year").reindex(list(years)).reset_index()
+    base["split"] = split
+    for col in cols:
+        if col not in base.columns:
+            base[col] = np.nan
+    base["trades"] = pd.to_numeric(base["trades"], errors="coerce").fillna(0).astype(int)
+    for col in ("avg_trade_return_pct", "median_trade_return_pct", "profit_factor", "avg_holding_days", "spy_return_pct"):
+        base[col] = pd.to_numeric(base[col], errors="coerce")
+    return base
+
+
+def _strict_quality_metrics(
+    *,
+    row: dict[str, Any],
+    yearly: pd.DataFrame,
+    validation_start: str,
+    validation_end: str,
+) -> dict[str, Any]:
+    validation_years = range(_dt(validation_start).year, _dt(validation_end).year + 1)
+    validation_yearly = _yearly_for_split(yearly, "validation", validation_years)
+    train_yearly = _yearly_for_split(yearly, "train", range(2003, 2011))
+    failures: list[str] = []
+
+    validation_min_trades = int(validation_yearly["trades"].min()) if not validation_yearly.empty else 0
+    if validation_min_trades < 100:
+        failures.append("validation_yearly_trades_lt_100")
+    validation_avg = pd.to_numeric(validation_yearly["avg_trade_return_pct"], errors="coerce")
+    validation_positive_years = int((validation_avg > 0.0).sum())
+    if validation_positive_years < len(list(validation_years)):
+        failures.append("validation_not_10_positive_years")
+    validation_median = pd.to_numeric(validation_yearly["median_trade_return_pct"], errors="coerce")
+    validation_median_positive_years = int((validation_median > 0.0).sum())
+    if validation_median_positive_years < 7:
+        failures.append("validation_median_positive_years_lt_7")
+    validation_pf = pd.to_numeric(validation_yearly["profit_factor"], errors="coerce")
+    validation_min_pf = _finite_float(validation_pf.min(), default=float("-inf"))
+    if validation_min_pf < 1.05:
+        failures.append("validation_yearly_profit_factor_lt_1_05")
+
+    validation_global_median = _finite_float(row.get("validation_median_trade_return_pct"), default=float("-inf"))
+    if validation_global_median <= 0.0:
+        failures.append("validation_global_median_not_positive")
+    validation_global_pf = _finite_float(row.get("validation_profit_factor"), default=float("-inf"))
+    if validation_global_pf < 1.4:
+        failures.append("validation_profit_factor_lt_1_4")
+    validation_tpy = _finite_float(row.get("validation_trades_per_year"), default=0.0)
+    if validation_tpy < 150.0:
+        failures.append("validation_trades_per_year_lt_150")
+    validation_global_avg = _finite_float(row.get("validation_avg_trade_return_pct"), default=float("-inf"))
+    if validation_global_median <= 0.0 or validation_global_avg > validation_global_median * 5.0:
+        failures.append("validation_avg_gt_5x_median")
+
+    annual_profit = validation_avg.fillna(0.0) * validation_yearly["trades"].astype(float)
+    total_positive_profit = float(annual_profit[annual_profit > 0.0].sum())
+    if total_positive_profit > 0.0:
+        max_share = float(annual_profit.max() / total_positive_profit)
+    else:
+        max_share = 1.0
+    if max_share > 0.25:
+        failures.append("validation_profit_concentration_gt_25pct")
+
+    train_avg = pd.to_numeric(train_yearly["avg_trade_return_pct"], errors="coerce")
+    train_positive_years = int((train_avg > 0.0).sum())
+    train_pf = pd.to_numeric(train_yearly["profit_factor"], errors="coerce")
+    train_min_pf = _finite_float(train_pf.min(), default=float("-inf"))
+    train_min_avg = _finite_float(train_avg.min(), default=float("-inf"))
+    if train_positive_years < 8:
+        failures.append("train_2003_2010_not_8_positive_years")
+    if train_min_pf < 1.05:
+        failures.append("train_2003_2010_profit_factor_lt_1_05")
+    if train_min_avg < 0.0:
+        failures.append("train_2003_2010_avg_return_negative")
+
+    holding = max(_finite_float(row.get("validation_avg_holding_days"), default=0.0), 1.0)
+    drawdown = max(abs(_finite_float(row.get("validation_max_drawdown_pct"), default=0.0)), 0.01)
+    adjusted = validation_global_avg / (holding * drawdown) if math.isfinite(validation_global_avg) else float("-inf")
+    failure_text = ";".join(failures)
+    return {
+        "strict_quality_pass": bool(not failures),
+        "strict_quality_failure_count": int(len(failures)),
+        "strict_quality_failures": failure_text,
+        "validation_positive_years": int(validation_positive_years),
+        "validation_median_positive_years": int(validation_median_positive_years),
+        "validation_min_yearly_trades": int(validation_min_trades),
+        "validation_min_yearly_profit_factor": float(validation_min_pf),
+        "validation_max_profit_contribution_share": float(max_share),
+        "train_2003_2010_positive_years": int(train_positive_years),
+        "train_2003_2010_min_profit_factor": float(train_min_pf),
+        "train_2003_2010_min_avg_trade_return_pct": float(train_min_avg),
+        "adjusted_return_time_risk": float(adjusted),
+    }
+
+
+def _strict_quality_score(row: dict[str, Any]) -> float:
+    adjusted = _finite_float(row.get("adjusted_return_time_risk"), default=-1e6)
+    med = _finite_float(row.get("validation_median_trade_return_pct"), default=0.0)
+    pf = min(_finite_float(row.get("validation_profit_factor"), default=0.0), 5.0)
+    yearly_trades = min(_finite_float(row.get("validation_trades_per_year"), default=0.0), 500.0)
+    concentration = _finite_float(row.get("validation_max_profit_contribution_share"), default=1.0)
+    if bool(row.get("strict_quality_pass")):
+        return 1_000_000.0 + adjusted * 10_000.0 + med * 100.0 + pf * 10.0 + yearly_trades * 0.1 - concentration * 100.0
+    return (
+        -1_000_000.0
+        - float(row.get("strict_quality_failure_count", 99)) * 10_000.0
+        + float(row.get("validation_positive_years", 0)) * 500.0
+        + float(row.get("validation_median_positive_years", 0)) * 250.0
+        + float(row.get("train_2003_2010_positive_years", 0)) * 250.0
+        + min(float(row.get("validation_min_yearly_trades", 0)), 150.0)
+        + med * 100.0
+        + pf * 10.0
+    )
+
+
 def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
     payload = {"config": config.to_dict(), "stage": int(stage), "sequence": int(sequence)}
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -682,6 +824,7 @@ def evaluate_candidate(
     search_method: str = DEFAULT_SEARCH_METHOD,
     selection_split: str = DEFAULT_SELECTION_SPLIT,
     min_selection_trades_per_year: int = 0,
+    scoring_profile: str = DEFAULT_SCORING_PROFILE,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
     all_trades: list[pd.DataFrame] = []
     for symbol, frame in symbol_frames.items():
@@ -725,6 +868,7 @@ def evaluate_candidate(
         "selection_split": str(selection_split),
         "selection_min_yearly_trades": int(selection_min_yearly_trades),
         "min_selection_trades_per_year": int(min_selection_trades_per_year),
+        "scoring_profile": str(scoring_profile),
         "locked_opened": False,
     }
     for prefix, metrics in (("train", train), ("validation", validation)):
@@ -737,6 +881,19 @@ def evaluate_candidate(
         row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
         row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
         row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row.update(
+        _strict_quality_metrics(
+            row=row,
+            yearly=yearly,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+    )
+    if scoring_profile == "strict_quality":
+        score = _strict_quality_score(row)
+    elif scoring_profile != "default":
+        raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
+    row["score"] = score
     return row, trades_df, yearly
 
 
@@ -1058,6 +1215,7 @@ def run_stage(
     selection_split: str = DEFAULT_SELECTION_SPLIT,
     min_selection_trades_per_year: int = 0,
     family_set: str = "default",
+    scoring_profile: str = DEFAULT_SCORING_PROFILE,
 ) -> dict[str, Any]:
     pack_dir = Path(pack_dir)
     output_dir = Path(output_dir)
@@ -1066,6 +1224,8 @@ def run_stage(
         raise ValueError(f"unknown search_method {search_method!r}; expected one of {SEARCH_METHODS}")
     if selection_split not in SELECTION_SPLITS:
         raise ValueError(f"unknown selection_split {selection_split!r}; expected one of {SELECTION_SPLITS}")
+    if scoring_profile not in SCORING_PROFILES:
+        raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     _families_for_set(family_set)
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
@@ -1098,6 +1258,7 @@ def run_stage(
             search_method=search_method,
             selection_split=selection_split,
             min_selection_trades_per_year=min_selection_trades_per_year,
+            scoring_profile=scoring_profile,
         )
         rows.append(row)
         observed.append((config, float(row["score"])))
@@ -1112,6 +1273,7 @@ def run_stage(
                 "search_method": str(search_method),
                 "selection_split": str(selection_split),
                 "family_set": str(family_set),
+                "scoring_profile": str(scoring_profile),
                 "config": config.to_dict(),
                 "score": row["score"],
             }
@@ -1162,6 +1324,7 @@ def run_stage(
         "locked_opened": False,
         "selection_split": str(selection_split),
         "family_set": str(family_set),
+        "scoring_profile": str(scoring_profile),
         "min_selection_trades_per_year": int(min_selection_trades_per_year),
         "elapsed_seconds": round(time.monotonic() - start, 3),
     }
@@ -1318,8 +1481,26 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
         if summary_path.exists():
             summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
 
-    leaderboard = pd.concat(leaderboards, ignore_index=True, sort=False) if leaderboards else pd.DataFrame(columns=LEADERBOARD_COLUMNS)
-    candidates_before = int(len(leaderboard))
+    all_leaderboard = pd.concat(leaderboards, ignore_index=True, sort=False) if leaderboards else pd.DataFrame(columns=LEADERBOARD_COLUMNS)
+    candidates_before = int(len(all_leaderboard))
+    filtered_leaderboard = pd.DataFrame(columns=all_leaderboard.columns)
+    if not all_leaderboard.empty and "strict_quality_pass" in all_leaderboard.columns:
+        pass_mask = all_leaderboard["strict_quality_pass"].astype(str).str.lower().isin({"true", "1", "yes"})
+        filtered_leaderboard = all_leaderboard.loc[pass_mask].copy()
+        if not filtered_leaderboard.empty:
+            filtered_leaderboard = filtered_leaderboard.sort_values(
+                [
+                    "adjusted_return_time_risk",
+                    "validation_median_trade_return_pct",
+                    "validation_median_positive_years",
+                    "validation_max_profit_contribution_share",
+                    "validation_max_drawdown_pct",
+                    "validation_trades_per_year",
+                    "candidate_id",
+                ],
+                ascending=[False, False, False, True, False, False, True],
+            )
+    leaderboard = all_leaderboard
     if not leaderboard.empty:
         leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).head(top_n)
     top_ids = set(leaderboard["candidate_id"].astype(str)) if not leaderboard.empty else set()
@@ -1331,6 +1512,7 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
         rule_rows = [row for row in rule_rows if str(row.get("candidate_id")) in top_ids]
 
     leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
+    filtered_leaderboard.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
     yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
@@ -1352,6 +1534,7 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
         "stages_seen": int(len(summaries)),
         "candidates": candidates_before,
         "top_n": int(len(leaderboard)),
+        "filtered_candidates": int(len(filtered_leaderboard)),
         "locked_opened": False,
         "selection_split": (
             None if leaderboard.empty or "selection_split" not in leaderboard.columns else str(leaderboard.iloc[0]["selection_split"])
@@ -1361,6 +1544,10 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
         ),
         "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
         "best_score": None if leaderboard.empty else float(leaderboard.iloc[0]["score"]),
+        "best_filtered_candidate_id": None if filtered_leaderboard.empty else str(filtered_leaderboard.iloc[0]["candidate_id"]),
+        "best_filtered_adjusted_return_time_risk": (
+            None if filtered_leaderboard.empty else float(filtered_leaderboard.iloc[0]["adjusted_return_time_risk"])
+        ),
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
@@ -1409,6 +1596,7 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--selection-split", choices=SELECTION_SPLITS, default=DEFAULT_SELECTION_SPLIT)
     parser.add_argument("--min-selection-trades-per-year", type=int, default=0)
     parser.add_argument("--family-set", choices=FAMILY_SETS, default="default")
+    parser.add_argument("--scoring-profile", choices=SCORING_PROFILES, default=DEFAULT_SCORING_PROFILE)
     args = parser.parse_args(argv)
     summary = run_stage(
         pack_dir=args.pack_dir,
@@ -1425,6 +1613,7 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
         selection_split=args.selection_split,
         min_selection_trades_per_year=args.min_selection_trades_per_year,
         family_set=args.family_set,
+        scoring_profile=args.scoring_profile,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
