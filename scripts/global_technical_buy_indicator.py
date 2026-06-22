@@ -1587,6 +1587,191 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
     return summary
 
 
+def _config_from_payload(payload: dict[str, Any]) -> IndicatorConfig:
+    defaults = IndicatorConfig().to_dict()
+    values = {field.name: payload.get(field.name, defaults[field.name]) for field in fields(IndicatorConfig)}
+    return IndicatorConfig(**values)
+
+
+def _load_rule_configs(rules_path: Path) -> dict[str, IndicatorConfig]:
+    configs: dict[str, IndicatorConfig] = {}
+    if not rules_path.exists():
+        return configs
+    for line in rules_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        candidate_id = str(payload.get("candidate_id", ""))
+        config_payload = payload.get("config")
+        if candidate_id and isinstance(config_payload, dict):
+            configs[candidate_id] = _config_from_payload(config_payload)
+    return configs
+
+
+def reevaluate_global_candidates(
+    *,
+    merged_dir: Path,
+    data_lake_root: Path,
+    output_dir: Path,
+    candidate_limit: int = 200,
+    min_market_cap: float = 0.0,
+    locked_start: str = DEFAULT_LOCKED_START,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+    scoring_profile: str = "strict_quality",
+) -> dict[str, Any]:
+    merged_dir = Path(merged_dir)
+    data_lake_root = Path(data_lake_root)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shard_leaderboard_path = merged_dir / "leaderboard.csv"
+    if not shard_leaderboard_path.exists():
+        raise FileNotFoundError(f"{shard_leaderboard_path} not found")
+    shard_leaderboard = pd.read_csv(shard_leaderboard_path)
+    rule_configs = _load_rule_configs(merged_dir / "top_indicator_rules.jsonl")
+    if shard_leaderboard.empty or not rule_configs:
+        summary = {
+            "campaign_id": CAMPAIGN_ID,
+            "artifact_name": ARTIFACT_NAME,
+            "global_recheck_candidates": 0,
+            "filtered_candidates": 0,
+            "locked_opened": False,
+        }
+        (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+        return summary
+
+    if output_dir.resolve() == merged_dir.resolve():
+        for name in (
+            "leaderboard.csv",
+            "filtered_leaderboard.csv",
+            "yearly_trade_performance.csv",
+            "top_trades_sample.csv",
+            "top_indicator_rules.jsonl",
+            "family_summary.csv",
+            "summary.json",
+        ):
+            src = output_dir / name
+            dst = output_dir / f"shard_{name}"
+            if src.exists() and not dst.exists():
+                src.replace(dst)
+
+    pack_root = output_dir / "_global_recheck_pack"
+    build_stage_packs(
+        data_lake_root,
+        pack_root,
+        stage_count=1,
+        group_count=1,
+        locked_start=locked_start,
+        min_rows=260,
+        min_market_cap=min_market_cap,
+    )
+    pack_dir = pack_root / "stage-000"
+    symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
+    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+
+    ordered_ids = [str(value) for value in shard_leaderboard["candidate_id"].head(int(candidate_limit)).tolist()]
+    rows: list[dict[str, Any]] = []
+    yearly_frames: list[pd.DataFrame] = []
+    trade_frames: list[pd.DataFrame] = []
+    rules_out: list[dict[str, Any]] = []
+    for idx, candidate_id in enumerate(ordered_ids):
+        config = rule_configs.get(candidate_id)
+        if config is None:
+            continue
+        row, trades, yearly = evaluate_candidate(
+            config=config,
+            candidate_id=candidate_id,
+            stage=int(idx),
+            symbol_frames=symbol_frames,
+            benchmark_prices=benchmark,
+            train_end=train_end,
+            validation_start=validation_start,
+            validation_end=validation_end,
+            search_method="global_recheck",
+            selection_split="validation",
+            min_selection_trades_per_year=100,
+            scoring_profile=scoring_profile,
+        )
+        rows.append(row)
+        if not yearly.empty:
+            yearly_frames.append(yearly)
+        if not trades.empty:
+            trade_frames.append(trades)
+        rules_out.append(
+            {
+                "candidate_id": candidate_id,
+                "stage": int(idx),
+                "search_method": "global_recheck",
+                "selection_split": "validation",
+                "scoring_profile": scoring_profile,
+                "config": config.to_dict(),
+                "score": row["score"],
+            }
+        )
+
+    leaderboard = pd.DataFrame(rows, columns=LEADERBOARD_COLUMNS)
+    if not leaderboard.empty:
+        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    filtered = pd.DataFrame(columns=leaderboard.columns)
+    if not leaderboard.empty:
+        mask = leaderboard["strict_quality_pass"].astype(bool)
+        filtered = leaderboard.loc[mask].sort_values(
+            [
+                "adjusted_return_time_risk",
+                "validation_median_trade_return_pct",
+                "validation_median_positive_years",
+                "validation_max_profit_contribution_share",
+                "validation_max_drawdown_pct",
+                "validation_trades_per_year",
+                "candidate_id",
+            ],
+            ascending=[False, False, False, True, False, False, True],
+        )
+    yearly = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
+    trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
+    top_ids = set(leaderboard.head(250)["candidate_id"].astype(str)) if not leaderboard.empty else set()
+    if top_ids:
+        yearly = yearly[yearly["candidate_id"].astype(str).isin(top_ids)].copy()
+        trades = trades[trades["candidate_id"].astype(str).isin(top_ids)].copy()
+        rules_out = [row for row in rules_out if str(row["candidate_id"]) in top_ids]
+
+    leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
+    filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
+    yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
+    trades.head(10000).to_csv(output_dir / "top_trades_sample.csv", index=False)
+    with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
+        for row in rules_out:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    if not leaderboard.empty:
+        family = (
+            leaderboard.groupby("family", dropna=False)
+            .agg(candidates=("candidate_id", "count"), best_score=("score", "max"), avg_score=("score", "mean"))
+            .reset_index()
+            .sort_values(["best_score", "family"], ascending=[False, True])
+        )
+    else:
+        family = pd.DataFrame(columns=["family", "candidates", "best_score", "avg_score"])
+    family.to_csv(output_dir / "family_summary.csv", index=False)
+    summary = {
+        "campaign_id": CAMPAIGN_ID,
+        "artifact_name": ARTIFACT_NAME,
+        "global_recheck": True,
+        "global_recheck_candidates": int(len(leaderboard)),
+        "symbols": int(len(symbol_frames)),
+        "min_market_cap": float(min_market_cap),
+        "locked_opened": False,
+        "scoring_profile": str(scoring_profile),
+        "filtered_candidates": int(len(filtered)),
+        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
+        "best_score": None if leaderboard.empty else float(leaderboard.iloc[0]["score"]),
+        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
+        "best_filtered_adjusted_return_time_risk": None if filtered.empty else float(filtered.iloc[0]["adjusted_return_time_risk"]),
+    }
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
+
+
 def _default_run_root() -> Path:
     return base_data_dir() / "runs" / CAMPAIGN_ID
 
@@ -1661,5 +1846,34 @@ def merge_cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     stage_dirs = [p for p in args.stages_root.rglob("*") if p.is_dir() and (p / "leaderboard.csv").exists()]
     summary = merge_stage_outputs(stage_dirs, args.output_dir, top_n=args.top_n)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def reevaluate_global_cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Re-evaluate merged indicator candidates on the full filtered universe.")
+    parser.add_argument("--merged-dir", type=Path, required=True)
+    parser.add_argument("--data-lake-root", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--candidate-limit", type=int, default=200)
+    parser.add_argument("--min-market-cap", type=float, default=0.0)
+    parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
+    parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
+    parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
+    parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
+    parser.add_argument("--scoring-profile", choices=SCORING_PROFILES, default="strict_quality")
+    args = parser.parse_args(argv)
+    summary = reevaluate_global_candidates(
+        merged_dir=args.merged_dir,
+        data_lake_root=args.data_lake_root,
+        output_dir=args.output_dir,
+        candidate_limit=args.candidate_limit,
+        min_market_cap=args.min_market_cap,
+        locked_start=args.locked_start,
+        train_end=args.train_end,
+        validation_start=args.validation_start,
+        validation_end=args.validation_end,
+        scoring_profile=args.scoring_profile,
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

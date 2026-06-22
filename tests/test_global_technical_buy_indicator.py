@@ -521,6 +521,8 @@ def test_workflow_is_manual_355_job_indicator_run() -> None:
     assert "--family-set" in text
     assert "--min-market-cap" in text
     assert "--scoring-profile" in text
+    assert "final_global_recheck_top_n" in text
+    assert "reevaluate_global_technical_buy_indicator_results.py" in text
 
 
 def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
