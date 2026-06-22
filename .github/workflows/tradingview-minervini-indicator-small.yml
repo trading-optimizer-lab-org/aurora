@@ -47,6 +47,7 @@ on:
         options:
           - default
           - strict_quality
+          - frequency_quality
       top_per_stage:
         description: "Top candidates kept per stage"
         required: true
