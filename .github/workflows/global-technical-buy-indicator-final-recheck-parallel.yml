@@ -105,7 +105,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      max-parallel: 10
+      max-parallel: 4
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     permissions:
       actions: read
@@ -131,15 +131,22 @@ jobs:
       - name: Download clean global data lake
         run: |
           mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
-          gh run download "${{ inputs.data_run_id }}" \
-            --repo "${{ github.repository }}" \
-            --name "${{ inputs.data_artifact_name }}" \
-            --dir "$QF_DATA_DIR/prices/free_us_daily"
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ inputs.data_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "${{ inputs.data_artifact_name }}" \
+              --dir "$QF_DATA_DIR/prices/free_us_daily"; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          exit 1
       - name: Ensure SPY benchmark exists
         run: |
           python - <<'PY'
           import json
           import os
+          import time
           from pathlib import Path
 
           import pandas as pd
@@ -148,8 +155,25 @@ jobs:
           data_root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
           out_dir = data_root / "benchmarks"
           out_dir.mkdir(parents=True, exist_ok=True)
-          frame = yf.download("SPY", period="max", interval="1d", auto_adjust=False, actions=True, progress=False, threads=False)
+          out_path = out_dir / "SPY.parquet"
+          if out_path.exists():
+              existing = pd.read_parquet(out_path)
+              if not existing.empty:
+                  print(json.dumps({"symbol": "SPY", "rows": int(len(existing)), "path": str(out_path), "cached": True}, indent=2, sort_keys=True))
+                  raise SystemExit(0)
+          frame = pd.DataFrame()
+          last_error = None
+          for attempt in range(1, 6):
+              try:
+                  frame = yf.download("SPY", period="max", interval="1d", auto_adjust=False, actions=True, progress=False, threads=False)
+                  if not frame.empty:
+                      break
+              except Exception as exc:
+                  last_error = exc
+              time.sleep(attempt * 10)
           if frame.empty:
+              if last_error is not None:
+                  print(f"last SPY benchmark error: {last_error!r}")
               raise SystemExit("SPY benchmark download returned no rows")
           if isinstance(frame.columns, pd.MultiIndex):
               frame.columns = [str(col[0]).strip().lower().replace(" ", "_") for col in frame.columns]
@@ -166,7 +190,6 @@ jobs:
           frame = frame.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date")
           frame["symbol"] = "SPY"
           cols = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
-          out_path = out_dir / "SPY.parquet"
           frame[cols].to_parquet(out_path, index=False)
           print(json.dumps({"symbol": "SPY", "rows": int(len(frame)), "path": str(out_path)}, indent=2, sort_keys=True))
           PY
