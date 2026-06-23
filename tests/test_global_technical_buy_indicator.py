@@ -87,6 +87,59 @@ def test_tradingview_minervini_family_set_samples_only_requested_families() -> N
     assert {cfg.family for cfg in configs} <= set(gtbi.TRADINGVIEW_MINERVINI_FAMILIES)
 
 
+def test_stability_family_set_samples_only_stability_families() -> None:
+    rng = np.random.default_rng(11)
+
+    configs = [gtbi.sample_config(rng, search_method="dehb_real", family_set="stability") for _ in range(40)]
+
+    assert {cfg.family for cfg in configs}
+    assert {cfg.family for cfg in configs} <= set(gtbi.STABILITY_FAMILIES)
+    assert any(cfg.require_market_trend for cfg in configs)
+
+
+def test_stability_pullback_rebound_signal_uses_past_pullback() -> None:
+    rows = 260
+    idx = pd.date_range("2010-01-04", periods=rows, freq="B")
+    close = np.linspace(50.0, 100.0, rows)
+    close[-3] = 97.0
+    close[-2] = 95.0
+    close[-1] = 98.0
+    open_ = np.r_[close[0], close[:-1]]
+    high = np.maximum(open_, close) * 1.01
+    low = np.minimum(open_, close) * 0.99
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(rows, 100_000.0),
+            "symbol": "AAA",
+        }
+    )
+    spy = _spy_frame(rows)
+    spy["date"] = idx
+    config = gtbi.IndicatorConfig(
+        family="stability_pullback_rebound",
+        require_rs=False,
+        require_market_trend=False,
+        ma_short=20,
+        ma_mid=80,
+        ma_long=120,
+        rsi_period=7,
+        rsi_max=65.0,
+    )
+
+    signal = gtbi.entry_signal(frame, spy, config)
+
+    assert bool(signal.iloc[-1]) is True
+    changed_future = frame.copy()
+    changed_future.loc[changed_future.index[-1], "close"] = frame["close"].iloc[-1]
+    pd.testing.assert_series_equal(signal.iloc[:-1], gtbi.entry_signal(changed_future, spy, config).iloc[:-1])
+
+
 def test_tradingview_pocket_pivot_signal_uses_minervini_and_volume_breakout() -> None:
     rows = 260
     idx = pd.date_range("2010-01-04", periods=rows, freq="B")
@@ -382,6 +435,34 @@ def test_frequency_quality_score_keeps_high_frequency_near_misses_auditable() ->
     }
 
     assert gtbi._frequency_quality_score(frequent) > gtbi._frequency_quality_score(rare)
+
+
+def test_stability_quality_score_prefers_distribution_over_lottery_average() -> None:
+    stable = {
+        "strict_quality_pass": False,
+        "strict_quality_failure_count": 1,
+        "validation_min_yearly_trades": 140,
+        "validation_trades_per_year": 240.0,
+        "validation_positive_years": 10,
+        "validation_median_positive_years": 8,
+        "train_2003_2010_positive_years": 8,
+        "validation_profit_factor": 1.45,
+        "validation_min_yearly_profit_factor": 1.03,
+        "train_2003_2010_min_profit_factor": 1.08,
+        "validation_median_trade_return_pct": 0.18,
+        "validation_avg_trade_return_pct": 0.42,
+        "validation_max_profit_contribution_share": 0.22,
+    }
+    lottery = {
+        **stable,
+        "strict_quality_failure_count": 3,
+        "validation_median_positive_years": 1,
+        "validation_median_trade_return_pct": 0.01,
+        "validation_avg_trade_return_pct": 4.0,
+        "validation_max_profit_contribution_share": 0.80,
+    }
+
+    assert gtbi._stability_quality_score(stable) > gtbi._stability_quality_score(lottery)
 
 
 def test_merge_stage_outputs_writes_filtered_leaderboard(tmp_path: Path) -> None:

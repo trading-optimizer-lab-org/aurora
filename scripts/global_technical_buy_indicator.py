@@ -28,7 +28,7 @@ SEARCH_METHODS = ("surrogate_ml", "dehb_real")
 DEFAULT_SELECTION_SPLIT = "train"
 SELECTION_SPLITS = ("train", "validation")
 DEFAULT_SCORING_PROFILE = "default"
-SCORING_PROFILES = ("default", "strict_quality", "frequency_quality")
+SCORING_PROFILES = ("default", "strict_quality", "frequency_quality", "stability_quality")
 DEFAULT_FAMILIES = ("minervini_sepa", "oneil_canslim", "quallamaggie")
 TRADINGVIEW_MINERVINI_FAMILIES = (
     "tv_minervini_qualifier",
@@ -41,8 +41,13 @@ TRADINGVIEW_MINERVINI_FAMILIES = (
     "tv_breakout_finder",
     "tv_rsi_strategy",
 )
-ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES
-FAMILY_SETS = ("default", "tradingview_minervini", "all")
+STABILITY_FAMILIES = (
+    "stability_pullback_rebound",
+    "stability_trend_reclaim",
+    "stability_market_dip",
+)
+ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES + STABILITY_FAMILIES
+FAMILY_SETS = ("default", "tradingview_minervini", "stability", "all")
 
 PRICE_COLUMNS = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
 LEADERBOARD_COLUMNS = [
@@ -219,6 +224,8 @@ def _families_for_set(family_set: str) -> tuple[str, ...]:
         return DEFAULT_FAMILIES
     if family_set == "tradingview_minervini":
         return TRADINGVIEW_MINERVINI_FAMILIES
+    if family_set == "stability":
+        return STABILITY_FAMILIES
     if family_set == "all":
         return ALL_FAMILIES
     raise ValueError(f"unknown family_set {family_set!r}; expected one of {FAMILY_SETS}")
@@ -389,6 +396,29 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
     )
     oversold_level = max(15.0, min(45.0, 100.0 - float(config.rsi_max)))
     rsi_rebound = (rsi_line.shift(1) <= oversold_level) & (rsi_line > oversold_level) & (close > sma_long)
+    stock_uptrend = (close > sma_long) & (sma_short > sma_long) & (sma_long >= sma_long.shift(21))
+    soft_rs_ok = rs_ok if config.require_rs else _safe_bool_series(True, index)
+    pullback_touch = (low <= sma_short) | (low <= ma21_sma) | (close <= ma21_sma)
+    rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
+    soft_rsi_rebound = (
+        (rsi_line.shift(1) <= rsi_cap)
+        & (rsi_line > rsi_line.shift(1))
+        & (close > close.shift(1))
+    )
+    trend_reclaim = (
+        stock_uptrend
+        & ((close.shift(1) < ma10_sma.shift(1)) | (close.shift(1) < ma21_sma.shift(1)) | pullback_touch.shift(1))
+        & (close > ma10_sma)
+        & (close > ma21_sma)
+        & (rsi_line <= max(rsi_cap, 55.0))
+    )
+    market_dip = (
+        stock_uptrend
+        & (rsi_line.shift(1) <= max(30.0, min(rsi_cap, 55.0)))
+        & (rsi_line > rsi_line.shift(1))
+        & (close > close.shift(1))
+        & (close >= low_n * max(config.above_low_multiple, 1.05))
+    )
 
     if config.family == "oneil_canslim":
         signal = oneil_stack & rs_ok & breakout & rsi_ok
@@ -412,6 +442,12 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         signal = breakout_finder & rsi_ok
     elif config.family == "tv_rsi_strategy":
         signal = rsi_rebound
+    elif config.family == "stability_pullback_rebound":
+        signal = stock_uptrend & soft_rs_ok & pullback_touch.shift(1).fillna(False) & soft_rsi_rebound
+    elif config.family == "stability_trend_reclaim":
+        signal = trend_reclaim & soft_rs_ok
+    elif config.family == "stability_market_dip":
+        signal = market_dip & soft_rs_ok
     else:
         signal = trend_ok & rs_ok & breakout & pocket_pivot & rsi_ok
     return (signal & market_trend).fillna(False).astype(bool)
@@ -841,6 +877,40 @@ def _frequency_quality_score(row: dict[str, Any]) -> float:
     )
 
 
+def _stability_quality_score(row: dict[str, Any]) -> float:
+    if bool(row.get("strict_quality_pass")):
+        return _strict_quality_score(row)
+    min_trades = _finite_float(row.get("validation_min_yearly_trades"), default=0.0)
+    trades_per_year = _finite_float(row.get("validation_trades_per_year"), default=0.0)
+    val_pos = _finite_float(row.get("validation_positive_years"), default=0.0)
+    med_pos = _finite_float(row.get("validation_median_positive_years"), default=0.0)
+    train_pos = _finite_float(row.get("train_2003_2010_positive_years"), default=0.0)
+    val_pf = min(_finite_float(row.get("validation_profit_factor"), default=0.0), 5.0)
+    yearly_pf = min(_finite_float(row.get("validation_min_yearly_profit_factor"), default=0.0), 2.0)
+    train_pf = min(_finite_float(row.get("train_2003_2010_min_profit_factor"), default=0.0), 2.0)
+    med = _finite_float(row.get("validation_median_trade_return_pct"), default=0.0)
+    avg = _finite_float(row.get("validation_avg_trade_return_pct"), default=0.0)
+    concentration = _finite_float(row.get("validation_max_profit_contribution_share"), default=1.0)
+    fail_count = _finite_float(row.get("strict_quality_failure_count"), default=99.0)
+    avg_median_ratio = (avg / med) if med > 0.0 else 99.0
+    return (
+        -1_000_000.0
+        - fail_count * 60_000.0
+        + min(min_trades, 150.0) * 250.0
+        + min(trades_per_year, 500.0) * 35.0
+        + val_pos * 12_000.0
+        + med_pos * 10_000.0
+        + train_pos * 8_000.0
+        + val_pf * 10_000.0
+        + yearly_pf * 14_000.0
+        + train_pf * 10_000.0
+        + max(med, -2.0) * 12_000.0
+        + min(avg, 3.0) * 2_000.0
+        - max(concentration - 0.25, 0.0) * 120_000.0
+        - max(avg_median_ratio - 5.0, 0.0) * 15_000.0
+    )
+
+
 def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
     payload = {"config": config.to_dict(), "stage": int(stage), "sequence": int(sequence)}
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -961,6 +1031,8 @@ def evaluate_candidate(
         score = _strict_quality_score(row)
     elif scoring_profile == "frequency_quality":
         score = _frequency_quality_score(row)
+    elif scoring_profile == "stability_quality":
+        score = _stability_quality_score(row)
     elif scoring_profile != "default":
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
@@ -1122,6 +1194,30 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
             rsi_max=float(rng.uniform(60.0, 80.0)),
             use_exit_ma=bool(rng.random() < 0.70),
         )
+    elif family in STABILITY_FAMILIES:
+        params.update(
+            minervini_trend=False,
+            require_rs=bool(rng.random() < 0.35),
+            require_base_tight=False,
+            require_breakout=False,
+            require_market_trend=bool(rng.random() < 0.90),
+            use_market_exit=bool(rng.random() < 0.75),
+            use_exit_ma=bool(rng.random() < 0.45),
+            ma_short=int(rng.choice([20, 30, 50])),
+            ma_mid=int(rng.choice([80, 100, 150])),
+            ma_long=int(rng.choice([120, 150, 200])),
+            rsi_period=int(rng.choice([7, 10, 14, 21])),
+            rsi_max=float(rng.uniform(38.0, 68.0)),
+            near_high_pct=float(rng.uniform(0.45, 0.85)),
+            above_low_multiple=float(rng.uniform(1.00, 1.25)),
+            stop_loss_pct=float(rng.uniform(0.025, 0.09)),
+            trailing_stop_pct=float(rng.uniform(0.035, 0.14)),
+            take_profit_pct=float(rng.choice([0.0, rng.uniform(0.025, 0.18), rng.uniform(0.08, 0.30)])),
+            max_holding_days=int(rng.choice([2, 3, 4, 5, 8, 10, 15, 20])),
+            exit_ma_days=int(rng.choice([5, 8, 10, 15, 20])),
+            market_ma_days=int(rng.choice([50, 100, 150, 200])),
+            market_momentum_days=int(rng.choice([5, 10, 21, 42, 63])),
+        )
     return IndicatorConfig(**params)
 
 
@@ -1212,6 +1308,8 @@ def sample_config(
             require_volume_dryup=bool(rng.random() < 0.70),
             require_episodic_gap=bool(rng.random() < 0.20),
         )
+    elif family in STABILITY_FAMILIES:
+        return _sample_dehb_real_config(rng, family_set=family_set)
     else:
         return _sample_dehb_real_config(rng, family_set=family_set)
     return IndicatorConfig(**params)

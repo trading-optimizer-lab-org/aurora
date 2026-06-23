@@ -48,6 +48,7 @@ on:
           - default
           - strict_quality
           - frequency_quality
+          - stability_quality
       family_set:
         description: "Signal family set"
         required: true
@@ -56,6 +57,7 @@ on:
         options:
           - default
           - tradingview_minervini
+          - stability
           - all
       min_market_cap:
         description: "Minimum market cap in USD, 0 disables the filter"
