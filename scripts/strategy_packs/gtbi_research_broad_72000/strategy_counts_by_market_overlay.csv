@@ -1,0 +1,9 @@
+market_overlay_id,market_overlay_name,strategy_count
+spy_broad_loose_bull,SPY loose bull / frequency regime,9000
+spy_dip_but_not_broken,SPY dip but not broken,9000
+spy_distribution_light,SPY light distribution regime,9000
+spy_fast_risk_on,SPY fast risk-on regime,9000
+spy_low_vol_uptrend,SPY low-volatility uptrend,9000
+spy_momentum_positive,SPY positive 20/50-day momentum,9000
+spy_pullback_reclaim,SPY pullback reclaim regime,9000
+spy_stage2_bull,SPY Stage-2 bull regime,9000
