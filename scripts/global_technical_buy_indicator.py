@@ -911,6 +911,8 @@ def _stability_quality_score(row: dict[str, Any]) -> float:
     return (
         -1_000_000.0
         - fail_count * 60_000.0
+        - max(100.0 - min_trades, 0.0) * 4_000.0
+        - max(150.0 - trades_per_year, 0.0) * 1_000.0
         + min(min_trades, 150.0) * 250.0
         + min(trades_per_year, 500.0) * 35.0
         + val_pos * 12_000.0
@@ -919,11 +921,58 @@ def _stability_quality_score(row: dict[str, Any]) -> float:
         + val_pf * 10_000.0
         + yearly_pf * 14_000.0
         + train_pf * 10_000.0
-        + max(med, -2.0) * 12_000.0
-        + min(avg, 3.0) * 2_000.0
+        + min(max(med, -2.0), 2.0) * 12_000.0
+        + min(max(avg, -2.0), 2.0) * 2_000.0
         - max(concentration - 0.25, 0.0) * 120_000.0
         - max(avg_median_ratio - 5.0, 0.0) * 15_000.0
     )
+
+
+def _sort_for_stability(leaderboard: pd.DataFrame) -> pd.DataFrame:
+    if leaderboard.empty:
+        return leaderboard
+    out = leaderboard.copy()
+    if "strict_quality_pass" not in out.columns:
+        return out.sort_values(["score", "candidate_id"], ascending=[False, True])
+    out["_strict_pass_sort"] = out["strict_quality_pass"].astype(str).str.lower().isin({"true", "1", "yes"}).astype(int)
+    numeric_defaults = {
+        "strict_quality_failure_count": 99,
+        "validation_min_yearly_trades": 0,
+        "validation_trades_per_year": 0,
+        "validation_positive_years": 0,
+        "validation_median_positive_years": 0,
+        "train_2003_2010_positive_years": 0,
+        "validation_profit_factor": 0,
+        "validation_min_yearly_profit_factor": 0,
+        "train_2003_2010_min_profit_factor": 0,
+        "validation_median_trade_return_pct": -999,
+        "validation_avg_trade_return_pct": -999,
+        "validation_max_profit_contribution_share": 1,
+        "score": -1e99,
+    }
+    for column, default in numeric_defaults.items():
+        if column not in out.columns:
+            out[column] = default
+        out[column] = pd.to_numeric(out[column], errors="coerce").fillna(default)
+    sorted_out = out.sort_values(
+        [
+            "_strict_pass_sort",
+            "strict_quality_failure_count",
+            "validation_min_yearly_trades",
+            "validation_trades_per_year",
+            "validation_positive_years",
+            "validation_median_positive_years",
+            "train_2003_2010_positive_years",
+            "validation_profit_factor",
+            "validation_min_yearly_profit_factor",
+            "train_2003_2010_min_profit_factor",
+            "validation_max_profit_contribution_share",
+            "score",
+            "candidate_id",
+        ],
+        ascending=[False, True, False, False, False, False, False, False, False, False, True, False, True],
+    )
+    return sorted_out.drop(columns=["_strict_pass_sort"])
 
 
 def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
@@ -1487,7 +1536,7 @@ def run_stage(
             configs.extend(extra)
     leaderboard = pd.DataFrame(rows, columns=LEADERBOARD_COLUMNS)
     if not leaderboard.empty:
-        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).head(top_per_stage)
+        leaderboard = _sort_for_stability(leaderboard).head(top_per_stage)
     top_ids = set(leaderboard["candidate_id"].astype(str)) if not leaderboard.empty else set()
     trades_out = (
         pd.concat(trade_frames, ignore_index=True, sort=False)
@@ -1698,7 +1747,7 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
             )
     leaderboard = all_leaderboard
     if not leaderboard.empty:
-        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).head(top_n)
+        leaderboard = _sort_for_stability(leaderboard).head(top_n)
     top_ids = set(leaderboard["candidate_id"].astype(str)) if not leaderboard.empty else set()
     yearly = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
     trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)

@@ -492,6 +492,47 @@ def test_stability_quality_score_prefers_distribution_over_lottery_average() -> 
     assert gtbi._stability_quality_score(stable) > gtbi._stability_quality_score(lottery)
 
 
+def test_stability_sort_prefers_fewer_failures_over_lottery_score() -> None:
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "candidate_id": "lottery",
+                "score": 10_000.0,
+                "strict_quality_pass": False,
+                "strict_quality_failure_count": 8,
+                "validation_min_yearly_trades": 0,
+                "validation_trades_per_year": 1.0,
+                "validation_positive_years": 1,
+                "validation_median_positive_years": 1,
+                "train_2003_2010_positive_years": 1,
+                "validation_profit_factor": 99.0,
+                "validation_min_yearly_profit_factor": 0.0,
+                "train_2003_2010_min_profit_factor": 0.0,
+                "validation_max_profit_contribution_share": 1.0,
+            },
+            {
+                "candidate_id": "near_pass",
+                "score": -100_000.0,
+                "strict_quality_pass": False,
+                "strict_quality_failure_count": 2,
+                "validation_min_yearly_trades": 120,
+                "validation_trades_per_year": 170.0,
+                "validation_positive_years": 10,
+                "validation_median_positive_years": 8,
+                "train_2003_2010_positive_years": 8,
+                "validation_profit_factor": 1.35,
+                "validation_min_yearly_profit_factor": 1.04,
+                "train_2003_2010_min_profit_factor": 1.08,
+                "validation_max_profit_contribution_share": 0.20,
+            },
+        ]
+    )
+
+    sorted_ids = gtbi._sort_for_stability(leaderboard)["candidate_id"].tolist()
+
+    assert sorted_ids == ["near_pass", "lottery"]
+
+
 def test_merge_stage_outputs_writes_filtered_leaderboard(tmp_path: Path) -> None:
     stage = tmp_path / "stage"
     stage.mkdir()
