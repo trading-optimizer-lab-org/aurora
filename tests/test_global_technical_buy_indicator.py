@@ -942,5 +942,6 @@ def test_parallel_final_recheck_workflow_splits_candidates() -> None:
     assert '--candidate-limit "${{ matrix.limit }}"' in text
     assert "Reuse source SPY benchmark" in text
     assert "global-technical-buy-indicator-pack-group-000" in text
+    assert "rm -rf \"candidate-batch-${{ matrix.batch_padded }}/_global_recheck_pack\"" in text
     assert "global-technical-buy-indicator-recheck-batch-" in text
     assert "global-technical-buy-indicator-final-recheck-parallel-results" in text

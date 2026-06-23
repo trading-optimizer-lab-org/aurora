@@ -248,6 +248,7 @@ jobs:
             --validation-start "${{ inputs.validation_start }}" \
             --validation-end "${{ inputs.validation_end }}" \
             --scoring-profile strict_quality
+          rm -rf "candidate-batch-${{ matrix.batch_padded }}/_global_recheck_pack"
       - name: Upload candidate recheck
         uses: actions/upload-artifact@v4
         with:
