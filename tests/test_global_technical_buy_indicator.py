@@ -809,6 +809,34 @@ def test_pack_builder_filters_symbols_by_min_market_cap(tmp_path: Path) -> None:
     assert manifest["symbols_requested"] == 1
 
 
+def test_pack_builder_groups_by_group_count_not_stage_count(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    normalized = lake / "normalized"
+    normalized.mkdir(parents=True)
+    symbols = ["AAA", "BBB", "CCC", "DDD", "SPY"]
+    for symbol in symbols:
+        frame = _breakout_frame(300)
+        frame["symbol"] = symbol
+        frame["date"] = pd.date_range("2019-01-02", periods=len(frame), freq="B")
+        frame.to_parquet(normalized / f"{symbol}.parquet", index=False)
+    pd.DataFrame(
+        {
+            "canonical_symbol": ["AAA", "BBB", "CCC", "DDD"],
+            "security_name": ["A", "B", "C", "D"],
+        }
+    ).to_parquet(lake / "universe.parquet", index=False)
+
+    out = tmp_path / "pack"
+    gtbi.build_stage_packs(lake, out, stage_count=4, group_count=2, locked_start="2020-06-01")
+
+    stage_0 = pd.read_parquet(out / "group-000" / "stage-000" / "prices.parquet")
+    stage_2 = pd.read_parquet(out / "group-000" / "stage-002" / "prices.parquet")
+    stage_1 = pd.read_parquet(out / "group-001" / "stage-001" / "prices.parquet")
+    assert sorted(stage_0["symbol"].unique()) == ["AAA", "CCC"]
+    assert sorted(stage_2["symbol"].unique()) == ["AAA", "CCC"]
+    assert sorted(stage_1["symbol"].unique()) == ["BBB", "DDD"]
+
+
 def test_run_stage_smoke_writes_outputs_from_synthetic_pack(tmp_path: Path) -> None:
     pack = tmp_path / "pack" / "stage-000"
     pack.mkdir(parents=True)

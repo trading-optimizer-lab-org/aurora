@@ -1830,19 +1830,20 @@ def build_stage_packs(
     symbols = _filter_symbols_by_market_cap(lake_root, all_symbols, min_market_cap)
     normalized = lake_root / "normalized"
     benchmark = _load_benchmark(lake_root, locked_start)
-    grouped: dict[int, list[str]] = {stage: [] for stage in range(stage_count)}
+    effective_group_count = max(int(group_count), 1)
+    grouped: dict[int, list[str]] = {group: [] for group in range(effective_group_count)}
     for idx, symbol in enumerate(symbols):
-        grouped[idx % stage_count].append(symbol)
+        grouped[idx % effective_group_count].append(symbol)
     stage_rows: list[dict[str, Any]] = []
     for stage in range(stage_count):
-        group_index = stage % max(int(group_count), 1)
+        group_index = stage % effective_group_count
         if group_count > 1:
             stage_dir = output_dir / f"group-{group_index:03d}" / f"stage-{stage:03d}"
         else:
             stage_dir = output_dir / f"stage-{stage:03d}"
         stage_dir.mkdir(parents=True, exist_ok=True)
         frames: list[pd.DataFrame] = []
-        for symbol in grouped[stage]:
+        for symbol in grouped[group_index]:
             path = normalized / f"{symbol}.parquet"
             if not path.exists():
                 continue
