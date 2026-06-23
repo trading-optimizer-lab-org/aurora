@@ -98,6 +98,27 @@ def test_stability_family_set_samples_only_stability_families() -> None:
     assert any(cfg.require_market_trend for cfg in configs)
 
 
+def test_stability_rs_family_set_excludes_market_dip_and_samples_hybrid() -> None:
+    rng = np.random.default_rng(12)
+
+    configs = [gtbi.sample_config(rng, search_method="dehb_real", family_set="stability_rs") for _ in range(80)]
+    families = {cfg.family for cfg in configs}
+
+    assert families <= set(gtbi.STABILITY_RS_FAMILIES)
+    assert "stability_market_dip" not in families
+    assert "stability_rs_pullback_breakout" in set(gtbi.STABILITY_RS_FAMILIES)
+
+
+def test_seed_mutation_respects_requested_family_set() -> None:
+    rng = np.random.default_rng(13)
+    seed = gtbi.IndicatorConfig(family="stability_market_dip")
+
+    configs = gtbi._neighbourhood_configs(rng, [seed], 25, family_set="stability_rs")
+
+    assert {cfg.family for cfg in configs} <= set(gtbi.STABILITY_RS_FAMILIES)
+    assert "stability_market_dip" not in {cfg.family for cfg in configs}
+
+
 def test_stability_pullback_rebound_signal_uses_past_pullback() -> None:
     rows = 260
     idx = pd.date_range("2010-01-04", periods=rows, freq="B")

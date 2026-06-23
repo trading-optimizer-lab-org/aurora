@@ -47,9 +47,17 @@ STABILITY_FAMILIES = (
     "stability_market_dip",
     "stability_rs_momentum_pullback",
     "stability_rs_reclaim_frequent",
+    "stability_rs_pullback_breakout",
+)
+STABILITY_RS_FAMILIES = (
+    "stability_pullback_rebound",
+    "stability_trend_reclaim",
+    "stability_rs_momentum_pullback",
+    "stability_rs_reclaim_frequent",
+    "stability_rs_pullback_breakout",
 )
 ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES + STABILITY_FAMILIES
-FAMILY_SETS = ("default", "tradingview_minervini", "stability", "all")
+FAMILY_SETS = ("default", "tradingview_minervini", "stability", "stability_rs", "all")
 
 PRICE_COLUMNS = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
 LEADERBOARD_COLUMNS = [
@@ -229,6 +237,8 @@ def _families_for_set(family_set: str) -> tuple[str, ...]:
         return TRADINGVIEW_MINERVINI_FAMILIES
     if family_set == "stability":
         return STABILITY_FAMILIES
+    if family_set == "stability_rs":
+        return STABILITY_RS_FAMILIES
     if family_set == "all":
         return ALL_FAMILIES
     raise ValueError(f"unknown family_set {family_set!r}; expected one of {FAMILY_SETS}")
@@ -478,6 +488,32 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         & (close > close.shift(1))
         & (rsi_line <= max(rsi_cap, 68.0))
     )
+    short_high = high.shift(1).rolling(max(5, min(config.breakout_lookback, 21)), min_periods=5).max()
+    short_range = (
+        high.rolling(max(5, min(config.base_lookback, 21)), min_periods=5).max()
+        - low.rolling(max(5, min(config.base_lookback, 21)), min_periods=5).min()
+    ) / close.replace(0.0, np.nan)
+    controlled_pullback = (
+        (low.shift(1) <= ma21_sma.shift(1))
+        | (close.shift(1) <= ma21_sma.shift(1))
+        | (short_range.shift(1) <= max(config.max_base_range_pct, 0.08))
+    )
+    reclaim_or_breakout = (
+        ((close > ma10_sma) & (close.shift(1) <= ma10_sma.shift(1)))
+        | ((close > ma21_sma) & (close.shift(1) <= ma21_sma.shift(1)))
+        | (close > short_high)
+    )
+    rs_pullback_breakout = (
+        stock_uptrend
+        & rs_reclaim_ok
+        & frequent_runup
+        & controlled_pullback.fillna(False)
+        & reclaim_or_breakout.fillna(False)
+        & (close >= high_n * max(config.near_high_pct, 0.55))
+        & (close <= high_n * 1.02)
+        & (volume >= avg_vol * max(config.volume_multiple, 0.95))
+        & (rsi_line <= max(rsi_cap, 72.0))
+    )
 
     if config.family == "oneil_canslim":
         signal = oneil_stack & rs_ok & breakout & rsi_ok
@@ -511,6 +547,8 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         signal = rs_momentum_pullback
     elif config.family == "stability_rs_reclaim_frequent":
         signal = frequent_reclaim
+    elif config.family == "stability_rs_pullback_breakout":
+        signal = rs_pullback_breakout
     else:
         signal = trend_ok & rs_ok & breakout & pocket_pivot & rsi_ok
     return (signal & market_trend).fillna(False).astype(bool)
@@ -1427,11 +1465,42 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
                 max_holding_days=int(rng.choice([2, 3, 4, 5, 8, 10])),
                 exit_ma_days=int(rng.choice([5, 8, 10])),
             )
+        elif family == "stability_rs_pullback_breakout":
+            params.update(
+                require_rs=True,
+                require_market_trend=True,
+                strict_market_filter=bool(rng.random() < 0.70),
+                use_market_exit=True,
+                use_exit_ma=bool(rng.random() < 0.45),
+                ma_short=int(rng.choice([10, 20, 30])),
+                ma_mid=int(rng.choice([50, 80, 100])),
+                ma_long=int(rng.choice([120, 150, 200])),
+                breakout_lookback=int(rng.choice([10, 15, 20, 30])),
+                base_lookback=int(rng.choice([5, 8, 10, 15, 20])),
+                volume_lookback=int(rng.choice([10, 20, 30, 50])),
+                volume_multiple=float(rng.uniform(0.85, 1.35)),
+                max_base_range_pct=float(rng.uniform(0.06, 0.20)),
+                rs_lookback=int(rng.choice([21, 42, 63, 84])),
+                rs_near_high_pct=float(rng.uniform(0.78, 0.94)),
+                prior_runup_lookback=int(rng.choice([21, 42, 63, 90])),
+                prior_runup_min_pct=float(rng.uniform(0.03, 0.22)),
+                near_high_pct=float(rng.uniform(0.55, 0.82)),
+                rsi_period=int(rng.choice([7, 10, 14])),
+                rsi_max=float(rng.uniform(52.0, 72.0)),
+                stop_loss_pct=float(rng.uniform(0.025, 0.065)),
+                trailing_stop_pct=float(rng.uniform(0.035, 0.10)),
+                take_profit_pct=float(rng.choice([rng.uniform(0.025, 0.08), rng.uniform(0.05, 0.14)])),
+                max_holding_days=int(rng.choice([2, 3, 4, 5, 8, 10, 15])),
+                exit_ma_days=int(rng.choice([5, 8, 10, 15])),
+            )
     return IndicatorConfig(**params)
 
 
 def _mutate_config(rng: np.random.Generator, base: IndicatorConfig, family_set: str = "default") -> IndicatorConfig:
     data = base.to_dict()
+    allowed_families = _families_for_set(family_set)
+    if data["family"] not in allowed_families:
+        data["family"] = str(rng.choice(allowed_families))
     field_names = [field.name for field in fields(IndicatorConfig) if field.name != "family"]
     for name in rng.choice(field_names, size=int(rng.integers(3, 8)), replace=False):
         value = data[name]
@@ -1450,7 +1519,7 @@ def _mutate_config(rng: np.random.Generator, base: IndicatorConfig, family_set: 
             jitter = float(rng.normal(0.0, (high - low) * 0.04))
             data[name] = float(np.clip(float(value) * scale + jitter, low, high))
     if rng.random() < 0.08:
-        data["family"] = str(rng.choice(_families_for_set(family_set)))
+        data["family"] = str(rng.choice(allowed_families))
     return IndicatorConfig(**data)
 
 

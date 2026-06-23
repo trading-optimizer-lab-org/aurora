@@ -58,6 +58,7 @@ on:
           - default
           - tradingview_minervini
           - stability
+          - stability_rs
           - all
       min_market_cap:
         description: "Minimum market cap in USD, 0 disables the filter"
