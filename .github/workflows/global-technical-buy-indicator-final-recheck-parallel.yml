@@ -153,6 +153,35 @@ jobs:
             sleep $((attempt * 20))
           done
           exit 1
+      - name: Reuse source SPY benchmark
+        run: |
+          mkdir -p "$QF_DATA_DIR/prices/free_us_daily/benchmarks"
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ inputs.source_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name global-technical-buy-indicator-pack-group-000 \
+              --dir source-pack; then
+              break
+            fi
+            sleep $((attempt * 20))
+          done
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+
+          out_path = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily" / "benchmarks" / "SPY.parquet"
+          candidates = sorted(Path("source-pack").rglob("benchmark.parquet"))
+          if not candidates:
+              raise SystemExit("source run benchmark artifact not found")
+          frame = pd.read_parquet(candidates[0])
+          if frame.empty:
+              raise SystemExit("source run benchmark artifact is empty")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          frame.to_parquet(out_path, index=False)
+          print({"source_benchmark": str(candidates[0]), "rows": int(len(frame)), "out": str(out_path)})
+          PY
       - name: Ensure SPY benchmark exists
         run: |
           python - <<'PY'
