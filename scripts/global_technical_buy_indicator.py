@@ -131,6 +131,7 @@ class IndicatorConfig:
     require_prior_runup: bool = False
     require_episodic_gap: bool = False
     require_market_trend: bool = False
+    strict_market_filter: bool = False
     breakout_lookback: int = 50
     base_lookback: int = 20
     volume_lookback: int = 50
@@ -237,7 +238,21 @@ def _market_trend_ok(index: pd.Index, benchmark_prices: pd.DataFrame, config: In
         return _safe_bool_series(True, index)
     spy_close = benchmark["close"].reindex(index).ffill()
     market_ma = spy_close.rolling(config.market_ma_days, min_periods=min(config.market_ma_days, len(spy_close))).mean()
-    return ((spy_close > market_ma) & (spy_close > spy_close.shift(config.market_momentum_days))).fillna(False)
+    base = (spy_close > market_ma) & (spy_close > spy_close.shift(config.market_momentum_days))
+    if not config.strict_market_filter:
+        return base.fillna(False)
+    short_window = max(20, min(50, int(config.market_ma_days // 2)))
+    market_short = spy_close.rolling(short_window, min_periods=min(short_window, len(spy_close))).mean()
+    recent_high = spy_close.rolling(63, min_periods=min(63, len(spy_close))).max()
+    strict = (
+        base
+        & (spy_close > market_short)
+        & (market_short > market_ma)
+        & (market_ma > market_ma.shift(21))
+        & (spy_close.pct_change(10) > -0.015)
+        & (spy_close >= recent_high * 0.94)
+    )
+    return strict.fillna(False)
 
 
 def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
@@ -1103,6 +1118,7 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
         "use_exit_ma": bool(rng.random() < 0.90),
         "require_market_trend": bool(rng.random() < 0.55),
         "use_market_exit": bool(rng.random() < 0.35),
+        "strict_market_filter": bool(rng.random() < 0.20),
         "market_ma_days": int(rng.choice([50, 100, 150, 200])),
         "market_momentum_days": int(rng.choice([10, 21, 42, 63, 126])),
     }
@@ -1201,7 +1217,8 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
             require_base_tight=False,
             require_breakout=False,
             require_market_trend=bool(rng.random() < 0.90),
-            use_market_exit=bool(rng.random() < 0.75),
+            strict_market_filter=bool(rng.random() < 0.85),
+            use_market_exit=bool(rng.random() < 0.90),
             use_exit_ma=bool(rng.random() < 0.45),
             ma_short=int(rng.choice([20, 30, 50])),
             ma_mid=int(rng.choice([80, 100, 150])),
@@ -1279,6 +1296,7 @@ def sample_config(
         "use_exit_ma": bool(rng.random() < 0.80),
         "require_market_trend": bool(rng.random() < 0.45),
         "use_market_exit": bool(rng.random() < 0.30),
+        "strict_market_filter": bool(rng.random() < 0.15),
         "market_ma_days": int(rng.choice([50, 100, 150, 200])),
         "market_momentum_days": int(rng.choice([10, 21, 42, 63, 126])),
     }

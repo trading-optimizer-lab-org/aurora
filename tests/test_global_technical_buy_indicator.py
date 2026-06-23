@@ -204,6 +204,33 @@ def test_market_trend_filter_blocks_buys_when_spy_regime_is_down() -> None:
     assert not bool(signal.iloc[-1])
 
 
+def test_strict_market_filter_requires_healthy_spy_stack() -> None:
+    idx = pd.date_range("2010-01-04", periods=260, freq="B")
+    spy_close = np.r_[np.linspace(90.0, 130.0, 220), np.linspace(130.0, 112.0, 40)]
+    spy = pd.DataFrame(
+        {
+            "date": idx,
+            "open": spy_close,
+            "high": spy_close * 1.002,
+            "low": spy_close * 0.998,
+            "close": spy_close,
+            "adj_close": spy_close,
+            "volume": np.full(len(idx), 1_000_000.0),
+            "symbol": "SPY",
+        }
+    )
+    config = gtbi.IndicatorConfig(
+        require_market_trend=True,
+        strict_market_filter=True,
+        market_ma_days=120,
+        market_momentum_days=5,
+    )
+
+    strict = gtbi._market_trend_ok(idx, spy, config)
+
+    assert not bool(strict.iloc[-1])
+
+
 def test_simulate_trades_uses_next_session_open_and_stop_loss() -> None:
     idx = pd.date_range("2011-01-03", periods=8, freq="B")
     frame = pd.DataFrame(
