@@ -1,0 +1,6 @@
+trend_profile_id,trend_profile_name,strategy_count
+balanced_uptrend,Balanced uptrend,14400
+ema_stack_fast,Fast EMA stack,14400
+ma50_support_uptrend,MA50 support uptrend,14400
+near_52w_high_leader,Near 52-week-high leader,14400
+stage2_strict,Stage-2 strict MA stack,14400

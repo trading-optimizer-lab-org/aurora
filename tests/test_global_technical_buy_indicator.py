@@ -618,3 +618,189 @@ def test_parallel_final_recheck_workflow_splits_candidates() -> None:
     assert "--candidate-limit 1" in text
     assert "global-technical-buy-indicator-recheck-candidate-" in text
     assert "global-technical-buy-indicator-final-recheck-parallel-results" in text
+
+
+def _external_strategy_payload(strategy_id: str, shard_id: int = 0, slot: int = 0) -> dict:
+    return {
+        "strategy_id": strategy_id,
+        "shard_id": shard_id,
+        "slot_in_shard": slot,
+        "concept_id": "minervini_trend_template_breakout",
+        "market_overlay_id": "spy_above_sma200",
+        "trend_profile_id": "stage2_stack",
+        "rs_profile_id": "rs_vs_spy",
+        "exit_profile_id": "stop_trailing_time",
+        "aggression_id": "balanced",
+        "source_quality_score": 0.91,
+        "entry_rules": {
+            "breakout_lookback_days": 50,
+            "base_length_days_min": 20,
+            "volume_on_signal_min_adv20_mult": 1.5,
+        },
+        "market_regime_rules": {"spy_close_gt_sma200": True},
+        "stock_trend_rules": {
+            "close_gt_sma50": True,
+            "sma50_gt_sma200": True,
+            "close_within_52w_high_pct_max": 0.12,
+        },
+        "relative_strength_rules": {"return_63d_minus_spy_63d_min_pct": 0.05},
+        "exit_rules": {
+            "stop_loss_pct": 0.08,
+            "trailing_stop_pct": 0.18,
+            "max_holding_days": 35,
+        },
+        "guardrails": {
+            "data_scope": "train_validation_only",
+            "do_not_load_or_use_data_on_or_after": "2021-01-01",
+            "locked_start_exclusive": "2021-01-01",
+            "execution": "next_session_open",
+            "positioning": "long_cash_no_leverage",
+            "min_market_cap_usd": 2_000_000_000,
+            "train_end": "2010-12-31",
+            "validation_start": "2011-01-01",
+            "validation_end": "2020-12-31",
+        },
+        "research_source_ids": ["unit-test-source"],
+        "codex_notes": "synthetic test payload",
+    }
+
+
+def _write_external_shard(pack: Path, shard_id: int, rows: int) -> Path:
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    path = shard_dir / f"shard_{shard_id:03d}.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        for slot in range(rows):
+            payload = _external_strategy_payload(
+                f"gtbi_test_s{shard_id:03d}_{slot:03d}",
+                shard_id=shard_id,
+                slot=slot,
+            )
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    return path
+
+
+def test_external_pack_loader_reads_five_jsonl_strategies(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    _write_external_shard(pack, shard_id=0, rows=5)
+
+    candidates = gtbi.load_external_strategy_candidates(pack, limit=5)
+
+    assert len(candidates) == 5
+    assert candidates[0].payload["strategy_id"] == "gtbi_test_s000_000"
+    assert candidates[0].payload["guardrails"]["do_not_load_or_use_data_on_or_after"] == "2021-01-01"
+    assert candidates[0].unsupported_rules == ()
+
+
+def test_external_pack_loader_reads_one_shard_and_filters_shard_id(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    _write_external_shard(pack, shard_id=0, rows=3)
+    _write_external_shard(pack, shard_id=1, rows=4)
+
+    candidates = gtbi.load_external_strategy_candidates(pack, shard_id=1)
+
+    assert len(candidates) == 4
+    assert {item.payload["shard_id"] for item in candidates} == {1}
+
+
+def test_external_pack_loader_limit_applies_before_full_pack_scan(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    _write_external_shard(pack, shard_id=0, rows=8)
+
+    candidates = gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=2)
+
+    assert [item.payload["slot_in_shard"] for item in candidates] == [0, 1]
+
+
+def test_external_pack_loader_registers_unsupported_rule(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    payload = _external_strategy_payload("gtbi_bad_rule")
+    payload["entry_rules"]["unknown_magic_filter"] = True
+    (shard_dir / "shard_000.jsonl").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    candidate = gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=1)[0]
+
+    assert "entry_rules.unknown_magic_filter" in candidate.unsupported_rules
+
+
+def test_external_pack_real_manifest_has_360_shards_and_72000_strategies() -> None:
+    pack = Path("scripts/strategy_packs/gtbi_research_broad_72000")
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["total_strategies"] == 72_000
+    assert manifest["shard_count"] == 360
+    assert manifest["strategies_per_shard"] == 200
+    assert len(list((pack / "shards").glob("shard_*.jsonl"))) == 360
+    assert len(gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=1)) == 1
+
+
+def test_external_merge_summary_preserves_locked_start_and_no_local_machine(tmp_path: Path) -> None:
+    shard = tmp_path / "downloaded" / "gtbi-external-pack-shard-000"
+    shard.mkdir(parents=True)
+    (shard / "summary_shard_000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 5,
+                "strategies_evaluated": 4,
+                "strategies_unsupported": 1,
+                "strategies_failed": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "c1",
+                "score": 1.0,
+                "adjusted_return_time_risk": 0.25,
+                "family": "minervini_sepa",
+                "concept_id": "concept_a",
+                "market_overlay_id": "market_a",
+            }
+        ]
+    ).to_csv(shard / "leaderboard_shard_000.csv", index=False)
+    pd.DataFrame(columns=["candidate_id", "adjusted_return_time_risk"]).to_csv(
+        shard / "filtered_leaderboard_shard_000.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.YEARLY_COLUMNS).to_csv(shard / "yearly_trade_performance_shard_000.csv", index=False)
+    pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]).to_csv(
+        shard / "unsupported_strategies_shard_000.csv",
+        index=False,
+    )
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=72_000,
+        total_shards_requested=360,
+        locked_start="2021-01-01",
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+
+    assert summary["locked_start"] == "2021-01-01"
+    assert summary["github_only_run"] is True
+    assert summary["requires_local_machine"] is False
+    assert json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))["requires_local_machine"] is False
+
+
+def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
+    path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["name"] == "Global Technical Buy Indicator External Pack 360 Jobs"
+    assert "workflow_dispatch" in data[True]
+    assert "push" not in data[True]
+    assert text.count("runs-on: ubuntu-latest") >= 3
+    assert "self-hosted" not in text
+    assert "C:\\" not in text
+    assert "scripts/strategy_packs/gtbi_research_broad_72000" in text
+    assert "global-technical-buy-indicator-external-pack-72000-results" in text
+    assert "--locked-start \"${{ inputs.locked_start }}\"" in text
+    assert "requires_local_machine" not in text

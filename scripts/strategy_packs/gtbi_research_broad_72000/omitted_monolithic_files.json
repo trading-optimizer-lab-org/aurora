@@ -1,0 +1,12 @@
+[
+  {
+    "file": "aurora_gtbi_research_broad_strategies_72000.csv",
+    "bytes": 210088511,
+    "reason": "GitHub normal git file limit >100MB; data available via shards/"
+  },
+  {
+    "file": "aurora_gtbi_research_broad_strategies_72000.jsonl",
+    "bytes": 237641689,
+    "reason": "GitHub normal git file limit >100MB; data available via shards/"
+  }
+]

@@ -1,0 +1,31 @@
+concept_id,concept_name,strategy_count
+academic_52w_high_pullback_reclaim,52-week high pullback reclaim,2400
+academic_6_12m_momentum_reclaim,6/12-month momentum reclaim,2400
+adx_di_pullback_reversal,ADX/+DI pullback reversal,2400
+atr_compression_nr_breakout,ATR compression + narrow-range breakout,2400
+bollinger_lower_band_reclaim_trend,Bollinger lower-band reclaim in trend,2400
+bollinger_squeeze_breakout,Bollinger squeeze breakout,2400
+ema_value_zone_pullback,EMA value-zone pullback,2400
+ep_gap_volume_continuation_proxy,Episodic-pivot daily OHLCV proxy,2400
+failed_breakdown_reclaim,Failed breakdown reclaim,2400
+gap_down_leader_reclaim,Gap-down leader reclaim,2400
+ibd_cup_handle_proxy,IBD cup-with-handle proxy,2400
+ibd_flat_base_proxy,IBD flat-base proxy,2400
+inside_day_breakout_reclaim,Inside-day breakout reclaim,2400
+keltner_pullback_reclaim,Keltner pullback reclaim,2400
+macd_histogram_turnup_trend,MACD histogram turn-up in trend,2400
+minervini_vcp_anticipation_reclaim,VCP anticipation reclaim,2400
+minervini_vcp_pivot_breakout,Minervini VCP pivot breakout,2400
+moving_average_timing_cross,Moving-average timing cross,2400
+pocket_pivot_reclaim,Pocket-pivot style reclaim,2400
+post_ep_pullback_reclaim_proxy,Post-EP pullback reclaim proxy,2400
+q_stair_step_breakout,Q stair-step breakout,2400
+q_stair_step_reclaim,Q stair-step MA reclaim,2400
+rs_new_high_before_price_reclaim,RS new high before price reclaim,2400
+rs_pullback_hold_rebound,RS pullback hold rebound,2400
+rsi2_pullback_rebound_trend,RSI2 pullback rebound in trend,2400
+three_weeks_tight_daily_proxy,Three-weeks-tight daily proxy,2400
+time_series_momentum_reentry,Time-series momentum re-entry,2400
+trend_template_pullback_rebound,Trend-template pullback rebound,2400
+undercut_reclaim_shakeout,Undercut-and-reclaim shakeout,2400
+weinstein_stage2_breakout_proxy,Weinstein Stage-2 breakout proxy,2400

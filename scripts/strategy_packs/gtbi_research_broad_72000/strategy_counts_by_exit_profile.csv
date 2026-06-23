@@ -1,0 +1,5 @@
+exit_profile_id,exit_profile_name,strategy_count
+balanced_tp_ema20,Balanced swing TP + EMA20 failure,18000
+chandelier_runner,ATR chandelier runner,18000
+quick_tp_ema10,Quick TP + EMA10 failure,18000
+setup_low_fast_exit,Setup-low fast failure exit,18000
