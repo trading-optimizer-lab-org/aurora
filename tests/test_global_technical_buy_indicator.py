@@ -94,6 +94,7 @@ def test_stability_family_set_samples_only_stability_families() -> None:
 
     assert {cfg.family for cfg in configs}
     assert {cfg.family for cfg in configs} <= set(gtbi.STABILITY_FAMILIES)
+    assert "stability_rs_reclaim_frequent" in set(gtbi.STABILITY_FAMILIES)
     assert any(cfg.require_market_trend for cfg in configs)
 
 
@@ -186,6 +187,62 @@ def test_stability_rs_momentum_pullback_requires_relative_strength() -> None:
         near_high_pct=0.70,
         rsi_period=7,
         rsi_max=65.0,
+    )
+
+    signal = gtbi.entry_signal(frame, spy, config)
+    weak_signal = gtbi.entry_signal(frame, frame.assign(symbol="SPY"), config)
+
+    assert bool(signal.iloc[-1]) is True
+    assert not bool(weak_signal.iloc[-1])
+
+
+def test_stability_rs_reclaim_frequent_is_hybrid_and_more_permissive() -> None:
+    rows = 260
+    idx = pd.date_range("2010-01-04", periods=rows, freq="B")
+    spy_close = np.linspace(100.0, 112.0, rows)
+    close = np.linspace(50.0, 95.0, rows)
+    close[-4] = 92.0
+    close[-3] = 90.0
+    close[-2] = 89.5
+    close[-1] = 94.0
+    open_ = np.r_[close[0], close[:-1]]
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": open_,
+            "high": np.maximum(open_, close) * 1.01,
+            "low": np.minimum(open_, close) * 0.99,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(rows, 100_000.0),
+            "symbol": "AAA",
+        }
+    )
+    spy = pd.DataFrame(
+        {
+            "date": idx,
+            "open": spy_close,
+            "high": spy_close * 1.002,
+            "low": spy_close * 0.998,
+            "close": spy_close,
+            "adj_close": spy_close,
+            "volume": np.full(rows, 1_000_000.0),
+            "symbol": "SPY",
+        }
+    )
+    config = gtbi.IndicatorConfig(
+        family="stability_rs_reclaim_frequent",
+        require_market_trend=False,
+        ma_short=20,
+        ma_mid=80,
+        ma_long=120,
+        rs_lookback=42,
+        rs_near_high_pct=0.82,
+        prior_runup_lookback=63,
+        prior_runup_min_pct=0.05,
+        near_high_pct=0.55,
+        rsi_period=10,
+        rsi_max=67.0,
     )
 
     signal = gtbi.entry_signal(frame, spy, config)
@@ -519,6 +576,64 @@ def test_frequency_quality_score_keeps_high_frequency_near_misses_auditable() ->
     assert gtbi._frequency_quality_score(frequent) > gtbi._frequency_quality_score(rare)
 
 
+def test_recheck_batches_group_candidates_after_one_download() -> None:
+    batches = gtbi.recheck_batches(candidate_count=150, batch_size=10)
+
+    assert len(batches) == 15
+    assert batches[0] == {"offset": 0, "limit": 10, "batch": 0, "batch_padded": "000"}
+    assert batches[-1] == {"offset": 140, "limit": 10, "batch": 14, "batch_padded": "014"}
+
+
+def test_recheck_batches_clamps_last_batch() -> None:
+    batches = gtbi.recheck_batches(candidate_count=23, batch_size=10)
+
+    assert [row["offset"] for row in batches] == [0, 10, 20]
+    assert [row["limit"] for row in batches] == [10, 10, 3]
+
+
+def test_near_miss_seed_ids_prefer_close_high_frequency_candidates() -> None:
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "candidate_id": "lottery",
+                "strict_quality_pass": False,
+                "strict_quality_failure_count": 2,
+                "validation_min_yearly_trades": 3,
+                "validation_trades_per_year": 8,
+                "validation_positive_years": 10,
+                "validation_median_positive_years": 10,
+                "train_2003_2010_positive_years": 8,
+                "validation_profit_factor": 3.0,
+                "validation_min_yearly_profit_factor": 1.2,
+                "train_2003_2010_min_profit_factor": 1.2,
+                "validation_median_trade_return_pct": 2.0,
+                "validation_avg_trade_return_pct": 8.0,
+                "validation_max_profit_contribution_share": 0.6,
+                "score": 1000.0,
+            },
+            {
+                "candidate_id": "close",
+                "strict_quality_pass": False,
+                "strict_quality_failure_count": 3,
+                "validation_min_yearly_trades": 120,
+                "validation_trades_per_year": 180,
+                "validation_positive_years": 9,
+                "validation_median_positive_years": 8,
+                "train_2003_2010_positive_years": 8,
+                "validation_profit_factor": 1.32,
+                "validation_min_yearly_profit_factor": 1.01,
+                "train_2003_2010_min_profit_factor": 1.04,
+                "validation_median_trade_return_pct": 0.12,
+                "validation_avg_trade_return_pct": 0.25,
+                "validation_max_profit_contribution_share": 0.22,
+                "score": 10.0,
+            },
+        ]
+    )
+
+    assert gtbi.near_miss_seed_ids(leaderboard, limit=1) == ["close"]
+
+
 def test_stability_quality_score_prefers_distribution_over_lottery_average() -> None:
     stable = {
         "strict_quality_pass": False,
@@ -777,6 +892,10 @@ def test_workflow_is_manual_355_job_indicator_run() -> None:
     assert "--family-set" in text
     assert "--min-market-cap" in text
     assert "--scoring-profile" in text
+    assert "seed_source_run_id" in text
+    assert "prepare_seed_rules" in text
+    assert "--seed-rules-path" in text
+    assert "--seed-mutation-share" in text
     assert "final_global_recheck_top_n" in text
     assert "reevaluate_global_technical_buy_indicator_results.py" in text
 
@@ -818,7 +937,8 @@ def test_parallel_final_recheck_workflow_splits_candidates() -> None:
 
     text = path.read_text(encoding="utf-8")
     assert "candidate_count" in text
+    assert "candidate_batch_size" in text
     assert "--candidate-offset" in text
-    assert "--candidate-limit 1" in text
-    assert "global-technical-buy-indicator-recheck-candidate-" in text
+    assert '--candidate-limit "${{ matrix.limit }}"' in text
+    assert "global-technical-buy-indicator-recheck-batch-" in text
     assert "global-technical-buy-indicator-final-recheck-parallel-results" in text

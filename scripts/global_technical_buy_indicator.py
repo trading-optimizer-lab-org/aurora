@@ -46,6 +46,7 @@ STABILITY_FAMILIES = (
     "stability_trend_reclaim",
     "stability_market_dip",
     "stability_rs_momentum_pullback",
+    "stability_rs_reclaim_frequent",
 )
 ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES + STABILITY_FAMILIES
 FAMILY_SETS = ("default", "tradingview_minervini", "stability", "all")
@@ -450,6 +451,33 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         & (close > close.shift(1))
         & (rsi_line <= max(rsi_cap, 60.0))
     )
+    if not benchmark.empty:
+        rs_line_for_reclaim = close / spy_close.replace(0.0, np.nan)
+        rs_avg_for_reclaim = rs_line_for_reclaim.rolling(
+            config.rs_lookback,
+            min_periods=min(config.rs_lookback, len(frame)),
+        ).mean()
+        rs_reclaim_ok = (
+            (rs_line_for_reclaim > rs_avg_for_reclaim)
+            & (rs_line_for_reclaim > rs_line_for_reclaim.shift(max(5, min(config.rs_lookback // 4, 21))))
+        )
+    else:
+        rs_reclaim_ok = _safe_bool_series(True, index)
+    frequent_runup = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(
+        min(config.prior_runup_min_pct, 0.10),
+        0.03,
+    )
+    frequent_reclaim = (
+        stock_uptrend
+        & rs_reclaim_ok
+        & frequent_runup
+        & (close >= high_n * max(config.near_high_pct, 0.50))
+        & (close <= high_n * 1.01)
+        & (pullback_touch.shift(1).fillna(False) | (close.shift(1) < ma10_sma.shift(1)) | (rsi_line.shift(1) <= rsi_cap))
+        & (close > ma10_sma)
+        & (close > close.shift(1))
+        & (rsi_line <= max(rsi_cap, 68.0))
+    )
 
     if config.family == "oneil_canslim":
         signal = oneil_stack & rs_ok & breakout & rsi_ok
@@ -481,6 +509,8 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         signal = market_dip & soft_rs_ok
     elif config.family == "stability_rs_momentum_pullback":
         signal = rs_momentum_pullback
+    elif config.family == "stability_rs_reclaim_frequent":
+        signal = frequent_reclaim
     else:
         signal = trend_ok & rs_ok & breakout & pocket_pivot & rsi_ok
     return (signal & market_trend).fillna(False).astype(bool)
@@ -993,6 +1023,57 @@ def _sort_for_stability(leaderboard: pd.DataFrame) -> pd.DataFrame:
     return sorted_out.drop(columns=["_strict_pass_sort"])
 
 
+def near_miss_seed_ids(leaderboard: pd.DataFrame, *, limit: int = 100) -> list[str]:
+    if leaderboard.empty or "candidate_id" not in leaderboard.columns:
+        return []
+    out = leaderboard.copy()
+    for column, default in (
+        ("strict_quality_failure_count", 99),
+        ("validation_min_yearly_trades", 0),
+        ("validation_trades_per_year", 0),
+        ("validation_positive_years", 0),
+        ("validation_median_positive_years", 0),
+        ("train_2003_2010_positive_years", 0),
+        ("validation_profit_factor", 0),
+        ("validation_min_yearly_profit_factor", 0),
+        ("train_2003_2010_min_profit_factor", 0),
+        ("validation_max_profit_contribution_share", 1),
+    ):
+        if column not in out.columns:
+            out[column] = default
+        out[column] = pd.to_numeric(out[column], errors="coerce").fillna(default)
+    mask = (
+        (out["validation_min_yearly_trades"] >= 50)
+        & (out["validation_trades_per_year"] >= 100)
+        & (out["validation_positive_years"] >= 8)
+        & (out["validation_median_positive_years"] >= 7)
+        & (out["train_2003_2010_positive_years"] >= 7)
+        & (out["strict_quality_failure_count"] <= 5)
+        & (out["validation_max_profit_contribution_share"] <= 0.35)
+    )
+    selected = out.loc[mask].copy()
+    if selected.empty:
+        selected = out.loc[
+            (out["validation_min_yearly_trades"] >= 25)
+            & (out["validation_positive_years"] >= 8)
+            & (out["strict_quality_failure_count"] <= 6)
+        ].copy()
+    if selected.empty:
+        return []
+    selected = _sort_for_stability(selected)
+    return selected["candidate_id"].astype(str).head(max(int(limit), 0)).tolist()
+
+
+def recheck_batches(*, candidate_count: int, batch_size: int) -> list[dict[str, int | str]]:
+    count = max(int(candidate_count), 0)
+    size = max(int(batch_size), 1)
+    rows: list[dict[str, int | str]] = []
+    for batch, offset in enumerate(range(0, count, size)):
+        limit = min(size, count - offset)
+        rows.append({"offset": int(offset), "limit": int(limit), "batch": int(batch), "batch_padded": f"{batch:03d}"})
+    return rows
+
+
 def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
     payload = {"config": config.to_dict(), "stage": int(stage), "sequence": int(sequence)}
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -1323,6 +1404,29 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
                 take_profit_pct=float(rng.choice([rng.uniform(0.025, 0.12), rng.uniform(0.05, 0.20)])),
                 max_holding_days=int(rng.choice([3, 4, 5, 8, 10, 15])),
             )
+        elif family == "stability_rs_reclaim_frequent":
+            params.update(
+                require_rs=True,
+                require_market_trend=True,
+                strict_market_filter=bool(rng.random() < 0.60),
+                use_market_exit=True,
+                use_exit_ma=bool(rng.random() < 0.35),
+                ma_short=int(rng.choice([10, 20, 30])),
+                ma_mid=int(rng.choice([50, 80, 100])),
+                ma_long=int(rng.choice([120, 150, 200])),
+                rs_lookback=int(rng.choice([21, 42, 63])),
+                rs_near_high_pct=float(rng.uniform(0.78, 0.92)),
+                prior_runup_lookback=int(rng.choice([21, 42, 63, 90])),
+                prior_runup_min_pct=float(rng.uniform(0.03, 0.18)),
+                near_high_pct=float(rng.uniform(0.50, 0.78)),
+                rsi_period=int(rng.choice([7, 10, 14])),
+                rsi_max=float(rng.uniform(50.0, 70.0)),
+                stop_loss_pct=float(rng.uniform(0.025, 0.065)),
+                trailing_stop_pct=float(rng.uniform(0.035, 0.10)),
+                take_profit_pct=float(rng.choice([rng.uniform(0.025, 0.08), rng.uniform(0.05, 0.14)])),
+                max_holding_days=int(rng.choice([2, 3, 4, 5, 8, 10])),
+                exit_ma_days=int(rng.choice([5, 8, 10])),
+            )
     return IndicatorConfig(**params)
 
 
@@ -1348,6 +1452,32 @@ def _mutate_config(rng: np.random.Generator, base: IndicatorConfig, family_set: 
     if rng.random() < 0.08:
         data["family"] = str(rng.choice(_families_for_set(family_set)))
     return IndicatorConfig(**data)
+
+
+def _neighbourhood_configs(
+    rng: np.random.Generator,
+    seeds: list[IndicatorConfig],
+    count: int,
+    *,
+    family_set: str = "default",
+) -> list[IndicatorConfig]:
+    if count <= 0 or not seeds:
+        return []
+    configs: list[IndicatorConfig] = []
+    for _ in range(count):
+        seed = seeds[int(rng.integers(0, len(seeds)))]
+        mutated = _mutate_config(rng, seed, family_set=family_set)
+        data = mutated.to_dict()
+        if data["family"] in STABILITY_FAMILIES:
+            data["require_market_trend"] = True
+            data["use_market_exit"] = True
+            data["max_holding_days"] = int(np.clip(data["max_holding_days"], 2, 20))
+            data["stop_loss_pct"] = float(np.clip(data["stop_loss_pct"], 0.02, 0.09))
+            data["trailing_stop_pct"] = float(np.clip(data["trailing_stop_pct"], 0.03, 0.16))
+            if float(data["take_profit_pct"]) <= 0.0 or rng.random() < 0.60:
+                data["take_profit_pct"] = float(rng.uniform(0.025, 0.16))
+        configs.append(IndicatorConfig(**data))
+    return configs
 
 
 def sample_config(
@@ -1500,6 +1630,8 @@ def run_stage(
     min_selection_trades_per_year: int = 0,
     family_set: str = "default",
     scoring_profile: str = DEFAULT_SCORING_PROFILE,
+    seed_rules_path: Path | None = None,
+    seed_mutation_share: float = 0.65,
 ) -> dict[str, Any]:
     pack_dir = Path(pack_dir)
     output_dir = Path(output_dir)
@@ -1514,11 +1646,18 @@ def run_stage(
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
     rng = np.random.default_rng(int(seed) + int(stage) * 1009)
+    seed_configs = _load_seed_configs(seed_rules_path, max_seeds=200)
+    seed_share = float(np.clip(seed_mutation_share, 0.0, 0.95)) if seed_configs else 0.0
     start = time.monotonic()
     deadline = start + max(float(time_budget_minutes), 0.01) * 60.0
     initial = min(int(configs_per_stage), max(24, int(configs_per_stage * 0.35)))
     remaining = max(int(configs_per_stage) - initial, 0)
-    configs = [sample_config(rng, search_method=search_method, family_set=family_set) for _ in range(initial)]
+    seed_initial = int(round(initial * seed_share))
+    configs = _neighbourhood_configs(rng, seed_configs, seed_initial, family_set=family_set)
+    configs.extend(
+        sample_config(rng, search_method=search_method, family_set=family_set)
+        for _ in range(max(initial - len(configs), 0))
+    )
     observed: list[tuple[IndicatorConfig, float]] = []
     rows: list[dict[str, Any]] = []
     trade_frames: list[pd.DataFrame] = []
@@ -1572,6 +1711,10 @@ def run_stage(
                 family_set=family_set,
             )
             surrogate_used = surrogate_used or used
+            if seed_configs and seed_share > 0.0:
+                seed_extra = int(round(remaining * seed_share))
+                seeded = _neighbourhood_configs(rng, seed_configs, seed_extra, family_set=family_set)
+                extra = seeded + extra[: max(remaining - len(seeded), 0)]
             configs.extend(extra)
     leaderboard = pd.DataFrame(rows, columns=LEADERBOARD_COLUMNS)
     if not leaderboard.empty:
@@ -1609,6 +1752,9 @@ def run_stage(
         "selection_split": str(selection_split),
         "family_set": str(family_set),
         "scoring_profile": str(scoring_profile),
+        "seed_rules_path": None if seed_rules_path is None else str(seed_rules_path),
+        "seed_configs": int(len(seed_configs)),
+        "seed_mutation_share": float(seed_share),
         "min_selection_trades_per_year": int(min_selection_trades_per_year),
         "elapsed_seconds": round(time.monotonic() - start, 3),
     }
@@ -1858,6 +2004,15 @@ def _load_rule_configs(rules_path: Path) -> dict[str, IndicatorConfig]:
     return configs
 
 
+def _load_seed_configs(rules_path: Path | None, *, max_seeds: int = 100) -> list[IndicatorConfig]:
+    if rules_path is None:
+        return []
+    configs = _load_rule_configs(Path(rules_path))
+    if not configs:
+        return []
+    return list(configs.values())[: max(int(max_seeds), 0)]
+
+
 def reevaluate_global_candidates(
     *,
     merged_dir: Path,
@@ -2074,6 +2229,8 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-selection-trades-per-year", type=int, default=0)
     parser.add_argument("--family-set", choices=FAMILY_SETS, default="default")
     parser.add_argument("--scoring-profile", choices=SCORING_PROFILES, default=DEFAULT_SCORING_PROFILE)
+    parser.add_argument("--seed-rules-path", type=Path, default=None)
+    parser.add_argument("--seed-mutation-share", type=float, default=0.65)
     args = parser.parse_args(argv)
     summary = run_stage(
         pack_dir=args.pack_dir,
@@ -2091,6 +2248,8 @@ def run_stage_cli(argv: list[str] | None = None) -> int:
         min_selection_trades_per_year=args.min_selection_trades_per_year,
         family_set=args.family_set,
         scoring_profile=args.scoring_profile,
+        seed_rules_path=args.seed_rules_path,
+        seed_mutation_share=args.seed_mutation_share,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

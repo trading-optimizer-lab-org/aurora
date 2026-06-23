@@ -75,6 +75,18 @@ on:
         description: "Top merged candidates re-evaluated on the full filtered universe, 0 disables"
         required: true
         default: "0"
+      seed_source_run_id:
+        description: "Optional prior run id used to seed neighbourhood mutations"
+        required: false
+        default: ""
+      seed_top_n:
+        description: "Top prior candidates used as mutation seeds"
+        required: true
+        default: "300"
+      seed_mutation_share:
+        description: "Share of each stage sampled around seed rules"
+        required: true
+        default: "0.70"
       train_end:
         description: "Train end date"
         required: true
@@ -143,10 +155,16 @@ jobs:
       - name: Download clean global data lake
         run: |
           mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
-          gh run download "${{ inputs.data_run_id }}" \
-            --repo "${{ github.repository }}" \
-            --name "${{ inputs.data_artifact_name }}" \
-            --dir "$QF_DATA_DIR/prices/free_us_daily"
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ inputs.data_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "${{ inputs.data_artifact_name }}" \
+              --dir "$QF_DATA_DIR/prices/free_us_daily"; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          exit 1
       - name: Ensure SPY benchmark exists
         run: |
           python - <<'PY'
@@ -307,8 +325,80 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: global-technical-buy-indicator-pack-group-031, path: "${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_355jobs/pack/group-031", if-no-files-found: error, retention-days: 3 }
 
+  prepare_seed_rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Create empty seed rules
+        run: |
+          mkdir -p seed-rules
+          : > seed-rules/top_indicator_rules.jsonl
+      - name: Download prior stage artifacts
+        if: ${{ inputs.seed_source_run_id != '' }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ inputs.seed_source_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --pattern "global-technical-buy-indicator-stage-*" \
+              --dir seed-stages; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          exit 1
+      - name: Select near-miss seed rules
+        if: ${{ inputs.seed_source_run_id != '' }}
+        run: |
+          python scripts/merge_global_technical_buy_indicator_results.py \
+            --stages-root seed-stages \
+            --output-dir seed-merged \
+            --top-n "${{ inputs.seed_top_n }}"
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import pandas as pd
+          from scripts.global_technical_buy_indicator import near_miss_seed_ids
+
+          merged = Path("seed-merged")
+          out = Path("seed-rules")
+          out.mkdir(exist_ok=True)
+          leaderboard = pd.read_csv(merged / "leaderboard.csv")
+          ids = set(near_miss_seed_ids(leaderboard, limit=int("${{ inputs.seed_top_n }}")))
+          if not ids:
+              ids = set(leaderboard["candidate_id"].astype(str).head(int("${{ inputs.seed_top_n }}")).tolist())
+          with (out / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
+              for line in (merged / "top_indicator_rules.jsonl").read_text(encoding="utf-8").splitlines():
+                  if not line.strip():
+                      continue
+                  payload = json.loads(line)
+                  if str(payload.get("candidate_id")) in ids:
+                      handle.write(json.dumps(payload, sort_keys=True) + "\n")
+          print({"seed_rules": len(ids)})
+          PY
+      - name: Upload seed rules
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-seed-rules
+          path: seed-rules
+          if-no-files-found: error
+          retention-days: 3
+
   search_a:
-    needs: [plan, build_pack]
+    needs: [plan, build_pack, prepare_seed_rules]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: true
@@ -333,6 +423,11 @@ jobs:
         with:
           name: global-technical-buy-indicator-pack-group-${{ matrix.group }}
           path: pack-group
+      - name: Download seed rules
+        uses: actions/download-artifact@v4
+        with:
+          name: global-technical-buy-indicator-seed-rules
+          path: seed-rules
       - name: Run stage
         run: |
           python scripts/run_global_technical_buy_indicator_stage.py \
@@ -349,7 +444,9 @@ jobs:
             --selection-split "${{ inputs.selection_split }}" \
             --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}" \
             --family-set "${{ inputs.family_set }}" \
-            --scoring-profile "${{ inputs.scoring_profile }}"
+            --scoring-profile "${{ inputs.scoring_profile }}" \
+            --seed-rules-path seed-rules/top_indicator_rules.jsonl \
+            --seed-mutation-share "${{ inputs.seed_mutation_share }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4
@@ -360,7 +457,7 @@ jobs:
           retention-days: 7
 
   search_b:
-    needs: [plan, build_pack]
+    needs: [plan, build_pack, prepare_seed_rules]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: true
@@ -385,6 +482,11 @@ jobs:
         with:
           name: global-technical-buy-indicator-pack-group-${{ matrix.group }}
           path: pack-group
+      - name: Download seed rules
+        uses: actions/download-artifact@v4
+        with:
+          name: global-technical-buy-indicator-seed-rules
+          path: seed-rules
       - name: Run stage
         run: |
           python scripts/run_global_technical_buy_indicator_stage.py \
@@ -401,7 +503,9 @@ jobs:
             --selection-split "${{ inputs.selection_split }}" \
             --min-selection-trades-per-year "${{ inputs.min_selection_trades_per_year }}" \
             --family-set "${{ inputs.family_set }}" \
-            --scoring-profile "${{ inputs.scoring_profile }}"
+            --scoring-profile "${{ inputs.scoring_profile }}" \
+            --seed-rules-path seed-rules/top_indicator_rules.jsonl \
+            --seed-mutation-share "${{ inputs.seed_mutation_share }}"
       - name: Upload stage output
         if: always()
         uses: actions/upload-artifact@v4
@@ -447,10 +551,16 @@ jobs:
         if: ${{ inputs.final_global_recheck_top_n != '0' }}
         run: |
           mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
-          gh run download "${{ inputs.data_run_id }}" \
-            --repo "${{ github.repository }}" \
-            --name "${{ inputs.data_artifact_name }}" \
-            --dir "$QF_DATA_DIR/prices/free_us_daily"
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ inputs.data_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "${{ inputs.data_artifact_name }}" \
+              --dir "$QF_DATA_DIR/prices/free_us_daily"; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          exit 1
       - name: Ensure SPY benchmark exists for final global recheck
         if: ${{ inputs.final_global_recheck_top_n != '0' }}
         run: |

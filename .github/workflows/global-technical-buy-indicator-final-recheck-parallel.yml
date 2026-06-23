@@ -22,6 +22,10 @@ on:
         description: "Number of top candidates to re-evaluate in parallel"
         required: true
         default: "10"
+      candidate_batch_size:
+        description: "Candidates evaluated per job after one data lake download"
+        required: true
+        default: "10"
       min_market_cap:
         description: "Minimum market cap in USD"
         required: true
@@ -56,7 +60,15 @@ jobs:
           import os
 
           count = int("${{ inputs.candidate_count }}")
-          rows = [{"offset": i, "offset_padded": f"{i:03d}"} for i in range(count)]
+          batch_size = max(int("${{ inputs.candidate_batch_size }}"), 1)
+          rows = []
+          for batch, offset in enumerate(range(0, max(count, 0), batch_size)):
+              rows.append({
+                  "offset": offset,
+                  "limit": min(batch_size, count - offset),
+                  "batch": batch,
+                  "batch_padded": f"{batch:03d}",
+              })
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
               handle.write(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}\n")
           PY
@@ -198,9 +210,9 @@ jobs:
           python scripts/reevaluate_global_technical_buy_indicator_results.py \
             --merged-dir merged \
             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --output-dir "candidate-${{ matrix.offset_padded }}" \
+            --output-dir "candidate-batch-${{ matrix.batch_padded }}" \
             --candidate-offset "${{ matrix.offset }}" \
-            --candidate-limit 1 \
+            --candidate-limit "${{ matrix.limit }}" \
             --min-market-cap "${{ inputs.min_market_cap }}" \
             --locked-start "${{ inputs.locked_start }}" \
             --train-end "${{ inputs.train_end }}" \
@@ -210,8 +222,8 @@ jobs:
       - name: Upload candidate recheck
         uses: actions/upload-artifact@v4
         with:
-          name: global-technical-buy-indicator-recheck-candidate-${{ matrix.offset_padded }}
-          path: candidate-${{ matrix.offset_padded }}
+          name: global-technical-buy-indicator-recheck-batch-${{ matrix.batch_padded }}
+          path: candidate-batch-${{ matrix.batch_padded }}
           if-no-files-found: error
           retention-days: 7
 
@@ -234,7 +246,7 @@ jobs:
       - name: Download candidate rechecks
         uses: actions/download-artifact@v4
         with:
-          pattern: global-technical-buy-indicator-recheck-candidate-*
+          pattern: global-technical-buy-indicator-recheck-batch-*
           path: candidate-rechecks
       - name: Merge candidate rechecks
         run: |
