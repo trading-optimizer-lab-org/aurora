@@ -2842,6 +2842,7 @@ def run_external_strategy_pack_shard(
     data_lake_root: Path,
     external_strategy_pack_path: Path = DEFAULT_EXTERNAL_STRATEGY_PACK_PATH,
     output_dir: Path,
+    prebuilt_pack_dir: Path | None = None,
     external_strategy_shard_id: int,
     external_strategy_limit: int = 200,
     external_strategy_format: str = "auto",
@@ -2881,17 +2882,23 @@ def run_external_strategy_pack_shard(
             raise ValueError(f"{len(unsupported_rows)} unsupported external strategies in shard {shard_padded}")
 
     evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
-    pack_root = output_dir / "_external_pack_data"
-    build_stage_packs(
-        data_lake_root,
-        pack_root,
-        stage_count=1,
-        group_count=1,
-        locked_start=locked_start,
-        min_rows=260,
-        min_market_cap=min_market_cap,
-    )
-    pack_dir = pack_root / "stage-000"
+    if prebuilt_pack_dir is None:
+        pack_root = output_dir / "_external_pack_data"
+        build_stage_packs(
+            data_lake_root,
+            pack_root,
+            stage_count=1,
+            group_count=1,
+            locked_start=locked_start,
+            min_rows=260,
+            min_market_cap=min_market_cap,
+        )
+        pack_dir = pack_root / "stage-000"
+    else:
+        pack_dir = Path(prebuilt_pack_dir)
+        missing = [name for name in ("prices.parquet", "benchmark.parquet") if not (pack_dir / name).exists()]
+        if missing:
+            raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
 
@@ -3240,6 +3247,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one external GTBI strategy-pack shard.")
     parser.add_argument("--data-lake-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--prebuilt-pack-dir", type=Path, default=None)
     parser.add_argument("--external-strategy-pack-path", type=Path, default=DEFAULT_EXTERNAL_STRATEGY_PACK_PATH)
     parser.add_argument("--external-strategy-shard-id", type=int, required=True)
     parser.add_argument("--external-strategy-limit", type=int, default=200)
@@ -3255,6 +3263,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         data_lake_root=args.data_lake_root,
         external_strategy_pack_path=args.external_strategy_pack_path,
         output_dir=args.output_dir,
+        prebuilt_pack_dir=args.prebuilt_pack_dir,
         external_strategy_shard_id=args.external_strategy_shard_id,
         external_strategy_limit=args.external_strategy_limit,
         external_strategy_format=args.external_strategy_format,
