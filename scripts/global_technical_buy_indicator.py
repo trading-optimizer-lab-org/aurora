@@ -45,6 +45,7 @@ STABILITY_FAMILIES = (
     "stability_pullback_rebound",
     "stability_trend_reclaim",
     "stability_market_dip",
+    "stability_rs_momentum_pullback",
 )
 ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES + STABILITY_FAMILIES
 FAMILY_SETS = ("default", "tradingview_minervini", "stability", "all")
@@ -434,6 +435,21 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         & (close > close.shift(1))
         & (close >= low_n * max(config.above_low_multiple, 1.05))
     )
+    long_momentum = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(
+        config.prior_runup_min_pct,
+        0.08,
+    )
+    rs_momentum_pullback = (
+        stock_uptrend
+        & rs_ok
+        & long_momentum
+        & (close >= high_n * max(config.near_high_pct, 0.70))
+        & (close <= high_n * 0.98)
+        & pullback_touch.shift(1).fillna(False)
+        & (close > ma10_sma)
+        & (close > close.shift(1))
+        & (rsi_line <= max(rsi_cap, 60.0))
+    )
 
     if config.family == "oneil_canslim":
         signal = oneil_stack & rs_ok & breakout & rsi_ok
@@ -463,6 +479,8 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
         signal = trend_reclaim & soft_rs_ok
     elif config.family == "stability_market_dip":
         signal = market_dip & soft_rs_ok
+    elif config.family == "stability_rs_momentum_pullback":
+        signal = rs_momentum_pullback
     else:
         signal = trend_ok & rs_ok & breakout & pocket_pivot & rsi_ok
     return (signal & market_trend).fillna(False).astype(bool)
@@ -1284,6 +1302,27 @@ def _sample_dehb_real_config(rng: np.random.Generator, family_set: str = "defaul
             market_ma_days=int(rng.choice([50, 100, 150, 200])),
             market_momentum_days=int(rng.choice([5, 10, 21, 42, 63])),
         )
+        if family == "stability_rs_momentum_pullback":
+            params.update(
+                require_rs=True,
+                require_market_trend=True,
+                strict_market_filter=bool(rng.random() < 0.75),
+                use_market_exit=bool(rng.random() < 0.85),
+                ma_short=int(rng.choice([20, 30, 50])),
+                ma_mid=int(rng.choice([80, 100, 150])),
+                ma_long=int(rng.choice([150, 200])),
+                rs_lookback=int(rng.choice([42, 63, 126])),
+                rs_near_high_pct=float(rng.uniform(0.88, 0.99)),
+                prior_runup_lookback=int(rng.choice([42, 63, 90, 126])),
+                prior_runup_min_pct=float(rng.uniform(0.08, 0.45)),
+                near_high_pct=float(rng.uniform(0.70, 0.92)),
+                rsi_period=int(rng.choice([7, 10, 14])),
+                rsi_max=float(rng.uniform(42.0, 65.0)),
+                stop_loss_pct=float(rng.uniform(0.025, 0.07)),
+                trailing_stop_pct=float(rng.uniform(0.04, 0.12)),
+                take_profit_pct=float(rng.choice([rng.uniform(0.025, 0.12), rng.uniform(0.05, 0.20)])),
+                max_holding_days=int(rng.choice([3, 4, 5, 8, 10, 15])),
+            )
     return IndicatorConfig(**params)
 
 

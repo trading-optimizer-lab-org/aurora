@@ -103,7 +103,7 @@ def test_stability_pullback_rebound_signal_uses_past_pullback() -> None:
     close = np.linspace(50.0, 100.0, rows)
     close[-3] = 97.0
     close[-2] = 95.0
-    close[-1] = 98.0
+    close[-1] = 98.35
     open_ = np.r_[close[0], close[:-1]]
     high = np.maximum(open_, close) * 1.01
     low = np.minimum(open_, close) * 0.99
@@ -138,6 +138,61 @@ def test_stability_pullback_rebound_signal_uses_past_pullback() -> None:
     changed_future = frame.copy()
     changed_future.loc[changed_future.index[-1], "close"] = frame["close"].iloc[-1]
     pd.testing.assert_series_equal(signal.iloc[:-1], gtbi.entry_signal(changed_future, spy, config).iloc[:-1])
+
+
+def test_stability_rs_momentum_pullback_requires_relative_strength() -> None:
+    rows = 260
+    idx = pd.date_range("2010-01-04", periods=rows, freq="B")
+    spy_close = np.linspace(100.0, 110.0, rows)
+    close = np.linspace(50.0, 100.0, rows)
+    close[-3] = 97.0
+    close[-2] = 96.0
+    close[-1] = 98.35
+    open_ = np.r_[close[0], close[:-1]]
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": open_,
+            "high": np.maximum(open_, close) * 1.01,
+            "low": np.minimum(open_, close) * 0.99,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(rows, 100_000.0),
+            "symbol": "AAA",
+        }
+    )
+    spy = pd.DataFrame(
+        {
+            "date": idx,
+            "open": spy_close,
+            "high": spy_close * 1.002,
+            "low": spy_close * 0.998,
+            "close": spy_close,
+            "adj_close": spy_close,
+            "volume": np.full(rows, 1_000_000.0),
+            "symbol": "SPY",
+        }
+    )
+    config = gtbi.IndicatorConfig(
+        family="stability_rs_momentum_pullback",
+        require_market_trend=False,
+        ma_short=20,
+        ma_mid=80,
+        ma_long=120,
+        rs_lookback=42,
+        rs_near_high_pct=0.88,
+        prior_runup_lookback=63,
+        prior_runup_min_pct=0.08,
+        near_high_pct=0.70,
+        rsi_period=7,
+        rsi_max=65.0,
+    )
+
+    signal = gtbi.entry_signal(frame, spy, config)
+    weak_signal = gtbi.entry_signal(frame, frame.assign(symbol="SPY"), config)
+
+    assert bool(signal.iloc[-1]) is True
+    assert not bool(weak_signal.iloc[-1])
 
 
 def test_tradingview_pocket_pivot_signal_uses_minervini_and_volume_breakout() -> None:
