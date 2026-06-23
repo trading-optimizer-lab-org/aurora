@@ -431,7 +431,7 @@ jobs:
       - name: Run stage
         run: |
           python scripts/run_global_technical_buy_indicator_stage.py \
-            --pack-dir "pack-group/stage-${{ matrix.stage_padded }}" \
+            --pack-dir "pack-group" \
             --output-dir "outputs/stage-${{ matrix.stage_padded }}" \
             --stage "${{ matrix.stage }}" \
             --configs-per-stage "${{ inputs.configs_per_stage }}" \
@@ -490,7 +490,7 @@ jobs:
       - name: Run stage
         run: |
           python scripts/run_global_technical_buy_indicator_stage.py \
-            --pack-dir "pack-group/stage-${{ matrix.stage_padded }}" \
+            --pack-dir "pack-group" \
             --output-dir "outputs/stage-${{ matrix.stage_padded }}" \
             --stage "${{ matrix.stage }}" \
             --configs-per-stage "${{ inputs.configs_per_stage }}" \

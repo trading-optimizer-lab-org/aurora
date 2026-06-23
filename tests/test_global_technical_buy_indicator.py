@@ -829,12 +829,14 @@ def test_pack_builder_groups_by_group_count_not_stage_count(tmp_path: Path) -> N
     out = tmp_path / "pack"
     gtbi.build_stage_packs(lake, out, stage_count=4, group_count=2, locked_start="2020-06-01")
 
-    stage_0 = pd.read_parquet(out / "group-000" / "stage-000" / "prices.parquet")
-    stage_2 = pd.read_parquet(out / "group-000" / "stage-002" / "prices.parquet")
-    stage_1 = pd.read_parquet(out / "group-001" / "stage-001" / "prices.parquet")
-    assert sorted(stage_0["symbol"].unique()) == ["AAA", "CCC"]
-    assert sorted(stage_2["symbol"].unique()) == ["AAA", "CCC"]
-    assert sorted(stage_1["symbol"].unique()) == ["BBB", "DDD"]
+    group_0 = pd.read_parquet(out / "group-000" / "prices.parquet")
+    group_1 = pd.read_parquet(out / "group-001" / "prices.parquet")
+    manifest = pd.read_csv(out / "manifest.csv")
+    assert sorted(group_0["symbol"].unique()) == ["AAA", "CCC"]
+    assert sorted(group_1["symbol"].unique()) == ["BBB", "DDD"]
+    assert not list((out / "group-000").glob("stage-*"))
+    assert manifest.loc[manifest["stage"].isin([0, 2]), "symbols"].tolist() == [2, 2]
+    assert manifest.loc[manifest["stage"] == 1, "symbols"].tolist() == [2]
 
 
 def test_run_stage_smoke_writes_outputs_from_synthetic_pack(tmp_path: Path) -> None:

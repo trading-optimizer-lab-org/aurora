@@ -1834,14 +1834,8 @@ def build_stage_packs(
     grouped: dict[int, list[str]] = {group: [] for group in range(effective_group_count)}
     for idx, symbol in enumerate(symbols):
         grouped[idx % effective_group_count].append(symbol)
-    stage_rows: list[dict[str, Any]] = []
-    for stage in range(stage_count):
-        group_index = stage % effective_group_count
-        if group_count > 1:
-            stage_dir = output_dir / f"group-{group_index:03d}" / f"stage-{stage:03d}"
-        else:
-            stage_dir = output_dir / f"stage-{stage:03d}"
-        stage_dir.mkdir(parents=True, exist_ok=True)
+
+    def build_group_prices(group_index: int) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         for symbol in grouped[group_index]:
             path = normalized / f"{symbol}.parquet"
@@ -1856,17 +1850,49 @@ def build_stage_packs(
                 continue
             frame["symbol"] = symbol
             frames.append(frame.reset_index(drop=True)[PRICE_COLUMNS])
-        prices = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame(columns=PRICE_COLUMNS)
-        prices.to_parquet(stage_dir / "prices.parquet", index=False)
-        benchmark.to_parquet(stage_dir / "benchmark.parquet", index=False)
-        stage_rows.append(
-            {
-                "stage": stage,
-                "group": group_index,
+        if frames:
+            return pd.concat(frames, ignore_index=True, sort=False)
+        return pd.DataFrame(columns=PRICE_COLUMNS)
+
+    stage_rows: list[dict[str, Any]] = []
+    group_stats: dict[int, dict[str, int]] = {}
+    if group_count > 1:
+        for group_index in range(effective_group_count):
+            group_dir = output_dir / f"group-{group_index:03d}"
+            group_dir.mkdir(parents=True, exist_ok=True)
+            prices = build_group_prices(group_index)
+            prices.to_parquet(group_dir / "prices.parquet", index=False)
+            benchmark.to_parquet(group_dir / "benchmark.parquet", index=False)
+            group_stats[group_index] = {
                 "symbols": int(prices["symbol"].nunique()) if not prices.empty else 0,
                 "rows": int(len(prices)),
             }
-        )
+        for stage in range(stage_count):
+            group_index = stage % effective_group_count
+            stats = group_stats[group_index]
+            stage_rows.append(
+                {
+                    "stage": stage,
+                    "group": group_index,
+                    "symbols": stats["symbols"],
+                    "rows": stats["rows"],
+                }
+            )
+    else:
+        for stage in range(stage_count):
+            stage_dir = output_dir / f"stage-{stage:03d}"
+            stage_dir.mkdir(parents=True, exist_ok=True)
+            prices = build_group_prices(0)
+            prices.to_parquet(stage_dir / "prices.parquet", index=False)
+            benchmark.to_parquet(stage_dir / "benchmark.parquet", index=False)
+            stage_rows.append(
+                {
+                    "stage": stage,
+                    "group": 0,
+                    "symbols": int(prices["symbol"].nunique()) if not prices.empty else 0,
+                    "rows": int(len(prices)),
+                }
+            )
     manifest = {
         "campaign_id": CAMPAIGN_ID,
         "created_at": pd.Timestamp.utcnow().isoformat(),
