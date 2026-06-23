@@ -162,6 +162,34 @@ def test_stability_pullback_rebound_signal_uses_past_pullback() -> None:
     pd.testing.assert_series_equal(signal.iloc[:-1], gtbi.entry_signal(changed_future, spy, config).iloc[:-1])
 
 
+def test_strict_market_filter_requires_long_regime_even_with_short_market_ma() -> None:
+    rows = 220
+    idx = pd.date_range("2010-01-04", periods=rows, freq="B")
+    close = np.r_[np.linspace(140.0, 70.0, 180), np.linspace(70.0, 90.0, 40)]
+    spy = pd.DataFrame(
+        {
+            "date": idx,
+            "open": close,
+            "high": close * 1.002,
+            "low": close * 0.998,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(rows, 1_000_000.0),
+            "symbol": "SPY",
+        }
+    )
+    config = gtbi.IndicatorConfig(
+        require_market_trend=True,
+        strict_market_filter=True,
+        market_ma_days=50,
+        market_momentum_days=21,
+    )
+
+    market_ok = gtbi._market_trend_ok(pd.DatetimeIndex(idx), spy, config)
+
+    assert bool(market_ok.iloc[-1]) is False
+
+
 def test_stability_rs_momentum_pullback_requires_relative_strength() -> None:
     rows = 260
     idx = pd.date_range("2010-01-04", periods=rows, freq="B")

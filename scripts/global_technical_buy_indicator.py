@@ -255,12 +255,16 @@ def _market_trend_ok(index: pd.Index, benchmark_prices: pd.DataFrame, config: In
         return base.fillna(False)
     short_window = max(20, min(50, int(config.market_ma_days // 2)))
     market_short = spy_close.rolling(short_window, min_periods=min(short_window, len(spy_close))).mean()
+    regime_window = max(150, int(config.market_ma_days))
+    market_regime = spy_close.rolling(regime_window, min_periods=min(regime_window, len(spy_close))).mean()
     recent_high = spy_close.rolling(63, min_periods=min(63, len(spy_close))).max()
     strict = (
         base
         & (spy_close > market_short)
+        & (spy_close > market_regime)
         & (market_short > market_ma)
         & (market_ma > market_ma.shift(21))
+        & (market_regime >= market_regime.shift(21))
         & (spy_close.pct_change(10) > -0.015)
         & (spy_close >= recent_high * 0.94)
     )
