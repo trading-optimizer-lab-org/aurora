@@ -1,0 +1,72 @@
+{
+  "pack_name": "aurora_gtbi_research_broad_strategy_pack_72000",
+  "total_strategies": 72000,
+  "shard_count": 360,
+  "strategies_per_shard": 200,
+  "concept_count": 30,
+  "market_overlay_count": 8,
+  "microfamily_count": 240,
+  "variants_per_microfamily": 300,
+  "variants_per_concept": 2400,
+  "variants_per_market_overlay": 9000,
+  "trend_profile_count": 5,
+  "rs_profile_count": 5,
+  "exit_profile_count": 4,
+  "aggression_profile_count": 3,
+  "shard_min_count": 200,
+  "shard_max_count": 200,
+  "files": {
+    "aurora_gtbi_research_broad_strategies_72000.csv": {
+      "bytes": 210088511,
+      "sha256": "6e47535944f9c839c5c91100f01306e08954194085ae4a68ccdebb3af637c8b5"
+    },
+    "aurora_gtbi_research_broad_strategies_72000.jsonl": {
+      "bytes": 237641689,
+      "sha256": "8d49d0cbcbac02b46a394c81de0773f1ec10be060443f366d69d07de02cc99e3"
+    },
+    "codex_360jobs_matrix.csv": {
+      "bytes": 11446,
+      "sha256": "530e28386f697101d537d0786dc17169713480a23253131c1125e8354fb90528"
+    },
+    "strategy_family_catalog_240.csv": {
+      "bytes": 154595,
+      "sha256": "71ff44655d83b3b3420079df8319a52216464a9eadd379f7c3636b27ae97982c"
+    },
+    "research_source_map.csv": {
+      "bytes": 9846,
+      "sha256": "687d8c05eca05902c0e1b1202485136aa5f1c8c127981239ee1bdcbb241acd3d"
+    },
+    "preview_first_500_strategies.csv": {
+      "bytes": 1615401,
+      "sha256": "2b9ca7ce3305367e5c28a6c7f6790844550a480896f3eb8530a48278556b23b1"
+    },
+    "strategy_counts_by_concept.csv": {
+      "bytes": 1908,
+      "sha256": "54b4f0204d764be79d81977440bf84c39def36c093543fd23f50f73d4d7e6b9f"
+    },
+    "strategy_counts_by_market_overlay.csv": {
+      "bytes": 487,
+      "sha256": "bf5f8d2d9391d00a598a6e01c084b080447dd5c2741dd9f135ef6a0fd3182050"
+    },
+    "strategy_counts_by_trend_profile.csv": {
+      "bytes": 277,
+      "sha256": "147e84ff76da709bba0d9fb1290c08d7dfc34105edb30926f8d8c6343bccaf46"
+    },
+    "strategy_counts_by_rs_profile.csv": {
+      "bytes": 303,
+      "sha256": "452630a436d57ef83cdfd9a077b17314d52bcf71e571460b5c43d0d994b00283"
+    },
+    "strategy_counts_by_exit_profile.csv": {
+      "bytes": 258,
+      "sha256": "4c3fa33980e908d5e5065631e32ddfbdd95fe8dd8f1fe86bde6fa3a0ac7412a4"
+    },
+    "strategy_counts_by_aggression.csv": {
+      "bytes": 167,
+      "sha256": "554dff3e57e1d82e9ef5874d31bf15f69c31a63ccc8ec8f05970f98dd6e4a0b4"
+    },
+    "README_codex_ingestion.md": {
+      "bytes": 2427,
+      "sha256": "fa1bd34206a505c6d9d48b73c7f536dc7c0143e663c92d0b7253acd1504cf2ff"
+    }
+  }
+}

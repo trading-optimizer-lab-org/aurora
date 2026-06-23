@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -17,6 +18,8 @@ from aurora.core.runtime_paths import base_data_dir
 
 CAMPAIGN_ID = "global_technical_buy_indicator_355jobs"
 ARTIFACT_NAME = "global-technical-buy-indicator-355jobs-results"
+EXTERNAL_PACK_ARTIFACT_NAME = "global-technical-buy-indicator-external-pack-72000-results"
+DEFAULT_EXTERNAL_STRATEGY_PACK_PATH = Path("scripts/strategy_packs/gtbi_research_broad_72000")
 DEFAULT_DATA_RUN_ID = "27936694743"
 DEFAULT_DATA_ARTIFACT_NAME = "free-global-yahoo-daily-data-lake"
 DEFAULT_TRAIN_END = "2010-12-31"
@@ -25,6 +28,7 @@ DEFAULT_VALIDATION_END = "2020-12-31"
 DEFAULT_LOCKED_START = "2021-01-01"
 DEFAULT_SEARCH_METHOD = "surrogate_ml"
 SEARCH_METHODS = ("surrogate_ml", "dehb_real")
+EXTERNAL_SEARCH_METHOD = "external_strategy_pack"
 DEFAULT_SELECTION_SPLIT = "train"
 SELECTION_SPLITS = ("train", "validation")
 DEFAULT_SCORING_PROFILE = "default"
@@ -101,6 +105,17 @@ LEADERBOARD_COLUMNS = [
     "adjusted_return_time_risk",
     "scoring_profile",
     "locked_opened",
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "concept_id",
+    "market_overlay_id",
+    "trend_profile_id",
+    "rs_profile_id",
+    "exit_profile_id",
+    "aggression_id",
+    "source_quality_score",
+    "external_strategy_pack",
 ]
 YEARLY_COLUMNS = [
     "candidate_id",
@@ -179,6 +194,254 @@ class IndicatorConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+EXTERNAL_REQUIRED_FIELDS = (
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "concept_id",
+    "market_overlay_id",
+    "trend_profile_id",
+    "rs_profile_id",
+    "exit_profile_id",
+    "aggression_id",
+    "entry_rules",
+    "market_regime_rules",
+    "stock_trend_rules",
+    "relative_strength_rules",
+    "exit_rules",
+    "guardrails",
+    "research_source_ids",
+    "source_quality_score",
+    "codex_notes",
+)
+
+
+EXTERNAL_SUPPORTED_RULE_KEYS = {
+    "entry_rules": {
+        "adx14_min",
+        "atr20_vs_atr60_max",
+        "atr_mult",
+        "avg_pullback_volume_max_adv20_mult",
+        "avoid_if_distance_above_slow_ma_pct_gt",
+        "bandwidth_percentile_126d_max",
+        "base_depth_pct_max",
+        "base_depth_pct_min",
+        "base_length_days_max",
+        "base_length_days_min",
+        "bb_length",
+        "bb_std",
+        "breakdown_level",
+        "breakout_lookback_days",
+        "close_above",
+        "close_above_level",
+        "close_above_support",
+        "close_above_upper_band",
+        "close_breaks_above_high_n",
+        "close_crosses_above",
+        "close_gt_gap_day_midpoint",
+        "close_gt_open",
+        "close_gt_prior_close",
+        "close_gt_prior_high",
+        "close_gt_sma150",
+        "close_gt_sma200",
+        "close_gt_sma50",
+        "close_position_in_range_min",
+        "close_reclaims",
+        "close_reclaims_lower_band",
+        "close_vs_prev_close_min_pct",
+        "close_within_52w_high_pct_max",
+        "close_within_ema20_pct",
+        "close_within_pivot_pct_max",
+        "contractions_max",
+        "contractions_min",
+        "ema_stack",
+        "entry_trigger",
+        "exit_default",
+        "fast_ma",
+        "gap_down_min_pct",
+        "gap_open_vs_prev_close_min_pct",
+        "handle_depth_pct_max",
+        "handle_length_days_min",
+        "higher_lows_required",
+        "histogram_higher_than_prior",
+        "histogram_prior_below_zero",
+        "inside_days_max",
+        "inside_days_min",
+        "keltner_length",
+        "last_10d_range_pct_max",
+        "last_5d_return_max_pct",
+        "last_contraction_pct_max",
+        "low_below_level_pct_min",
+        "low_holds_ema20_or_sma50",
+        "low_touched_ema20_or_ema50",
+        "low_undercuts_support_pct_min",
+        "low_within_ma_pct",
+        "ma_choice",
+        "macd_fast",
+        "macd_signal",
+        "macd_slow",
+        "max_close_to_close_range_pct",
+        "max_consecutive_down_closes",
+        "max_intraday_range_avg_pct",
+        "max_single_pullback_volume_adv20_mult",
+        "next_entry",
+        "not_second_ep_within_days",
+        "nr_days_lookback",
+        "plus_di_crosses_above_minus_di",
+        "price_below_50d_high_pct_max",
+        "price_below_50d_high_pct_min",
+        "price_within_52w_high_pct_max",
+        "prior_10d_down_volume_dryup",
+        "prior_20d_return_max_pct",
+        "prior_close_below_lower_band_within_days",
+        "prior_close_below_sma20_within_days",
+        "prior_low_touched_lower_or_mid_channel",
+        "prior_return_63d_min_pct",
+        "prior_runup_lookback_days",
+        "prior_runup_min_pct",
+        "prior_trend_required",
+        "prior_uptrend_min_pct",
+        "pullback_days_max",
+        "pullback_days_min",
+        "pullback_from_52w_high_max_pct",
+        "pullback_from_52w_high_min_pct",
+        "pullback_from_gap_close_max_pct",
+        "pullback_from_gap_close_min_pct",
+        "pullback_from_recent_high_max_pct",
+        "pullback_from_recent_high_min_pct",
+        "range_20d_pct_max",
+        "range_5d_pct_max",
+        "range_contraction_ratio_max",
+        "rebound_confirmation",
+        "recent_gap_up_days_ago_max",
+        "recent_gap_up_days_ago_min",
+        "recent_gap_volume_min_adv20_mult",
+        "red_candle_body_range_max",
+        "red_days_count_min",
+        "red_volume_spike_max_adv20_mult",
+        "return_126d_min_pct",
+        "return_21d_min_pct",
+        "return_252d_ex_last_21d_min_pct",
+        "return_252d_min_pct",
+        "return_63d_min_pct",
+        "rs_ratio_symbol_spy_gt_sma20",
+        "rs_ratio_symbol_spy_gt_sma50",
+        "rs_ratio_symbol_spy_new_high_50d",
+        "rsi2_max",
+        "rsi_max_signal",
+        "rsi_period",
+        "signal_volume_gt_max_down_volume_days",
+        "signal_volume_min_adv20_mult",
+        "signal_volume_min_adv50_mult",
+        "slope_slow_ma_20d_min_pct",
+        "slow_ma",
+        "sma150_gt_sma200",
+        "sma150_slope_30d_min_pct",
+        "spy_3d_or_5d_down_required",
+        "support_reference",
+        "symbol_5d_minus_spy_5d_min_pct",
+        "tight_days",
+        "today_range_is_lowest_of_n_days",
+        "volume_dryup_max_adv20_mult",
+        "volume_dryup_prior_days",
+        "volume_max_adv20_mult",
+        "volume_on_signal_min_adv20_mult",
+    },
+    "market_regime_rules": {
+        "spy_5d_return_max_pct",
+        "spy_5d_return_min_pct",
+        "spy_atr20_pct_max",
+        "spy_close_gt_ema10_or_ema20",
+        "spy_close_gt_ema20",
+        "spy_close_gt_sma100",
+        "spy_close_gt_sma200",
+        "spy_close_gt_sma50",
+        "spy_close_reclaims_ema10",
+        "spy_distribution_days_20_max",
+        "spy_drawdown_from_63d_high_max_pct",
+        "spy_drawdown_from_63d_high_min_pct",
+        "spy_ema20_gt_sma50",
+        "spy_heavy_down_days_10_max",
+        "spy_low_5d_below_ema10",
+        "spy_max_drawdown_126d_pct",
+        "spy_max_drawdown_63d_pct",
+        "spy_no_20d_low",
+        "spy_no_close_below_sma50_days",
+        "spy_return_126d_min_pct",
+        "spy_return_20d_min_pct",
+        "spy_return_50d_min_pct",
+        "spy_sma200_slope_20d_min_pct",
+        "spy_sma50_gt_sma200",
+    },
+    "stock_trend_rules": {
+        "atr20_pct_max",
+        "close_gt_ema20",
+        "close_gt_sma100",
+        "close_gt_sma200",
+        "close_gt_sma50",
+        "close_vs_52w_low_min_pct",
+        "close_within_52w_high_pct_max",
+        "ema10_gt_ema20",
+        "ema20_gt_ema50",
+        "ema20_slope_10d_min_pct",
+        "ema50_gt_sma100",
+        "recent_low_touched_sma50_max_pct",
+        "return_126d_min_pct",
+        "return_63d_min_pct",
+        "sma150_gt_sma200",
+        "sma200_slope_20d_min_pct",
+        "sma20_gt_sma50",
+        "sma50_gt_sma150",
+        "sma50_gt_sma200",
+        "sma50_slope_20d_min_pct",
+    },
+    "relative_strength_rules": {
+        "if_spy_5d_return_lt_pct",
+        "price_not_more_than_pct_above_high_50d",
+        "return_126d_minus_spy_126d_min_pct",
+        "return_20d_minus_spy_20d_min_pct",
+        "return_63d_minus_spy_63d_min_pct",
+        "rs_ratio_slope_20d_min_pct",
+        "rs_ratio_symbol_spy_gt_sma20",
+        "rs_ratio_symbol_spy_gt_sma50",
+        "rs_ratio_symbol_spy_within_high_50d_pct",
+        "symbol_5d_minus_spy_5d_min_pct",
+    },
+    "exit_rules": {
+        "atr_trailing_len",
+        "atr_trailing_mult",
+        "exit_if_no_followthrough_days",
+        "exit_if_red_volume_spike_gt_adv20",
+        "exit_on_close_below",
+        "market_exit",
+        "max_holding_days",
+        "stop_loss_pct",
+        "stop_reference",
+        "take_profit_pct",
+        "trailing_stop_pct",
+    },
+    "guardrails": {
+        "data_scope",
+        "do_not_load_or_use_data_on_or_after",
+        "execution",
+        "locked_start_exclusive",
+        "min_market_cap_usd",
+        "positioning",
+        "train_end",
+        "validation_end",
+        "validation_start",
+    },
+}
+
+
+@dataclass(frozen=True)
+class ExternalStrategyCandidate:
+    payload: dict[str, Any]
+    config: IndicatorConfig
+    unsupported_rules: tuple[str, ...]
+    approximated_rules: tuple[str, ...]
 
 
 def _dt(value: str | pd.Timestamp) -> pd.Timestamp:
@@ -829,6 +1092,279 @@ def _finite_float(value: Any, default: float = float("nan")) -> float:
     except (TypeError, ValueError):
         return default
     return out if math.isfinite(out) else default
+
+
+def _external_pct(value: Any, default: float = 0.0) -> float:
+    out = _finite_float(value, default=default)
+    if not math.isfinite(out):
+        return default
+    return out / 100.0 if abs(out) > 1.0 else out
+
+
+def _external_int(value: Any, default: int, *, low: int, high: int) -> int:
+    out = _finite_float(value, default=float(default))
+    if not math.isfinite(out):
+        out = float(default)
+    return int(np.clip(round(out), low, high))
+
+
+def _ma_days(value: Any, default: int) -> int:
+    text = str(value or "").lower()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return int(digits) if digits else int(default)
+
+
+def _external_strategy_files(pack_path: Path, shard_id: int | None, strategy_format: str) -> list[Path]:
+    pack_path = Path(pack_path)
+    fmt = strategy_format.lower()
+    if fmt not in {"auto", "jsonl", "csv"}:
+        raise ValueError("external_strategy_format must be auto, jsonl, or csv")
+    if pack_path.is_file():
+        return [pack_path]
+    if not pack_path.exists():
+        raise FileNotFoundError(f"external strategy pack path not found: {pack_path}")
+    if shard_id is not None:
+        shard_path = pack_path / "shards" / f"shard_{int(shard_id):03d}.jsonl"
+        if shard_path.exists():
+            return [shard_path]
+        raise FileNotFoundError(f"external strategy shard not found: {shard_path}")
+    shards = sorted((pack_path / "shards").glob("shard_*.jsonl"))
+    if shards:
+        return shards
+    if fmt in {"auto", "jsonl"}:
+        jsonl = pack_path / "aurora_gtbi_research_broad_strategies_72000.jsonl"
+        if jsonl.exists():
+            return [jsonl]
+    if fmt in {"auto", "csv"}:
+        csv_path = pack_path / "aurora_gtbi_research_broad_strategies_72000.csv"
+        if csv_path.exists():
+            return [csv_path]
+    raise FileNotFoundError(f"no external strategy files found under {pack_path}")
+
+
+def _decode_external_csv_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    if text[0] in "[{":
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _iter_external_strategy_payloads(path: Path) -> Iterable[dict[str, Any]]:
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                yield {key: _decode_external_csv_value(value) for key, value in row.items()}
+        return
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                yield json.loads(line)
+
+
+def _external_unknown_rules(payload: dict[str, Any]) -> list[str]:
+    unknown: list[str] = []
+    missing = [field for field in EXTERNAL_REQUIRED_FIELDS if field not in payload]
+    unknown.extend(f"missing_required.{field}" for field in missing)
+    for section, supported in EXTERNAL_SUPPORTED_RULE_KEYS.items():
+        rules = payload.get(section) or {}
+        if not isinstance(rules, dict):
+            unknown.append(f"{section}.__not_object__")
+            continue
+        for key in rules:
+            if key not in supported:
+                unknown.append(f"{section}.{key}")
+    return unknown
+
+
+def _family_for_external_strategy(payload: dict[str, Any]) -> str:
+    concept = str(payload.get("concept_id", "")).lower()
+    if any(token in concept for token in ("breakout", "vcp", "squeeze", "inside", "stair_step")):
+        return "quallamaggie"
+    if any(token in concept for token in ("rsi", "pullback", "reclaim", "shakeout", "failed_breakdown", "keltner")):
+        return "oneil_canslim"
+    if any(token in concept for token in ("trend", "moving_average", "stage2", "52w", "momentum")):
+        return "minervini_sepa"
+    return "quallamaggie"
+
+
+def external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCandidate:
+    unknown = _external_unknown_rules(payload)
+    entry = payload.get("entry_rules") or {}
+    market = payload.get("market_regime_rules") or {}
+    stock = payload.get("stock_trend_rules") or {}
+    rs_rules = payload.get("relative_strength_rules") or {}
+    exit_rules = payload.get("exit_rules") or {}
+    concept = str(payload.get("concept_id", "")).lower()
+    trend = str(payload.get("trend_profile_id", "")).lower()
+    exit_profile = str(payload.get("exit_profile_id", "")).lower()
+
+    breakout_lookback = _external_int(
+        entry.get("breakout_lookback_days")
+        or entry.get("close_breaks_above_high_n")
+        or entry.get("nr_days_lookback")
+        or entry.get("inside_days_max")
+        or entry.get("tight_days")
+        or 20,
+        20,
+        low=5,
+        high=126,
+    )
+    base_lookback = _external_int(
+        entry.get("base_length_days_min")
+        or entry.get("pullback_days_min")
+        or entry.get("volume_dryup_prior_days")
+        or entry.get("handle_length_days_min")
+        or 10,
+        10,
+        low=3,
+        high=80,
+    )
+    volume_multiple = _finite_float(
+        entry.get("volume_on_signal_min_adv20_mult")
+        or entry.get("signal_volume_min_adv20_mult")
+        or entry.get("signal_volume_min_adv50_mult")
+        or entry.get("recent_gap_volume_min_adv20_mult")
+        or 1.15,
+        default=1.15,
+    )
+    max_base_range_pct = max(
+        _external_pct(entry.get("range_20d_pct_max"), default=0.0),
+        _external_pct(entry.get("base_depth_pct_max"), default=0.0),
+        _external_pct(entry.get("handle_depth_pct_max"), default=0.0),
+        _external_pct(entry.get("pullback_from_recent_high_max_pct"), default=0.0),
+        _external_pct(entry.get("pullback_from_52w_high_max_pct"), default=0.0),
+        0.08,
+    )
+    near_high_pct = 1.0 - max(
+        _external_pct(entry.get("price_within_52w_high_pct_max"), default=0.0),
+        _external_pct(entry.get("close_within_52w_high_pct_max"), default=0.0),
+        _external_pct(stock.get("close_within_52w_high_pct_max"), default=0.0),
+        0.10,
+    )
+    above_low_multiple = 1.0 + max(_external_pct(stock.get("close_vs_52w_low_min_pct"), default=0.0), 0.05)
+    prior_runup_lookback = _external_int(
+        entry.get("prior_runup_lookback_days") or entry.get("prior_return_63d_min_pct") and 63 or 63,
+        63,
+        low=10,
+        high=126,
+    )
+    prior_runup_min_pct = max(
+        _external_pct(entry.get("prior_runup_min_pct"), default=0.0),
+        _external_pct(entry.get("prior_uptrend_min_pct"), default=0.0),
+        _external_pct(entry.get("return_63d_min_pct"), default=0.0),
+        _external_pct(stock.get("return_63d_min_pct"), default=0.0),
+        0.03,
+    )
+    exit_ma_days = _ma_days(exit_rules.get("exit_on_close_below"), 20)
+    market_exit = str(exit_rules.get("market_exit", ""))
+    market_ma_days = _ma_days(market_exit, 100)
+    if market.get("spy_close_gt_sma200") or market.get("spy_sma50_gt_sma200"):
+        market_ma_days = max(market_ma_days, 200)
+    elif market.get("spy_close_gt_sma100"):
+        market_ma_days = max(market_ma_days, 100)
+    elif market.get("spy_close_gt_sma50") or market.get("spy_ema20_gt_sma50"):
+        market_ma_days = max(market_ma_days, 50)
+    ma_short = 20 if ("ema" in trend or "ema" in str(entry.get("close_above", "")).lower()) else 50
+    if "ema10" in str(entry.get("close_above", "")).lower():
+        ma_short = 10
+    ma_mid = 100 if stock.get("close_gt_sma100") or stock.get("ema50_gt_sma100") else 150
+    ma_long = 200 if stock.get("close_gt_sma200") or stock.get("sma50_gt_sma200") else 150
+
+    config = IndicatorConfig(
+        family=_family_for_external_strategy(payload),
+        minervini_trend=bool("stage2" in trend or "minervini" in concept or stock),
+        require_rs=bool(rs_rules),
+        require_base_tight=bool(
+            any(key in entry for key in ("base_depth_pct_max", "range_20d_pct_max", "max_close_to_close_range_pct"))
+        ),
+        require_breakout=bool(
+            "breakout" in concept
+            or any(key in entry for key in ("entry_trigger", "close_breaks_above_high_n", "close_above_upper_band"))
+        ),
+        require_pocket_pivot=bool("pocket_pivot" in concept or entry.get("signal_volume_gt_max_down_volume_days")),
+        require_oneil_stack=bool("ibd" in concept or "oneil" in concept),
+        require_volume_dryup=bool("volume_dryup_max_adv20_mult" in entry or entry.get("prior_10d_down_volume_dryup")),
+        require_prior_runup=bool(
+            any(key in entry for key in ("prior_runup_min_pct", "prior_uptrend_min_pct", "return_63d_min_pct"))
+        ),
+        require_episodic_gap=bool("gap" in concept or "gap_open_vs_prev_close_min_pct" in entry),
+        require_market_trend=bool(market),
+        breakout_lookback=breakout_lookback,
+        base_lookback=base_lookback,
+        volume_lookback=_external_int(entry.get("volume_lookback") or entry.get("volume_dryup_prior_days") or 20, 20, low=5, high=100),
+        rs_lookback=126 if "126d" in json.dumps(rs_rules) else 63 if "63d" in json.dumps(rs_rules) else 20,
+        high_lookback=252 if "52w" in json.dumps(payload) else 126,
+        low_lookback=252,
+        ma_short=ma_short,
+        ma_mid=ma_mid,
+        ma_long=ma_long,
+        oneil_fast_ma=10,
+        oneil_mid_ma=21,
+        volume_multiple=max(float(volume_multiple), 0.01),
+        max_base_range_pct=float(np.clip(max_base_range_pct, 0.02, 0.50)),
+        rs_near_high_pct=1.0 - max(_external_pct(rs_rules.get("rs_ratio_symbol_spy_within_high_50d_pct"), 0.04), 0.01),
+        near_high_pct=float(np.clip(near_high_pct, 0.50, 0.98)),
+        above_low_multiple=float(np.clip(above_low_multiple, 1.0, 2.5)),
+        rsi_period=_external_int(entry.get("rsi_period"), 14, low=2, high=30),
+        rsi_max=float(np.clip(_finite_float(entry.get("rsi_max_signal"), default=75.0), 35.0, 98.0)),
+        prior_runup_lookback=prior_runup_lookback,
+        prior_runup_min_pct=float(np.clip(prior_runup_min_pct, 0.0, 1.5)),
+        volume_dryup_lookback=_external_int(entry.get("volume_dryup_prior_days"), 10, low=3, high=40),
+        volume_dryup_max_ratio=float(
+            np.clip(_finite_float(entry.get("volume_dryup_max_adv20_mult"), default=0.85), 0.05, 2.0)
+        ),
+        episodic_gap_pct=float(np.clip(_external_pct(entry.get("gap_open_vs_prev_close_min_pct"), 0.06), 0.0, 0.30)),
+        min_adr_pct=0.002,
+        stop_loss_pct=float(np.clip(_external_pct(exit_rules.get("stop_loss_pct"), 0.08), 0.005, 0.50)),
+        trailing_stop_pct=float(np.clip(_external_pct(exit_rules.get("trailing_stop_pct"), 0.18), 0.0, 0.80)),
+        take_profit_pct=float(np.clip(_external_pct(exit_rules.get("take_profit_pct"), 0.0), 0.0, 2.0)),
+        max_holding_days=_external_int(exit_rules.get("max_holding_days"), 30, low=1, high=260),
+        use_exit_ma=bool(exit_rules.get("exit_on_close_below")),
+        use_market_exit=bool(exit_rules.get("market_exit")),
+        exit_ma_days=int(np.clip(exit_ma_days, 2, 100)),
+        market_ma_days=int(np.clip(market_ma_days, 10, 250)),
+        market_momentum_days=20 if any(key.endswith("20d_min_pct") for key in market) else 21,
+    )
+    approximated: list[str] = []
+    for section in ("entry_rules", "market_regime_rules", "stock_trend_rules", "relative_strength_rules", "exit_rules"):
+        for key in (payload.get(section) or {}):
+            if f"{section}.{key}" not in unknown:
+                approximated.append(f"{section}.{key}")
+    return ExternalStrategyCandidate(
+        payload=payload,
+        config=config,
+        unsupported_rules=tuple(sorted(unknown)),
+        approximated_rules=tuple(sorted(approximated)),
+    )
+
+
+def load_external_strategy_candidates(
+    pack_path: Path,
+    *,
+    shard_id: int | None = None,
+    limit: int | None = None,
+    strategy_format: str = "auto",
+) -> list[ExternalStrategyCandidate]:
+    if shard_id is not None and not (0 <= int(shard_id) <= 359):
+        raise ValueError("external_strategy_shard_id must be between 0 and 359")
+    candidates: list[ExternalStrategyCandidate] = []
+    max_count = None if limit is None or int(limit) <= 0 else int(limit)
+    for path in _external_strategy_files(Path(pack_path), shard_id, strategy_format):
+        for payload in _iter_external_strategy_payloads(path):
+            if shard_id is not None and int(payload.get("shard_id", -1)) != int(shard_id):
+                continue
+            candidates.append(external_strategy_to_config(payload))
+            if max_count is not None and len(candidates) >= max_count:
+                return candidates
+    return candidates
 
 
 def _yearly_for_split(yearly: pd.DataFrame, split: str, years: range) -> pd.DataFrame:
@@ -2285,6 +2821,308 @@ def reevaluate_global_candidates(
     return summary
 
 
+def _external_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "strategy_id": str(payload.get("strategy_id", "")),
+        "shard_id": int(payload.get("shard_id", -1)),
+        "slot_in_shard": int(payload.get("slot_in_shard", -1)),
+        "concept_id": str(payload.get("concept_id", "")),
+        "market_overlay_id": str(payload.get("market_overlay_id", "")),
+        "trend_profile_id": str(payload.get("trend_profile_id", "")),
+        "rs_profile_id": str(payload.get("rs_profile_id", "")),
+        "exit_profile_id": str(payload.get("exit_profile_id", "")),
+        "aggression_id": str(payload.get("aggression_id", "")),
+        "source_quality_score": _finite_float(payload.get("source_quality_score"), default=float("nan")),
+        "external_strategy_pack": True,
+    }
+
+
+def run_external_strategy_pack_shard(
+    *,
+    data_lake_root: Path,
+    external_strategy_pack_path: Path = DEFAULT_EXTERNAL_STRATEGY_PACK_PATH,
+    output_dir: Path,
+    external_strategy_shard_id: int,
+    external_strategy_limit: int = 200,
+    external_strategy_format: str = "auto",
+    external_strategy_fail_on_unsupported: bool = False,
+    min_market_cap: float = 2_000_000_000,
+    locked_start: str = DEFAULT_LOCKED_START,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+) -> dict[str, Any]:
+    shard = int(external_strategy_shard_id)
+    shard_padded = f"{shard:03d}"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    candidates = load_external_strategy_candidates(
+        external_strategy_pack_path,
+        shard_id=shard,
+        limit=external_strategy_limit,
+        strategy_format=external_strategy_format,
+    )
+    unsupported_rows: list[dict[str, Any]] = []
+    if any(candidate.unsupported_rules for candidate in candidates):
+        for candidate in candidates:
+            if candidate.unsupported_rules:
+                payload = candidate.payload
+                unsupported_rows.append(
+                    {
+                        "strategy_id": payload.get("strategy_id"),
+                        "shard_id": payload.get("shard_id"),
+                        "slot_in_shard": payload.get("slot_in_shard"),
+                        "unsupported_rules": ";".join(candidate.unsupported_rules),
+                        "reason": "unsupported_or_missing_external_rule",
+                    }
+                )
+        if external_strategy_fail_on_unsupported:
+            pd.DataFrame(unsupported_rows).to_csv(output_dir / f"unsupported_strategies_shard_{shard_padded}.csv", index=False)
+            raise ValueError(f"{len(unsupported_rows)} unsupported external strategies in shard {shard_padded}")
+
+    evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
+    pack_root = output_dir / "_external_pack_data"
+    build_stage_packs(
+        data_lake_root,
+        pack_root,
+        stage_count=1,
+        group_count=1,
+        locked_start=locked_start,
+        min_rows=260,
+        min_market_cap=min_market_cap,
+    )
+    pack_dir = pack_root / "stage-000"
+    symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
+    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+
+    rows: list[dict[str, Any]] = []
+    yearly_frames: list[pd.DataFrame] = []
+    trade_frames: list[pd.DataFrame] = []
+    rules: list[dict[str, Any]] = []
+    failed_rows: list[dict[str, Any]] = []
+    for candidate in evaluable:
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        try:
+            row, trades, yearly = evaluate_candidate(
+                config=candidate.config,
+                candidate_id=candidate_id,
+                stage=shard,
+                symbol_frames=symbol_frames,
+                benchmark_prices=benchmark,
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+                search_method=EXTERNAL_SEARCH_METHOD,
+                selection_split="validation",
+                min_selection_trades_per_year=100,
+                scoring_profile="strict_quality",
+            )
+        except Exception as exc:
+            failed_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "shard_id": payload.get("shard_id"),
+                    "slot_in_shard": payload.get("slot_in_shard"),
+                    "reason": repr(exc),
+                }
+            )
+            continue
+        row.update(_external_metadata(payload))
+        rows.append(row)
+        if not yearly.empty:
+            yearly_frames.append(yearly)
+        if not trades.empty:
+            trade_frames.append(trades)
+        rules.append(
+            {
+                "candidate_id": candidate_id,
+                "strategy_id": candidate_id,
+                "stage": shard,
+                "search_method": EXTERNAL_SEARCH_METHOD,
+                "selection_split": "validation",
+                "scoring_profile": "strict_quality",
+                "config": candidate.config.to_dict(),
+                "external_strategy": payload,
+                "approximated_rules": list(candidate.approximated_rules),
+                "unsupported_rules": list(candidate.unsupported_rules),
+                "score": row["score"],
+            }
+        )
+
+    leaderboard = pd.DataFrame(rows)
+    if not leaderboard.empty:
+        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    filtered = pd.DataFrame(columns=leaderboard.columns)
+    if not leaderboard.empty and "strict_quality_pass" in leaderboard.columns:
+        filtered = leaderboard.loc[leaderboard["strict_quality_pass"].astype(bool)].copy()
+        if not filtered.empty:
+            filtered = filtered.sort_values(
+                ["adjusted_return_time_risk", "validation_median_trade_return_pct", "candidate_id"],
+                ascending=[False, False, True],
+            )
+    yearly_out = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
+    trades_out = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
+    if unsupported_rows:
+        unsupported = pd.DataFrame(unsupported_rows)
+    else:
+        unsupported = pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"])
+    if failed_rows:
+        failed = pd.DataFrame(failed_rows)
+        unsupported = pd.concat([unsupported, failed.assign(unsupported_rules="", reason=failed["reason"])], ignore_index=True, sort=False)
+
+    leaderboard.to_csv(output_dir / f"leaderboard_shard_{shard_padded}.csv", index=False)
+    filtered.to_csv(output_dir / f"filtered_leaderboard_shard_{shard_padded}.csv", index=False)
+    yearly_out.to_csv(output_dir / f"yearly_trade_performance_shard_{shard_padded}.csv", index=False)
+    trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_shard_{shard_padded}.csv", index=False)
+    unsupported.to_csv(output_dir / f"unsupported_strategies_shard_{shard_padded}.csv", index=False)
+    with (output_dir / f"top_indicator_rules_shard_{shard_padded}.jsonl").open("w", encoding="utf-8") as handle:
+        for rule in rules:
+            handle.write(json.dumps(rule, sort_keys=True) + "\n")
+    summary = {
+        "shard_id": shard,
+        "strategies_requested": int(external_strategy_limit),
+        "strategies_loaded": int(len(candidates)),
+        "strategies_evaluated": int(len(rows)),
+        "strategies_unsupported": int(len(unsupported_rows)),
+        "strategies_failed": int(len(failed_rows)),
+        "symbols": int(len(symbol_frames)),
+        "locked_start": str(locked_start),
+        "train_end": str(train_end),
+        "validation_start": str(validation_start),
+        "validation_end": str(validation_end),
+        "github_only_run": True,
+        "requires_local_machine": False,
+        "locked_opened": False,
+        "filtered_candidates": int(len(filtered)),
+        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
+        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
+        "best_adjusted_return_time_risk": (
+            None if leaderboard.empty else float(leaderboard.iloc[0].get("adjusted_return_time_risk", float("nan")))
+        ),
+    }
+    (output_dir / f"summary_shard_{shard_padded}.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
+
+
+def merge_external_strategy_pack_outputs(
+    *,
+    shards_root: Path,
+    output_dir: Path,
+    total_strategies_requested: int,
+    total_shards_requested: int,
+    locked_start: str = DEFAULT_LOCKED_START,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+) -> dict[str, Any]:
+    shards_root = Path(shards_root)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summaries: list[dict[str, Any]] = []
+    leaderboards: list[pd.DataFrame] = []
+    filtered_frames: list[pd.DataFrame] = []
+    yearly_frames: list[pd.DataFrame] = []
+    trade_frames: list[pd.DataFrame] = []
+    unsupported_frames: list[pd.DataFrame] = []
+    rule_rows: list[dict[str, Any]] = []
+    for summary_path in sorted(shards_root.rglob("summary_shard_*.json")):
+        summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
+    for path in sorted(shards_root.rglob("leaderboard_shard_*.csv")):
+        if path.stat().st_size:
+            leaderboards.append(pd.read_csv(path))
+    for path in sorted(shards_root.rglob("filtered_leaderboard_shard_*.csv")):
+        if path.stat().st_size:
+            filtered_frames.append(pd.read_csv(path))
+    for path in sorted(shards_root.rglob("yearly_trade_performance_shard_*.csv")):
+        if path.stat().st_size:
+            yearly_frames.append(pd.read_csv(path))
+    for path in sorted(shards_root.rglob("top_trades_sample_shard_*.csv")):
+        if path.stat().st_size:
+            trade_frames.append(pd.read_csv(path))
+    for path in sorted(shards_root.rglob("unsupported_strategies_shard_*.csv")):
+        if path.stat().st_size:
+            unsupported_frames.append(pd.read_csv(path))
+    for path in sorted(shards_root.rglob("top_indicator_rules_shard_*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rule_rows.append(json.loads(line))
+
+    leaderboard = pd.concat(leaderboards, ignore_index=True, sort=False) if leaderboards else pd.DataFrame(columns=LEADERBOARD_COLUMNS)
+    if not leaderboard.empty:
+        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    filtered = pd.concat(filtered_frames, ignore_index=True, sort=False) if filtered_frames else pd.DataFrame(columns=leaderboard.columns)
+    if not filtered.empty:
+        filtered = filtered.sort_values(
+            ["adjusted_return_time_risk", "validation_median_trade_return_pct", "candidate_id"],
+            ascending=[False, False, True],
+        ).reset_index(drop=True)
+    yearly = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
+    trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
+    unsupported = (
+        pd.concat(unsupported_frames, ignore_index=True, sort=False)
+        if unsupported_frames
+        else pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"])
+    )
+
+    leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
+    filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
+    yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
+    trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
+    unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
+    with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
+        for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+    def summary_by(column: str) -> pd.DataFrame:
+        if leaderboard.empty or column not in leaderboard.columns:
+            return pd.DataFrame(columns=[column, "candidates", "best_score", "avg_score", "filtered_candidates"])
+        filtered_ids = set(filtered["candidate_id"].astype(str)) if not filtered.empty and "candidate_id" in filtered.columns else set()
+        grouped = (
+            leaderboard.assign(_filtered=leaderboard["candidate_id"].astype(str).isin(filtered_ids).astype(int))
+            .groupby(column, dropna=False)
+            .agg(
+                candidates=("candidate_id", "count"),
+                best_score=("score", "max"),
+                avg_score=("score", "mean"),
+                filtered_candidates=("_filtered", "sum"),
+            )
+            .reset_index()
+            .sort_values(["best_score", column], ascending=[False, True])
+        )
+        return grouped
+
+    summary_by("family").to_csv(output_dir / "family_summary.csv", index=False)
+    summary_by("concept_id").to_csv(output_dir / "concept_summary.csv", index=False)
+    summary_by("market_overlay_id").to_csv(output_dir / "market_overlay_summary.csv", index=False)
+
+    best_adjusted = None
+    if not leaderboard.empty and "adjusted_return_time_risk" in leaderboard.columns:
+        best_adjusted = _finite_float(leaderboard.iloc[0].get("adjusted_return_time_risk"), default=float("nan"))
+        best_adjusted = None if not math.isfinite(best_adjusted) else float(best_adjusted)
+    summary = {
+        "total_strategies_requested": int(total_strategies_requested),
+        "total_strategies_loaded": int(sum(int(item.get("strategies_loaded", 0)) for item in summaries)),
+        "total_strategies_evaluated": int(sum(int(item.get("strategies_evaluated", 0)) for item in summaries)),
+        "total_strategies_unsupported": int(sum(int(item.get("strategies_unsupported", 0)) for item in summaries)),
+        "total_strategies_failed": int(sum(int(item.get("strategies_failed", 0)) for item in summaries)),
+        "total_shards_requested": int(total_shards_requested),
+        "total_shards_completed": int(len(summaries)),
+        "filtered_candidates": int(len(filtered)),
+        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
+        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
+        "best_adjusted_return_time_risk": best_adjusted,
+        "locked_start": str(locked_start),
+        "train_end": str(train_end),
+        "validation_start": str(validation_start),
+        "validation_end": str(validation_end),
+        "github_only_run": True,
+        "requires_local_machine": False,
+    }
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
+
+
 def _default_run_root() -> Path:
     return base_data_dir() / "runs" / CAMPAIGN_ID
 
@@ -2393,6 +3231,64 @@ def reevaluate_global_cli(argv: list[str] | None = None) -> int:
         validation_start=args.validation_start,
         validation_end=args.validation_end,
         scoring_profile=args.scoring_profile,
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run one external GTBI strategy-pack shard.")
+    parser.add_argument("--data-lake-root", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--external-strategy-pack-path", type=Path, default=DEFAULT_EXTERNAL_STRATEGY_PACK_PATH)
+    parser.add_argument("--external-strategy-shard-id", type=int, required=True)
+    parser.add_argument("--external-strategy-limit", type=int, default=200)
+    parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
+    parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--min-market-cap", type=float, default=2_000_000_000)
+    parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
+    parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
+    parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
+    parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
+    args = parser.parse_args(argv)
+    summary = run_external_strategy_pack_shard(
+        data_lake_root=args.data_lake_root,
+        external_strategy_pack_path=args.external_strategy_pack_path,
+        output_dir=args.output_dir,
+        external_strategy_shard_id=args.external_strategy_shard_id,
+        external_strategy_limit=args.external_strategy_limit,
+        external_strategy_format=args.external_strategy_format,
+        external_strategy_fail_on_unsupported=args.external_strategy_fail_on_unsupported,
+        min_market_cap=args.min_market_cap,
+        locked_start=args.locked_start,
+        train_end=args.train_end,
+        validation_start=args.validation_start,
+        validation_end=args.validation_end,
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Merge external GTBI strategy-pack shard outputs.")
+    parser.add_argument("--shards-root", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--total-strategies-requested", type=int, required=True)
+    parser.add_argument("--total-shards-requested", type=int, required=True)
+    parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
+    parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
+    parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
+    parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
+    args = parser.parse_args(argv)
+    summary = merge_external_strategy_pack_outputs(
+        shards_root=args.shards_root,
+        output_dir=args.output_dir,
+        total_strategies_requested=args.total_strategies_requested,
+        total_shards_requested=args.total_shards_requested,
+        locked_start=args.locked_start,
+        train_end=args.train_end,
+        validation_start=args.validation_start,
+        validation_end=args.validation_end,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

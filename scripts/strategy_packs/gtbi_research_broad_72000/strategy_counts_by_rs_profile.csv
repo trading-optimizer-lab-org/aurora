@@ -1,0 +1,6 @@
+rs_profile_id,rs_profile_name,strategy_count
+rs_63d_excess,63-day excess return vs SPY,14400
+rs_combo_medium,Medium-term RS combo,14400
+rs_line_new_high,RS line new high before/with price,14400
+rs_pullback_resilience,RS resilience during market dip,14400
+rs_ratio_above_ma,RS ratio above MA,14400
