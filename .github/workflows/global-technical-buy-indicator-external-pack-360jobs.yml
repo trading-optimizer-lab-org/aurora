@@ -87,14 +87,10 @@ jobs:
               handle.write(f"candidate_limit={candidate_limit}\n")
           PY
 
-  run_shard:
+  build_external_pack:
     needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      max-parallel: 60
-      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     permissions:
       actions: read
       contents: read
@@ -111,7 +107,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[data-cloud,ml]"
-      - name: Download clean global data lake once for this shard
+      - name: Download clean global data lake once
         run: |
           mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
           for attempt in 1 2 3 4 5; do
@@ -176,6 +172,53 @@ jobs:
           frame[cols].to_parquet(out_path, index=False)
           print(json.dumps({"symbol": "SPY", "rows": int(len(frame)), "path": str(out_path)}, indent=2, sort_keys=True))
           PY
+      - name: Build reusable external pack data
+        run: |
+          python scripts/build_global_technical_buy_indicator_pack.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --output-dir "$QF_DATA_DIR/runs/global_technical_buy_indicator_external_pack/pack" \
+            --stage-count 1 \
+            --group-count 1 \
+            --locked-start "${{ inputs.locked_start }}" \
+            --min-rows 260 \
+            --min-market-cap "${{ inputs.min_market_cap }}"
+      - name: Upload reusable external pack data
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: ${{ env.QF_DATA_DIR }}/runs/global_technical_buy_indicator_external_pack/pack/stage-000
+          if-no-files-found: error
+          retention-days: 3
+
+  run_shard:
+    needs: [plan, build_external_pack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
       - name: Run external strategy shard
         run: |
           FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
@@ -184,6 +227,7 @@ jobs:
           fi
           python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --prebuilt-pack-dir external-pack-data \
             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
             --external-strategy-shard-id "${{ matrix.shard }}" \
             --external-strategy-limit "${{ matrix.candidate_limit }}" \
