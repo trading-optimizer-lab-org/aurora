@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
@@ -1210,3 +1213,28 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "global-technical-buy-indicator-external-pack-72000-results" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
+
+
+def test_external_pack_wrappers_import_from_script_path() -> None:
+    env = os.environ.copy()
+    env["GITHUB_ACTIONS"] = "true"
+    shard_help = subprocess.run(
+        [sys.executable, "scripts/run_global_technical_buy_indicator_external_pack_shard.py", "--help"],
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    merge_help = subprocess.run(
+        [sys.executable, "scripts/merge_global_technical_buy_indicator_external_pack.py", "--help"],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert shard_help.returncode == 0, shard_help.stderr
+    assert merge_help.returncode == 0, merge_help.stderr
+    assert "external GTBI strategy-pack shard" in shard_help.stdout
+    assert "Merge external GTBI strategy-pack shard outputs" in merge_help.stdout
