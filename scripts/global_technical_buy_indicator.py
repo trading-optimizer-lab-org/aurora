@@ -454,6 +454,15 @@ def _dt(value: str | pd.Timestamp) -> pd.Timestamp:
 def _prepare_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=PRICE_COLUMNS)
+    if (
+        isinstance(frame.index, pd.DatetimeIndex)
+        and "date" in frame.columns
+        and all(column in frame.columns for column in ("open", "high", "low", "close", "adj_close", "volume"))
+        and all(pd.api.types.is_numeric_dtype(frame[column]) for column in ("open", "high", "low", "close", "adj_close", "volume"))
+        and frame.index.is_monotonic_increasing
+        and getattr(frame.index, "tz", None) is None
+    ):
+        return frame
     out = frame.copy()
     if "date" in out.columns:
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
@@ -2588,7 +2597,7 @@ def _load_symbol_frames(prices_path: Path) -> dict[str, pd.DataFrame]:
     if "symbol" not in prices.columns:
         raise ValueError(f"{prices_path} does not contain a symbol column")
     return {
-        str(symbol): group.reset_index(drop=True)
+        str(symbol): _prepare_ohlcv(group.reset_index(drop=True))
         for symbol, group in prices.groupby("symbol", sort=True)
     }
 
@@ -2624,7 +2633,7 @@ def run_stage(
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     _families_for_set(family_set)
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
-    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+    benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
     rng = np.random.default_rng(int(seed) + int(stage) * 1009)
     seed_configs = _load_seed_configs(seed_rules_path, max_seeds=200)
     seed_share = float(np.clip(seed_mutation_share, 0.0, 0.95)) if seed_configs else 0.0
@@ -3081,7 +3090,7 @@ def reevaluate_global_candidates(
     )
     pack_dir = pack_root / "stage-000"
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
-    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+    benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
 
     ordered_ids = [
         str(value)
@@ -3271,31 +3280,46 @@ def run_external_strategy_pack_shard(
         if missing:
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
-    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+    benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
 
     rows: list[dict[str, Any]] = []
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
     rules: list[dict[str, Any]] = []
     failed_rows: list[dict[str, Any]] = []
+    evaluation_cache: dict[str, tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]] = {}
     for candidate in evaluable:
         payload = candidate.payload
         candidate_id = str(payload.get("strategy_id"))
+        config_signature = json.dumps(candidate.config.to_dict(), sort_keys=True, separators=(",", ":"))
         try:
-            row, trades, yearly = evaluate_candidate(
-                config=candidate.config,
-                candidate_id=candidate_id,
-                stage=shard,
-                symbol_frames=symbol_frames,
-                benchmark_prices=benchmark,
-                train_end=train_end,
-                validation_start=validation_start,
-                validation_end=validation_end,
-                search_method=EXTERNAL_SEARCH_METHOD,
-                selection_split="validation",
-                min_selection_trades_per_year=100,
-                scoring_profile="strict_quality",
-            )
+            cached = evaluation_cache.get(config_signature)
+            if cached is None:
+                row, trades, yearly = evaluate_candidate(
+                    config=candidate.config,
+                    candidate_id=candidate_id,
+                    stage=shard,
+                    symbol_frames=symbol_frames,
+                    benchmark_prices=benchmark,
+                    train_end=train_end,
+                    validation_start=validation_start,
+                    validation_end=validation_end,
+                    search_method=EXTERNAL_SEARCH_METHOD,
+                    selection_split="validation",
+                    min_selection_trades_per_year=100,
+                    scoring_profile="strict_quality",
+                )
+                evaluation_cache[config_signature] = (row.copy(), trades.copy(), yearly.copy())
+            else:
+                row, trades, yearly = cached
+                row = row.copy()
+                trades = trades.copy()
+                yearly = yearly.copy()
+                row["candidate_id"] = candidate_id
+                if not trades.empty:
+                    trades["candidate_id"] = candidate_id
+                if not yearly.empty:
+                    yearly["candidate_id"] = candidate_id
         except Exception as exc:
             failed_rows.append(
                 {
@@ -3364,6 +3388,8 @@ def run_external_strategy_pack_shard(
         "strategies_evaluated": int(len(rows)),
         "strategies_unsupported": int(len(unsupported_rows)),
         "strategies_failed": int(len(failed_rows)),
+        "unique_config_evaluations": int(len(evaluation_cache)),
+        "cached_config_reuses": int(max(len(evaluable) - len(evaluation_cache), 0)),
         "symbols": int(len(symbol_frames)),
         "locked_start": str(locked_start),
         "train_end": str(train_end),
