@@ -821,6 +821,364 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
     return (signal & market_trend).fillna(False).astype(bool)
 
 
+def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+    """Return same-day buy indicator with lazy per-family feature calculation."""
+
+    frame = _prepare_ohlcv(prices)
+    if frame.empty:
+        return pd.Series(dtype=bool)
+    benchmark = _prepare_ohlcv(benchmark_prices)
+    close = frame["close"]
+    high = frame["high"]
+    low = frame["low"]
+    volume = frame["volume"].fillna(0.0)
+    index = frame.index
+    cache: dict[tuple[str, int], pd.Series] = {}
+
+    def const(value: bool) -> pd.Series:
+        return _safe_bool_series(value, index)
+
+    def sma(window: int) -> pd.Series:
+        key = ("sma", int(window))
+        if key not in cache:
+            cache[key] = close.rolling(int(window), min_periods=int(window)).mean()
+        return cache[key]
+
+    def ema(window: int) -> pd.Series:
+        key = ("ema", int(window))
+        if key not in cache:
+            cache[key] = close.ewm(span=int(window), adjust=False, min_periods=int(window)).mean()
+        return cache[key]
+
+    def high_roll(window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
+        key = (f"high_{shift}_{min_periods}", int(window))
+        if key not in cache:
+            source = high.shift(shift) if shift else high
+            cache[key] = source.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).max()
+        return cache[key]
+
+    def low_roll(window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
+        key = (f"low_{shift}_{min_periods}", int(window))
+        if key not in cache:
+            source = low.shift(shift) if shift else low
+            cache[key] = source.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).min()
+        return cache[key]
+
+    def avg_volume(window: int, *, min_periods: int | None = None) -> pd.Series:
+        key = (f"vol_{min_periods}", int(window))
+        if key not in cache:
+            cache[key] = volume.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).mean()
+        return cache[key]
+
+    def rsi_line() -> pd.Series:
+        key = ("rsi", int(config.rsi_period))
+        if key not in cache:
+            cache[key] = _rsi(close, config.rsi_period).fillna(50.0)
+        return cache[key]
+
+    def high_n() -> pd.Series:
+        return high_roll(config.high_lookback, min_periods=min(config.high_lookback, len(frame)))
+
+    def low_n() -> pd.Series:
+        return low_roll(config.low_lookback, min_periods=min(config.low_lookback, len(frame)))
+
+    def rsi_ok() -> pd.Series:
+        return rsi_line() <= config.rsi_max
+
+    def spy_close() -> pd.Series:
+        key = ("spy_close", 0)
+        if key not in cache:
+            cache[key] = benchmark["close"].reindex(index).ffill() if not benchmark.empty else pd.Series(np.nan, index=index)
+        return cache[key]
+
+    def rs_ok() -> pd.Series:
+        if not config.require_rs:
+            return const(True)
+        if benchmark.empty:
+            return const(True)
+        rs_line = close / spy_close().replace(0.0, np.nan)
+        rs_avg = rs_line.rolling(config.rs_lookback, min_periods=min(config.rs_lookback, len(frame))).mean()
+        rs_high = rs_line.rolling(config.rs_lookback, min_periods=min(config.rs_lookback, len(frame))).max()
+        return (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
+
+    def market_trend() -> pd.Series:
+        return _market_trend_ok(index, benchmark, config) if config.require_market_trend else const(True)
+
+    def trend_ok() -> pd.Series:
+        if not config.minervini_trend:
+            return const(True)
+        short = sma(config.ma_short)
+        mid = sma(config.ma_mid)
+        long = sma(config.ma_long)
+        return (
+            (close > short)
+            & (close > mid)
+            & (close > long)
+            & (short > mid)
+            & (mid > long)
+            & (long > long.shift(21))
+            & (close >= high_n() * config.near_high_pct)
+            & (close >= low_n() * config.above_low_multiple)
+        )
+
+    def base_tight() -> pd.Series:
+        if not config.require_base_tight:
+            return const(True)
+        base_range = (
+            high_roll(config.base_lookback, min_periods=config.base_lookback)
+            - low_roll(config.base_lookback, min_periods=config.base_lookback)
+        )
+        return (base_range / close) <= config.max_base_range_pct
+
+    def breakout() -> pd.Series:
+        if not config.require_breakout:
+            return const(True)
+        resistance = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
+        return (close > resistance) & (volume > avg_volume(config.volume_lookback) * config.volume_multiple) & base_tight()
+
+    def prior_runup() -> pd.Series:
+        return const(True) if not config.require_prior_runup else (close / close.shift(config.prior_runup_lookback) - 1.0) >= config.prior_runup_min_pct
+
+    def dryup() -> pd.Series:
+        if not config.require_volume_dryup:
+            return const(True)
+        recent_vol = avg_volume(config.volume_dryup_lookback, min_periods=config.volume_dryup_lookback)
+        long_vol = avg_volume(config.volume_lookback)
+        return recent_vol <= long_vol * config.volume_dryup_max_ratio
+
+    def adr_ok() -> pd.Series:
+        adr = close.pct_change().abs().rolling(config.adr_lookback, min_periods=config.adr_lookback).mean()
+        return adr >= config.min_adr_pct
+
+    def episodic_gap() -> pd.Series:
+        if not config.require_episodic_gap:
+            return const(True)
+        gap = (frame["open"] / close.shift(1) - 1.0) >= config.episodic_gap_pct
+        return gap & (volume > avg_volume(config.volume_lookback) * max(config.volume_multiple, 1.5))
+
+    def pocket_pivot() -> pd.Series:
+        if not config.require_pocket_pivot:
+            return const(True)
+        down_vol = volume.where(close < close.shift(1), 0.0)
+        max_down_vol = down_vol.shift(1).rolling(10, min_periods=10).max()
+        return (close > close.shift(1)) & (volume > max_down_vol) & (close > sma(config.ma_short)) & (close > sma(config.ma_long))
+
+    def oneil_stack() -> pd.Series:
+        if not config.require_oneil_stack:
+            return const(True)
+        ma10 = sma(config.oneil_fast_ma)
+        ma21 = ema(config.oneil_mid_ma)
+        return (close > ma10) & (ma10 > ma21) & (ma21 > sma(config.ma_short)) & (sma(config.ma_short) > sma(config.ma_long))
+
+    def ema_trend_ok() -> pd.Series:
+        short = ema(config.ma_short)
+        mid = ema(config.ma_mid)
+        long = ema(config.ma_long)
+        return (
+            (close > short)
+            & (close > mid)
+            & (close > long)
+            & (short > mid)
+            & (mid > long)
+            & (long > long.shift(21))
+            & (close >= high_n() * config.near_high_pct)
+            & (close >= low_n() * config.above_low_multiple)
+        )
+
+    def sma50() -> pd.Series:
+        return sma(50)
+
+    def sma150() -> pd.Series:
+        return sma(150)
+
+    def sma200() -> pd.Series:
+        return sma(200)
+
+    def ma10_sma() -> pd.Series:
+        return sma(10)
+
+    def ma21_sma() -> pd.Series:
+        return sma(21)
+
+    def stock_uptrend() -> pd.Series:
+        long = sma(config.ma_long)
+        short = sma(config.ma_short)
+        return (close > long) & (short > long) & (long >= long.shift(21))
+
+    family = config.family
+    if family == "oneil_canslim":
+        signal = oneil_stack() & rs_ok() & breakout() & rsi_ok()
+    elif family == "quallamaggie":
+        signal = (trend_ok() | (close > sma(config.ma_short))) & prior_runup() & dryup() & (breakout() | episodic_gap()) & adr_ok() & rsi_ok()
+    elif family == "tv_minervini_qualifier":
+        signal = trend_ok() & rs_ok() & (close > sma(20)) & rsi_ok()
+    elif family == "tv_minervini_trend_template_ema":
+        signal = ema_trend_ok() & (breakout() if config.require_breakout else const(True)) & rsi_ok()
+    elif family == "tv_minervini_trend_template_sepa_pro":
+        signal = ema_trend_ok() & rs_ok() & (base_tight() | dryup()) & (breakout() | episodic_gap()) & rsi_ok()
+    elif family == "tv_pocket_pivot_breakout":
+        down_vol = volume.where(close < close.shift(1), 0.0)
+        max_down_vol = down_vol.shift(1).rolling(10, min_periods=10).max()
+        pocket_pivot_3pct = (
+            ((close / frame["open"].replace(0.0, np.nan) - 1.0) >= 0.03)
+            & (volume > max_down_vol)
+            & (close > ema(config.ma_short))
+            & (close > ema(config.ma_long))
+        )
+        signal = ema_trend_ok() & (pocket_pivot() | pocket_pivot_3pct) & rsi_ok()
+    elif family == "tv_5ma_oneil_minervini":
+        oneil_buy = (
+            (close > sma50())
+            & (close > sma200())
+            & (sma50() > sma50().shift(20))
+            & (sma200() > sma200().shift(20))
+            & (close >= high_n() * max(config.near_high_pct, 0.85))
+        )
+        minervini_5ma_buy = (
+            (ma10_sma() > ma21_sma())
+            & (ma21_sma() > sma50())
+            & (ma10_sma() > ma10_sma().shift(5))
+            & (ma21_sma() > ma21_sma().shift(5))
+            & (close >= high_n() * max(config.near_high_pct, 0.75))
+            & (close >= low_n() * max(config.above_low_multiple, 1.25))
+        )
+        signal = ((oneil_buy & minervini_5ma_buy) | (breakout() if config.require_breakout else const(False))) & rsi_ok()
+    elif family == "tv_minervini_mtc":
+        mtc_ok = (
+            (close > sma50())
+            & (close > sma150())
+            & (close > sma200())
+            & (sma50() > sma150())
+            & (sma150() > sma200())
+            & (sma200() > sma200().shift(21))
+            & (close >= low_n() * config.above_low_multiple)
+            & (close >= high_n() * config.near_high_pct)
+        )
+        signal = mtc_ok & rsi_ok()
+    elif family == "tv_weinstein_stage":
+        stage2 = (close > sma150()) & (sma150() > sma150().shift(20)) & (sma50() > sma150())
+        stage2_minervini = stage2 & (close > sma50()) & (sma50() > sma150()) & (sma150() > sma200()) & (sma200() > sma200().shift(21))
+        signal = (stage2_minervini if config.minervini_trend else stage2) & rsi_ok()
+    elif family == "tv_breakout_finder":
+        short_high = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
+        short_low = low.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).min()
+        channel_width = ((short_high - short_low) / close).fillna(np.inf)
+        tests = (high.shift(1) >= short_high * (1.0 - max(config.max_base_range_pct, 0.02))).rolling(
+            config.base_lookback,
+            min_periods=max(2, min(config.base_lookback, 5)),
+        ).sum()
+        signal = (
+            (close > short_high)
+            & (tests >= 2)
+            & (channel_width <= max(config.max_base_range_pct, 0.02))
+            & (volume >= avg_volume(config.volume_lookback) * max(config.volume_multiple, 1.0))
+            & rsi_ok()
+        )
+    elif family == "tv_rsi_strategy":
+        oversold_level = max(15.0, min(45.0, 100.0 - float(config.rsi_max)))
+        signal = (rsi_line().shift(1) <= oversold_level) & (rsi_line() > oversold_level) & (close > sma(config.ma_long))
+    elif family == "stability_pullback_rebound":
+        pullback_touch = (low <= sma(config.ma_short)) | (low <= ma21_sma()) | (close <= ma21_sma())
+        rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
+        soft_rsi_rebound = (rsi_line().shift(1) <= rsi_cap) & (rsi_line() > rsi_line().shift(1)) & (close > close.shift(1))
+        signal = stock_uptrend() & (rs_ok() if config.require_rs else const(True)) & pullback_touch.shift(1).fillna(False) & soft_rsi_rebound
+    elif family == "stability_trend_reclaim":
+        pullback_touch = (low <= sma(config.ma_short)) | (low <= ma21_sma()) | (close <= ma21_sma())
+        rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
+        trend_reclaim = (
+            stock_uptrend()
+            & ((close.shift(1) < ma10_sma().shift(1)) | (close.shift(1) < ma21_sma().shift(1)) | pullback_touch.shift(1))
+            & (close > ma10_sma())
+            & (close > ma21_sma())
+            & (rsi_line() <= max(rsi_cap, 55.0))
+        )
+        signal = trend_reclaim & (rs_ok() if config.require_rs else const(True))
+    elif family == "stability_market_dip":
+        rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
+        market_dip = (
+            stock_uptrend()
+            & (rsi_line().shift(1) <= max(30.0, min(rsi_cap, 55.0)))
+            & (rsi_line() > rsi_line().shift(1))
+            & (close > close.shift(1))
+            & (close >= low_n() * max(config.above_low_multiple, 1.05))
+        )
+        signal = market_dip & (rs_ok() if config.require_rs else const(True))
+    elif family in {"stability_rs_momentum_pullback", "stability_rs_reclaim_frequent", "stability_rs_pullback_breakout"}:
+        if not benchmark.empty:
+            rs_line_for_reclaim = close / spy_close().replace(0.0, np.nan)
+            rs_avg_for_reclaim = rs_line_for_reclaim.rolling(
+                config.rs_lookback,
+                min_periods=min(config.rs_lookback, len(frame)),
+            ).mean()
+            rs_reclaim_ok = (
+                (rs_line_for_reclaim > rs_avg_for_reclaim)
+                & (rs_line_for_reclaim > rs_line_for_reclaim.shift(max(5, min(config.rs_lookback // 4, 21))))
+            )
+        else:
+            rs_reclaim_ok = const(True)
+        pullback_touch = (low <= sma(config.ma_short)) | (low <= ma21_sma()) | (close <= ma21_sma())
+        rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
+        long_momentum = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(config.prior_runup_min_pct, 0.08)
+        frequent_runup = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(min(config.prior_runup_min_pct, 0.10), 0.03)
+        if family == "stability_rs_momentum_pullback":
+            signal = (
+                stock_uptrend()
+                & rs_ok()
+                & long_momentum
+                & (close >= high_n() * max(config.near_high_pct, 0.70))
+                & (close <= high_n() * 0.98)
+                & pullback_touch.shift(1).fillna(False)
+                & (close > ma10_sma())
+                & (close > close.shift(1))
+                & (rsi_line() <= max(rsi_cap, 60.0))
+            )
+        elif family == "stability_rs_reclaim_frequent":
+            signal = (
+                stock_uptrend()
+                & rs_reclaim_ok
+                & frequent_runup
+                & (close >= high_n() * max(config.near_high_pct, 0.50))
+                & (close <= high_n() * 1.01)
+                & (pullback_touch.shift(1).fillna(False) | (close.shift(1) < ma10_sma().shift(1)) | (rsi_line().shift(1) <= rsi_cap))
+                & (close > ma10_sma())
+                & (close > close.shift(1))
+                & (rsi_line() <= max(rsi_cap, 68.0))
+            )
+        else:
+            short_high = high.shift(1).rolling(max(5, min(config.breakout_lookback, 21)), min_periods=5).max()
+            short_range = (
+                high.rolling(max(5, min(config.base_lookback, 21)), min_periods=5).max()
+                - low.rolling(max(5, min(config.base_lookback, 21)), min_periods=5).min()
+            ) / close.replace(0.0, np.nan)
+            controlled_pullback = (
+                (low.shift(1) <= ma21_sma().shift(1))
+                | (close.shift(1) <= ma21_sma().shift(1))
+                | (short_range.shift(1) <= max(config.max_base_range_pct, 0.08))
+            )
+            reclaim_or_breakout = (
+                ((close > ma10_sma()) & (close.shift(1) <= ma10_sma().shift(1)))
+                | ((close > ma21_sma()) & (close.shift(1) <= ma21_sma().shift(1)))
+                | (close > short_high)
+            )
+            signal = (
+                stock_uptrend()
+                & rs_reclaim_ok
+                & frequent_runup
+                & controlled_pullback.fillna(False)
+                & reclaim_or_breakout.fillna(False)
+                & (close >= high_n() * max(config.near_high_pct, 0.55))
+                & (close <= high_n() * 1.02)
+                & (volume >= avg_volume(config.volume_lookback) * max(config.volume_multiple, 0.95))
+                & (rsi_line() <= max(rsi_cap, 72.0))
+            )
+    else:
+        signal = trend_ok() & rs_ok() & breakout() & pocket_pivot() & rsi_ok()
+    return (signal & market_trend()).fillna(False).astype(bool)
+
+
+entry_signal = _entry_signal_optimized
+
+
 def _open_or_close(frame: pd.DataFrame, idx: int) -> float:
     value = frame["open"].iloc[idx]
     if pd.isna(value) or float(value) <= 0:
