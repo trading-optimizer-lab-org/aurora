@@ -193,7 +193,7 @@ jobs:
   run_shard:
     needs: [plan, build_external_pack]
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: 60
@@ -253,7 +253,7 @@ jobs:
     needs: [plan, run_shard]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
       actions: read
       contents: read
