@@ -1761,18 +1761,27 @@ def load_external_strategy_candidates(
     pack_path: Path,
     *,
     shard_id: int | None = None,
+    offset: int = 0,
     limit: int | None = None,
     strategy_format: str = "auto",
 ) -> list[ExternalStrategyCandidate]:
     if shard_id is not None and not (0 <= int(shard_id) <= 359):
         raise ValueError("external_strategy_shard_id must be between 0 and 359")
+    strategy_offset = int(offset)
+    if strategy_offset < 0:
+        raise ValueError("external_strategy_offset must be greater than or equal to 0")
     candidates: list[ExternalStrategyCandidate] = []
     max_count = None if limit is None or int(limit) <= 0 else int(limit)
+    matched = 0
     for path in _external_strategy_files(Path(pack_path), shard_id, strategy_format):
         for payload in _iter_external_strategy_payloads(path):
             if shard_id is not None and int(payload.get("shard_id", -1)) != int(shard_id):
                 continue
+            if matched < strategy_offset:
+                matched += 1
+                continue
             candidates.append(external_strategy_to_config(payload))
+            matched += 1
             if max_count is not None and len(candidates) >= max_count:
                 return candidates
     return candidates
@@ -3257,6 +3266,7 @@ def run_external_strategy_pack_shard(
     output_dir: Path,
     prebuilt_pack_dir: Path | None = None,
     external_strategy_shard_id: int,
+    external_strategy_offset: int = 0,
     external_strategy_limit: int = 200,
     external_strategy_format: str = "auto",
     external_strategy_fail_on_unsupported: bool = False,
@@ -3270,9 +3280,14 @@ def run_external_strategy_pack_shard(
     shard_padded = f"{shard:03d}"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_name = output_dir.name
+    output_prefix = "job" if output_name.startswith("job-") else "shard"
+    output_padded = output_name.split("-", 1)[1] if output_prefix == "job" and "-" in output_name else shard_padded
+    file_suffix = f"{output_prefix}_{output_padded}"
     candidates = load_external_strategy_candidates(
         external_strategy_pack_path,
         shard_id=shard,
+        offset=external_strategy_offset,
         limit=external_strategy_limit,
         strategy_format=external_strategy_format,
     )
@@ -3291,7 +3306,7 @@ def run_external_strategy_pack_shard(
                     }
                 )
         if external_strategy_fail_on_unsupported:
-            pd.DataFrame(unsupported_rows).to_csv(output_dir / f"unsupported_strategies_shard_{shard_padded}.csv", index=False)
+            pd.DataFrame(unsupported_rows).to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
             raise ValueError(f"{len(unsupported_rows)} unsupported external strategies in shard {shard_padded}")
 
     evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
@@ -3406,16 +3421,21 @@ def run_external_strategy_pack_shard(
         failed = pd.DataFrame(failed_rows)
         unsupported = pd.concat([unsupported, failed.assign(unsupported_rules="", reason=failed["reason"])], ignore_index=True, sort=False)
 
-    leaderboard.to_csv(output_dir / f"leaderboard_shard_{shard_padded}.csv", index=False)
-    filtered.to_csv(output_dir / f"filtered_leaderboard_shard_{shard_padded}.csv", index=False)
-    yearly_out.to_csv(output_dir / f"yearly_trade_performance_shard_{shard_padded}.csv", index=False)
-    trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_shard_{shard_padded}.csv", index=False)
-    unsupported.to_csv(output_dir / f"unsupported_strategies_shard_{shard_padded}.csv", index=False)
-    with (output_dir / f"top_indicator_rules_shard_{shard_padded}.jsonl").open("w", encoding="utf-8") as handle:
+    leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
+    filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
+    yearly_out.to_csv(output_dir / f"yearly_trade_performance_{file_suffix}.csv", index=False)
+    trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
+    unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
+    with (output_dir / f"top_indicator_rules_{file_suffix}.jsonl").open("w", encoding="utf-8") as handle:
         for rule in rules:
             handle.write(json.dumps(rule, sort_keys=True) + "\n")
     summary = {
         "shard_id": shard,
+        "base_shard_id": shard,
+        "job_padded": output_padded if output_prefix == "job" else None,
+        "chunk_index": int(external_strategy_offset) // max(int(external_strategy_limit), 1),
+        "strategy_offset": int(external_strategy_offset),
+        "strategy_limit": int(external_strategy_limit),
         "strategies_requested": int(external_strategy_limit),
         "strategies_loaded": int(len(candidates)),
         "strategies_evaluated": int(len(rows)),
@@ -3438,7 +3458,7 @@ def run_external_strategy_pack_shard(
             None if leaderboard.empty else float(leaderboard.iloc[0].get("adjusted_return_time_risk", float("nan")))
         ),
     }
-    (output_dir / f"summary_shard_{shard_padded}.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    (output_dir / f"summary_{file_suffix}.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
 
 
@@ -3448,6 +3468,8 @@ def merge_external_strategy_pack_outputs(
     output_dir: Path,
     total_strategies_requested: int,
     total_shards_requested: int,
+    total_jobs_requested: int | None = None,
+    candidate_count_per_job: int | None = None,
     locked_start: str = DEFAULT_LOCKED_START,
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
@@ -3463,24 +3485,30 @@ def merge_external_strategy_pack_outputs(
     trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
     rule_rows: list[dict[str, Any]] = []
-    for summary_path in sorted(shards_root.rglob("summary_shard_*.json")):
+    for summary_path in sorted([*shards_root.rglob("summary_shard_*.json"), *shards_root.rglob("summary_job_*.json")]):
         summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
-    for path in sorted(shards_root.rglob("leaderboard_shard_*.csv")):
+    for path in sorted([*shards_root.rglob("leaderboard_shard_*.csv"), *shards_root.rglob("leaderboard_job_*.csv")]):
         if path.stat().st_size:
             leaderboards.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("filtered_leaderboard_shard_*.csv")):
+    for path in sorted(
+        [*shards_root.rglob("filtered_leaderboard_shard_*.csv"), *shards_root.rglob("filtered_leaderboard_job_*.csv")]
+    ):
         if path.stat().st_size:
             filtered_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("yearly_trade_performance_shard_*.csv")):
+    for path in sorted(
+        [*shards_root.rglob("yearly_trade_performance_shard_*.csv"), *shards_root.rglob("yearly_trade_performance_job_*.csv")]
+    ):
         if path.stat().st_size:
             yearly_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("top_trades_sample_shard_*.csv")):
+    for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv")]):
         if path.stat().st_size:
             trade_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("unsupported_strategies_shard_*.csv")):
+    for path in sorted(
+        [*shards_root.rglob("unsupported_strategies_shard_*.csv"), *shards_root.rglob("unsupported_strategies_job_*.csv")]
+    ):
         if path.stat().st_size:
             unsupported_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("top_indicator_rules_shard_*.jsonl")):
+    for path in sorted([*shards_root.rglob("top_indicator_rules_shard_*.jsonl"), *shards_root.rglob("top_indicator_rules_job_*.jsonl")]):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 rule_rows.append(json.loads(line))
@@ -3537,6 +3565,12 @@ def merge_external_strategy_pack_outputs(
     if not leaderboard.empty and "adjusted_return_time_risk" in leaderboard.columns:
         best_adjusted = _finite_float(leaderboard.iloc[0].get("adjusted_return_time_risk"), default=float("nan"))
         best_adjusted = None if not math.isfinite(best_adjusted) else float(best_adjusted)
+    jobs_requested = int(total_jobs_requested) if total_jobs_requested is not None else int(total_shards_requested)
+    inferred_candidate_count = None
+    if candidate_count_per_job is not None:
+        inferred_candidate_count = int(candidate_count_per_job)
+    elif jobs_requested > 0:
+        inferred_candidate_count = int(total_strategies_requested) // jobs_requested
     summary = {
         "total_strategies_requested": int(total_strategies_requested),
         "total_strategies_loaded": int(sum(int(item.get("strategies_loaded", 0)) for item in summaries)),
@@ -3545,6 +3579,9 @@ def merge_external_strategy_pack_outputs(
         "total_strategies_failed": int(sum(int(item.get("strategies_failed", 0)) for item in summaries)),
         "total_shards_requested": int(total_shards_requested),
         "total_shards_completed": int(len(summaries)),
+        "total_jobs_requested": jobs_requested,
+        "total_jobs_completed": int(len(summaries)),
+        "candidate_count_per_job": inferred_candidate_count,
         "filtered_candidates": int(len(filtered)),
         "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
         "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
@@ -3680,6 +3717,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--prebuilt-pack-dir", type=Path, default=None)
     parser.add_argument("--external-strategy-pack-path", type=Path, default=DEFAULT_EXTERNAL_STRATEGY_PACK_PATH)
     parser.add_argument("--external-strategy-shard-id", type=int, required=True)
+    parser.add_argument("--external-strategy-offset", type=int, default=0)
     parser.add_argument("--external-strategy-limit", type=int, default=200)
     parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
@@ -3695,6 +3733,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         prebuilt_pack_dir=args.prebuilt_pack_dir,
         external_strategy_shard_id=args.external_strategy_shard_id,
+        external_strategy_offset=args.external_strategy_offset,
         external_strategy_limit=args.external_strategy_limit,
         external_strategy_format=args.external_strategy_format,
         external_strategy_fail_on_unsupported=args.external_strategy_fail_on_unsupported,
@@ -3714,6 +3753,8 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--total-strategies-requested", type=int, required=True)
     parser.add_argument("--total-shards-requested", type=int, required=True)
+    parser.add_argument("--total-jobs-requested", type=int, default=None)
+    parser.add_argument("--candidate-count-per-job", type=int, default=None)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
     parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
@@ -3724,6 +3765,8 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         total_strategies_requested=args.total_strategies_requested,
         total_shards_requested=args.total_shards_requested,
+        total_jobs_requested=args.total_jobs_requested,
+        candidate_count_per_job=args.candidate_count_per_job,
         locked_start=args.locked_start,
         train_end=args.train_end,
         validation_start=args.validation_start,

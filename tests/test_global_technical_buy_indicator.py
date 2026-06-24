@@ -1151,6 +1151,37 @@ def test_external_pack_loader_limit_applies_before_full_pack_scan(tmp_path: Path
     assert [item.payload["slot_in_shard"] for item in candidates] == [0, 1]
 
 
+def test_external_pack_loader_splits_shard_into_40_strategy_offsets(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    _write_external_shard(pack, shard_id=0, rows=200)
+
+    chunk_0 = gtbi.load_external_strategy_candidates(pack, shard_id=0, offset=0, limit=40)
+    chunk_1 = gtbi.load_external_strategy_candidates(pack, shard_id=0, offset=40, limit=40)
+    chunk_4 = gtbi.load_external_strategy_candidates(pack, shard_id=0, offset=160, limit=40)
+    chunk_past_end = gtbi.load_external_strategy_candidates(pack, shard_id=0, offset=200, limit=40)
+
+    assert len(chunk_0) == 40
+    assert len(chunk_1) == 40
+    assert len(chunk_4) == 40
+    assert chunk_past_end == []
+    assert [item.payload["slot_in_shard"] for item in chunk_0] == list(range(0, 40))
+    assert [item.payload["slot_in_shard"] for item in chunk_1] == list(range(40, 80))
+    assert [item.payload["slot_in_shard"] for item in chunk_4] == list(range(160, 200))
+    assert {item.payload["strategy_id"] for item in chunk_0}.isdisjoint(
+        {item.payload["strategy_id"] for item in chunk_1}
+    )
+    assert chunk_0[0].payload["guardrails"]["do_not_load_or_use_data_on_or_after"] == "2021-01-01"
+    assert chunk_0[0].payload["guardrails"]["validation_end"] == "2020-12-31"
+
+
+def test_external_pack_loader_rejects_negative_offset(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    _write_external_shard(pack, shard_id=0, rows=5)
+
+    with pytest.raises(ValueError, match="external_strategy_offset"):
+        gtbi.load_external_strategy_candidates(pack, shard_id=0, offset=-1, limit=1)
+
+
 def test_external_pack_loader_registers_unsupported_rule(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     shard_dir = pack / "shards"
@@ -1228,6 +1259,64 @@ def test_external_merge_summary_preserves_locked_start_and_no_local_machine(tmp_
     assert json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))["requires_local_machine"] is False
 
 
+def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 40,
+                "strategies_evaluated": 39,
+                "strategies_unsupported": 1,
+                "strategies_failed": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "c1",
+                "score": 1.0,
+                "adjusted_return_time_risk": 0.25,
+                "family": "minervini_sepa",
+                "concept_id": "concept_a",
+                "market_overlay_id": "market_a",
+            }
+        ]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=["candidate_id", "adjusted_return_time_risk"]).to_csv(
+        job / "filtered_leaderboard_job_0000.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.YEARLY_COLUMNS).to_csv(job / "yearly_trade_performance_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TRADE_COLUMNS).to_csv(job / "top_trades_sample_job_0000.csv", index=False)
+    pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]).to_csv(
+        job / "unsupported_strategies_job_0000.csv",
+        index=False,
+    )
+    (job / "top_indicator_rules_job_0000.jsonl").write_text("", encoding="utf-8")
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=800,
+        total_shards_requested=360,
+        total_jobs_requested=20,
+        candidate_count_per_job=40,
+        locked_start="2021-01-01",
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+
+    assert summary["total_jobs_requested"] == 20
+    assert summary["total_jobs_completed"] == 1
+    assert summary["candidate_count_per_job"] == 40
+    assert summary["total_strategies_requested"] == 800
+    assert summary["total_strategies_loaded"] == 40
+
+
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
     text = path.read_text(encoding="utf-8")
@@ -1251,6 +1340,48 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--prebuilt-pack-dir external-pack-data" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
+
+
+def test_external_pack_1800jobs_workflow_splits_into_40_strategy_jobs() -> None:
+    path = Path(".github/workflows/global-technical-buy-indicator-external-pack-1800jobs.yml")
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["name"] == "Global Technical Buy Indicator External Pack 1800 Jobs"
+    assert "workflow_dispatch" in data[True]
+    assert "push" not in data[True]
+    assert "C:\\" not in text
+    assert text.count("runs-on: ubuntu-latest") >= 12
+    assert "self-hosted" not in text
+    assert 'default: "27936694743"' in text
+    assert 'default: "free-global-yahoo-daily-data-lake"' in text
+    assert 'default: "scripts/strategy_packs/gtbi_research_broad_72000"' in text
+    assert 'default: "40"' in text
+    assert 'default: "2000000000"' in text
+    assert 'default: "2010-12-31"' in text
+    assert 'default: "2011-01-01"' in text
+    assert 'default: "2020-12-31"' in text
+    assert 'default: "2021-01-01"' in text
+    assert "original_shards = 360" in text
+    assert "chunks_per_shard = 5" in text
+    assert "jobs_per_block = 180" in text
+    assert "block_count = 10" in text
+    assert 'f"{job_index:04d}"' in text
+    assert '"strategy_offset": chunk_index * candidate_limit' in text
+    assert '"strategy_limit": candidate_limit' in text
+    assert text.count("max-parallel: 180") == 10
+    assert "max-parallel: 60" not in text
+    for idx in range(10):
+        assert f"run_chunk_{idx}:" in text
+        assert f"needs.plan.outputs.chunk_{idx}" in text
+    assert "--external-strategy-shard-id \"${{ matrix.base_shard_id }}\"" in text
+    assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
+    assert "--external-strategy-limit \"${{ matrix.strategy_limit }}\"" in text
+    assert 'name: gtbi-external-pack-job-${{ matrix.job_padded }}' in text
+    assert "pattern: gtbi-external-pack-job-*" in text
+    assert "--total-jobs-requested" in text
+    assert "--candidate-count-per-job" in text
+    assert "global-technical-buy-indicator-external-pack-72000-results" in text
 
 
 def test_external_pack_wrappers_import_from_script_path() -> None:
