@@ -1322,10 +1322,10 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
 
-    assert data["name"] == "Global Technical Buy Indicator External Pack 360 Jobs"
+    assert data["name"] == "Global Technical Buy Indicator External Pack 1800 Jobs"
     assert "workflow_dispatch" in data[True]
     assert "push" not in data[True]
-    assert text.count("runs-on: ubuntu-latest") >= 3
+    assert text.count("runs-on: ubuntu-latest") >= 12
     assert "self-hosted" not in text
     assert "C:\\" not in text
     assert "scripts/strategy_packs/gtbi_research_broad_72000" in text
@@ -1333,11 +1333,15 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "Ensure SPY benchmark exists" in text
     assert "out_path = out_dir / \"SPY.parquet\"" in text
     assert "gtbi-external-pack-data" in text
-    assert "matrix_extra" in text
-    assert "run_shard_extra" in data["jobs"]
-    assert "primary_rows = rows[:180]" in text
-    assert "extra_rows = rows[180:]" in text
+    assert "original_shards = 360" in text
+    assert "chunks_per_shard = 5" in text
+    assert "jobs_per_block = 180" in text
+    assert text.count("max-parallel: 180") == 10
+    assert "max-parallel: 60" not in text
+    assert "run_chunk_0" in data["jobs"]
+    assert "run_chunk_9" in data["jobs"]
     assert "--prebuilt-pack-dir external-pack-data" in text
+    assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
 
