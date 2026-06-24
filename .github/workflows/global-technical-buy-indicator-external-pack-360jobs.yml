@@ -57,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      matrix_extra: ${{ steps.plan.outputs.matrix_extra }}
       total_strategies_requested: ${{ steps.plan.outputs.total_strategies_requested }}
       total_shards_requested: ${{ steps.plan.outputs.total_shards_requested }}
       candidate_limit: ${{ steps.plan.outputs.candidate_limit }}
@@ -80,8 +81,11 @@ jobs:
               {"shard": shard, "shard_padded": f"{shard:03d}", "candidate_limit": candidate_limit}
               for shard in range(shard_count)
           ]
+          primary_rows = rows[:180]
+          extra_rows = rows[180:]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-              handle.write(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}\n")
+              handle.write(f"matrix={json.dumps({'include': primary_rows}, separators=(',', ':'))}\n")
+              handle.write(f"matrix_extra={json.dumps({'include': extra_rows}, separators=(',', ':'))}\n")
               handle.write(f"total_strategies_requested={shard_count * candidate_limit}\n")
               handle.write(f"total_shards_requested={shard_count}\n")
               handle.write(f"candidate_limit={candidate_limit}\n")
@@ -249,8 +253,68 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  run_shard_extra:
+    needs: [plan, build_external_pack]
+    if: ${{ inputs.test_mode != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix: ${{ fromJson(needs.plan.outputs.matrix_extra) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy shard
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --prebuilt-pack-dir external-pack-data \
+            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
+            --external-strategy-shard-id "${{ matrix.shard }}" \
+            --external-strategy-limit "${{ matrix.candidate_limit }}" \
+            --external-strategy-format jsonl \
+            "$FAIL_FLAG" \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --output-dir "outputs/shard-${{ matrix.shard_padded }}"
+          rm -rf "outputs/shard-${{ matrix.shard_padded }}/_external_pack_data"
+      - name: Upload shard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-shard-${{ matrix.shard_padded }}
+          path: outputs/shard-${{ matrix.shard_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
   merge:
-    needs: [plan, run_shard]
+    needs: [plan, run_shard, run_shard_extra]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 180

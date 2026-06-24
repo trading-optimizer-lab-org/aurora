@@ -1244,6 +1244,10 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "Ensure SPY benchmark exists" in text
     assert "out_path = out_dir / \"SPY.parquet\"" in text
     assert "gtbi-external-pack-data" in text
+    assert "matrix_extra" in text
+    assert "run_shard_extra" in data["jobs"]
+    assert "primary_rows = rows[:180]" in text
+    assert "extra_rows = rows[180:]" in text
     assert "--prebuilt-pack-dir external-pack-data" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
