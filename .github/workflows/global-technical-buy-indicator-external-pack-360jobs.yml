@@ -200,7 +200,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 60
+      max-parallel: 180
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     permissions:
       actions: read
@@ -260,7 +260,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 60
+      max-parallel: 180
       matrix: ${{ fromJson(needs.plan.outputs.matrix_extra) }}
     permissions:
       actions: read
