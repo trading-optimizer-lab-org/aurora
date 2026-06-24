@@ -1173,6 +1173,9 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
             )
     else:
         signal = trend_ok() & rs_ok() & breakout() & pocket_pivot() & rsi_ok()
+    signal = signal.fillna(False).astype(bool)
+    if not bool(signal.any()):
+        return signal
     return (signal & market_trend()).fillna(False).astype(bool)
 
 
@@ -2064,6 +2067,8 @@ def evaluate_candidate(
     all_trades: list[pd.DataFrame] = []
     for symbol, frame in symbol_frames.items():
         signal = entry_signal(frame, benchmark_prices, config)
+        if signal.empty or not bool(signal.any()):
+            continue
         prepared_frame = _prepare_ohlcv(frame)
         market_exit = ~_market_trend_ok(prepared_frame.index, benchmark_prices, config) if config.use_market_exit else None
         raw_trades = simulate_trades(
