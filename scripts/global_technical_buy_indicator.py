@@ -502,6 +502,14 @@ def _safe_bool_series(value: bool, index: pd.Index) -> pd.Series:
     return pd.Series(bool(value), index=index, dtype=bool)
 
 
+def _frame_series_cache(frame: pd.DataFrame, namespace: str) -> dict[tuple[Any, ...], pd.Series]:
+    cache = frame.attrs.get(namespace)
+    if not isinstance(cache, dict):
+        cache = {}
+        frame.attrs[namespace] = cache
+    return cache
+
+
 def _families_for_set(family_set: str) -> tuple[str, ...]:
     if family_set == "default":
         return DEFAULT_FAMILIES
@@ -541,6 +549,25 @@ def _market_trend_ok(index: pd.Index, benchmark_prices: pd.DataFrame, config: In
         & (spy_close >= recent_high * 0.94)
     )
     return strict.fillna(False)
+
+
+def _market_trend_ok_for_frame(frame: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+    prepared = _prepare_ohlcv(frame)
+    if prepared.empty:
+        return pd.Series(dtype=bool)
+    benchmark = _prepare_ohlcv(benchmark_prices)
+    key = (
+        "market_trend",
+        id(benchmark),
+        len(benchmark),
+        int(config.market_ma_days),
+        int(config.market_momentum_days),
+        bool(config.strict_market_filter),
+    )
+    cache = _frame_series_cache(prepared, "_gtbi_market_trend_cache")
+    if key not in cache:
+        cache[key] = _market_trend_ok(prepared.index, benchmark, config)
+    return cache[key]
 
 
 def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
@@ -842,7 +869,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     low = frame["low"]
     volume = frame["volume"].fillna(0.0)
     index = frame.index
-    cache: dict[tuple[str, int], pd.Series] = {}
+    cache = _frame_series_cache(frame, "_gtbi_entry_signal_series_cache")
 
     def const(value: bool) -> pd.Series:
         return _safe_bool_series(value, index)
@@ -895,7 +922,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return rsi_line() <= config.rsi_max
 
     def spy_close() -> pd.Series:
-        key = ("spy_close", 0)
+        key = ("spy_close", id(benchmark), len(benchmark))
         if key not in cache:
             cache[key] = benchmark["close"].reindex(index).ffill() if not benchmark.empty else pd.Series(np.nan, index=index)
         return cache[key]
@@ -911,7 +938,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
 
     def market_trend() -> pd.Series:
-        return _market_trend_ok(index, benchmark, config) if config.require_market_trend else const(True)
+        return _market_trend_ok_for_frame(frame, benchmark, config) if config.require_market_trend else const(True)
 
     def trend_ok() -> pd.Series:
         if not config.minervini_trend:
@@ -1247,7 +1274,11 @@ def simulate_trades(
         if exit_signal is not None
         else _safe_bool_series(False, frame.index)
     )
-    exit_ma = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
+    exit_ma_key = ("exit_ma", int(config.exit_ma_days))
+    exit_ma_cache = _frame_series_cache(frame, "_gtbi_exit_series_cache")
+    if exit_ma_key not in exit_ma_cache:
+        exit_ma_cache[exit_ma_key] = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
+    exit_ma = exit_ma_cache[exit_ma_key]
     signal_values = signal.to_numpy(dtype=bool)
     signal_positions = np.flatnonzero(signal_values[:-1])
     if len(signal_positions) == 0:
@@ -1372,8 +1403,10 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
     downside = returns[returns < 0]
     dstd = float(downside.std(ddof=0)) if len(downside) > 1 else std
     sortino = float((returns.mean() / dstd) * scale) if dstd > 1e-12 else 0.0
-    nav = np.cumprod(1.0 + returns.to_numpy())
-    dd = nav / np.maximum.accumulate(nav) - 1.0
+    gross = np.maximum(1.0 + returns.to_numpy(dtype=float), 1e-12)
+    log_nav = np.cumsum(np.log(gross))
+    log_dd = log_nav - np.maximum.accumulate(log_nav)
+    dd = np.exp(np.clip(log_dd, -745.0, 0.0)) - 1.0
     years_by_exit = pd.to_datetime(trades["exit_date"], errors="coerce").dt.year
     per_year = trades.assign(_year=years_by_exit).groupby("_year")["return_pct"].count()
     concentration = float(per_year.max() / len(trades)) if len(trades) else float("nan")
@@ -2079,7 +2112,7 @@ def evaluate_candidate(
         if signal.empty or not bool(signal.any()):
             continue
         prepared_frame = _prepare_ohlcv(frame)
-        market_exit = ~_market_trend_ok(prepared_frame.index, benchmark_prices, config) if config.use_market_exit else None
+        market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
         raw_trades = simulate_trades(
             symbol,
             frame,
