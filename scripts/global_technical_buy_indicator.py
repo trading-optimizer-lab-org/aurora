@@ -878,6 +878,10 @@ def simulate_trades(
         else _safe_bool_series(False, frame.index)
     )
     exit_ma = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
+    signal_values = signal.to_numpy(dtype=bool)
+    signal_positions = np.flatnonzero(signal_values[:-1])
+    if len(signal_positions) == 0:
+        return pd.DataFrame(columns=TRADE_COLUMNS)
 
     trades: list[dict[str, Any]] = []
     in_position = False
@@ -885,16 +889,20 @@ def simulate_trades(
     entry_price = 0.0
     high_water = 0.0
     i = 0
+    next_signal = 0
     while i < len(frame) - 1:
         if not in_position:
-            if bool(signal.iloc[i]):
-                entry_idx = i + 1
-                entry_price = _open_or_close(frame, entry_idx)
-                high_water = float(frame["high"].iloc[entry_idx])
-                in_position = True
-                i = entry_idx
-                continue
-            i += 1
+            while next_signal < len(signal_positions) and int(signal_positions[next_signal]) < i:
+                next_signal += 1
+            if next_signal >= len(signal_positions):
+                break
+            i = int(signal_positions[next_signal])
+            next_signal += 1
+            entry_idx = i + 1
+            entry_price = _open_or_close(frame, entry_idx)
+            high_water = float(frame["high"].iloc[entry_idx])
+            in_position = True
+            i = entry_idx
             continue
 
         high_water = max(high_water, float(frame["high"].iloc[i]))

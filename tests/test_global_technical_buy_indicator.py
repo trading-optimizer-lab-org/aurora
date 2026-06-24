@@ -453,6 +453,36 @@ def test_simulate_trades_exits_on_ma_and_max_holding() -> None:
     assert trades.iloc[0]["holding_days"] <= 10
 
 
+def test_simulate_trades_skips_directly_to_sparse_signals() -> None:
+    idx = pd.date_range("2011-01-03", periods=80, freq="B")
+    close = np.linspace(100.0, 120.0, len(idx))
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": close,
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(len(idx), 1000.0),
+            "symbol": "AAA",
+        }
+    )
+    signal = pd.Series(False, index=idx)
+    signal.iloc[40] = True
+    config = gtbi.IndicatorConfig(
+        stop_loss_pct=0.50,
+        trailing_stop_pct=0.50,
+        max_holding_days=5,
+    )
+
+    trades = gtbi.simulate_trades("AAA", frame, signal, config, split="validation")
+
+    assert len(trades) == 1
+    assert trades.iloc[0]["entry_date"] == idx[41].date().isoformat()
+    assert trades.iloc[0]["exit_reason"] == "max_holding"
+
+
 def test_simulate_trades_exits_on_market_regime_next_session() -> None:
     idx = pd.date_range("2011-01-03", periods=8, freq="B")
     frame = pd.DataFrame(
