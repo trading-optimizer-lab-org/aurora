@@ -1269,6 +1269,7 @@ def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: P
                 "strategies_evaluated": 39,
                 "strategies_unsupported": 1,
                 "strategies_failed": 0,
+                "strategies_timed_out": 0,
             }
         ),
         encoding="utf-8",
@@ -1315,6 +1316,7 @@ def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: P
     assert summary["candidate_count_per_job"] == 40
     assert summary["total_strategies_requested"] == 800
     assert summary["total_strategies_loaded"] == 40
+    assert summary["total_strategies_timed_out"] == 0
 
 
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
@@ -1343,6 +1345,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "run_chunk_39" in data["jobs"]
     assert "--prebuilt-pack-dir external-pack-data" in text
     assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
+    assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
 
@@ -1362,6 +1365,7 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert 'default: "free-global-yahoo-daily-data-lake"' in text
     assert 'default: "scripts/strategy_packs/gtbi_research_broad_72000"' in text
     assert 'default: "10"' in text
+    assert 'default: "1200"' in text
     assert 'default: "2000000000"' in text
     assert 'default: "2010-12-31"' in text
     assert 'default: "2011-01-01"' in text
@@ -1385,6 +1389,7 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert "--external-strategy-shard-id \"${{ matrix.base_shard_id }}\"" in text
     assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
     assert "--external-strategy-limit \"${{ matrix.strategy_limit }}\"" in text
+    assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert 'name: gtbi-external-pack-job-${{ matrix.job_padded }}' in text
     assert "pattern: gtbi-external-pack-job-*" in text
     assert "--total-jobs-requested" in text

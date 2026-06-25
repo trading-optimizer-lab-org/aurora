@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import hashlib
 import json
 import math
+import signal
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -26,6 +28,7 @@ DEFAULT_TRAIN_END = "2010-12-31"
 DEFAULT_VALIDATION_START = "2011-01-01"
 DEFAULT_VALIDATION_END = "2020-12-31"
 DEFAULT_LOCKED_START = "2021-01-01"
+DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS = 1_200
 DEFAULT_SEARCH_METHOD = "surrogate_ml"
 SEARCH_METHODS = ("surrogate_ml", "dehb_real")
 EXTERNAL_SEARCH_METHOD = "external_strategy_pack"
@@ -1757,6 +1760,34 @@ def external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCand
     )
 
 
+class CandidateEvaluationTimeout(TimeoutError):
+    pass
+
+
+@contextlib.contextmanager
+def _candidate_evaluation_timeout(seconds: int | float | None) -> Iterable[None]:
+    if seconds is None or float(seconds) <= 0:
+        yield
+        return
+    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
+        yield
+        return
+
+    timeout_seconds = float(seconds)
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _raise_timeout(signum: int, frame: Any) -> None:
+        raise CandidateEvaluationTimeout(f"candidate evaluation exceeded {timeout_seconds:g} seconds")
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
 def load_external_strategy_candidates(
     pack_path: Path,
     *,
@@ -3270,6 +3301,7 @@ def run_external_strategy_pack_shard(
     external_strategy_limit: int = 200,
     external_strategy_format: str = "auto",
     external_strategy_fail_on_unsupported: bool = False,
+    candidate_timeout_seconds: int = DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS,
     min_market_cap: float = 2_000_000_000,
     locked_start: str = DEFAULT_LOCKED_START,
     train_end: str = DEFAULT_TRAIN_END,
@@ -3343,20 +3375,21 @@ def run_external_strategy_pack_shard(
         try:
             cached = evaluation_cache.get(config_signature)
             if cached is None:
-                row, trades, yearly = evaluate_candidate(
-                    config=candidate.config,
-                    candidate_id=candidate_id,
-                    stage=shard,
-                    symbol_frames=symbol_frames,
-                    benchmark_prices=benchmark,
-                    train_end=train_end,
-                    validation_start=validation_start,
-                    validation_end=validation_end,
-                    search_method=EXTERNAL_SEARCH_METHOD,
-                    selection_split="validation",
-                    min_selection_trades_per_year=100,
-                    scoring_profile="strict_quality",
-                )
+                with _candidate_evaluation_timeout(candidate_timeout_seconds):
+                    row, trades, yearly = evaluate_candidate(
+                        config=candidate.config,
+                        candidate_id=candidate_id,
+                        stage=shard,
+                        symbol_frames=symbol_frames,
+                        benchmark_prices=benchmark,
+                        train_end=train_end,
+                        validation_start=validation_start,
+                        validation_end=validation_end,
+                        search_method=EXTERNAL_SEARCH_METHOD,
+                        selection_split="validation",
+                        min_selection_trades_per_year=100,
+                        scoring_profile="strict_quality",
+                    )
                 evaluation_cache[config_signature] = (row.copy(), trades.copy(), yearly.copy())
             else:
                 row, trades, yearly = cached
@@ -3420,6 +3453,7 @@ def run_external_strategy_pack_shard(
     if failed_rows:
         failed = pd.DataFrame(failed_rows)
         unsupported = pd.concat([unsupported, failed.assign(unsupported_rules="", reason=failed["reason"])], ignore_index=True, sort=False)
+    timed_out_count = sum("CandidateEvaluationTimeout" in str(row.get("reason", "")) for row in failed_rows)
 
     leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
@@ -3441,6 +3475,8 @@ def run_external_strategy_pack_shard(
         "strategies_evaluated": int(len(rows)),
         "strategies_unsupported": int(len(unsupported_rows)),
         "strategies_failed": int(len(failed_rows)),
+        "strategies_timed_out": int(timed_out_count),
+        "candidate_timeout_seconds": int(candidate_timeout_seconds),
         "unique_config_evaluations": int(len(evaluation_cache)),
         "cached_config_reuses": int(max(len(evaluable) - len(evaluation_cache), 0)),
         "symbols": int(len(symbol_frames)),
@@ -3577,6 +3613,7 @@ def merge_external_strategy_pack_outputs(
         "total_strategies_evaluated": int(sum(int(item.get("strategies_evaluated", 0)) for item in summaries)),
         "total_strategies_unsupported": int(sum(int(item.get("strategies_unsupported", 0)) for item in summaries)),
         "total_strategies_failed": int(sum(int(item.get("strategies_failed", 0)) for item in summaries)),
+        "total_strategies_timed_out": int(sum(int(item.get("strategies_timed_out", 0)) for item in summaries)),
         "total_shards_requested": int(total_shards_requested),
         "total_shards_completed": int(len(summaries)),
         "total_jobs_requested": jobs_requested,
@@ -3721,6 +3758,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--external-strategy-limit", type=int, default=200)
     parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
     parser.add_argument("--min-market-cap", type=float, default=2_000_000_000)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
@@ -3737,6 +3775,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         external_strategy_limit=args.external_strategy_limit,
         external_strategy_format=args.external_strategy_format,
         external_strategy_fail_on_unsupported=args.external_strategy_fail_on_unsupported,
+        candidate_timeout_seconds=args.candidate_timeout_seconds,
         min_market_cap=args.min_market_cap,
         locked_start=args.locked_start,
         train_end=args.train_end,
