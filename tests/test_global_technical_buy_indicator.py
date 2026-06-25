@@ -1322,7 +1322,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
 
-    assert data["name"] == "Global Technical Buy Indicator External Pack 1800 Jobs"
+    assert data["name"] == "Global Technical Buy Indicator External Pack 2880 Jobs"
     assert "workflow_dispatch" in data[True]
     assert "push" not in data[True]
     assert text.count("runs-on: ubuntu-latest") >= 12
@@ -1334,24 +1334,25 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "out_path = out_dir / \"SPY.parquet\"" in text
     assert "gtbi-external-pack-data" in text
     assert "original_shards = 360" in text
-    assert "chunks_per_shard = 5" in text
+    assert "original_strategies_per_shard = 200" in text
+    assert "chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit" in text
     assert "jobs_per_block = 180" in text
-    assert text.count("max-parallel: 180") == 10
+    assert text.count("max-parallel: 180") == 16
     assert "max-parallel: 60" not in text
     assert "run_chunk_0" in data["jobs"]
-    assert "run_chunk_9" in data["jobs"]
+    assert "run_chunk_15" in data["jobs"]
     assert "--prebuilt-pack-dir external-pack-data" in text
     assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
 
 
-def test_external_pack_1800jobs_workflow_splits_into_40_strategy_jobs() -> None:
+def test_external_pack_1800jobs_workflow_splits_into_25_strategy_jobs_after_40_timeout() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-1800jobs.yml")
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
 
-    assert data["name"] == "Global Technical Buy Indicator External Pack 1800 Jobs"
+    assert data["name"] == "Global Technical Buy Indicator External Pack 2880 Jobs"
     assert "workflow_dispatch" in data[True]
     assert "push" not in data[True]
     assert "C:\\" not in text
@@ -1360,22 +1361,25 @@ def test_external_pack_1800jobs_workflow_splits_into_40_strategy_jobs() -> None:
     assert 'default: "27936694743"' in text
     assert 'default: "free-global-yahoo-daily-data-lake"' in text
     assert 'default: "scripts/strategy_packs/gtbi_research_broad_72000"' in text
-    assert 'default: "40"' in text
+    assert 'default: "25"' in text
     assert 'default: "2000000000"' in text
     assert 'default: "2010-12-31"' in text
     assert 'default: "2011-01-01"' in text
     assert 'default: "2020-12-31"' in text
     assert 'default: "2021-01-01"' in text
     assert "original_shards = 360" in text
-    assert "chunks_per_shard = 5" in text
+    assert "original_strategies_per_shard = 200" in text
+    assert "chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit" in text
     assert "jobs_per_block = 180" in text
-    assert "block_count = 10" in text
+    assert "block_count = 16" in text
     assert 'f"{job_index:04d}"' in text
-    assert '"strategy_offset": chunk_index * candidate_limit' in text
-    assert '"strategy_limit": candidate_limit' in text
-    assert text.count("max-parallel: 180") == 10
+    assert '"strategy_offset": strategy_offset' in text
+    assert '"strategy_limit": strategy_limit' in text
+    assert "total_jobs = original_shards * chunks_per_shard" in text
+    assert "total_strategies_requested={sum(row['strategy_limit'] for row in rows)}" in text
+    assert text.count("max-parallel: 180") == 16
     assert "max-parallel: 60" not in text
-    for idx in range(10):
+    for idx in range(16):
         assert f"run_chunk_{idx}:" in text
         assert f"needs.plan.outputs.chunk_{idx}" in text
     assert "--external-strategy-shard-id \"${{ matrix.base_shard_id }}\"" in text

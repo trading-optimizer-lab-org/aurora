@@ -1,4 +1,4 @@
-name: Global Technical Buy Indicator External Pack 1800 Jobs
+name: Global Technical Buy Indicator External Pack 2880 Jobs
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
       candidate_count_per_job:
         description: "Strategies evaluated per job"
         required: true
-        default: "40"
+        default: "25"
       min_market_cap:
         description: "Minimum market cap in USD"
         required: true
@@ -76,24 +76,37 @@ jobs:
       chunk_8_count: ${{ steps.plan.outputs.chunk_8_count }}
       chunk_9: ${{ steps.plan.outputs.chunk_9 }}
       chunk_9_count: ${{ steps.plan.outputs.chunk_9_count }}
+      chunk_10: ${{ steps.plan.outputs.chunk_10 }}
+      chunk_10_count: ${{ steps.plan.outputs.chunk_10_count }}
+      chunk_11: ${{ steps.plan.outputs.chunk_11 }}
+      chunk_11_count: ${{ steps.plan.outputs.chunk_11_count }}
+      chunk_12: ${{ steps.plan.outputs.chunk_12 }}
+      chunk_12_count: ${{ steps.plan.outputs.chunk_12_count }}
+      chunk_13: ${{ steps.plan.outputs.chunk_13 }}
+      chunk_13_count: ${{ steps.plan.outputs.chunk_13_count }}
+      chunk_14: ${{ steps.plan.outputs.chunk_14 }}
+      chunk_14_count: ${{ steps.plan.outputs.chunk_14_count }}
+      chunk_15: ${{ steps.plan.outputs.chunk_15 }}
+      chunk_15_count: ${{ steps.plan.outputs.chunk_15_count }}
       total_strategies_requested: ${{ steps.plan.outputs.total_strategies_requested }}
       total_shards_requested: ${{ steps.plan.outputs.total_shards_requested }}
       total_jobs_requested: ${{ steps.plan.outputs.total_jobs_requested }}
       candidate_limit: ${{ steps.plan.outputs.candidate_limit }}
     steps:
       - id: plan
-        name: Build 1800-job matrix
+        name: Build external-pack job matrix
         run: |
           python - <<'PY'
           import json
           import os
 
           original_shards = 360
-          chunks_per_shard = 5
+          original_strategies_per_shard = 200
           jobs_per_block = 180
-          block_count = 10
+          block_count = 16
           test_mode = "${{ inputs.test_mode }}".strip().lower() == "true"
           candidate_limit = max(int("${{ inputs.candidate_count_per_job }}"), 1)
+          chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit
           total_jobs = original_shards * chunks_per_shard
           if test_mode:
               total_jobs = min(max(int("${{ inputs.test_max_jobs }}"), 1), total_jobs)
@@ -101,14 +114,16 @@ jobs:
           for job_index in range(total_jobs):
               base_shard_id = job_index // chunks_per_shard
               chunk_index = job_index % chunks_per_shard
+              strategy_offset = chunk_index * candidate_limit
+              strategy_limit = min(candidate_limit, original_strategies_per_shard - strategy_offset)
               rows.append(
                   {
                       "job_index": job_index,
                       "base_shard_id": base_shard_id,
                       "base_shard_padded": f"{base_shard_id:03d}",
                       "chunk_index": chunk_index,
-                      "strategy_offset": chunk_index * candidate_limit,
-                      "strategy_limit": candidate_limit,
+                      "strategy_offset": strategy_offset,
+                      "strategy_limit": strategy_limit,
                       "job_padded": f"{job_index:04d}",
                   }
               )
@@ -117,7 +132,7 @@ jobs:
                   block_rows = rows[block * jobs_per_block : (block + 1) * jobs_per_block]
                   handle.write(f"chunk_{block}={json.dumps({'include': block_rows}, separators=(',', ':'))}\n")
                   handle.write(f"chunk_{block}_count={len(block_rows)}\n")
-              handle.write(f"total_strategies_requested={len(rows) * candidate_limit}\n")
+              handle.write(f"total_strategies_requested={sum(row['strategy_limit'] for row in rows)}\n")
               handle.write(f"total_shards_requested={original_shards}\n")
               handle.write(f"total_jobs_requested={len(rows)}\n")
               handle.write(f"candidate_limit={candidate_limit}\n")
@@ -147,10 +162,7 @@ jobs:
         run: |
           mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
           for attempt in 1 2 3 4 5; do
-            if gh run download "${{ inputs.data_run_id }}" \
-              --repo "${{ github.repository }}" \
-              --name "${{ inputs.data_artifact_name }}" \
-              --dir "$QF_DATA_DIR/prices/free_us_daily"; then
+            if gh run download "${{ inputs.data_run_id }}"               --repo "${{ github.repository }}"               --name "${{ inputs.data_artifact_name }}"               --dir "$QF_DATA_DIR/prices/free_us_daily"; then
               exit 0
             fi
             sleep $((attempt * 20))
@@ -210,14 +222,7 @@ jobs:
           PY
       - name: Build reusable external pack data
         run: |
-          python scripts/build_global_technical_buy_indicator_pack.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --output-dir "$QF_DATA_DIR/runs/global_technical_buy_indicator_external_pack/pack" \
-            --stage-count 1 \
-            --group-count 1 \
-            --locked-start "${{ inputs.locked_start }}" \
-            --min-rows 260 \
-            --min-market-cap "${{ inputs.min_market_cap }}"
+          python scripts/build_global_technical_buy_indicator_pack.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --output-dir "$QF_DATA_DIR/runs/global_technical_buy_indicator_external_pack/pack"             --stage-count 1             --group-count 1             --locked-start "${{ inputs.locked_start }}"             --min-rows 260             --min-market-cap "${{ inputs.min_market_cap }}"
       - name: Upload reusable external pack data
         uses: actions/upload-artifact@v4
         with:
@@ -262,21 +267,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -323,21 +314,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -384,21 +361,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -445,21 +408,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -506,21 +455,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -567,21 +502,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -628,21 +549,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -689,21 +596,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -750,21 +643,7 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -811,21 +690,289 @@ jobs:
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
             FAIL_FLAG="--external-strategy-fail-on-unsupported"
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
-            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
-            --prebuilt-pack-dir external-pack-data \
-            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
-            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
-            --external-strategy-offset "${{ matrix.strategy_offset }}" \
-            --external-strategy-limit "${{ matrix.strategy_limit }}" \
-            --external-strategy-format jsonl \
-            "$FAIL_FLAG" \
-            --min-market-cap "${{ inputs.min_market_cap }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_chunk_10:
+    needs: [plan, build_external_pack]
+    if: ${{ needs.plan.outputs.chunk_10_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.chunk_10) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy job
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_chunk_11:
+    needs: [plan, build_external_pack]
+    if: ${{ needs.plan.outputs.chunk_11_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.chunk_11) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy job
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_chunk_12:
+    needs: [plan, build_external_pack]
+    if: ${{ needs.plan.outputs.chunk_12_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.chunk_12) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy job
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_chunk_13:
+    needs: [plan, build_external_pack]
+    if: ${{ needs.plan.outputs.chunk_13_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.chunk_13) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy job
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_chunk_14:
+    needs: [plan, build_external_pack]
+    if: ${{ needs.plan.outputs.chunk_14_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.chunk_14) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy job
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_chunk_15:
+    needs: [plan, build_external_pack]
+    if: ${{ needs.plan.outputs.chunk_15_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.chunk_15) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable external pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run external strategy job
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ matrix.base_shard_id }}"             --external-strategy-offset "${{ matrix.strategy_offset }}"             --external-strategy-limit "${{ matrix.strategy_limit }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always()
@@ -850,6 +997,12 @@ jobs:
       - run_chunk_7
       - run_chunk_8
       - run_chunk_9
+      - run_chunk_10
+      - run_chunk_11
+      - run_chunk_12
+      - run_chunk_13
+      - run_chunk_14
+      - run_chunk_15
     if: ${{ always() && needs.build_external_pack.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -875,17 +1028,7 @@ jobs:
           merge-multiple: true
       - name: Merge job results
         run: |
-          python scripts/merge_global_technical_buy_indicator_external_pack.py \
-            --shards-root downloaded-jobs \
-            --output-dir final-results \
-            --total-strategies-requested "${{ needs.plan.outputs.total_strategies_requested }}" \
-            --total-shards-requested "360" \
-            --total-jobs-requested "${{ needs.plan.outputs.total_jobs_requested }}" \
-            --candidate-count-per-job "${{ needs.plan.outputs.candidate_limit }}" \
-            --locked-start "${{ inputs.locked_start }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}"
+          python scripts/merge_global_technical_buy_indicator_external_pack.py             --shards-root downloaded-jobs             --output-dir final-results             --total-strategies-requested "${{ needs.plan.outputs.total_strategies_requested }}"             --total-shards-requested "360"             --total-jobs-requested "${{ needs.plan.outputs.total_jobs_requested }}"             --candidate-count-per-job "${{ needs.plan.outputs.candidate_limit }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"
       - name: Upload final results
         uses: actions/upload-artifact@v4
         with:
