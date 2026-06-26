@@ -79,15 +79,30 @@ jobs:
           name: ${{ inputs.data_artifact_name }}
           path: ${{ env.QF_DATA_DIR }}/prices/free_us_daily
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Ensure SPY benchmark exists
+      - name: Normalize data lake layout and ensure SPY benchmark exists
         run: |
           python - <<'PY'
           from pathlib import Path
+          import shutil
           import pandas as pd
+
           root = Path("${{ env.QF_DATA_DIR }}/prices/free_us_daily")
+          normalized = root / "normalized"
+          if not normalized.exists():
+              nested = [path.parent for path in root.rglob("normalized/*.parquet")]
+              if nested:
+                  actual_root = nested[0].parent
+                  for child in actual_root.iterdir():
+                      target = root / child.name
+                      if child.resolve() == target.resolve():
+                          continue
+                      if target.exists():
+                          continue
+                      shutil.move(str(child), str(target))
           candidates = [
               root / "normalized" / "SPY.parquet",
               root / "raw" / "yfinance" / "SPY.parquet",
+              *root.rglob("SPY.parquet"),
           ]
           out_dir = root / "normalized"
           out_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +114,8 @@ jobs:
                   frame = pd.read_parquet(src)
                   frame.to_parquet(out_path, index=False)
                   raise SystemExit(0)
-          raise FileNotFoundError("SPY benchmark parquet not found in data lake artifact")
+          found = "\n".join(str(path) for path in list(root.rglob("*.parquet"))[:20])
+          raise FileNotFoundError(f"SPY benchmark parquet not found in data lake artifact. First parquet files:\n{found}")
           PY
       - name: Build reusable external pack data
         run: |
@@ -138,7 +154,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -223,7 +239,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -308,7 +324,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -393,7 +409,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -478,7 +494,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -563,7 +579,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -648,7 +664,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -733,7 +749,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -818,7 +834,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -903,7 +919,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -988,7 +1004,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1073,7 +1089,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1158,7 +1174,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1243,7 +1259,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1328,7 +1344,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1413,7 +1429,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1498,7 +1514,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1583,7 +1599,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1668,7 +1684,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1753,7 +1769,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1838,7 +1854,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -1923,7 +1939,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2008,7 +2024,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2093,7 +2109,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2178,7 +2194,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2263,7 +2279,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2348,7 +2364,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2433,7 +2449,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2518,7 +2534,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2603,7 +2619,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2688,7 +2704,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2773,7 +2789,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2858,7 +2874,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -2943,7 +2959,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3028,7 +3044,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3113,7 +3129,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3198,7 +3214,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3283,7 +3299,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3368,7 +3384,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3453,7 +3469,7 @@ jobs:
           jobs_per_block=180
           block_count=40
           candidate_limit=$(python - <<'PY'
-          print(max(int("${ inputs.candidate_count_per_job }"), 1))
+          print(max(int("${{ inputs.candidate_count_per_job }}"), 1))
           PY
           )
           chunks_per_shard=$(( (original_strategies_per_shard + candidate_limit - 1) / candidate_limit ))
@@ -3579,11 +3595,11 @@ jobs:
           python - <<'PY' >> "$GITHUB_OUTPUT"
           original_shards = 360
           original_strategies_per_shard = 200
-          candidate_limit = max(int("${ inputs.candidate_count_per_job }"), 1)
+          candidate_limit = max(int("${{ inputs.candidate_count_per_job }}"), 1)
           chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit
           total_jobs = original_shards * chunks_per_shard
-          if "${ inputs.test_mode }".strip().lower() == "true":
-              total_jobs = min(max(int("${ inputs.test_max_jobs }"), 1), total_jobs)
+          if "${{ inputs.test_mode }}".strip().lower() == "true":
+              total_jobs = min(max(int("${{ inputs.test_max_jobs }}"), 1), total_jobs)
           total_strategies = 0
           for job_index in range(total_jobs):
               chunk_index = job_index % chunks_per_shard

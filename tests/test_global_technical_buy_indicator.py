@@ -1384,7 +1384,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "runner.temp" not in text
     assert "scripts/strategy_packs/gtbi_research_broad_72000" in text
     assert "global-technical-buy-indicator-external-pack-72000-results" in text
-    assert "Ensure SPY benchmark exists" in text
+    assert "Normalize data lake layout and ensure SPY benchmark exists" in text
     assert "out_path = out_dir / \"SPY.parquet\"" in text
     assert "gtbi-external-pack-data" in text
     assert "original_shards = 360" in text
