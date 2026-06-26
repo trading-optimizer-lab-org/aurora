@@ -1319,6 +1319,57 @@ def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: P
     assert summary["total_strategies_timed_out"] == 0
 
 
+def test_external_merge_ignores_empty_job_csvs_and_counts_timeouts(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0007"
+    job.mkdir(parents=True)
+    (job / "summary_job_0007.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 10,
+                "strategies_evaluated": 0,
+                "strategies_unsupported": 0,
+                "strategies_failed": 10,
+                "strategies_timed_out": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "leaderboard_job_0007.csv",
+        "filtered_leaderboard_job_0007.csv",
+        "yearly_trade_performance_job_0007.csv",
+        "top_trades_sample_job_0007.csv",
+    ):
+        (job / name).write_text("", encoding="utf-8")
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "slow",
+                "shard_id": 0,
+                "slot_in_shard": 70,
+                "unsupported_rules": "",
+                "reason": "CandidateEvaluationTimeout('candidate evaluation exceeded 300 seconds')",
+            }
+        ]
+    ).to_csv(job / "unsupported_strategies_job_0007.csv", index=False)
+    (job / "top_indicator_rules_job_0007.jsonl").write_text("", encoding="utf-8")
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=200,
+        total_shards_requested=360,
+        total_jobs_requested=20,
+        candidate_count_per_job=10,
+    )
+
+    assert summary["total_jobs_completed"] == 1
+    assert summary["total_strategies_evaluated"] == 0
+    assert summary["total_strategies_failed"] == 10
+    assert summary["total_strategies_timed_out"] == 10
+    assert (tmp_path / "final" / "leaderboard.csv").exists()
+
+
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
     text = path.read_text(encoding="utf-8")

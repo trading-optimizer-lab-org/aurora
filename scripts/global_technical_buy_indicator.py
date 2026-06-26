@@ -3434,6 +3434,8 @@ def run_external_strategy_pack_shard(
         )
 
     leaderboard = pd.DataFrame(rows)
+    if leaderboard.empty:
+        leaderboard = pd.DataFrame(columns=LEADERBOARD_COLUMNS)
     if not leaderboard.empty:
         leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
     filtered = pd.DataFrame(columns=leaderboard.columns)
@@ -3521,29 +3523,42 @@ def merge_external_strategy_pack_outputs(
     trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
     rule_rows: list[dict[str, Any]] = []
+    def read_csv_or_empty(path: Path) -> pd.DataFrame:
+        if not path.stat().st_size:
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
+
     for summary_path in sorted([*shards_root.rglob("summary_shard_*.json"), *shards_root.rglob("summary_job_*.json")]):
         summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
     for path in sorted([*shards_root.rglob("leaderboard_shard_*.csv"), *shards_root.rglob("leaderboard_job_*.csv")]):
-        if path.stat().st_size:
-            leaderboards.append(pd.read_csv(path))
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            leaderboards.append(frame)
     for path in sorted(
         [*shards_root.rglob("filtered_leaderboard_shard_*.csv"), *shards_root.rglob("filtered_leaderboard_job_*.csv")]
     ):
-        if path.stat().st_size:
-            filtered_frames.append(pd.read_csv(path))
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            filtered_frames.append(frame)
     for path in sorted(
         [*shards_root.rglob("yearly_trade_performance_shard_*.csv"), *shards_root.rglob("yearly_trade_performance_job_*.csv")]
     ):
-        if path.stat().st_size:
-            yearly_frames.append(pd.read_csv(path))
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            yearly_frames.append(frame)
     for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv")]):
-        if path.stat().st_size:
-            trade_frames.append(pd.read_csv(path))
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            trade_frames.append(frame)
     for path in sorted(
         [*shards_root.rglob("unsupported_strategies_shard_*.csv"), *shards_root.rglob("unsupported_strategies_job_*.csv")]
     ):
-        if path.stat().st_size:
-            unsupported_frames.append(pd.read_csv(path))
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            unsupported_frames.append(frame)
     for path in sorted([*shards_root.rglob("top_indicator_rules_shard_*.jsonl"), *shards_root.rglob("top_indicator_rules_job_*.jsonl")]):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
