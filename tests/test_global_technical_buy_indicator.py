@@ -1389,13 +1389,13 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "original_shards = 360" in text
     assert "original_strategies_per_shard = 200" in text
     assert "chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit" in text
-    assert "jobs_per_block = 180" in text
+    assert "jobs_per_block=180" in text
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
     assert "run_chunk_0" in data["jobs"]
     assert "run_chunk_39" in data["jobs"]
     assert "--prebuilt-pack-dir external-pack-data" in text
-    assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
+    assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
@@ -1416,7 +1416,7 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert 'default: "free-global-yahoo-daily-data-lake"' in text
     assert 'default: "scripts/strategy_packs/gtbi_research_broad_72000"' in text
     assert 'default: "10"' in text
-    assert 'default: "1200"' in text
+    assert 'default: "300"' in text
     assert 'default: "2000000000"' in text
     assert 'default: "2010-12-31"' in text
     assert 'default: "2011-01-01"' in text
@@ -1425,23 +1425,26 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert "original_shards = 360" in text
     assert "original_strategies_per_shard = 200" in text
     assert "chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit" in text
-    assert "jobs_per_block = 180" in text
-    assert "block_count = 40" in text
-    assert 'f"{job_index:04d}"' in text
-    assert '"strategy_offset": strategy_offset' in text
-    assert '"strategy_limit": strategy_limit' in text
-    assert "total_jobs = original_shards * chunks_per_shard" in text
-    assert "total_strategies_requested={sum(row['strategy_limit'] for row in rows)}" in text
+    assert "jobs_per_block=180" in text
+    assert "block_count=40" in text
+    assert 'job_padded=$(printf "%04d" "$job_index")' in text
+    assert 'echo "strategy_offset=$strategy_offset" >> "$GITHUB_OUTPUT"' in text
+    assert 'echo "strategy_limit=$strategy_limit" >> "$GITHUB_OUTPUT"' in text
+    assert "total_jobs=$(( original_shards * chunks_per_shard ))" in text
+    assert "total_strategies += min(candidate_limit, original_strategies_per_shard - strategy_offset)" in text
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
     for idx in range(40):
         assert f"run_chunk_{idx}:" in text
-        assert f"needs.plan.outputs.chunk_{idx}" in text
-    assert "--external-strategy-shard-id \"${{ matrix.base_shard_id }}\"" in text
-    assert "--external-strategy-offset \"${{ matrix.strategy_offset }}\"" in text
-    assert "--external-strategy-limit \"${{ matrix.strategy_limit }}\"" in text
+        matrix_values = data["jobs"][f"run_chunk_{idx}"]["strategy"]["matrix"]["local_job_index"]
+        assert len(matrix_values) == 180
+        assert matrix_values[0] == 0
+        assert matrix_values[-1] == 179
+    assert "--external-strategy-shard-id \"${{ steps.vars.outputs.base_shard_id }}\"" in text
+    assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
+    assert "--external-strategy-limit \"${{ steps.vars.outputs.strategy_limit }}\"" in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
-    assert 'name: gtbi-external-pack-job-${{ matrix.job_padded }}' in text
+    assert 'name: gtbi-external-pack-job-${{ steps.vars.outputs.job_padded }}' in text
     assert "pattern: gtbi-external-pack-job-*" in text
     assert "--total-jobs-requested" in text
     assert "--candidate-count-per-job" in text
