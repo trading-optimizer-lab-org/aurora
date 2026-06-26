@@ -216,11 +216,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -301,11 +301,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -386,11 +386,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -471,11 +471,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -556,11 +556,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -641,11 +641,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -726,11 +726,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -811,11 +811,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -896,11 +896,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -981,11 +981,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1066,11 +1066,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1151,11 +1151,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1236,11 +1236,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1321,11 +1321,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1406,11 +1406,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1491,11 +1491,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1576,11 +1576,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1661,11 +1661,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1746,11 +1746,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1831,11 +1831,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -1916,11 +1916,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2001,11 +2001,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2086,11 +2086,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2171,11 +2171,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2256,11 +2256,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2341,11 +2341,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2426,11 +2426,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2511,11 +2511,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2596,11 +2596,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2681,11 +2681,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2766,11 +2766,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2851,11 +2851,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -2936,11 +2936,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3021,11 +3021,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3106,11 +3106,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3191,11 +3191,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3276,11 +3276,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3361,11 +3361,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3446,11 +3446,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'
@@ -3531,11 +3531,11 @@ jobs:
       - name: Run external strategy job
         if: steps.vars.outputs.skip != 'true'
         run: |
-          FAIL_FLAG=""
+          FAIL_ARGS=()
           if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
-            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
           fi
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "$FAIL_FLAG"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"             --prebuilt-pack-dir external-pack-data             --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}"             --external-strategy-shard-id "${{ steps.vars.outputs.base_shard_id }}"             --external-strategy-offset "${{ steps.vars.outputs.strategy_offset }}"             --external-strategy-limit "${{ steps.vars.outputs.strategy_limit }}"             --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"             --external-strategy-format jsonl             "${FAIL_ARGS[@]}"             --min-market-cap "${{ inputs.min_market_cap }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"             --output-dir "outputs/job-${{ steps.vars.outputs.job_padded }}"
           rm -rf "outputs/job-${{ steps.vars.outputs.job_padded }}/_external_pack_data"
       - name: Upload job artifact
         if: always() && steps.vars.outputs.skip != 'true'

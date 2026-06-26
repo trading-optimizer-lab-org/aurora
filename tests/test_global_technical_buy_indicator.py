@@ -1398,6 +1398,9 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--prebuilt-pack-dir external-pack-data" in text
     assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
+    assert "FAIL_ARGS=()" in text
+    assert '"${FAIL_ARGS[@]}"' in text
+    assert '"$FAIL_FLAG"' not in text
     assert "--locked-start \"${{ inputs.locked_start }}\"" in text
     assert "requires_local_machine" not in text
 
@@ -1446,6 +1449,9 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
     assert "--external-strategy-limit \"${{ steps.vars.outputs.strategy_limit }}\"" in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
+    assert "FAIL_ARGS=()" in text
+    assert '"${FAIL_ARGS[@]}"' in text
+    assert '"$FAIL_FLAG"' not in text
     assert 'name: gtbi-external-pack-job-${{ steps.vars.outputs.job_padded }}' in text
     assert "pattern: gtbi-external-pack-job-*" in text
     assert "--total-jobs-requested" in text
