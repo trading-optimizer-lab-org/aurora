@@ -104,7 +104,7 @@ jobs:
               root / "raw" / "yfinance" / "SPY.parquet",
               *root.rglob("SPY.parquet"),
           ]
-          out_dir = root / "normalized"
+          out_dir = root / "benchmarks"
           out_dir.mkdir(parents=True, exist_ok=True)
           out_path = out_dir / "SPY.parquet"
           if out_path.exists():
@@ -114,8 +114,25 @@ jobs:
                   frame = pd.read_parquet(src)
                   frame.to_parquet(out_path, index=False)
                   raise SystemExit(0)
-          found = "\n".join(str(path) for path in list(root.rglob("*.parquet"))[:20])
-          raise FileNotFoundError(f"SPY benchmark parquet not found in data lake artifact. First parquet files:\n{found}")
+          import yfinance as yf
+          spy = yf.download("SPY", period="max", interval="1d", auto_adjust=False, progress=False)
+          if isinstance(spy.columns, pd.MultiIndex):
+              spy.columns = [str(col[0]).lower().replace(" ", "_") for col in spy.columns]
+          else:
+              spy.columns = [str(col).lower().replace(" ", "_") for col in spy.columns]
+          spy = spy.reset_index().rename(columns={"Date": "date", "date": "date", "adj_close": "adj_close"})
+          if "adj_close" not in spy.columns and "adj close" in spy.columns:
+              spy["adj_close"] = spy["adj close"]
+          spy["date"] = pd.to_datetime(spy["date"], errors="coerce")
+          spy = spy.dropna(subset=["date"])
+          spy = spy[spy["date"] < pd.Timestamp("${{ inputs.locked_start }}")]
+          spy["symbol"] = "SPY"
+          keep = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+          missing = [column for column in keep if column not in spy.columns]
+          if missing or spy.empty:
+              found = "\n".join(str(path) for path in list(root.rglob("*.parquet"))[:20])
+              raise FileNotFoundError(f"SPY benchmark unavailable; missing={missing}. First parquet files:\n{found}")
+          spy[keep].to_parquet(out_path, index=False)
           PY
       - name: Build reusable external pack data
         run: |
