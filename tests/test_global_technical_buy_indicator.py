@@ -1381,6 +1381,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert text.count("runs-on: ubuntu-latest") >= 12
     assert "self-hosted" not in text
     assert "C:\\" not in text
+    assert "runner.temp" not in text
     assert "scripts/strategy_packs/gtbi_research_broad_72000" in text
     assert "global-technical-buy-indicator-external-pack-72000-results" in text
     assert "Ensure SPY benchmark exists" in text
@@ -1410,6 +1411,7 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert "workflow_dispatch" in data[True]
     assert "push" not in data[True]
     assert "C:\\" not in text
+    assert "runner.temp" not in text
     assert text.count("runs-on: ubuntu-latest") >= 12
     assert "self-hosted" not in text
     assert 'default: "27936694743"' in text
