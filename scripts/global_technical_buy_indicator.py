@@ -6,12 +6,8 @@ import csv
 import hashlib
 import json
 import math
-import multiprocessing as mp
-import pickle
-import signal
 import threading
 import time
-import traceback
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Iterable
@@ -1933,30 +1929,6 @@ class EarlyRejectedStrategy(Exception):
 
 
 @contextlib.contextmanager
-def _candidate_evaluation_timeout(seconds: int | float | None) -> Iterable[None]:
-    if seconds is None or float(seconds) <= 0:
-        yield
-        return
-    if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
-        yield
-        return
-
-    timeout_seconds = float(seconds)
-    previous_handler = signal.getsignal(signal.SIGALRM)
-
-    def _raise_timeout(signum: int, frame: Any) -> None:
-        raise CandidateEvaluationTimeout(f"candidate evaluation exceeded {timeout_seconds:g} seconds")
-
-    signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous_handler)
-
-
-@contextlib.contextmanager
 def _candidate_evaluation_heartbeat(label: str, interval_seconds: int = 60) -> Iterable[None]:
     """Emit periodic progress so GitHub Actions does not kill long silent jobs."""
     stop_event = threading.Event()
@@ -2650,6 +2622,7 @@ def evaluate_candidate_optimized(
     scoring_profile: str = DEFAULT_SCORING_PROFILE,
     enable_safe_prefilter: bool = True,
     enable_early_stopping: bool = True,
+    deadline: float | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     del enable_early_stopping  # Early stops are restricted to the safe raw-signal prefilter in v1.
     total_start = time.perf_counter()
@@ -2658,6 +2631,8 @@ def evaluate_candidate_optimized(
     symbols_processed = 0
     raw_signals_total = 0
     for symbol, frame in symbol_frames.items():
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
         symbols_processed += 1
         signal = entry_signal(frame, benchmark_prices, config)
         if signal.empty or not bool(signal.any()):
@@ -2705,6 +2680,8 @@ def evaluate_candidate_optimized(
     simulation_start = time.perf_counter()
     all_trades: list[pd.DataFrame] = []
     for symbol, signal in signals_by_symbol.items():
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
         frame = symbol_frames[symbol]
         prepared_frame = _prepare_ohlcv(frame)
         market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
@@ -2823,6 +2800,7 @@ def _evaluate_external_candidate_core(
     optimized_evaluation_mode: str,
     enable_safe_prefilter: bool,
     enable_early_stopping: bool,
+    deadline: float | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     if optimized_evaluation_mode == "optimized_evaluation_v1":
         return evaluate_candidate_optimized(
@@ -2840,6 +2818,7 @@ def _evaluate_external_candidate_core(
             scoring_profile="strict_quality",
             enable_safe_prefilter=enable_safe_prefilter,
             enable_early_stopping=enable_early_stopping,
+            deadline=deadline,
         )
 
     start = time.perf_counter()
@@ -2872,84 +2851,6 @@ def _evaluate_external_candidate_core(
         "validation_trades": int(row.get("validation_trades", 0)),
     }
     return row, trades, yearly, diagnostic
-
-
-def _evaluate_external_candidate_child(result_path: str, kwargs: dict[str, Any]) -> None:
-    try:
-        result = _evaluate_external_candidate_core(**kwargs)
-        payload: tuple[str, Any] = ("ok", result)
-    except EarlyRejectedStrategy as exc:
-        payload = (
-            "early_rejected",
-            {
-                "reason": exc.reason,
-                "split": exc.split,
-                "year": exc.year,
-                "actual": exc.actual,
-                "threshold": exc.threshold,
-                "stage": exc.stage,
-                "symbols_processed": exc.symbols_processed,
-                "seconds_until_reject": exc.seconds_until_reject,
-                "diagnostic": exc.diagnostic,
-            },
-        )
-    except BaseException as exc:  # pragma: no cover - exercised in GitHub smoke on unexpected failures.
-        payload = (
-            "error",
-            {
-                "type": type(exc).__name__,
-                "message": repr(exc),
-                "traceback": traceback.format_exc(),
-            },
-        )
-    with Path(result_path).open("wb") as handle:
-        pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-def _evaluate_external_candidate_with_process_timeout(
-    *,
-    result_path: Path,
-    timeout_seconds: int | float | None,
-    kwargs: dict[str, Any],
-) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    timeout_value = None if timeout_seconds is None or float(timeout_seconds) <= 0 else float(timeout_seconds)
-    if timeout_value is None or "fork" not in mp.get_all_start_methods():
-        with _candidate_evaluation_timeout(timeout_value):
-            return _evaluate_external_candidate_core(**kwargs)
-
-    if result_path.exists():
-        result_path.unlink()
-    ctx = mp.get_context("fork")
-    process = ctx.Process(
-        target=_evaluate_external_candidate_child,
-        kwargs={"result_path": str(result_path), "kwargs": kwargs},
-    )
-    process.start()
-    process.join(timeout_value)
-    if process.is_alive():
-        process.terminate()
-        process.join(timeout=10)
-        if process.is_alive():  # pragma: no cover - depends on runner process state.
-            process.kill()
-            process.join(timeout=10)
-        raise CandidateEvaluationTimeout(f"candidate evaluation exceeded {timeout_value:g} seconds")
-
-    if not result_path.exists():
-        raise RuntimeError(f"candidate worker exited without result, exitcode={process.exitcode}")
-    with result_path.open("rb") as handle:
-        status, payload = pickle.load(handle)
-    result_path.unlink(missing_ok=True)
-
-    if status == "ok":
-        return payload
-    if status == "early_rejected":
-        raise EarlyRejectedStrategy(**payload)
-    if status == "error":
-        raise RuntimeError(
-            "candidate worker failed: "
-            f"{payload.get('type')}: {payload.get('message')}\n{payload.get('traceback', '')}"
-        )
-    raise RuntimeError(f"unknown candidate worker status: {status!r}")
 
 
 _NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
@@ -4167,7 +4068,6 @@ def run_external_strategy_pack_shard(
             deduped = cached is not None
             if not deduped:
                 heartbeat_label = f"job={output_padded} candidate={candidate_id}"
-                result_path = output_dir / f".candidate_result_{canonical_hash}.pkl"
                 eval_kwargs = {
                     "config": candidate.config,
                     "candidate_id": candidate_id,
@@ -4180,13 +4080,12 @@ def run_external_strategy_pack_shard(
                     "optimized_evaluation_mode": optimized_evaluation_mode,
                     "enable_safe_prefilter": enable_safe_prefilter,
                     "enable_early_stopping": enable_early_stopping,
+                    "deadline": time.perf_counter() + float(candidate_timeout_seconds)
+                    if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0
+                    else None,
                 }
                 with _candidate_evaluation_heartbeat(heartbeat_label):
-                    row, trades, yearly, diagnostic = _evaluate_external_candidate_with_process_timeout(
-                        result_path=result_path,
-                        timeout_seconds=candidate_timeout_seconds,
-                        kwargs=eval_kwargs,
-                    )
+                    row, trades, yearly, diagnostic = _evaluate_external_candidate_core(**eval_kwargs)
                 evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
                 canonical_strategy_id = candidate_id
             else:
