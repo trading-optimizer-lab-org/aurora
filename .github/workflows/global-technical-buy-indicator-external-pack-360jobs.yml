@@ -148,7 +148,7 @@ jobs:
 
   run_chunk_0:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 0 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 0 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -233,7 +233,7 @@ jobs:
 
   run_chunk_1:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 1 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 1 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -318,7 +318,7 @@ jobs:
 
   run_chunk_2:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 2 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 2 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -403,7 +403,7 @@ jobs:
 
   run_chunk_3:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 3 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 3 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -488,7 +488,7 @@ jobs:
 
   run_chunk_4:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 4 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 4 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -573,7 +573,7 @@ jobs:
 
   run_chunk_5:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 5 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 5 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -658,7 +658,7 @@ jobs:
 
   run_chunk_6:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 6 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 6 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -743,7 +743,7 @@ jobs:
 
   run_chunk_7:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 7 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 7 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -828,7 +828,7 @@ jobs:
 
   run_chunk_8:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 8 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 8 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -913,7 +913,7 @@ jobs:
 
   run_chunk_9:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 9 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 9 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -998,7 +998,7 @@ jobs:
 
   run_chunk_10:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 10 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 10 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1083,7 +1083,7 @@ jobs:
 
   run_chunk_11:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 11 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 11 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1168,7 +1168,7 @@ jobs:
 
   run_chunk_12:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 12 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 12 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1253,7 +1253,7 @@ jobs:
 
   run_chunk_13:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 13 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 13 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1338,7 +1338,7 @@ jobs:
 
   run_chunk_14:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 14 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 14 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1423,7 +1423,7 @@ jobs:
 
   run_chunk_15:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 15 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 15 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1508,7 +1508,7 @@ jobs:
 
   run_chunk_16:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 16 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 16 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1593,7 +1593,7 @@ jobs:
 
   run_chunk_17:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 17 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 17 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1678,7 +1678,7 @@ jobs:
 
   run_chunk_18:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 18 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 18 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1763,7 +1763,7 @@ jobs:
 
   run_chunk_19:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 19 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 19 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1848,7 +1848,7 @@ jobs:
 
   run_chunk_20:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 20 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 20 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1933,7 +1933,7 @@ jobs:
 
   run_chunk_21:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 21 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 21 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2018,7 +2018,7 @@ jobs:
 
   run_chunk_22:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 22 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 22 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2103,7 +2103,7 @@ jobs:
 
   run_chunk_23:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 23 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 23 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2188,7 +2188,7 @@ jobs:
 
   run_chunk_24:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 24 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 24 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2273,7 +2273,7 @@ jobs:
 
   run_chunk_25:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 25 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 25 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2358,7 +2358,7 @@ jobs:
 
   run_chunk_26:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 26 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 26 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2443,7 +2443,7 @@ jobs:
 
   run_chunk_27:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 27 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 27 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2528,7 +2528,7 @@ jobs:
 
   run_chunk_28:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 28 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 28 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2613,7 +2613,7 @@ jobs:
 
   run_chunk_29:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 29 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 29 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2698,7 +2698,7 @@ jobs:
 
   run_chunk_30:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 30 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 30 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2783,7 +2783,7 @@ jobs:
 
   run_chunk_31:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 31 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 31 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2868,7 +2868,7 @@ jobs:
 
   run_chunk_32:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 32 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 32 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -2953,7 +2953,7 @@ jobs:
 
   run_chunk_33:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 33 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 33 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3038,7 +3038,7 @@ jobs:
 
   run_chunk_34:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 34 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 34 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3123,7 +3123,7 @@ jobs:
 
   run_chunk_35:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 35 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 35 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3208,7 +3208,7 @@ jobs:
 
   run_chunk_36:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 36 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 36 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3293,7 +3293,7 @@ jobs:
 
   run_chunk_37:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 37 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 37 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3378,7 +3378,7 @@ jobs:
 
   run_chunk_38:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 38 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 38 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3463,7 +3463,7 @@ jobs:
 
   run_chunk_39:
     needs: build_external_pack
-    if: ${{ inputs.test_mode != 'true' || 39 == 0 }}
+    if: ${{ inputs.recovery_job_indices == '' && (inputs.test_mode != 'true' || 39 == 0) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -3631,6 +3631,166 @@ jobs:
       - name: Merge outputs
         run: |
           python scripts/merge_global_technical_buy_indicator_external_pack.py             --shards-root downloaded-jobs             --output-dir final-results             --total-strategies-requested "${{ steps.totals.outputs.total_strategies }}"             --total-shards-requested "360"             --total-jobs-requested "${{ steps.totals.outputs.total_jobs }}"             --candidate-count-per-job "${{ steps.totals.outputs.candidate_limit }}"             --locked-start "${{ inputs.locked_start }}"             --train-end "${{ inputs.train_end }}"             --validation-start "${{ inputs.validation_start }}"             --validation-end "${{ inputs.validation_end }}"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-external-pack-72000-results
+          path: final-results
+          retention-days: 30
+
+  plan_recovery:
+    if: ${{ inputs.recovery_job_indices != '' }}
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      recovery_jobs: ${{ steps.plan.outputs.recovery_jobs }}
+    steps:
+      - name: Build recovery matrix
+        id: plan
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          original_shards = 360
+          original_strategies_per_shard = 200
+          candidate_limit = max(int("${{ inputs.candidate_count_per_job }}"), 1)
+          chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit
+          max_jobs = original_shards * chunks_per_shard
+          rows = []
+          seen = set()
+          for item in "${{ inputs.recovery_job_indices }}".split(","):
+              item = item.strip()
+              if not item:
+                  continue
+              job_index = int(item)
+              if job_index < 0 or job_index >= max_jobs:
+                  raise SystemExit(f"recovery job index out of range: {job_index}")
+              if job_index in seen:
+                  continue
+              seen.add(job_index)
+              base_shard_id = job_index // chunks_per_shard
+              chunk_index = job_index % chunks_per_shard
+              strategy_offset = chunk_index * candidate_limit
+              strategy_limit = min(candidate_limit, original_strategies_per_shard - strategy_offset)
+              rows.append({
+                  "job_index": job_index,
+                  "job_padded": f"{job_index:04d}",
+                  "base_shard_id": base_shard_id,
+                  "base_shard_padded": f"{base_shard_id:03d}",
+                  "chunk_index": chunk_index,
+                  "strategy_offset": strategy_offset,
+                  "strategy_limit": strategy_limit,
+              })
+          if not rows:
+              raise SystemExit("no recovery job indices provided")
+          rows.sort(key=lambda row: row["job_index"])
+          print(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}")
+          print(f"recovery_jobs={len(rows)}")
+          PY
+
+  run_recovery:
+    needs:
+      - build_external_pack
+      - plan_recovery
+    if: ${{ inputs.recovery_job_indices != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJson(needs.plan_recovery.outputs.matrix) }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      QF_DATA_DIR: /tmp/aurora-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run recovery job
+        run: |
+          FAIL_ARGS=()
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --prebuilt-pack-dir external-pack-data \
+            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
+            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
+            --external-strategy-offset "${{ matrix.strategy_offset }}" \
+            --external-strategy-limit "${{ matrix.strategy_limit }}" \
+            --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}" \
+            --external-strategy-format jsonl \
+            "${FAIL_ARGS[@]}" \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload recovery artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          retention-days: 14
+
+  merge_recovery:
+    needs:
+      - plan_recovery
+      - run_recovery
+    if: ${{ always() && inputs.recovery_job_indices != '' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download source and recovery job artifacts
+        run: |
+          if [ -z "${{ inputs.source_run_id }}" ]; then
+            echo "source_run_id is required in recovery mode" >&2
+            exit 1
+          fi
+          mkdir -p downloaded-jobs
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "gtbi-external-pack-job-*" \
+            --dir downloaded-jobs
+          gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "gtbi-external-pack-job-*" \
+            --dir downloaded-jobs
+      - name: Merge outputs
+        run: |
+          python scripts/merge_global_technical_buy_indicator_external_pack.py \
+            --shards-root downloaded-jobs \
+            --output-dir final-results \
+            --total-strategies-requested "72000" \
+            --total-shards-requested "360" \
+            --total-jobs-requested "7200" \
+            --candidate-count-per-job "${{ inputs.candidate_count_per_job }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}"
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:
