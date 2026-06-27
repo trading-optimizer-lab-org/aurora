@@ -2516,6 +2516,68 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
     return score, "fast"
 
 
+def _append_external_timeout_result(
+    *,
+    timeout_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    diagnostic_base: dict[str, Any],
+    payload: dict[str, Any],
+    candidate_id: str,
+    canonical_hash: str,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int,
+) -> None:
+    timeout_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "shard_id": payload.get("shard_id"),
+            "slot_in_shard": payload.get("slot_in_shard"),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "exit_rule": diagnostic_base.get("exit_rule", ""),
+            "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+            "reason": reason,
+            "seconds_until_timeout": float(seconds_total),
+        }
+    )
+    dedupe_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "canonical_hash": canonical_hash,
+            "canonical_strategy_id": "",
+            "deduped": False,
+        }
+    )
+    timing_rows.append(
+        {
+            **diagnostic_base,
+            "seconds_total": float(seconds_total),
+            "seconds_feature_build": 0.0,
+            "seconds_signal": float("nan"),
+            "seconds_simulation": float("nan"),
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": int(symbols_total),
+            "symbols_processed": int(symbols_processed),
+            "raw_signals_total": 0,
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+            "result_status": "timeout",
+            "reject_reason": reason,
+            "timeout": True,
+            "early_rejected": False,
+            "runtime_error": False,
+        }
+    )
+
+
 def _signal_year_counts_for_possible_exits(
     *,
     signals_by_symbol: dict[str, pd.Series],
@@ -3949,7 +4011,14 @@ def run_external_strategy_pack_shard(
     enable_safe_prefilter: bool = True,
     enable_early_stopping: bool = True,
     enable_cost_scheduling: bool = True,
+    job_wall_clock_seconds: int = 420,
 ) -> dict[str, Any]:
+    job_start = time.perf_counter()
+    job_deadline = (
+        job_start + float(job_wall_clock_seconds)
+        if job_wall_clock_seconds and float(job_wall_clock_seconds) > 0
+        else None
+    )
     shard = int(external_strategy_shard_id)
     shard_padded = f"{shard:03d}"
     output_dir = Path(output_dir)
@@ -3985,7 +4054,7 @@ def run_external_strategy_pack_shard(
 
     evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
     if enable_cost_scheduling:
-        evaluable = sorted(evaluable, key=lambda item: _estimated_cost_score(item.payload)[0], reverse=True)
+        evaluable = sorted(evaluable, key=lambda item: _estimated_cost_score(item.payload)[0])
     if prebuilt_pack_dir is None:
         pack_root = output_dir / "_external_pack_data"
         build_stage_packs(
@@ -4071,6 +4140,31 @@ def run_external_strategy_pack_shard(
             }
         )
         candidate_start = time.perf_counter()
+        if job_deadline is not None:
+            remaining_job_seconds = float(job_deadline - candidate_start)
+            if remaining_job_seconds <= 90.0:
+                reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before candidate start')"
+                _append_external_timeout_result(
+                    timeout_rows=timeout_rows,
+                    dedupe_rows=dedupe_rows,
+                    timing_rows=timing_rows,
+                    diagnostic_base=diagnostic_base,
+                    payload=payload,
+                    candidate_id=candidate_id,
+                    canonical_hash=canonical_hash,
+                    reason=reason,
+                    seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
+                    symbols_total=len(symbol_frames),
+                    symbols_processed=0,
+                )
+                print(
+                    "[gtbi] job "
+                    f"{output_padded} deferred_timeout candidate={candidate_id} "
+                    f"reason=job_wall_clock_budget_exhausted "
+                    f"remaining_job_seconds={remaining_job_seconds:.2f}",
+                    flush=True,
+                )
+                continue
         print(
             "[gtbi] job "
             f"{output_padded} start candidate={candidate_id} "
@@ -4096,10 +4190,17 @@ def run_external_strategy_pack_shard(
                     "optimized_evaluation_mode": optimized_evaluation_mode,
                     "enable_safe_prefilter": enable_safe_prefilter,
                     "enable_early_stopping": enable_early_stopping,
-                    "deadline": time.perf_counter() + float(candidate_timeout_seconds)
-                    if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0
-                    else None,
                 }
+                candidate_deadlines: list[float] = []
+                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                    candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
+                if job_deadline is not None:
+                    job_safe_deadline = job_deadline - 90.0
+                    if job_safe_deadline > time.perf_counter():
+                        candidate_deadlines.append(job_safe_deadline)
+                    else:
+                        candidate_deadlines.append(time.perf_counter())
+                eval_kwargs["deadline"] = min(candidate_deadlines) if candidate_deadlines else None
                 with _candidate_evaluation_heartbeat(heartbeat_label):
                     row, trades, yearly, diagnostic = _evaluate_external_candidate_core(**eval_kwargs)
                 evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
@@ -4187,52 +4288,18 @@ def run_external_strategy_pack_shard(
             continue
         except CandidateEvaluationTimeout as exc:
             seconds_total = float(time.perf_counter() - candidate_start)
-            timeout_rows.append(
-                {
-                    **{key: diagnostic_base.get(key, "") for key in TIMEOUT_COLUMNS if key in diagnostic_base},
-                    "strategy_id": candidate_id,
-                    "shard_id": payload.get("shard_id"),
-                    "slot_in_shard": payload.get("slot_in_shard"),
-                    "family": diagnostic_base.get("family", ""),
-                    "concept": diagnostic_base.get("concept", ""),
-                    "market_overlay": diagnostic_base.get("market_overlay", ""),
-                    "trend_filter": diagnostic_base.get("trend_filter", ""),
-                    "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
-                    "exit_rule": diagnostic_base.get("exit_rule", ""),
-                    "aggressiveness": diagnostic_base.get("aggressiveness", ""),
-                    "reason": repr(exc),
-                    "seconds_until_timeout": seconds_total,
-                }
-            )
-            dedupe_rows.append(
-                {
-                    "strategy_id": candidate_id,
-                    "canonical_hash": canonical_hash,
-                    "canonical_strategy_id": "",
-                    "deduped": False,
-                }
-            )
-            timing_rows.append(
-                {
-                    **diagnostic_base,
-                    "seconds_total": seconds_total,
-                    "seconds_feature_build": 0.0,
-                    "seconds_signal": float("nan"),
-                    "seconds_simulation": float("nan"),
-                    "seconds_train": 0.0,
-                    "seconds_validation": 0.0,
-                    "symbols_total": int(len(symbol_frames)),
-                    "symbols_processed": int(len(symbol_frames)),
-                    "raw_signals_total": 0,
-                    "trades_total": 0,
-                    "train_trades": 0,
-                    "validation_trades": 0,
-                    "result_status": "timeout",
-                    "reject_reason": repr(exc),
-                    "timeout": True,
-                    "early_rejected": False,
-                    "runtime_error": False,
-                }
+            _append_external_timeout_result(
+                timeout_rows=timeout_rows,
+                dedupe_rows=dedupe_rows,
+                timing_rows=timing_rows,
+                diagnostic_base=diagnostic_base,
+                payload=payload,
+                candidate_id=candidate_id,
+                canonical_hash=canonical_hash,
+                reason=repr(exc),
+                seconds_total=seconds_total,
+                symbols_total=len(symbol_frames),
+                symbols_processed=len(symbol_frames),
             )
             print(
                 "[gtbi] job "
@@ -4383,6 +4450,7 @@ def run_external_strategy_pack_shard(
         "strategies_timed_out": int(len(timeouts)),
         "strategies_deduped": int(deduped_count),
         "candidate_timeout_seconds": int(candidate_timeout_seconds),
+        "job_wall_clock_seconds": int(job_wall_clock_seconds),
         "unique_config_evaluations": int(len(evaluation_cache)),
         "cached_config_reuses": int(deduped_count),
         "optimized_evaluation_mode": str(optimized_evaluation_mode),
@@ -4789,6 +4857,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
+    parser.add_argument("--job-wall-clock-seconds", type=int, default=420)
     parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v1")
     parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
@@ -4812,6 +4881,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         external_strategy_format=args.external_strategy_format,
         external_strategy_fail_on_unsupported=args.external_strategy_fail_on_unsupported,
         candidate_timeout_seconds=args.candidate_timeout_seconds,
+        job_wall_clock_seconds=args.job_wall_clock_seconds,
         min_market_cap=args.min_market_cap,
         locked_start=args.locked_start,
         train_end=args.train_end,

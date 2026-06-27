@@ -1216,6 +1216,20 @@ def test_external_canonical_hash_ignores_notes_but_changes_exit_rules(tmp_path: 
     assert gtbi.canonical_external_strategy_hash(candidates[0]) != gtbi.canonical_external_strategy_hash(candidates[2])
 
 
+def test_external_cost_scheduling_orders_fast_candidates_first() -> None:
+    fast = _external_strategy_payload("fast_candidate")
+    slow = _external_strategy_payload("slow_candidate")
+    slow["concept_id"] = "bollinger_squeeze_breakout"
+    slow["exit_profile_id"] = "balanced_tp_ema20"
+    slow["market_overlay_id"] = "spy_low_vol_uptrend"
+    slow["aggression_id"] = "frequency_quality"
+
+    ordered = sorted([slow, fast], key=lambda payload: gtbi._estimated_cost_score(payload)[0])
+
+    assert ordered[0]["strategy_id"] == "fast_candidate"
+    assert gtbi._estimated_cost_score(slow)[1] == "very_slow"
+
+
 def test_feature_store_preserves_entry_signals() -> None:
     frame = gtbi._prepare_ohlcv(_breakout_frame(140))
     spy = gtbi._prepare_ohlcv(_spy_frame(140))
@@ -1627,6 +1641,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--prebuilt-pack-dir external-pack-data" in text
     assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
+    assert "job_wall_clock_seconds" in text
+    assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
     assert "FAIL_ARGS=()" in text
     assert '"${FAIL_ARGS[@]}"' in text
     assert '"$FAIL_FLAG"' not in text
@@ -1692,6 +1708,8 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
     assert "--external-strategy-limit \"${{ steps.vars.outputs.strategy_limit }}\"" in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
+    assert "job_wall_clock_seconds" in text
+    assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
     assert "FAIL_ARGS=()" in text
     assert '"${FAIL_ARGS[@]}"' in text
     assert '"$FAIL_FLAG"' not in text
