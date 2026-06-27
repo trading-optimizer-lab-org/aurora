@@ -2030,6 +2030,60 @@ def test_signal_first_runner_rejects_whole_signal_group_once(
     assert timing["result_status"].tolist() == ["signal_early_rejected", "signal_early_rejected"]
 
 
+def test_signal_first_runner_stops_before_job_wall_clock_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("slow_signal_group_a")
+    second_payload = _external_strategy_payload("slow_signal_group_b")
+    second_payload["entry_rules"]["breakout_lookback_days"] = 80
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal_calls = {"count": 0}
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        signal_calls["count"] += 1
+        deadline = kwargs.get("deadline")
+        if deadline is not None and deadline <= gtbi.time.perf_counter():
+            raise gtbi.CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
+        signal = pd.Series(False, index=frame.index)
+        signal.iloc[70] = True
+        return {"AAA": signal}, {"seconds_signal": 0.0, "symbols_processed": 1, "raw_signals_total": 1}
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v3_signal_first",
+        enable_dedupe=True,
+        job_wall_clock_seconds=1,
+    )
+
+    timeouts = pd.read_csv(tmp_path / "out" / "job-0000" / "timeout_strategies_job_0000.csv")
+    manifest = pd.read_csv(tmp_path / "out" / "job-0000" / "signal_group_manifest_job_0000.csv")
+    assert signal_calls["count"] <= 1
+    assert summary["strategies_timed_out"] == 2
+    assert summary["signal_groups_timed_out"] == 2
+    assert timeouts["strategy_id"].tolist() == ["slow_signal_group_a", "slow_signal_group_b"]
+    assert manifest["result_status"].tolist() == ["signal_timeout", "signal_timeout"]
+
+
 def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -> None:
     idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
     close = np.linspace(50.0, 150.0, len(idx))

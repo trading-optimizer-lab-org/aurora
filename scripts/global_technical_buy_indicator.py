@@ -2970,6 +2970,67 @@ def _append_external_timeout_result(
     )
 
 
+def _append_signal_group_timeout_result(
+    *,
+    timeout_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    signal_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    cost_score: float,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int = 0,
+) -> None:
+    for index, candidate in enumerate(group):
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        _append_external_timeout_result(
+            timeout_rows=timeout_rows,
+            dedupe_rows=dedupe_rows,
+            timing_rows=timing_rows,
+            diagnostic_base=_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+            payload=payload,
+            candidate_id=candidate_id,
+            canonical_hash=canonical_hash,
+            signal_hash=signal_hash,
+            reason=reason,
+            seconds_total=seconds_total,
+            symbols_total=symbols_total,
+            symbols_processed=symbols_processed,
+            signal_canonical_strategy_id=first_id,
+            signal_deduped=bool(index > 0),
+        )
+    signal_group_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_count": int(len(group)),
+            "strategy_ids": ";".join(strategy_ids),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "number_of_reuses": int(max(len(group) - 1, 0)),
+            "result_status": "signal_timeout",
+            "reject_reason": reason,
+            "seconds_signal": float(seconds_total),
+            "raw_signals_total": 0,
+            "symbols_processed": int(symbols_processed),
+        }
+    )
+
+
 def _signal_year_counts_for_possible_exits(
     *,
     signals_by_symbol: dict[str, pd.Series],
@@ -4570,6 +4631,8 @@ def run_external_strategy_pack_shard(
         enabled=enable_feature_cache,
         prewarm=str(optimized_evaluation_mode) != "optimized_evaluation_v2",
     )
+    if use_v3_signal_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
+        job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
     print(
         "[gtbi] job "
         f"{output_padded} loaded {len(candidates)} candidates "
@@ -4675,7 +4738,7 @@ def run_external_strategy_pack_shard(
                         "trend_filter": _external_diagnostic_base(payload, job_id=output_padded).get("trend_filter", ""),
                         "relative_strength_filter": _external_diagnostic_base(payload, job_id=output_padded).get("relative_strength_filter", ""),
                     }
-                )
+            )
             group_start = time.perf_counter()
             try:
                 candidate_deadlines: list[float] = []
@@ -4683,7 +4746,30 @@ def run_external_strategy_pack_shard(
                     candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
                 if job_deadline is not None:
                     job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
-                    candidate_deadlines.append(job_safe_deadline if job_safe_deadline > time.perf_counter() else time.perf_counter())
+                    if job_safe_deadline <= time.perf_counter():
+                        signal_groups_timed_out += 1
+                        reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before signal group start')"
+                        _append_signal_group_timeout_result(
+                            timeout_rows=timeout_rows,
+                            dedupe_rows=dedupe_rows,
+                            timing_rows=timing_rows,
+                            signal_group_manifest_rows=signal_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            first_id=first_id,
+                            strategy_ids=strategy_ids,
+                            diagnostic_base=diagnostic_base,
+                            cost_score=cost_score,
+                            reason=reason,
+                            seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                            symbols_total=len(symbol_frames),
+                            symbols_processed=0,
+                        )
+                        for candidate in group:
+                            signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                        continue
+                    candidate_deadlines.append(job_safe_deadline)
                 signal_deadline = min(candidate_deadlines) if candidate_deadlines else None
                 with _candidate_evaluation_heartbeat(f"job={output_padded} signal={signal_hash[:12]}"):
                     signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
@@ -4807,48 +4893,25 @@ def run_external_strategy_pack_shard(
             except CandidateEvaluationTimeout as exc:
                 signal_groups_timed_out += 1
                 seconds_total = float(time.perf_counter() - group_start)
-                for index, candidate in enumerate(group):
-                    payload = candidate.payload
-                    candidate_id = str(payload.get("strategy_id"))
-                    canonical_hash = canonical_external_strategy_hash(candidate)
-                    signal_first_skipped_strategy_ids.add(candidate_id)
-                    _append_external_timeout_result(
-                        timeout_rows=timeout_rows,
-                        dedupe_rows=dedupe_rows,
-                        timing_rows=timing_rows,
-                        diagnostic_base=_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
-                        payload=payload,
-                        candidate_id=candidate_id,
-                        canonical_hash=canonical_hash,
-                        signal_hash=signal_hash,
-                        reason=repr(exc),
-                        seconds_total=seconds_total,
-                        symbols_total=len(symbol_frames),
-                        symbols_processed=0,
-                        signal_canonical_strategy_id=first_id,
-                        signal_deduped=bool(index > 0),
-                    )
-                signal_group_manifest_rows.append(
-                    {
-                        "job_id": output_padded,
-                        "signal_hash": signal_hash,
-                        "canonical_strategy_id": first_id,
-                        "strategy_count": int(len(group)),
-                        "strategy_ids": ";".join(strategy_ids),
-                        "family": diagnostic_base.get("family", ""),
-                        "concept": diagnostic_base.get("concept", ""),
-                        "market_overlay": diagnostic_base.get("market_overlay", ""),
-                        "trend_filter": diagnostic_base.get("trend_filter", ""),
-                        "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
-                        "estimated_cost": float(cost_score),
-                        "number_of_reuses": int(max(len(group) - 1, 0)),
-                        "result_status": "signal_timeout",
-                        "reject_reason": repr(exc),
-                        "seconds_signal": seconds_total,
-                        "raw_signals_total": 0,
-                        "symbols_processed": 0,
-                    }
+                _append_signal_group_timeout_result(
+                    timeout_rows=timeout_rows,
+                    dedupe_rows=dedupe_rows,
+                    timing_rows=timing_rows,
+                    signal_group_manifest_rows=signal_group_manifest_rows,
+                    group=group,
+                    output_padded=output_padded,
+                    signal_hash=signal_hash,
+                    first_id=first_id,
+                    strategy_ids=strategy_ids,
+                    diagnostic_base=diagnostic_base,
+                    cost_score=cost_score,
+                    reason=repr(exc),
+                    seconds_total=seconds_total,
+                    symbols_total=len(symbol_frames),
+                    symbols_processed=0,
                 )
+                for candidate in group:
+                    signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
 
     candidate_loop_evaluable = [
         candidate
