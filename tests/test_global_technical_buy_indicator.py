@@ -2181,6 +2181,135 @@ def test_signal_first_runner_reserves_time_for_exit_simulation(
     assert manifest["result_status"].tolist() == ["signal_ready", "signal_timeout"]
 
 
+def test_compact_signal_events_roundtrip_preserves_signal_positions(tmp_path: Path) -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[[12, 70, 121]] = True
+
+    path = tmp_path / "signal_events_job_0000.npz"
+    gtbi._write_compact_signal_events(
+        path,
+        signal_events={"hash_a": {"AAA": signal}},
+        symbol_frames={"AAA": frame},
+    )
+    loaded = gtbi._load_compact_signal_events(path, symbol_frames={"AAA": frame})
+
+    assert list(loaded) == ["hash_a"]
+    pd.testing.assert_series_equal(loaded["hash_a"]["AAA"], signal)
+
+
+def test_signal_first_split_phase_writes_events_and_exits_reuse_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("split_signal_a")
+    second_payload = _external_strategy_payload("split_signal_b")
+    second_payload["exit_rules"]["take_profit_pct"] = 0.25
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[70] = True
+    signal_calls = {"count": 0}
+    core_precomputed: list[bool] = []
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        signal_calls["count"] += 1
+        return {"AAA": signal}, {"seconds_signal": 1.25, "symbols_processed": 1, "raw_signals_total": 1}
+
+    def fake_prefilter(**kwargs: object) -> tuple[dict[str, object] | None, int]:
+        return None, 1
+
+    def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
+        core_precomputed.append(kwargs.get("precomputed_signals_by_symbol") is not None)
+        candidate_id = str(kwargs["candidate_id"])
+        row = {
+            "candidate_id": candidate_id,
+            "stage": 0,
+            "search_method": gtbi.EXTERNAL_SEARCH_METHOD,
+            "family": "minervini_sepa",
+            "score": 0.0,
+            "strict_quality_pass": False,
+            "adjusted_return_time_risk": 0.0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        diagnostic = {
+            "seconds_total": 0.2,
+            "seconds_feature_build": 0.0,
+            "seconds_signal": 0.0,
+            "seconds_simulation": 0.1,
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": 1,
+            "symbols_processed": 1,
+            "raw_signals_total": 1,
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        return row, pd.DataFrame(columns=gtbi.TRADE_COLUMNS), pd.DataFrame(columns=gtbi.YEARLY_COLUMNS), diagnostic
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", fake_prefilter)
+    monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    signal_summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "signals" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v3_signal_first",
+        signal_first_phase="signals",
+        enable_dedupe=True,
+        job_wall_clock_seconds=300,
+    )
+    assert signal_summary["signal_first_phase"] == "signals"
+    assert signal_summary["signal_groups_evaluated"] == 1
+    assert signal_summary["strategies_evaluated"] == 0
+    assert signal_calls["count"] == 1
+    assert (tmp_path / "signals" / "job-0000" / "signal_events_job_0000.npz").exists()
+    assert (tmp_path / "signals" / "job-0000" / "signal_ready_groups_job_0000.jsonl").exists()
+
+    def fail_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        raise AssertionError("exit phase must consume compact signal events")
+
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fail_build_signal)
+    exit_summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v3_signal_first",
+        signal_first_phase="exits",
+        signal_events_dir=tmp_path / "signals" / "job-0000",
+        enable_dedupe=True,
+        job_wall_clock_seconds=300,
+    )
+
+    leaderboard = pd.read_csv(tmp_path / "out" / "job-0000" / "leaderboard_job_0000.csv")
+    assert exit_summary["signal_first_phase"] == "exits"
+    assert exit_summary["signal_groups_loaded"] == 1
+    assert exit_summary["strategies_loaded"] == 2
+    assert exit_summary["strategies_evaluated"] == 2
+    assert core_precomputed == [True, True]
+    assert leaderboard["candidate_id"].tolist() == ["split_signal_a", "split_signal_b"]
+
+
 def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -> None:
     idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
     close = np.linspace(50.0, 150.0, len(idx))
@@ -2606,7 +2735,11 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "optimized_evaluation_v3_signal_first" in text
     assert "--optimized-evaluation-mode" in text
     assert len(data[True]["workflow_dispatch"]["inputs"]) <= 25
-    assert "--test-max-signal-groups" not in text
+    assert "test_max_signal_groups" in data[True]["workflow_dispatch"]["inputs"]
+    assert "--test-max-signal-groups" in text
+    assert "--signal-first-phase signals" in text
+    assert "--signal-first-phase exits" in text
+    assert "--signal-events-dir" in text
     assert "enable_block_merge" in text
     assert "merge_block_0" in data["jobs"]
     assert "merge_block_39" in data["jobs"]
