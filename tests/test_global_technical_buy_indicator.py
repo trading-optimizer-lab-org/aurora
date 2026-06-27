@@ -1972,6 +1972,7 @@ def test_signal_first_runner_rejects_whole_signal_group_once(
     signal.iloc[70] = True
     signal_calls = {"count": 0}
     core_calls = {"count": 0}
+    prewarm_calls = {"count": 0}
 
     def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
         return candidates
@@ -1997,12 +1998,16 @@ def test_signal_first_runner_rejects_whole_signal_group_once(
         core_calls["count"] += 1
         raise AssertionError("signal-first prefilter should stop before exit simulation")
 
+    def fake_prewarm(*args: object, **kwargs: object) -> None:
+        prewarm_calls["count"] += 1
+
     monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
     monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
     monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
     monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
     monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", fake_prefilter)
     monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    monkeypatch.setattr(gtbi, "_prewarm_common_features", fake_prewarm)
     pack_dir = tmp_path / "prebuilt"
     pack_dir.mkdir()
     (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
@@ -2023,6 +2028,7 @@ def test_signal_first_runner_rejects_whole_signal_group_once(
     timing = pd.read_csv(tmp_path / "out" / "job-0000" / "timing_diagnostics_job_0000.csv")
     assert signal_calls["count"] == 1
     assert core_calls["count"] == 0
+    assert prewarm_calls["count"] == 0
     assert summary["signal_groups_loaded"] == 1
     assert summary["signal_groups_early_rejected"] == 1
     assert summary["strategies_early_rejected"] == 2

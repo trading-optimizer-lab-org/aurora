@@ -4629,7 +4629,7 @@ def run_external_strategy_pack_shard(
         symbol_frames,
         benchmark,
         enabled=enable_feature_cache,
-        prewarm=str(optimized_evaluation_mode) != "optimized_evaluation_v2",
+        prewarm=str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"},
     )
     if use_v3_signal_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
         job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
