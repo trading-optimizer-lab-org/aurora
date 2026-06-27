@@ -1380,6 +1380,43 @@ def test_balanced_external_strategy_candidates_groups_signal_siblings_for_smoke(
     assert len(set(canonical_hashes)) == 4
 
 
+def test_signal_first_balancer_selects_complete_signal_groups(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows: list[dict[str, object]] = []
+    for group_index in range(3):
+        for exit_index in range(4):
+            payload = _external_strategy_payload(
+                f"signal_{group_index}_exit_{exit_index}",
+                shard_id=0,
+                slot=group_index * 4 + exit_index,
+            )
+            payload["concept_id"] = f"concept_{group_index}"
+            payload["entry_rules"]["breakout_lookback_days"] = 30 + group_index
+            payload["exit_rules"]["take_profit_pct"] = 0.05 + exit_index * 0.05
+            rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    selected, total_jobs, total_signal_groups = gtbi._balanced_external_signal_groups_for_job(
+        pack,
+        job_index=0,
+        signal_groups_per_job=2,
+        schedule_active_jobs=None,
+        max_signal_groups=None,
+        strategy_format="jsonl",
+    )
+
+    assert total_signal_groups == 3
+    assert total_jobs == 2
+    assert len(selected) == 2
+    assert [len(group) for group in selected] == [4, 4]
+    assert all(len({gtbi.signal_external_strategy_hash(candidate) for candidate in group}) == 1 for group in selected)
+
+
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
     assert gtbi._effective_job_deadline(
         optimized_evaluation_mode="optimized_evaluation_v2",
@@ -1880,6 +1917,78 @@ def test_external_runner_counts_signal_reuse_when_candidate_is_early_rejected(
     assert summary["cached_signal_reuses"] == 1
 
 
+def test_signal_first_runner_rejects_whole_signal_group_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("same_signal_group_a")
+    second_payload = _external_strategy_payload("same_signal_group_b")
+    second_payload["exit_rules"]["take_profit_pct"] = 0.25
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[70] = True
+    signal_calls = {"count": 0}
+    core_calls = {"count": 0}
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        signal_calls["count"] += 1
+        return {"AAA": signal}, {"seconds_signal": 1.5, "symbols_processed": 1, "raw_signals_total": 1}
+
+    def fake_prefilter(**kwargs: object) -> tuple[dict[str, object] | None, int]:
+        return (
+            {
+                "reason": "raw_signal_yearly_trades_lt_100",
+                "split": "validation",
+                "year": 2011,
+                "actual": 1,
+                "threshold": 100,
+                "stage": "safe_prefilter",
+            },
+            1,
+        )
+
+    def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
+        core_calls["count"] += 1
+        raise AssertionError("signal-first prefilter should stop before exit simulation")
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", fake_prefilter)
+    monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v3_signal_first",
+        enable_dedupe=True,
+        job_wall_clock_seconds=0,
+    )
+
+    timing = pd.read_csv(tmp_path / "out" / "job-0000" / "timing_diagnostics_job_0000.csv")
+    assert signal_calls["count"] == 1
+    assert core_calls["count"] == 0
+    assert summary["signal_groups_loaded"] == 1
+    assert summary["signal_groups_early_rejected"] == 1
+    assert summary["strategies_early_rejected"] == 2
+    assert summary["strategies_signal_reused"] == 1
+    assert timing["result_status"].tolist() == ["signal_early_rejected", "signal_early_rejected"]
+
+
 def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -> None:
     idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
     close = np.linspace(50.0, 150.0, len(idx))
@@ -2247,8 +2356,10 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "jobs_per_block=180" in text
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
-    assert "optimized_evaluation_v2" in text
+    assert "optimized_evaluation_v3_signal_first" in text
     assert "--optimized-evaluation-mode" in text
+    assert "test_max_signal_groups" in text
+    assert "--test-max-signal-groups" in text
     assert "enable_block_merge" in text
     assert "merge_block_0" in data["jobs"]
     assert "merge_block_39" in data["jobs"]

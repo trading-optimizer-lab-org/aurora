@@ -233,6 +233,38 @@ JOB_MANIFEST_COLUMNS = [
     "cost_score",
     "estimated_cost_bucket",
 ]
+SIGNAL_GROUP_MANIFEST_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "canonical_strategy_id",
+    "strategy_count",
+    "strategy_ids",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "estimated_cost",
+    "number_of_reuses",
+    "result_status",
+    "reject_reason",
+    "seconds_signal",
+    "raw_signals_total",
+    "symbols_processed",
+]
+STRATEGY_TO_SIGNAL_MAP_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "signal_hash",
+    "canonical_strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "exit_rule",
+    "aggressiveness",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+]
 
 
 @dataclass(frozen=True)
@@ -2158,6 +2190,93 @@ def _balanced_external_strategy_candidates_for_job(
     return selected, total_jobs
 
 
+def _group_external_candidates_by_signal(
+    candidates: Iterable[ExternalStrategyCandidate],
+) -> list[list[ExternalStrategyCandidate]]:
+    def candidate_sort_key(candidate: ExternalStrategyCandidate) -> tuple[Any, ...]:
+        return (
+            _estimated_cost_score(candidate.payload)[0],
+            str(candidate.payload.get("concept_id", "")),
+            int(candidate.payload.get("shard_id", 0)),
+            int(candidate.payload.get("slot_in_shard", 0)),
+            str(candidate.payload.get("strategy_id", "")),
+        )
+
+    groups: dict[str, list[ExternalStrategyCandidate]] = {}
+    for candidate in candidates:
+        groups.setdefault(signal_external_strategy_hash(candidate), []).append(candidate)
+
+    def group_sort_key(group: list[ExternalStrategyCandidate]) -> tuple[Any, ...]:
+        first = min(group, key=candidate_sort_key)
+        cost = max(float(_estimated_cost_score(candidate.payload)[0]) for candidate in group)
+        return (
+            cost,
+            str(first.payload.get("concept_id", "")),
+            signal_external_strategy_hash(first),
+        )
+
+    return [sorted(group, key=candidate_sort_key) for group in sorted(groups.values(), key=group_sort_key)]
+
+
+def _balanced_external_signal_groups_for_job(
+    pack_path: Path,
+    *,
+    job_index: int,
+    signal_groups_per_job: int,
+    schedule_active_jobs: int | None = None,
+    max_signal_groups: int | None = None,
+    strategy_format: str = "auto",
+) -> tuple[list[list[ExternalStrategyCandidate]], int, int]:
+    all_candidates = load_external_strategy_candidates(
+        pack_path,
+        shard_id=None,
+        offset=0,
+        limit=None,
+        strategy_format=strategy_format,
+    )
+    groups = _group_external_candidates_by_signal(all_candidates)
+    if max_signal_groups is not None and int(max_signal_groups) > 0:
+        groups = groups[: int(max_signal_groups)]
+    per_job = max(int(signal_groups_per_job), 1)
+    total_signal_groups = int(len(groups))
+    total_jobs = int(math.ceil(total_signal_groups / per_job)) if total_signal_groups else 0
+    if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
+        return [], total_jobs, total_signal_groups
+
+    def group_cost(group: list[ExternalStrategyCandidate]) -> float:
+        if not group:
+            return 0.0
+        max_cost = max(float(_estimated_cost_score(candidate.payload)[0]) for candidate in group)
+        return float(max_cost * max(len(group), 1))
+
+    ordered = sorted(
+        groups,
+        key=lambda group: (
+            -group_cost(group),
+            signal_external_strategy_hash(group[0]) if group else "",
+        ),
+    )
+    buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(total_jobs)]
+    bucket_costs = [0.0 for _ in range(total_jobs)]
+    for group in ordered:
+        available = [idx for idx, bucket in enumerate(buckets) if len(bucket) < per_job]
+        if not available:
+            break
+        target = min(available, key=lambda idx: (bucket_costs[idx], len(buckets[idx]), idx))
+        buckets[target].append(group)
+        bucket_costs[target] += group_cost(group)
+
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0 and total_jobs > int(schedule_active_jobs):
+        active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
+        schedule_group = int(job_index // active_jobs)
+        schedule_position = int(job_index % active_jobs)
+        mapped_job_index = schedule_group * active_jobs + schedule_position
+        if mapped_job_index >= total_jobs:
+            return [], total_jobs, total_signal_groups
+        job_index = mapped_job_index
+    return buckets[int(job_index)], total_jobs, total_signal_groups
+
+
 def _effective_job_deadline(
     *,
     optimized_evaluation_mode: str,
@@ -3194,7 +3313,7 @@ def _evaluate_external_candidate_core(
     precomputed_symbols_processed: int | None = None,
     precomputed_raw_signals_total: int | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2"}:
+    if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"}:
         return evaluate_candidate_optimized(
             config=config,
             candidate_id=candidate_id,
@@ -4331,6 +4450,7 @@ def run_external_strategy_pack_shard(
     enable_cost_scheduling: bool = True,
     job_wall_clock_seconds: int = 300,
     schedule_active_jobs: int = 0,
+    test_max_signal_groups: int = 0,
 ) -> dict[str, Any]:
     job_start = time.perf_counter()
     job_deadline = _effective_job_deadline(
@@ -4349,12 +4469,34 @@ def run_external_strategy_pack_shard(
     job_index_for_balancing: int | None = None
     if output_prefix == "job" and str(output_padded).isdigit():
         job_index_for_balancing = int(output_padded)
+    use_v3_signal_first = str(optimized_evaluation_mode) == "optimized_evaluation_v3_signal_first"
+    selected_signal_groups: list[list[ExternalStrategyCandidate]] | None = None
+    total_signal_groups_for_schedule = 0
     use_v2_global_schedule = (
         str(optimized_evaluation_mode) == "optimized_evaluation_v2"
         and bool(enable_cost_scheduling)
         and job_index_for_balancing is not None
     )
-    if use_v2_global_schedule:
+    use_v3_global_schedule = use_v3_signal_first and bool(enable_cost_scheduling) and job_index_for_balancing is not None
+    if use_v3_global_schedule:
+        selected_signal_groups, balanced_total_jobs, total_signal_groups_for_schedule = _balanced_external_signal_groups_for_job(
+            external_strategy_pack_path,
+            job_index=int(job_index_for_balancing),
+            signal_groups_per_job=external_strategy_limit,
+            schedule_active_jobs=schedule_active_jobs if int(schedule_active_jobs) > 0 else None,
+            max_signal_groups=test_max_signal_groups if int(test_max_signal_groups) > 0 else None,
+            strategy_format=external_strategy_format,
+        )
+        candidates = [candidate for group in selected_signal_groups for candidate in group]
+        print(
+            "[gtbi] job "
+            f"{output_padded} using optimized_evaluation_v3_signal_first signal schedule "
+            f"total_jobs={balanced_total_jobs} total_signal_groups={total_signal_groups_for_schedule} "
+            f"active_jobs={schedule_active_jobs} signal_groups={len(selected_signal_groups)} "
+            f"candidates={len(candidates)}",
+            flush=True,
+        )
+    elif use_v2_global_schedule:
         candidates, balanced_total_jobs = _balanced_external_strategy_candidates_for_job(
             external_strategy_pack_path,
             job_index=int(job_index_for_balancing),
@@ -4440,6 +4582,9 @@ def run_external_strategy_pack_shard(
     timing_rows: list[dict[str, Any]] = []
     dedupe_rows: list[dict[str, Any]] = []
     job_manifest_rows: list[dict[str, Any]] = []
+    signal_group_manifest_rows: list[dict[str, Any]] = []
+    strategy_to_signal_rows: list[dict[str, Any]] = []
+    signal_group_seconds: list[float] = []
     evaluation_cache: dict[str, tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
     signal_evaluation_cache: dict[str, tuple[str, dict[str, pd.Series], dict[str, Any]]] = {}
     for candidate in candidates:
@@ -4470,25 +4615,260 @@ def run_external_strategy_pack_shard(
             }
         )
 
-    for candidate in evaluable:
+    signal_first_skipped_strategy_ids: set[str] = set()
+    signal_groups_loaded = 0
+    signal_groups_evaluated = 0
+    signal_groups_early_rejected = 0
+    signal_groups_timed_out = 0
+    if use_v3_signal_first:
+        signal_groups = selected_signal_groups if selected_signal_groups is not None else _group_external_candidates_by_signal(evaluable)
+        signal_groups_loaded = int(len(signal_groups))
+        for group in signal_groups:
+            if not group:
+                continue
+            first_candidate = group[0]
+            first_payload = first_candidate.payload
+            first_id = str(first_payload.get("strategy_id"))
+            signal_hash = signal_external_strategy_hash(first_candidate)
+            cost_score = max(float(_estimated_cost_score(candidate.payload)[0]) for candidate in group)
+            diagnostic_base = _external_diagnostic_base(
+                first_payload,
+                job_id=output_padded,
+                canonical_hash=canonical_external_strategy_hash(first_candidate),
+            )
+            strategy_ids = [str(candidate.payload.get("strategy_id")) for candidate in group]
+            for candidate in group:
+                payload = candidate.payload
+                canonical_hash = canonical_external_strategy_hash(candidate)
+                signal_hash_for_candidate = signal_external_strategy_hash(candidate)
+                candidate_id = str(payload.get("strategy_id"))
+                cost, bucket = _estimated_cost_score(payload)
+                job_manifest_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "strategy_id": candidate_id,
+                        "shard_id": payload.get("shard_id"),
+                        "slot_in_shard": payload.get("slot_in_shard"),
+                        "canonical_hash": canonical_hash,
+                        "signal_hash": signal_hash_for_candidate,
+                        "cost_score": float(cost),
+                        "estimated_cost_bucket": bucket,
+                    }
+                )
+                strategy_to_signal_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "strategy_id": candidate_id,
+                        "signal_hash": signal_hash_for_candidate,
+                        "canonical_strategy_id": first_id,
+                        "shard_id": payload.get("shard_id"),
+                        "slot_in_shard": payload.get("slot_in_shard"),
+                        "exit_rule": _external_diagnostic_base(payload, job_id=output_padded).get("exit_rule", ""),
+                        "aggressiveness": _external_diagnostic_base(payload, job_id=output_padded).get("aggressiveness", ""),
+                        "market_overlay": _external_diagnostic_base(payload, job_id=output_padded).get("market_overlay", ""),
+                        "trend_filter": _external_diagnostic_base(payload, job_id=output_padded).get("trend_filter", ""),
+                        "relative_strength_filter": _external_diagnostic_base(payload, job_id=output_padded).get("relative_strength_filter", ""),
+                    }
+                )
+            group_start = time.perf_counter()
+            try:
+                candidate_deadlines: list[float] = []
+                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                    candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
+                if job_deadline is not None:
+                    job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
+                    candidate_deadlines.append(job_safe_deadline if job_safe_deadline > time.perf_counter() else time.perf_counter())
+                signal_deadline = min(candidate_deadlines) if candidate_deadlines else None
+                with _candidate_evaluation_heartbeat(f"job={output_padded} signal={signal_hash[:12]}"):
+                    signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
+                        config=first_candidate.config,
+                        candidate_id=first_id,
+                        symbol_frames=symbol_frames,
+                        benchmark_prices=benchmark,
+                        deadline=signal_deadline,
+                    )
+                signal_groups_evaluated += 1
+                signal_seconds = float(signal_diagnostic.get("seconds_signal", time.perf_counter() - group_start))
+                signal_group_seconds.append(signal_seconds)
+                signal_evaluation_cache[signal_hash] = (first_id, signals_by_symbol, signal_diagnostic)
+                reject = None
+                validation_signal_total = 0
+                if enable_safe_prefilter or enable_early_stopping:
+                    reject, validation_signal_total = _safe_prefilter_raw_signals(
+                        signals_by_symbol=signals_by_symbol,
+                        symbol_frames=symbol_frames,
+                        config=first_candidate.config,
+                        validation_start=validation_start,
+                        validation_end=validation_end,
+                    )
+                if reject is not None:
+                    signal_groups_early_rejected += 1
+                    reason = str(reject["reason"])
+                    for index, candidate in enumerate(group):
+                        payload = candidate.payload
+                        candidate_id = str(payload.get("strategy_id"))
+                        canonical_hash = canonical_external_strategy_hash(candidate)
+                        signal_first_skipped_strategy_ids.add(candidate_id)
+                        early_reject_rows.append(
+                            {
+                                "strategy_id": candidate_id,
+                                "reason": reason,
+                                "split": str(reject.get("split", "")),
+                                "year": reject.get("year", ""),
+                                "actual": reject.get("actual", validation_signal_total),
+                                "threshold": reject.get("threshold", ""),
+                                "stage": str(reject.get("stage", "safe_prefilter")),
+                                "seconds_until_reject": float(time.perf_counter() - group_start),
+                                "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                            }
+                        )
+                        dedupe_rows.append(
+                            {
+                                "strategy_id": candidate_id,
+                                "canonical_hash": canonical_hash,
+                                "canonical_strategy_id": "",
+                                "deduped": False,
+                                "signal_hash": signal_hash,
+                                "signal_canonical_strategy_id": first_id,
+                                "signal_deduped": bool(index > 0),
+                            }
+                        )
+                        timing_rows.append(
+                            {
+                                **_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+                                "seconds_total": float(time.perf_counter() - group_start),
+                                "seconds_feature_build": 0.0,
+                                "seconds_signal": signal_seconds if index == 0 else 0.0,
+                                "seconds_simulation": 0.0,
+                                "seconds_train": 0.0,
+                                "seconds_validation": 0.0,
+                                "symbols_total": int(len(symbol_frames)),
+                                "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                                "raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                                "trades_total": 0,
+                                "train_trades": 0,
+                                "validation_trades": 0,
+                                "result_status": "signal_early_rejected",
+                                "reject_reason": reason,
+                                "timeout": False,
+                                "early_rejected": True,
+                                "runtime_error": False,
+                            }
+                        )
+                    signal_group_manifest_rows.append(
+                        {
+                            "job_id": output_padded,
+                            "signal_hash": signal_hash,
+                            "canonical_strategy_id": first_id,
+                            "strategy_count": int(len(group)),
+                            "strategy_ids": ";".join(strategy_ids),
+                            "family": diagnostic_base.get("family", ""),
+                            "concept": diagnostic_base.get("concept", ""),
+                            "market_overlay": diagnostic_base.get("market_overlay", ""),
+                            "trend_filter": diagnostic_base.get("trend_filter", ""),
+                            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                            "estimated_cost": float(cost_score),
+                            "number_of_reuses": int(max(len(group) - 1, 0)),
+                            "result_status": "signal_early_rejected",
+                            "reject_reason": reason,
+                            "seconds_signal": signal_seconds,
+                            "raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                            "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                        }
+                    )
+                    continue
+                signal_group_manifest_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "signal_hash": signal_hash,
+                        "canonical_strategy_id": first_id,
+                        "strategy_count": int(len(group)),
+                        "strategy_ids": ";".join(strategy_ids),
+                        "family": diagnostic_base.get("family", ""),
+                        "concept": diagnostic_base.get("concept", ""),
+                        "market_overlay": diagnostic_base.get("market_overlay", ""),
+                        "trend_filter": diagnostic_base.get("trend_filter", ""),
+                        "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                        "estimated_cost": float(cost_score),
+                        "number_of_reuses": int(max(len(group) - 1, 0)),
+                        "result_status": "signal_ready",
+                        "reject_reason": "",
+                        "seconds_signal": signal_seconds,
+                        "raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                        "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                    }
+                )
+            except CandidateEvaluationTimeout as exc:
+                signal_groups_timed_out += 1
+                seconds_total = float(time.perf_counter() - group_start)
+                for index, candidate in enumerate(group):
+                    payload = candidate.payload
+                    candidate_id = str(payload.get("strategy_id"))
+                    canonical_hash = canonical_external_strategy_hash(candidate)
+                    signal_first_skipped_strategy_ids.add(candidate_id)
+                    _append_external_timeout_result(
+                        timeout_rows=timeout_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        diagnostic_base=_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+                        payload=payload,
+                        candidate_id=candidate_id,
+                        canonical_hash=canonical_hash,
+                        signal_hash=signal_hash,
+                        reason=repr(exc),
+                        seconds_total=seconds_total,
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                        signal_canonical_strategy_id=first_id,
+                        signal_deduped=bool(index > 0),
+                    )
+                signal_group_manifest_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "signal_hash": signal_hash,
+                        "canonical_strategy_id": first_id,
+                        "strategy_count": int(len(group)),
+                        "strategy_ids": ";".join(strategy_ids),
+                        "family": diagnostic_base.get("family", ""),
+                        "concept": diagnostic_base.get("concept", ""),
+                        "market_overlay": diagnostic_base.get("market_overlay", ""),
+                        "trend_filter": diagnostic_base.get("trend_filter", ""),
+                        "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                        "estimated_cost": float(cost_score),
+                        "number_of_reuses": int(max(len(group) - 1, 0)),
+                        "result_status": "signal_timeout",
+                        "reject_reason": repr(exc),
+                        "seconds_signal": seconds_total,
+                        "raw_signals_total": 0,
+                        "symbols_processed": 0,
+                    }
+                )
+
+    candidate_loop_evaluable = [
+        candidate
+        for candidate in evaluable
+        if str(candidate.payload.get("strategy_id")) not in signal_first_skipped_strategy_ids
+    ]
+    for candidate in candidate_loop_evaluable:
         payload = candidate.payload
         candidate_id = str(payload.get("strategy_id"))
         canonical_hash = canonical_external_strategy_hash(candidate)
         signal_hash = signal_external_strategy_hash(candidate)
         diagnostic_base = _external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash)
         cost_score, cost_bucket = _estimated_cost_score(payload)
-        job_manifest_rows.append(
-            {
-                "job_id": output_padded,
-                "strategy_id": candidate_id,
-                "shard_id": payload.get("shard_id"),
-                "slot_in_shard": payload.get("slot_in_shard"),
-                "canonical_hash": canonical_hash,
-                "signal_hash": signal_hash,
-                "cost_score": float(cost_score),
-                "estimated_cost_bucket": cost_bucket,
-            }
-        )
+        if not use_v3_signal_first:
+            job_manifest_rows.append(
+                {
+                    "job_id": output_padded,
+                    "strategy_id": candidate_id,
+                    "shard_id": payload.get("shard_id"),
+                    "slot_in_shard": payload.get("slot_in_shard"),
+                    "canonical_hash": canonical_hash,
+                    "signal_hash": signal_hash,
+                    "cost_score": float(cost_score),
+                    "estimated_cost_bucket": cost_bucket,
+                }
+            )
         candidate_start = time.perf_counter()
         signal_deduped = False
         signal_canonical_strategy_id = ""
@@ -4556,7 +4936,7 @@ def run_external_strategy_pack_shard(
                     else:
                         candidate_deadlines.append(time.perf_counter())
                 eval_kwargs["deadline"] = min(candidate_deadlines) if candidate_deadlines else None
-                if str(optimized_evaluation_mode) == "optimized_evaluation_v2" and enable_dedupe:
+                if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"} and enable_dedupe:
                     cached_signal = signal_evaluation_cache.get(signal_hash)
                     if cached_signal is None:
                         signal_heartbeat_label = f"job={output_padded} candidate={candidate_id} signal"
@@ -4572,7 +4952,7 @@ def run_external_strategy_pack_shard(
                         signal_canonical_strategy_id = candidate_id
                     else:
                         signal_canonical_strategy_id, signals_by_symbol, signal_diagnostic = cached_signal
-                        signal_deduped = True
+                        signal_deduped = str(candidate_id) != str(signal_canonical_strategy_id)
                     eval_kwargs.update(
                         {
                             "precomputed_signals_by_symbol": signals_by_symbol,
@@ -4811,6 +5191,8 @@ def run_external_strategy_pack_shard(
     timing = pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)
     dedupe_map = pd.DataFrame(dedupe_rows, columns=DEDUPE_MAP_COLUMNS)
     job_manifest = pd.DataFrame(job_manifest_rows, columns=JOB_MANIFEST_COLUMNS)
+    signal_group_manifest = pd.DataFrame(signal_group_manifest_rows, columns=SIGNAL_GROUP_MANIFEST_COLUMNS)
+    strategy_to_signal_map = pd.DataFrame(strategy_to_signal_rows, columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
 
     leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
@@ -4823,6 +5205,8 @@ def run_external_strategy_pack_shard(
     timing.to_csv(output_dir / f"timing_diagnostics_{file_suffix}.csv", index=False)
     dedupe_map.to_csv(output_dir / f"dedupe_map_{file_suffix}.csv", index=False)
     job_manifest.to_csv(output_dir / f"job_manifest_{file_suffix}.csv", index=False)
+    signal_group_manifest.to_csv(output_dir / f"signal_group_manifest_{file_suffix}.csv", index=False)
+    strategy_to_signal_map.to_csv(output_dir / f"strategy_to_signal_map_{file_suffix}.csv", index=False)
     with (output_dir / f"top_indicator_rules_{file_suffix}.jsonl").open("w", encoding="utf-8") as handle:
         for rule in rules:
             handle.write(json.dumps(rule, sort_keys=True) + "\n")
@@ -4832,6 +5216,19 @@ def run_external_strategy_pack_shard(
         if not dedupe_map.empty and "signal_deduped" in dedupe_map.columns
         else 0
     )
+    signal_seconds_array = np.asarray(signal_group_seconds, dtype=float)
+    signal_seconds_array = signal_seconds_array[np.isfinite(signal_seconds_array)]
+    exit_seconds = (
+        pd.to_numeric(timing.get("seconds_simulation", pd.Series(dtype=float)), errors="coerce").dropna().to_numpy(dtype=float)
+        if not timing.empty
+        else np.asarray([], dtype=float)
+    )
+
+    def percentile_or_none(values: np.ndarray, percentile: float) -> float | None:
+        if values.size == 0:
+            return None
+        return float(np.percentile(values, percentile))
+
     summary = {
         "shard_id": shard,
         "base_shard_id": shard,
@@ -4849,6 +5246,26 @@ def run_external_strategy_pack_shard(
         "strategies_timed_out": int(len(timeouts)),
         "strategies_deduped": int(deduped_count),
         "strategies_signal_deduped": int(signal_deduped_count),
+        "strategies_signal_reused": int(signal_deduped_count),
+        "strategies_covered": int(len(candidates)),
+        "strategies_evaluated_complete": int(len(rows)),
+        "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
+        "signal_groups_evaluated": int(signal_groups_evaluated if use_v3_signal_first else len(signal_evaluation_cache)),
+        "signal_groups_early_rejected": int(signal_groups_early_rejected),
+        "signal_groups_timed_out": int(signal_groups_timed_out),
+        "time_per_signal_p50_seconds": percentile_or_none(signal_seconds_array, 50),
+        "time_per_signal_p95_seconds": percentile_or_none(signal_seconds_array, 95),
+        "time_per_signal_max_seconds": percentile_or_none(signal_seconds_array, 100),
+        "time_per_exit_simulation_p50_seconds": percentile_or_none(exit_seconds, 50),
+        "time_per_exit_simulation_p95_seconds": percentile_or_none(exit_seconds, 95),
+        "time_per_exit_simulation_max_seconds": percentile_or_none(exit_seconds, 100),
+        "full_runtime_estimate_hours": (
+            None
+            if signal_seconds_array.size == 0
+            else float((18_000 * float(np.mean(signal_seconds_array))) / 360.0 / 3600.0)
+        ),
+        "numba_enabled": False,
+        "numba_reason": "numpy_simulation_route_active",
         "candidate_timeout_seconds": int(candidate_timeout_seconds),
         "job_wall_clock_seconds": int(job_wall_clock_seconds),
         "schedule_active_jobs": int(schedule_active_jobs),
@@ -4910,6 +5327,8 @@ def merge_external_strategy_pack_outputs(
     timing_frames: list[pd.DataFrame] = []
     dedupe_frames: list[pd.DataFrame] = []
     job_manifest_frames: list[pd.DataFrame] = []
+    signal_group_manifest_frames: list[pd.DataFrame] = []
+    strategy_to_signal_map_frames: list[pd.DataFrame] = []
     rule_rows: list[dict[str, Any]] = []
     def read_csv_or_empty(path: Path) -> pd.DataFrame:
         if not path.stat().st_size:
@@ -4984,6 +5403,12 @@ def merge_external_strategy_pack_outputs(
         ("job_manifest_shard_*.csv", job_manifest_frames),
         ("job_manifest_job_*.csv", job_manifest_frames),
         ("job_manifest.csv", job_manifest_frames),
+        ("signal_group_manifest_shard_*.csv", signal_group_manifest_frames),
+        ("signal_group_manifest_job_*.csv", signal_group_manifest_frames),
+        ("signal_group_manifest.csv", signal_group_manifest_frames),
+        ("strategy_to_signal_map_shard_*.csv", strategy_to_signal_map_frames),
+        ("strategy_to_signal_map_job_*.csv", strategy_to_signal_map_frames),
+        ("strategy_to_signal_map.csv", strategy_to_signal_map_frames),
     ):
         for path in sorted(shards_root.rglob(pattern)):
             frame = read_csv_or_empty(path)
@@ -5034,6 +5459,16 @@ def merge_external_strategy_pack_outputs(
         if job_manifest_frames
         else pd.DataFrame(columns=JOB_MANIFEST_COLUMNS)
     )
+    signal_group_manifest = (
+        pd.concat(signal_group_manifest_frames, ignore_index=True, sort=False)
+        if signal_group_manifest_frames
+        else pd.DataFrame(columns=SIGNAL_GROUP_MANIFEST_COLUMNS)
+    )
+    strategy_to_signal_map = (
+        pd.concat(strategy_to_signal_map_frames, ignore_index=True, sort=False)
+        if strategy_to_signal_map_frames
+        else pd.DataFrame(columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
+    )
 
     leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
     filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
@@ -5046,6 +5481,8 @@ def merge_external_strategy_pack_outputs(
     timing.to_csv(output_dir / "timing_diagnostics.csv", index=False)
     dedupe_map.to_csv(output_dir / "dedupe_map.csv", index=False)
     job_manifest.to_csv(output_dir / "job_manifest.csv", index=False)
+    signal_group_manifest.to_csv(output_dir / "signal_group_manifest.csv", index=False)
+    strategy_to_signal_map.to_csv(output_dir / "strategy_to_signal_map.csv", index=False)
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
@@ -5102,6 +5539,42 @@ def merge_external_strategy_pack_outputs(
     failed_total = sum_summary("strategies_failed", "total_strategies_failed")
     if failed_total == 0:
         failed_total = int(timed_out_total + runtime_error_total)
+    signal_seconds = (
+        pd.to_numeric(signal_group_manifest.get("seconds_signal", pd.Series(dtype=float)), errors="coerce")
+        .dropna()
+        .to_numpy(dtype=float)
+        if not signal_group_manifest.empty
+        else np.asarray([], dtype=float)
+    )
+    exit_seconds = (
+        pd.to_numeric(timing.get("seconds_simulation", pd.Series(dtype=float)), errors="coerce")
+        .dropna()
+        .to_numpy(dtype=float)
+        if not timing.empty
+        else np.asarray([], dtype=float)
+    )
+
+    def percentile_or_none(values: np.ndarray, percentile: float) -> float | None:
+        if values.size == 0:
+            return None
+        return float(np.percentile(values, percentile))
+
+    signal_groups_loaded = sum_summary("signal_groups_loaded")
+    if signal_groups_loaded == 0 and not signal_group_manifest.empty:
+        signal_groups_loaded = int(len(signal_group_manifest))
+    signal_groups_evaluated = sum_summary("signal_groups_evaluated")
+    if signal_groups_evaluated == 0 and not signal_group_manifest.empty:
+        signal_groups_evaluated = int(
+            signal_group_manifest["result_status"].astype(str).isin({"signal_ready", "signal_early_rejected"}).sum()
+            if "result_status" in signal_group_manifest.columns
+            else len(signal_group_manifest)
+        )
+    signal_groups_early_rejected = sum_summary("signal_groups_early_rejected")
+    if signal_groups_early_rejected == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
+        signal_groups_early_rejected = int((signal_group_manifest["result_status"].astype(str) == "signal_early_rejected").sum())
+    signal_groups_timed_out = sum_summary("signal_groups_timed_out")
+    if signal_groups_timed_out == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
+        signal_groups_timed_out = int((signal_group_manifest["result_status"].astype(str) == "signal_timeout").sum())
     summary = {
         "total_strategies_requested": int(total_strategies_requested),
         "total_strategies_loaded": sum_summary("strategies_loaded", "total_strategies_loaded"),
@@ -5113,6 +5586,26 @@ def merge_external_strategy_pack_outputs(
         "total_strategies_timed_out": int(timed_out_total),
         "total_strategies_deduped": sum_summary("strategies_deduped", "total_strategies_deduped"),
         "total_strategies_signal_deduped": sum_summary("strategies_signal_deduped", "total_strategies_signal_deduped"),
+        "strategies_signal_reused": sum_summary("strategies_signal_reused", "total_strategies_signal_deduped"),
+        "strategies_covered": sum_summary("strategies_covered", "total_strategies_loaded"),
+        "strategies_evaluated_complete": sum_summary("strategies_evaluated_complete", "total_strategies_evaluated"),
+        "signal_groups_loaded": int(signal_groups_loaded),
+        "signal_groups_evaluated": int(signal_groups_evaluated),
+        "signal_groups_early_rejected": int(signal_groups_early_rejected),
+        "signal_groups_timed_out": int(signal_groups_timed_out),
+        "time_per_signal_p50_seconds": percentile_or_none(signal_seconds, 50),
+        "time_per_signal_p95_seconds": percentile_or_none(signal_seconds, 95),
+        "time_per_signal_max_seconds": percentile_or_none(signal_seconds, 100),
+        "time_per_exit_simulation_p50_seconds": percentile_or_none(exit_seconds, 50),
+        "time_per_exit_simulation_p95_seconds": percentile_or_none(exit_seconds, 95),
+        "time_per_exit_simulation_max_seconds": percentile_or_none(exit_seconds, 100),
+        "full_runtime_estimate_hours": (
+            None
+            if signal_seconds.size == 0
+            else float((18_000 * float(np.mean(signal_seconds))) / 360.0 / 3600.0)
+        ),
+        "numba_enabled": any(bool(item.get("numba_enabled")) for item in summaries),
+        "numba_reason": next((str(item.get("numba_reason")) for item in summaries if item.get("numba_reason")), ""),
         "unique_signal_evaluations": sum_summary("unique_signal_evaluations"),
         "cached_signal_reuses": sum_summary("cached_signal_reuses"),
         "total_shards_requested": int(total_shards_requested),
@@ -5265,6 +5758,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
     parser.add_argument("--job-wall-clock-seconds", type=int, default=300)
     parser.add_argument("--schedule-active-jobs", type=int, default=0)
+    parser.add_argument("--test-max-signal-groups", type=int, default=0)
     parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v2")
     parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
@@ -5290,6 +5784,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         candidate_timeout_seconds=args.candidate_timeout_seconds,
         job_wall_clock_seconds=args.job_wall_clock_seconds,
         schedule_active_jobs=args.schedule_active_jobs,
+        test_max_signal_groups=args.test_max_signal_groups,
         min_market_cap=args.min_market_cap,
         locked_start=args.locked_start,
         train_end=args.train_end,
