@@ -4692,6 +4692,7 @@ def run_external_strategy_pack_shard(
     if use_v3_signal_first:
         signal_groups = selected_signal_groups if selected_signal_groups is not None else _group_external_candidates_by_signal(evaluable)
         signal_groups_loaded = int(len(signal_groups))
+        reserve_remaining_job_for_exit = False
         for group in signal_groups:
             if not group:
                 continue
@@ -4741,6 +4742,29 @@ def run_external_strategy_pack_shard(
             )
             group_start = time.perf_counter()
             try:
+                if reserve_remaining_job_for_exit:
+                    signal_groups_timed_out += 1
+                    reason = "CandidateEvaluationTimeout('job wall clock budget reserved for exit simulation after signal group ready')"
+                    _append_signal_group_timeout_result(
+                        timeout_rows=timeout_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        signal_group_manifest_rows=signal_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        cost_score=cost_score,
+                        reason=reason,
+                        seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                    )
+                    for candidate in group:
+                        signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                    continue
                 candidate_deadlines: list[float] = []
                 if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
                     candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
@@ -4890,6 +4914,8 @@ def run_external_strategy_pack_shard(
                         "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
                     }
                 )
+                if job_deadline is not None:
+                    reserve_remaining_job_for_exit = True
             except CandidateEvaluationTimeout as exc:
                 signal_groups_timed_out += 1
                 seconds_total = float(time.perf_counter() - group_start)
