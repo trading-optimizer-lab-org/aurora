@@ -47,6 +47,14 @@ on:
         description: "Fail job when an external rule cannot be mapped"
         required: true
         default: "false"
+      source_run_id:
+        description: "Optional source run ID for recovery merge"
+        required: false
+        default: "28228752956"
+      recovery_job_indices:
+        description: "Optional comma-separated absolute job indices to recover"
+        required: false
+        default: "2773,3031,3644,5228,5272,5974"
       test_mode:
         description: "Run only test_max_jobs jobs"
         required: true
@@ -3589,7 +3597,7 @@ jobs:
       - run_chunk_37
       - run_chunk_38
       - run_chunk_39
-    if: always()
+    if: ${{ always() && inputs.recovery_job_indices == '' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
