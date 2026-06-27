@@ -144,6 +144,85 @@ TRADE_COLUMNS = [
     "holding_days",
     "exit_reason",
 ]
+UNSUPPORTED_COLUMNS = ["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]
+TIMEOUT_COLUMNS = [
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "reason",
+    "seconds_until_timeout",
+]
+EARLY_REJECT_COLUMNS = [
+    "strategy_id",
+    "reason",
+    "split",
+    "year",
+    "actual",
+    "threshold",
+    "stage",
+    "seconds_until_reject",
+    "symbols_processed",
+]
+RUNTIME_ERROR_COLUMNS = [
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "reason",
+]
+TIMING_DIAGNOSTIC_COLUMNS = [
+    "strategy_id",
+    "job_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "seconds_total",
+    "seconds_feature_build",
+    "seconds_signal",
+    "seconds_simulation",
+    "seconds_train",
+    "seconds_validation",
+    "symbols_total",
+    "symbols_processed",
+    "raw_signals_total",
+    "trades_total",
+    "train_trades",
+    "validation_trades",
+    "result_status",
+    "reject_reason",
+    "timeout",
+    "early_rejected",
+    "runtime_error",
+]
+DEDUPE_MAP_COLUMNS = ["strategy_id", "canonical_hash", "canonical_strategy_id", "deduped"]
+JOB_MANIFEST_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "canonical_hash",
+    "cost_score",
+    "estimated_cost_bucket",
+]
 
 
 @dataclass(frozen=True)
@@ -511,6 +590,63 @@ def _frame_series_cache(frame: pd.DataFrame, namespace: str) -> dict[tuple[Any, 
         cache = {}
         frame.attrs[namespace] = cache
     return cache
+
+
+@dataclass
+class FeatureStore:
+    """Per-job feature cache attached to prepared symbol frames."""
+
+    symbol_frames: dict[str, pd.DataFrame]
+    benchmark_prices: pd.DataFrame
+    seconds_build: float = 0.0
+    enabled: bool = True
+
+
+def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame) -> None:
+    prepared = _prepare_ohlcv(frame)
+    if prepared.empty:
+        return
+    close = prepared["close"]
+    high = prepared["high"]
+    low = prepared["low"]
+    volume = prepared["volume"].fillna(0.0)
+    entry_cache = _frame_series_cache(prepared, "_gtbi_entry_signal_series_cache")
+    exit_cache = _frame_series_cache(prepared, "_gtbi_exit_series_cache")
+
+    for window in (10, 20, 21, 50, 63, 80, 100, 126, 150, 180, 200, 220, 252):
+        if window <= 0:
+            continue
+        entry_cache.setdefault(("sma", window), close.rolling(window, min_periods=window).mean())
+        entry_cache.setdefault(("ema", window), close.ewm(span=window, adjust=False, min_periods=window).mean())
+        min_periods = min(window, len(prepared))
+        entry_cache.setdefault((f"high_0_{min_periods}", window), high.rolling(window, min_periods=min_periods).max())
+        entry_cache.setdefault((f"low_0_{min_periods}", window), low.rolling(window, min_periods=min_periods).min())
+        entry_cache.setdefault((f"vol_{min_periods}", window), volume.rolling(window, min_periods=min_periods).mean())
+    for window in (10, 20, 21, 35, 50, 60):
+        exit_cache.setdefault(("exit_ma", window), close.rolling(window, min_periods=window).mean())
+
+    if not benchmark_prices.empty:
+        benchmark = _prepare_ohlcv(benchmark_prices)
+        spy_close = benchmark["close"].reindex(prepared.index).ffill()
+        entry_cache.setdefault(("spy_close", id(benchmark), len(benchmark)), spy_close)
+
+
+def build_feature_store(
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    *,
+    enabled: bool = True,
+) -> FeatureStore:
+    start = time.perf_counter()
+    if enabled:
+        for frame in symbol_frames.values():
+            _prewarm_common_features(frame, benchmark_prices)
+    return FeatureStore(
+        symbol_frames=symbol_frames,
+        benchmark_prices=benchmark_prices,
+        seconds_build=float(time.perf_counter() - start),
+        enabled=bool(enabled),
+    )
 
 
 def _families_for_set(family_set: str) -> tuple[str, ...]:
@@ -1764,6 +1900,34 @@ class CandidateEvaluationTimeout(TimeoutError):
     pass
 
 
+class EarlyRejectedStrategy(Exception):
+    """Raised when a candidate cannot mathematically pass required filters."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        split: str = "",
+        year: int | None = None,
+        actual: float | int | str | None = None,
+        threshold: float | int | str | None = None,
+        stage: str = "safe_prefilter",
+        symbols_processed: int = 0,
+        seconds_until_reject: float = 0.0,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.split = split
+        self.year = year
+        self.actual = actual
+        self.threshold = threshold
+        self.stage = stage
+        self.symbols_processed = int(symbols_processed)
+        self.seconds_until_reject = float(seconds_until_reject)
+        self.diagnostic = dict(diagnostic or {})
+
+
 @contextlib.contextmanager
 def _candidate_evaluation_timeout(seconds: int | float | None) -> Iterable[None]:
     if seconds is None or float(seconds) <= 0:
@@ -2231,6 +2395,397 @@ def evaluate_candidate(
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
     return row, trades_df, yearly
+
+
+def _external_profile_value(payload: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _external_diagnostic_base(
+    payload: dict[str, Any],
+    *,
+    job_id: str | None = None,
+    canonical_hash: str | None = None,
+) -> dict[str, Any]:
+    out = {
+        "strategy_id": str(payload.get("strategy_id", "")),
+        "job_id": "" if job_id is None else str(job_id),
+        "shard_id": payload.get("shard_id"),
+        "slot_in_shard": payload.get("slot_in_shard"),
+        "family": _family_for_external_strategy(payload),
+        "concept": _external_profile_value(payload, "concept_id", "concept"),
+        "market_overlay": _external_profile_value(payload, "market_overlay_id", "market_overlay"),
+        "trend_filter": _external_profile_value(payload, "trend_profile_id", "trend_filter"),
+        "relative_strength_filter": _external_profile_value(payload, "rs_profile_id", "relative_strength_filter"),
+        "exit_rule": _external_profile_value(payload, "exit_profile_id", "exit_rule"),
+        "aggressiveness": _external_profile_value(payload, "aggression_id", "aggressiveness"),
+    }
+    if canonical_hash is not None:
+        out["canonical_hash"] = canonical_hash
+    return out
+
+
+def canonical_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
+    payload = candidate.payload
+    canonical = {
+        "config": candidate.config.to_dict(),
+        "effective_rules": {
+            "family": _family_for_external_strategy(payload),
+            "concept_id": payload.get("concept_id"),
+            "market_overlay_id": payload.get("market_overlay_id"),
+            "trend_profile_id": payload.get("trend_profile_id"),
+            "rs_profile_id": payload.get("rs_profile_id"),
+            "exit_profile_id": payload.get("exit_profile_id"),
+            "aggression_id": payload.get("aggression_id"),
+            "entry_rules": payload.get("entry_rules", {}),
+            "market_regime_rules": payload.get("market_regime_rules", {}),
+            "stock_trend_rules": payload.get("stock_trend_rules", {}),
+            "relative_strength_rules": payload.get("relative_strength_rules", {}),
+            "exit_rules": payload.get("exit_rules", {}),
+            "guardrails": {
+                key: value
+                for key, value in dict(payload.get("guardrails") or {}).items()
+                if key
+                in {
+                    "data_scope",
+                    "do_not_load_or_use_data_on_or_after",
+                    "locked_start_exclusive",
+                    "execution",
+                    "positioning",
+                    "min_market_cap_usd",
+                    "train_end",
+                    "validation_start",
+                    "validation_end",
+                }
+            },
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
+    concept = _external_profile_value(payload, "concept_id", "concept")
+    family = _family_for_external_strategy(payload)
+    exit_rule = _external_profile_value(payload, "exit_profile_id", "exit_rule")
+    market_overlay = _external_profile_value(payload, "market_overlay_id", "market_overlay")
+    aggressiveness = _external_profile_value(payload, "aggression_id", "aggressiveness")
+    very_slow_concepts = {
+        "atr_compression_nr_breakout",
+        "ibd_cup_handle_proxy",
+        "ibd_flat_base_proxy",
+        "bollinger_squeeze_breakout",
+        "weinstein_stage2_breakout_proxy",
+        "minervini_vcp_pivot_breakout",
+        "minervini_vcp_anticipation_reclaim",
+        "inside_day_breakout_reclaim",
+    }
+    slow_concepts = {
+        "keltner_pullback_reclaim",
+        "ep_gap_volume_continuation_proxy",
+        "academic_6_12m_momentum_reclaim",
+        "failed_breakdown_reclaim",
+        "pocket_pivot_reclaim",
+        "ema_value_zone_pullback",
+        "academic_52w_high_pullback_reclaim",
+        "rs_new_high_before_price_reclaim",
+        "gap_down_leader_reclaim",
+        "undercut_reclaim_shakeout",
+        "trend_template_pullback_rebound",
+        "adx_di_pullback_reversal",
+    }
+    score = 0.0
+    if concept in very_slow_concepts:
+        score += 5.0
+    elif concept in slow_concepts:
+        score += 3.0
+    if family == "oneil_canslim":
+        score += 2.0
+    elif family == "quallamaggie":
+        score += 1.5
+    if exit_rule in {"chandelier_runner", "balanced_tp_ema20"}:
+        score += 2.0
+    if market_overlay in {"spy_broad_loose_bull", "spy_low_vol_uptrend"}:
+        score += 1.0
+    if aggressiveness == "frequency_quality":
+        score += 1.0
+    if score >= 8.0:
+        return score, "very_slow"
+    if score >= 5.0:
+        return score, "slow"
+    if score >= 2.0:
+        return score, "normal"
+    return score, "fast"
+
+
+def _signal_year_counts_for_possible_exits(
+    *,
+    signals_by_symbol: dict[str, pd.Series],
+    symbol_frames: dict[str, pd.DataFrame],
+    config: IndicatorConfig,
+    years: range,
+) -> dict[int, int]:
+    counts = {int(year): 0 for year in years}
+    lookback_days = max(int(config.max_holding_days) + 7, 14)
+    for symbol, signal in signals_by_symbol.items():
+        frame = _prepare_ohlcv(symbol_frames[symbol])
+        if frame.empty or signal.empty:
+            continue
+        signal = signal.reindex(frame.index).fillna(False).astype(bool)
+        signal_dates = pd.DatetimeIndex(frame.index[np.flatnonzero(signal.to_numpy(dtype=bool)[:-1])])
+        if signal_dates.empty:
+            continue
+        for year in years:
+            start = pd.Timestamp(year=int(year), month=1, day=1) - pd.Timedelta(days=lookback_days)
+            end = pd.Timestamp(year=int(year), month=12, day=31)
+            counts[int(year)] += int(((signal_dates >= start) & (signal_dates <= end)).sum())
+    return counts
+
+
+def _safe_prefilter_raw_signals(
+    *,
+    signals_by_symbol: dict[str, pd.Series],
+    symbol_frames: dict[str, pd.DataFrame],
+    config: IndicatorConfig,
+    validation_start: str,
+    validation_end: str,
+) -> tuple[dict[str, Any] | None, int]:
+    validation_years = range(_dt(validation_start).year, _dt(validation_end).year + 1)
+    validation_counts = _signal_year_counts_for_possible_exits(
+        signals_by_symbol=signals_by_symbol,
+        symbol_frames=symbol_frames,
+        config=config,
+        years=validation_years,
+    )
+    if validation_counts:
+        min_year = min(validation_counts, key=lambda year: validation_counts[year])
+        min_count = int(validation_counts[min_year])
+        if min_count < 100:
+            return (
+                {
+                    "reason": "raw_signal_yearly_trades_lt_100",
+                    "split": "validation",
+                    "year": int(min_year),
+                    "actual": int(min_count),
+                    "threshold": 100,
+                    "stage": "safe_prefilter",
+                },
+                int(sum(validation_counts.values())),
+            )
+        avg_count = float(sum(validation_counts.values()) / max(len(validation_counts), 1))
+        if avg_count < 150.0:
+            return (
+                {
+                    "reason": "raw_signal_trades_per_year_lt_150",
+                    "split": "validation",
+                    "year": "",
+                    "actual": avg_count,
+                    "threshold": 150.0,
+                    "stage": "safe_prefilter",
+                },
+                int(sum(validation_counts.values())),
+            )
+
+    train_counts = _signal_year_counts_for_possible_exits(
+        signals_by_symbol=signals_by_symbol,
+        symbol_frames=symbol_frames,
+        config=config,
+        years=range(2003, 2011),
+    )
+    train_possible_years = int(sum(1 for value in train_counts.values() if int(value) > 0))
+    if train_counts and train_possible_years < 8:
+        return (
+            {
+                "reason": "raw_signal_train_2003_2010_years_lt_8",
+                "split": "train",
+                "year": "",
+                "actual": int(train_possible_years),
+                "threshold": 8,
+                "stage": "safe_prefilter",
+            },
+            int(sum(validation_counts.values())),
+        )
+    return None, int(sum(validation_counts.values()))
+
+
+def evaluate_candidate_optimized(
+    *,
+    config: IndicatorConfig,
+    candidate_id: str,
+    stage: int,
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+    search_method: str = DEFAULT_SEARCH_METHOD,
+    selection_split: str = DEFAULT_SELECTION_SPLIT,
+    min_selection_trades_per_year: int = 0,
+    scoring_profile: str = DEFAULT_SCORING_PROFILE,
+    enable_safe_prefilter: bool = True,
+    enable_early_stopping: bool = True,
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    del enable_early_stopping  # Early stops are restricted to the safe raw-signal prefilter in v1.
+    total_start = time.perf_counter()
+    signal_start = time.perf_counter()
+    signals_by_symbol: dict[str, pd.Series] = {}
+    symbols_processed = 0
+    raw_signals_total = 0
+    for symbol, frame in symbol_frames.items():
+        symbols_processed += 1
+        signal = entry_signal(frame, benchmark_prices, config)
+        if signal.empty or not bool(signal.any()):
+            continue
+        signals_by_symbol[symbol] = signal
+        raw_signals_total += int(signal.sum())
+    seconds_signal = float(time.perf_counter() - signal_start)
+
+    if enable_safe_prefilter:
+        reject, validation_signal_total = _safe_prefilter_raw_signals(
+            signals_by_symbol=signals_by_symbol,
+            symbol_frames=symbol_frames,
+            config=config,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+        if reject is not None:
+            seconds_total = float(time.perf_counter() - total_start)
+            diagnostic = {
+                "seconds_total": seconds_total,
+                "seconds_feature_build": 0.0,
+                "seconds_signal": seconds_signal,
+                "seconds_simulation": 0.0,
+                "seconds_train": 0.0,
+                "seconds_validation": 0.0,
+                "symbols_total": int(len(symbol_frames)),
+                "symbols_processed": int(symbols_processed),
+                "raw_signals_total": int(raw_signals_total),
+                "trades_total": 0,
+                "train_trades": 0,
+                "validation_trades": 0,
+            }
+            raise EarlyRejectedStrategy(
+                str(reject["reason"]),
+                split=str(reject.get("split", "")),
+                year=int(reject["year"]) if str(reject.get("year", "")).isdigit() else None,
+                actual=reject.get("actual", validation_signal_total),
+                threshold=reject.get("threshold", ""),
+                stage=str(reject.get("stage", "safe_prefilter")),
+                symbols_processed=symbols_processed,
+                seconds_until_reject=seconds_total,
+                diagnostic=diagnostic,
+            )
+
+    simulation_start = time.perf_counter()
+    all_trades: list[pd.DataFrame] = []
+    for symbol, signal in signals_by_symbol.items():
+        frame = symbol_frames[symbol]
+        prepared_frame = _prepare_ohlcv(frame)
+        market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
+        raw_trades = simulate_trades(
+            symbol,
+            frame,
+            signal,
+            config,
+            split="unassigned",
+            candidate_id=candidate_id,
+            exit_signal=market_exit,
+        )
+        trades = split_trade_frame(
+            raw_trades,
+            train_end=train_end,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+        if not trades.empty:
+            all_trades.append(trades)
+    seconds_simulation = float(time.perf_counter() - simulation_start)
+    trades_df = pd.concat(all_trades, ignore_index=True, sort=False) if all_trades else pd.DataFrame(columns=TRADE_COLUMNS)
+
+    train_years = max((_dt(train_end) - pd.Timestamp("1900-01-01")).days / 365.25, 1.0)
+    if not trades_df.empty:
+        first_train = pd.to_datetime(trades_df.loc[trades_df["split"] == "train", "exit_date"], errors="coerce").min()
+        if pd.notna(first_train):
+            train_years = max((_dt(train_end) - first_train).days / 365.25, 1.0)
+    validation_years = max((_dt(validation_end) - _dt(validation_start)).days / 365.25, 1.0)
+
+    train_start = time.perf_counter()
+    train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
+    seconds_train = float(time.perf_counter() - train_start)
+    validation_start_timer = time.perf_counter()
+    validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    yearly = yearly_trade_performance(trades_df, benchmark_prices)
+    seconds_validation = float(time.perf_counter() - validation_start_timer)
+
+    selected_metrics = validation if selection_split == "validation" else train
+    score = _candidate_score(selected_metrics)
+    selection_min_yearly_trades = _min_yearly_trades_for_selection(
+        yearly,
+        selection_split=selection_split,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    if int(min_selection_trades_per_year) > 0 and selection_min_yearly_trades < int(min_selection_trades_per_year):
+        score = -1e9 + float(selection_min_yearly_trades)
+    row = {
+        "candidate_id": candidate_id,
+        "stage": int(stage),
+        "search_method": str(search_method),
+        "family": config.family,
+        "score": score,
+        "selection_split": str(selection_split),
+        "selection_min_yearly_trades": int(selection_min_yearly_trades),
+        "min_selection_trades_per_year": int(min_selection_trades_per_year),
+        "scoring_profile": str(scoring_profile),
+        "locked_opened": False,
+    }
+    for prefix, metrics in (("train", train), ("validation", validation)):
+        row[f"{prefix}_trades"] = int(metrics["trades"])
+        row[f"{prefix}_avg_trade_return_pct"] = metrics["avg_trade_return_pct"]
+        row[f"{prefix}_median_trade_return_pct"] = metrics["median_trade_return_pct"]
+        row[f"{prefix}_win_rate"] = metrics["win_rate"]
+        row[f"{prefix}_profit_factor"] = metrics["profit_factor"]
+        row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
+        row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
+        row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row.update(
+        _strict_quality_metrics(
+            row=row,
+            yearly=yearly,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+    )
+    if scoring_profile == "strict_quality":
+        score = _strict_quality_score(row)
+    elif scoring_profile == "frequency_quality":
+        score = _frequency_quality_score(row)
+    elif scoring_profile == "stability_quality":
+        score = _stability_quality_score(row)
+    elif scoring_profile != "default":
+        raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
+    row["score"] = score
+    diagnostic = {
+        "seconds_total": float(time.perf_counter() - total_start),
+        "seconds_feature_build": 0.0,
+        "seconds_signal": seconds_signal,
+        "seconds_simulation": seconds_simulation,
+        "seconds_train": seconds_train,
+        "seconds_validation": seconds_validation,
+        "symbols_total": int(len(symbol_frames)),
+        "symbols_processed": int(symbols_processed),
+        "raw_signals_total": int(raw_signals_total),
+        "trades_total": int(len(trades_df)),
+        "train_trades": int(row.get("train_trades", 0)),
+        "validation_trades": int(row.get("validation_trades", 0)),
+    }
+    return row, trades_df, yearly, diagnostic
 
 
 _NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
@@ -3307,6 +3862,12 @@ def run_external_strategy_pack_shard(
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
+    optimized_evaluation_mode: str = "optimized_evaluation_v1",
+    enable_feature_cache: bool = True,
+    enable_dedupe: bool = True,
+    enable_safe_prefilter: bool = True,
+    enable_early_stopping: bool = True,
+    enable_cost_scheduling: bool = True,
 ) -> dict[str, Any]:
     shard = int(external_strategy_shard_id)
     shard_padded = f"{shard:03d}"
@@ -3342,6 +3903,8 @@ def run_external_strategy_pack_shard(
             raise ValueError(f"{len(unsupported_rows)} unsupported external strategies in shard {shard_padded}")
 
     evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
+    if enable_cost_scheduling:
+        evaluable = sorted(evaluable, key=lambda item: _estimated_cost_score(item.payload)[0], reverse=True)
     if prebuilt_pack_dir is None:
         pack_root = output_dir / "_external_pack_data"
         build_stage_packs(
@@ -3361,53 +3924,280 @@ def run_external_strategy_pack_shard(
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
+    feature_store = build_feature_store(symbol_frames, benchmark, enabled=enable_feature_cache)
 
     rows: list[dict[str, Any]] = []
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
     rules: list[dict[str, Any]] = []
-    failed_rows: list[dict[str, Any]] = []
-    evaluation_cache: dict[str, tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]] = {}
+    timeout_rows: list[dict[str, Any]] = []
+    early_reject_rows: list[dict[str, Any]] = []
+    runtime_error_rows: list[dict[str, Any]] = []
+    timing_rows: list[dict[str, Any]] = []
+    dedupe_rows: list[dict[str, Any]] = []
+    job_manifest_rows: list[dict[str, Any]] = []
+    evaluation_cache: dict[str, tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
+    for candidate in candidates:
+        if not candidate.unsupported_rules:
+            continue
+        payload = candidate.payload
+        diagnostic = _external_diagnostic_base(payload, job_id=output_padded)
+        timing_rows.append(
+            {
+                **diagnostic,
+                "seconds_total": 0.0,
+                "seconds_feature_build": 0.0,
+                "seconds_signal": 0.0,
+                "seconds_simulation": 0.0,
+                "seconds_train": 0.0,
+                "seconds_validation": 0.0,
+                "symbols_total": int(len(symbol_frames)),
+                "symbols_processed": 0,
+                "raw_signals_total": 0,
+                "trades_total": 0,
+                "train_trades": 0,
+                "validation_trades": 0,
+                "result_status": "unsupported",
+                "reject_reason": "unsupported_or_missing_external_rule",
+                "timeout": False,
+                "early_rejected": False,
+                "runtime_error": False,
+            }
+        )
+
     for candidate in evaluable:
         payload = candidate.payload
         candidate_id = str(payload.get("strategy_id"))
-        config_signature = json.dumps(candidate.config.to_dict(), sort_keys=True, separators=(",", ":"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        diagnostic_base = _external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash)
+        cost_score, cost_bucket = _estimated_cost_score(payload)
+        job_manifest_rows.append(
+            {
+                "job_id": output_padded,
+                "strategy_id": candidate_id,
+                "shard_id": payload.get("shard_id"),
+                "slot_in_shard": payload.get("slot_in_shard"),
+                "canonical_hash": canonical_hash,
+                "cost_score": float(cost_score),
+                "estimated_cost_bucket": cost_bucket,
+            }
+        )
+        candidate_start = time.perf_counter()
         try:
-            cached = evaluation_cache.get(config_signature)
-            if cached is None:
+            cached = evaluation_cache.get(canonical_hash) if enable_dedupe else None
+            deduped = cached is not None
+            if not deduped:
                 with _candidate_evaluation_timeout(candidate_timeout_seconds):
-                    row, trades, yearly = evaluate_candidate(
-                        config=candidate.config,
-                        candidate_id=candidate_id,
-                        stage=shard,
-                        symbol_frames=symbol_frames,
-                        benchmark_prices=benchmark,
-                        train_end=train_end,
-                        validation_start=validation_start,
-                        validation_end=validation_end,
-                        search_method=EXTERNAL_SEARCH_METHOD,
-                        selection_split="validation",
-                        min_selection_trades_per_year=100,
-                        scoring_profile="strict_quality",
-                    )
-                evaluation_cache[config_signature] = (row.copy(), trades.copy(), yearly.copy())
+                    if optimized_evaluation_mode == "optimized_evaluation_v1":
+                        row, trades, yearly, diagnostic = evaluate_candidate_optimized(
+                            config=candidate.config,
+                            candidate_id=candidate_id,
+                            stage=shard,
+                            symbol_frames=symbol_frames,
+                            benchmark_prices=benchmark,
+                            train_end=train_end,
+                            validation_start=validation_start,
+                            validation_end=validation_end,
+                            search_method=EXTERNAL_SEARCH_METHOD,
+                            selection_split="validation",
+                            min_selection_trades_per_year=100,
+                            scoring_profile="strict_quality",
+                            enable_safe_prefilter=enable_safe_prefilter,
+                            enable_early_stopping=enable_early_stopping,
+                        )
+                    else:
+                        row, trades, yearly = evaluate_candidate(
+                            config=candidate.config,
+                            candidate_id=candidate_id,
+                            stage=shard,
+                            symbol_frames=symbol_frames,
+                            benchmark_prices=benchmark,
+                            train_end=train_end,
+                            validation_start=validation_start,
+                            validation_end=validation_end,
+                            search_method=EXTERNAL_SEARCH_METHOD,
+                            selection_split="validation",
+                            min_selection_trades_per_year=100,
+                            scoring_profile="strict_quality",
+                        )
+                        diagnostic = {
+                            "seconds_total": float(time.perf_counter() - candidate_start),
+                            "seconds_feature_build": 0.0,
+                            "seconds_signal": float("nan"),
+                            "seconds_simulation": float("nan"),
+                            "seconds_train": float("nan"),
+                            "seconds_validation": float("nan"),
+                            "symbols_total": int(len(symbol_frames)),
+                            "symbols_processed": int(len(symbol_frames)),
+                            "raw_signals_total": 0,
+                            "trades_total": int(len(trades)),
+                            "train_trades": int(row.get("train_trades", 0)),
+                            "validation_trades": int(row.get("validation_trades", 0)),
+                        }
+                evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
+                canonical_strategy_id = candidate_id
             else:
-                row, trades, yearly = cached
+                canonical_strategy_id, row, trades, yearly, diagnostic = cached
                 row = row.copy()
                 trades = trades.copy()
                 yearly = yearly.copy()
+                diagnostic = dict(diagnostic)
                 row["candidate_id"] = candidate_id
                 if not trades.empty:
                     trades["candidate_id"] = candidate_id
                 if not yearly.empty:
                     yearly["candidate_id"] = candidate_id
+                diagnostic["seconds_total"] = float(time.perf_counter() - candidate_start)
+                canonical_strategy_id = str(canonical_strategy_id)
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": canonical_strategy_id,
+                    "deduped": bool(deduped),
+                }
+            )
+        except EarlyRejectedStrategy as exc:
+            diagnostic = dict(exc.diagnostic)
+            diagnostic.setdefault("seconds_total", float(time.perf_counter() - candidate_start))
+            diagnostic.setdefault("seconds_feature_build", 0.0)
+            diagnostic.setdefault("seconds_signal", float("nan"))
+            diagnostic.setdefault("seconds_simulation", 0.0)
+            diagnostic.setdefault("seconds_train", 0.0)
+            diagnostic.setdefault("seconds_validation", 0.0)
+            diagnostic.setdefault("symbols_total", int(len(symbol_frames)))
+            diagnostic.setdefault("symbols_processed", int(exc.symbols_processed))
+            diagnostic.setdefault("raw_signals_total", 0)
+            diagnostic.setdefault("trades_total", 0)
+            diagnostic.setdefault("train_trades", 0)
+            diagnostic.setdefault("validation_trades", 0)
+            early_reject_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "reason": exc.reason,
+                    "split": exc.split,
+                    "year": "" if exc.year is None else int(exc.year),
+                    "actual": exc.actual,
+                    "threshold": exc.threshold,
+                    "stage": exc.stage,
+                    "seconds_until_reject": exc.seconds_until_reject,
+                    "symbols_processed": exc.symbols_processed,
+                }
+            )
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": "",
+                    "deduped": False,
+                }
+            )
+            timing_rows.append(
+                {
+                    **diagnostic_base,
+                    **diagnostic,
+                    "result_status": "early_rejected",
+                    "reject_reason": exc.reason,
+                    "timeout": False,
+                    "early_rejected": True,
+                    "runtime_error": False,
+                }
+            )
+            continue
+        except CandidateEvaluationTimeout as exc:
+            seconds_total = float(time.perf_counter() - candidate_start)
+            timeout_rows.append(
+                {
+                    **{key: diagnostic_base.get(key, "") for key in TIMEOUT_COLUMNS if key in diagnostic_base},
+                    "strategy_id": candidate_id,
+                    "shard_id": payload.get("shard_id"),
+                    "slot_in_shard": payload.get("slot_in_shard"),
+                    "family": diagnostic_base.get("family", ""),
+                    "concept": diagnostic_base.get("concept", ""),
+                    "market_overlay": diagnostic_base.get("market_overlay", ""),
+                    "trend_filter": diagnostic_base.get("trend_filter", ""),
+                    "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                    "exit_rule": diagnostic_base.get("exit_rule", ""),
+                    "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+                    "reason": repr(exc),
+                    "seconds_until_timeout": seconds_total,
+                }
+            )
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": "",
+                    "deduped": False,
+                }
+            )
+            timing_rows.append(
+                {
+                    **diagnostic_base,
+                    "seconds_total": seconds_total,
+                    "seconds_feature_build": 0.0,
+                    "seconds_signal": float("nan"),
+                    "seconds_simulation": float("nan"),
+                    "seconds_train": 0.0,
+                    "seconds_validation": 0.0,
+                    "symbols_total": int(len(symbol_frames)),
+                    "symbols_processed": int(len(symbol_frames)),
+                    "raw_signals_total": 0,
+                    "trades_total": 0,
+                    "train_trades": 0,
+                    "validation_trades": 0,
+                    "result_status": "timeout",
+                    "reject_reason": repr(exc),
+                    "timeout": True,
+                    "early_rejected": False,
+                    "runtime_error": False,
+                }
+            )
+            continue
         except Exception as exc:
-            failed_rows.append(
+            runtime_error_rows.append(
                 {
                     "strategy_id": candidate_id,
                     "shard_id": payload.get("shard_id"),
                     "slot_in_shard": payload.get("slot_in_shard"),
+                    "family": diagnostic_base.get("family", ""),
+                    "concept": diagnostic_base.get("concept", ""),
+                    "market_overlay": diagnostic_base.get("market_overlay", ""),
+                    "trend_filter": diagnostic_base.get("trend_filter", ""),
+                    "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                    "exit_rule": diagnostic_base.get("exit_rule", ""),
+                    "aggressiveness": diagnostic_base.get("aggressiveness", ""),
                     "reason": repr(exc),
+                }
+            )
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": "",
+                    "deduped": False,
+                }
+            )
+            timing_rows.append(
+                {
+                    **diagnostic_base,
+                    "seconds_total": float(time.perf_counter() - candidate_start),
+                    "seconds_feature_build": 0.0,
+                    "seconds_signal": float("nan"),
+                    "seconds_simulation": float("nan"),
+                    "seconds_train": 0.0,
+                    "seconds_validation": 0.0,
+                    "symbols_total": int(len(symbol_frames)),
+                    "symbols_processed": int(len(symbol_frames)),
+                    "raw_signals_total": 0,
+                    "trades_total": 0,
+                    "train_trades": 0,
+                    "validation_trades": 0,
+                    "result_status": "runtime_error",
+                    "reject_reason": repr(exc),
+                    "timeout": False,
+                    "early_rejected": False,
+                    "runtime_error": True,
                 }
             )
             continue
@@ -3417,6 +4207,18 @@ def run_external_strategy_pack_shard(
             yearly_frames.append(yearly)
         if not trades.empty:
             trade_frames.append(trades)
+        diagnostic["seconds_feature_build"] = float(feature_store.seconds_build / max(len(evaluable), 1))
+        timing_rows.append(
+            {
+                **diagnostic_base,
+                **diagnostic,
+                "result_status": "deduped" if deduped else "evaluated",
+                "reject_reason": "",
+                "timeout": False,
+                "early_rejected": False,
+                "runtime_error": False,
+            }
+        )
         rules.append(
             {
                 "candidate_id": candidate_id,
@@ -3448,23 +4250,29 @@ def run_external_strategy_pack_shard(
             )
     yearly_out = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
     trades_out = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
-    if unsupported_rows:
-        unsupported = pd.DataFrame(unsupported_rows)
-    else:
-        unsupported = pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"])
-    if failed_rows:
-        failed = pd.DataFrame(failed_rows)
-        unsupported = pd.concat([unsupported, failed.assign(unsupported_rules="", reason=failed["reason"])], ignore_index=True, sort=False)
-    timed_out_count = sum("CandidateEvaluationTimeout" in str(row.get("reason", "")) for row in failed_rows)
+    unsupported = pd.DataFrame(unsupported_rows, columns=UNSUPPORTED_COLUMNS)
+    timeouts = pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)
+    early_rejected = pd.DataFrame(early_reject_rows, columns=EARLY_REJECT_COLUMNS)
+    runtime_errors = pd.DataFrame(runtime_error_rows, columns=RUNTIME_ERROR_COLUMNS)
+    timing = pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)
+    dedupe_map = pd.DataFrame(dedupe_rows, columns=DEDUPE_MAP_COLUMNS)
+    job_manifest = pd.DataFrame(job_manifest_rows, columns=JOB_MANIFEST_COLUMNS)
 
     leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
     yearly_out.to_csv(output_dir / f"yearly_trade_performance_{file_suffix}.csv", index=False)
     trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
     unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
+    timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
+    early_rejected.to_csv(output_dir / f"early_rejected_strategies_{file_suffix}.csv", index=False)
+    runtime_errors.to_csv(output_dir / f"runtime_errors_{file_suffix}.csv", index=False)
+    timing.to_csv(output_dir / f"timing_diagnostics_{file_suffix}.csv", index=False)
+    dedupe_map.to_csv(output_dir / f"dedupe_map_{file_suffix}.csv", index=False)
+    job_manifest.to_csv(output_dir / f"job_manifest_{file_suffix}.csv", index=False)
     with (output_dir / f"top_indicator_rules_{file_suffix}.jsonl").open("w", encoding="utf-8") as handle:
         for rule in rules:
             handle.write(json.dumps(rule, sort_keys=True) + "\n")
+    deduped_count = int(dedupe_map["deduped"].astype(str).str.lower().isin({"true", "1", "yes"}).sum()) if not dedupe_map.empty else 0
     summary = {
         "shard_id": shard,
         "base_shard_id": shard,
@@ -3475,12 +4283,22 @@ def run_external_strategy_pack_shard(
         "strategies_requested": int(external_strategy_limit),
         "strategies_loaded": int(len(candidates)),
         "strategies_evaluated": int(len(rows)),
+        "strategies_early_rejected": int(len(early_rejected)),
         "strategies_unsupported": int(len(unsupported_rows)),
-        "strategies_failed": int(len(failed_rows)),
-        "strategies_timed_out": int(timed_out_count),
+        "strategies_runtime_error": int(len(runtime_errors)),
+        "strategies_failed": int(len(timeouts) + len(runtime_errors)),
+        "strategies_timed_out": int(len(timeouts)),
+        "strategies_deduped": int(deduped_count),
         "candidate_timeout_seconds": int(candidate_timeout_seconds),
         "unique_config_evaluations": int(len(evaluation_cache)),
-        "cached_config_reuses": int(max(len(evaluable) - len(evaluation_cache), 0)),
+        "cached_config_reuses": int(deduped_count),
+        "optimized_evaluation_mode": str(optimized_evaluation_mode),
+        "enable_feature_cache": bool(enable_feature_cache),
+        "enable_dedupe": bool(enable_dedupe),
+        "enable_safe_prefilter": bool(enable_safe_prefilter),
+        "enable_early_stopping": bool(enable_early_stopping),
+        "enable_cost_scheduling": bool(enable_cost_scheduling),
+        "seconds_feature_store_build": float(feature_store.seconds_build),
         "symbols": int(len(symbol_frames)),
         "locked_start": str(locked_start),
         "train_end": str(train_end),
@@ -3522,6 +4340,12 @@ def merge_external_strategy_pack_outputs(
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
+    timeout_frames: list[pd.DataFrame] = []
+    early_rejected_frames: list[pd.DataFrame] = []
+    runtime_error_frames: list[pd.DataFrame] = []
+    timing_frames: list[pd.DataFrame] = []
+    dedupe_frames: list[pd.DataFrame] = []
+    job_manifest_frames: list[pd.DataFrame] = []
     rule_rows: list[dict[str, Any]] = []
     def read_csv_or_empty(path: Path) -> pd.DataFrame:
         if not path.stat().st_size:
@@ -3531,35 +4355,83 @@ def merge_external_strategy_pack_outputs(
         except pd.errors.EmptyDataError:
             return pd.DataFrame()
 
-    for summary_path in sorted([*shards_root.rglob("summary_shard_*.json"), *shards_root.rglob("summary_job_*.json")]):
+    for summary_path in sorted(
+        [
+            *shards_root.rglob("summary_shard_*.json"),
+            *shards_root.rglob("summary_job_*.json"),
+            *shards_root.rglob("summary.json"),
+        ]
+    ):
         summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
-    for path in sorted([*shards_root.rglob("leaderboard_shard_*.csv"), *shards_root.rglob("leaderboard_job_*.csv")]):
+    for path in sorted([*shards_root.rglob("leaderboard_shard_*.csv"), *shards_root.rglob("leaderboard_job_*.csv"), *shards_root.rglob("leaderboard.csv")]):
         frame = read_csv_or_empty(path)
         if not frame.empty:
             leaderboards.append(frame)
     for path in sorted(
-        [*shards_root.rglob("filtered_leaderboard_shard_*.csv"), *shards_root.rglob("filtered_leaderboard_job_*.csv")]
+        [
+            *shards_root.rglob("filtered_leaderboard_shard_*.csv"),
+            *shards_root.rglob("filtered_leaderboard_job_*.csv"),
+            *shards_root.rglob("filtered_leaderboard.csv"),
+        ]
     ):
         frame = read_csv_or_empty(path)
         if not frame.empty:
             filtered_frames.append(frame)
     for path in sorted(
-        [*shards_root.rglob("yearly_trade_performance_shard_*.csv"), *shards_root.rglob("yearly_trade_performance_job_*.csv")]
+        [
+            *shards_root.rglob("yearly_trade_performance_shard_*.csv"),
+            *shards_root.rglob("yearly_trade_performance_job_*.csv"),
+            *shards_root.rglob("yearly_trade_performance.csv"),
+        ]
     ):
         frame = read_csv_or_empty(path)
         if not frame.empty:
             yearly_frames.append(frame)
-    for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv")]):
+    for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv"), *shards_root.rglob("top_trades_sample.csv")]):
         frame = read_csv_or_empty(path)
         if not frame.empty:
             trade_frames.append(frame)
     for path in sorted(
-        [*shards_root.rglob("unsupported_strategies_shard_*.csv"), *shards_root.rglob("unsupported_strategies_job_*.csv")]
+        [
+            *shards_root.rglob("unsupported_strategies_shard_*.csv"),
+            *shards_root.rglob("unsupported_strategies_job_*.csv"),
+            *shards_root.rglob("unsupported_strategies.csv"),
+        ]
     ):
         frame = read_csv_or_empty(path)
         if not frame.empty:
             unsupported_frames.append(frame)
-    for path in sorted([*shards_root.rglob("top_indicator_rules_shard_*.jsonl"), *shards_root.rglob("top_indicator_rules_job_*.jsonl")]):
+    for pattern, target in (
+        ("timeout_strategies_shard_*.csv", timeout_frames),
+        ("timeout_strategies_job_*.csv", timeout_frames),
+        ("timeout_strategies.csv", timeout_frames),
+        ("early_rejected_strategies_shard_*.csv", early_rejected_frames),
+        ("early_rejected_strategies_job_*.csv", early_rejected_frames),
+        ("early_rejected_strategies.csv", early_rejected_frames),
+        ("runtime_errors_shard_*.csv", runtime_error_frames),
+        ("runtime_errors_job_*.csv", runtime_error_frames),
+        ("runtime_errors.csv", runtime_error_frames),
+        ("timing_diagnostics_shard_*.csv", timing_frames),
+        ("timing_diagnostics_job_*.csv", timing_frames),
+        ("timing_diagnostics.csv", timing_frames),
+        ("dedupe_map_shard_*.csv", dedupe_frames),
+        ("dedupe_map_job_*.csv", dedupe_frames),
+        ("dedupe_map.csv", dedupe_frames),
+        ("job_manifest_shard_*.csv", job_manifest_frames),
+        ("job_manifest_job_*.csv", job_manifest_frames),
+        ("job_manifest.csv", job_manifest_frames),
+    ):
+        for path in sorted(shards_root.rglob(pattern)):
+            frame = read_csv_or_empty(path)
+            if not frame.empty:
+                target.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("top_indicator_rules_shard_*.jsonl"),
+            *shards_root.rglob("top_indicator_rules_job_*.jsonl"),
+            *shards_root.rglob("top_indicator_rules.jsonl"),
+        ]
+    ):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 rule_rows.append(json.loads(line))
@@ -3578,7 +4450,25 @@ def merge_external_strategy_pack_outputs(
     unsupported = (
         pd.concat(unsupported_frames, ignore_index=True, sort=False)
         if unsupported_frames
-        else pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"])
+        else pd.DataFrame(columns=UNSUPPORTED_COLUMNS)
+    )
+    timeouts = pd.concat(timeout_frames, ignore_index=True, sort=False) if timeout_frames else pd.DataFrame(columns=TIMEOUT_COLUMNS)
+    early_rejected = (
+        pd.concat(early_rejected_frames, ignore_index=True, sort=False)
+        if early_rejected_frames
+        else pd.DataFrame(columns=EARLY_REJECT_COLUMNS)
+    )
+    runtime_errors = (
+        pd.concat(runtime_error_frames, ignore_index=True, sort=False)
+        if runtime_error_frames
+        else pd.DataFrame(columns=RUNTIME_ERROR_COLUMNS)
+    )
+    timing = pd.concat(timing_frames, ignore_index=True, sort=False) if timing_frames else pd.DataFrame(columns=TIMING_DIAGNOSTIC_COLUMNS)
+    dedupe_map = pd.concat(dedupe_frames, ignore_index=True, sort=False) if dedupe_frames else pd.DataFrame(columns=DEDUPE_MAP_COLUMNS)
+    job_manifest = (
+        pd.concat(job_manifest_frames, ignore_index=True, sort=False)
+        if job_manifest_frames
+        else pd.DataFrame(columns=JOB_MANIFEST_COLUMNS)
     )
 
     leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
@@ -3586,6 +4476,12 @@ def merge_external_strategy_pack_outputs(
     yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
+    timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)
+    early_rejected.to_csv(output_dir / "early_rejected_strategies.csv", index=False)
+    runtime_errors.to_csv(output_dir / "runtime_errors.csv", index=False)
+    timing.to_csv(output_dir / "timing_diagnostics.csv", index=False)
+    dedupe_map.to_csv(output_dir / "dedupe_map.csv", index=False)
+    job_manifest.to_csv(output_dir / "job_manifest.csv", index=False)
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
@@ -3622,18 +4518,44 @@ def merge_external_strategy_pack_outputs(
         inferred_candidate_count = int(candidate_count_per_job)
     elif jobs_requested > 0:
         inferred_candidate_count = int(total_strategies_requested) // jobs_requested
+    def sum_summary(*keys: str) -> int:
+        total = 0
+        for item in summaries:
+            for key in keys:
+                if key in item and item.get(key) is not None:
+                    total += int(item.get(key, 0))
+                    break
+        return int(total)
+
+    completed_jobs = sum_summary("total_jobs_completed")
+    if completed_jobs == 0:
+        completed_jobs = int(len(summaries))
+    completed_shards = sum_summary("total_shards_completed")
+    if completed_shards == 0:
+        completed_shards = int(len(summaries))
+    timed_out_total = sum_summary("strategies_timed_out", "total_strategies_timed_out")
+    runtime_error_total = sum_summary("strategies_runtime_error", "total_strategies_runtime_error")
+    failed_total = sum_summary("strategies_failed", "total_strategies_failed")
+    if failed_total == 0:
+        failed_total = int(timed_out_total + runtime_error_total)
     summary = {
         "total_strategies_requested": int(total_strategies_requested),
-        "total_strategies_loaded": int(sum(int(item.get("strategies_loaded", 0)) for item in summaries)),
-        "total_strategies_evaluated": int(sum(int(item.get("strategies_evaluated", 0)) for item in summaries)),
-        "total_strategies_unsupported": int(sum(int(item.get("strategies_unsupported", 0)) for item in summaries)),
-        "total_strategies_failed": int(sum(int(item.get("strategies_failed", 0)) for item in summaries)),
-        "total_strategies_timed_out": int(sum(int(item.get("strategies_timed_out", 0)) for item in summaries)),
+        "total_strategies_loaded": sum_summary("strategies_loaded", "total_strategies_loaded"),
+        "total_strategies_evaluated": sum_summary("strategies_evaluated", "total_strategies_evaluated"),
+        "total_strategies_early_rejected": sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
+        "total_strategies_unsupported": sum_summary("strategies_unsupported", "total_strategies_unsupported"),
+        "total_strategies_runtime_error": int(runtime_error_total),
+        "total_strategies_failed": int(failed_total),
+        "total_strategies_timed_out": int(timed_out_total),
+        "total_strategies_deduped": sum_summary("strategies_deduped", "total_strategies_deduped"),
         "total_shards_requested": int(total_shards_requested),
-        "total_shards_completed": int(len(summaries)),
+        "total_shards_completed": int(completed_shards),
         "total_jobs_requested": jobs_requested,
-        "total_jobs_completed": int(len(summaries)),
+        "total_jobs_completed": int(completed_jobs),
+        "total_jobs_failed": int(max(jobs_requested - completed_jobs, 0)),
         "candidate_count_per_job": inferred_candidate_count,
+        "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
+        "optimized_evaluation_mode": next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
         "filtered_candidates": int(len(filtered)),
         "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
         "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
@@ -3774,6 +4696,12 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
+    parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v1")
+    parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-safe-prefilter", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-early-stopping", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-cost-scheduling", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--min-market-cap", type=float, default=2_000_000_000)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
@@ -3796,6 +4724,12 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         train_end=args.train_end,
         validation_start=args.validation_start,
         validation_end=args.validation_end,
+        optimized_evaluation_mode=args.optimized_evaluation_mode,
+        enable_feature_cache=args.enable_feature_cache,
+        enable_dedupe=args.enable_dedupe,
+        enable_safe_prefilter=args.enable_safe_prefilter,
+        enable_early_stopping=args.enable_early_stopping,
+        enable_cost_scheduling=args.enable_cost_scheduling,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

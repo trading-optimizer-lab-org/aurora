@@ -1195,6 +1195,140 @@ def test_external_pack_loader_registers_unsupported_rule(tmp_path: Path) -> None
     assert "entry_rules.unknown_magic_filter" in candidate.unsupported_rules
 
 
+def test_external_canonical_hash_ignores_notes_but_changes_exit_rules(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard = pack / "shards"
+    shard.mkdir(parents=True)
+    first = _external_strategy_payload("same_effective_a")
+    second = _external_strategy_payload("same_effective_b")
+    second["codex_notes"] = "different note should not alter effective rules"
+    second["research_source_ids"] = ["different-source"]
+    third = _external_strategy_payload("different_exit")
+    third["exit_rules"]["take_profit_pct"] = 0.11
+    (shard / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in (first, second, third)) + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=3)
+
+    assert gtbi.canonical_external_strategy_hash(candidates[0]) == gtbi.canonical_external_strategy_hash(candidates[1])
+    assert gtbi.canonical_external_strategy_hash(candidates[0]) != gtbi.canonical_external_strategy_hash(candidates[2])
+
+
+def test_feature_store_preserves_entry_signals() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(140))
+    spy = gtbi._prepare_ohlcv(_spy_frame(140))
+    config = gtbi.IndicatorConfig(
+        family="minervini_sepa",
+        minervini_trend=False,
+        require_rs=False,
+        require_base_tight=True,
+        require_breakout=True,
+        breakout_lookback=20,
+        base_lookback=20,
+        volume_lookback=20,
+        volume_multiple=1.5,
+        max_base_range_pct=0.20,
+        rsi_max=100.0,
+    )
+
+    baseline = gtbi.entry_signal(frame.copy(), spy.copy(), config)
+    store = gtbi.build_feature_store({"AAA": frame}, spy, enabled=True)
+    cached = gtbi.entry_signal(store.symbol_frames["AAA"], store.benchmark_prices, config)
+
+    pd.testing.assert_series_equal(baseline, cached)
+    assert store.seconds_build >= 0.0
+
+
+def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    config = gtbi.IndicatorConfig(
+        family="minervini_sepa",
+        minervini_trend=False,
+        require_rs=False,
+        require_base_tight=True,
+        require_breakout=True,
+        breakout_lookback=20,
+        base_lookback=20,
+        volume_lookback=20,
+        volume_multiple=1.5,
+        max_base_range_pct=0.20,
+        rsi_max=100.0,
+        max_holding_days=10,
+    )
+
+    legacy_row, legacy_trades, legacy_yearly = gtbi.evaluate_candidate(
+        config=config,
+        candidate_id="legacy",
+        stage=0,
+        symbol_frames={"AAA": frame},
+        benchmark_prices=spy,
+        selection_split="validation",
+        scoring_profile="strict_quality",
+    )
+    opt_row, opt_trades, opt_yearly, diagnostic = gtbi.evaluate_candidate_optimized(
+        config=config,
+        candidate_id="legacy",
+        stage=0,
+        symbol_frames={"AAA": frame},
+        benchmark_prices=spy,
+        selection_split="validation",
+        scoring_profile="strict_quality",
+        enable_safe_prefilter=False,
+    )
+
+    for key in ("score", "train_trades", "validation_trades", "strict_quality_pass", "adjusted_return_time_risk"):
+        left = legacy_row[key]
+        right = opt_row[key]
+        if isinstance(left, float) and np.isnan(left):
+            assert np.isnan(right)
+        else:
+            assert right == left
+    pd.testing.assert_frame_equal(legacy_trades.reset_index(drop=True), opt_trades.reset_index(drop=True))
+    pd.testing.assert_frame_equal(legacy_yearly.reset_index(drop=True), opt_yearly.reset_index(drop=True))
+    assert diagnostic["symbols_processed"] == 1
+
+
+def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -> None:
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.linspace(50.0, 150.0, len(idx))
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": close,
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(len(idx), 100_000.0),
+            "symbol": "AAA",
+        }
+    )
+    sparse_signal = pd.Series(False, index=idx)
+    sparse_signal.loc[pd.date_range("2015-01-02", periods=10, freq="20B")] = True
+    reject, _ = gtbi._safe_prefilter_raw_signals(
+        signals_by_symbol={"AAA": sparse_signal},
+        symbol_frames={"AAA": frame},
+        config=gtbi.IndicatorConfig(max_holding_days=5),
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+    assert reject is not None
+    assert reject["reason"] == "raw_signal_yearly_trades_lt_100"
+
+    dense_signal = pd.Series(True, index=idx)
+    reject, _ = gtbi._safe_prefilter_raw_signals(
+        signals_by_symbol={"AAA": dense_signal},
+        symbol_frames={"AAA": frame},
+        config=gtbi.IndicatorConfig(max_holding_days=5),
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+    assert reject is None
+
+
 def test_external_pack_real_manifest_has_360_shards_and_72000_strategies() -> None:
     pack = Path("scripts/strategy_packs/gtbi_research_broad_72000")
     manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
@@ -1296,6 +1430,22 @@ def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: P
         job / "unsupported_strategies_job_0000.csv",
         index=False,
     )
+    pd.DataFrame(
+        [{"strategy_id": "slow", "reason": "CandidateEvaluationTimeout", "seconds_until_timeout": 300.0}]
+    ).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"strategy_id": "early", "reason": "raw_signal_yearly_trades_lt_100", "stage": "safe_prefilter"}]
+    ).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"strategy_id": "c1", "result_status": "evaluated", "seconds_total": 1.25, "timeout": False}]
+    ).to_csv(job / "timing_diagnostics_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"strategy_id": "c1", "canonical_hash": "abc", "canonical_strategy_id": "c1", "deduped": False}]
+    ).to_csv(job / "dedupe_map_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"job_id": "0000", "strategy_id": "c1", "canonical_hash": "abc", "cost_score": 1.0}]
+    ).to_csv(job / "job_manifest_job_0000.csv", index=False)
     (job / "top_indicator_rules_job_0000.jsonl").write_text("", encoding="utf-8")
 
     summary = gtbi.merge_external_strategy_pack_outputs(
@@ -1317,6 +1467,15 @@ def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: P
     assert summary["total_strategies_requested"] == 800
     assert summary["total_strategies_loaded"] == 40
     assert summary["total_strategies_timed_out"] == 0
+    for name in (
+        "timeout_strategies.csv",
+        "early_rejected_strategies.csv",
+        "runtime_errors.csv",
+        "timing_diagnostics.csv",
+        "dedupe_map.csv",
+        "job_manifest.csv",
+    ):
+        assert (tmp_path / "final" / name).exists()
 
 
 def test_external_merge_ignores_empty_job_csvs_and_counts_timeouts(tmp_path: Path) -> None:
@@ -1370,6 +1529,70 @@ def test_external_merge_ignores_empty_job_csvs_and_counts_timeouts(tmp_path: Pat
     assert (tmp_path / "final" / "leaderboard.csv").exists()
 
 
+def test_external_block_merge_sums_block_artifacts(tmp_path: Path) -> None:
+    for block_id, candidate in enumerate(("a", "b")):
+        block = tmp_path / "downloaded" / f"gtbi-external-pack-block-{block_id}-results"
+        block.mkdir(parents=True)
+        (block / "summary.json").write_text(
+            json.dumps(
+                {
+                    "total_jobs_completed": 2,
+                    "total_strategies_loaded": 20,
+                    "total_strategies_evaluated": 18,
+                    "total_strategies_early_rejected": 1,
+                    "total_strategies_timed_out": 1,
+                    "total_strategies_runtime_error": 0,
+                    "total_strategies_failed": 1,
+                    "total_strategies_unsupported": 0,
+                    "total_strategies_deduped": 0,
+                    "candidate_timeout_seconds": 300,
+                    "optimized_evaluation_mode": "optimized_evaluation_v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        pd.DataFrame(
+            [
+                {
+                    "candidate_id": candidate,
+                    "score": float(block_id),
+                    "adjusted_return_time_risk": 0.1 + block_id,
+                    "family": "oneil_canslim",
+                    "concept_id": "concept",
+                    "market_overlay_id": "market",
+                }
+            ]
+        ).to_csv(block / "leaderboard.csv", index=False)
+        pd.DataFrame(columns=["candidate_id", "adjusted_return_time_risk"]).to_csv(block / "filtered_leaderboard.csv", index=False)
+        pd.DataFrame(columns=gtbi.YEARLY_COLUMNS).to_csv(block / "yearly_trade_performance.csv", index=False)
+        pd.DataFrame(columns=gtbi.TRADE_COLUMNS).to_csv(block / "top_trades_sample.csv", index=False)
+        pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(block / "unsupported_strategies.csv", index=False)
+        pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(block / "timeout_strategies.csv", index=False)
+        pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(block / "early_rejected_strategies.csv", index=False)
+        pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(block / "runtime_errors.csv", index=False)
+        pd.DataFrame(columns=gtbi.TIMING_DIAGNOSTIC_COLUMNS).to_csv(block / "timing_diagnostics.csv", index=False)
+        pd.DataFrame(columns=gtbi.DEDUPE_MAP_COLUMNS).to_csv(block / "dedupe_map.csv", index=False)
+        pd.DataFrame(columns=gtbi.JOB_MANIFEST_COLUMNS).to_csv(block / "job_manifest.csv", index=False)
+        (block / "top_indicator_rules.jsonl").write_text("", encoding="utf-8")
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=40,
+        total_shards_requested=360,
+        total_jobs_requested=4,
+        candidate_count_per_job=10,
+    )
+
+    assert summary["total_jobs_completed"] == 4
+    assert summary["total_strategies_loaded"] == 40
+    assert summary["total_strategies_evaluated"] == 36
+    assert summary["total_strategies_early_rejected"] == 2
+    assert summary["total_strategies_timed_out"] == 2
+    assert summary["optimized_evaluation_mode"] == "optimized_evaluation_v1"
+    assert list(pd.read_csv(tmp_path / "final" / "leaderboard.csv")["candidate_id"]) == ["b", "a"]
+
+
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
     text = path.read_text(encoding="utf-8")
@@ -1393,6 +1616,12 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "jobs_per_block=180" in text
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
+    assert "optimized_evaluation_v1" in text
+    assert "--optimized-evaluation-mode" in text
+    assert "enable_block_merge" in text
+    assert "merge_block_0" in data["jobs"]
+    assert "merge_block_39" in data["jobs"]
+    assert "gtbi-external-pack-block-*-results" in text
     assert "run_chunk_0" in data["jobs"]
     assert "run_chunk_39" in data["jobs"]
     assert "--prebuilt-pack-dir external-pack-data" in text
@@ -1405,6 +1634,18 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in text
     assert 'gh run download "${{ github.run_id }}"' in text
     assert "requires_local_machine" not in text
+
+
+def test_optimized_evaluation_v1_workflow_alias_exists() -> None:
+    path = Path(".github/workflows/global-technical-buy-indicator-optimized-evaluation-v1.yml")
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["name"] == "Global Technical Buy Indicator Optimized Evaluation v1"
+    assert "workflow_dispatch" in data[True]
+    assert "optimized_evaluation_v1" in text
+    assert "self-hosted" not in text
+    assert "C:\\" not in text
 
 
 def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_timeout_risk() -> None:
