@@ -1,0 +1,304 @@
+name: Global Technical Buy Indicator External Pack Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID with the main job artifacts"
+        required: true
+        default: "28228752956"
+      recovery_job_indices:
+        description: "Comma-separated absolute job indices to rerun"
+        required: true
+        default: "2773,3031,3644,5228,5272,5974"
+      data_run_id:
+        description: "GitHub Actions run ID containing the data lake artifact"
+        required: true
+        default: "27936694743"
+      data_artifact_name:
+        description: "Data lake artifact name"
+        required: true
+        default: "free-global-yahoo-daily-data-lake"
+      external_strategy_pack_path:
+        description: "External strategy pack path"
+        required: true
+        default: "scripts/strategy_packs/gtbi_research_broad_72000"
+      candidate_count_per_job:
+        description: "External strategies per job"
+        required: true
+        default: "10"
+      candidate_timeout_seconds:
+        description: "Per-candidate timeout inside each job"
+        required: true
+        default: "300"
+      min_market_cap:
+        description: "Minimum market cap filter"
+        required: true
+        default: "2000000000"
+      train_end:
+        description: "Train end date"
+        required: true
+        default: "2010-12-31"
+      validation_start:
+        description: "Validation start date"
+        required: true
+        default: "2011-01-01"
+      validation_end:
+        description: "Validation end date"
+        required: true
+        default: "2020-12-31"
+      locked_start:
+        description: "Locked/OOS start date"
+        required: true
+        default: "2021-01-01"
+      fail_on_unsupported:
+        description: "Fail if any external strategy rule is unsupported"
+        required: true
+        default: "false"
+
+jobs:
+  build_external_pack:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
+      QF_DATA_DIR: /tmp/aurora-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download data lake artifact
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ inputs.data_run_id }}
+          name: ${{ inputs.data_artifact_name }}
+          path: "$QF_DATA_DIR/prices/free_us_daily"
+      - name: Normalize data lake layout and ensure SPY benchmark exists
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          import sys
+          import pandas as pd
+          root = Path("/tmp/aurora-data/prices/free_us_daily")
+          nested = root / "prices" / "free_us_daily"
+          if nested.exists():
+              for child in nested.iterdir():
+                  target = root / child.name
+                  if target.exists():
+                      continue
+                  shutil.move(str(child), str(target))
+          normalized = root / "normalized"
+          if not normalized.exists():
+              raise SystemExit(f"normalized data dir not found: {normalized}")
+          benchmark = root / "benchmarks" / "SPY.parquet"
+          if benchmark.exists():
+              raise SystemExit(0)
+          try:
+              import yfinance as yf
+          except Exception as exc:
+              raise SystemExit(f"yfinance unavailable for SPY benchmark fallback: {exc}") from exc
+          df = yf.download("SPY", period="max", interval="1d", auto_adjust=False, actions=True, progress=False)
+          if df.empty:
+              raise SystemExit("SPY benchmark fallback returned no rows")
+          if isinstance(df.columns, pd.MultiIndex):
+              df.columns = [c[0] for c in df.columns]
+          df = df.reset_index()
+          rename = {
+              "Date": "date",
+              "Open": "open",
+              "High": "high",
+              "Low": "low",
+              "Close": "close",
+              "Adj Close": "adj_close",
+              "Volume": "volume",
+          }
+          df = df.rename(columns=rename)
+          df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+          df = df[df["date"] < pd.Timestamp("${{ inputs.locked_start }}")].copy()
+          if df.empty:
+              raise SystemExit("SPY benchmark fallback has no pre-locked rows")
+          df["symbol"] = "SPY"
+          df["source"] = "yfinance"
+          for col in ("dividends", "stock_splits"):
+              if col not in df.columns:
+                  df[col] = 0.0
+          benchmark.parent.mkdir(parents=True, exist_ok=True)
+          df.to_parquet(benchmark, index=False)
+          PY
+      - name: Build reusable external pack data
+        run: |
+          python scripts/build_global_technical_buy_indicator_pack.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --output-dir external-pack-data
+      - name: Upload reusable pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-recovery-data
+          path: external-pack-data
+          retention-days: 7
+
+  plan_recovery:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      recovery_jobs: ${{ steps.plan.outputs.recovery_jobs }}
+    steps:
+      - name: Build recovery matrix
+        id: plan
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          original_shards = 360
+          original_strategies_per_shard = 200
+          candidate_limit = max(int("${{ inputs.candidate_count_per_job }}"), 1)
+          chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit
+          max_jobs = original_shards * chunks_per_shard
+          raw = "${{ inputs.recovery_job_indices }}"
+          rows = []
+          seen = set()
+          for item in raw.split(","):
+              item = item.strip()
+              if not item:
+                  continue
+              job_index = int(item)
+              if job_index < 0 or job_index >= max_jobs:
+                  raise SystemExit(f"recovery job index out of range: {job_index}")
+              if job_index in seen:
+                  continue
+              seen.add(job_index)
+              base_shard_id = job_index // chunks_per_shard
+              chunk_index = job_index % chunks_per_shard
+              strategy_offset = chunk_index * candidate_limit
+              strategy_limit = min(candidate_limit, original_strategies_per_shard - strategy_offset)
+              rows.append({
+                  "job_index": job_index,
+                  "job_padded": f"{job_index:04d}",
+                  "base_shard_id": base_shard_id,
+                  "base_shard_padded": f"{base_shard_id:03d}",
+                  "chunk_index": chunk_index,
+                  "strategy_offset": strategy_offset,
+                  "strategy_limit": strategy_limit,
+              })
+          if not rows:
+              raise SystemExit("no recovery job indices provided")
+          rows.sort(key=lambda row: row["job_index"])
+          print(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}")
+          print(f"recovery_jobs={len(rows)}")
+          PY
+
+  run_recovery:
+    needs:
+      - build_external_pack
+      - plan_recovery
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJson(needs.plan_recovery.outputs.matrix) }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      QF_DATA_DIR: /tmp/aurora-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-recovery-data
+          path: external-pack-data
+      - name: Run recovery job
+        run: |
+          FAIL_ARGS=()
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_ARGS=(--external-strategy-fail-on-unsupported)
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --prebuilt-pack-dir external-pack-data \
+            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
+            --external-strategy-shard-id "${{ matrix.base_shard_id }}" \
+            --external-strategy-offset "${{ matrix.strategy_offset }}" \
+            --external-strategy-limit "${{ matrix.strategy_limit }}" \
+            --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}" \
+            --external-strategy-format jsonl \
+            "${FAIL_ARGS[@]}" \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload recovery artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          retention-days: 14
+
+  merge:
+    needs:
+      - plan_recovery
+      - run_recovery
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download source and recovery job artifacts
+        run: |
+          mkdir -p downloaded-jobs
+          gh run download "${{ inputs.source_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "gtbi-external-pack-job-*" \
+            --dir downloaded-jobs
+          gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "gtbi-external-pack-job-*" \
+            --dir downloaded-jobs
+      - name: Merge outputs
+        run: |
+          python scripts/merge_global_technical_buy_indicator_external_pack.py \
+            --shards-root downloaded-jobs \
+            --output-dir final-results \
+            --total-strategies-requested "72000" \
+            --total-shards-requested "360" \
+            --total-jobs-requested "7200" \
+            --candidate-count-per-job "${{ inputs.candidate_count_per_job }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-external-pack-72000-results
+          path: final-results
+          retention-days: 30

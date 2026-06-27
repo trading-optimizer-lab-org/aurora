@@ -61,6 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       QF_DATA_DIR: /tmp/aurora-data
       AURORA_ALLOW_LOCAL_RUNS_EXPLICIT: USER_REQUESTED_LOCAL_RUN_THIS_TURN
     steps:
@@ -3602,10 +3603,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[data-cloud,ml]"
       - name: Download job artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: gtbi-external-pack-job-*
-          path: downloaded-jobs
+        run: |
+          gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "gtbi-external-pack-job-*" \
+            --dir downloaded-jobs
       - name: Compute merge totals
         id: totals
         run: |
