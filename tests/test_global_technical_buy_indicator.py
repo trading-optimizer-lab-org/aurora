@@ -1294,6 +1294,62 @@ def test_balanced_external_strategy_candidates_spread_fast_candidates_across_job
     assert len(first_job) == 4
 
 
+def test_balanced_external_strategy_candidates_uses_active_job_window_for_smoke(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows = []
+    for idx in range(20):
+        payload = _external_strategy_payload(f"fast_{idx:02d}", shard_id=idx // 10, slot=idx % 10)
+        payload["concept_id"] = "q_stair_step_breakout"
+        rows.append(payload)
+    for idx in range(20):
+        payload = _external_strategy_payload(f"slow_{idx:02d}", shard_id=2 + idx // 10, slot=idx % 10)
+        payload["concept_id"] = "bollinger_squeeze_breakout"
+        payload["exit_profile_id"] = "balanced_tp_ema20"
+        payload["market_overlay_id"] = "spy_low_vol_uptrend"
+        payload["aggression_id"] = "frequency_quality"
+        rows.append(payload)
+    by_shard: dict[int, list[dict[str, object]]] = {}
+    for row in rows:
+        by_shard.setdefault(int(row["shard_id"]), []).append(row)
+    for shard_id, shard_rows in by_shard.items():
+        (shard_dir / f"shard_{shard_id:03d}.jsonl").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in shard_rows) + "\n",
+            encoding="utf-8",
+        )
+
+    first_job, total_jobs = gtbi._balanced_external_strategy_candidates_for_job(
+        pack,
+        job_index=0,
+        candidate_count_per_job=4,
+        schedule_active_jobs=2,
+    )
+    second_job, _ = gtbi._balanced_external_strategy_candidates_for_job(
+        pack,
+        job_index=1,
+        candidate_count_per_job=4,
+        schedule_active_jobs=2,
+    )
+
+    assert total_jobs == 10
+    assert [candidate.payload["concept_id"] for candidate in first_job] == ["q_stair_step_breakout"] * 4
+    assert [candidate.payload["concept_id"] for candidate in second_job] == ["q_stair_step_breakout"] * 4
+
+
+def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
+    assert gtbi._effective_job_deadline(
+        optimized_evaluation_mode="optimized_evaluation_v2",
+        job_start=100.0,
+        job_wall_clock_seconds=300,
+    ) is None
+    assert gtbi._effective_job_deadline(
+        optimized_evaluation_mode="optimized_evaluation_v1",
+        job_start=100.0,
+        job_wall_clock_seconds=300,
+    ) == 400.0
+
+
 def test_feature_store_preserves_entry_signals() -> None:
     frame = gtbi._prepare_ohlcv(_breakout_frame(140))
     spy = gtbi._prepare_ohlcv(_spy_frame(140))
@@ -1338,6 +1394,44 @@ def test_signal_primitive_store_reuses_boolean_primitives() -> None:
     assert len(rs_filter) == len(frame)
 
 
+def test_simulate_trades_executes_next_session_open_with_array_safe_rules() -> None:
+    idx = pd.date_range("2020-01-01", periods=6, freq="B")
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+            "high": [10.5, 11.2, 13.5, 13.2, 14.2, 15.2],
+            "low": [9.8, 10.8, 11.8, 12.7, 13.8, 14.8],
+            "close": [10.1, 11.1, 12.8, 13.0, 14.1, 15.1],
+            "adj_close": [10.1, 11.1, 12.8, 13.0, 14.1, 15.1],
+            "volume": [1000, 1000, 1000, 1000, 1000, 1000],
+            "symbol": "AAA",
+        }
+    )
+    prepared = gtbi._prepare_ohlcv(frame)
+    signal = pd.Series(False, index=prepared.index)
+    signal.iloc[0] = True
+    config = gtbi.IndicatorConfig(
+        family="minervini_sepa",
+        take_profit_pct=0.10,
+        stop_loss_pct=0.50,
+        trailing_stop_pct=0.0,
+        use_exit_ma=False,
+        use_market_exit=False,
+        max_holding_days=5,
+    )
+
+    trades = gtbi.simulate_trades("AAA", prepared, signal, config, split="unassigned", candidate_id="c")
+
+    assert len(trades) == 1
+    row = trades.iloc[0]
+    assert row["entry_date"] == "2020-01-02"
+    assert row["entry_price"] == 11.0
+    assert row["exit_date"] == "2020-01-06"
+    assert row["exit_price"] == 13.0
+    assert row["exit_reason"] == "take_profit"
+
+
 def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
     frame = gtbi._prepare_ohlcv(_breakout_frame(180))
     spy = gtbi._prepare_ohlcv(_spy_frame(180))
@@ -1374,6 +1468,7 @@ def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
         selection_split="validation",
         scoring_profile="strict_quality",
         enable_safe_prefilter=False,
+        enable_early_stopping=False,
     )
 
     for key in ("score", "train_trades", "validation_trades", "strict_quality_pass", "adjusted_return_time_risk"):
@@ -1386,6 +1481,169 @@ def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
     pd.testing.assert_frame_equal(legacy_trades.reset_index(drop=True), opt_trades.reset_index(drop=True))
     pd.testing.assert_frame_equal(legacy_yearly.reset_index(drop=True), opt_yearly.reset_index(drop=True))
     assert diagnostic["symbols_processed"] == 1
+
+
+def test_optimized_candidate_can_reuse_precomputed_signal_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    config = gtbi.IndicatorConfig(
+        family="minervini_sepa",
+        minervini_trend=False,
+        require_rs=False,
+        require_base_tight=True,
+        require_breakout=True,
+        breakout_lookback=20,
+        base_lookback=20,
+        volume_lookback=20,
+        volume_multiple=1.5,
+        max_base_range_pct=0.20,
+        rsi_max=100.0,
+        max_holding_days=10,
+    )
+    signal = gtbi.entry_signal(frame, spy, config)
+
+    def fail_if_called(*args: object, **kwargs: object) -> pd.Series:
+        raise AssertionError("entry_signal should not be called when signals are precomputed")
+
+    monkeypatch.setattr(gtbi, "entry_signal", fail_if_called)
+    row, trades, yearly, diagnostic = gtbi.evaluate_candidate_optimized(
+        config=config,
+        candidate_id="reused",
+        stage=0,
+        symbol_frames={"AAA": frame},
+        benchmark_prices=spy,
+        selection_split="validation",
+        scoring_profile="strict_quality",
+        enable_safe_prefilter=False,
+        enable_early_stopping=False,
+        precomputed_signals_by_symbol={"AAA": signal},
+        precomputed_signal_seconds=0.0,
+        precomputed_symbols_processed=1,
+        precomputed_raw_signals_total=int(signal.sum()),
+    )
+
+    assert row["candidate_id"] == "reused"
+    assert diagnostic["seconds_signal"] == 0.0
+    assert diagnostic["symbols_processed"] == 1
+    assert not trades.empty
+    assert not yearly.empty
+
+
+def test_early_stopping_flag_enables_safe_signal_reject_without_prefilter_flag() -> None:
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.linspace(50.0, 150.0, len(idx))
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    sparse_signal = pd.Series(False, index=frame.index)
+    sparse_signal.iloc[100] = True
+    with pytest.raises(gtbi.EarlyRejectedStrategy, match="raw_signal_yearly_trades_lt_100"):
+        gtbi.evaluate_candidate_optimized(
+            config=gtbi.IndicatorConfig(family="minervini_sepa"),
+            candidate_id="sparse",
+            stage=0,
+            symbol_frames={"AAA": frame},
+            benchmark_prices=frame,
+            enable_safe_prefilter=False,
+            enable_early_stopping=True,
+            precomputed_signals_by_symbol={"AAA": sparse_signal},
+            precomputed_signal_seconds=0.0,
+            precomputed_symbols_processed=1,
+            precomputed_raw_signals_total=1,
+        )
+
+
+def test_external_runner_reuses_signal_signature_for_exit_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("same_signal_a")
+    second_payload = _external_strategy_payload("same_signal_b")
+    second_payload["exit_rules"]["take_profit_pct"] = 0.25
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[70] = True
+    signal_calls = {"count": 0}
+    core_precomputed: list[bool] = []
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_entry_signal(*args: object, **kwargs: object) -> pd.Series:
+        signal_calls["count"] += 1
+        return signal
+
+    def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
+        core_precomputed.append(kwargs.get("precomputed_signals_by_symbol") is not None)
+        candidate_id = str(kwargs["candidate_id"])
+        row = {
+            "candidate_id": candidate_id,
+            "stage": 0,
+            "search_method": gtbi.EXTERNAL_SEARCH_METHOD,
+            "family": "minervini_sepa",
+            "score": 0.0,
+            "strict_quality_pass": False,
+            "adjusted_return_time_risk": 0.0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        diagnostic = {
+            "seconds_total": 0.1,
+            "seconds_feature_build": 0.0,
+            "seconds_signal": 0.0 if kwargs.get("precomputed_signals_by_symbol") is not None else 1.0,
+            "seconds_simulation": 0.0,
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": 1,
+            "symbols_processed": 1,
+            "raw_signals_total": int(signal.sum()),
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        return row, pd.DataFrame(columns=gtbi.TRADE_COLUMNS), pd.DataFrame(columns=gtbi.YEARLY_COLUMNS), diagnostic
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "entry_signal", fake_entry_signal)
+    monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v2",
+        enable_dedupe=True,
+        enable_safe_prefilter=False,
+        job_wall_clock_seconds=0,
+    )
+
+    dedupe = pd.read_csv(tmp_path / "out" / "job-0000" / "dedupe_map_job_0000.csv")
+    assert signal_calls["count"] == 1
+    assert core_precomputed == [True, True]
+    assert dedupe["deduped"].tolist() == [False, False]
+    assert dedupe["signal_deduped"].tolist() == [False, True]
 
 
 def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -> None:
@@ -1768,6 +2026,9 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "job_wall_clock_seconds" in text
     assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
+    assert "SCHEDULE_ACTIVE_JOBS=0" in text
+    assert 'SCHEDULE_ACTIVE_JOBS="${{ inputs.test_max_jobs }}"' in text
+    assert '--schedule-active-jobs "$SCHEDULE_ACTIVE_JOBS"' in text
     assert "FAIL_ARGS=()" in text
     assert '"${FAIL_ARGS[@]}"' in text
     assert '"$FAIL_FLAG"' not in text
@@ -1785,6 +2046,7 @@ def test_optimized_evaluation_v1_workflow_alias_uses_v2_engine() -> None:
     assert data["name"] == "Global Technical Buy Indicator Optimized Evaluation v1"
     assert "workflow_dispatch" in data[True]
     assert "optimized_evaluation_v2" in text
+    assert '--schedule-active-jobs "$SCHEDULE_ACTIVE_JOBS"' in text
     assert "self-hosted" not in text
     assert "C:\\" not in text
 
@@ -1835,6 +2097,9 @@ def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_t
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "job_wall_clock_seconds" in text
     assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
+    assert "SCHEDULE_ACTIVE_JOBS=0" in text
+    assert 'SCHEDULE_ACTIVE_JOBS="${{ inputs.test_max_jobs }}"' in text
+    assert '--schedule-active-jobs "$SCHEDULE_ACTIVE_JOBS"' in text
     assert "FAIL_ARGS=()" in text
     assert '"${FAIL_ARGS[@]}"' in text
     assert '"$FAIL_FLAG"' not in text

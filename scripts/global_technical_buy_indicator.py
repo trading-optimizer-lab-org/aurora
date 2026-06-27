@@ -1532,6 +1532,36 @@ def simulate_trades(
     signal_positions = np.flatnonzero(signal_values[:-1])
     if len(signal_positions) == 0:
         return pd.DataFrame(columns=TRADE_COLUMNS)
+    open_values = frame["open"].to_numpy(dtype=float, copy=False)
+    high_values = frame["high"].to_numpy(dtype=float, copy=False)
+    low_values = frame["low"].to_numpy(dtype=float, copy=False)
+    close_values = frame["close"].to_numpy(dtype=float, copy=False)
+    exit_ma_values = exit_ma.to_numpy(dtype=float, copy=False)
+    exit_signal_values = exit_signal.to_numpy(dtype=bool, copy=False)
+    index_values = frame.index.to_numpy()
+
+    def price_at(idx: int) -> float:
+        value = float(open_values[idx])
+        if not math.isfinite(value) or value <= 0:
+            value = float(close_values[idx])
+        return value
+
+    def append_trade(entry: int, exit_: int, entry_value: float, reason: str) -> None:
+        exit_price = price_at(exit_) if exit_ > entry else float(close_values[exit_])
+        trades.append(
+            {
+                "candidate_id": candidate_id,
+                "symbol": symbol,
+                "split": split,
+                "entry_date": pd.Timestamp(index_values[entry]).date().isoformat(),
+                "exit_date": pd.Timestamp(index_values[exit_]).date().isoformat(),
+                "entry_price": float(entry_value),
+                "exit_price": float(exit_price),
+                "return_pct": float((exit_price / entry_value - 1.0) * 100.0),
+                "holding_days": int(exit_ - entry),
+                "exit_reason": reason,
+            }
+        )
 
     trades: list[dict[str, Any]] = []
     in_position = False
@@ -1549,59 +1579,37 @@ def simulate_trades(
             i = int(signal_positions[next_signal])
             next_signal += 1
             entry_idx = i + 1
-            entry_price = _open_or_close(frame, entry_idx)
-            high_water = float(frame["high"].iloc[entry_idx])
+            entry_price = price_at(entry_idx)
+            high_water = float(high_values[entry_idx])
             in_position = True
             i = entry_idx
             continue
 
-        high_water = max(high_water, float(frame["high"].iloc[i]))
+        high_water = max(high_water, float(high_values[i]))
         reason: str | None = None
-        if float(frame["low"].iloc[i]) <= entry_price * (1.0 - config.stop_loss_pct):
+        if float(low_values[i]) <= entry_price * (1.0 - config.stop_loss_pct):
             reason = "stop_loss"
-        elif config.take_profit_pct > 0 and float(frame["high"].iloc[i]) >= entry_price * (1.0 + config.take_profit_pct):
+        elif config.take_profit_pct > 0 and float(high_values[i]) >= entry_price * (1.0 + config.take_profit_pct):
             reason = "take_profit"
-        elif config.trailing_stop_pct > 0 and float(frame["low"].iloc[i]) <= high_water * (1.0 - config.trailing_stop_pct):
+        elif config.trailing_stop_pct > 0 and float(low_values[i]) <= high_water * (1.0 - config.trailing_stop_pct):
             reason = "trailing_stop"
-        elif config.use_exit_ma and pd.notna(exit_ma.iloc[i]) and float(frame["close"].iloc[i]) < float(exit_ma.iloc[i]):
+        elif config.use_exit_ma and math.isfinite(float(exit_ma_values[i])) and float(close_values[i]) < float(exit_ma_values[i]):
             reason = "exit_ma"
-        elif config.use_market_exit and bool(exit_signal.iloc[i]):
+        elif config.use_market_exit and bool(exit_signal_values[i]):
             reason = "market_exit"
         elif min(i + 1, len(frame) - 1) - entry_idx >= config.max_holding_days:
             reason = "max_holding"
 
         if reason is not None:
             exit_idx = min(i + 1, len(frame) - 1)
-            trades.append(
-                _record_trade(
-                    candidate_id=candidate_id,
-                    symbol=symbol,
-                    split=split,
-                    frame=frame,
-                    entry_idx=entry_idx,
-                    exit_idx=exit_idx,
-                    entry_price=entry_price,
-                    exit_reason=reason,
-                )
-            )
+            append_trade(entry_idx, exit_idx, entry_price, reason)
             in_position = False
             i = exit_idx
             continue
         i += 1
 
     if in_position:
-        trades.append(
-            _record_trade(
-                candidate_id=candidate_id,
-                symbol=symbol,
-                split=split,
-                frame=frame,
-                entry_idx=entry_idx,
-                exit_idx=len(frame) - 1,
-                entry_price=entry_price,
-                exit_reason="end_of_data",
-            )
-        )
+        append_trade(entry_idx, len(frame) - 1, entry_price, "end_of_data")
     return pd.DataFrame(trades, columns=TRADE_COLUMNS)
 
 
@@ -2091,6 +2099,7 @@ def _balanced_external_strategy_candidates_for_job(
     *,
     job_index: int,
     candidate_count_per_job: int,
+    schedule_active_jobs: int | None = None,
     strategy_format: str = "auto",
 ) -> tuple[list[ExternalStrategyCandidate], int]:
     all_candidates = load_external_strategy_candidates(
@@ -2104,6 +2113,11 @@ def _balanced_external_strategy_candidates_for_job(
     total_jobs = int(math.ceil(len(all_candidates) / per_job)) if all_candidates else 0
     if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
         return [], total_jobs
+    active_jobs = total_jobs
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
+    schedule_group = int(job_index // active_jobs)
+    schedule_position = int(job_index % active_jobs)
     ordered = sorted(
         all_candidates,
         key=lambda candidate: (
@@ -2115,10 +2129,10 @@ def _balanced_external_strategy_candidates_for_job(
         ),
     )
     selected: list[ExternalStrategyCandidate] = []
-    cursor = int(job_index)
+    cursor = schedule_group * active_jobs * per_job + schedule_position
     while cursor < len(ordered) and len(selected) < per_job:
         selected.append(ordered[cursor])
-        cursor += total_jobs
+        cursor += active_jobs
     selected.sort(
         key=lambda candidate: (
             _estimated_cost_score(candidate.payload)[0],
@@ -2126,6 +2140,19 @@ def _balanced_external_strategy_candidates_for_job(
         )
     )
     return selected, total_jobs
+
+
+def _effective_job_deadline(
+    *,
+    optimized_evaluation_mode: str,
+    job_start: float,
+    job_wall_clock_seconds: int | float | None,
+) -> float | None:
+    if str(optimized_evaluation_mode) == "optimized_evaluation_v2":
+        return None
+    if job_wall_clock_seconds is None or float(job_wall_clock_seconds) <= 0:
+        return None
+    return float(job_start) + float(job_wall_clock_seconds)
 
 
 def _yearly_for_split(yearly: pd.DataFrame, split: str, years: range) -> pd.DataFrame:
@@ -2890,26 +2917,14 @@ def _safe_prefilter_raw_signals(
     return None, int(sum(validation_counts.values()))
 
 
-def evaluate_candidate_optimized(
+def _build_signals_by_symbol(
     *,
     config: IndicatorConfig,
     candidate_id: str,
-    stage: int,
     symbol_frames: dict[str, pd.DataFrame],
     benchmark_prices: pd.DataFrame,
-    train_end: str = DEFAULT_TRAIN_END,
-    validation_start: str = DEFAULT_VALIDATION_START,
-    validation_end: str = DEFAULT_VALIDATION_END,
-    search_method: str = DEFAULT_SEARCH_METHOD,
-    selection_split: str = DEFAULT_SELECTION_SPLIT,
-    min_selection_trades_per_year: int = 0,
-    scoring_profile: str = DEFAULT_SCORING_PROFILE,
-    enable_safe_prefilter: bool = True,
-    enable_early_stopping: bool = True,
     deadline: float | None = None,
-) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    del enable_early_stopping  # Early stops are restricted to the safe raw-signal prefilter in v1.
-    total_start = time.perf_counter()
+) -> tuple[dict[str, pd.Series], dict[str, Any]]:
     signal_start = time.perf_counter()
     signals_by_symbol: dict[str, pd.Series] = {}
     symbols_processed = 0
@@ -2932,9 +2947,62 @@ def evaluate_candidate_optimized(
         raw_signals_total += int(signal.sum())
         if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
-    seconds_signal = float(time.perf_counter() - signal_start)
+    return signals_by_symbol, {
+        "seconds_signal": float(time.perf_counter() - signal_start),
+        "symbols_processed": int(symbols_processed),
+        "raw_signals_total": int(raw_signals_total),
+    }
 
-    if enable_safe_prefilter:
+
+def evaluate_candidate_optimized(
+    *,
+    config: IndicatorConfig,
+    candidate_id: str,
+    stage: int,
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+    search_method: str = DEFAULT_SEARCH_METHOD,
+    selection_split: str = DEFAULT_SELECTION_SPLIT,
+    min_selection_trades_per_year: int = 0,
+    scoring_profile: str = DEFAULT_SCORING_PROFILE,
+    enable_safe_prefilter: bool = True,
+    enable_early_stopping: bool = True,
+    deadline: float | None = None,
+    precomputed_signals_by_symbol: dict[str, pd.Series] | None = None,
+    precomputed_signal_seconds: float | None = None,
+    precomputed_symbols_processed: int | None = None,
+    precomputed_raw_signals_total: int | None = None,
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    total_start = time.perf_counter()
+    if precomputed_signals_by_symbol is not None:
+        signals_by_symbol = {
+            str(symbol): signal
+            for symbol, signal in precomputed_signals_by_symbol.items()
+            if str(symbol) in symbol_frames and not signal.empty and bool(signal.any())
+        }
+        symbols_processed = int(precomputed_symbols_processed if precomputed_symbols_processed is not None else len(symbol_frames))
+        raw_signals_total = int(
+            precomputed_raw_signals_total
+            if precomputed_raw_signals_total is not None
+            else sum(int(signal.sum()) for signal in signals_by_symbol.values())
+        )
+        seconds_signal = float(precomputed_signal_seconds or 0.0)
+    else:
+        signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
+            config=config,
+            candidate_id=candidate_id,
+            symbol_frames=symbol_frames,
+            benchmark_prices=benchmark_prices,
+            deadline=deadline,
+        )
+        seconds_signal = float(signal_diagnostic["seconds_signal"])
+        symbols_processed = int(signal_diagnostic["symbols_processed"])
+        raw_signals_total = int(signal_diagnostic["raw_signals_total"])
+
+    if enable_safe_prefilter or enable_early_stopping:
         reject, validation_signal_total = _safe_prefilter_raw_signals(
             signals_by_symbol=signals_by_symbol,
             symbol_frames=symbol_frames,
@@ -3103,6 +3171,10 @@ def _evaluate_external_candidate_core(
     enable_safe_prefilter: bool,
     enable_early_stopping: bool,
     deadline: float | None = None,
+    precomputed_signals_by_symbol: dict[str, pd.Series] | None = None,
+    precomputed_signal_seconds: float | None = None,
+    precomputed_symbols_processed: int | None = None,
+    precomputed_raw_signals_total: int | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2"}:
         return evaluate_candidate_optimized(
@@ -3121,6 +3193,10 @@ def _evaluate_external_candidate_core(
             enable_safe_prefilter=enable_safe_prefilter,
             enable_early_stopping=enable_early_stopping,
             deadline=deadline,
+            precomputed_signals_by_symbol=precomputed_signals_by_symbol,
+            precomputed_signal_seconds=precomputed_signal_seconds,
+            precomputed_symbols_processed=precomputed_symbols_processed,
+            precomputed_raw_signals_total=precomputed_raw_signals_total,
         )
 
     start = time.perf_counter()
@@ -4236,12 +4312,13 @@ def run_external_strategy_pack_shard(
     enable_early_stopping: bool = True,
     enable_cost_scheduling: bool = True,
     job_wall_clock_seconds: int = 300,
+    schedule_active_jobs: int = 0,
 ) -> dict[str, Any]:
     job_start = time.perf_counter()
-    job_deadline = (
-        job_start + float(job_wall_clock_seconds)
-        if job_wall_clock_seconds and float(job_wall_clock_seconds) > 0
-        else None
+    job_deadline = _effective_job_deadline(
+        optimized_evaluation_mode=optimized_evaluation_mode,
+        job_start=job_start,
+        job_wall_clock_seconds=job_wall_clock_seconds,
     )
     shard = int(external_strategy_shard_id)
     shard_padded = f"{shard:03d}"
@@ -4264,12 +4341,13 @@ def run_external_strategy_pack_shard(
             external_strategy_pack_path,
             job_index=int(job_index_for_balancing),
             candidate_count_per_job=external_strategy_limit,
+            schedule_active_jobs=schedule_active_jobs if int(schedule_active_jobs) > 0 else None,
             strategy_format=external_strategy_format,
         )
         print(
             "[gtbi] job "
             f"{output_padded} using optimized_evaluation_v2 balanced schedule "
-            f"total_jobs={balanced_total_jobs} candidates={len(candidates)}",
+            f"total_jobs={balanced_total_jobs} active_jobs={schedule_active_jobs} candidates={len(candidates)}",
             flush=True,
         )
     else:
@@ -4345,6 +4423,7 @@ def run_external_strategy_pack_shard(
     dedupe_rows: list[dict[str, Any]] = []
     job_manifest_rows: list[dict[str, Any]] = []
     evaluation_cache: dict[str, tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
+    signal_evaluation_cache: dict[str, tuple[str, dict[str, pd.Series], dict[str, Any]]] = {}
     for candidate in candidates:
         if not candidate.unsupported_rules:
             continue
@@ -4393,6 +4472,8 @@ def run_external_strategy_pack_shard(
             }
         )
         candidate_start = time.perf_counter()
+        signal_deduped = False
+        signal_canonical_strategy_id = ""
         if job_deadline is not None:
             remaining_job_seconds = float(job_deadline - candidate_start)
             if remaining_job_seconds <= JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS:
@@ -4455,6 +4536,33 @@ def run_external_strategy_pack_shard(
                     else:
                         candidate_deadlines.append(time.perf_counter())
                 eval_kwargs["deadline"] = min(candidate_deadlines) if candidate_deadlines else None
+                if str(optimized_evaluation_mode) == "optimized_evaluation_v2" and enable_dedupe:
+                    cached_signal = signal_evaluation_cache.get(signal_hash)
+                    if cached_signal is None:
+                        signal_heartbeat_label = f"job={output_padded} candidate={candidate_id} signal"
+                        with _candidate_evaluation_heartbeat(signal_heartbeat_label):
+                            signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
+                                config=candidate.config,
+                                candidate_id=candidate_id,
+                                symbol_frames=symbol_frames,
+                                benchmark_prices=benchmark,
+                                deadline=eval_kwargs["deadline"],
+                            )
+                        signal_evaluation_cache[signal_hash] = (candidate_id, signals_by_symbol, signal_diagnostic)
+                        signal_canonical_strategy_id = candidate_id
+                    else:
+                        signal_canonical_strategy_id, signals_by_symbol, signal_diagnostic = cached_signal
+                        signal_deduped = True
+                    eval_kwargs.update(
+                        {
+                            "precomputed_signals_by_symbol": signals_by_symbol,
+                            "precomputed_signal_seconds": 0.0
+                            if signal_deduped
+                            else float(signal_diagnostic.get("seconds_signal", 0.0)),
+                            "precomputed_symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                            "precomputed_raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                        }
+                    )
                 with _candidate_evaluation_heartbeat(heartbeat_label):
                     row, trades, yearly, diagnostic = _evaluate_external_candidate_core(**eval_kwargs)
                 evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
@@ -4479,8 +4587,8 @@ def run_external_strategy_pack_shard(
                     "canonical_strategy_id": canonical_strategy_id,
                     "deduped": bool(deduped),
                     "signal_hash": signal_hash,
-                    "signal_canonical_strategy_id": canonical_strategy_id,
-                    "signal_deduped": bool(deduped),
+                    "signal_canonical_strategy_id": signal_canonical_strategy_id or canonical_strategy_id,
+                    "signal_deduped": bool(signal_deduped or deduped),
                 }
             )
             print(
@@ -4697,6 +4805,11 @@ def run_external_strategy_pack_shard(
         for rule in rules:
             handle.write(json.dumps(rule, sort_keys=True) + "\n")
     deduped_count = int(dedupe_map["deduped"].astype(str).str.lower().isin({"true", "1", "yes"}).sum()) if not dedupe_map.empty else 0
+    signal_deduped_count = (
+        int(dedupe_map["signal_deduped"].astype(str).str.lower().isin({"true", "1", "yes"}).sum())
+        if not dedupe_map.empty and "signal_deduped" in dedupe_map.columns
+        else 0
+    )
     summary = {
         "shard_id": shard,
         "base_shard_id": shard,
@@ -4713,10 +4826,14 @@ def run_external_strategy_pack_shard(
         "strategies_failed": int(len(timeouts) + len(runtime_errors)),
         "strategies_timed_out": int(len(timeouts)),
         "strategies_deduped": int(deduped_count),
+        "strategies_signal_deduped": int(signal_deduped_count),
         "candidate_timeout_seconds": int(candidate_timeout_seconds),
         "job_wall_clock_seconds": int(job_wall_clock_seconds),
+        "schedule_active_jobs": int(schedule_active_jobs),
         "unique_config_evaluations": int(len(evaluation_cache)),
         "cached_config_reuses": int(deduped_count),
+        "unique_signal_evaluations": int(len(signal_evaluation_cache)),
+        "cached_signal_reuses": int(signal_deduped_count),
         "optimized_evaluation_mode": str(optimized_evaluation_mode),
         "enable_feature_cache": bool(enable_feature_cache),
         "enable_dedupe": bool(enable_dedupe),
@@ -4973,6 +5090,9 @@ def merge_external_strategy_pack_outputs(
         "total_strategies_failed": int(failed_total),
         "total_strategies_timed_out": int(timed_out_total),
         "total_strategies_deduped": sum_summary("strategies_deduped", "total_strategies_deduped"),
+        "total_strategies_signal_deduped": sum_summary("strategies_signal_deduped", "total_strategies_signal_deduped"),
+        "unique_signal_evaluations": sum_summary("unique_signal_evaluations"),
+        "cached_signal_reuses": sum_summary("cached_signal_reuses"),
         "total_shards_requested": int(total_shards_requested),
         "total_shards_completed": int(completed_shards),
         "total_jobs_requested": jobs_requested,
@@ -5122,6 +5242,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
     parser.add_argument("--job-wall-clock-seconds", type=int, default=300)
+    parser.add_argument("--schedule-active-jobs", type=int, default=0)
     parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v2")
     parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
@@ -5146,6 +5267,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         external_strategy_fail_on_unsupported=args.external_strategy_fail_on_unsupported,
         candidate_timeout_seconds=args.candidate_timeout_seconds,
         job_wall_clock_seconds=args.job_wall_clock_seconds,
+        schedule_active_jobs=args.schedule_active_jobs,
         min_market_cap=args.min_market_cap,
         locked_start=args.locked_start,
         train_end=args.train_end,
