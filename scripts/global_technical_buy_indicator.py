@@ -1794,6 +1794,34 @@ def _finite_float(value: Any, default: float = float("nan")) -> float:
     return out if math.isfinite(out) else default
 
 
+def _best_adjusted_row(frame: pd.DataFrame) -> pd.Series | None:
+    if frame.empty:
+        return None
+    if "adjusted_return_time_risk" not in frame.columns:
+        return frame.iloc[0]
+    ranked = frame.copy()
+    ranked["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+        ranked["adjusted_return_time_risk"],
+        errors="coerce",
+    )
+    ranked = ranked[np.isfinite(ranked["_adjusted_return_time_risk_numeric"])]
+    if ranked.empty:
+        return frame.iloc[0]
+    sort_columns = ["_adjusted_return_time_risk_numeric"]
+    ascending = [False]
+    if "validation_median_trade_return_pct" in ranked.columns:
+        ranked["_validation_median_trade_return_pct_numeric"] = pd.to_numeric(
+            ranked["validation_median_trade_return_pct"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        sort_columns.append("_validation_median_trade_return_pct_numeric")
+        ascending.append(False)
+    if "candidate_id" in ranked.columns:
+        sort_columns.append("candidate_id")
+        ascending.append(True)
+    return ranked.sort_values(sort_columns, ascending=ascending).iloc[0]
+
+
 def _external_pct(value: Any, default: float = 0.0) -> float:
     out = _finite_float(value, default=default)
     if not math.isfinite(out):
@@ -5324,6 +5352,10 @@ def run_external_strategy_pack_shard(
             return None
         return float(np.percentile(values, percentile))
 
+    best_row = _best_adjusted_row(leaderboard)
+    best_filtered_row = _best_adjusted_row(filtered)
+    best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
+    best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
     summary = {
         "shard_id": shard,
         "base_shard_id": shard,
@@ -5384,11 +5416,9 @@ def run_external_strategy_pack_shard(
         "requires_local_machine": False,
         "locked_opened": False,
         "filtered_candidates": int(len(filtered)),
-        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
-        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
-        "best_adjusted_return_time_risk": (
-            None if leaderboard.empty else float(leaderboard.iloc[0].get("adjusted_return_time_risk", float("nan")))
-        ),
+        "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
+        "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
+        "best_adjusted_return_time_risk": best_adjusted,
     }
     (output_dir / f"summary_{file_suffix}.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
@@ -5604,10 +5634,10 @@ def merge_external_strategy_pack_outputs(
     summary_by("concept_id").to_csv(output_dir / "concept_summary.csv", index=False)
     summary_by("market_overlay_id").to_csv(output_dir / "market_overlay_summary.csv", index=False)
 
-    best_adjusted = None
-    if not leaderboard.empty and "adjusted_return_time_risk" in leaderboard.columns:
-        best_adjusted = _finite_float(leaderboard.iloc[0].get("adjusted_return_time_risk"), default=float("nan"))
-        best_adjusted = None if not math.isfinite(best_adjusted) else float(best_adjusted)
+    best_row = _best_adjusted_row(leaderboard)
+    best_filtered_row = _best_adjusted_row(filtered)
+    best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
+    best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
     jobs_requested = int(total_jobs_requested) if total_jobs_requested is not None else int(total_shards_requested)
     inferred_candidate_count = None
     if candidate_count_per_job is not None:
@@ -5712,8 +5742,8 @@ def merge_external_strategy_pack_outputs(
         "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
         "optimized_evaluation_mode": next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
         "filtered_candidates": int(len(filtered)),
-        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
-        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
+        "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
+        "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
         "best_adjusted_return_time_risk": best_adjusted,
         "locked_start": str(locked_start),
         "train_end": str(train_end),

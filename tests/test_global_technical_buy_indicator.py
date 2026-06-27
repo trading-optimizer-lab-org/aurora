@@ -2410,6 +2410,61 @@ def test_external_merge_accepts_job_artifacts_and_reports_job_counts(tmp_path: P
         assert (tmp_path / "final" / name).exists()
 
 
+def test_external_merge_summary_uses_best_adjusted_return_time_risk(tmp_path: Path) -> None:
+    specs = [
+        ("0000", "best_score_only", 10.0, 0.10),
+        ("0001", "best_adjusted", 1.0, 0.90),
+    ]
+    for job_id, candidate_id, score, adjusted in specs:
+        job = tmp_path / "downloaded" / f"gtbi-external-pack-job-{job_id}"
+        job.mkdir(parents=True)
+        (job / f"summary_job_{job_id}.json").write_text(
+            json.dumps(
+                {
+                    "strategies_loaded": 1,
+                    "strategies_evaluated": 1,
+                    "strategies_unsupported": 0,
+                    "strategies_failed": 0,
+                    "strategies_timed_out": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        pd.DataFrame(
+            [
+                {
+                    "candidate_id": candidate_id,
+                    "score": score,
+                    "adjusted_return_time_risk": adjusted,
+                    "validation_median_trade_return_pct": adjusted,
+                    "family": "minervini_sepa",
+                    "concept_id": "concept_a",
+                    "market_overlay_id": "market_a",
+                }
+            ]
+        ).to_csv(job / f"leaderboard_job_{job_id}.csv", index=False)
+        pd.DataFrame(columns=["candidate_id", "adjusted_return_time_risk"]).to_csv(
+            job / f"filtered_leaderboard_job_{job_id}.csv",
+            index=False,
+        )
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=2,
+        total_shards_requested=360,
+        total_jobs_requested=2,
+        candidate_count_per_job=1,
+    )
+
+    assert list(pd.read_csv(tmp_path / "final" / "leaderboard.csv")["candidate_id"]) == [
+        "best_score_only",
+        "best_adjusted",
+    ]
+    assert summary["best_candidate_id"] == "best_adjusted"
+    assert summary["best_adjusted_return_time_risk"] == pytest.approx(0.90)
+
+
 def test_external_merge_ignores_empty_job_csvs_and_counts_timeouts(tmp_path: Path) -> None:
     job = tmp_path / "downloaded" / "gtbi-external-pack-job-0007"
     job.mkdir(parents=True)
