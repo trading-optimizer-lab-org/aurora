@@ -26,7 +26,7 @@ on:
       job_wall_clock_seconds:
         description: "Soft per-job wall-clock budget inside the Python evaluator"
         required: true
-        default: "420"
+        default: "300"
       min_market_cap:
         description: "Minimum market cap in USD"
         required: true

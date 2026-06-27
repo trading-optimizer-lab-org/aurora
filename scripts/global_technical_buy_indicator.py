@@ -4011,7 +4011,7 @@ def run_external_strategy_pack_shard(
     enable_safe_prefilter: bool = True,
     enable_early_stopping: bool = True,
     enable_cost_scheduling: bool = True,
-    job_wall_clock_seconds: int = 420,
+    job_wall_clock_seconds: int = 300,
 ) -> dict[str, Any]:
     job_start = time.perf_counter()
     job_deadline = (
@@ -4857,7 +4857,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
-    parser.add_argument("--job-wall-clock-seconds", type=int, default=420)
+    parser.add_argument("--job-wall-clock-seconds", type=int, default=300)
     parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v1")
     parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
