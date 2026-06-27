@@ -2358,8 +2358,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "max-parallel: 60" not in text
     assert "optimized_evaluation_v3_signal_first" in text
     assert "--optimized-evaluation-mode" in text
-    assert "test_max_signal_groups" in text
-    assert "--test-max-signal-groups" in text
+    assert len(data[True]["workflow_dispatch"]["inputs"]) <= 25
+    assert "--test-max-signal-groups" not in text
     assert "enable_block_merge" in text
     assert "merge_block_0" in data["jobs"]
     assert "merge_block_39" in data["jobs"]
