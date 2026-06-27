@@ -2635,6 +2635,13 @@ def evaluate_candidate_optimized(
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
         symbols_processed += 1
         signal = entry_signal(frame, benchmark_prices, config)
+        if symbols_processed % 250 == 0:
+            print(
+                f"[gtbi] candidate={candidate_id} signal_progress={symbols_processed}/{len(symbol_frames)}",
+                flush=True,
+            )
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
         if signal.empty or not bool(signal.any()):
             continue
         signals_by_symbol[symbol] = signal
@@ -2679,9 +2686,11 @@ def evaluate_candidate_optimized(
 
     simulation_start = time.perf_counter()
     all_trades: list[pd.DataFrame] = []
+    simulated_symbols = 0
     for symbol, signal in signals_by_symbol.items():
         if deadline is not None and time.perf_counter() >= deadline:
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
+        simulated_symbols += 1
         frame = symbol_frames[symbol]
         prepared_frame = _prepare_ohlcv(frame)
         market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
@@ -2702,6 +2711,13 @@ def evaluate_candidate_optimized(
         )
         if not trades.empty:
             all_trades.append(trades)
+        if simulated_symbols % 250 == 0:
+            print(
+                f"[gtbi] candidate={candidate_id} simulation_progress={simulated_symbols}/{len(signals_by_symbol)}",
+                flush=True,
+            )
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
     seconds_simulation = float(time.perf_counter() - simulation_start)
     trades_df = pd.concat(all_trades, ignore_index=True, sort=False) if all_trades else pd.DataFrame(columns=TRADE_COLUMNS)
 
