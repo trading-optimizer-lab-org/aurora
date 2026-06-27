@@ -6,9 +6,12 @@ import csv
 import hashlib
 import json
 import math
+import multiprocessing as mp
+import pickle
 import signal
 import threading
 import time
+import traceback
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Iterable
@@ -2807,6 +2810,148 @@ def evaluate_candidate_optimized(
     return row, trades_df, yearly, diagnostic
 
 
+def _evaluate_external_candidate_core(
+    *,
+    config: IndicatorConfig,
+    candidate_id: str,
+    stage: int,
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    train_end: str,
+    validation_start: str,
+    validation_end: str,
+    optimized_evaluation_mode: str,
+    enable_safe_prefilter: bool,
+    enable_early_stopping: bool,
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if optimized_evaluation_mode == "optimized_evaluation_v1":
+        return evaluate_candidate_optimized(
+            config=config,
+            candidate_id=candidate_id,
+            stage=stage,
+            symbol_frames=symbol_frames,
+            benchmark_prices=benchmark_prices,
+            train_end=train_end,
+            validation_start=validation_start,
+            validation_end=validation_end,
+            search_method=EXTERNAL_SEARCH_METHOD,
+            selection_split="validation",
+            min_selection_trades_per_year=100,
+            scoring_profile="strict_quality",
+            enable_safe_prefilter=enable_safe_prefilter,
+            enable_early_stopping=enable_early_stopping,
+        )
+
+    start = time.perf_counter()
+    row, trades, yearly = evaluate_candidate(
+        config=config,
+        candidate_id=candidate_id,
+        stage=stage,
+        symbol_frames=symbol_frames,
+        benchmark_prices=benchmark_prices,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+        search_method=EXTERNAL_SEARCH_METHOD,
+        selection_split="validation",
+        min_selection_trades_per_year=100,
+        scoring_profile="strict_quality",
+    )
+    diagnostic = {
+        "seconds_total": float(time.perf_counter() - start),
+        "seconds_feature_build": 0.0,
+        "seconds_signal": float("nan"),
+        "seconds_simulation": float("nan"),
+        "seconds_train": float("nan"),
+        "seconds_validation": float("nan"),
+        "symbols_total": int(len(symbol_frames)),
+        "symbols_processed": int(len(symbol_frames)),
+        "raw_signals_total": 0,
+        "trades_total": int(len(trades)),
+        "train_trades": int(row.get("train_trades", 0)),
+        "validation_trades": int(row.get("validation_trades", 0)),
+    }
+    return row, trades, yearly, diagnostic
+
+
+def _evaluate_external_candidate_child(result_path: str, kwargs: dict[str, Any]) -> None:
+    try:
+        result = _evaluate_external_candidate_core(**kwargs)
+        payload: tuple[str, Any] = ("ok", result)
+    except EarlyRejectedStrategy as exc:
+        payload = (
+            "early_rejected",
+            {
+                "reason": exc.reason,
+                "split": exc.split,
+                "year": exc.year,
+                "actual": exc.actual,
+                "threshold": exc.threshold,
+                "stage": exc.stage,
+                "symbols_processed": exc.symbols_processed,
+                "seconds_until_reject": exc.seconds_until_reject,
+                "diagnostic": exc.diagnostic,
+            },
+        )
+    except BaseException as exc:  # pragma: no cover - exercised in GitHub smoke on unexpected failures.
+        payload = (
+            "error",
+            {
+                "type": type(exc).__name__,
+                "message": repr(exc),
+                "traceback": traceback.format_exc(),
+            },
+        )
+    with Path(result_path).open("wb") as handle:
+        pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _evaluate_external_candidate_with_process_timeout(
+    *,
+    result_path: Path,
+    timeout_seconds: int | float | None,
+    kwargs: dict[str, Any],
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    timeout_value = None if timeout_seconds is None or float(timeout_seconds) <= 0 else float(timeout_seconds)
+    if timeout_value is None or "fork" not in mp.get_all_start_methods():
+        with _candidate_evaluation_timeout(timeout_value):
+            return _evaluate_external_candidate_core(**kwargs)
+
+    if result_path.exists():
+        result_path.unlink()
+    ctx = mp.get_context("fork")
+    process = ctx.Process(
+        target=_evaluate_external_candidate_child,
+        kwargs={"result_path": str(result_path), "kwargs": kwargs},
+    )
+    process.start()
+    process.join(timeout_value)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=10)
+        if process.is_alive():  # pragma: no cover - depends on runner process state.
+            process.kill()
+            process.join(timeout=10)
+        raise CandidateEvaluationTimeout(f"candidate evaluation exceeded {timeout_value:g} seconds")
+
+    if not result_path.exists():
+        raise RuntimeError(f"candidate worker exited without result, exitcode={process.exitcode}")
+    with result_path.open("rb") as handle:
+        status, payload = pickle.load(handle)
+    result_path.unlink(missing_ok=True)
+
+    if status == "ok":
+        return payload
+    if status == "early_rejected":
+        raise EarlyRejectedStrategy(**payload)
+    if status == "error":
+        raise RuntimeError(
+            "candidate worker failed: "
+            f"{payload.get('type')}: {payload.get('message')}\n{payload.get('traceback', '')}"
+        )
+    raise RuntimeError(f"unknown candidate worker status: {status!r}")
+
+
 _NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
     "breakout_lookback": (10, 126, True),
     "base_lookback": (5, 80, True),
@@ -4022,55 +4167,26 @@ def run_external_strategy_pack_shard(
             deduped = cached is not None
             if not deduped:
                 heartbeat_label = f"job={output_padded} candidate={candidate_id}"
-                with _candidate_evaluation_heartbeat(heartbeat_label), _candidate_evaluation_timeout(
-                    candidate_timeout_seconds
-                ):
-                    if optimized_evaluation_mode == "optimized_evaluation_v1":
-                        row, trades, yearly, diagnostic = evaluate_candidate_optimized(
-                            config=candidate.config,
-                            candidate_id=candidate_id,
-                            stage=shard,
-                            symbol_frames=symbol_frames,
-                            benchmark_prices=benchmark,
-                            train_end=train_end,
-                            validation_start=validation_start,
-                            validation_end=validation_end,
-                            search_method=EXTERNAL_SEARCH_METHOD,
-                            selection_split="validation",
-                            min_selection_trades_per_year=100,
-                            scoring_profile="strict_quality",
-                            enable_safe_prefilter=enable_safe_prefilter,
-                            enable_early_stopping=enable_early_stopping,
-                        )
-                    else:
-                        row, trades, yearly = evaluate_candidate(
-                            config=candidate.config,
-                            candidate_id=candidate_id,
-                            stage=shard,
-                            symbol_frames=symbol_frames,
-                            benchmark_prices=benchmark,
-                            train_end=train_end,
-                            validation_start=validation_start,
-                            validation_end=validation_end,
-                            search_method=EXTERNAL_SEARCH_METHOD,
-                            selection_split="validation",
-                            min_selection_trades_per_year=100,
-                            scoring_profile="strict_quality",
-                        )
-                        diagnostic = {
-                            "seconds_total": float(time.perf_counter() - candidate_start),
-                            "seconds_feature_build": 0.0,
-                            "seconds_signal": float("nan"),
-                            "seconds_simulation": float("nan"),
-                            "seconds_train": float("nan"),
-                            "seconds_validation": float("nan"),
-                            "symbols_total": int(len(symbol_frames)),
-                            "symbols_processed": int(len(symbol_frames)),
-                            "raw_signals_total": 0,
-                            "trades_total": int(len(trades)),
-                            "train_trades": int(row.get("train_trades", 0)),
-                            "validation_trades": int(row.get("validation_trades", 0)),
-                        }
+                result_path = output_dir / f".candidate_result_{canonical_hash}.pkl"
+                eval_kwargs = {
+                    "config": candidate.config,
+                    "candidate_id": candidate_id,
+                    "stage": shard,
+                    "symbol_frames": symbol_frames,
+                    "benchmark_prices": benchmark,
+                    "train_end": train_end,
+                    "validation_start": validation_start,
+                    "validation_end": validation_end,
+                    "optimized_evaluation_mode": optimized_evaluation_mode,
+                    "enable_safe_prefilter": enable_safe_prefilter,
+                    "enable_early_stopping": enable_early_stopping,
+                }
+                with _candidate_evaluation_heartbeat(heartbeat_label):
+                    row, trades, yearly, diagnostic = _evaluate_external_candidate_with_process_timeout(
+                        result_path=result_path,
+                        timeout_seconds=candidate_timeout_seconds,
+                        kwargs=eval_kwargs,
+                    )
                 evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
                 canonical_strategy_id = candidate_id
             else:
