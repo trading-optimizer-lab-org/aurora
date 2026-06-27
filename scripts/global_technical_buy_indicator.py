@@ -214,6 +214,7 @@ TIMING_DIAGNOSTIC_COLUMNS = [
     "runtime_error",
 ]
 DEDUPE_MAP_COLUMNS = ["strategy_id", "canonical_hash", "canonical_strategy_id", "deduped"]
+JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS = 60.0
 JOB_MANIFEST_COLUMNS = [
     "job_id",
     "strategy_id",
@@ -2702,12 +2703,14 @@ def evaluate_candidate_optimized(
                 f"[gtbi] candidate={candidate_id} signal_progress={symbols_processed}/{len(symbol_frames)}",
                 flush=True,
             )
-        if deadline is not None and time.perf_counter() >= deadline:
-            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
         if signal.empty or not bool(signal.any()):
+            if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
+                raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
             continue
         signals_by_symbol[symbol] = signal
         raw_signals_total += int(signal.sum())
+        if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
     seconds_signal = float(time.perf_counter() - signal_start)
 
     if enable_safe_prefilter:
@@ -4142,7 +4145,7 @@ def run_external_strategy_pack_shard(
         candidate_start = time.perf_counter()
         if job_deadline is not None:
             remaining_job_seconds = float(job_deadline - candidate_start)
-            if remaining_job_seconds <= 90.0:
+            if remaining_job_seconds <= JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS:
                 reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before candidate start')"
                 _append_external_timeout_result(
                     timeout_rows=timeout_rows,
@@ -4195,7 +4198,7 @@ def run_external_strategy_pack_shard(
                 if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
                     candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
                 if job_deadline is not None:
-                    job_safe_deadline = job_deadline - 90.0
+                    job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
                     if job_safe_deadline > time.perf_counter():
                         candidate_deadlines.append(job_safe_deadline)
                     else:

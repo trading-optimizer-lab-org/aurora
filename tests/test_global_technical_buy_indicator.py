@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -1341,6 +1342,48 @@ def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -
         validation_end="2020-12-31",
     )
     assert reject is None
+
+
+def test_optimized_candidate_prefilters_if_deadline_hits_after_final_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.linspace(50.0, 150.0, len(idx))
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    spy = gtbi._prepare_ohlcv(_spy_frame(len(idx)))
+
+    def slow_empty_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: gtbi.IndicatorConfig) -> pd.Series:
+        del benchmark_prices, config
+        time.sleep(0.02)
+        prepared = gtbi._prepare_ohlcv(prices)
+        return pd.Series(False, index=prepared.index)
+
+    monkeypatch.setattr(gtbi, "entry_signal", slow_empty_signal)
+    with pytest.raises(gtbi.EarlyRejectedStrategy) as raised:
+        gtbi.evaluate_candidate_optimized(
+            config=gtbi.IndicatorConfig(max_holding_days=5),
+            candidate_id="deadline-final-signal",
+            stage=0,
+            symbol_frames={"AAA": frame},
+            benchmark_prices=spy,
+            validation_start="2011-01-01",
+            validation_end="2020-12-31",
+            deadline=time.perf_counter() + 0.01,
+        )
+
+    assert raised.value.reason == "raw_signal_yearly_trades_lt_100"
+    assert raised.value.symbols_processed == 1
 
 
 def test_external_pack_real_manifest_has_360_shards_and_72000_strategies() -> None:
