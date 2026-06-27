@@ -1252,7 +1252,7 @@ def test_external_cost_scheduling_orders_fast_candidates_first() -> None:
     assert gtbi._estimated_cost_score(slow)[1] == "very_slow"
 
 
-def test_balanced_external_strategy_candidates_spread_fast_candidates_across_jobs(tmp_path: Path) -> None:
+def test_balanced_external_strategy_candidates_group_fast_signal_siblings_before_slow(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     shard_dir = pack / "shards"
     shard_dir.mkdir(parents=True)
@@ -1290,8 +1290,9 @@ def test_balanced_external_strategy_candidates_spread_fast_candidates_across_job
 
     assert total_jobs == 12
     assert first_job[0].payload["concept_id"] == "q_stair_step_breakout"
-    assert later_job[0].payload["concept_id"] == "q_stair_step_breakout"
+    assert later_job[0].payload["concept_id"] == "bollinger_squeeze_breakout"
     assert len(first_job) == 4
+    assert len({gtbi.signal_external_strategy_hash(candidate) for candidate in first_job}) == 1
 
 
 def test_balanced_external_strategy_candidates_uses_active_job_window_for_smoke(tmp_path: Path) -> None:
@@ -1335,6 +1336,48 @@ def test_balanced_external_strategy_candidates_uses_active_job_window_for_smoke(
     assert total_jobs == 10
     assert [candidate.payload["concept_id"] for candidate in first_job] == ["q_stair_step_breakout"] * 4
     assert [candidate.payload["concept_id"] for candidate in second_job] == ["q_stair_step_breakout"] * 4
+
+
+def test_balanced_external_strategy_candidates_groups_signal_siblings_for_smoke(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    exit_variants = [
+        ("quick_tp_ema10", {"take_profit_pct": 0.10, "max_holding_days": 12}),
+        ("balanced_tp_ema20", {"take_profit_pct": 0.20, "max_holding_days": 25}),
+        ("chandelier_runner", {"trailing_stop_pct": 0.22, "max_holding_days": 60}),
+        ("setup_low_fast_exit", {"stop_loss_pct": 0.05, "max_holding_days": 8}),
+    ]
+    rows = []
+    for group in range(4):
+        for variant, (exit_profile, exit_rules) in enumerate(exit_variants):
+            payload = _external_strategy_payload(
+                f"group_{group}_exit_{variant}",
+                shard_id=0,
+                slot=group * 4 + variant,
+            )
+            payload["concept_id"] = "q_stair_step_breakout"
+            payload["entry_rules"]["breakout_lookback_days"] = 30 + group
+            payload["exit_profile_id"] = exit_profile
+            payload["exit_rules"].update(exit_rules)
+            rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    first_job, total_jobs = gtbi._balanced_external_strategy_candidates_for_job(
+        pack,
+        job_index=0,
+        candidate_count_per_job=4,
+        schedule_active_jobs=4,
+    )
+
+    assert total_jobs == 4
+    signal_hashes = [gtbi.signal_external_strategy_hash(candidate) for candidate in first_job]
+    canonical_hashes = [gtbi.canonical_external_strategy_hash(candidate) for candidate in first_job]
+    assert len(set(signal_hashes)) == 1
+    assert len(set(canonical_hashes)) == 4
 
 
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
@@ -1430,6 +1473,129 @@ def test_simulate_trades_executes_next_session_open_with_array_safe_rules() -> N
     assert row["exit_date"] == "2020-01-06"
     assert row["exit_price"] == 13.0
     assert row["exit_reason"] == "take_profit"
+
+
+def test_simulate_trades_array_route_matches_pandas_reference() -> None:
+    idx = pd.date_range("2019-01-01", periods=80, freq="B")
+    close = 50.0 + np.sin(np.arange(len(idx)) / 3.0) * 1.5 + np.arange(len(idx)) * 0.08
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close * 1.001,
+                "high": close * 1.035,
+                "low": close * 0.965,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[::9] = True
+    exit_signal = pd.Series(False, index=frame.index)
+    exit_signal.iloc[25] = True
+    config = gtbi.IndicatorConfig(
+        family="minervini_sepa",
+        stop_loss_pct=0.06,
+        take_profit_pct=0.08,
+        trailing_stop_pct=0.05,
+        use_exit_ma=True,
+        use_market_exit=True,
+        exit_ma_days=7,
+        max_holding_days=6,
+    )
+
+    def pandas_reference() -> pd.DataFrame:
+        reference_frame = gtbi._prepare_ohlcv(frame)
+        reference_signal = signal.reindex(reference_frame.index).fillna(False).astype(bool)
+        reference_exit_signal = exit_signal.reindex(reference_frame.index).fillna(False).astype(bool)
+        exit_ma = reference_frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
+        trades: list[dict[str, object]] = []
+        in_position = False
+        entry_idx = -1
+        entry_price = 0.0
+        high_water = 0.0
+        i = 0
+        while i < len(reference_frame) - 1:
+            if not in_position:
+                if not bool(reference_signal.iloc[i]):
+                    i += 1
+                    continue
+                entry_idx = i + 1
+                entry_price = float(reference_frame["open"].iloc[entry_idx])
+                high_water = float(reference_frame["high"].iloc[entry_idx])
+                in_position = True
+                i = entry_idx
+                continue
+            high_water = max(high_water, float(reference_frame["high"].iloc[i]))
+            reason = None
+            if float(reference_frame["low"].iloc[i]) <= entry_price * (1.0 - config.stop_loss_pct):
+                reason = "stop_loss"
+            elif config.take_profit_pct > 0 and float(reference_frame["high"].iloc[i]) >= entry_price * (1.0 + config.take_profit_pct):
+                reason = "take_profit"
+            elif config.trailing_stop_pct > 0 and float(reference_frame["low"].iloc[i]) <= high_water * (1.0 - config.trailing_stop_pct):
+                reason = "trailing_stop"
+            elif config.use_exit_ma and pd.notna(exit_ma.iloc[i]) and float(reference_frame["close"].iloc[i]) < float(exit_ma.iloc[i]):
+                reason = "exit_ma"
+            elif config.use_market_exit and bool(reference_exit_signal.iloc[i]):
+                reason = "market_exit"
+            elif min(i + 1, len(reference_frame) - 1) - entry_idx >= config.max_holding_days:
+                reason = "max_holding"
+            if reason is not None:
+                exit_idx = min(i + 1, len(reference_frame) - 1)
+                exit_price = float(reference_frame["open"].iloc[exit_idx])
+                trades.append(
+                    {
+                        "candidate_id": "array",
+                        "symbol": "AAA",
+                        "split": "unassigned",
+                        "entry_date": pd.Timestamp(reference_frame.index[entry_idx]).date().isoformat(),
+                        "exit_date": pd.Timestamp(reference_frame.index[exit_idx]).date().isoformat(),
+                        "entry_price": entry_price,
+                        "exit_price": exit_price,
+                        "return_pct": float((exit_price / entry_price - 1.0) * 100.0),
+                        "holding_days": int(exit_idx - entry_idx),
+                        "exit_reason": reason,
+                    }
+                )
+                in_position = False
+                i = exit_idx
+                continue
+            i += 1
+        if in_position:
+            exit_idx = len(reference_frame) - 1
+            exit_price = float(reference_frame["open"].iloc[exit_idx])
+            trades.append(
+                {
+                    "candidate_id": "array",
+                    "symbol": "AAA",
+                    "split": "unassigned",
+                    "entry_date": pd.Timestamp(reference_frame.index[entry_idx]).date().isoformat(),
+                    "exit_date": pd.Timestamp(reference_frame.index[exit_idx]).date().isoformat(),
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "return_pct": float((exit_price / entry_price - 1.0) * 100.0),
+                    "holding_days": int(exit_idx - entry_idx),
+                    "exit_reason": "end_of_data",
+                }
+            )
+        return pd.DataFrame(trades, columns=gtbi.TRADE_COLUMNS)
+
+    array_trades = gtbi.simulate_trades(
+        "AAA",
+        frame,
+        signal,
+        config,
+        split="unassigned",
+        candidate_id="array",
+        exit_signal=exit_signal,
+    )
+    reference_trades = pandas_reference()
+
+    pd.testing.assert_frame_equal(array_trades.reset_index(drop=True), reference_trades.reset_index(drop=True))
+    assert gtbi.summarize_trades(array_trades, years=1.0) == gtbi.summarize_trades(reference_trades, years=1.0)
 
 
 def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
@@ -1644,6 +1810,74 @@ def test_external_runner_reuses_signal_signature_for_exit_variants(
     assert core_precomputed == [True, True]
     assert dedupe["deduped"].tolist() == [False, False]
     assert dedupe["signal_deduped"].tolist() == [False, True]
+
+
+def test_external_runner_counts_signal_reuse_when_candidate_is_early_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("same_signal_reject_a")
+    second_payload = _external_strategy_payload("same_signal_reject_b")
+    second_payload["exit_rules"]["take_profit_pct"] = 0.25
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[70] = True
+    signal_calls = {"count": 0}
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_entry_signal(*args: object, **kwargs: object) -> pd.Series:
+        signal_calls["count"] += 1
+        return signal
+
+    def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
+        raise gtbi.EarlyRejectedStrategy(
+            "raw_signal_yearly_trades_lt_100",
+            split="validation",
+            year=2011,
+            actual=1,
+            threshold=100,
+            symbols_processed=1,
+            diagnostic={
+                "seconds_total": 0.1,
+                "seconds_signal": 0.0,
+                "symbols_total": 1,
+                "symbols_processed": 1,
+                "raw_signals_total": 1,
+            },
+        )
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "entry_signal", fake_entry_signal)
+    monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v2",
+        enable_dedupe=True,
+        enable_safe_prefilter=False,
+        job_wall_clock_seconds=0,
+    )
+
+    dedupe = pd.read_csv(tmp_path / "out" / "job-0000" / "dedupe_map_job_0000.csv")
+    summary = json.loads((tmp_path / "out" / "job-0000" / "summary_job_0000.json").read_text(encoding="utf-8"))
+    assert signal_calls["count"] == 1
+    assert dedupe["signal_deduped"].tolist() == [False, True]
+    assert summary["cached_signal_reuses"] == 1
 
 
 def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -> None:

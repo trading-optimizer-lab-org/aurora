@@ -2113,29 +2113,45 @@ def _balanced_external_strategy_candidates_for_job(
     total_jobs = int(math.ceil(len(all_candidates) / per_job)) if all_candidates else 0
     if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
         return [], total_jobs
-    active_jobs = total_jobs
-    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
-        active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
-    schedule_group = int(job_index // active_jobs)
-    schedule_position = int(job_index % active_jobs)
-    ordered = sorted(
-        all_candidates,
-        key=lambda candidate: (
+
+    def candidate_sort_key(candidate: ExternalStrategyCandidate) -> tuple[Any, ...]:
+        return (
             _estimated_cost_score(candidate.payload)[0],
             str(candidate.payload.get("concept_id", "")),
             int(candidate.payload.get("shard_id", 0)),
             int(candidate.payload.get("slot_in_shard", 0)),
             str(candidate.payload.get("strategy_id", "")),
-        ),
+        )
+
+    ordered = sorted(
+        all_candidates,
+        key=lambda candidate: (candidate_sort_key(candidate), signal_external_strategy_hash(candidate)),
     )
-    selected: list[ExternalStrategyCandidate] = []
-    cursor = schedule_group * active_jobs * per_job + schedule_position
-    while cursor < len(ordered) and len(selected) < per_job:
-        selected.append(ordered[cursor])
-        cursor += active_jobs
+    signal_groups: dict[str, list[ExternalStrategyCandidate]] = {}
+    signal_group_order: list[str] = []
+    for candidate in ordered:
+        signal_hash = signal_external_strategy_hash(candidate)
+        if signal_hash not in signal_groups:
+            signal_groups[signal_hash] = []
+            signal_group_order.append(signal_hash)
+        signal_groups[signal_hash].append(candidate)
+
+    grouped_ordered: list[ExternalStrategyCandidate] = []
+    for signal_hash in signal_group_order:
+        grouped_ordered.extend(sorted(signal_groups[signal_hash], key=candidate_sort_key))
+
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
+        schedule_group = int(job_index // active_jobs)
+        schedule_position = int(job_index % active_jobs)
+        start = (schedule_group * active_jobs * per_job) + (schedule_position * per_job)
+    else:
+        start = int(job_index) * per_job
+    selected = grouped_ordered[start : start + per_job]
     selected.sort(
         key=lambda candidate: (
             _estimated_cost_score(candidate.payload)[0],
+            signal_external_strategy_hash(candidate),
             str(candidate.payload.get("strategy_id", "")),
         )
     )
@@ -2775,6 +2791,8 @@ def _append_external_timeout_result(
     seconds_total: float,
     symbols_total: int,
     symbols_processed: int,
+    signal_canonical_strategy_id: str = "",
+    signal_deduped: bool = False,
 ) -> None:
     timeout_rows.append(
         {
@@ -2799,8 +2817,8 @@ def _append_external_timeout_result(
             "canonical_strategy_id": "",
             "deduped": False,
             "signal_hash": signal_hash,
-            "signal_canonical_strategy_id": "",
-            "signal_deduped": False,
+            "signal_canonical_strategy_id": signal_canonical_strategy_id,
+            "signal_deduped": bool(signal_deduped),
         }
     )
     timing_rows.append(
@@ -4491,6 +4509,8 @@ def run_external_strategy_pack_shard(
                     seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
                     symbols_total=len(symbol_frames),
                     symbols_processed=0,
+                    signal_canonical_strategy_id=signal_canonical_strategy_id,
+                    signal_deduped=signal_deduped,
                 )
                 print(
                     "[gtbi] job "
@@ -4632,8 +4652,8 @@ def run_external_strategy_pack_shard(
                     "canonical_strategy_id": "",
                     "deduped": False,
                     "signal_hash": signal_hash,
-                    "signal_canonical_strategy_id": "",
-                    "signal_deduped": False,
+                    "signal_canonical_strategy_id": signal_canonical_strategy_id,
+                    "signal_deduped": bool(signal_deduped),
                 }
             )
             timing_rows.append(
@@ -4669,6 +4689,8 @@ def run_external_strategy_pack_shard(
                 seconds_total=seconds_total,
                 symbols_total=len(symbol_frames),
                 symbols_processed=len(symbol_frames),
+                signal_canonical_strategy_id=signal_canonical_strategy_id,
+                signal_deduped=signal_deduped,
             )
             print(
                 "[gtbi] job "
@@ -4700,8 +4722,8 @@ def run_external_strategy_pack_shard(
                     "canonical_strategy_id": "",
                     "deduped": False,
                     "signal_hash": signal_hash,
-                    "signal_canonical_strategy_id": "",
-                    "signal_deduped": False,
+                    "signal_canonical_strategy_id": signal_canonical_strategy_id,
+                    "signal_deduped": bool(signal_deduped),
                 }
             )
             timing_rows.append(
