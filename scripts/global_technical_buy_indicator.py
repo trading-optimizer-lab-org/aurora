@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import signal
+import threading
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -1950,6 +1951,24 @@ def _candidate_evaluation_timeout(seconds: int | float | None) -> Iterable[None]
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
+
+
+@contextlib.contextmanager
+def _candidate_evaluation_heartbeat(label: str, interval_seconds: int = 60) -> Iterable[None]:
+    """Emit periodic progress so GitHub Actions does not kill long silent jobs."""
+    stop_event = threading.Event()
+
+    def _beat() -> None:
+        while not stop_event.wait(interval_seconds):
+            print(f"[gtbi] still evaluating {label}", flush=True)
+
+    thread = threading.Thread(target=_beat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=1)
 
 
 def load_external_strategy_candidates(
@@ -3925,6 +3944,13 @@ def run_external_strategy_pack_shard(
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
     feature_store = build_feature_store(symbol_frames, benchmark, enabled=enable_feature_cache)
+    print(
+        "[gtbi] job "
+        f"{output_padded} loaded {len(candidates)} candidates "
+        f"({len(evaluable)} evaluable), symbols={len(symbol_frames)}, "
+        f"feature_cache={bool(feature_store.enabled)}",
+        flush=True,
+    )
 
     rows: list[dict[str, Any]] = []
     yearly_frames: list[pd.DataFrame] = []
@@ -3983,11 +4009,22 @@ def run_external_strategy_pack_shard(
             }
         )
         candidate_start = time.perf_counter()
+        print(
+            "[gtbi] job "
+            f"{output_padded} start candidate={candidate_id} "
+            f"concept={diagnostic_base.get('concept', '')} "
+            f"exit={diagnostic_base.get('exit_rule', '')} "
+            f"cost_bucket={cost_bucket}",
+            flush=True,
+        )
         try:
             cached = evaluation_cache.get(canonical_hash) if enable_dedupe else None
             deduped = cached is not None
             if not deduped:
-                with _candidate_evaluation_timeout(candidate_timeout_seconds):
+                heartbeat_label = f"job={output_padded} candidate={candidate_id}"
+                with _candidate_evaluation_heartbeat(heartbeat_label), _candidate_evaluation_timeout(
+                    candidate_timeout_seconds
+                ):
                     if optimized_evaluation_mode == "optimized_evaluation_v1":
                         row, trades, yearly, diagnostic = evaluate_candidate_optimized(
                             config=candidate.config,
@@ -4057,6 +4094,13 @@ def run_external_strategy_pack_shard(
                     "deduped": bool(deduped),
                 }
             )
+            print(
+                "[gtbi] job "
+                f"{output_padded} done candidate={candidate_id} "
+                f"status={'deduped' if deduped else 'evaluated'} "
+                f"seconds={time.perf_counter() - candidate_start:.2f}",
+                flush=True,
+            )
         except EarlyRejectedStrategy as exc:
             diagnostic = dict(exc.diagnostic)
             diagnostic.setdefault("seconds_total", float(time.perf_counter() - candidate_start))
@@ -4102,6 +4146,12 @@ def run_external_strategy_pack_shard(
                     "early_rejected": True,
                     "runtime_error": False,
                 }
+            )
+            print(
+                "[gtbi] job "
+                f"{output_padded} early_rejected candidate={candidate_id} "
+                f"reason={exc.reason} seconds={time.perf_counter() - candidate_start:.2f}",
+                flush=True,
             )
             continue
         except CandidateEvaluationTimeout as exc:
@@ -4153,6 +4203,12 @@ def run_external_strategy_pack_shard(
                     "runtime_error": False,
                 }
             )
+            print(
+                "[gtbi] job "
+                f"{output_padded} timeout candidate={candidate_id} "
+                f"seconds={seconds_total:.2f}",
+                flush=True,
+            )
             continue
         except Exception as exc:
             runtime_error_rows.append(
@@ -4199,6 +4255,12 @@ def run_external_strategy_pack_shard(
                     "early_rejected": False,
                     "runtime_error": True,
                 }
+            )
+            print(
+                "[gtbi] job "
+                f"{output_padded} runtime_error candidate={candidate_id} "
+                f"error={type(exc).__name__} seconds={time.perf_counter() - candidate_start:.2f}",
+                flush=True,
             )
             continue
         row.update(_external_metadata(payload))
