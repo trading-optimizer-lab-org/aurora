@@ -213,7 +213,15 @@ TIMING_DIAGNOSTIC_COLUMNS = [
     "early_rejected",
     "runtime_error",
 ]
-DEDUPE_MAP_COLUMNS = ["strategy_id", "canonical_hash", "canonical_strategy_id", "deduped"]
+DEDUPE_MAP_COLUMNS = [
+    "strategy_id",
+    "canonical_hash",
+    "canonical_strategy_id",
+    "deduped",
+    "signal_hash",
+    "signal_canonical_strategy_id",
+    "signal_deduped",
+]
 JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS = 60.0
 JOB_MANIFEST_COLUMNS = [
     "job_id",
@@ -221,6 +229,7 @@ JOB_MANIFEST_COLUMNS = [
     "shard_id",
     "slot_in_shard",
     "canonical_hash",
+    "signal_hash",
     "cost_score",
     "estimated_cost_bucket",
 ]
@@ -603,6 +612,106 @@ class FeatureStore:
     enabled: bool = True
 
 
+class SignalPrimitiveStore:
+    """Lazy boolean/numeric primitive cache for one prepared symbol frame."""
+
+    def __init__(self, frame: pd.DataFrame, benchmark_prices: pd.DataFrame) -> None:
+        self.frame = _prepare_ohlcv(frame)
+        self.benchmark = _prepare_ohlcv(benchmark_prices)
+        self.close = self.frame["close"] if not self.frame.empty else pd.Series(dtype=float)
+        self.high = self.frame["high"] if not self.frame.empty else pd.Series(dtype=float)
+        self.low = self.frame["low"] if not self.frame.empty else pd.Series(dtype=float)
+        self.volume = self.frame["volume"].fillna(0.0) if not self.frame.empty else pd.Series(dtype=float)
+        self.index = self.frame.index
+        self.cache = _frame_series_cache(self.frame, "_gtbi_signal_primitive_cache")
+
+    def const(self, value: bool) -> pd.Series:
+        return _safe_bool_series(value, self.index)
+
+    def sma(self, window: int) -> pd.Series:
+        key = ("sma", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close.rolling(int(window), min_periods=int(window)).mean()
+        return self.cache[key]
+
+    def ema(self, window: int) -> pd.Series:
+        key = ("ema", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close.ewm(span=int(window), adjust=False, min_periods=int(window)).mean()
+        return self.cache[key]
+
+    def adv(self, window: int, *, min_periods: int | None = None) -> pd.Series:
+        key = ("adv", int(window), min_periods)
+        if key not in self.cache:
+            self.cache[key] = self.volume.rolling(
+                int(window),
+                min_periods=min_periods or min(int(window), len(self.frame)),
+            ).mean()
+        return self.cache[key]
+
+    def rolling_high(self, window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
+        key = ("rolling_high", int(window), int(shift), min_periods)
+        if key not in self.cache:
+            source = self.high.shift(int(shift)) if shift else self.high
+            self.cache[key] = source.rolling(
+                int(window),
+                min_periods=min_periods or min(int(window), len(self.frame)),
+            ).max()
+        return self.cache[key]
+
+    def rolling_low(self, window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
+        key = ("rolling_low", int(window), int(shift), min_periods)
+        if key not in self.cache:
+            source = self.low.shift(int(shift)) if shift else self.low
+            self.cache[key] = source.rolling(
+                int(window),
+                min_periods=min_periods or min(int(window), len(self.frame)),
+            ).min()
+        return self.cache[key]
+
+    def rsi(self, period: int) -> pd.Series:
+        key = ("rsi", int(period))
+        if key not in self.cache:
+            self.cache[key] = _rsi(self.close, int(period)).fillna(50.0)
+        return self.cache[key]
+
+    def close_gt_ema(self, window: int) -> pd.Series:
+        key = ("close_gt_ema", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close > self.ema(int(window))
+        return self.cache[key]
+
+    def ema_gt_ema(self, fast: int, slow: int) -> pd.Series:
+        key = ("ema_gt_ema", int(fast), int(slow))
+        if key not in self.cache:
+            self.cache[key] = self.ema(int(fast)) > self.ema(int(slow))
+        return self.cache[key]
+
+    def close_breaks_high(self, window: int) -> pd.Series:
+        key = ("close_breaks_high", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close > self.rolling_high(int(window), shift=1, min_periods=int(window))
+        return self.cache[key]
+
+    def volume_gt_adv(self, window: int, multiple: float) -> pd.Series:
+        key = ("volume_gt_adv", int(window), round(float(multiple), 8))
+        if key not in self.cache:
+            self.cache[key] = self.volume > self.adv(int(window)) * float(multiple)
+        return self.cache[key]
+
+    def rs_ratio_gt_ma(self, window: int) -> pd.Series:
+        key = ("rs_ratio_gt_ma", int(window), id(self.benchmark), len(self.benchmark))
+        if key not in self.cache:
+            if self.benchmark.empty:
+                self.cache[key] = self.const(True)
+            else:
+                spy_close = self.benchmark["close"].reindex(self.index).ffill()
+                rs_line = self.close / spy_close.replace(0.0, np.nan)
+                rs_avg = rs_line.rolling(int(window), min_periods=min(int(window), len(self.frame))).mean()
+                self.cache[key] = rs_line > rs_avg
+        return self.cache[key]
+
+
 def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame) -> None:
     prepared = _prepare_ohlcv(frame)
     if prepared.empty:
@@ -637,9 +746,10 @@ def build_feature_store(
     benchmark_prices: pd.DataFrame,
     *,
     enabled: bool = True,
+    prewarm: bool = True,
 ) -> FeatureStore:
     start = time.perf_counter()
-    if enabled:
+    if enabled and prewarm:
         for frame in symbol_frames.values():
             _prewarm_common_features(frame, benchmark_prices)
     return FeatureStore(
@@ -1010,46 +1120,45 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     volume = frame["volume"].fillna(0.0)
     index = frame.index
     cache = _frame_series_cache(frame, "_gtbi_entry_signal_series_cache")
+    primitives = SignalPrimitiveStore(frame, benchmark)
 
     def const(value: bool) -> pd.Series:
-        return _safe_bool_series(value, index)
+        return primitives.const(value)
 
     def sma(window: int) -> pd.Series:
         key = ("sma", int(window))
         if key not in cache:
-            cache[key] = close.rolling(int(window), min_periods=int(window)).mean()
+            cache[key] = primitives.sma(int(window))
         return cache[key]
 
     def ema(window: int) -> pd.Series:
         key = ("ema", int(window))
         if key not in cache:
-            cache[key] = close.ewm(span=int(window), adjust=False, min_periods=int(window)).mean()
+            cache[key] = primitives.ema(int(window))
         return cache[key]
 
     def high_roll(window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
         key = (f"high_{shift}_{min_periods}", int(window))
         if key not in cache:
-            source = high.shift(shift) if shift else high
-            cache[key] = source.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).max()
+            cache[key] = primitives.rolling_high(int(window), shift=shift, min_periods=min_periods)
         return cache[key]
 
     def low_roll(window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
         key = (f"low_{shift}_{min_periods}", int(window))
         if key not in cache:
-            source = low.shift(shift) if shift else low
-            cache[key] = source.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).min()
+            cache[key] = primitives.rolling_low(int(window), shift=shift, min_periods=min_periods)
         return cache[key]
 
     def avg_volume(window: int, *, min_periods: int | None = None) -> pd.Series:
         key = (f"vol_{min_periods}", int(window))
         if key not in cache:
-            cache[key] = volume.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).mean()
+            cache[key] = primitives.adv(int(window), min_periods=min_periods)
         return cache[key]
 
     def rsi_line() -> pd.Series:
         key = ("rsi", int(config.rsi_period))
         if key not in cache:
-            cache[key] = _rsi(close, config.rsi_period).fillna(50.0)
+            cache[key] = primitives.rsi(config.rsi_period)
         return cache[key]
 
     def high_n() -> pd.Series:
@@ -1977,6 +2086,48 @@ def load_external_strategy_candidates(
     return candidates
 
 
+def _balanced_external_strategy_candidates_for_job(
+    pack_path: Path,
+    *,
+    job_index: int,
+    candidate_count_per_job: int,
+    strategy_format: str = "auto",
+) -> tuple[list[ExternalStrategyCandidate], int]:
+    all_candidates = load_external_strategy_candidates(
+        pack_path,
+        shard_id=None,
+        offset=0,
+        limit=None,
+        strategy_format=strategy_format,
+    )
+    per_job = max(int(candidate_count_per_job), 1)
+    total_jobs = int(math.ceil(len(all_candidates) / per_job)) if all_candidates else 0
+    if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
+        return [], total_jobs
+    ordered = sorted(
+        all_candidates,
+        key=lambda candidate: (
+            _estimated_cost_score(candidate.payload)[0],
+            str(candidate.payload.get("concept_id", "")),
+            int(candidate.payload.get("shard_id", 0)),
+            int(candidate.payload.get("slot_in_shard", 0)),
+            str(candidate.payload.get("strategy_id", "")),
+        ),
+    )
+    selected: list[ExternalStrategyCandidate] = []
+    cursor = int(job_index)
+    while cursor < len(ordered) and len(selected) < per_job:
+        selected.append(ordered[cursor])
+        cursor += total_jobs
+    selected.sort(
+        key=lambda candidate: (
+            _estimated_cost_score(candidate.payload)[0],
+            str(candidate.payload.get("strategy_id", "")),
+        )
+    )
+    return selected, total_jobs
+
+
 def _yearly_for_split(yearly: pd.DataFrame, split: str, years: range) -> pd.DataFrame:
     cols = [col for col in YEARLY_COLUMNS if col != "candidate_id"]
     if yearly.empty:
@@ -2463,6 +2614,70 @@ def canonical_external_strategy_hash(candidate: ExternalStrategyCandidate) -> st
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
+    """Hash only the effective entry/market/stock/RS signal definition."""
+
+    payload = candidate.payload
+    canonical = {
+        "family": _family_for_external_strategy(payload),
+        "concept_id": payload.get("concept_id"),
+        "market_overlay_id": payload.get("market_overlay_id"),
+        "trend_profile_id": payload.get("trend_profile_id"),
+        "rs_profile_id": payload.get("rs_profile_id"),
+        "aggression_id": payload.get("aggression_id"),
+        "config_signal": {
+            key: value
+            for key, value in candidate.config.to_dict().items()
+            if key
+            not in {
+                "stop_loss_pct",
+                "trailing_stop_pct",
+                "take_profit_pct",
+                "max_holding_days",
+                "use_exit_ma",
+                "use_market_exit",
+                "exit_ma_days",
+            }
+        },
+        "rules": {
+            "entry_rules": payload.get("entry_rules", {}),
+            "market_regime_rules": payload.get("market_regime_rules", {}),
+            "stock_trend_rules": payload.get("stock_trend_rules", {}),
+            "relative_strength_rules": payload.get("relative_strength_rules", {}),
+            "guardrails": {
+                key: value
+                for key, value in dict(payload.get("guardrails") or {}).items()
+                if key
+                in {
+                    "data_scope",
+                    "do_not_load_or_use_data_on_or_after",
+                    "locked_start_exclusive",
+                    "execution",
+                    "positioning",
+                    "min_market_cap_usd",
+                    "train_end",
+                    "validation_start",
+                    "validation_end",
+                }
+            },
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+RECOVERY_FAST_CONCEPT_SCORES = {
+    "q_stair_step_breakout": -8.0,
+    "rsi2_pullback_rebound_trend": -8.0,
+    "post_ep_pullback_reclaim_proxy": -6.0,
+    "moving_average_timing_cross": -6.0,
+    "time_series_momentum_reentry": -6.0,
+    "macd_histogram_turnup_trend": -5.0,
+    "three_weeks_tight_daily_proxy": -4.0,
+    "q_stair_step_reclaim": -3.0,
+}
+
+
 def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
     concept = _external_profile_value(payload, "concept_id", "concept")
     family = _family_for_external_strategy(payload)
@@ -2493,7 +2708,7 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
         "trend_template_pullback_rebound",
         "adx_di_pullback_reversal",
     }
-    score = 0.0
+    score = float(RECOVERY_FAST_CONCEPT_SCORES.get(concept, 0.0))
     if concept in very_slow_concepts:
         score += 5.0
     elif concept in slow_concepts:
@@ -2508,6 +2723,8 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
         score += 1.0
     if aggressiveness == "frequency_quality":
         score += 1.0
+    if score <= -4.0:
+        return score, "fast"
     if score >= 8.0:
         return score, "very_slow"
     if score >= 5.0:
@@ -2526,6 +2743,7 @@ def _append_external_timeout_result(
     payload: dict[str, Any],
     candidate_id: str,
     canonical_hash: str,
+    signal_hash: str,
     reason: str,
     seconds_total: float,
     symbols_total: int,
@@ -2553,6 +2771,9 @@ def _append_external_timeout_result(
             "canonical_hash": canonical_hash,
             "canonical_strategy_id": "",
             "deduped": False,
+            "signal_hash": signal_hash,
+            "signal_canonical_strategy_id": "",
+            "signal_deduped": False,
         }
     )
     timing_rows.append(
@@ -2883,7 +3104,7 @@ def _evaluate_external_candidate_core(
     enable_early_stopping: bool,
     deadline: float | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    if optimized_evaluation_mode == "optimized_evaluation_v1":
+    if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2"}:
         return evaluate_candidate_optimized(
             config=config,
             candidate_id=candidate_id,
@@ -4008,7 +4229,7 @@ def run_external_strategy_pack_shard(
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
-    optimized_evaluation_mode: str = "optimized_evaluation_v1",
+    optimized_evaluation_mode: str = "optimized_evaluation_v2",
     enable_feature_cache: bool = True,
     enable_dedupe: bool = True,
     enable_safe_prefilter: bool = True,
@@ -4030,13 +4251,35 @@ def run_external_strategy_pack_shard(
     output_prefix = "job" if output_name.startswith("job-") else "shard"
     output_padded = output_name.split("-", 1)[1] if output_prefix == "job" and "-" in output_name else shard_padded
     file_suffix = f"{output_prefix}_{output_padded}"
-    candidates = load_external_strategy_candidates(
-        external_strategy_pack_path,
-        shard_id=shard,
-        offset=external_strategy_offset,
-        limit=external_strategy_limit,
-        strategy_format=external_strategy_format,
+    job_index_for_balancing: int | None = None
+    if output_prefix == "job" and str(output_padded).isdigit():
+        job_index_for_balancing = int(output_padded)
+    use_v2_global_schedule = (
+        str(optimized_evaluation_mode) == "optimized_evaluation_v2"
+        and bool(enable_cost_scheduling)
+        and job_index_for_balancing is not None
     )
+    if use_v2_global_schedule:
+        candidates, balanced_total_jobs = _balanced_external_strategy_candidates_for_job(
+            external_strategy_pack_path,
+            job_index=int(job_index_for_balancing),
+            candidate_count_per_job=external_strategy_limit,
+            strategy_format=external_strategy_format,
+        )
+        print(
+            "[gtbi] job "
+            f"{output_padded} using optimized_evaluation_v2 balanced schedule "
+            f"total_jobs={balanced_total_jobs} candidates={len(candidates)}",
+            flush=True,
+        )
+    else:
+        candidates = load_external_strategy_candidates(
+            external_strategy_pack_path,
+            shard_id=shard,
+            offset=external_strategy_offset,
+            limit=external_strategy_limit,
+            strategy_format=external_strategy_format,
+        )
     unsupported_rows: list[dict[str, Any]] = []
     if any(candidate.unsupported_rules for candidate in candidates):
         for candidate in candidates:
@@ -4056,7 +4299,7 @@ def run_external_strategy_pack_shard(
             raise ValueError(f"{len(unsupported_rows)} unsupported external strategies in shard {shard_padded}")
 
     evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
-    if enable_cost_scheduling:
+    if enable_cost_scheduling and not use_v2_global_schedule:
         evaluable = sorted(evaluable, key=lambda item: _estimated_cost_score(item.payload)[0])
     if prebuilt_pack_dir is None:
         pack_root = output_dir / "_external_pack_data"
@@ -4077,7 +4320,12 @@ def run_external_strategy_pack_shard(
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
-    feature_store = build_feature_store(symbol_frames, benchmark, enabled=enable_feature_cache)
+    feature_store = build_feature_store(
+        symbol_frames,
+        benchmark,
+        enabled=enable_feature_cache,
+        prewarm=str(optimized_evaluation_mode) != "optimized_evaluation_v2",
+    )
     print(
         "[gtbi] job "
         f"{output_padded} loaded {len(candidates)} candidates "
@@ -4129,6 +4377,7 @@ def run_external_strategy_pack_shard(
         payload = candidate.payload
         candidate_id = str(payload.get("strategy_id"))
         canonical_hash = canonical_external_strategy_hash(candidate)
+        signal_hash = signal_external_strategy_hash(candidate)
         diagnostic_base = _external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash)
         cost_score, cost_bucket = _estimated_cost_score(payload)
         job_manifest_rows.append(
@@ -4138,6 +4387,7 @@ def run_external_strategy_pack_shard(
                 "shard_id": payload.get("shard_id"),
                 "slot_in_shard": payload.get("slot_in_shard"),
                 "canonical_hash": canonical_hash,
+                "signal_hash": signal_hash,
                 "cost_score": float(cost_score),
                 "estimated_cost_bucket": cost_bucket,
             }
@@ -4155,6 +4405,7 @@ def run_external_strategy_pack_shard(
                     payload=payload,
                     candidate_id=candidate_id,
                     canonical_hash=canonical_hash,
+                    signal_hash=signal_hash,
                     reason=reason,
                     seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
                     symbols_total=len(symbol_frames),
@@ -4227,6 +4478,9 @@ def run_external_strategy_pack_shard(
                     "canonical_hash": canonical_hash,
                     "canonical_strategy_id": canonical_strategy_id,
                     "deduped": bool(deduped),
+                    "signal_hash": signal_hash,
+                    "signal_canonical_strategy_id": canonical_strategy_id,
+                    "signal_deduped": bool(deduped),
                 }
             )
             print(
@@ -4269,6 +4523,9 @@ def run_external_strategy_pack_shard(
                     "canonical_hash": canonical_hash,
                     "canonical_strategy_id": "",
                     "deduped": False,
+                    "signal_hash": signal_hash,
+                    "signal_canonical_strategy_id": "",
+                    "signal_deduped": False,
                 }
             )
             timing_rows.append(
@@ -4299,6 +4556,7 @@ def run_external_strategy_pack_shard(
                 payload=payload,
                 candidate_id=candidate_id,
                 canonical_hash=canonical_hash,
+                signal_hash=signal_hash,
                 reason=repr(exc),
                 seconds_total=seconds_total,
                 symbols_total=len(symbol_frames),
@@ -4333,6 +4591,9 @@ def run_external_strategy_pack_shard(
                     "canonical_hash": canonical_hash,
                     "canonical_strategy_id": "",
                     "deduped": False,
+                    "signal_hash": signal_hash,
+                    "signal_canonical_strategy_id": "",
+                    "signal_deduped": False,
                 }
             )
             timing_rows.append(
@@ -4861,7 +5122,7 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
     parser.add_argument("--job-wall-clock-seconds", type=int, default=300)
-    parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v1")
+    parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v2")
     parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-safe-prefilter", action=argparse.BooleanOptionalAction, default=True)

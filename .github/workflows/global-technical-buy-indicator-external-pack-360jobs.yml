@@ -30,7 +30,7 @@ on:
       optimized_evaluation_mode:
         description: "Evaluation engine mode"
         required: true
-        default: "optimized_evaluation_v1"
+        default: "optimized_evaluation_v2"
       enable_feature_cache:
         description: "Enable per-job FeatureStore cache"
         required: true

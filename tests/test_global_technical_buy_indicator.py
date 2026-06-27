@@ -1217,6 +1217,27 @@ def test_external_canonical_hash_ignores_notes_but_changes_exit_rules(tmp_path: 
     assert gtbi.canonical_external_strategy_hash(candidates[0]) != gtbi.canonical_external_strategy_hash(candidates[2])
 
 
+def test_signal_external_strategy_hash_ignores_exit_rules_but_not_entry_rules(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard = pack / "shards"
+    shard.mkdir(parents=True)
+    base = _external_strategy_payload("base")
+    different_exit = _external_strategy_payload("different_exit")
+    different_exit["exit_rules"]["take_profit_pct"] = 0.25
+    different_entry = _external_strategy_payload("different_entry")
+    different_entry["entry_rules"]["prior_runup_min_pct"] = 0.55
+    (shard / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in (base, different_exit, different_entry)) + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=3)
+
+    assert gtbi.canonical_external_strategy_hash(candidates[0]) != gtbi.canonical_external_strategy_hash(candidates[1])
+    assert gtbi.signal_external_strategy_hash(candidates[0]) == gtbi.signal_external_strategy_hash(candidates[1])
+    assert gtbi.signal_external_strategy_hash(candidates[0]) != gtbi.signal_external_strategy_hash(candidates[2])
+
+
 def test_external_cost_scheduling_orders_fast_candidates_first() -> None:
     fast = _external_strategy_payload("fast_candidate")
     slow = _external_strategy_payload("slow_candidate")
@@ -1229,6 +1250,48 @@ def test_external_cost_scheduling_orders_fast_candidates_first() -> None:
 
     assert ordered[0]["strategy_id"] == "fast_candidate"
     assert gtbi._estimated_cost_score(slow)[1] == "very_slow"
+
+
+def test_balanced_external_strategy_candidates_spread_fast_candidates_across_jobs(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows = []
+    for idx in range(24):
+        payload = _external_strategy_payload(f"fast_{idx:02d}", shard_id=idx // 20, slot=idx % 20)
+        payload["concept_id"] = "q_stair_step_breakout"
+        rows.append(payload)
+    for idx in range(24):
+        payload = _external_strategy_payload(f"slow_{idx:02d}", shard_id=1 + idx // 20, slot=idx % 20)
+        payload["concept_id"] = "bollinger_squeeze_breakout"
+        payload["exit_profile_id"] = "balanced_tp_ema20"
+        payload["market_overlay_id"] = "spy_low_vol_uptrend"
+        payload["aggression_id"] = "frequency_quality"
+        rows.append(payload)
+    by_shard: dict[int, list[dict[str, object]]] = {}
+    for row in rows:
+        by_shard.setdefault(int(row["shard_id"]), []).append(row)
+    for shard_id, shard_rows in by_shard.items():
+        (shard_dir / f"shard_{shard_id:03d}.jsonl").write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in shard_rows) + "\n",
+            encoding="utf-8",
+        )
+
+    first_job, total_jobs = gtbi._balanced_external_strategy_candidates_for_job(
+        pack,
+        job_index=0,
+        candidate_count_per_job=4,
+    )
+    later_job, _ = gtbi._balanced_external_strategy_candidates_for_job(
+        pack,
+        job_index=6,
+        candidate_count_per_job=4,
+    )
+
+    assert total_jobs == 12
+    assert first_job[0].payload["concept_id"] == "q_stair_step_breakout"
+    assert later_job[0].payload["concept_id"] == "q_stair_step_breakout"
+    assert len(first_job) == 4
 
 
 def test_feature_store_preserves_entry_signals() -> None:
@@ -1254,6 +1317,25 @@ def test_feature_store_preserves_entry_signals() -> None:
 
     pd.testing.assert_series_equal(baseline, cached)
     assert store.seconds_build >= 0.0
+
+
+def test_signal_primitive_store_reuses_boolean_primitives() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(140))
+    spy = gtbi._prepare_ohlcv(_spy_frame(140))
+    store = gtbi.SignalPrimitiveStore(frame, spy)
+
+    close_gt_ema10 = store.close_gt_ema(10)
+    close_gt_ema10_again = store.close_gt_ema(10)
+    ema10_gt_ema20 = store.ema_gt_ema(10, 20)
+    breakout_20 = store.close_breaks_high(20)
+    volume_breakout = store.volume_gt_adv(20, 1.5)
+    rs_filter = store.rs_ratio_gt_ma(20)
+
+    assert close_gt_ema10 is close_gt_ema10_again
+    assert len(ema10_gt_ema20) == len(frame)
+    assert len(breakout_20) == len(frame)
+    assert len(volume_breakout) == len(frame)
+    assert len(rs_filter) == len(frame)
 
 
 def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
@@ -1603,7 +1685,7 @@ def test_external_block_merge_sums_block_artifacts(tmp_path: Path) -> None:
                     "total_strategies_unsupported": 0,
                     "total_strategies_deduped": 0,
                     "candidate_timeout_seconds": 300,
-                    "optimized_evaluation_mode": "optimized_evaluation_v1",
+                    "optimized_evaluation_mode": "optimized_evaluation_v2",
                 }
             ),
             encoding="utf-8",
@@ -1646,7 +1728,7 @@ def test_external_block_merge_sums_block_artifacts(tmp_path: Path) -> None:
     assert summary["total_strategies_evaluated"] == 36
     assert summary["total_strategies_early_rejected"] == 2
     assert summary["total_strategies_timed_out"] == 2
-    assert summary["optimized_evaluation_mode"] == "optimized_evaluation_v1"
+    assert summary["optimized_evaluation_mode"] == "optimized_evaluation_v2"
     assert list(pd.read_csv(tmp_path / "final" / "leaderboard.csv")["candidate_id"]) == ["b", "a"]
 
 
@@ -1673,7 +1755,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "jobs_per_block=180" in text
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
-    assert "optimized_evaluation_v1" in text
+    assert "optimized_evaluation_v2" in text
     assert "--optimized-evaluation-mode" in text
     assert "enable_block_merge" in text
     assert "merge_block_0" in data["jobs"]
@@ -1695,14 +1777,14 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "requires_local_machine" not in text
 
 
-def test_optimized_evaluation_v1_workflow_alias_exists() -> None:
+def test_optimized_evaluation_v1_workflow_alias_uses_v2_engine() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-optimized-evaluation-v1.yml")
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
 
     assert data["name"] == "Global Technical Buy Indicator Optimized Evaluation v1"
     assert "workflow_dispatch" in data[True]
-    assert "optimized_evaluation_v1" in text
+    assert "optimized_evaluation_v2" in text
     assert "self-hosted" not in text
     assert "C:\\" not in text
 
