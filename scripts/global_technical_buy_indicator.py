@@ -2238,10 +2238,16 @@ def _balanced_external_signal_groups_for_job(
     if max_signal_groups is not None and int(max_signal_groups) > 0:
         groups = groups[: int(max_signal_groups)]
     per_job = max(int(signal_groups_per_job), 1)
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        active_groups = max(int(schedule_active_jobs), 1) * per_job
+        groups = groups[:active_groups]
     total_signal_groups = int(len(groups))
     total_jobs = int(math.ceil(total_signal_groups / per_job)) if total_signal_groups else 0
     if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
         return [], total_jobs, total_signal_groups
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        start = int(job_index) * per_job
+        return groups[start : start + per_job], total_jobs, total_signal_groups
 
     def group_cost(group: list[ExternalStrategyCandidate]) -> float:
         if not group:
@@ -2283,7 +2289,7 @@ def _effective_job_deadline(
     job_start: float,
     job_wall_clock_seconds: int | float | None,
 ) -> float | None:
-    if str(optimized_evaluation_mode) == "optimized_evaluation_v2":
+    if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"}:
         return None
     if job_wall_clock_seconds is None or float(job_wall_clock_seconds) <= 0:
         return None

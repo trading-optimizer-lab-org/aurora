@@ -1417,9 +1417,50 @@ def test_signal_first_balancer_selects_complete_signal_groups(tmp_path: Path) ->
     assert all(len({gtbi.signal_external_strategy_hash(candidate) for candidate in group}) == 1 for group in selected)
 
 
+def test_signal_first_balancer_uses_fast_signal_groups_for_smoke_window(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows: list[dict[str, object]] = []
+    for concept in ("q_stair_step_breakout", "atr_compression_nr_breakout"):
+        for group_index in range(3):
+            for exit_index in range(4):
+                payload = _external_strategy_payload(
+                    f"{concept}_{group_index}_exit_{exit_index}",
+                    shard_id=0,
+                    slot=len(rows),
+                )
+                payload["concept_id"] = concept
+                payload["entry_rules"]["breakout_lookback_days"] = 30 + group_index
+                payload["exit_rules"]["take_profit_pct"] = 0.05 + exit_index * 0.05
+                rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    selected, total_jobs, total_signal_groups = gtbi._balanced_external_signal_groups_for_job(
+        pack,
+        job_index=0,
+        signal_groups_per_job=2,
+        schedule_active_jobs=1,
+        max_signal_groups=None,
+        strategy_format="jsonl",
+    )
+
+    assert total_jobs == 1
+    assert total_signal_groups == 2
+    assert {candidate.payload["concept_id"] for group in selected for candidate in group} == {"q_stair_step_breakout"}
+
+
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
     assert gtbi._effective_job_deadline(
         optimized_evaluation_mode="optimized_evaluation_v2",
+        job_start=100.0,
+        job_wall_clock_seconds=300,
+    ) is None
+    assert gtbi._effective_job_deadline(
+        optimized_evaluation_mode="optimized_evaluation_v3_signal_first",
         job_start=100.0,
         job_wall_clock_seconds=300,
     ) is None
