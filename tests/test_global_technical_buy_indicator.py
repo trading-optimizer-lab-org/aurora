@@ -853,6 +853,27 @@ def test_pack_builder_excludes_locked_rows_and_splits_symbols(tmp_path: Path) ->
     assert pd.to_datetime(shard["date"]).max() < pd.Timestamp("2020-01-01")
 
 
+def test_pack_price_preparation_filters_locked_rows_without_boolean_frame_slice() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": ["2020-01-03", "2021-01-01", "2020-01-02", "2019-12-31"],
+            "open": [11.0, 99.0, 10.0, -1.0],
+            "high": [12.0, 100.0, 11.0, 2.0],
+            "low": [10.0, 98.0, 9.0, 1.0],
+            "close": [11.5, 99.5, 10.5, 1.5],
+            "volume": [1000, 2000, 1500, 500],
+        }
+    )
+
+    prepared = gtbi._prepare_pack_prices_before_locked(frame, symbol="000001-SZ", locked_start="2021-01-01")
+
+    assert prepared.columns.tolist() == gtbi.PRICE_COLUMNS
+    assert prepared["symbol"].tolist() == ["000001-SZ", "000001-SZ"]
+    assert prepared["date"].tolist() == [pd.Timestamp("2020-01-02"), pd.Timestamp("2020-01-03")]
+    assert prepared["adj_close"].tolist() == prepared["close"].tolist()
+    assert pd.to_datetime(prepared["date"]).max() < pd.Timestamp("2021-01-01")
+
+
 def test_pack_builder_filters_symbols_by_min_market_cap(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     normalized = lake / "normalized"

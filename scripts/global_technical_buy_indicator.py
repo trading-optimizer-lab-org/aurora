@@ -722,6 +722,75 @@ def _prepare_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _prepare_pack_prices_before_locked(frame: pd.DataFrame, *, symbol: str, locked_start: str) -> pd.DataFrame:
+    """Normalize one symbol for pack building without pandas boolean frame slicing."""
+    if frame.empty:
+        return pd.DataFrame(columns=PRICE_COLUMNS)
+
+    raw_dates: Any
+    if "date" in frame.columns:
+        raw_dates = frame["date"]
+    elif isinstance(frame.index, pd.DatetimeIndex):
+        raw_dates = pd.Series(frame.index, index=frame.index)
+    else:
+        raise ValueError("price frame must have a date column or DatetimeIndex")
+
+    parsed_dates = pd.to_datetime(raw_dates, errors="coerce", utc=True)
+    if isinstance(parsed_dates, pd.Series):
+        date_values = parsed_dates.dt.tz_convert(None).to_numpy(dtype="datetime64[ns]")
+    else:
+        date_values = parsed_dates.tz_convert(None).to_numpy(dtype="datetime64[ns]")
+
+    def numeric_values(column: str) -> np.ndarray:
+        if column in frame.columns:
+            source = frame[column]
+        elif column in {"open", "high", "low", "adj_close"} and "close" in frame.columns:
+            source = frame["close"]
+        elif column == "volume":
+            source = pd.Series(np.zeros(len(frame), dtype=float))
+        else:
+            raise ValueError(f"missing price column {column!r}")
+        return pd.to_numeric(source, errors="coerce").astype("float64").to_numpy()
+
+    open_values = numeric_values("open")
+    high_values = numeric_values("high")
+    low_values = numeric_values("low")
+    close_values = numeric_values("close")
+    adj_close_values = numeric_values("adj_close")
+    volume_values = numeric_values("volume")
+
+    cutoff = np.datetime64(_dt(locked_start).to_datetime64(), "ns")
+    mask = (
+        ~np.isnat(date_values)
+        & (date_values < cutoff)
+        & np.isfinite(open_values)
+        & np.isfinite(high_values)
+        & np.isfinite(low_values)
+        & np.isfinite(close_values)
+        & (open_values > 0)
+        & (high_values > 0)
+        & (low_values > 0)
+        & (close_values > 0)
+    )
+    positions = np.flatnonzero(mask)
+    if positions.size == 0:
+        return pd.DataFrame(columns=PRICE_COLUMNS)
+    positions = positions[np.argsort(date_values[positions], kind="mergesort")]
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(date_values[positions]),
+            "open": open_values[positions],
+            "high": high_values[positions],
+            "low": low_values[positions],
+            "close": close_values[positions],
+            "adj_close": adj_close_values[positions],
+            "volume": volume_values[positions],
+            "symbol": str(symbol),
+        },
+        columns=PRICE_COLUMNS,
+    )
+
+
 def _rsi(close: pd.Series, period: int) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0.0)
@@ -5193,15 +5262,17 @@ def build_stage_packs(
                     f"group={group_index} read_symbol={symbol_index}/{len(group_symbols)} symbol={symbol}",
                     verbose=True,
                 )
-                frame = _prepare_ohlcv(pd.read_parquet(path))
+                frame = _prepare_pack_prices_before_locked(
+                    pd.read_parquet(path),
+                    symbol=symbol,
+                    locked_start=locked_start,
+                )
             except Exception:
                 _build_pack_log(f"group={group_index} skip_symbol={symbol}", verbose=True)
                 continue
-            frame = frame[frame.index < _dt(locked_start)].copy()
             if len(frame) < min_rows:
                 continue
-            frame["symbol"] = symbol
-            frames.append(frame.reset_index(drop=True)[PRICE_COLUMNS])
+            frames.append(frame[PRICE_COLUMNS])
         if frames:
             _build_pack_log(f"group={group_index} concat_frames={len(frames)}")
             return pd.concat(frames, ignore_index=True, sort=False)
