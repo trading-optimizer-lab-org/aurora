@@ -506,13 +506,13 @@ def run_merge(output_dir: Path) -> None:
     }
     (output_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     lines = [
-        f"# SWR strict final > initial report",
+        "# SWR strict final > initial report",
         "",
         f"- Accepted count: {summary['accepted_count']}",
         f"- Top candidate rows: {summary['top_candidate_rows']}",
         f"- Monthly withdrawal: {MONTHLY_WITHDRAWAL}",
-        f"- Strict final > initial: true",
-        f"- Locked opened: false",
+        "- Strict final > initial: true",
+        "- Locked opened: false",
     ]
     (output_dir / "SWR_STRICT_FINAL_GT_INITIAL_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
