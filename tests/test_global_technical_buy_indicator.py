@@ -1252,6 +1252,21 @@ def test_external_cost_scheduling_orders_fast_candidates_first() -> None:
     assert gtbi._estimated_cost_score(slow)[1] == "very_slow"
 
 
+def test_v3_observed_timeout_concepts_are_not_marked_fast() -> None:
+    for concept in (
+        "moving_average_timing_cross",
+        "q_stair_step_breakout",
+        "time_series_momentum_reentry",
+        "rsi2_pullback_rebound_trend",
+    ):
+        payload = _external_strategy_payload(f"{concept}_candidate")
+        payload["concept_id"] = concept
+
+        _, bucket = gtbi._estimated_cost_score(payload)
+
+        assert bucket in {"slow", "very_slow"}
+
+
 def test_balanced_external_strategy_candidates_group_fast_signal_siblings_before_slow(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     shard_dir = pack / "shards"
@@ -1422,7 +1437,7 @@ def test_signal_first_balancer_uses_fast_signal_groups_for_smoke_window(tmp_path
     shard_dir = pack / "shards"
     shard_dir.mkdir(parents=True)
     rows: list[dict[str, object]] = []
-    for concept in ("q_stair_step_breakout", "atr_compression_nr_breakout"):
+    for concept in ("post_ep_pullback_reclaim_proxy", "atr_compression_nr_breakout"):
         for group_index in range(3):
             for exit_index in range(4):
                 payload = _external_strategy_payload(
@@ -1450,7 +1465,9 @@ def test_signal_first_balancer_uses_fast_signal_groups_for_smoke_window(tmp_path
 
     assert total_jobs == 1
     assert total_signal_groups == 2
-    assert {candidate.payload["concept_id"] for group in selected for candidate in group} == {"q_stair_step_breakout"}
+    assert {candidate.payload["concept_id"] for group in selected for candidate in group} == {
+        "post_ep_pullback_reclaim_proxy"
+    }
 
 
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:

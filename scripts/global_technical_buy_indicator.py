@@ -2863,14 +2863,20 @@ def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
 
 
 RECOVERY_FAST_CONCEPT_SCORES = {
-    "q_stair_step_breakout": -8.0,
-    "rsi2_pullback_rebound_trend": -8.0,
     "post_ep_pullback_reclaim_proxy": -6.0,
-    "moving_average_timing_cross": -6.0,
-    "time_series_momentum_reentry": -6.0,
     "macd_histogram_turnup_trend": -5.0,
     "three_weeks_tight_daily_proxy": -4.0,
     "q_stair_step_reclaim": -3.0,
+}
+
+V3_SIGNAL_TIMEOUT_CONCEPT_SCORES = {
+    # Observed in v3 signal-first smoke 28301085292. These concepts were cheap
+    # enough under earlier strategy-level sampling, but expensive when the engine
+    # builds the full shared signal across the global universe.
+    "moving_average_timing_cross": 7.0,
+    "q_stair_step_breakout": 7.0,
+    "time_series_momentum_reentry": 6.0,
+    "rsi2_pullback_rebound_trend": 6.0,
 }
 
 
@@ -2905,6 +2911,7 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
         "adx_di_pullback_reversal",
     }
     score = float(RECOVERY_FAST_CONCEPT_SCORES.get(concept, 0.0))
+    score += float(V3_SIGNAL_TIMEOUT_CONCEPT_SCORES.get(concept, 0.0))
     if concept in very_slow_concepts:
         score += 5.0
     elif concept in slow_concepts:
