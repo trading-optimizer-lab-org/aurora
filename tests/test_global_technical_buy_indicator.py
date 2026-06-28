@@ -1267,6 +1267,40 @@ def test_v3_observed_timeout_concepts_are_not_marked_fast() -> None:
         assert bucket in {"slow", "very_slow"}
 
 
+def test_v5_observed_expensive_event_first_concepts_are_not_marked_fast() -> None:
+    for concept in (
+        "three_weeks_tight_daily_proxy",
+        "q_stair_step_reclaim",
+        "q_stair_step_breakout",
+        "macd_histogram_turnup_trend",
+        "post_ep_pullback_reclaim_proxy",
+        "bollinger_lower_band_reclaim_trend",
+        "rs_pullback_hold_rebound",
+    ):
+        payload = _external_strategy_payload(f"{concept}_candidate")
+        payload["concept_id"] = concept
+
+        _, bucket = gtbi._estimated_cost_score(
+            payload,
+            optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        )
+
+        assert bucket in {"slow", "very_slow"}
+
+
+def test_v5_cost_weights_do_not_change_default_or_v4_scheduling() -> None:
+    payload = _external_strategy_payload("event_first_only_cost")
+    payload["concept_id"] = "three_weeks_tight_daily_proxy"
+
+    default_score = gtbi._estimated_cost_score(payload)
+    v4_score = gtbi._estimated_cost_score(payload, optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout")
+    v5_score = gtbi._estimated_cost_score(payload, optimized_evaluation_mode="optimized_evaluation_v5_event_first")
+
+    assert default_score == v4_score
+    assert default_score[1] == "fast"
+    assert v5_score[1] in {"slow", "very_slow"}
+
+
 def test_balanced_external_strategy_candidates_group_fast_signal_siblings_before_slow(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     shard_dir = pack / "shards"
@@ -1274,7 +1308,7 @@ def test_balanced_external_strategy_candidates_group_fast_signal_siblings_before
     rows = []
     for idx in range(24):
         payload = _external_strategy_payload(f"fast_{idx:02d}", shard_id=idx // 20, slot=idx % 20)
-        payload["concept_id"] = "q_stair_step_breakout"
+        payload["concept_id"] = "rs_pullback_hold_rebound"
         rows.append(payload)
     for idx in range(24):
         payload = _external_strategy_payload(f"slow_{idx:02d}", shard_id=1 + idx // 20, slot=idx % 20)
@@ -1304,7 +1338,7 @@ def test_balanced_external_strategy_candidates_group_fast_signal_siblings_before
     )
 
     assert total_jobs == 12
-    assert first_job[0].payload["concept_id"] == "q_stair_step_breakout"
+    assert first_job[0].payload["concept_id"] == "rs_pullback_hold_rebound"
     assert later_job[0].payload["concept_id"] == "bollinger_squeeze_breakout"
     assert len(first_job) == 4
     assert len({gtbi.signal_external_strategy_hash(candidate) for candidate in first_job}) == 1
@@ -1317,7 +1351,7 @@ def test_balanced_external_strategy_candidates_uses_active_job_window_for_smoke(
     rows = []
     for idx in range(20):
         payload = _external_strategy_payload(f"fast_{idx:02d}", shard_id=idx // 10, slot=idx % 10)
-        payload["concept_id"] = "q_stair_step_breakout"
+        payload["concept_id"] = "rs_pullback_hold_rebound"
         rows.append(payload)
     for idx in range(20):
         payload = _external_strategy_payload(f"slow_{idx:02d}", shard_id=2 + idx // 10, slot=idx % 10)
@@ -1349,8 +1383,8 @@ def test_balanced_external_strategy_candidates_uses_active_job_window_for_smoke(
     )
 
     assert total_jobs == 10
-    assert [candidate.payload["concept_id"] for candidate in first_job] == ["q_stair_step_breakout"] * 4
-    assert [candidate.payload["concept_id"] for candidate in second_job] == ["q_stair_step_breakout"] * 4
+    assert [candidate.payload["concept_id"] for candidate in first_job] == ["rs_pullback_hold_rebound"] * 4
+    assert [candidate.payload["concept_id"] for candidate in second_job] == ["rs_pullback_hold_rebound"] * 4
 
 
 def test_balanced_external_strategy_candidates_groups_signal_siblings_for_smoke(tmp_path: Path) -> None:
@@ -1432,7 +1466,7 @@ def test_signal_first_balancer_selects_complete_signal_groups(tmp_path: Path) ->
     assert all(len({gtbi.signal_external_strategy_hash(candidate) for candidate in group}) == 1 for group in selected)
 
 
-def test_signal_first_balancer_uses_fast_signal_groups_for_smoke_window(tmp_path: Path) -> None:
+def test_signal_first_balancer_uses_lower_cost_signal_groups_for_smoke_window(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     shard_dir = pack / "shards"
     shard_dir.mkdir(parents=True)
@@ -1461,13 +1495,24 @@ def test_signal_first_balancer_uses_fast_signal_groups_for_smoke_window(tmp_path
         schedule_active_jobs=1,
         max_signal_groups=None,
         strategy_format="jsonl",
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
     )
 
     assert total_jobs == 1
     assert total_signal_groups == 2
-    assert {candidate.payload["concept_id"] for group in selected for candidate in group} == {
-        "post_ep_pullback_reclaim_proxy"
-    }
+    selected_concepts = {candidate.payload["concept_id"] for group in selected for candidate in group}
+    assert selected_concepts == {"atr_compression_nr_breakout"}
+    selected_cost = min(
+        gtbi._estimated_cost_score(candidate.payload, optimized_evaluation_mode="optimized_evaluation_v5_event_first")[0]
+        for group in selected
+        for candidate in group
+    )
+    skipped_post_ep = [row for row in rows if row["concept_id"] == "post_ep_pullback_reclaim_proxy"]
+    skipped_cost = min(
+        gtbi._estimated_cost_score(row, optimized_evaluation_mode="optimized_evaluation_v5_event_first")[0]
+        for row in skipped_post_ep
+    )
+    assert selected_cost < skipped_cost
 
 
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
@@ -2402,7 +2447,15 @@ def test_zero_timeout_specific_slow_precheck_does_not_false_reject_dense_superse
     assert slow["reason"].tolist() == ["known_slow_concept"]
 
 
-@pytest.mark.parametrize("concept", ["q_stair_step_reclaim", "q_stair_step_breakout"])
+@pytest.mark.parametrize(
+    "concept",
+    [
+        "q_stair_step_reclaim",
+        "q_stair_step_breakout",
+        "bollinger_lower_band_reclaim_trend",
+        "rs_pullback_hold_rebound",
+    ],
+)
 def test_event_first_prechecks_extra_slow_concepts_without_slow_queue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2469,6 +2522,54 @@ def test_event_first_prechecks_extra_slow_concepts_without_slow_queue(
     assert early["reason"].iloc[0].startswith(f"{concept}_precheck_")
     assert concept_diag["decision"].tolist() == ["early_rejected"]
     assert event_manifest["concept"].tolist() == [concept]
+
+
+@pytest.mark.parametrize("concept", ["bollinger_lower_band_reclaim_trend", "rs_pullback_hold_rebound"])
+def test_event_first_breakout_superset_precheck_contains_legacy_signal(concept: str) -> None:
+    payload = _external_strategy_payload(f"superset_{concept}")
+    payload["concept_id"] = concept
+    payload["entry_rules"]["volume_on_signal_min_adv20_mult"] = 0.50
+    candidate = gtbi.external_strategy_to_config(payload)
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.linspace(20.0, 220.0, len(idx))
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close,
+                "low": close * 0.99,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    benchmark = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close * 0.95,
+                "high": close * 0.95,
+                "low": close * 0.94,
+                "close": close * 0.95,
+                "adj_close": close * 0.95,
+                "volume": np.full(len(idx), 1_000_000.0),
+                "symbol": "SPY",
+            }
+        )
+    )
+
+    legacy = gtbi.entry_signal(frame, benchmark, candidate.config).reindex(frame.index).fillna(False).astype(bool)
+    precheck = gtbi._specific_slow_concept_precheck_signal(
+        concept=concept,
+        frame=frame,
+        config=candidate.config,
+    ).reindex(frame.index).fillna(False).astype(bool)
+
+    assert bool(legacy.any())
+    assert not bool((legacy & ~precheck).any())
 
 
 def test_zero_timeout_long_budget_single_candidate_evaluates_known_slow_signal_group(
@@ -2654,6 +2755,7 @@ def test_event_first_runner_never_slow_defers_known_slow_signal_group(
     def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
         candidate_id = str(kwargs["candidate_id"])
         core_calls.append(candidate_id)
+        assert kwargs.get("deadline") is not None
         assert kwargs.get("precomputed_signals_by_symbol") is not None
         row = {
             "candidate_id": candidate_id,
@@ -2729,6 +2831,118 @@ def test_event_first_runner_never_slow_defers_known_slow_signal_group(
     assert set(exits["strategy_id"]) == {"event_first_a", "event_first_b"}
     assert cost_profile["optimized_evaluation_mode"] == "optimized_evaluation_v5_event_first"
     assert cost_profile["signal_groups_loaded"] == 1
+
+
+def test_event_first_runner_passes_cooperative_deadline_to_signal_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _external_strategy_payload("event_first_deadline")
+    payload["concept_id"] = "moving_average_timing_cross"
+    candidates = [gtbi.external_strategy_to_config(payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    captured_deadlines: list[float | None] = []
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        deadline = kwargs.get("deadline")
+        captured_deadlines.append(deadline if deadline is None else float(deadline))
+        signal = pd.Series(False, index=frame.index)
+        signal.iloc[[70, 90, 120]] = True
+        return {"AAA": signal}, {"seconds_signal": 0.1, "symbols_processed": 1, "raw_signals_total": 3}
+
+    def fake_prefilter(**kwargs: object) -> tuple[dict[str, object], int]:
+        return (
+            {
+                "reason": "raw_signal_yearly_trades_lt_100",
+                "split": "validation",
+                "year": 2011,
+                "actual": 3,
+                "threshold": 100,
+                "stage": "safe_prefilter",
+            },
+            3,
+        )
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", fake_prefilter)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=1,
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        enable_dedupe=True,
+        candidate_timeout_seconds=300,
+        job_wall_clock_seconds=300,
+    )
+
+    assert captured_deadlines
+    assert captured_deadlines[0] is not None
+    assert float(captured_deadlines[0]) > gtbi.time.perf_counter()
+
+
+def test_event_first_signal_timeout_is_reported_without_slow_deferred(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _external_strategy_payload("event_first_signal_timeout")
+    payload["concept_id"] = "moving_average_timing_cross"
+    candidates = [gtbi.external_strategy_to_config(payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        raise gtbi.CandidateEvaluationTimeout("forced event-first signal timeout")
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=1,
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        enable_dedupe=True,
+        candidate_timeout_seconds=300,
+        job_wall_clock_seconds=300,
+    )
+
+    out = tmp_path / "out" / "job-0000"
+    slow = pd.read_csv(out / "slow_deferred_strategies_job_0000.csv")
+    timeouts = pd.read_csv(out / "timeout_strategies_job_0000.csv")
+    manifest = pd.read_csv(out / "signal_group_manifest_job_0000.csv")
+    assert slow.empty
+    assert len(timeouts) == 1
+    assert summary["strategies_slow_deferred"] == 0
+    assert summary["signal_groups_slow_deferred"] == 0
+    assert summary["signal_groups_timed_out"] == 1
+    assert manifest["result_status"].tolist() == ["signal_timeout"]
 
 
 def test_event_first_exit_hash_uses_only_effective_exit_rules() -> None:
@@ -3578,6 +3792,10 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "global-technical-buy-indicator-external-pack-72000-results" in text
     assert "Normalize data lake layout and ensure SPY benchmark exists" in text
     assert "out_path = out_dir / \"SPY.parquet\"" in text
+    assert "pd.read_parquet(src)" not in text
+    assert "shutil.copy2(src, out_path)" in text
+    assert "import yfinance" not in text
+    assert "v8/finance/chart/SPY" in text
     assert "gtbi-external-pack-data" in text
     assert "original_shards = 360" in text
     assert "original_strategies_per_shard = 200" in text
@@ -3617,6 +3835,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "optimized_evaluation_v5_event_first" in text
     assert "smoke_test" in data["jobs"]
     assert "merge_smoke" in data["jobs"]
+    assert "timeout-minutes: 35" in text
     assert 'if: ${{ inputs.recovery_job_indices == \'\' && inputs.test_mode == \'true\' }}' in text
     assert 'if: ${{ inputs.recovery_job_indices == \'\' && inputs.test_mode != \'true\' }}' in text
     assert "matrix: ${{ fromJson(needs.plan_smoke.outputs.matrix) }}" in text
@@ -3649,11 +3868,18 @@ def test_gtbi_v5_smoke_workflow_is_push_only_small_github_smoke() -> None:
     assert "TEST_MAX_SIGNAL_GROUPS: \"1000\"" in text
     assert "optimized_evaluation_v5_event_first" in text
     assert "max-parallel: 100" in text
+    assert "timeout-minutes: 35" in text
+    assert "QF_DATA_DIR: /tmp/aurora-data" in text
+    assert "if: ${{ success() }}" in text
     assert "global-technical-buy-indicator-external-pack-72000-results" in text
     assert "gtbi-external-pack-smoke-results" in text
     assert "self-hosted" not in text
     assert "C:\\" not in text
     assert "runner.temp" not in text
+    assert "pd.read_parquet(src)" not in text
+    assert "shutil.copy2(src, out_path)" in text
+    assert "import yfinance" not in text
+    assert "v8/finance/chart/SPY" in text
     assert "locked_start" not in text
     assert "LOCKED_START: \"2021-01-01\"" in text
     assert "VALIDATION_END: \"2020-12-31\"" in text

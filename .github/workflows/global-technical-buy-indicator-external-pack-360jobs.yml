@@ -160,18 +160,37 @@ jobs:
               raise SystemExit(0)
           for src in candidates:
               if src.exists():
-                  frame = pd.read_parquet(src)
-                  frame.to_parquet(out_path, index=False)
+                  shutil.copy2(src, out_path)
                   raise SystemExit(0)
-          import yfinance as yf
-          spy = yf.download("SPY", period="max", interval="1d", auto_adjust=False, progress=False)
-          if isinstance(spy.columns, pd.MultiIndex):
-              spy.columns = [str(col[0]).lower().replace(" ", "_") for col in spy.columns]
-          else:
-              spy.columns = [str(col).lower().replace(" ", "_") for col in spy.columns]
-          spy = spy.reset_index().rename(columns={"Date": "date", "date": "date", "adj_close": "adj_close"})
-          if "adj_close" not in spy.columns and "adj close" in spy.columns:
-              spy["adj_close"] = spy["adj close"]
+          import json
+          from urllib.request import Request, urlopen
+          locked = pd.Timestamp("${{ inputs.locked_start }}")
+          period1 = int(pd.Timestamp("1990-01-01", tz="UTC").timestamp())
+          period2 = int(locked.tz_localize("UTC").timestamp()) if locked.tzinfo is None else int(locked.timestamp())
+          url = (
+              "https://query1.finance.yahoo.com/v8/finance/chart/SPY"
+              f"?period1={period1}&period2={period2}&interval=1d&events=div%2Csplits"
+          )
+          request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+          with urlopen(request, timeout=30) as response:
+              payload = json.loads(response.read().decode("utf-8"))
+          result = (payload.get("chart", {}).get("result") or [None])[0]
+          if not result:
+              raise FileNotFoundError("SPY benchmark unavailable from Yahoo chart API")
+          timestamps = result.get("timestamp") or []
+          quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+          adj = (result.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose")
+          spy = pd.DataFrame(
+              {
+                  "date": pd.to_datetime(timestamps, unit="s", utc=True).tz_convert(None).normalize(),
+                  "open": quote.get("open", []),
+                  "high": quote.get("high", []),
+                  "low": quote.get("low", []),
+                  "close": quote.get("close", []),
+                  "adj_close": adj if adj is not None else quote.get("close", []),
+                  "volume": quote.get("volume", []),
+              }
+          )
           spy["date"] = pd.to_datetime(spy["date"], errors="coerce")
           spy = spy.dropna(subset=["date"])
           spy = spy[spy["date"] < pd.Timestamp("${{ inputs.locked_start }}")]
@@ -253,6 +272,7 @@ jobs:
       - plan_smoke
     if: ${{ inputs.recovery_job_indices == '' && inputs.test_mode == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       max-parallel: 100
@@ -328,7 +348,7 @@ jobs:
     needs:
       - plan_smoke
       - smoke_test
-    if: ${{ always() && inputs.recovery_job_indices == '' && inputs.test_mode == 'true' && inputs.enable_block_merge == 'true' }}
+    if: ${{ success() && inputs.recovery_job_indices == '' && inputs.test_mode == 'true' && inputs.enable_block_merge == 'true' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -376,7 +396,7 @@ jobs:
     needs:
       - plan_smoke
       - merge_smoke_block
-    if: ${{ always() && inputs.recovery_job_indices == '' && inputs.test_mode == 'true' && inputs.enable_block_merge == 'true' }}
+    if: ${{ success() && inputs.recovery_job_indices == '' && inputs.test_mode == 'true' && inputs.enable_block_merge == 'true' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
