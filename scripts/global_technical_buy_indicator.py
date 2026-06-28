@@ -2004,6 +2004,30 @@ def split_trade_frame(
     return out
 
 
+def _exit_year_from_value(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    text = str(value)
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    try:
+        return int(pd.Timestamp(value).year)
+    except (TypeError, ValueError):
+        return None
+
+
+def _exit_year_counts(exit_dates: Iterable[Any]) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for value in exit_dates:
+        year = _exit_year_from_value(value)
+        if year is None:
+            continue
+        counts[year] = counts.get(year, 0) + 1
+    return counts
+
+
 def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
     if trades.empty:
         return {
@@ -2036,9 +2060,8 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
     log_nav = np.cumsum(np.log(gross))
     log_dd = log_nav - np.maximum.accumulate(log_nav)
     dd = np.exp(np.clip(log_dd, -745.0, 0.0)) - 1.0
-    years_by_exit = pd.to_datetime(trades["exit_date"], errors="coerce").dt.year
-    per_year = trades.assign(_year=years_by_exit).groupby("_year")["return_pct"].count()
-    concentration = float(per_year.max() / len(trades)) if len(trades) else float("nan")
+    per_year = _exit_year_counts(trades["exit_date"].to_numpy(dtype=object, copy=False))
+    concentration = float(max(per_year.values()) / len(trades)) if len(trades) and per_year else float("nan")
     return {
         "trades": float(len(returns)),
         "avg_trade_return_pct": float(returns.mean() * 100.0),
@@ -2069,29 +2092,45 @@ def _spy_return_by_year(benchmark_prices: pd.DataFrame) -> dict[int, float]:
 def yearly_trade_performance(trades: pd.DataFrame, benchmark_prices: pd.DataFrame) -> pd.DataFrame:
     if trades.empty:
         return pd.DataFrame(columns=YEARLY_COLUMNS)
-    frame = trades.copy()
-    frame["exit_date"] = pd.to_datetime(frame["exit_date"], errors="coerce")
-    frame = frame.dropna(subset=["exit_date"])
-    frame["year"] = frame["exit_date"].dt.year.astype(int)
     spy_by_year = _spy_return_by_year(benchmark_prices)
+    grouped: dict[tuple[Any, Any, int], dict[str, Any]] = {}
+    candidate_values = trades.get("candidate_id", pd.Series([""] * len(trades))).to_numpy(dtype=object, copy=False)
+    split_values = trades.get("split", pd.Series([""] * len(trades))).to_numpy(dtype=object, copy=False)
+    exit_values = trades["exit_date"].to_numpy(dtype=object, copy=False)
+    return_values = pd.to_numeric(trades["return_pct"], errors="coerce").to_numpy(dtype=float, copy=False)
+    holding_values = pd.to_numeric(trades["holding_days"], errors="coerce").to_numpy(dtype=float, copy=False)
+    for idx, value in enumerate(exit_values):
+        year = _exit_year_from_value(value)
+        if year is None:
+            continue
+        key = (candidate_values[idx], split_values[idx], int(year))
+        bucket = grouped.setdefault(key, {"trade_count": 0, "returns": [], "holding_days": []})
+        bucket["trade_count"] += 1
+        ret = float(return_values[idx])
+        if math.isfinite(ret):
+            bucket["returns"].append(ret)
+        holding = float(holding_values[idx])
+        if math.isfinite(holding):
+            bucket["holding_days"].append(holding)
     rows: list[dict[str, Any]] = []
-    group_cols = ["candidate_id", "split", "year"]
-    for (candidate_id, split, year), group in frame.groupby(group_cols, dropna=False):
-        ret = pd.to_numeric(group["return_pct"], errors="coerce").dropna()
-        wins = ret[ret > 0]
-        losses = ret[ret < 0]
-        pf = float(wins.sum() / abs(losses.sum())) if float(losses.sum()) < 0 else float("inf")
+    for (candidate_id, split, year), bucket in grouped.items():
+        ret_array = np.asarray(bucket["returns"], dtype=float)
+        wins = ret_array[ret_array > 0]
+        losses = ret_array[ret_array < 0]
+        loss_sum = float(losses.sum())
+        pf = float(wins.sum() / abs(loss_sum)) if loss_sum < 0 else float("inf")
+        holding_array = np.asarray(bucket["holding_days"], dtype=float)
         rows.append(
             {
                 "candidate_id": candidate_id,
                 "split": split,
                 "year": int(year),
-                "trades": int(len(group)),
-                "avg_trade_return_pct": float(ret.mean()) if len(ret) else float("nan"),
-                "median_trade_return_pct": float(ret.median()) if len(ret) else float("nan"),
-                "win_rate": float((ret > 0).mean()) if len(ret) else float("nan"),
+                "trades": int(bucket["trade_count"]),
+                "avg_trade_return_pct": float(ret_array.mean()) if len(ret_array) else float("nan"),
+                "median_trade_return_pct": float(np.median(ret_array)) if len(ret_array) else float("nan"),
+                "win_rate": float((ret_array > 0).mean()) if len(ret_array) else float("nan"),
                 "profit_factor": pf,
-                "avg_holding_days": float(pd.to_numeric(group["holding_days"], errors="coerce").mean()),
+                "avg_holding_days": float(holding_array.mean()) if len(holding_array) else float("nan"),
                 "spy_return_pct": spy_by_year.get(int(year), float("nan")),
             }
         )
