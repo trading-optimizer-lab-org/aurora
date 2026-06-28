@@ -942,6 +942,8 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
         min_periods = min(window, len(prepared))
         entry_cache.setdefault((f"high_0_{min_periods}", window), high.rolling(window, min_periods=min_periods).max())
         entry_cache.setdefault((f"low_0_{min_periods}", window), low.rolling(window, min_periods=min_periods).min())
+        entry_cache.setdefault((f"high_1_{window}", window), high.shift(1).rolling(window, min_periods=window).max())
+        entry_cache.setdefault((f"low_1_{window}", window), low.shift(1).rolling(window, min_periods=window).min())
         entry_cache.setdefault((f"vol_{min_periods}", window), volume.rolling(window, min_periods=min_periods).mean())
     for window in (10, 20, 21, 35, 50, 60):
         exit_cache.setdefault(("exit_ma", window), close.rolling(window, min_periods=window).mean())
@@ -1392,10 +1394,20 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
             return const(True)
         if benchmark.empty:
             return const(True)
-        rs_line = close / spy_close().replace(0.0, np.nan)
-        rs_avg = rs_line.rolling(config.rs_lookback, min_periods=min(config.rs_lookback, len(frame))).mean()
-        rs_high = rs_line.rolling(config.rs_lookback, min_periods=min(config.rs_lookback, len(frame))).max()
-        return (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
+        key = (
+            "rs_ok",
+            int(config.rs_lookback),
+            round(float(config.rs_near_high_pct), 8),
+            id(benchmark),
+            len(benchmark),
+        )
+        if key not in cache:
+            rs_line = close / spy_close().replace(0.0, np.nan)
+            min_periods = min(config.rs_lookback, len(frame))
+            rs_avg = rs_line.rolling(config.rs_lookback, min_periods=min_periods).mean()
+            rs_high = rs_line.rolling(config.rs_lookback, min_periods=min_periods).max()
+            cache[key] = (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
+        return cache[key]
 
     def market_trend() -> pd.Series:
         return _market_trend_ok_for_frame(frame, benchmark, config) if config.require_market_trend else const(True)
@@ -1429,7 +1441,11 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     def breakout() -> pd.Series:
         if not config.require_breakout:
             return const(True)
-        resistance = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
+        resistance = high_roll(
+            config.breakout_lookback,
+            shift=1,
+            min_periods=config.breakout_lookback,
+        )
         return (close > resistance) & (volume > avg_volume(config.volume_lookback) * config.volume_multiple) & base_tight()
 
     def prior_runup() -> pd.Series:
@@ -1556,8 +1572,16 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         stage2_minervini = stage2 & (close > sma50()) & (sma50() > sma150()) & (sma150() > sma200()) & (sma200() > sma200().shift(21))
         signal = (stage2_minervini if config.minervini_trend else stage2) & rsi_ok()
     elif family == "tv_breakout_finder":
-        short_high = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
-        short_low = low.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).min()
+        short_high = high_roll(
+            config.breakout_lookback,
+            shift=1,
+            min_periods=config.breakout_lookback,
+        )
+        short_low = low_roll(
+            config.breakout_lookback,
+            shift=1,
+            min_periods=config.breakout_lookback,
+        )
         channel_width = ((short_high - short_low) / close).fillna(np.inf)
         tests = (high.shift(1) >= short_high * (1.0 - max(config.max_base_range_pct, 0.02))).rolling(
             config.base_lookback,
@@ -1909,7 +1933,7 @@ def _simulate_trade_arrays(
     )
 
 
-def simulate_trades(
+def _simulate_trade_records(
     symbol: str,
     prices: pd.DataFrame,
     signal: pd.Series,
@@ -1918,12 +1942,10 @@ def simulate_trades(
     split: str,
     candidate_id: str = "",
     exit_signal: pd.Series | None = None,
-) -> pd.DataFrame:
-    """Simulate long/cash trades from a buy indicator, executing next session."""
-
+) -> list[dict[str, Any]]:
     frame = _prepare_ohlcv(prices)
     if frame.empty or len(frame) < 3:
-        return pd.DataFrame(columns=TRADE_COLUMNS)
+        return []
     signal = signal.reindex(frame.index).fillna(False).astype(bool)
     exit_signal = (
         exit_signal.reindex(frame.index).fillna(False).astype(bool)
@@ -1938,7 +1960,7 @@ def simulate_trades(
     signal_values = signal.to_numpy(dtype=bool)
     signal_positions = np.flatnonzero(signal_values[:-1])
     if len(signal_positions) == 0:
-        return pd.DataFrame(columns=TRADE_COLUMNS)
+        return []
     open_values = frame["open"].to_numpy(dtype=float, copy=False)
     high_values = frame["high"].to_numpy(dtype=float, copy=False)
     low_values = frame["low"].to_numpy(dtype=float, copy=False)
@@ -1959,16 +1981,16 @@ def simulate_trades(
         config,
     )
     if count <= 0:
-        return pd.DataFrame(columns=TRADE_COLUMNS)
+        return []
 
-    trades: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for pos in range(int(count)):
         entry_idx = int(entry_indices[pos])
         exit_idx = int(exit_indices[pos])
         entry_price = float(entry_prices[pos])
         exit_price = float(exit_prices[pos])
         reason = EXIT_REASON_BY_CODE.get(int(reason_codes[pos]), "unknown")
-        trades.append(
+        records.append(
             {
                 "candidate_id": candidate_id,
                 "symbol": symbol,
@@ -1982,7 +2004,31 @@ def simulate_trades(
                 "exit_reason": reason,
             }
         )
-    return pd.DataFrame(trades, columns=TRADE_COLUMNS)
+    return records
+
+
+def simulate_trades(
+    symbol: str,
+    prices: pd.DataFrame,
+    signal: pd.Series,
+    config: IndicatorConfig,
+    *,
+    split: str,
+    candidate_id: str = "",
+    exit_signal: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Simulate long/cash trades from a buy indicator, executing next session."""
+
+    records = _simulate_trade_records(
+        symbol,
+        prices,
+        signal,
+        config,
+        split=split,
+        candidate_id=candidate_id,
+        exit_signal=exit_signal,
+    )
+    return pd.DataFrame(records, columns=TRADE_COLUMNS)
 
 
 def split_trade_frame(
@@ -1995,9 +2041,19 @@ def split_trade_frame(
     if trades.empty:
         return trades.copy()
     out = trades.copy()
-    exit_dates = pd.to_datetime(out["exit_date"], errors="coerce")
-    train_mask = exit_dates <= _dt(train_end)
-    valid_mask = (exit_dates >= _dt(validation_start)) & (exit_dates <= _dt(validation_end))
+    exit_values = out["exit_date"].to_numpy(dtype=object, copy=False)
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
+    parsed_days = np.empty(len(exit_values), dtype="datetime64[D]")
+    parsed_days[:] = np.datetime64("NaT", "D")
+    for idx, value in enumerate(exit_values):
+        parsed = _exit_date64_from_value(value)
+        if parsed is not None:
+            parsed_days[idx] = parsed
+    valid_date = ~np.isnat(parsed_days)
+    train_mask = valid_date & (parsed_days <= train_end_day)
+    valid_mask = valid_date & (parsed_days >= validation_start_day) & (parsed_days <= validation_end_day)
     out.loc[train_mask, "split"] = "train"
     out.loc[valid_mask, "split"] = "validation"
     out = out[train_mask | valid_mask].copy()
@@ -4454,8 +4510,11 @@ def evaluate_candidate_optimized(
             )
 
     simulation_start = time.perf_counter()
-    all_trades: list[pd.DataFrame] = []
+    all_trade_records: list[dict[str, Any]] = []
     simulated_symbols = 0
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
     for symbol, signal in signals_by_symbol.items():
         if deadline is not None and time.perf_counter() >= deadline:
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
@@ -4463,7 +4522,7 @@ def evaluate_candidate_optimized(
         frame = symbol_frames[symbol]
         prepared_frame = _prepare_ohlcv(frame)
         market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
-        raw_trades = simulate_trades(
+        raw_records = _simulate_trade_records(
             symbol,
             frame,
             signal,
@@ -4472,14 +4531,18 @@ def evaluate_candidate_optimized(
             candidate_id=candidate_id,
             exit_signal=market_exit,
         )
-        trades = split_trade_frame(
-            raw_trades,
-            train_end=train_end,
-            validation_start=validation_start,
-            validation_end=validation_end,
-        )
-        if not trades.empty:
-            all_trades.append(trades)
+        for record in raw_records:
+            exit_day = _exit_date64_from_value(record.get("exit_date"))
+            if exit_day is None:
+                continue
+            if exit_day <= train_end_day:
+                split_record = dict(record)
+                split_record["split"] = "train"
+                all_trade_records.append(split_record)
+            elif validation_start_day <= exit_day <= validation_end_day:
+                split_record = dict(record)
+                split_record["split"] = "validation"
+                all_trade_records.append(split_record)
         if simulated_symbols % 250 == 0:
             print(
                 f"[gtbi] candidate={candidate_id} simulation_progress={simulated_symbols}/{len(signals_by_symbol)}",
@@ -4488,11 +4551,8 @@ def evaluate_candidate_optimized(
         if deadline is not None and time.perf_counter() >= deadline:
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
     seconds_simulation = float(time.perf_counter() - simulation_start)
-    trades_df = pd.concat(all_trades, ignore_index=True, sort=False) if all_trades else pd.DataFrame(columns=TRADE_COLUMNS)
+    trades_df = pd.DataFrame(all_trade_records, columns=TRADE_COLUMNS)
 
-    train_end_day = np.datetime64(str(train_end), "D")
-    validation_start_day = np.datetime64(str(validation_start), "D")
-    validation_end_day = np.datetime64(str(validation_end), "D")
     train_years = max(_date64_days_between(train_end_day, np.datetime64("1900-01-01", "D")) / 365.25, 1.0)
     if not trades_df.empty:
         split_values = trades_df["split"].to_numpy(dtype=object, copy=False)
@@ -5920,11 +5980,14 @@ def run_external_strategy_pack_shard(
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
+    prewarm_feature_cache = str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}
+    if use_event_first and signal_first_phase == "signals":
+        prewarm_feature_cache = True
     feature_store = build_feature_store(
         symbol_frames,
         benchmark,
         enabled=enable_feature_cache,
-        prewarm=str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES},
+        prewarm=prewarm_feature_cache,
     )
     if use_v3_signal_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
         job_deadline = time.perf_counter() + float(job_wall_clock_seconds)

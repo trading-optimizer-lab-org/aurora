@@ -535,6 +535,29 @@ def test_yearly_trade_performance_groups_closed_trades_and_adds_spy_return() -> 
     assert row_2010["spy_return_pct"] == pytest.approx(20.0)
 
 
+def test_split_trade_frame_uses_iso_dates_without_pandas_datetime_conversion() -> None:
+    trades = pd.DataFrame(
+        [
+            {"candidate_id": "c1", "symbol": "AAA", "split": "unassigned", "exit_date": "2010-12-31"},
+            {"candidate_id": "c1", "symbol": "AAA", "split": "unassigned", "exit_date": "2011-01-03"},
+            {"candidate_id": "c1", "symbol": "AAA", "split": "unassigned", "exit_date": "2020-12-31"},
+            {"candidate_id": "c1", "symbol": "AAA", "split": "unassigned", "exit_date": "2021-01-04"},
+            {"candidate_id": "c1", "symbol": "AAA", "split": "unassigned", "exit_date": "not-a-date"},
+        ],
+        columns=gtbi.TRADE_COLUMNS,
+    )
+
+    out = gtbi.split_trade_frame(
+        trades,
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+
+    assert out["exit_date"].tolist() == ["2010-12-31", "2011-01-03", "2020-12-31"]
+    assert out["split"].tolist() == ["train", "validation", "validation"]
+
+
 def test_merge_stage_outputs_is_deterministic(tmp_path: Path) -> None:
     stage_a = tmp_path / "stage-a"
     stage_b = tmp_path / "stage-b"
