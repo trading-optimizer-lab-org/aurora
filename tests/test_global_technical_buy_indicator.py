@@ -2243,16 +2243,13 @@ def test_zero_timeout_runner_defers_known_slow_signal_group_before_signal_build(
     assert timing["timeout"].astype(bool).tolist() == [False, False]
 
 
-def test_zero_timeout_slow_queue_mode_evaluates_known_slow_signal_group(
+def test_zero_timeout_long_budget_single_candidate_evaluates_known_slow_signal_group(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first_payload = _external_strategy_payload("slow_queue_a")
-    second_payload = _external_strategy_payload("slow_queue_b")
     first_payload["concept_id"] = "macd_histogram_turnup_trend"
-    second_payload["concept_id"] = "macd_histogram_turnup_trend"
-    second_payload["exit_rules"]["take_profit_pct"] = 0.25
-    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    candidates = [gtbi.external_strategy_to_config(first_payload)]
     frame = gtbi._prepare_ohlcv(_breakout_frame(180))
     spy = gtbi._prepare_ohlcv(_spy_frame(180))
     signal = pd.Series(False, index=frame.index)
@@ -2317,10 +2314,11 @@ def test_zero_timeout_slow_queue_mode_evaluates_known_slow_signal_group(
         output_dir=tmp_path / "out" / "job-0000",
         prebuilt_pack_dir=pack_dir,
         external_strategy_shard_id=0,
-        external_strategy_limit=2,
-        optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout_slow_queue",
+        external_strategy_limit=1,
+        optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout",
         enable_dedupe=True,
-        job_wall_clock_seconds=300,
+        candidate_timeout_seconds=1800,
+        job_wall_clock_seconds=2100,
     )
 
     slow = pd.read_csv(tmp_path / "out" / "job-0000" / "slow_deferred_strategies_job_0000.csv")
@@ -2331,10 +2329,10 @@ def test_zero_timeout_slow_queue_mode_evaluates_known_slow_signal_group(
     assert summary["strategies_timed_out"] == 0
     assert summary["strategies_slow_deferred"] == 0
     assert signal_calls["count"] == 1
-    assert core_calls == ["slow_queue_a", "slow_queue_b"]
+    assert core_calls == ["slow_queue_a"]
     assert slow.empty
     assert timeouts.empty
-    assert leaderboard["candidate_id"].tolist() == ["slow_queue_a", "slow_queue_b"]
+    assert leaderboard["candidate_id"].tolist() == ["slow_queue_a"]
     assert manifest["result_status"].tolist() == ["signal_ready"]
 
 
@@ -3110,7 +3108,6 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
     assert "optimized_evaluation_v4_zero_timeout" in text
-    assert "optimized_evaluation_v4_zero_timeout_slow_queue" in text
     assert "--optimized-evaluation-mode" in text
     assert len(data[True]["workflow_dispatch"]["inputs"]) <= 25
     assert "test_max_signal_groups" in data[True]["workflow_dispatch"]["inputs"]

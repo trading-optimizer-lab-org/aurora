@@ -3159,8 +3159,9 @@ def _zero_timeout_defer_reason(
     cost_score: float,
     cost_bucket: str,
     optimized_evaluation_mode: str = ZERO_TIMEOUT_MODE,
+    allow_slow_queue_evaluation: bool = False,
 ) -> str | None:
-    if _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode):
+    if _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode) or allow_slow_queue_evaluation:
         return None
     concept = _external_profile_value(payload, "concept_id", "concept")
     if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
@@ -5497,11 +5498,17 @@ def run_external_strategy_pack_shard(
                         continue
                     candidate_deadlines.append(job_safe_deadline)
                 if use_zero_timeout:
+                    allow_slow_queue_evaluation = (
+                        int(external_strategy_limit) <= 1
+                        and float(candidate_timeout_seconds) >= 1800.0
+                        and float(job_wall_clock_seconds) >= 1800.0
+                    )
                     defer_reason = _zero_timeout_defer_reason(
                         payload=first_payload,
                         cost_score=cost_score,
                         cost_bucket=cost_bucket,
                         optimized_evaluation_mode=str(optimized_evaluation_mode),
+                        allow_slow_queue_evaluation=allow_slow_queue_evaluation,
                     )
                     if defer_reason is not None:
                         signal_groups_slow_deferred += 1
