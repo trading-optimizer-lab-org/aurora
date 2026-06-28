@@ -3172,6 +3172,13 @@ V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
     "post_ep_pullback_reclaim_proxy",
 }
 V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS = V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS
+V5_EVENT_FIRST_PRECHECK_CONCEPTS = {
+    "three_weeks_tight_daily_proxy",
+    "q_stair_step_reclaim",
+    "macd_histogram_turnup_trend",
+    "post_ep_pullback_reclaim_proxy",
+    "q_stair_step_breakout",
+}
 
 
 def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
@@ -3973,6 +3980,22 @@ def _specific_slow_concept_precheck_signal(
         # loose volume confirmation. This is deliberately a superset.
         signal = (tiny_gap | high_reclaim) & volume_confirm
         return signal.fillna(False).astype(bool)
+    if concept == "three_weeks_tight_daily_proxy":
+        # Superset for tight-base entries: any positive day with valid volume
+        # can contain a later tight-base breakout. This is intentionally broad
+        # and is only used to prove impossibility when even this set is sparse.
+        signal = (close > close.shift(1)) & (volume > 0)
+        return signal.fillna(False).astype(bool)
+    if concept == "q_stair_step_reclaim":
+        ema10 = close.ewm(span=10, adjust=False, min_periods=10).mean()
+        short_reclaim = close > prepared["high"].shift(1).rolling(5, min_periods=2).max()
+        trend_reclaim = (close > ema10) & (close.shift(1) <= ema10.shift(1))
+        signal = (short_reclaim | trend_reclaim) & (volume > 0)
+        return signal.fillna(False).astype(bool)
+    if concept == "q_stair_step_breakout":
+        breakout = close > prepared["high"].shift(1).rolling(10, min_periods=3).max()
+        signal = breakout & (volume > 0)
+        return signal.fillna(False).astype(bool)
     return pd.Series(False, index=index)
 
 
@@ -3984,9 +4007,11 @@ def _specific_slow_concept_precheck(
     validation_start: str,
     validation_end: str,
     deadline: float | None,
+    optimized_evaluation_mode: str = ZERO_TIMEOUT_MODE,
 ) -> tuple[dict[str, Any] | None, int, int, int, float]:
     concept = _external_profile_value(payload, "concept_id", "concept")
-    if concept not in V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS:
+    allowed_concepts = V5_EVENT_FIRST_PRECHECK_CONCEPTS if _is_event_first_mode(optimized_evaluation_mode) else V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS
+    if concept not in allowed_concepts:
         return None, 0, 0, 0, 0.0
     start = time.perf_counter()
     signals_by_symbol: dict[str, pd.Series] = {}
@@ -5928,7 +5953,7 @@ def run_external_strategy_pack_shard(
                             signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
                         continue
                     candidate_deadlines.append(job_safe_deadline)
-                if use_zero_timeout and not use_event_first:
+                if use_zero_timeout:
                     allow_slow_queue_evaluation = (
                         int(external_strategy_limit) <= 1
                         and float(candidate_timeout_seconds) >= 1800.0
@@ -5943,6 +5968,7 @@ def run_external_strategy_pack_shard(
                             validation_start=validation_start,
                             validation_end=validation_end,
                             deadline=precheck_deadline,
+                            optimized_evaluation_mode=str(optimized_evaluation_mode),
                         )
                     )
                     if precheck_reject is not None:

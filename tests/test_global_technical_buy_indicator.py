@@ -2402,6 +2402,75 @@ def test_zero_timeout_specific_slow_precheck_does_not_false_reject_dense_superse
     assert slow["reason"].tolist() == ["known_slow_concept"]
 
 
+@pytest.mark.parametrize("concept", ["q_stair_step_reclaim", "q_stair_step_breakout"])
+def test_event_first_prechecks_extra_slow_concepts_without_slow_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    concept: str,
+) -> None:
+    payload = _external_strategy_payload(f"event_first_sparse_{concept}")
+    payload["concept_id"] = concept
+    candidates = [gtbi.external_strategy_to_config(payload)]
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.full(len(idx), 100.0)
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    spy = frame.copy()
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fail_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        raise AssertionError("event-first precheck should reject sparse extra concepts before full signal build")
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fail_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=1,
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        enable_dedupe=True,
+        job_wall_clock_seconds=300,
+    )
+
+    out = tmp_path / "out" / "job-0000"
+    early = pd.read_csv(out / "early_rejected_strategies_job_0000.csv")
+    slow = pd.read_csv(out / "slow_deferred_strategies_job_0000.csv")
+    concept_diag = pd.read_csv(out / "concept_precheck_diagnostics_job_0000.csv")
+    event_manifest = pd.read_csv(out / "event_store_manifest_job_0000.csv")
+    assert summary["strategies_timed_out"] == 0
+    assert summary["strategies_slow_deferred"] == 0
+    assert summary["zero_slow_deferred_mode"] is True
+    assert summary["strategies_early_rejected"] == 1
+    assert slow.empty
+    assert early["reason"].iloc[0].startswith(f"{concept}_precheck_")
+    assert concept_diag["decision"].tolist() == ["early_rejected"]
+    assert event_manifest["concept"].tolist() == [concept]
+
+
 def test_zero_timeout_long_budget_single_candidate_evaluates_known_slow_signal_group(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
