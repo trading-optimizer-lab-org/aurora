@@ -3078,7 +3078,8 @@ V3_SIGNAL_TIMEOUT_CONCEPT_SCORES = {
 }
 
 ZERO_TIMEOUT_MODE = "optimized_evaluation_v4_zero_timeout"
-SIGNAL_FIRST_MODES = {"optimized_evaluation_v3_signal_first", ZERO_TIMEOUT_MODE}
+ZERO_TIMEOUT_SLOW_QUEUE_MODE = "optimized_evaluation_v4_zero_timeout_slow_queue"
+SIGNAL_FIRST_MODES = {"optimized_evaluation_v3_signal_first", ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE}
 V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
     "macd_histogram_turnup_trend",
     "post_ep_pullback_reclaim_proxy",
@@ -3145,10 +3146,22 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
 
 
 def _is_zero_timeout_mode(optimized_evaluation_mode: str) -> bool:
-    return str(optimized_evaluation_mode) == ZERO_TIMEOUT_MODE
+    return str(optimized_evaluation_mode) in {ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE}
 
 
-def _zero_timeout_defer_reason(*, payload: dict[str, Any], cost_score: float, cost_bucket: str) -> str | None:
+def _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode: str) -> bool:
+    return str(optimized_evaluation_mode) == ZERO_TIMEOUT_SLOW_QUEUE_MODE
+
+
+def _zero_timeout_defer_reason(
+    *,
+    payload: dict[str, Any],
+    cost_score: float,
+    cost_bucket: str,
+    optimized_evaluation_mode: str = ZERO_TIMEOUT_MODE,
+) -> str | None:
+    if _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode):
+        return None
     concept = _external_profile_value(payload, "concept_id", "concept")
     if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
         return "known_slow_concept"
@@ -5488,6 +5501,7 @@ def run_external_strategy_pack_shard(
                         payload=first_payload,
                         cost_score=cost_score,
                         cost_bucket=cost_bucket,
+                        optimized_evaluation_mode=str(optimized_evaluation_mode),
                     )
                     if defer_reason is not None:
                         signal_groups_slow_deferred += 1
