@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import faulthandler
 import os
 import sys
 from pathlib import Path
@@ -11,6 +12,10 @@ if str(REPO_ROOT) not in sys.path:
 
 
 def main() -> int:
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
     if os.environ.get("GITHUB_ACTIONS") != "true" and os.environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT") != "USER_REQUESTED_LOCAL_RUN_THIS_TURN":
         raise SystemExit(
             "External GTBI shard runs are GitHub-only. Set AURORA_ALLOW_LOCAL_RUNS_EXPLICIT=USER_REQUESTED_LOCAL_RUN_THIS_TURN "

@@ -3564,6 +3564,10 @@ def _write_compact_signal_events(
 ) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    print(
+        f"[gtbi] write_signal_events_start path={path} signal_hashes={len(signal_events)} symbols={len(symbol_frames)}",
+        flush=True,
+    )
     signal_hashes: list[str] = []
     signal_indices: list[int] = []
     event_symbols: list[str] = []
@@ -3582,6 +3586,10 @@ def _write_compact_signal_events(
             signal_indices.extend([signal_index] * int(positions.size))
             event_symbols.extend([symbol_key] * int(positions.size))
             event_positions.extend(int(pos) for pos in positions)
+    print(
+        f"[gtbi] write_signal_events_save path={path} signal_hashes={len(signal_hashes)} events={len(event_positions)}",
+        flush=True,
+    )
     np.savez_compressed(
         path,
         signal_hashes=np.asarray(signal_hashes, dtype=str),
@@ -3589,6 +3597,7 @@ def _write_compact_signal_events(
         event_symbol=np.asarray(event_symbols, dtype=str),
         event_pos=np.asarray(event_positions, dtype=np.int32),
     )
+    print(f"[gtbi] write_signal_events_done path={path}", flush=True)
 
 
 def _load_compact_signal_events(
@@ -6303,6 +6312,13 @@ def run_external_strategy_pack_shard(
                         benchmark_prices=benchmark,
                         deadline=signal_deadline,
                     )
+                print(
+                    f"[gtbi] signal_complete job={output_padded} candidate={first_id} "
+                    f"signal={signal_hash[:12]} symbols_processed={signal_diagnostic.get('symbols_processed')} "
+                    f"raw_signals={signal_diagnostic.get('raw_signals_total')} "
+                    f"seconds_signal={signal_diagnostic.get('seconds_signal')}",
+                    flush=True,
+                )
                 signal_groups_evaluated += 1
                 signal_seconds = float(signal_diagnostic.get("seconds_signal", time.perf_counter() - group_start))
                 signal_diagnostic.setdefault("symbols_with_events", _event_first_symbols_with_events(signals_by_symbol))
@@ -6311,12 +6327,23 @@ def run_external_strategy_pack_shard(
                 reject = None
                 validation_signal_total = 0
                 if enable_safe_prefilter or enable_early_stopping:
+                    print(
+                        f"[gtbi] safe_prefilter_start job={output_padded} candidate={first_id} "
+                        f"signal={signal_hash[:12]}",
+                        flush=True,
+                    )
                     reject, validation_signal_total = _safe_prefilter_raw_signals(
                         signals_by_symbol=signals_by_symbol,
                         symbol_frames=symbol_frames,
                         config=first_candidate.config,
                         validation_start=validation_start,
                         validation_end=validation_end,
+                    )
+                    print(
+                        f"[gtbi] safe_prefilter_done job={output_padded} candidate={first_id} "
+                        f"signal={signal_hash[:12]} reject={'' if reject is None else reject.get('reason')} "
+                        f"validation_signal_total={validation_signal_total}",
+                        flush=True,
                     )
                 if use_event_first:
                     _append_event_first_signal_artifacts(
@@ -7615,6 +7642,10 @@ def reevaluate_global_cli(argv: list[str] | None = None) -> int:
 
 
 def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(description="Run one external GTBI strategy-pack shard.")
     parser.add_argument("--data-lake-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
