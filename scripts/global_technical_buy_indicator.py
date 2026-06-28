@@ -303,6 +303,65 @@ STRATEGY_TO_SIGNAL_MAP_COLUMNS = [
     "trend_filter",
     "relative_strength_filter",
 ]
+COMPILED_SIGNAL_PLAN_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "canonical_strategy_id",
+    "strategy_ids",
+    "strategy_count",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "aggressiveness",
+    "formula_tokens",
+    "uses_event_store",
+    "uses_bitset",
+    "uses_sparse_events",
+    "storage_kind",
+    "events_total",
+    "symbols_with_events",
+    "seconds_event_build",
+    "legacy_equivalence_status",
+]
+EVENT_STORE_MANIFEST_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "concept",
+    "family",
+    "events_total",
+    "symbols_with_events",
+    "store_format",
+    "locked_start_exclusive",
+    "validation_end",
+    "seconds_event_build",
+]
+CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "signal_hash",
+    "concept",
+    "precheck_name",
+    "max_events_by_year",
+    "max_avg_events_per_year",
+    "decision",
+    "reason",
+    "actual",
+    "threshold",
+]
+EXIT_GROUP_MANIFEST_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "signal_hash",
+    "exit_group_hash",
+    "exit_rule",
+    "stop_loss",
+    "take_profit",
+    "max_holding",
+    "market_exit",
+    "result_status",
+]
 
 
 @dataclass(frozen=True)
@@ -3060,6 +3119,33 @@ def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def exit_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
+    """Hash only the effective exit definition used after a shared signal fires."""
+
+    payload = candidate.payload
+    config = candidate.config
+    canonical = {
+        "exit_profile_id": payload.get("exit_profile_id"),
+        "exit_rules": payload.get("exit_rules", {}),
+        "config_exit": {
+            "stop_loss_pct": config.stop_loss_pct,
+            "trailing_stop_pct": config.trailing_stop_pct,
+            "take_profit_pct": config.take_profit_pct,
+            "max_holding_days": config.max_holding_days,
+            "use_exit_ma": config.use_exit_ma,
+            "exit_ma_days": config.exit_ma_days,
+            "use_market_exit": config.use_market_exit,
+        },
+        "market_regime_exit": {
+            key: value
+            for key, value in dict(payload.get("market_regime_rules") or {}).items()
+            if key in {"use_market_exit", "market_ma_days", "market_momentum_days", "strict_market_filter"}
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 RECOVERY_FAST_CONCEPT_SCORES = {
     "post_ep_pullback_reclaim_proxy": -6.0,
     "macd_histogram_turnup_trend": -5.0,
@@ -3079,7 +3165,8 @@ V3_SIGNAL_TIMEOUT_CONCEPT_SCORES = {
 
 ZERO_TIMEOUT_MODE = "optimized_evaluation_v4_zero_timeout"
 ZERO_TIMEOUT_SLOW_QUEUE_MODE = "optimized_evaluation_v4_zero_timeout_slow_queue"
-SIGNAL_FIRST_MODES = {"optimized_evaluation_v3_signal_first", ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE}
+EVENT_FIRST_MODE = "optimized_evaluation_v5_event_first"
+SIGNAL_FIRST_MODES = {"optimized_evaluation_v3_signal_first", ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE, EVENT_FIRST_MODE}
 V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
     "macd_histogram_turnup_trend",
     "post_ep_pullback_reclaim_proxy",
@@ -3147,11 +3234,15 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
 
 
 def _is_zero_timeout_mode(optimized_evaluation_mode: str) -> bool:
-    return str(optimized_evaluation_mode) in {ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE}
+    return str(optimized_evaluation_mode) in {ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE, EVENT_FIRST_MODE}
 
 
 def _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode: str) -> bool:
     return str(optimized_evaluation_mode) == ZERO_TIMEOUT_SLOW_QUEUE_MODE
+
+
+def _is_event_first_mode(optimized_evaluation_mode: str) -> bool:
+    return str(optimized_evaluation_mode) == EVENT_FIRST_MODE
 
 
 def _zero_timeout_defer_reason(
@@ -3162,6 +3253,8 @@ def _zero_timeout_defer_reason(
     optimized_evaluation_mode: str = ZERO_TIMEOUT_MODE,
     allow_slow_queue_evaluation: bool = False,
 ) -> str | None:
+    if _is_event_first_mode(optimized_evaluation_mode):
+        return None
     if _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode) or allow_slow_queue_evaluation:
         return None
     concept = _external_profile_value(payload, "concept_id", "concept")
@@ -3172,6 +3265,150 @@ def _zero_timeout_defer_reason(
     if str(cost_bucket) == "slow":
         return "needs_slow_queue"
     return None
+
+
+def _event_first_formula_tokens(candidate: ExternalStrategyCandidate) -> str:
+    payload = candidate.payload
+    tokens = {
+        "entry_rules": payload.get("entry_rules", {}),
+        "market_regime_rules": payload.get("market_regime_rules", {}),
+        "stock_trend_rules": payload.get("stock_trend_rules", {}),
+        "relative_strength_rules": payload.get("relative_strength_rules", {}),
+        "concept_id": payload.get("concept_id"),
+        "market_overlay_id": payload.get("market_overlay_id"),
+        "trend_profile_id": payload.get("trend_profile_id"),
+        "rs_profile_id": payload.get("rs_profile_id"),
+        "aggression_id": payload.get("aggression_id"),
+    }
+    return json.dumps(tokens, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _event_first_symbols_with_events(signals_by_symbol: dict[str, pd.Series]) -> int:
+    total = 0
+    for signal in signals_by_symbol.values():
+        if signal is not None and not signal.empty and bool(signal.astype(bool).any()):
+            total += 1
+    return int(total)
+
+
+def _append_event_first_signal_artifacts(
+    *,
+    compiled_signal_plan_rows: list[dict[str, Any]],
+    event_store_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    signal_diagnostic: dict[str, Any],
+    locked_start: str,
+    validation_end: str,
+) -> None:
+    first_candidate = group[0]
+    raw_signals_total = int(signal_diagnostic.get("raw_signals_total", 0))
+    seconds_signal = float(signal_diagnostic.get("seconds_signal", 0.0))
+    symbols_with_events = int(signal_diagnostic.get("symbols_with_events", signal_diagnostic.get("symbols_processed", 0)))
+    compiled_signal_plan_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_ids": ";".join(strategy_ids),
+            "strategy_count": int(len(group)),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+            "formula_tokens": _event_first_formula_tokens(first_candidate),
+            "uses_event_store": True,
+            "uses_bitset": False,
+            "uses_sparse_events": True,
+            "storage_kind": "compact_npz_sparse",
+            "events_total": raw_signals_total,
+            "symbols_with_events": symbols_with_events,
+            "seconds_event_build": seconds_signal,
+            "legacy_equivalence_status": "legacy_signal_path",
+        }
+    )
+    event_store_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "concept": diagnostic_base.get("concept", ""),
+            "family": diagnostic_base.get("family", ""),
+            "events_total": raw_signals_total,
+            "symbols_with_events": symbols_with_events,
+            "store_format": "compact_npz_sparse",
+            "locked_start_exclusive": locked_start,
+            "validation_end": validation_end,
+            "seconds_event_build": seconds_signal,
+        }
+    )
+
+
+def _append_event_first_precheck_diagnostics(
+    *,
+    concept_precheck_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    concept: str,
+    reject: dict[str, Any] | None,
+    validation_signal_total: int,
+    validation_year_count: int,
+) -> None:
+    decision = "passed" if reject is None else "early_rejected"
+    reason = "" if reject is None else str(reject.get("reason", ""))
+    actual = validation_signal_total if reject is None else reject.get("actual", validation_signal_total)
+    threshold = "" if reject is None else reject.get("threshold", "")
+    max_avg = float(validation_signal_total / max(int(validation_year_count), 1))
+    for candidate in group:
+        concept_precheck_rows.append(
+            {
+                "job_id": output_padded,
+                "strategy_id": str(candidate.payload.get("strategy_id")),
+                "signal_hash": signal_hash,
+                "concept": concept,
+                "precheck_name": str(reject.get("stage", "safe_prefilter") if reject else "safe_prefilter"),
+                "max_events_by_year": actual,
+                "max_avg_events_per_year": max_avg,
+                "decision": decision,
+                "reason": reason,
+                "actual": actual,
+                "threshold": threshold,
+            }
+        )
+
+
+def _append_event_first_exit_group_artifacts(
+    *,
+    exit_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    result_status: str,
+) -> None:
+    for candidate in group:
+        payload = candidate.payload
+        config = candidate.config
+        diagnostic = _external_diagnostic_base(payload, job_id=output_padded)
+        exit_group_manifest_rows.append(
+            {
+                "job_id": output_padded,
+                "strategy_id": str(payload.get("strategy_id")),
+                "signal_hash": signal_hash,
+                "exit_group_hash": exit_external_strategy_hash(candidate),
+                "exit_rule": diagnostic.get("exit_rule", ""),
+                "stop_loss": config.stop_loss_pct,
+                "take_profit": config.take_profit_pct,
+                "max_holding": config.max_holding_days,
+                "market_exit": config.use_market_exit,
+                "result_status": result_status,
+            }
+        )
 
 
 def _suggested_slow_timeout_seconds(reason: str) -> int:
@@ -5277,6 +5514,7 @@ def run_external_strategy_pack_shard(
     if output_prefix == "job" and str(output_padded).isdigit():
         job_index_for_balancing = int(output_padded)
     use_zero_timeout = _is_zero_timeout_mode(str(optimized_evaluation_mode))
+    use_event_first = _is_event_first_mode(str(optimized_evaluation_mode))
     use_v3_signal_first = str(optimized_evaluation_mode) in SIGNAL_FIRST_MODES
     signal_first_phase = str(signal_first_phase or "combined").strip().lower()
     if signal_first_phase not in {"combined", "signals", "exits"}:
@@ -5403,7 +5641,7 @@ def run_external_strategy_pack_shard(
         enabled=enable_feature_cache,
         prewarm=str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES},
     )
-    if use_v3_signal_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
+    if use_v3_signal_first and not use_event_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
         job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
     print(
         "[gtbi] job "
@@ -5427,6 +5665,10 @@ def run_external_strategy_pack_shard(
     slow_queue_rows: list[dict[str, Any]] = []
     signal_group_manifest_rows: list[dict[str, Any]] = []
     strategy_to_signal_rows: list[dict[str, Any]] = []
+    compiled_signal_plan_rows: list[dict[str, Any]] = []
+    event_store_manifest_rows: list[dict[str, Any]] = []
+    concept_precheck_rows: list[dict[str, Any]] = []
+    exit_group_manifest_rows: list[dict[str, Any]] = []
     signal_group_seconds: list[float] = []
     evaluation_cache: dict[str, tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
     signal_evaluation_cache: dict[str, tuple[str, dict[str, pd.Series], dict[str, Any]]] = {}
@@ -5450,6 +5692,10 @@ def run_external_strategy_pack_shard(
         slow_queue_rows.extend(_csv_records_or_empty(signal_events_dir / f"slow_queue_manifest_{source_suffix}.csv"))
         signal_group_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"signal_group_manifest_{source_suffix}.csv"))
         strategy_to_signal_rows.extend(_csv_records_or_empty(signal_events_dir / f"strategy_to_signal_map_{source_suffix}.csv"))
+        compiled_signal_plan_rows.extend(_csv_records_or_empty(signal_events_dir / f"compiled_signal_plan_{source_suffix}.csv"))
+        event_store_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"event_store_manifest_{source_suffix}.csv"))
+        concept_precheck_rows.extend(_csv_records_or_empty(signal_events_dir / f"concept_precheck_diagnostics_{source_suffix}.csv"))
+        exit_group_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"exit_group_manifest_{source_suffix}.csv"))
         signal_group_seconds = [
             float(row.get("seconds_signal", 0.0))
             for row in signal_group_manifest_rows
@@ -5632,9 +5878,9 @@ def run_external_strategy_pack_shard(
                         signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
                     continue
                 candidate_deadlines: list[float] = []
-                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                if not use_event_first and candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
                     candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
-                if job_deadline is not None:
+                if not use_event_first and job_deadline is not None:
                     job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
                     if job_safe_deadline <= time.perf_counter():
                         if use_zero_timeout:
@@ -5682,7 +5928,7 @@ def run_external_strategy_pack_shard(
                             signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
                         continue
                     candidate_deadlines.append(job_safe_deadline)
-                if use_zero_timeout:
+                if use_zero_timeout and not use_event_first:
                     allow_slow_queue_evaluation = (
                         int(external_strategy_limit) <= 1
                         and float(candidate_timeout_seconds) >= 1800.0
@@ -5723,6 +5969,43 @@ def run_external_strategy_pack_shard(
                             )
                         else:
                             signal_groups_early_rejected += 1
+                            if use_event_first:
+                                precheck_diagnostic = {
+                                    "raw_signals_total": precheck_raw_total,
+                                    "symbols_processed": precheck_symbols,
+                                    "symbols_with_events": precheck_symbols,
+                                    "seconds_signal": precheck_seconds,
+                                }
+                                _append_event_first_signal_artifacts(
+                                    compiled_signal_plan_rows=compiled_signal_plan_rows,
+                                    event_store_manifest_rows=event_store_manifest_rows,
+                                    group=group,
+                                    output_padded=output_padded,
+                                    signal_hash=signal_hash,
+                                    first_id=first_id,
+                                    strategy_ids=strategy_ids,
+                                    diagnostic_base=diagnostic_base,
+                                    signal_diagnostic=precheck_diagnostic,
+                                    locked_start=locked_start,
+                                    validation_end=validation_end,
+                                )
+                                _append_event_first_precheck_diagnostics(
+                                    concept_precheck_rows=concept_precheck_rows,
+                                    group=group,
+                                    output_padded=output_padded,
+                                    signal_hash=signal_hash,
+                                    concept=str(diagnostic_base.get("concept", "")),
+                                    reject=precheck_reject,
+                                    validation_signal_total=precheck_validation_total,
+                                    validation_year_count=_dt(validation_end).year - _dt(validation_start).year + 1,
+                                )
+                                _append_event_first_exit_group_artifacts(
+                                    exit_group_manifest_rows=exit_group_manifest_rows,
+                                    group=group,
+                                    output_padded=output_padded,
+                                    signal_hash=signal_hash,
+                                    result_status="signal_early_rejected",
+                                )
                             _append_signal_group_early_rejected_result(
                                 early_reject_rows=early_reject_rows,
                                 dedupe_rows=dedupe_rows,
@@ -5787,6 +6070,7 @@ def run_external_strategy_pack_shard(
                     )
                 signal_groups_evaluated += 1
                 signal_seconds = float(signal_diagnostic.get("seconds_signal", time.perf_counter() - group_start))
+                signal_diagnostic.setdefault("symbols_with_events", _event_first_symbols_with_events(signals_by_symbol))
                 signal_group_seconds.append(signal_seconds)
                 signal_evaluation_cache[signal_hash] = (first_id, signals_by_symbol, signal_diagnostic)
                 reject = None
@@ -5799,8 +6083,40 @@ def run_external_strategy_pack_shard(
                         validation_start=validation_start,
                         validation_end=validation_end,
                     )
+                if use_event_first:
+                    _append_event_first_signal_artifacts(
+                        compiled_signal_plan_rows=compiled_signal_plan_rows,
+                        event_store_manifest_rows=event_store_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        signal_diagnostic=signal_diagnostic,
+                        locked_start=locked_start,
+                        validation_end=validation_end,
+                    )
+                    _append_event_first_precheck_diagnostics(
+                        concept_precheck_rows=concept_precheck_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        concept=str(diagnostic_base.get("concept", "")),
+                        reject=reject,
+                        validation_signal_total=validation_signal_total,
+                        validation_year_count=_dt(validation_end).year - _dt(validation_start).year + 1,
+                    )
                 if reject is not None:
                     signal_groups_early_rejected += 1
+                    if use_event_first:
+                        _append_event_first_exit_group_artifacts(
+                            exit_group_manifest_rows=exit_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            result_status="signal_early_rejected",
+                        )
                     reason = str(reject["reason"])
                     for index, candidate in enumerate(group):
                         payload = candidate.payload
@@ -5896,6 +6212,14 @@ def run_external_strategy_pack_shard(
                         "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
                     }
                 )
+                if use_event_first:
+                    _append_event_first_exit_group_artifacts(
+                        exit_group_manifest_rows=exit_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        result_status="signal_ready",
+                    )
                 signal_events_to_write[signal_hash] = signals_by_symbol
                 ready_group_records_to_write.append(
                     {
@@ -6057,9 +6381,9 @@ def run_external_strategy_pack_shard(
                     "enable_early_stopping": enable_early_stopping,
                 }
                 candidate_deadlines: list[float] = []
-                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                if not use_event_first and candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
                     candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
-                if job_deadline is not None:
+                if not use_event_first and job_deadline is not None:
                     job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
                     if job_safe_deadline > time.perf_counter():
                         candidate_deadlines.append(job_safe_deadline)
@@ -6352,6 +6676,10 @@ def run_external_strategy_pack_shard(
     slow_queue_manifest = pd.DataFrame(slow_queue_rows, columns=SLOW_QUEUE_MANIFEST_COLUMNS)
     signal_group_manifest = pd.DataFrame(signal_group_manifest_rows, columns=SIGNAL_GROUP_MANIFEST_COLUMNS)
     strategy_to_signal_map = pd.DataFrame(strategy_to_signal_rows, columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
+    compiled_signal_plan = pd.DataFrame(compiled_signal_plan_rows, columns=COMPILED_SIGNAL_PLAN_COLUMNS)
+    event_store_manifest = pd.DataFrame(event_store_manifest_rows, columns=EVENT_STORE_MANIFEST_COLUMNS)
+    concept_precheck_diagnostics = pd.DataFrame(concept_precheck_rows, columns=CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS)
+    exit_group_manifest = pd.DataFrame(exit_group_manifest_rows, columns=EXIT_GROUP_MANIFEST_COLUMNS)
 
     leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
@@ -6368,6 +6696,24 @@ def run_external_strategy_pack_shard(
     slow_queue_manifest.to_csv(output_dir / f"slow_queue_manifest_{file_suffix}.csv", index=False)
     signal_group_manifest.to_csv(output_dir / f"signal_group_manifest_{file_suffix}.csv", index=False)
     strategy_to_signal_map.to_csv(output_dir / f"strategy_to_signal_map_{file_suffix}.csv", index=False)
+    compiled_signal_plan.to_csv(output_dir / f"compiled_signal_plan_{file_suffix}.csv", index=False)
+    event_store_manifest.to_csv(output_dir / f"event_store_manifest_{file_suffix}.csv", index=False)
+    concept_precheck_diagnostics.to_csv(output_dir / f"concept_precheck_diagnostics_{file_suffix}.csv", index=False)
+    exit_group_manifest.to_csv(output_dir / f"exit_group_manifest_{file_suffix}.csv", index=False)
+    cost_profile_v5 = {
+        "optimized_evaluation_mode": str(optimized_evaluation_mode),
+        "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
+        "signal_groups_evaluated": int(signal_groups_evaluated if use_v3_signal_first else len(signal_evaluation_cache)),
+        "events_total": int(pd.to_numeric(event_store_manifest.get("events_total", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        if not event_store_manifest.empty
+        else 0,
+        "slow_deferred_rate": 0.0 if use_event_first else None,
+        "timeout_rate": 0.0 if use_event_first else None,
+    }
+    (output_dir / f"cost_profile_v5_{file_suffix}.json").write_text(
+        json.dumps(cost_profile_v5, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     with (output_dir / f"top_indicator_rules_{file_suffix}.jsonl").open("w", encoding="utf-8") as handle:
         for rule in rules:
             handle.write(json.dumps(rule, sort_keys=True) + "\n")
@@ -6455,6 +6801,7 @@ def run_external_strategy_pack_shard(
         "cached_signal_reuses": int(signal_deduped_count),
         "optimized_evaluation_mode": str(optimized_evaluation_mode),
         "zero_timeout_mode": bool(use_zero_timeout),
+        "zero_slow_deferred_mode": bool(use_event_first),
         "signal_first_phase": str(signal_first_phase),
         "enable_feature_cache": bool(enable_feature_cache),
         "enable_dedupe": bool(enable_dedupe),
@@ -6511,6 +6858,11 @@ def merge_external_strategy_pack_outputs(
     slow_queue_frames: list[pd.DataFrame] = []
     signal_group_manifest_frames: list[pd.DataFrame] = []
     strategy_to_signal_map_frames: list[pd.DataFrame] = []
+    compiled_signal_plan_frames: list[pd.DataFrame] = []
+    event_store_manifest_frames: list[pd.DataFrame] = []
+    concept_precheck_frames: list[pd.DataFrame] = []
+    exit_group_manifest_frames: list[pd.DataFrame] = []
+    cost_profile_v5_rows: list[dict[str, Any]] = []
     rule_rows: list[dict[str, Any]] = []
     def read_csv_or_empty(path: Path) -> pd.DataFrame:
         if not path.stat().st_size:
@@ -6597,11 +6949,36 @@ def merge_external_strategy_pack_outputs(
         ("strategy_to_signal_map_shard_*.csv", strategy_to_signal_map_frames),
         ("strategy_to_signal_map_job_*.csv", strategy_to_signal_map_frames),
         ("strategy_to_signal_map.csv", strategy_to_signal_map_frames),
+        ("compiled_signal_plan_shard_*.csv", compiled_signal_plan_frames),
+        ("compiled_signal_plan_job_*.csv", compiled_signal_plan_frames),
+        ("compiled_signal_plan.csv", compiled_signal_plan_frames),
+        ("event_store_manifest_shard_*.csv", event_store_manifest_frames),
+        ("event_store_manifest_job_*.csv", event_store_manifest_frames),
+        ("event_store_manifest.csv", event_store_manifest_frames),
+        ("concept_precheck_diagnostics_shard_*.csv", concept_precheck_frames),
+        ("concept_precheck_diagnostics_job_*.csv", concept_precheck_frames),
+        ("concept_precheck_diagnostics.csv", concept_precheck_frames),
+        ("exit_group_manifest_shard_*.csv", exit_group_manifest_frames),
+        ("exit_group_manifest_job_*.csv", exit_group_manifest_frames),
+        ("exit_group_manifest.csv", exit_group_manifest_frames),
     ):
         for path in sorted(shards_root.rglob(pattern)):
             frame = read_csv_or_empty(path)
             if not frame.empty:
                 target.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("cost_profile_v5_shard_*.json"),
+            *shards_root.rglob("cost_profile_v5_job_*.json"),
+            *shards_root.rglob("cost_profile_v5.json"),
+        ]
+    ):
+        try:
+            profile = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(profile, dict):
+            cost_profile_v5_rows.append(profile)
     for path in sorted(
         [
             *shards_root.rglob("top_indicator_rules_shard_*.jsonl"),
@@ -6667,6 +7044,26 @@ def merge_external_strategy_pack_outputs(
         if strategy_to_signal_map_frames
         else pd.DataFrame(columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
     )
+    compiled_signal_plan = (
+        pd.concat(compiled_signal_plan_frames, ignore_index=True, sort=False)
+        if compiled_signal_plan_frames
+        else pd.DataFrame(columns=COMPILED_SIGNAL_PLAN_COLUMNS)
+    )
+    event_store_manifest = (
+        pd.concat(event_store_manifest_frames, ignore_index=True, sort=False)
+        if event_store_manifest_frames
+        else pd.DataFrame(columns=EVENT_STORE_MANIFEST_COLUMNS)
+    )
+    concept_precheck_diagnostics = (
+        pd.concat(concept_precheck_frames, ignore_index=True, sort=False)
+        if concept_precheck_frames
+        else pd.DataFrame(columns=CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS)
+    )
+    exit_group_manifest = (
+        pd.concat(exit_group_manifest_frames, ignore_index=True, sort=False)
+        if exit_group_manifest_frames
+        else pd.DataFrame(columns=EXIT_GROUP_MANIFEST_COLUMNS)
+    )
 
     leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
     filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
@@ -6683,6 +7080,23 @@ def merge_external_strategy_pack_outputs(
     slow_queue_manifest.to_csv(output_dir / "slow_queue_manifest.csv", index=False)
     signal_group_manifest.to_csv(output_dir / "signal_group_manifest.csv", index=False)
     strategy_to_signal_map.to_csv(output_dir / "strategy_to_signal_map.csv", index=False)
+    compiled_signal_plan.to_csv(output_dir / "compiled_signal_plan.csv", index=False)
+    event_store_manifest.to_csv(output_dir / "event_store_manifest.csv", index=False)
+    concept_precheck_diagnostics.to_csv(output_dir / "concept_precheck_diagnostics.csv", index=False)
+    exit_group_manifest.to_csv(output_dir / "exit_group_manifest.csv", index=False)
+    cost_profile_v5 = {
+        "optimized_evaluation_mode": next(
+            (str(item.get("optimized_evaluation_mode")) for item in cost_profile_v5_rows if item.get("optimized_evaluation_mode")),
+            next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
+        ),
+        "profiles": cost_profile_v5_rows,
+        "signal_groups_loaded": int(sum(int(item.get("signal_groups_loaded", 0) or 0) for item in cost_profile_v5_rows)),
+        "signal_groups_evaluated": int(sum(int(item.get("signal_groups_evaluated", 0) or 0) for item in cost_profile_v5_rows)),
+        "events_total": int(pd.to_numeric(event_store_manifest.get("events_total", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        if not event_store_manifest.empty
+        else int(sum(int(item.get("events_total", 0) or 0) for item in cost_profile_v5_rows)),
+    }
+    (output_dir / "cost_profile_v5.json").write_text(json.dumps(cost_profile_v5, indent=2, sort_keys=True), encoding="utf-8")
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
@@ -6782,6 +7196,7 @@ def merge_external_strategy_pack_outputs(
     if signal_groups_slow_deferred == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
         signal_groups_slow_deferred = int((signal_group_manifest["result_status"].astype(str) == "signal_slow_deferred").sum())
     zero_timeout_mode = any(bool(item.get("zero_timeout_mode")) for item in summaries)
+    zero_slow_deferred_mode = any(bool(item.get("zero_slow_deferred_mode")) for item in summaries)
     summary = {
         "total_strategies_requested": int(total_strategies_requested),
         "total_strategies_loaded": sum_summary("strategies_loaded", "total_strategies_loaded"),
@@ -6827,6 +7242,7 @@ def merge_external_strategy_pack_outputs(
         "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
         "optimized_evaluation_mode": next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
         "zero_timeout_mode": bool(zero_timeout_mode),
+        "zero_slow_deferred_mode": bool(zero_slow_deferred_mode),
         "signal_first_phase": next((str(item.get("signal_first_phase")) for item in summaries if item.get("signal_first_phase")), ""),
         "filtered_candidates": int(len(filtered)),
         "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),

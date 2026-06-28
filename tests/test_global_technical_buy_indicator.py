@@ -2555,6 +2555,129 @@ def test_zero_timeout_runner_defers_when_job_budget_is_exhausted(
     assert manifest["result_status"].tolist() == ["signal_slow_deferred", "signal_slow_deferred"]
 
 
+def test_event_first_runner_never_slow_defers_known_slow_signal_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("event_first_a")
+    second_payload = _external_strategy_payload("event_first_b")
+    first_payload["concept_id"] = "macd_histogram_turnup_trend"
+    second_payload["concept_id"] = "macd_histogram_turnup_trend"
+    second_payload["exit_rules"]["take_profit_pct"] = 0.25
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[[70, 90, 120]] = True
+    signal_calls = {"count": 0}
+    core_calls: list[str] = []
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        signal_calls["count"] += 1
+        return {"AAA": signal}, {"seconds_signal": 0.75, "symbols_processed": 1, "raw_signals_total": 3}
+
+    def fake_prefilter(**kwargs: object) -> tuple[dict[str, object] | None, int]:
+        return None, 3
+
+    def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
+        candidate_id = str(kwargs["candidate_id"])
+        core_calls.append(candidate_id)
+        assert kwargs.get("precomputed_signals_by_symbol") is not None
+        row = {
+            "candidate_id": candidate_id,
+            "stage": 0,
+            "search_method": gtbi.EXTERNAL_SEARCH_METHOD,
+            "family": "minervini_sepa",
+            "score": 0.0,
+            "strict_quality_pass": False,
+            "adjusted_return_time_risk": 0.0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        diagnostic = {
+            "seconds_total": 0.2,
+            "seconds_feature_build": 0.0,
+            "seconds_signal": 0.0,
+            "seconds_simulation": 0.1,
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": 1,
+            "symbols_processed": 1,
+            "raw_signals_total": 3,
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        return row, pd.DataFrame(columns=gtbi.TRADE_COLUMNS), pd.DataFrame(columns=gtbi.YEARLY_COLUMNS), diagnostic
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", fake_prefilter)
+    monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        enable_dedupe=True,
+        candidate_timeout_seconds=300,
+        job_wall_clock_seconds=300,
+    )
+
+    out = tmp_path / "out" / "job-0000"
+    slow = pd.read_csv(out / "slow_deferred_strategies_job_0000.csv")
+    timeouts = pd.read_csv(out / "timeout_strategies_job_0000.csv")
+    manifest = pd.read_csv(out / "signal_group_manifest_job_0000.csv")
+    compiled = pd.read_csv(out / "compiled_signal_plan_job_0000.csv")
+    event_manifest = pd.read_csv(out / "event_store_manifest_job_0000.csv")
+    exits = pd.read_csv(out / "exit_group_manifest_job_0000.csv")
+    cost_profile = json.loads((out / "cost_profile_v5_job_0000.json").read_text(encoding="utf-8"))
+    assert signal_calls["count"] == 1
+    assert core_calls == ["event_first_a", "event_first_b"]
+    assert summary["zero_timeout_mode"] is True
+    assert summary["zero_slow_deferred_mode"] is True
+    assert summary["strategies_timed_out"] == 0
+    assert summary["strategies_slow_deferred"] == 0
+    assert summary["signal_groups_slow_deferred"] == 0
+    assert slow.empty
+    assert timeouts.empty
+    assert manifest["result_status"].tolist() == ["signal_ready"]
+    assert compiled["uses_event_store"].astype(bool).tolist() == [True]
+    assert event_manifest["events_total"].tolist() == [3]
+    assert set(exits["strategy_id"]) == {"event_first_a", "event_first_b"}
+    assert cost_profile["optimized_evaluation_mode"] == "optimized_evaluation_v5_event_first"
+    assert cost_profile["signal_groups_loaded"] == 1
+
+
+def test_event_first_exit_hash_uses_only_effective_exit_rules() -> None:
+    first_payload = _external_strategy_payload("exit_hash_a")
+    second_payload = _external_strategy_payload("exit_hash_b")
+    second_payload["concept_id"] = "q_stair_step_reclaim"
+    first = gtbi.external_strategy_to_config(first_payload)
+    second = gtbi.external_strategy_to_config(second_payload)
+
+    assert gtbi.exit_external_strategy_hash(first) == gtbi.exit_external_strategy_hash(second)
+
+    changed_payload = _external_strategy_payload("exit_hash_c")
+    changed_payload["exit_rules"]["take_profit_pct"] = 22.0
+    changed = gtbi.external_strategy_to_config(changed_payload)
+
+    assert gtbi.exit_external_strategy_hash(first) != gtbi.exit_external_strategy_hash(changed)
+
+
 def test_signal_first_runner_reserves_time_for_exit_simulation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3243,6 +3366,133 @@ def test_external_merge_sums_zero_timeout_slow_deferred_outputs(tmp_path: Path) 
     assert queue["suggested_timeout_seconds"].tolist() == [1800]
 
 
+def test_external_merge_preserves_event_first_artifacts(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 2,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 1,
+                "strategies_timed_out": 0,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "signal_groups_loaded": 1,
+                "signal_groups_evaluated": 1,
+                "signal_groups_slow_deferred": 0,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "event_first_a",
+                "score": 0.0,
+                "adjusted_return_time_risk": 0.1,
+                "family": "minervini_sepa",
+                "concept_id": "macd_histogram_turnup_trend",
+                "market_overlay_id": "spy_stage2_bull",
+            }
+        ]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=["candidate_id", "adjusted_return_time_risk"]).to_csv(
+        job / "filtered_leaderboard_job_0000.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.YEARLY_COLUMNS).to_csv(job / "yearly_trade_performance_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TRADE_COLUMNS).to_csv(job / "top_trades_sample_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMING_DIAGNOSTIC_COLUMNS).to_csv(job / "timing_diagnostics_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.DEDUPE_MAP_COLUMNS).to_csv(job / "dedupe_map_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.JOB_MANIFEST_COLUMNS).to_csv(job / "job_manifest_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "job_id": "0000",
+                "signal_hash": "sig",
+                "concept": "macd_histogram_turnup_trend",
+                "uses_event_store": True,
+                "uses_sparse_events": True,
+                "uses_bitset": False,
+            }
+        ]
+    ).to_csv(job / "compiled_signal_plan_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "job_id": "0000",
+                "signal_hash": "sig",
+                "concept": "macd_histogram_turnup_trend",
+                "events_total": 123,
+                "symbols_with_events": 7,
+            }
+        ]
+    ).to_csv(job / "event_store_manifest_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "event_first_b",
+                "concept": "macd_histogram_turnup_trend",
+                "precheck_name": "event_max_yearly_trades",
+                "decision": "early_rejected",
+                "reason": "event_max_yearly_trades_lt_100",
+            }
+        ]
+    ).to_csv(job / "concept_precheck_diagnostics_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "job_id": "0000",
+                "strategy_id": "event_first_a",
+                "exit_group_hash": "exit",
+                "signal_hash": "sig",
+                "result_status": "evaluated",
+            }
+        ]
+    ).to_csv(job / "exit_group_manifest_job_0000.csv", index=False)
+    (job / "cost_profile_v5_job_0000.json").write_text(
+        json.dumps({"optimized_evaluation_mode": "optimized_evaluation_v5_event_first", "signal_groups_loaded": 1}),
+        encoding="utf-8",
+    )
+    (job / "top_indicator_rules_job_0000.jsonl").write_text("", encoding="utf-8")
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=2,
+        total_shards_requested=1,
+        total_jobs_requested=1,
+        candidate_count_per_job=2,
+    )
+
+    assert summary["optimized_evaluation_mode"] == "optimized_evaluation_v5_event_first"
+    assert summary["zero_timeout_mode"] is True
+    assert summary["zero_slow_deferred_mode"] is True
+    assert summary["total_strategies_slow_deferred"] == 0
+    assert summary["total_strategies_timed_out"] == 0
+    for name in (
+        "compiled_signal_plan.csv",
+        "event_store_manifest.csv",
+        "concept_precheck_diagnostics.csv",
+        "exit_group_manifest.csv",
+        "cost_profile_v5.json",
+    ):
+        assert (tmp_path / "final" / name).exists()
+    assert pd.read_csv(tmp_path / "final" / "event_store_manifest.csv")["events_total"].tolist() == [123]
+
+
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
     text = path.read_text(encoding="utf-8")
@@ -3295,6 +3545,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in text
     assert 'gh run download "${{ github.run_id }}"' in text
     assert "requires_local_machine" not in text
+    assert "optimized_evaluation_v5_event_first" in text
 
 
 def test_optimized_evaluation_v1_workflow_alias_uses_v2_engine() -> None:
