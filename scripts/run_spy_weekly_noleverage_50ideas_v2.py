@@ -1100,4 +1100,3 @@ def synthetic_weekly_panel(*, periods: int = 1500) -> pd.DataFrame:
 
 if __name__ == "__main__":
     main()
-
