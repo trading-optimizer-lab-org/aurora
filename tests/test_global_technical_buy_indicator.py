@@ -2199,9 +2199,13 @@ def test_zero_timeout_runner_defers_known_slow_signal_group_before_signal_build(
     def fail_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
         raise AssertionError("known slow v4 concepts should enter slow queue before signal build")
 
+    def no_specific_precheck(**kwargs: object) -> tuple[None, int, int, int, float]:
+        return None, 0, 0, 0, 0.0
+
     monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
     monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
     monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_specific_slow_concept_precheck", no_specific_precheck)
     monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fail_build_signal)
     pack_dir = tmp_path / "prebuilt"
     pack_dir.mkdir()
@@ -2241,6 +2245,161 @@ def test_zero_timeout_runner_defers_known_slow_signal_group_before_signal_build(
     assert queue["concept"].tolist() == ["macd_histogram_turnup_trend"]
     assert timing["result_status"].tolist() == ["slow_deferred", "slow_deferred"]
     assert timing["timeout"].astype(bool).tolist() == [False, False]
+
+
+@pytest.mark.parametrize(
+    ("concept", "reason_prefix"),
+    [
+        ("macd_histogram_turnup_trend", "macd_histogram_turnup_trend_precheck_"),
+        ("post_ep_pullback_reclaim_proxy", "post_ep_pullback_reclaim_proxy_precheck_"),
+    ],
+)
+def test_zero_timeout_specific_slow_precheck_early_rejects_impossible_sparse_concepts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    concept: str,
+    reason_prefix: str,
+) -> None:
+    payload = _external_strategy_payload(f"sparse_{concept}")
+    payload["concept_id"] = concept
+    candidates = [gtbi.external_strategy_to_config(payload)]
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.full(len(idx), 100.0)
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    spy = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 1_000_000.0),
+                "symbol": "SPY",
+            }
+        )
+    )
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fail_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        raise AssertionError("specific slow precheck should reject before full signal build")
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fail_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=1,
+        optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout",
+        enable_dedupe=True,
+        job_wall_clock_seconds=300,
+    )
+
+    early = pd.read_csv(tmp_path / "out" / "job-0000" / "early_rejected_strategies_job_0000.csv")
+    timeouts = pd.read_csv(tmp_path / "out" / "job-0000" / "timeout_strategies_job_0000.csv")
+    manifest = pd.read_csv(tmp_path / "out" / "job-0000" / "signal_group_manifest_job_0000.csv")
+    assert summary["strategies_timed_out"] == 0
+    assert summary["strategies_early_rejected"] == 1
+    assert summary["strategies_slow_deferred"] == 0
+    assert timeouts.empty
+    assert early["reason"].iloc[0].startswith(reason_prefix)
+    assert early["stage"].iloc[0] == f"{concept}_precheck"
+    assert manifest["result_status"].tolist() == ["signal_early_rejected"]
+
+
+@pytest.mark.parametrize("concept", ["macd_histogram_turnup_trend", "post_ep_pullback_reclaim_proxy"])
+def test_zero_timeout_specific_slow_precheck_does_not_false_reject_dense_superset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    concept: str,
+) -> None:
+    payload = _external_strategy_payload(f"dense_{concept}")
+    payload["concept_id"] = concept
+    candidates = [gtbi.external_strategy_to_config(payload)]
+    idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
+    close = np.linspace(50.0, 150.0, len(idx))
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    spy = frame.copy()
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def dense_precheck_signal(**kwargs: object) -> pd.Series:
+        return pd.Series(True, index=frame.index)
+
+    def fail_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        raise AssertionError("dense known-slow precheck should defer before full signal build")
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_specific_slow_concept_precheck_signal", dense_precheck_signal)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fail_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=1,
+        optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout",
+        enable_dedupe=True,
+        job_wall_clock_seconds=300,
+    )
+
+    early = pd.read_csv(tmp_path / "out" / "job-0000" / "early_rejected_strategies_job_0000.csv")
+    slow = pd.read_csv(tmp_path / "out" / "job-0000" / "slow_deferred_strategies_job_0000.csv")
+    timeouts = pd.read_csv(tmp_path / "out" / "job-0000" / "timeout_strategies_job_0000.csv")
+    assert summary["strategies_timed_out"] == 0
+    assert summary["strategies_early_rejected"] == 0
+    assert summary["strategies_slow_deferred"] == 1
+    assert early.empty
+    assert timeouts.empty
+    assert slow["reason"].tolist() == ["known_slow_concept"]
 
 
 def test_zero_timeout_long_budget_single_candidate_evaluates_known_slow_signal_group(

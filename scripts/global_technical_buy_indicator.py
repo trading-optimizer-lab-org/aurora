@@ -3084,6 +3084,7 @@ V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
     "macd_histogram_turnup_trend",
     "post_ep_pullback_reclaim_proxy",
 }
+V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS = V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS
 
 
 def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
@@ -3584,6 +3585,101 @@ def _append_signal_group_slow_deferred_result(
     )
 
 
+def _append_signal_group_early_rejected_result(
+    *,
+    early_reject_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    signal_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    cost_score: float,
+    reject: dict[str, Any],
+    validation_signal_total: int,
+    seconds_total: float,
+    seconds_signal: float,
+    symbols_total: int,
+    symbols_processed: int,
+    raw_signals_total: int,
+) -> None:
+    reason = str(reject["reason"])
+    for index, candidate in enumerate(group):
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        early_reject_rows.append(
+            {
+                "strategy_id": candidate_id,
+                "reason": reason,
+                "split": str(reject.get("split", "")),
+                "year": reject.get("year", ""),
+                "actual": reject.get("actual", validation_signal_total),
+                "threshold": reject.get("threshold", ""),
+                "stage": str(reject.get("stage", "safe_prefilter")),
+                "seconds_until_reject": float(seconds_total),
+                "symbols_processed": int(symbols_processed),
+            }
+        )
+        dedupe_rows.append(
+            {
+                "strategy_id": candidate_id,
+                "canonical_hash": canonical_hash,
+                "canonical_strategy_id": "",
+                "deduped": False,
+                "signal_hash": signal_hash,
+                "signal_canonical_strategy_id": first_id,
+                "signal_deduped": bool(index > 0),
+            }
+        )
+        timing_rows.append(
+            {
+                **_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+                "seconds_total": float(seconds_total),
+                "seconds_feature_build": 0.0,
+                "seconds_signal": float(seconds_signal) if index == 0 else 0.0,
+                "seconds_simulation": 0.0,
+                "seconds_train": 0.0,
+                "seconds_validation": 0.0,
+                "symbols_total": int(symbols_total),
+                "symbols_processed": int(symbols_processed),
+                "raw_signals_total": int(raw_signals_total),
+                "trades_total": 0,
+                "train_trades": 0,
+                "validation_trades": 0,
+                "result_status": "signal_early_rejected",
+                "reject_reason": reason,
+                "timeout": False,
+                "early_rejected": True,
+                "runtime_error": False,
+            }
+        )
+    signal_group_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_count": int(len(group)),
+            "strategy_ids": ";".join(strategy_ids),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "number_of_reuses": int(max(len(group) - 1, 0)),
+            "result_status": "signal_early_rejected",
+            "reject_reason": reason,
+            "seconds_signal": float(seconds_signal),
+            "raw_signals_total": int(raw_signals_total),
+            "symbols_processed": int(symbols_processed),
+        }
+    )
+
+
 def _signal_year_counts_for_possible_exits(
     *,
     signals_by_symbol: dict[str, pd.Series],
@@ -3606,6 +3702,95 @@ def _signal_year_counts_for_possible_exits(
             end = pd.Timestamp(year=int(year), month=12, day=31)
             counts[int(year)] += int(((signal_dates >= start) & (signal_dates <= end)).sum())
     return counts
+
+
+def _specific_slow_concept_precheck_signal(
+    *,
+    concept: str,
+    frame: pd.DataFrame,
+    config: IndicatorConfig,
+) -> pd.Series:
+    prepared = _prepare_ohlcv(frame)
+    if prepared.empty:
+        return pd.Series(dtype=bool)
+    close = prepared["close"]
+    volume = prepared["volume"].fillna(0.0)
+    index = prepared.index
+    if concept == "macd_histogram_turnup_trend":
+        fast = close.ewm(span=12, adjust=False, min_periods=12).mean()
+        slow = close.ewm(span=26, adjust=False, min_periods=26).mean()
+        macd = fast - slow
+        macd_signal = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+        hist = macd - macd_signal
+        # Superset of histogram turn-up/reclaim entries. We intentionally do
+        # not apply trend, RS, market, or exit filters here; if this broad set
+        # is too sparse, the final stricter strategy cannot pass frequency gates.
+        signal = (hist > hist.shift(1)) & (hist.shift(1) <= hist.shift(2))
+        return signal.fillna(False).astype(bool)
+    if concept == "post_ep_pullback_reclaim_proxy":
+        avg_vol = volume.rolling(config.volume_lookback, min_periods=min(config.volume_lookback, len(prepared))).mean()
+        tiny_gap = (prepared["open"] / close.shift(1) - 1.0) > 0.0
+        high_reclaim = close > prepared["high"].shift(1).rolling(10, min_periods=3).max()
+        volume_confirm = volume >= avg_vol.fillna(0.0) * 0.5
+        # Broad EP/reclaim proxy: any positive gap or short-term reclaim with
+        # loose volume confirmation. This is deliberately a superset.
+        signal = (tiny_gap | high_reclaim) & volume_confirm
+        return signal.fillna(False).astype(bool)
+    return pd.Series(False, index=index)
+
+
+def _specific_slow_concept_precheck(
+    *,
+    payload: dict[str, Any],
+    config: IndicatorConfig,
+    symbol_frames: dict[str, pd.DataFrame],
+    validation_start: str,
+    validation_end: str,
+    deadline: float | None,
+) -> tuple[dict[str, Any] | None, int, int, int, float]:
+    concept = _external_profile_value(payload, "concept_id", "concept")
+    if concept not in V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS:
+        return None, 0, 0, 0, 0.0
+    start = time.perf_counter()
+    signals_by_symbol: dict[str, pd.Series] = {}
+    raw_signals_total = 0
+    symbols_processed = 0
+    for symbol, frame in symbol_frames.items():
+        if deadline is not None and time.perf_counter() >= float(deadline):
+            return (
+                {
+                    "action": "slow_deferred",
+                    "reason": "needs_slow_queue",
+                    "split": "",
+                    "year": "",
+                    "actual": raw_signals_total,
+                    "threshold": "",
+                    "stage": f"{concept}_precheck",
+                },
+                raw_signals_total,
+                symbols_processed,
+                raw_signals_total,
+                float(time.perf_counter() - start),
+            )
+        signal = _specific_slow_concept_precheck_signal(concept=concept, frame=frame, config=config)
+        signals_by_symbol[str(symbol)] = signal
+        raw_signals_total += int(signal.sum()) if not signal.empty else 0
+        symbols_processed += 1
+    reject, validation_signal_total = _safe_prefilter_raw_signals(
+        signals_by_symbol=signals_by_symbol,
+        symbol_frames=symbol_frames,
+        config=config,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    seconds = float(time.perf_counter() - start)
+    if reject is None:
+        return None, validation_signal_total, symbols_processed, raw_signals_total, seconds
+    reject = dict(reject)
+    reject["stage"] = f"{concept}_precheck"
+    reject["reason"] = f"{concept}_precheck_{reject['reason']}"
+    reject["action"] = "early_reject"
+    return reject, validation_signal_total, symbols_processed, raw_signals_total, seconds
 
 
 def _safe_prefilter_raw_signals(
@@ -5503,6 +5688,64 @@ def run_external_strategy_pack_shard(
                         and float(candidate_timeout_seconds) >= 1800.0
                         and float(job_wall_clock_seconds) >= 1800.0
                     )
+                    precheck_deadline = min(candidate_deadlines) if candidate_deadlines else None
+                    precheck_reject, precheck_validation_total, precheck_symbols, precheck_raw_total, precheck_seconds = (
+                        _specific_slow_concept_precheck(
+                            payload=first_payload,
+                            config=first_candidate.config,
+                            symbol_frames=symbol_frames,
+                            validation_start=validation_start,
+                            validation_end=validation_end,
+                            deadline=precheck_deadline,
+                        )
+                    )
+                    if precheck_reject is not None:
+                        action = str(precheck_reject.get("action", "early_reject"))
+                        if action == "slow_deferred":
+                            signal_groups_slow_deferred += 1
+                            _append_signal_group_slow_deferred_result(
+                                slow_deferred_rows=slow_deferred_rows,
+                                slow_queue_rows=slow_queue_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=str(precheck_reject.get("reason", "needs_slow_queue")),
+                                seconds_total=precheck_seconds,
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=precheck_symbols,
+                            )
+                        else:
+                            signal_groups_early_rejected += 1
+                            _append_signal_group_early_rejected_result(
+                                early_reject_rows=early_reject_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reject=precheck_reject,
+                                validation_signal_total=precheck_validation_total,
+                                seconds_total=precheck_seconds,
+                                seconds_signal=precheck_seconds,
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=precheck_symbols,
+                                raw_signals_total=precheck_raw_total,
+                            )
+                        for candidate in group:
+                            signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                        continue
                     defer_reason = _zero_timeout_defer_reason(
                         payload=first_payload,
                         cost_score=cost_score,
