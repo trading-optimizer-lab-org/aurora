@@ -1,0 +1,323 @@
+name: Global Technical Buy Indicator V5 Event First Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/gtbi-github-only-external-pack-72000
+    paths:
+      - ".github/workflows/global-technical-buy-indicator-v5-smoke.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  DATA_RUN_ID: "27936694743"
+  DATA_ARTIFACT_NAME: free-global-yahoo-daily-data-lake
+  EXTERNAL_STRATEGY_PACK_PATH: scripts/strategy_packs/gtbi_research_broad_72000
+  CANDIDATE_COUNT_PER_JOB: "10"
+  CANDIDATE_TIMEOUT_SECONDS: "300"
+  JOB_WALL_CLOCK_SECONDS: "300"
+  OPTIMIZED_EVALUATION_MODE: optimized_evaluation_v5_event_first
+  MIN_MARKET_CAP: "2000000000"
+  TRAIN_END: "2010-12-31"
+  VALIDATION_START: "2011-01-01"
+  VALIDATION_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+  TEST_MAX_JOBS: "100"
+  TEST_MAX_SIGNAL_GROUPS: "1000"
+
+jobs:
+  build_external_pack:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: "1"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      QF_DATA_DIR: /tmp/aurora-data
+      AURORA_ALLOW_LOCAL_RUNS_EXPLICIT: USER_REQUESTED_LOCAL_RUN_THIS_TURN
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download data lake artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.DATA_RUN_ID }}
+          name: ${{ env.DATA_ARTIFACT_NAME }}
+          path: ${{ env.QF_DATA_DIR }}/prices/free_us_daily
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Normalize data lake layout and ensure SPY benchmark exists
+        run: |
+          python - <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path(os.environ["QF_DATA_DIR"]) / "prices" / "free_us_daily"
+          normalized = root / "normalized"
+          if not normalized.exists():
+              nested = [path.parent for path in root.rglob("normalized/*.parquet")]
+              if nested:
+                  actual_root = nested[0].parent
+                  for child in actual_root.iterdir():
+                      target = root / child.name
+                      if child.resolve() == target.resolve():
+                          continue
+                      if target.exists():
+                          continue
+                      shutil.move(str(child), str(target))
+          candidates = [
+              root / "normalized" / "SPY.parquet",
+              root / "raw" / "yfinance" / "SPY.parquet",
+              *root.rglob("SPY.parquet"),
+          ]
+          out_dir = root / "benchmarks"
+          out_dir.mkdir(parents=True, exist_ok=True)
+          out_path = out_dir / "SPY.parquet"
+          if out_path.exists():
+              raise SystemExit(0)
+          for src in candidates:
+              if src.exists():
+                  frame = pd.read_parquet(src)
+                  frame.to_parquet(out_path, index=False)
+                  raise SystemExit(0)
+          import yfinance as yf
+          spy = yf.download("SPY", period="max", interval="1d", auto_adjust=False, progress=False)
+          if isinstance(spy.columns, pd.MultiIndex):
+              spy.columns = [str(col[0]).lower().replace(" ", "_") for col in spy.columns]
+          else:
+              spy.columns = [str(col).lower().replace(" ", "_") for col in spy.columns]
+          spy = spy.reset_index().rename(columns={"Date": "date", "date": "date", "adj_close": "adj_close"})
+          if "adj_close" not in spy.columns and "adj close" in spy.columns:
+              spy["adj_close"] = spy["adj close"]
+          spy["date"] = pd.to_datetime(spy["date"], errors="coerce")
+          spy = spy.dropna(subset=["date"])
+          spy = spy[spy["date"] < pd.Timestamp(os.environ["LOCKED_START"])]
+          spy["symbol"] = "SPY"
+          keep = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+          missing = [column for column in keep if column not in spy.columns]
+          if missing or spy.empty:
+              found = "\n".join(str(path) for path in list(root.rglob("*.parquet"))[:20])
+              raise FileNotFoundError(f"SPY benchmark unavailable; missing={missing}. First parquet files:\n{found}")
+          spy[keep].to_parquet(out_path, index=False)
+          PY
+      - name: Build reusable external pack data
+        run: |
+          python scripts/build_global_technical_buy_indicator_pack.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --output-dir external-pack-data-root \
+            --stage-count 1 \
+            --group-count 1 \
+            --locked-start "$LOCKED_START" \
+            --min-market-cap "$MIN_MARKET_CAP"
+          cp -R external-pack-data-root/stage-000 external-pack-data
+      - name: Upload reusable pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+          retention-days: 14
+
+  plan_smoke:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      total_jobs: ${{ steps.plan.outputs.total_jobs }}
+      total_strategies: ${{ steps.plan.outputs.total_strategies }}
+      candidate_limit: ${{ steps.plan.outputs.candidate_limit }}
+    steps:
+      - name: Build smoke matrix
+        id: plan
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          original_shards = 360
+          original_strategies_per_shard = 200
+          candidate_limit = max(int(os.environ["CANDIDATE_COUNT_PER_JOB"]), 1)
+          chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit
+          total_signal_groups = min(18000, max(int(os.environ["TEST_MAX_SIGNAL_GROUPS"]), 1))
+          total_jobs = (total_signal_groups + candidate_limit - 1) // candidate_limit
+          total_jobs = min(max(int(os.environ["TEST_MAX_JOBS"]), 1), total_jobs)
+          total_strategies = min(total_signal_groups, total_jobs * candidate_limit) * 4
+          rows = []
+          for job_index in range(total_jobs):
+              base_shard_id = job_index // chunks_per_shard
+              chunk_index = job_index % chunks_per_shard
+              strategy_offset = chunk_index * candidate_limit
+              strategy_limit = min(candidate_limit, original_strategies_per_shard - strategy_offset)
+              rows.append({
+                  "job_index": job_index,
+                  "job_padded": f"{job_index:04d}",
+                  "base_shard_id": base_shard_id,
+                  "base_shard_padded": f"{base_shard_id:03d}",
+                  "chunk_index": chunk_index,
+                  "strategy_offset": strategy_offset,
+                  "strategy_limit": strategy_limit,
+              })
+          print(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}")
+          print(f"total_jobs={total_jobs}")
+          print(f"total_strategies={total_strategies}")
+          print(f"candidate_limit={candidate_limit}")
+          PY
+
+  smoke_test:
+    needs:
+      - build_external_pack
+      - plan_smoke
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 100
+      matrix: ${{ fromJson(needs.plan_smoke.outputs.matrix) }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      QF_DATA_DIR: /tmp/aurora-data
+      AURORA_ALLOW_LOCAL_RUNS_EXPLICIT: USER_REQUESTED_LOCAL_RUN_THIS_TURN
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download reusable pack data
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: external-pack-data
+      - name: Run smoke strategy job
+        run: |
+          OPT_ARGS=(--enable-feature-cache --enable-dedupe --enable-safe-prefilter --enable-early-stopping --enable-cost-scheduling)
+          RUN_ARGS=(
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"
+            --prebuilt-pack-dir external-pack-data
+            --external-strategy-pack-path "$EXTERNAL_STRATEGY_PACK_PATH"
+            --external-strategy-shard-id "${{ matrix.base_shard_id }}"
+            --external-strategy-offset "${{ matrix.strategy_offset }}"
+            --external-strategy-limit "${{ matrix.strategy_limit }}"
+            --candidate-timeout-seconds "$CANDIDATE_TIMEOUT_SECONDS"
+            --job-wall-clock-seconds "$JOB_WALL_CLOCK_SECONDS"
+            --schedule-active-jobs "${{ needs.plan_smoke.outputs.total_jobs }}"
+            --test-max-signal-groups "$TEST_MAX_SIGNAL_GROUPS"
+            --optimized-evaluation-mode "$OPTIMIZED_EVALUATION_MODE"
+            "${OPT_ARGS[@]}"
+            --external-strategy-format jsonl
+            --min-market-cap "$MIN_MARKET_CAP"
+            --locked-start "$LOCKED_START"
+            --train-end "$TRAIN_END"
+            --validation-start "$VALIDATION_START"
+            --validation-end "$VALIDATION_END"
+          )
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --signal-first-phase signals --output-dir "signals/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --signal-first-phase exits --signal-events-dir "signals/job-${{ matrix.job_padded }}" --output-dir "outputs/job-${{ matrix.job_padded }}"
+          rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
+      - name: Upload smoke job artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-job-${{ matrix.job_padded }}
+          path: outputs/job-${{ matrix.job_padded }}
+          retention-days: 14
+
+  merge_smoke_block:
+    needs:
+      - plan_smoke
+      - smoke_test
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download smoke job artifacts
+        run: |
+          mkdir -p downloaded-jobs
+          for ((job_index=0; job_index<${{ needs.plan_smoke.outputs.total_jobs }}; job_index++)); do
+            job_padded=$(printf "%04d" "$job_index")
+            gh run download "${{ github.run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "gtbi-external-pack-job-$job_padded" \
+              --dir "downloaded-jobs/gtbi-external-pack-job-$job_padded"
+          done
+      - name: Merge smoke block outputs
+        run: |
+          python scripts/merge_global_technical_buy_indicator_external_pack.py \
+            --shards-root downloaded-jobs \
+            --output-dir block-results \
+            --total-strategies-requested "${{ needs.plan_smoke.outputs.total_strategies }}" \
+            --total-shards-requested "360" \
+            --total-jobs-requested "${{ needs.plan_smoke.outputs.total_jobs }}" \
+            --candidate-count-per-job "${{ needs.plan_smoke.outputs.candidate_limit }}" \
+            --locked-start "$LOCKED_START" \
+            --train-end "$TRAIN_END" \
+            --validation-start "$VALIDATION_START" \
+            --validation-end "$VALIDATION_END"
+      - name: Upload smoke block artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-smoke-results
+          path: block-results
+          retention-days: 14
+
+  merge_smoke:
+    needs:
+      - plan_smoke
+      - merge_smoke_block
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download smoke block artifact
+        run: |
+          gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name "gtbi-external-pack-smoke-results" \
+            --dir downloaded-blocks
+      - name: Merge smoke final outputs
+        run: |
+          python scripts/merge_global_technical_buy_indicator_external_pack.py \
+            --shards-root downloaded-blocks \
+            --output-dir final-results \
+            --total-strategies-requested "${{ needs.plan_smoke.outputs.total_strategies }}" \
+            --total-shards-requested "360" \
+            --total-jobs-requested "${{ needs.plan_smoke.outputs.total_jobs }}" \
+            --candidate-count-per-job "${{ needs.plan_smoke.outputs.candidate_limit }}" \
+            --locked-start "$LOCKED_START" \
+            --train-end "$TRAIN_END" \
+            --validation-start "$VALIDATION_START" \
+            --validation-end "$VALIDATION_END"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-external-pack-72000-results
+          path: final-results
+          retention-days: 30

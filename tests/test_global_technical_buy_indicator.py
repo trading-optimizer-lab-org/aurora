@@ -3636,6 +3636,29 @@ def test_optimized_evaluation_v1_workflow_alias_uses_v2_engine() -> None:
     assert "C:\\" not in text
 
 
+def test_gtbi_v5_smoke_workflow_is_push_only_small_github_smoke() -> None:
+    path = Path(".github/workflows/global-technical-buy-indicator-v5-smoke.yml")
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["name"] == "Global Technical Buy Indicator V5 Event First Smoke"
+    assert "push" in data[True]
+    assert "workflow_dispatch" in data[True]
+    assert "codex/gtbi-github-only-external-pack-72000" in text
+    assert "TEST_MAX_JOBS: \"100\"" in text
+    assert "TEST_MAX_SIGNAL_GROUPS: \"1000\"" in text
+    assert "optimized_evaluation_v5_event_first" in text
+    assert "max-parallel: 100" in text
+    assert "global-technical-buy-indicator-external-pack-72000-results" in text
+    assert "gtbi-external-pack-smoke-results" in text
+    assert "self-hosted" not in text
+    assert "C:\\" not in text
+    assert "runner.temp" not in text
+    assert "locked_start" not in text
+    assert "LOCKED_START: \"2021-01-01\"" in text
+    assert "VALIDATION_END: \"2020-12-31\"" in text
+
+
 def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_timeout_risk() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-1800jobs.yml")
     text = path.read_text(encoding="utf-8")
