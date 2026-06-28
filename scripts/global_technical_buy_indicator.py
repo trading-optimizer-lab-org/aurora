@@ -2004,18 +2004,29 @@ def split_trade_frame(
     return out
 
 
-def _exit_year_from_value(value: Any) -> int | None:
+def _exit_date64_from_value(value: Any) -> np.datetime64 | None:
     if value is None:
         return None
     if isinstance(value, float) and math.isnan(value):
         return None
     text = str(value)
-    if len(text) >= 4 and text[:4].isdigit():
-        return int(text[:4])
+    if not text or text.lower() in {"nat", "nan", "none"}:
+        return None
     try:
-        return int(pd.Timestamp(value).year)
+        return np.datetime64(text[:10], "D")
     except (TypeError, ValueError):
         return None
+
+
+def _exit_year_from_value(value: Any) -> int | None:
+    date_value = _exit_date64_from_value(value)
+    if date_value is None:
+        return None
+    return int(str(date_value)[:4])
+
+
+def _date64_days_between(later: np.datetime64, earlier: np.datetime64) -> int:
+    return int((later - earlier) / np.timedelta64(1, "D"))
 
 
 def _exit_year_counts(exit_dates: Iterable[Any]) -> dict[int, int]:
@@ -4479,12 +4490,25 @@ def evaluate_candidate_optimized(
     seconds_simulation = float(time.perf_counter() - simulation_start)
     trades_df = pd.concat(all_trades, ignore_index=True, sort=False) if all_trades else pd.DataFrame(columns=TRADE_COLUMNS)
 
-    train_years = max((_dt(train_end) - pd.Timestamp("1900-01-01")).days / 365.25, 1.0)
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
+    train_years = max(_date64_days_between(train_end_day, np.datetime64("1900-01-01", "D")) / 365.25, 1.0)
     if not trades_df.empty:
-        first_train = pd.to_datetime(trades_df.loc[trades_df["split"] == "train", "exit_date"], errors="coerce").min()
-        if pd.notna(first_train):
-            train_years = max((_dt(train_end) - first_train).days / 365.25, 1.0)
-    validation_years = max((_dt(validation_end) - _dt(validation_start)).days / 365.25, 1.0)
+        split_values = trades_df["split"].to_numpy(dtype=object, copy=False)
+        exit_values = trades_df["exit_date"].to_numpy(dtype=object, copy=False)
+        first_train_day: np.datetime64 | None = None
+        for idx, split_value in enumerate(split_values):
+            if str(split_value) != "train":
+                continue
+            exit_day = _exit_date64_from_value(exit_values[idx])
+            if exit_day is None:
+                continue
+            if first_train_day is None or exit_day < first_train_day:
+                first_train_day = exit_day
+        if first_train_day is not None:
+            train_years = max(_date64_days_between(train_end_day, first_train_day) / 365.25, 1.0)
+    validation_years = max(_date64_days_between(validation_end_day, validation_start_day) / 365.25, 1.0)
 
     train_start = time.perf_counter()
     train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
