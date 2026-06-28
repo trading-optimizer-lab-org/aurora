@@ -7,6 +7,8 @@ import hashlib
 import json
 import math
 import os
+import faulthandler
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, fields
@@ -73,6 +75,17 @@ ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES + STABILITY_FAM
 FAMILY_SETS = ("default", "tradingview_minervini", "stability", "stability_rs", "all")
 
 PRICE_COLUMNS = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+
+
+def _build_pack_verbose() -> bool:
+    return os.environ.get("GTBI_BUILD_PACK_VERBOSE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _build_pack_log(message: str, *, verbose: bool = False) -> None:
+    if verbose and not _build_pack_verbose():
+        return
+    print(f"[gtbi-pack] {message}", file=sys.stderr, flush=True)
+
 LEADERBOARD_COLUMNS = [
     "candidate_id",
     "stage",
@@ -5146,10 +5159,21 @@ def build_stage_packs(
     lake_root = Path(lake_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _build_pack_log(
+        "start "
+        f"lake_root={lake_root} output_dir={output_dir} stage_count={stage_count} "
+        f"group_count={group_count} locked_start={locked_start} min_market_cap={min_market_cap}"
+    )
+    _build_pack_log("reading universe")
     all_symbols = _read_universe_symbols(lake_root)
+    _build_pack_log(f"universe_symbols={len(all_symbols)}")
+    _build_pack_log("filtering market cap")
     symbols = _filter_symbols_by_market_cap(lake_root, all_symbols, min_market_cap)
+    _build_pack_log(f"symbols_after_market_cap={len(symbols)}")
     normalized = lake_root / "normalized"
+    _build_pack_log("loading benchmark")
     benchmark = _load_benchmark(lake_root, locked_start)
+    _build_pack_log(f"benchmark_rows={len(benchmark)}")
     effective_group_count = max(int(group_count), 1)
     grouped: dict[int, list[str]] = {group: [] for group in range(effective_group_count)}
     for idx, symbol in enumerate(symbols):
@@ -5157,13 +5181,21 @@ def build_stage_packs(
 
     def build_group_prices(group_index: int) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
-        for symbol in grouped[group_index]:
+        group_symbols = grouped[group_index]
+        _build_pack_log(f"group={group_index} read_symbols={len(group_symbols)}")
+        for symbol_index, symbol in enumerate(group_symbols, start=1):
             path = normalized / f"{symbol}.parquet"
             if not path.exists():
+                _build_pack_log(f"group={group_index} missing_symbol={symbol}", verbose=True)
                 continue
             try:
+                _build_pack_log(
+                    f"group={group_index} read_symbol={symbol_index}/{len(group_symbols)} symbol={symbol}",
+                    verbose=True,
+                )
                 frame = _prepare_ohlcv(pd.read_parquet(path))
             except Exception:
+                _build_pack_log(f"group={group_index} skip_symbol={symbol}", verbose=True)
                 continue
             frame = frame[frame.index < _dt(locked_start)].copy()
             if len(frame) < min_rows:
@@ -5171,7 +5203,9 @@ def build_stage_packs(
             frame["symbol"] = symbol
             frames.append(frame.reset_index(drop=True)[PRICE_COLUMNS])
         if frames:
+            _build_pack_log(f"group={group_index} concat_frames={len(frames)}")
             return pd.concat(frames, ignore_index=True, sort=False)
+        _build_pack_log(f"group={group_index} empty")
         return pd.DataFrame(columns=PRICE_COLUMNS)
 
     stage_rows: list[dict[str, Any]] = []
@@ -5181,7 +5215,9 @@ def build_stage_packs(
             group_dir = output_dir / f"group-{group_index:03d}"
             group_dir.mkdir(parents=True, exist_ok=True)
             prices = build_group_prices(group_index)
+            _build_pack_log(f"group={group_index} write_prices rows={len(prices)}")
             prices.to_parquet(group_dir / "prices.parquet", index=False)
+            _build_pack_log(f"group={group_index} write_benchmark")
             benchmark.to_parquet(group_dir / "benchmark.parquet", index=False)
             group_stats[group_index] = {
                 "symbols": int(prices["symbol"].nunique()) if not prices.empty else 0,
@@ -5203,7 +5239,9 @@ def build_stage_packs(
             stage_dir = output_dir / f"stage-{stage:03d}"
             stage_dir.mkdir(parents=True, exist_ok=True)
             prices = build_group_prices(0)
+            _build_pack_log(f"stage={stage} write_prices rows={len(prices)}")
             prices.to_parquet(stage_dir / "prices.parquet", index=False)
+            _build_pack_log(f"stage={stage} write_benchmark")
             benchmark.to_parquet(stage_dir / "benchmark.parquet", index=False)
             stage_rows.append(
                 {
@@ -5228,6 +5266,7 @@ def build_stage_packs(
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     pd.DataFrame(stage_rows).to_csv(output_dir / "manifest.csv", index=False)
+    _build_pack_log("complete")
     return manifest
 
 
@@ -7392,6 +7431,10 @@ def _default_run_root() -> Path:
 
 
 def build_pack_cli(argv: list[str] | None = None) -> int:
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(description="Build stage packs for global technical buy indicator search.")
     parser.add_argument("--data-lake-root", type=Path, default=base_data_dir() / "prices" / "free_us_daily")
     parser.add_argument("--output-dir", type=Path, default=_default_run_root() / "pack")
