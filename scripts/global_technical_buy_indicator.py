@@ -4054,6 +4054,14 @@ def _signal_year_counts_for_possible_exits(
 ) -> dict[int, int]:
     counts = {int(year): 0 for year in years}
     lookback_days = max(int(config.max_holding_days) + 7, 14)
+    year_windows = [
+        (
+            int(year),
+            np.datetime64(f"{int(year):04d}-01-01", "D") - np.timedelta64(lookback_days, "D"),
+            np.datetime64(f"{int(year):04d}-12-31", "D"),
+        )
+        for year in years
+    ]
     for symbol, signal in signals_by_symbol.items():
         frame = _prepare_ohlcv(symbol_frames[symbol])
         if frame.empty or signal.empty:
@@ -4069,12 +4077,7 @@ def _signal_year_counts_for_possible_exits(
             continue
         date_values = frame.index.to_numpy(dtype="datetime64[ns]", copy=False)
         signal_dates = date_values[signal_positions]
-        for year in years:
-            start = np.datetime64(
-                (pd.Timestamp(year=int(year), month=1, day=1) - pd.Timedelta(days=lookback_days)).to_datetime64(),
-                "ns",
-            )
-            end = np.datetime64(pd.Timestamp(year=int(year), month=12, day=31).to_datetime64(), "ns")
+        for year, start, end in year_windows:
             counts[int(year)] += int(np.count_nonzero((signal_dates >= start) & (signal_dates <= end)))
     return counts
 
