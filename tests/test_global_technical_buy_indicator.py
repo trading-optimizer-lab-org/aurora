@@ -3615,6 +3615,12 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert 'gh run download "${{ github.run_id }}"' in text
     assert "requires_local_machine" not in text
     assert "optimized_evaluation_v5_event_first" in text
+    assert "smoke_test" in data["jobs"]
+    assert "merge_smoke" in data["jobs"]
+    assert 'if: ${{ inputs.recovery_job_indices == \'\' && inputs.test_mode == \'true\' }}' in text
+    assert 'if: ${{ inputs.recovery_job_indices == \'\' && inputs.test_mode != \'true\' }}' in text
+    assert "matrix: ${{ fromJson(needs.plan_smoke.outputs.matrix) }}" in text
+    assert "gtbi-external-pack-smoke-results" in text
 
 
 def test_optimized_evaluation_v1_workflow_alias_uses_v2_engine() -> None:
