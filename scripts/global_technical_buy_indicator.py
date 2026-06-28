@@ -1945,7 +1945,8 @@ def simulate_trades(
     close_values = frame["close"].to_numpy(dtype=float, copy=False)
     exit_ma_values = exit_ma.to_numpy(dtype=float, copy=False)
     exit_signal_values = exit_signal.to_numpy(dtype=bool, copy=False)
-    index_values = frame.index.to_numpy()
+    date_values = frame.index.to_numpy(dtype="datetime64[ns]", copy=False).astype("datetime64[D]", copy=False)
+    date_strings = np.datetime_as_string(date_values, unit="D")
 
     entry_indices, exit_indices, entry_prices, exit_prices, reason_codes, count = _simulate_trade_arrays(
         open_values,
@@ -1972,8 +1973,8 @@ def simulate_trades(
                 "candidate_id": candidate_id,
                 "symbol": symbol,
                 "split": split,
-                "entry_date": pd.Timestamp(index_values[entry_idx]).date().isoformat(),
-                "exit_date": pd.Timestamp(index_values[exit_idx]).date().isoformat(),
+                "entry_date": str(date_strings[entry_idx]),
+                "exit_date": str(date_strings[exit_idx]),
                 "entry_price": float(entry_price),
                 "exit_price": float(exit_price),
                 "return_pct": float((exit_price / entry_price - 1.0) * 100.0),
