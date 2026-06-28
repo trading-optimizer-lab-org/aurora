@@ -3240,6 +3240,37 @@ def test_safe_prefilter_rejects_only_mathematically_impossible_signal_counts() -
     assert reject is None
 
 
+def test_signal_year_counts_uses_numpy_dates_without_pandas_index_slice() -> None:
+    idx = pd.date_range("2010-12-20", "2012-01-10", freq="B")
+    close = np.linspace(50.0, 75.0, len(idx))
+    frame = pd.DataFrame(
+        {
+            "date": idx,
+            "open": close,
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "close": close,
+            "adj_close": close,
+            "volume": np.full(len(idx), 100_000.0),
+            "symbol": "AAA",
+        }
+    )
+    signal = pd.Series(False, index=idx)
+    signal.loc[pd.Timestamp("2010-12-20")] = True
+    signal.loc[pd.Timestamp("2011-01-03")] = True
+    signal.loc[pd.Timestamp("2011-12-30")] = True
+    signal.loc[pd.Timestamp("2012-01-10")] = True
+
+    counts = gtbi._signal_year_counts_for_possible_exits(
+        signals_by_symbol={"AAA": signal.sample(frac=1.0, random_state=7).sort_index()},
+        symbol_frames={"AAA": frame},
+        config=gtbi.IndicatorConfig(max_holding_days=5),
+        years=range(2011, 2013),
+    )
+
+    assert counts == {2011: 3, 2012: 1}
+
+
 def test_optimized_candidate_prefilters_if_deadline_hits_after_final_signal(monkeypatch: pytest.MonkeyPatch) -> None:
     idx = pd.date_range("2003-01-01", "2020-12-31", freq="B")
     close = np.linspace(50.0, 150.0, len(idx))

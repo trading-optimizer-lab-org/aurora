@@ -4058,14 +4058,24 @@ def _signal_year_counts_for_possible_exits(
         frame = _prepare_ohlcv(symbol_frames[symbol])
         if frame.empty or signal.empty:
             continue
-        signal = signal.reindex(frame.index).fillna(False).astype(bool)
-        signal_dates = pd.DatetimeIndex(frame.index[np.flatnonzero(signal.to_numpy(dtype=bool)[:-1])])
-        if signal_dates.empty:
+        if signal.index.equals(frame.index):
+            signal_values = signal.fillna(False).to_numpy(dtype=bool, copy=False)
+        else:
+            signal_values = signal.reindex(frame.index).fillna(False).to_numpy(dtype=bool, copy=False)
+        if signal_values.size <= 1:
             continue
+        signal_positions = np.flatnonzero(signal_values[:-1])
+        if signal_positions.size == 0:
+            continue
+        date_values = frame.index.to_numpy(dtype="datetime64[ns]", copy=False)
+        signal_dates = date_values[signal_positions]
         for year in years:
-            start = pd.Timestamp(year=int(year), month=1, day=1) - pd.Timedelta(days=lookback_days)
-            end = pd.Timestamp(year=int(year), month=12, day=31)
-            counts[int(year)] += int(((signal_dates >= start) & (signal_dates <= end)).sum())
+            start = np.datetime64(
+                (pd.Timestamp(year=int(year), month=1, day=1) - pd.Timedelta(days=lookback_days)).to_datetime64(),
+                "ns",
+            )
+            end = np.datetime64(pd.Timestamp(year=int(year), month=12, day=31).to_datetime64(), "ns")
+            counts[int(year)] += int(np.count_nonzero((signal_dates >= start) & (signal_dates <= end)))
     return counts
 
 
