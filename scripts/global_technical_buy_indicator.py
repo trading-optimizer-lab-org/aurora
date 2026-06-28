@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 import threading
 import time
 from dataclasses import asdict, dataclass, fields
@@ -14,6 +15,11 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+
+try:  # Optional; the evaluator must run without numba in CI.
+    from numba import njit as _numba_njit
+except Exception:  # pragma: no cover - depends on optional local dependency.
+    _numba_njit = None
 
 from aurora.core.runtime_paths import base_data_dir
 
@@ -1534,6 +1540,202 @@ def _record_trade(
     }
 
 
+EXIT_REASON_BY_CODE = {
+    1: "stop_loss",
+    2: "take_profit",
+    3: "trailing_stop",
+    4: "exit_ma",
+    5: "market_exit",
+    6: "max_holding",
+    7: "end_of_data",
+}
+_NUMBA_SIMULATION_REASON = "not_checked"
+_NUMBA_SIMULATION_ENABLED = False
+
+
+def _simulate_trade_arrays_core(
+    open_values: np.ndarray,
+    high_values: np.ndarray,
+    low_values: np.ndarray,
+    close_values: np.ndarray,
+    exit_ma_values: np.ndarray,
+    exit_signal_values: np.ndarray,
+    signal_positions: np.ndarray,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    trailing_stop_pct: float,
+    use_exit_ma: bool,
+    use_market_exit: bool,
+    max_holding_days: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    n = len(close_values)
+    max_trades = len(signal_positions) + 1
+    entry_indices = np.empty(max_trades, dtype=np.int64)
+    exit_indices = np.empty(max_trades, dtype=np.int64)
+    entry_prices = np.empty(max_trades, dtype=np.float64)
+    exit_prices = np.empty(max_trades, dtype=np.float64)
+    reason_codes = np.empty(max_trades, dtype=np.int64)
+    count = 0
+    in_position = False
+    entry_idx = -1
+    entry_price = 0.0
+    high_water = 0.0
+    i = 0
+    next_signal = 0
+    while i < n - 1:
+        if not in_position:
+            while next_signal < len(signal_positions) and int(signal_positions[next_signal]) < i:
+                next_signal += 1
+            if next_signal >= len(signal_positions):
+                break
+            i = int(signal_positions[next_signal])
+            next_signal += 1
+            entry_idx = i + 1
+            entry_price = float(open_values[entry_idx])
+            if not math.isfinite(entry_price) or entry_price <= 0.0:
+                entry_price = float(close_values[entry_idx])
+            high_water = float(high_values[entry_idx])
+            in_position = True
+            i = entry_idx
+            continue
+
+        high_water = max(high_water, float(high_values[i]))
+        reason_code = 0
+        if float(low_values[i]) <= entry_price * (1.0 - stop_loss_pct):
+            reason_code = 1
+        elif take_profit_pct > 0.0 and float(high_values[i]) >= entry_price * (1.0 + take_profit_pct):
+            reason_code = 2
+        elif trailing_stop_pct > 0.0 and float(low_values[i]) <= high_water * (1.0 - trailing_stop_pct):
+            reason_code = 3
+        elif use_exit_ma and math.isfinite(float(exit_ma_values[i])) and float(close_values[i]) < float(exit_ma_values[i]):
+            reason_code = 4
+        elif use_market_exit and bool(exit_signal_values[i]):
+            reason_code = 5
+        elif min(i + 1, n - 1) - entry_idx >= max_holding_days:
+            reason_code = 6
+
+        if reason_code:
+            exit_idx = min(i + 1, n - 1)
+            exit_price = float(open_values[exit_idx]) if exit_idx > entry_idx else float(close_values[exit_idx])
+            if exit_idx > entry_idx and (not math.isfinite(exit_price) or exit_price <= 0.0):
+                exit_price = float(close_values[exit_idx])
+            entry_indices[count] = entry_idx
+            exit_indices[count] = exit_idx
+            entry_prices[count] = entry_price
+            exit_prices[count] = exit_price
+            reason_codes[count] = reason_code
+            count += 1
+            in_position = False
+            i = exit_idx
+            continue
+        i += 1
+
+    if in_position:
+        exit_idx = n - 1
+        exit_price = float(open_values[exit_idx]) if exit_idx > entry_idx else float(close_values[exit_idx])
+        if exit_idx > entry_idx and (not math.isfinite(exit_price) or exit_price <= 0.0):
+            exit_price = float(close_values[exit_idx])
+        entry_indices[count] = entry_idx
+        exit_indices[count] = exit_idx
+        entry_prices[count] = entry_price
+        exit_prices[count] = exit_price
+        reason_codes[count] = 7
+        count += 1
+    return entry_indices, exit_indices, entry_prices, exit_prices, reason_codes, count
+
+
+_simulate_trade_arrays_numba = None
+if _numba_njit is not None:  # pragma: no cover - optional accelerator.
+    try:
+        _simulate_trade_arrays_numba = _numba_njit(cache=True)(_simulate_trade_arrays_core)
+    except Exception:
+        _simulate_trade_arrays_numba = None
+
+
+def _numba_simulation_state() -> tuple[bool, str]:
+    global _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    requested = os.environ.get("GTBI_ENABLE_NUMBA_SIM", "auto").strip().lower()
+    if requested in {"0", "false", "no", "off"}:
+        _NUMBA_SIMULATION_ENABLED = False
+        _NUMBA_SIMULATION_REASON = "disabled_by_env"
+        return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    if _simulate_trade_arrays_numba is None:
+        _NUMBA_SIMULATION_ENABLED = False
+        _NUMBA_SIMULATION_REASON = "numba_unavailable"
+        return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    if requested in {"1", "true", "yes", "on"}:
+        _NUMBA_SIMULATION_ENABLED = True
+        _NUMBA_SIMULATION_REASON = "enabled_by_env"
+        return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    _NUMBA_SIMULATION_ENABLED = True
+    _NUMBA_SIMULATION_REASON = "auto_enabled_numba"
+    return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+
+
+def _simulate_trade_arrays(
+    open_values: np.ndarray,
+    high_values: np.ndarray,
+    low_values: np.ndarray,
+    close_values: np.ndarray,
+    exit_ma_values: np.ndarray,
+    exit_signal_values: np.ndarray,
+    signal_positions: np.ndarray,
+    config: IndicatorConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    global _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    use_numba, _ = _numba_simulation_state()
+    if use_numba and _simulate_trade_arrays_numba is not None:  # pragma: no cover - optional accelerator.
+        try:
+            return _simulate_trade_arrays_numba(
+                open_values,
+                high_values,
+                low_values,
+                close_values,
+                exit_ma_values,
+                exit_signal_values,
+                signal_positions,
+                float(config.stop_loss_pct),
+                float(config.take_profit_pct),
+                float(config.trailing_stop_pct),
+                bool(config.use_exit_ma),
+                bool(config.use_market_exit),
+                int(config.max_holding_days),
+            )
+        except Exception:
+            _NUMBA_SIMULATION_ENABLED = False
+            _NUMBA_SIMULATION_REASON = "numba_runtime_fallback"
+            return _simulate_trade_arrays_core(
+                open_values,
+                high_values,
+                low_values,
+                close_values,
+                exit_ma_values,
+                exit_signal_values,
+                signal_positions,
+                float(config.stop_loss_pct),
+                float(config.take_profit_pct),
+                float(config.trailing_stop_pct),
+                bool(config.use_exit_ma),
+                bool(config.use_market_exit),
+                int(config.max_holding_days),
+            )
+    return _simulate_trade_arrays_core(
+        open_values,
+        high_values,
+        low_values,
+        close_values,
+        exit_ma_values,
+        exit_signal_values,
+        signal_positions,
+        float(config.stop_loss_pct),
+        float(config.take_profit_pct),
+        float(config.trailing_stop_pct),
+        bool(config.use_exit_ma),
+        bool(config.use_market_exit),
+        int(config.max_holding_days),
+    )
+
+
 def simulate_trades(
     symbol: str,
     prices: pd.DataFrame,
@@ -1572,76 +1774,40 @@ def simulate_trades(
     exit_signal_values = exit_signal.to_numpy(dtype=bool, copy=False)
     index_values = frame.index.to_numpy()
 
-    def price_at(idx: int) -> float:
-        value = float(open_values[idx])
-        if not math.isfinite(value) or value <= 0:
-            value = float(close_values[idx])
-        return value
+    entry_indices, exit_indices, entry_prices, exit_prices, reason_codes, count = _simulate_trade_arrays(
+        open_values,
+        high_values,
+        low_values,
+        close_values,
+        exit_ma_values,
+        exit_signal_values,
+        signal_positions,
+        config,
+    )
+    if count <= 0:
+        return pd.DataFrame(columns=TRADE_COLUMNS)
 
-    def append_trade(entry: int, exit_: int, entry_value: float, reason: str) -> None:
-        exit_price = price_at(exit_) if exit_ > entry else float(close_values[exit_])
+    trades: list[dict[str, Any]] = []
+    for pos in range(int(count)):
+        entry_idx = int(entry_indices[pos])
+        exit_idx = int(exit_indices[pos])
+        entry_price = float(entry_prices[pos])
+        exit_price = float(exit_prices[pos])
+        reason = EXIT_REASON_BY_CODE.get(int(reason_codes[pos]), "unknown")
         trades.append(
             {
                 "candidate_id": candidate_id,
                 "symbol": symbol,
                 "split": split,
-                "entry_date": pd.Timestamp(index_values[entry]).date().isoformat(),
-                "exit_date": pd.Timestamp(index_values[exit_]).date().isoformat(),
-                "entry_price": float(entry_value),
+                "entry_date": pd.Timestamp(index_values[entry_idx]).date().isoformat(),
+                "exit_date": pd.Timestamp(index_values[exit_idx]).date().isoformat(),
+                "entry_price": float(entry_price),
                 "exit_price": float(exit_price),
-                "return_pct": float((exit_price / entry_value - 1.0) * 100.0),
-                "holding_days": int(exit_ - entry),
+                "return_pct": float((exit_price / entry_price - 1.0) * 100.0),
+                "holding_days": int(exit_idx - entry_idx),
                 "exit_reason": reason,
             }
         )
-
-    trades: list[dict[str, Any]] = []
-    in_position = False
-    entry_idx = -1
-    entry_price = 0.0
-    high_water = 0.0
-    i = 0
-    next_signal = 0
-    while i < len(frame) - 1:
-        if not in_position:
-            while next_signal < len(signal_positions) and int(signal_positions[next_signal]) < i:
-                next_signal += 1
-            if next_signal >= len(signal_positions):
-                break
-            i = int(signal_positions[next_signal])
-            next_signal += 1
-            entry_idx = i + 1
-            entry_price = price_at(entry_idx)
-            high_water = float(high_values[entry_idx])
-            in_position = True
-            i = entry_idx
-            continue
-
-        high_water = max(high_water, float(high_values[i]))
-        reason: str | None = None
-        if float(low_values[i]) <= entry_price * (1.0 - config.stop_loss_pct):
-            reason = "stop_loss"
-        elif config.take_profit_pct > 0 and float(high_values[i]) >= entry_price * (1.0 + config.take_profit_pct):
-            reason = "take_profit"
-        elif config.trailing_stop_pct > 0 and float(low_values[i]) <= high_water * (1.0 - config.trailing_stop_pct):
-            reason = "trailing_stop"
-        elif config.use_exit_ma and math.isfinite(float(exit_ma_values[i])) and float(close_values[i]) < float(exit_ma_values[i]):
-            reason = "exit_ma"
-        elif config.use_market_exit and bool(exit_signal_values[i]):
-            reason = "market_exit"
-        elif min(i + 1, len(frame) - 1) - entry_idx >= config.max_holding_days:
-            reason = "max_holding"
-
-        if reason is not None:
-            exit_idx = min(i + 1, len(frame) - 1)
-            append_trade(entry_idx, exit_idx, entry_price, reason)
-            in_position = False
-            i = exit_idx
-            continue
-        i += 1
-
-    if in_position:
-        append_trade(entry_idx, len(frame) - 1, entry_price, "end_of_data")
     return pd.DataFrame(trades, columns=TRADE_COLUMNS)
 
 
@@ -5597,6 +5763,7 @@ def run_external_strategy_pack_shard(
         if use_v3_signal_first and signal_first_phase == "exits"
         else len(signal_evaluation_cache)
     )
+    numba_enabled, numba_reason = _numba_simulation_state()
     summary = {
         "shard_id": shard,
         "base_shard_id": shard,
@@ -5632,8 +5799,8 @@ def run_external_strategy_pack_shard(
             if signal_seconds_array.size == 0
             else float((18_000 * float(np.mean(signal_seconds_array))) / 360.0 / 3600.0)
         ),
-        "numba_enabled": False,
-        "numba_reason": "numpy_simulation_route_active",
+        "numba_enabled": bool(numba_enabled),
+        "numba_reason": str(numba_reason),
         "candidate_timeout_seconds": int(candidate_timeout_seconds),
         "job_wall_clock_seconds": int(job_wall_clock_seconds),
         "schedule_active_jobs": int(schedule_active_jobs),

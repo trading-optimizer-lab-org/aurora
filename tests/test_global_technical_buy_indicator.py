@@ -1693,6 +1693,79 @@ def test_simulate_trades_array_route_matches_pandas_reference() -> None:
     assert gtbi.summarize_trades(array_trades, years=1.0) == gtbi.summarize_trades(reference_trades, years=1.0)
 
 
+def test_numba_trade_core_matches_python_core_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    if gtbi._simulate_trade_arrays_numba is None:
+        pytest.skip("numba optional dependency is not installed")
+    idx = pd.date_range("2019-01-01", periods=55, freq="B")
+    close = 40.0 + np.sin(np.arange(len(idx)) / 4.0) * 1.2 + np.arange(len(idx)) * 0.05
+    frame = gtbi._prepare_ohlcv(
+        pd.DataFrame(
+            {
+                "date": idx,
+                "open": close * 1.002,
+                "high": close * 1.035,
+                "low": close * 0.965,
+                "close": close,
+                "adj_close": close,
+                "volume": np.full(len(idx), 100_000.0),
+                "symbol": "AAA",
+            }
+        )
+    )
+    signal = np.zeros(len(frame), dtype=bool)
+    signal[::8] = True
+    signal_positions = np.flatnonzero(signal[:-1])
+    exit_signal = np.zeros(len(frame), dtype=bool)
+    exit_signal[28] = True
+    config = gtbi.IndicatorConfig(
+        stop_loss_pct=0.06,
+        take_profit_pct=0.08,
+        trailing_stop_pct=0.05,
+        use_exit_ma=True,
+        use_market_exit=True,
+        exit_ma_days=7,
+        max_holding_days=6,
+    )
+    exit_ma = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean().to_numpy(
+        dtype=float,
+        copy=False,
+    )
+    args = (
+        frame["open"].to_numpy(dtype=float, copy=False),
+        frame["high"].to_numpy(dtype=float, copy=False),
+        frame["low"].to_numpy(dtype=float, copy=False),
+        frame["close"].to_numpy(dtype=float, copy=False),
+        exit_ma,
+        exit_signal,
+        signal_positions,
+        float(config.stop_loss_pct),
+        float(config.take_profit_pct),
+        float(config.trailing_stop_pct),
+        bool(config.use_exit_ma),
+        bool(config.use_market_exit),
+        int(config.max_holding_days),
+    )
+
+    python_result = gtbi._simulate_trade_arrays_core(*args)
+    numba_result = gtbi._simulate_trade_arrays_numba(*args)
+
+    assert int(numba_result[-1]) == int(python_result[-1])
+    count = int(python_result[-1])
+    for python_values, numba_values in zip(python_result[:-1], numba_result[:-1], strict=True):
+        np.testing.assert_allclose(numba_values[:count], python_values[:count])
+
+    monkeypatch.setenv("GTBI_ENABLE_NUMBA_SIM", "1")
+    assert gtbi._numba_simulation_state() == (True, "enabled_by_env")
+
+
+def test_numba_trade_simulation_auto_uses_available_accelerator(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GTBI_ENABLE_NUMBA_SIM", raising=False)
+    enabled, reason = gtbi._numba_simulation_state()
+
+    assert enabled is (gtbi._simulate_trade_arrays_numba is not None)
+    assert reason in {"auto_enabled_numba", "numba_unavailable"}
+
+
 def test_optimized_candidate_matches_legacy_when_prefilter_disabled() -> None:
     frame = gtbi._prepare_ohlcv(_breakout_frame(180))
     spy = gtbi._prepare_ohlcv(_spy_frame(180))
