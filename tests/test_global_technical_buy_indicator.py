@@ -2180,6 +2180,129 @@ def test_signal_first_runner_stops_before_job_wall_clock_shutdown(
     assert manifest["result_status"].tolist() == ["signal_timeout", "signal_timeout"]
 
 
+def test_zero_timeout_runner_defers_known_slow_signal_group_before_signal_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("slow_known_a")
+    second_payload = _external_strategy_payload("slow_known_b")
+    first_payload["concept_id"] = "macd_histogram_turnup_trend"
+    second_payload["concept_id"] = "macd_histogram_turnup_trend"
+    second_payload["exit_rules"]["take_profit_pct"] = 0.25
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fail_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        raise AssertionError("known slow v4 concepts should enter slow queue before signal build")
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fail_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout",
+        enable_dedupe=True,
+        job_wall_clock_seconds=300,
+    )
+
+    slow = pd.read_csv(tmp_path / "out" / "job-0000" / "slow_deferred_strategies_job_0000.csv")
+    queue = pd.read_csv(tmp_path / "out" / "job-0000" / "slow_queue_manifest_job_0000.csv")
+    timing = pd.read_csv(tmp_path / "out" / "job-0000" / "timing_diagnostics_job_0000.csv")
+    timeouts = pd.read_csv(tmp_path / "out" / "job-0000" / "timeout_strategies_job_0000.csv")
+    assert summary["zero_timeout_mode"] is True
+    assert summary["strategies_timed_out"] == 0
+    assert summary["strategies_slow_deferred"] == 2
+    assert summary["strategies_loaded"] == (
+        summary["strategies_evaluated"]
+        + summary["strategies_early_rejected"]
+        + summary["strategies_slow_deferred"]
+        + summary["strategies_unsupported"]
+        + summary["strategies_runtime_error"]
+    )
+    assert summary["signal_groups_slow_deferred"] == 1
+    assert timeouts.empty
+    assert slow["strategy_id"].tolist() == ["slow_known_a", "slow_known_b"]
+    assert set(slow["reason"]) == {"known_slow_concept"}
+    assert queue["concept"].tolist() == ["macd_histogram_turnup_trend"]
+    assert timing["result_status"].tolist() == ["slow_deferred", "slow_deferred"]
+    assert timing["timeout"].astype(bool).tolist() == [False, False]
+
+
+def test_zero_timeout_runner_defers_when_job_budget_is_exhausted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("budget_slow_a")
+    second_payload = _external_strategy_payload("budget_slow_b")
+    second_payload["entry_rules"]["breakout_lookback_days"] = 80
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal_calls = {"count": 0}
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_build_signal(**kwargs: object) -> tuple[dict[str, pd.Series], dict[str, object]]:
+        signal_calls["count"] += 1
+        signal = pd.Series(False, index=frame.index)
+        signal.iloc[70] = True
+        return {"AAA": signal}, {"seconds_signal": 0.0, "symbols_processed": 1, "raw_signals_total": 1}
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "_build_signals_by_symbol", fake_build_signal)
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    summary = gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v4_zero_timeout",
+        enable_dedupe=True,
+        job_wall_clock_seconds=1,
+    )
+
+    slow = pd.read_csv(tmp_path / "out" / "job-0000" / "slow_deferred_strategies_job_0000.csv")
+    manifest = pd.read_csv(tmp_path / "out" / "job-0000" / "signal_group_manifest_job_0000.csv")
+    assert signal_calls["count"] == 0
+    assert summary["strategies_timed_out"] == 0
+    assert summary["strategies_slow_deferred"] == 2
+    assert summary["strategies_loaded"] == (
+        summary["strategies_evaluated"]
+        + summary["strategies_early_rejected"]
+        + summary["strategies_slow_deferred"]
+        + summary["strategies_unsupported"]
+        + summary["strategies_runtime_error"]
+    )
+    assert summary["signal_groups_timed_out"] == 0
+    assert summary["signal_groups_slow_deferred"] == 2
+    assert set(slow["reason"]) == {"insufficient_job_budget"}
+    assert manifest["result_status"].tolist() == ["signal_slow_deferred", "signal_slow_deferred"]
+
+
 def test_signal_first_runner_reserves_time_for_exit_simulation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2799,6 +2922,75 @@ def test_external_block_merge_sums_block_artifacts(tmp_path: Path) -> None:
     assert list(pd.read_csv(tmp_path / "final" / "leaderboard.csv")["candidate_id"]) == ["b", "a"]
 
 
+def test_external_merge_sums_zero_timeout_slow_deferred_outputs(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 10,
+                "strategies_evaluated": 4,
+                "strategies_early_rejected": 2,
+                "strategies_slow_deferred": 4,
+                "strategies_timed_out": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "signal_groups_loaded": 5,
+                "signal_groups_slow_deferred": 2,
+                "candidate_timeout_seconds": 300,
+                "optimized_evaluation_mode": "optimized_evaluation_v4_zero_timeout",
+                "zero_timeout_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "slow_a",
+                "reason": "known_slow_concept",
+                "concept": "macd_histogram_turnup_trend",
+                "signal_hash": "sig",
+            }
+        ]
+    ).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "job_id": "0000",
+                "signal_hash": "sig",
+                "strategy_ids": "slow_a;slow_b",
+                "concept": "macd_histogram_turnup_trend",
+                "family": "minervini_sepa",
+                "estimated_cost": 9.0,
+                "reason": "known_slow_concept",
+                "suggested_timeout_seconds": 1800,
+                "suggested_strategies_per_job": 1,
+            }
+        ]
+    ).to_csv(job / "slow_queue_manifest_job_0000.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=10,
+        total_shards_requested=1,
+        total_jobs_requested=1,
+        candidate_count_per_job=10,
+    )
+
+    slow = pd.read_csv(tmp_path / "final" / "slow_deferred_strategies.csv")
+    queue = pd.read_csv(tmp_path / "final" / "slow_queue_manifest.csv")
+    assert summary["zero_timeout_mode"] is True
+    assert summary["total_strategies_timed_out"] == 0
+    assert summary["total_strategies_slow_deferred"] == 4
+    assert summary["total_signal_groups_slow_deferred"] == 2
+    assert len(slow) == 1
+    assert queue["suggested_timeout_seconds"].tolist() == [1800]
+
+
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
     text = path.read_text(encoding="utf-8")
@@ -2822,7 +3014,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "jobs_per_block=180" in text
     assert text.count("max-parallel: 180") == 40
     assert "max-parallel: 60" not in text
-    assert "optimized_evaluation_v3_signal_first" in text
+    assert "optimized_evaluation_v4_zero_timeout" in text
     assert "--optimized-evaluation-mode" in text
     assert len(data[True]["workflow_dispatch"]["inputs"]) <= 25
     assert "test_max_signal_groups" in data[True]["workflow_dispatch"]["inputs"]

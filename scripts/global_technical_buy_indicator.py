@@ -165,6 +165,24 @@ TIMEOUT_COLUMNS = [
     "reason",
     "seconds_until_timeout",
 ]
+SLOW_DEFERRED_COLUMNS = [
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "reason",
+    "seconds_until_deferred",
+    "suggested_timeout_seconds",
+    "suggested_strategies_per_job",
+    "signal_hash",
+    "estimated_cost",
+]
 EARLY_REJECT_COLUMNS = [
     "strategy_id",
     "reason",
@@ -238,6 +256,20 @@ JOB_MANIFEST_COLUMNS = [
     "signal_hash",
     "cost_score",
     "estimated_cost_bucket",
+]
+SLOW_QUEUE_MANIFEST_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "strategy_ids",
+    "concept",
+    "family",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "estimated_cost",
+    "reason",
+    "suggested_timeout_seconds",
+    "suggested_strategies_per_job",
 ]
 SIGNAL_GROUP_MANIFEST_COLUMNS = [
     "job_id",
@@ -2483,7 +2515,7 @@ def _effective_job_deadline(
     job_start: float,
     job_wall_clock_seconds: int | float | None,
 ) -> float | None:
-    if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"}:
+    if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}:
         return None
     if job_wall_clock_seconds is None or float(job_wall_clock_seconds) <= 0:
         return None
@@ -3045,6 +3077,13 @@ V3_SIGNAL_TIMEOUT_CONCEPT_SCORES = {
     "rsi2_pullback_rebound_trend": 6.0,
 }
 
+ZERO_TIMEOUT_MODE = "optimized_evaluation_v4_zero_timeout"
+SIGNAL_FIRST_MODES = {"optimized_evaluation_v3_signal_first", ZERO_TIMEOUT_MODE}
+V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
+    "macd_histogram_turnup_trend",
+    "post_ep_pullback_reclaim_proxy",
+}
+
 
 def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
     concept = _external_profile_value(payload, "concept_id", "concept")
@@ -3078,6 +3117,8 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
     }
     score = float(RECOVERY_FAST_CONCEPT_SCORES.get(concept, 0.0))
     score += float(V3_SIGNAL_TIMEOUT_CONCEPT_SCORES.get(concept, 0.0))
+    if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
+        score += 9.0
     if concept in very_slow_concepts:
         score += 5.0
     elif concept in slow_concepts:
@@ -3101,6 +3142,35 @@ def _estimated_cost_score(payload: dict[str, Any]) -> tuple[float, str]:
     if score >= 2.0:
         return score, "normal"
     return score, "fast"
+
+
+def _is_zero_timeout_mode(optimized_evaluation_mode: str) -> bool:
+    return str(optimized_evaluation_mode) == ZERO_TIMEOUT_MODE
+
+
+def _zero_timeout_defer_reason(*, payload: dict[str, Any], cost_score: float, cost_bucket: str) -> str | None:
+    concept = _external_profile_value(payload, "concept_id", "concept")
+    if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
+        return "known_slow_concept"
+    if str(cost_bucket) == "very_slow" or float(cost_score) >= 8.0:
+        return "estimated_cost_too_high"
+    if str(cost_bucket) == "slow":
+        return "needs_slow_queue"
+    return None
+
+
+def _suggested_slow_timeout_seconds(reason: str) -> int:
+    if str(reason) in {"known_slow_concept", "estimated_cost_too_high", "needs_slow_queue"}:
+        return 1800
+    if str(reason) == "insufficient_job_budget":
+        return 1800
+    return 900
+
+
+def _suggested_slow_strategies_per_job(reason: str) -> int:
+    if str(reason) in {"known_slow_concept", "estimated_cost_too_high", "needs_slow_queue", "insufficient_job_budget"}:
+        return 1
+    return 1
 
 
 def _signal_events_npz_path(output_dir: Path, file_suffix: str) -> Path:
@@ -3287,6 +3357,79 @@ def _append_external_timeout_result(
     )
 
 
+def _append_external_slow_deferred_result(
+    *,
+    slow_deferred_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    diagnostic_base: dict[str, Any],
+    payload: dict[str, Any],
+    candidate_id: str,
+    canonical_hash: str,
+    signal_hash: str,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int,
+    estimated_cost: float,
+    signal_canonical_strategy_id: str = "",
+    signal_deduped: bool = False,
+) -> None:
+    slow_deferred_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "shard_id": payload.get("shard_id"),
+            "slot_in_shard": payload.get("slot_in_shard"),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "exit_rule": diagnostic_base.get("exit_rule", ""),
+            "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+            "reason": reason,
+            "seconds_until_deferred": float(seconds_total),
+            "suggested_timeout_seconds": int(_suggested_slow_timeout_seconds(reason)),
+            "suggested_strategies_per_job": int(_suggested_slow_strategies_per_job(reason)),
+            "signal_hash": signal_hash,
+            "estimated_cost": float(estimated_cost),
+        }
+    )
+    dedupe_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "canonical_hash": canonical_hash,
+            "canonical_strategy_id": "",
+            "deduped": False,
+            "signal_hash": signal_hash,
+            "signal_canonical_strategy_id": signal_canonical_strategy_id,
+            "signal_deduped": bool(signal_deduped),
+        }
+    )
+    timing_rows.append(
+        {
+            **diagnostic_base,
+            "seconds_total": float(seconds_total),
+            "seconds_feature_build": 0.0,
+            "seconds_signal": float("nan"),
+            "seconds_simulation": float("nan"),
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": int(symbols_total),
+            "symbols_processed": int(symbols_processed),
+            "raw_signals_total": 0,
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+            "result_status": "slow_deferred",
+            "reject_reason": reason,
+            "timeout": False,
+            "early_rejected": False,
+            "runtime_error": False,
+        }
+    )
+
+
 def _append_signal_group_timeout_result(
     *,
     timeout_rows: list[dict[str, Any]],
@@ -3340,6 +3483,85 @@ def _append_signal_group_timeout_result(
             "estimated_cost": float(cost_score),
             "number_of_reuses": int(max(len(group) - 1, 0)),
             "result_status": "signal_timeout",
+            "reject_reason": reason,
+            "seconds_signal": float(seconds_total),
+            "raw_signals_total": 0,
+            "symbols_processed": int(symbols_processed),
+        }
+    )
+
+
+def _append_signal_group_slow_deferred_result(
+    *,
+    slow_deferred_rows: list[dict[str, Any]],
+    slow_queue_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    signal_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    cost_score: float,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int = 0,
+) -> None:
+    for index, candidate in enumerate(group):
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        _append_external_slow_deferred_result(
+            slow_deferred_rows=slow_deferred_rows,
+            dedupe_rows=dedupe_rows,
+            timing_rows=timing_rows,
+            diagnostic_base=_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+            payload=payload,
+            candidate_id=candidate_id,
+            canonical_hash=canonical_hash,
+            signal_hash=signal_hash,
+            reason=reason,
+            seconds_total=seconds_total,
+            symbols_total=symbols_total,
+            symbols_processed=symbols_processed,
+            estimated_cost=cost_score,
+            signal_canonical_strategy_id=first_id,
+            signal_deduped=bool(index > 0),
+        )
+    slow_queue_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "strategy_ids": ";".join(strategy_ids),
+            "concept": diagnostic_base.get("concept", ""),
+            "family": diagnostic_base.get("family", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "reason": reason,
+            "suggested_timeout_seconds": int(_suggested_slow_timeout_seconds(reason)),
+            "suggested_strategies_per_job": int(_suggested_slow_strategies_per_job(reason)),
+        }
+    )
+    signal_group_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_count": int(len(group)),
+            "strategy_ids": ";".join(strategy_ids),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "number_of_reuses": int(max(len(group) - 1, 0)),
+            "result_status": "signal_slow_deferred",
             "reject_reason": reason,
             "seconds_signal": float(seconds_total),
             "raw_signals_total": 0,
@@ -3697,7 +3919,7 @@ def _evaluate_external_candidate_core(
     precomputed_symbols_processed: int | None = None,
     precomputed_raw_signals_total: int | None = None,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"}:
+    if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2", *SIGNAL_FIRST_MODES}:
         return evaluate_candidate_optimized(
             config=config,
             candidate_id=candidate_id,
@@ -4855,7 +5077,8 @@ def run_external_strategy_pack_shard(
     job_index_for_balancing: int | None = None
     if output_prefix == "job" and str(output_padded).isdigit():
         job_index_for_balancing = int(output_padded)
-    use_v3_signal_first = str(optimized_evaluation_mode) == "optimized_evaluation_v3_signal_first"
+    use_zero_timeout = _is_zero_timeout_mode(str(optimized_evaluation_mode))
+    use_v3_signal_first = str(optimized_evaluation_mode) in SIGNAL_FIRST_MODES
     signal_first_phase = str(signal_first_phase or "combined").strip().lower()
     if signal_first_phase not in {"combined", "signals", "exits"}:
         raise ValueError("signal_first_phase must be one of: combined, signals, exits")
@@ -4979,7 +5202,7 @@ def run_external_strategy_pack_shard(
         symbol_frames,
         benchmark,
         enabled=enable_feature_cache,
-        prewarm=str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"},
+        prewarm=str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES},
     )
     if use_v3_signal_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
         job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
@@ -4996,11 +5219,13 @@ def run_external_strategy_pack_shard(
     trade_frames: list[pd.DataFrame] = []
     rules: list[dict[str, Any]] = []
     timeout_rows: list[dict[str, Any]] = []
+    slow_deferred_rows: list[dict[str, Any]] = []
     early_reject_rows: list[dict[str, Any]] = []
     runtime_error_rows: list[dict[str, Any]] = []
     timing_rows: list[dict[str, Any]] = []
     dedupe_rows: list[dict[str, Any]] = []
     job_manifest_rows: list[dict[str, Any]] = []
+    slow_queue_rows: list[dict[str, Any]] = []
     signal_group_manifest_rows: list[dict[str, Any]] = []
     strategy_to_signal_rows: list[dict[str, Any]] = []
     signal_group_seconds: list[float] = []
@@ -5012,15 +5237,18 @@ def run_external_strategy_pack_shard(
     signal_groups_evaluated = 0
     signal_groups_early_rejected = 0
     signal_groups_timed_out = 0
+    signal_groups_slow_deferred = 0
     if use_v3_signal_first and signal_first_phase == "exits":
         source_suffix = file_suffix
         unsupported_rows.extend(_csv_records_or_empty(signal_events_dir / f"unsupported_strategies_{source_suffix}.csv"))
         timeout_rows.extend(_csv_records_or_empty(signal_events_dir / f"timeout_strategies_{source_suffix}.csv"))
+        slow_deferred_rows.extend(_csv_records_or_empty(signal_events_dir / f"slow_deferred_strategies_{source_suffix}.csv"))
         early_reject_rows.extend(_csv_records_or_empty(signal_events_dir / f"early_rejected_strategies_{source_suffix}.csv"))
         runtime_error_rows.extend(_csv_records_or_empty(signal_events_dir / f"runtime_errors_{source_suffix}.csv"))
         timing_rows.extend(_csv_records_or_empty(signal_events_dir / f"timing_diagnostics_{source_suffix}.csv"))
         dedupe_rows.extend(_csv_records_or_empty(signal_events_dir / f"dedupe_map_{source_suffix}.csv"))
         job_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"job_manifest_{source_suffix}.csv"))
+        slow_queue_rows.extend(_csv_records_or_empty(signal_events_dir / f"slow_queue_manifest_{source_suffix}.csv"))
         signal_group_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"signal_group_manifest_{source_suffix}.csv"))
         strategy_to_signal_rows.extend(_csv_records_or_empty(signal_events_dir / f"strategy_to_signal_map_{source_suffix}.csv"))
         signal_group_seconds = [
@@ -5065,6 +5293,12 @@ def run_external_strategy_pack_shard(
                 sum(1 for row in signal_group_manifest_rows if str(row.get("result_status")) == "signal_timeout"),
             )
         )
+        signal_groups_slow_deferred = int(
+            signal_phase_summary.get(
+                "signal_groups_slow_deferred",
+                sum(1 for row in signal_group_manifest_rows if str(row.get("result_status")) == "signal_slow_deferred"),
+            )
+        )
     for candidate in candidates:
         if not candidate.unsupported_rules:
             continue
@@ -5105,7 +5339,13 @@ def run_external_strategy_pack_shard(
             first_payload = first_candidate.payload
             first_id = str(first_payload.get("strategy_id"))
             signal_hash = signal_external_strategy_hash(first_candidate)
-            cost_score = max(float(_estimated_cost_score(candidate.payload)[0]) for candidate in group)
+            cost_pairs = [_estimated_cost_score(candidate.payload) for candidate in group]
+            cost_score = max(float(score) for score, _bucket in cost_pairs)
+            cost_bucket = "very_slow" if any(bucket == "very_slow" for _score, bucket in cost_pairs) else (
+                "slow" if any(bucket == "slow" for _score, bucket in cost_pairs) else (
+                    "normal" if any(bucket == "normal" for _score, bucket in cost_pairs) else "fast"
+                )
+            )
             diagnostic_base = _external_diagnostic_base(
                 first_payload,
                 job_id=output_padded,
@@ -5148,36 +5388,30 @@ def run_external_strategy_pack_shard(
             group_start = time.perf_counter()
             try:
                 if reserve_remaining_job_for_exit:
-                    signal_groups_timed_out += 1
-                    reason = "CandidateEvaluationTimeout('job wall clock budget reserved for exit simulation after signal group ready')"
-                    _append_signal_group_timeout_result(
-                        timeout_rows=timeout_rows,
-                        dedupe_rows=dedupe_rows,
-                        timing_rows=timing_rows,
-                        signal_group_manifest_rows=signal_group_manifest_rows,
-                        group=group,
-                        output_padded=output_padded,
-                        signal_hash=signal_hash,
-                        first_id=first_id,
-                        strategy_ids=strategy_ids,
-                        diagnostic_base=diagnostic_base,
-                        cost_score=cost_score,
-                        reason=reason,
-                        seconds_total=max(0.0, float(time.perf_counter() - group_start)),
-                        symbols_total=len(symbol_frames),
-                        symbols_processed=0,
-                    )
-                    for candidate in group:
-                        signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
-                    continue
-                candidate_deadlines: list[float] = []
-                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
-                    candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
-                if job_deadline is not None:
-                    job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
-                    if job_safe_deadline <= time.perf_counter():
+                    if use_zero_timeout:
+                        signal_groups_slow_deferred += 1
+                        reason = "insufficient_job_budget"
+                        _append_signal_group_slow_deferred_result(
+                            slow_deferred_rows=slow_deferred_rows,
+                            slow_queue_rows=slow_queue_rows,
+                            dedupe_rows=dedupe_rows,
+                            timing_rows=timing_rows,
+                            signal_group_manifest_rows=signal_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            first_id=first_id,
+                            strategy_ids=strategy_ids,
+                            diagnostic_base=diagnostic_base,
+                            cost_score=cost_score,
+                            reason=reason,
+                            seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                            symbols_total=len(symbol_frames),
+                            symbols_processed=0,
+                        )
+                    else:
                         signal_groups_timed_out += 1
-                        reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before signal group start')"
+                        reason = "CandidateEvaluationTimeout('job wall clock budget reserved for exit simulation after signal group ready')"
                         _append_signal_group_timeout_result(
                             timeout_rows=timeout_rows,
                             dedupe_rows=dedupe_rows,
@@ -5195,10 +5429,89 @@ def run_external_strategy_pack_shard(
                             symbols_total=len(symbol_frames),
                             symbols_processed=0,
                         )
+                    for candidate in group:
+                        signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                    continue
+                candidate_deadlines: list[float] = []
+                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                    candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
+                if job_deadline is not None:
+                    job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
+                    if job_safe_deadline <= time.perf_counter():
+                        if use_zero_timeout:
+                            signal_groups_slow_deferred += 1
+                            reason = "insufficient_job_budget"
+                            _append_signal_group_slow_deferred_result(
+                                slow_deferred_rows=slow_deferred_rows,
+                                slow_queue_rows=slow_queue_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=reason,
+                                seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=0,
+                            )
+                        else:
+                            signal_groups_timed_out += 1
+                            reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before signal group start')"
+                            _append_signal_group_timeout_result(
+                                timeout_rows=timeout_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=reason,
+                                seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=0,
+                            )
                         for candidate in group:
                             signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
                         continue
                     candidate_deadlines.append(job_safe_deadline)
+                if use_zero_timeout:
+                    defer_reason = _zero_timeout_defer_reason(
+                        payload=first_payload,
+                        cost_score=cost_score,
+                        cost_bucket=cost_bucket,
+                    )
+                    if defer_reason is not None:
+                        signal_groups_slow_deferred += 1
+                        _append_signal_group_slow_deferred_result(
+                            slow_deferred_rows=slow_deferred_rows,
+                            slow_queue_rows=slow_queue_rows,
+                            dedupe_rows=dedupe_rows,
+                            timing_rows=timing_rows,
+                            signal_group_manifest_rows=signal_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            first_id=first_id,
+                            strategy_ids=strategy_ids,
+                            diagnostic_base=diagnostic_base,
+                            cost_score=cost_score,
+                            reason=defer_reason,
+                            seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                            symbols_total=len(symbol_frames),
+                            symbols_processed=0,
+                        )
+                        for candidate in group:
+                            signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                        continue
                 signal_deadline = min(candidate_deadlines) if candidate_deadlines else None
                 with _candidate_evaluation_heartbeat(f"job={output_padded} signal={signal_hash[:12]}"):
                     signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
@@ -5334,25 +5647,46 @@ def run_external_strategy_pack_shard(
                 elif job_deadline is not None:
                     reserve_remaining_job_for_exit = True
             except CandidateEvaluationTimeout as exc:
-                signal_groups_timed_out += 1
                 seconds_total = float(time.perf_counter() - group_start)
-                _append_signal_group_timeout_result(
-                    timeout_rows=timeout_rows,
-                    dedupe_rows=dedupe_rows,
-                    timing_rows=timing_rows,
-                    signal_group_manifest_rows=signal_group_manifest_rows,
-                    group=group,
-                    output_padded=output_padded,
-                    signal_hash=signal_hash,
-                    first_id=first_id,
-                    strategy_ids=strategy_ids,
-                    diagnostic_base=diagnostic_base,
-                    cost_score=cost_score,
-                    reason=repr(exc),
-                    seconds_total=seconds_total,
-                    symbols_total=len(symbol_frames),
-                    symbols_processed=0,
-                )
+                if use_zero_timeout:
+                    signal_groups_slow_deferred += 1
+                    _append_signal_group_slow_deferred_result(
+                        slow_deferred_rows=slow_deferred_rows,
+                        slow_queue_rows=slow_queue_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        signal_group_manifest_rows=signal_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        cost_score=cost_score,
+                        reason="needs_slow_queue",
+                        seconds_total=seconds_total,
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                    )
+                else:
+                    signal_groups_timed_out += 1
+                    _append_signal_group_timeout_result(
+                        timeout_rows=timeout_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        signal_group_manifest_rows=signal_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        cost_score=cost_score,
+                        reason=repr(exc),
+                        seconds_total=seconds_total,
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                    )
                 for candidate in group:
                     signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
 
@@ -5387,27 +5721,47 @@ def run_external_strategy_pack_shard(
         if job_deadline is not None:
             remaining_job_seconds = float(job_deadline - candidate_start)
             if remaining_job_seconds <= JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS:
-                reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before candidate start')"
-                _append_external_timeout_result(
-                    timeout_rows=timeout_rows,
-                    dedupe_rows=dedupe_rows,
-                    timing_rows=timing_rows,
-                    diagnostic_base=diagnostic_base,
-                    payload=payload,
-                    candidate_id=candidate_id,
-                    canonical_hash=canonical_hash,
-                    signal_hash=signal_hash,
-                    reason=reason,
-                    seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
-                    symbols_total=len(symbol_frames),
-                    symbols_processed=0,
-                    signal_canonical_strategy_id=signal_canonical_strategy_id,
-                    signal_deduped=signal_deduped,
-                )
+                if use_zero_timeout:
+                    reason = "insufficient_job_budget"
+                    _append_external_slow_deferred_result(
+                        slow_deferred_rows=slow_deferred_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        diagnostic_base=diagnostic_base,
+                        payload=payload,
+                        candidate_id=candidate_id,
+                        canonical_hash=canonical_hash,
+                        signal_hash=signal_hash,
+                        reason=reason,
+                        seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                        estimated_cost=cost_score,
+                        signal_canonical_strategy_id=signal_canonical_strategy_id,
+                        signal_deduped=signal_deduped,
+                    )
+                else:
+                    reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before candidate start')"
+                    _append_external_timeout_result(
+                        timeout_rows=timeout_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        diagnostic_base=diagnostic_base,
+                        payload=payload,
+                        candidate_id=candidate_id,
+                        canonical_hash=canonical_hash,
+                        signal_hash=signal_hash,
+                        reason=reason,
+                        seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                        signal_canonical_strategy_id=signal_canonical_strategy_id,
+                        signal_deduped=signal_deduped,
+                    )
                 print(
                     "[gtbi] job "
-                    f"{output_padded} deferred_timeout candidate={candidate_id} "
-                    f"reason=job_wall_clock_budget_exhausted "
+                    f"{output_padded} {'slow_deferred' if use_zero_timeout else 'deferred_timeout'} candidate={candidate_id} "
+                    f"reason={reason} "
                     f"remaining_job_seconds={remaining_job_seconds:.2f}",
                     flush=True,
                 )
@@ -5448,7 +5802,7 @@ def run_external_strategy_pack_shard(
                     else:
                         candidate_deadlines.append(time.perf_counter())
                 eval_kwargs["deadline"] = min(candidate_deadlines) if candidate_deadlines else None
-                if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", "optimized_evaluation_v3_signal_first"} and enable_dedupe:
+                if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES} and enable_dedupe:
                     cached_signal = signal_evaluation_cache.get(signal_hash)
                     if cached_signal is None:
                         signal_heartbeat_label = f"job={output_padded} candidate={candidate_id} signal"
@@ -5568,25 +5922,44 @@ def run_external_strategy_pack_shard(
             continue
         except CandidateEvaluationTimeout as exc:
             seconds_total = float(time.perf_counter() - candidate_start)
-            _append_external_timeout_result(
-                timeout_rows=timeout_rows,
-                dedupe_rows=dedupe_rows,
-                timing_rows=timing_rows,
-                diagnostic_base=diagnostic_base,
-                payload=payload,
-                candidate_id=candidate_id,
-                canonical_hash=canonical_hash,
-                signal_hash=signal_hash,
-                reason=repr(exc),
-                seconds_total=seconds_total,
-                symbols_total=len(symbol_frames),
-                symbols_processed=len(symbol_frames),
-                signal_canonical_strategy_id=signal_canonical_strategy_id,
-                signal_deduped=signal_deduped,
-            )
+            if use_zero_timeout:
+                _append_external_slow_deferred_result(
+                    slow_deferred_rows=slow_deferred_rows,
+                    dedupe_rows=dedupe_rows,
+                    timing_rows=timing_rows,
+                    diagnostic_base=diagnostic_base,
+                    payload=payload,
+                    candidate_id=candidate_id,
+                    canonical_hash=canonical_hash,
+                    signal_hash=signal_hash,
+                    reason="needs_slow_queue",
+                    seconds_total=seconds_total,
+                    symbols_total=len(symbol_frames),
+                    symbols_processed=len(symbol_frames),
+                    estimated_cost=cost_score,
+                    signal_canonical_strategy_id=signal_canonical_strategy_id,
+                    signal_deduped=signal_deduped,
+                )
+            else:
+                _append_external_timeout_result(
+                    timeout_rows=timeout_rows,
+                    dedupe_rows=dedupe_rows,
+                    timing_rows=timing_rows,
+                    diagnostic_base=diagnostic_base,
+                    payload=payload,
+                    candidate_id=candidate_id,
+                    canonical_hash=canonical_hash,
+                    signal_hash=signal_hash,
+                    reason=repr(exc),
+                    seconds_total=seconds_total,
+                    symbols_total=len(symbol_frames),
+                    symbols_processed=len(symbol_frames),
+                    signal_canonical_strategy_id=signal_canonical_strategy_id,
+                    signal_deduped=signal_deduped,
+                )
             print(
                 "[gtbi] job "
-                f"{output_padded} timeout candidate={candidate_id} "
+                f"{output_padded} {'slow_deferred' if use_zero_timeout else 'timeout'} candidate={candidate_id} "
                 f"seconds={seconds_total:.2f}",
                 flush=True,
             )
@@ -5706,11 +6079,13 @@ def run_external_strategy_pack_shard(
     trades_out = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
     unsupported = pd.DataFrame(unsupported_rows, columns=UNSUPPORTED_COLUMNS)
     timeouts = pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)
+    slow_deferred = pd.DataFrame(slow_deferred_rows, columns=SLOW_DEFERRED_COLUMNS)
     early_rejected = pd.DataFrame(early_reject_rows, columns=EARLY_REJECT_COLUMNS)
     runtime_errors = pd.DataFrame(runtime_error_rows, columns=RUNTIME_ERROR_COLUMNS)
     timing = pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)
     dedupe_map = pd.DataFrame(dedupe_rows, columns=DEDUPE_MAP_COLUMNS)
     job_manifest = pd.DataFrame(job_manifest_rows, columns=JOB_MANIFEST_COLUMNS)
+    slow_queue_manifest = pd.DataFrame(slow_queue_rows, columns=SLOW_QUEUE_MANIFEST_COLUMNS)
     signal_group_manifest = pd.DataFrame(signal_group_manifest_rows, columns=SIGNAL_GROUP_MANIFEST_COLUMNS)
     strategy_to_signal_map = pd.DataFrame(strategy_to_signal_rows, columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
 
@@ -5720,11 +6095,13 @@ def run_external_strategy_pack_shard(
     trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
     unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
     timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
+    slow_deferred.to_csv(output_dir / f"slow_deferred_strategies_{file_suffix}.csv", index=False)
     early_rejected.to_csv(output_dir / f"early_rejected_strategies_{file_suffix}.csv", index=False)
     runtime_errors.to_csv(output_dir / f"runtime_errors_{file_suffix}.csv", index=False)
     timing.to_csv(output_dir / f"timing_diagnostics_{file_suffix}.csv", index=False)
     dedupe_map.to_csv(output_dir / f"dedupe_map_{file_suffix}.csv", index=False)
     job_manifest.to_csv(output_dir / f"job_manifest_{file_suffix}.csv", index=False)
+    slow_queue_manifest.to_csv(output_dir / f"slow_queue_manifest_{file_suffix}.csv", index=False)
     signal_group_manifest.to_csv(output_dir / f"signal_group_manifest_{file_suffix}.csv", index=False)
     strategy_to_signal_map.to_csv(output_dir / f"strategy_to_signal_map_{file_suffix}.csv", index=False)
     with (output_dir / f"top_indicator_rules_{file_suffix}.jsonl").open("w", encoding="utf-8") as handle:
@@ -5775,9 +6152,11 @@ def run_external_strategy_pack_shard(
         "strategies_loaded": int(strategies_loaded_for_summary),
         "strategies_evaluated": int(len(rows)),
         "strategies_early_rejected": int(len(early_rejected)),
+        "strategies_slow_deferred": int(len(slow_deferred)),
+        "total_strategies_slow_deferred": int(len(slow_deferred)),
         "strategies_unsupported": int(len(unsupported_rows)),
         "strategies_runtime_error": int(len(runtime_errors)),
-        "strategies_failed": int(len(timeouts) + len(runtime_errors)),
+        "strategies_failed": int((0 if use_zero_timeout else len(timeouts)) + len(runtime_errors)),
         "strategies_timed_out": int(len(timeouts)),
         "strategies_deduped": int(deduped_count),
         "strategies_signal_deduped": int(signal_deduped_count),
@@ -5788,6 +6167,8 @@ def run_external_strategy_pack_shard(
         "signal_groups_evaluated": int(signal_groups_evaluated if use_v3_signal_first else len(signal_evaluation_cache)),
         "signal_groups_early_rejected": int(signal_groups_early_rejected),
         "signal_groups_timed_out": int(signal_groups_timed_out),
+        "signal_groups_slow_deferred": int(signal_groups_slow_deferred),
+        "total_signal_groups_slow_deferred": int(signal_groups_slow_deferred),
         "time_per_signal_p50_seconds": percentile_or_none(signal_seconds_array, 50),
         "time_per_signal_p95_seconds": percentile_or_none(signal_seconds_array, 95),
         "time_per_signal_max_seconds": percentile_or_none(signal_seconds_array, 100),
@@ -5809,6 +6190,7 @@ def run_external_strategy_pack_shard(
         "unique_signal_evaluations": int(unique_signal_evaluations_for_summary),
         "cached_signal_reuses": int(signal_deduped_count),
         "optimized_evaluation_mode": str(optimized_evaluation_mode),
+        "zero_timeout_mode": bool(use_zero_timeout),
         "signal_first_phase": str(signal_first_phase),
         "enable_feature_cache": bool(enable_feature_cache),
         "enable_dedupe": bool(enable_dedupe),
@@ -5856,11 +6238,13 @@ def merge_external_strategy_pack_outputs(
     trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
     timeout_frames: list[pd.DataFrame] = []
+    slow_deferred_frames: list[pd.DataFrame] = []
     early_rejected_frames: list[pd.DataFrame] = []
     runtime_error_frames: list[pd.DataFrame] = []
     timing_frames: list[pd.DataFrame] = []
     dedupe_frames: list[pd.DataFrame] = []
     job_manifest_frames: list[pd.DataFrame] = []
+    slow_queue_frames: list[pd.DataFrame] = []
     signal_group_manifest_frames: list[pd.DataFrame] = []
     strategy_to_signal_map_frames: list[pd.DataFrame] = []
     rule_rows: list[dict[str, Any]] = []
@@ -5922,6 +6306,9 @@ def merge_external_strategy_pack_outputs(
         ("timeout_strategies_shard_*.csv", timeout_frames),
         ("timeout_strategies_job_*.csv", timeout_frames),
         ("timeout_strategies.csv", timeout_frames),
+        ("slow_deferred_strategies_shard_*.csv", slow_deferred_frames),
+        ("slow_deferred_strategies_job_*.csv", slow_deferred_frames),
+        ("slow_deferred_strategies.csv", slow_deferred_frames),
         ("early_rejected_strategies_shard_*.csv", early_rejected_frames),
         ("early_rejected_strategies_job_*.csv", early_rejected_frames),
         ("early_rejected_strategies.csv", early_rejected_frames),
@@ -5937,6 +6324,9 @@ def merge_external_strategy_pack_outputs(
         ("job_manifest_shard_*.csv", job_manifest_frames),
         ("job_manifest_job_*.csv", job_manifest_frames),
         ("job_manifest.csv", job_manifest_frames),
+        ("slow_queue_manifest_shard_*.csv", slow_queue_frames),
+        ("slow_queue_manifest_job_*.csv", slow_queue_frames),
+        ("slow_queue_manifest.csv", slow_queue_frames),
         ("signal_group_manifest_shard_*.csv", signal_group_manifest_frames),
         ("signal_group_manifest_job_*.csv", signal_group_manifest_frames),
         ("signal_group_manifest.csv", signal_group_manifest_frames),
@@ -5976,6 +6366,11 @@ def merge_external_strategy_pack_outputs(
         else pd.DataFrame(columns=UNSUPPORTED_COLUMNS)
     )
     timeouts = pd.concat(timeout_frames, ignore_index=True, sort=False) if timeout_frames else pd.DataFrame(columns=TIMEOUT_COLUMNS)
+    slow_deferred = (
+        pd.concat(slow_deferred_frames, ignore_index=True, sort=False)
+        if slow_deferred_frames
+        else pd.DataFrame(columns=SLOW_DEFERRED_COLUMNS)
+    )
     early_rejected = (
         pd.concat(early_rejected_frames, ignore_index=True, sort=False)
         if early_rejected_frames
@@ -5992,6 +6387,11 @@ def merge_external_strategy_pack_outputs(
         pd.concat(job_manifest_frames, ignore_index=True, sort=False)
         if job_manifest_frames
         else pd.DataFrame(columns=JOB_MANIFEST_COLUMNS)
+    )
+    slow_queue_manifest = (
+        pd.concat(slow_queue_frames, ignore_index=True, sort=False)
+        if slow_queue_frames
+        else pd.DataFrame(columns=SLOW_QUEUE_MANIFEST_COLUMNS)
     )
     signal_group_manifest = (
         pd.concat(signal_group_manifest_frames, ignore_index=True, sort=False)
@@ -6010,11 +6410,13 @@ def merge_external_strategy_pack_outputs(
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
     timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)
+    slow_deferred.to_csv(output_dir / "slow_deferred_strategies.csv", index=False)
     early_rejected.to_csv(output_dir / "early_rejected_strategies.csv", index=False)
     runtime_errors.to_csv(output_dir / "runtime_errors.csv", index=False)
     timing.to_csv(output_dir / "timing_diagnostics.csv", index=False)
     dedupe_map.to_csv(output_dir / "dedupe_map.csv", index=False)
     job_manifest.to_csv(output_dir / "job_manifest.csv", index=False)
+    slow_queue_manifest.to_csv(output_dir / "slow_queue_manifest.csv", index=False)
     signal_group_manifest.to_csv(output_dir / "signal_group_manifest.csv", index=False)
     strategy_to_signal_map.to_csv(output_dir / "strategy_to_signal_map.csv", index=False)
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
@@ -6069,6 +6471,9 @@ def merge_external_strategy_pack_outputs(
     if completed_shards == 0:
         completed_shards = int(len(summaries))
     timed_out_total = sum_summary("strategies_timed_out", "total_strategies_timed_out")
+    slow_deferred_total = sum_summary("strategies_slow_deferred", "total_strategies_slow_deferred")
+    if slow_deferred_total == 0 and not slow_deferred.empty:
+        slow_deferred_total = int(len(slow_deferred))
     runtime_error_total = sum_summary("strategies_runtime_error", "total_strategies_runtime_error")
     failed_total = sum_summary("strategies_failed", "total_strategies_failed")
     if failed_total == 0:
@@ -6109,11 +6514,16 @@ def merge_external_strategy_pack_outputs(
     signal_groups_timed_out = sum_summary("signal_groups_timed_out")
     if signal_groups_timed_out == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
         signal_groups_timed_out = int((signal_group_manifest["result_status"].astype(str) == "signal_timeout").sum())
+    signal_groups_slow_deferred = sum_summary("signal_groups_slow_deferred", "total_signal_groups_slow_deferred")
+    if signal_groups_slow_deferred == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
+        signal_groups_slow_deferred = int((signal_group_manifest["result_status"].astype(str) == "signal_slow_deferred").sum())
+    zero_timeout_mode = any(bool(item.get("zero_timeout_mode")) for item in summaries)
     summary = {
         "total_strategies_requested": int(total_strategies_requested),
         "total_strategies_loaded": sum_summary("strategies_loaded", "total_strategies_loaded"),
         "total_strategies_evaluated": sum_summary("strategies_evaluated", "total_strategies_evaluated"),
         "total_strategies_early_rejected": sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
+        "total_strategies_slow_deferred": int(slow_deferred_total),
         "total_strategies_unsupported": sum_summary("strategies_unsupported", "total_strategies_unsupported"),
         "total_strategies_runtime_error": int(runtime_error_total),
         "total_strategies_failed": int(failed_total),
@@ -6127,6 +6537,8 @@ def merge_external_strategy_pack_outputs(
         "signal_groups_evaluated": int(signal_groups_evaluated),
         "signal_groups_early_rejected": int(signal_groups_early_rejected),
         "signal_groups_timed_out": int(signal_groups_timed_out),
+        "signal_groups_slow_deferred": int(signal_groups_slow_deferred),
+        "total_signal_groups_slow_deferred": int(signal_groups_slow_deferred),
         "time_per_signal_p50_seconds": percentile_or_none(signal_seconds, 50),
         "time_per_signal_p95_seconds": percentile_or_none(signal_seconds, 95),
         "time_per_signal_max_seconds": percentile_or_none(signal_seconds, 100),
@@ -6150,6 +6562,7 @@ def merge_external_strategy_pack_outputs(
         "candidate_count_per_job": inferred_candidate_count,
         "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
         "optimized_evaluation_mode": next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
+        "zero_timeout_mode": bool(zero_timeout_mode),
         "signal_first_phase": next((str(item.get("signal_first_phase")) for item in summaries if item.get("signal_first_phase")), ""),
         "filtered_candidates": int(len(filtered)),
         "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
