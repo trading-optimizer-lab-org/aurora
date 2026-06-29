@@ -55,10 +55,6 @@ on:
         description: "Enable logical-job block artifacts"
         required: true
         default: "true"
-      cost_profile_artifact_run_id:
-        description: "Optional run id containing cost profile artifacts"
-        required: false
-        default: "28281182132"
       test_max_signal_groups:
         description: "Maximum signal groups in test_mode for signal-first evaluation"
         required: true
