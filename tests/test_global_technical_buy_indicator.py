@@ -1611,6 +1611,47 @@ def test_v5_signal_scheduler_caps_strategy_budget_per_job(tmp_path: Path) -> Non
     assert sum(len(group) for group in selected) <= 50
 
 
+def test_v5_signal_scheduler_splits_large_signal_group_across_jobs(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows: list[dict[str, object]] = []
+    for exit_index in range(48):
+        payload = _external_strategy_payload(
+            f"large_signal_group_exit_{exit_index}",
+            shard_id=0,
+            slot=exit_index,
+        )
+        payload["concept_id"] = "ep_gap_volume_continuation_proxy"
+        payload["entry_rules"]["breakout_lookback_days"] = 35
+        payload["exit_rules"]["take_profit_pct"] = 0.03 + exit_index * 0.001
+        rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    scheduled_groups: list[list[gtbi.ExternalStrategyCandidate]] = []
+    for job_index in range(4):
+        selected, total_jobs, total_signal_groups = gtbi._balanced_external_signal_groups_for_job(
+            pack,
+            job_index=job_index,
+            signal_groups_per_job=10,
+            schedule_active_jobs=4,
+            max_signal_groups=None,
+            strategy_format="jsonl",
+            optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        )
+        assert total_jobs == 4
+        assert total_signal_groups == 3
+        assert sum(len(group) for group in selected) <= 16
+        scheduled_groups.extend(selected)
+
+    assert len(scheduled_groups) == 3
+    assert sum(len(group) for group in scheduled_groups) == 48
+    assert all(len(group) == 16 for group in scheduled_groups)
+
+
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
     assert gtbi._effective_job_deadline(
         optimized_evaluation_mode="optimized_evaluation_v2",

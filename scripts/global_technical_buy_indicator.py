@@ -2779,6 +2779,30 @@ def _balanced_external_signal_groups_for_job(
             return float(max_cost * max(len(group), 1))
 
         candidate_budget = max(per_job * 5, per_job)
+        max_signal_chunk_candidates = max(8, min(16, candidate_budget))
+
+        def split_large_signal_group(group: list[ExternalStrategyCandidate]) -> list[list[ExternalStrategyCandidate]]:
+            if len(group) <= max_signal_chunk_candidates:
+                return [group]
+            ordered_candidates = sorted(
+                group,
+                key=lambda candidate: (
+                    exit_external_strategy_hash(candidate),
+                    int(candidate.payload.get("shard_id", 0)),
+                    int(candidate.payload.get("slot_in_shard", 0)),
+                    str(candidate.payload.get("strategy_id", "")),
+                ),
+            )
+            return [
+                ordered_candidates[start : start + max_signal_chunk_candidates]
+                for start in range(0, len(ordered_candidates), max_signal_chunk_candidates)
+            ]
+
+        groups = [
+            chunk
+            for group in groups
+            for chunk in split_large_signal_group(group)
+        ]
         group_budget = max(1, per_job)
         max_window_groups = max(active_jobs * group_budget, 1)
         window_groups = sorted(
@@ -2798,25 +2822,32 @@ def _balanced_external_signal_groups_for_job(
             ),
         )
         buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(active_jobs)]
+        bucket_signal_hashes: list[set[str]] = [set() for _ in range(active_jobs)]
         bucket_counts = [0 for _ in range(active_jobs)]
         bucket_costs = [0.0 for _ in range(active_jobs)]
         for group in ordered:
             group_size = int(len(group))
+            signal_hash = signal_external_strategy_hash(group[0]) if group else ""
             available = [
                 idx
                 for idx, bucket in enumerate(buckets)
-                if len(bucket) < group_budget and bucket_counts[idx] + group_size <= candidate_budget
+                if (
+                    len(bucket) < group_budget
+                    and bucket_counts[idx] + group_size <= candidate_budget
+                    and signal_hash not in bucket_signal_hashes[idx]
+                )
             ]
             if not available and group_size > candidate_budget:
                 available = [
                     idx
                     for idx, bucket in enumerate(buckets)
-                    if not bucket
+                    if not bucket and signal_hash not in bucket_signal_hashes[idx]
                 ]
             if not available:
                 break
             target = min(available, key=lambda idx: (bucket_costs[idx], bucket_counts[idx], len(buckets[idx]), idx))
             buckets[target].append(group)
+            bucket_signal_hashes[target].add(signal_hash)
             bucket_counts[target] += group_size
             bucket_costs[target] += group_cost(group)
         total_signal_groups = int(sum(len(bucket) for bucket in buckets))
