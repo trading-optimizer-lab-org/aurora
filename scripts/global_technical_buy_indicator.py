@@ -2769,17 +2769,20 @@ def _balanced_external_signal_groups_for_job(
     if str(optimized_evaluation_mode) == "optimized_evaluation_v5_event_first" and schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
         active_jobs = max(int(schedule_active_jobs), 1)
 
-        def group_cost(group: list[ExternalStrategyCandidate]) -> float:
+        def group_base_cost(group: list[ExternalStrategyCandidate]) -> float:
             if not group:
                 return 0.0
-            max_cost = max(
+            return max(
                 float(_estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0])
                 for candidate in group
             )
-            return float(max_cost * max(len(group), 1))
+
+        def group_cost(group: list[ExternalStrategyCandidate]) -> float:
+            base_cost = float(group_base_cost(group))
+            return float(base_cost + max(len(group), 1) * 0.25)
 
         candidate_budget = max(per_job * 5, per_job)
-        max_signal_chunk_candidates = max(8, min(16, candidate_budget))
+        max_signal_chunk_candidates = max(8, min(20, candidate_budget))
 
         def split_large_signal_group(group: list[ExternalStrategyCandidate]) -> list[list[ExternalStrategyCandidate]]:
             if len(group) <= max_signal_chunk_candidates:
@@ -2803,12 +2806,13 @@ def _balanced_external_signal_groups_for_job(
             for group in groups
             for chunk in split_large_signal_group(group)
         ]
-        group_budget = max(1, per_job)
+        group_budget = max(1, min(3, per_job))
         max_window_groups = max(active_jobs * group_budget, 1)
         window_groups = sorted(
             groups,
             key=lambda group: (
-                group_cost(group),
+                group_base_cost(group),
+                -len(group),
                 signal_external_strategy_hash(group[0]) if group else "",
             ),
         )

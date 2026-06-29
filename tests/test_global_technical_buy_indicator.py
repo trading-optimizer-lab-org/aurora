@@ -1644,12 +1644,12 @@ def test_v5_signal_scheduler_splits_large_signal_group_across_jobs(tmp_path: Pat
         )
         assert total_jobs == 4
         assert total_signal_groups == 3
-        assert sum(len(group) for group in selected) <= 16
+        assert sum(len(group) for group in selected) <= 20
         scheduled_groups.extend(selected)
 
     assert len(scheduled_groups) == 3
     assert sum(len(group) for group in scheduled_groups) == 48
-    assert all(len(group) == 16 for group in scheduled_groups)
+    assert sorted(len(group) for group in scheduled_groups) == [8, 20, 20]
 
 
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
