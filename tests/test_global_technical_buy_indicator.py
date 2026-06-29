@@ -1608,7 +1608,7 @@ def test_v5_signal_scheduler_caps_strategy_budget_per_job(tmp_path: Path) -> Non
     assert total_jobs == 4
     assert total_signal_groups <= 12
     assert len(selected) <= 3
-    assert sum(len(group) for group in selected) <= 40
+    assert sum(len(group) for group in selected) <= 50
 
 
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:

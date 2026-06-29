@@ -2778,7 +2778,7 @@ def _balanced_external_signal_groups_for_job(
             )
             return float(max_cost * max(len(group), 1))
 
-        candidate_budget = max(per_job * 4, per_job)
+        candidate_budget = max(per_job * 5, per_job)
         group_budget = max(1, per_job)
         max_window_groups = max(active_jobs * group_budget, 1)
         window_groups = sorted(
@@ -3001,6 +3001,42 @@ def _strict_quality_score(row: dict[str, Any]) -> float:
         + med * 100.0
         + pf * 10.0
     )
+
+
+def _event_first_final_quality_reject(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Classify candidates that already fail irreversible final filters."""
+
+    if bool(row.get("strict_quality_pass")):
+        return None
+    median = _finite_float(row.get("validation_median_trade_return_pct"), default=float("nan"))
+    profit_factor = _finite_float(row.get("validation_profit_factor"), default=float("nan"))
+    if math.isfinite(median) and math.isfinite(profit_factor) and median <= 0.0 and profit_factor < 1.15:
+        return {
+            "reason": "final_filter_validation_median_nonpositive_and_profit_factor_lt_1_15",
+            "split": "validation",
+            "year": "",
+            "actual": f"median={median:.6g};profit_factor={profit_factor:.6g}",
+            "threshold": "median>0;profit_factor>=1.4",
+            "stage": "final_filter_irreversible",
+        }
+    return None
+
+
+def _event_first_amortize_diagnostic(
+    diagnostic: dict[str, Any],
+    *,
+    signal_group_size: int,
+    exit_group_size: int,
+) -> dict[str, Any]:
+    out = dict(diagnostic)
+    for key, divisor in (
+        ("seconds_signal", max(int(signal_group_size), 1)),
+        ("seconds_simulation", max(int(exit_group_size), 1)),
+    ):
+        value = _finite_float(out.get(key), default=float("nan"))
+        if math.isfinite(value) and value > 0.0:
+            out[key] = float(value / divisor)
+    return out
 
 
 def _frequency_quality_score(row: dict[str, Any]) -> float:
@@ -6087,6 +6123,14 @@ def run_external_strategy_pack_shard(
                 optimized_evaluation_mode=str(optimized_evaluation_mode),
             )[0],
         )
+    signal_group_size_by_hash: dict[str, int] = {}
+    exit_group_size_by_key: dict[tuple[str, str], int] = {}
+    for candidate in evaluable:
+        candidate_signal_hash = signal_external_strategy_hash(candidate)
+        candidate_exit_hash = exit_external_strategy_hash(candidate)
+        signal_group_size_by_hash[candidate_signal_hash] = signal_group_size_by_hash.get(candidate_signal_hash, 0) + 1
+        key = (candidate_signal_hash, candidate_exit_hash)
+        exit_group_size_by_key[key] = exit_group_size_by_key.get(key, 0) + 1
     if prebuilt_pack_dir is None:
         pack_root = output_dir / "_external_pack_data"
         build_stage_packs(
@@ -6587,7 +6631,12 @@ def run_external_strategy_pack_shard(
                 signal_groups_evaluated += 1
                 signal_seconds = float(signal_diagnostic.get("seconds_signal", time.perf_counter() - group_start))
                 signal_diagnostic.setdefault("symbols_with_events", _event_first_symbols_with_events(signals_by_symbol))
-                signal_group_seconds.append(signal_seconds)
+                effective_signal_seconds = (
+                    signal_seconds / max(signal_group_size_by_hash.get(signal_hash, len(group)), 1)
+                    if use_event_first
+                    else signal_seconds
+                )
+                signal_group_seconds.append(float(effective_signal_seconds))
                 signal_evaluation_cache[signal_hash] = (first_id, signals_by_symbol, signal_diagnostic)
                 reject = None
                 validation_signal_total = 0
@@ -7155,6 +7204,46 @@ def run_external_strategy_pack_shard(
                 flush=True,
             )
             continue
+        if use_event_first:
+            diagnostic = _event_first_amortize_diagnostic(
+                diagnostic,
+                signal_group_size=signal_group_size_by_hash.get(signal_hash, 1),
+                exit_group_size=exit_group_size_by_key.get((signal_hash, exit_hash), 1),
+            )
+            final_reject = _event_first_final_quality_reject(row)
+            if final_reject is not None:
+                reject_reason = str(final_reject["reason"])
+                early_reject_rows.append(
+                    {
+                        "strategy_id": candidate_id,
+                        "reason": reject_reason,
+                        "split": str(final_reject.get("split", "")),
+                        "year": final_reject.get("year", ""),
+                        "actual": final_reject.get("actual", ""),
+                        "threshold": final_reject.get("threshold", ""),
+                        "stage": str(final_reject.get("stage", "final_filter_irreversible")),
+                        "seconds_until_reject": float(diagnostic.get("seconds_total", time.perf_counter() - candidate_start)),
+                        "symbols_processed": int(diagnostic.get("symbols_processed", len(symbol_frames))),
+                    }
+                )
+                timing_rows.append(
+                    {
+                        **diagnostic_base,
+                        **diagnostic,
+                        "result_status": "early_rejected",
+                        "reject_reason": reject_reason,
+                        "timeout": False,
+                        "early_rejected": True,
+                        "runtime_error": False,
+                    }
+                )
+                print(
+                    "[gtbi] job "
+                    f"{output_padded} final_filter_early_rejected candidate={candidate_id} "
+                    f"reason={reject_reason} seconds={time.perf_counter() - candidate_start:.2f}",
+                    flush=True,
+                )
+                continue
         row.update(_external_metadata(payload))
         rows.append(row)
         if not yearly.empty:
