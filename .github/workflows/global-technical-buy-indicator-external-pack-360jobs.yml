@@ -331,9 +331,10 @@ jobs:
           IFS=',' read -ra JOBS <<< "$JOB_INDICES_CSV"
           original_strategies_per_shard=200
           chunks_per_shard=$(( (original_strategies_per_shard + CANDIDATE_LIMIT - 1) / CANDIDATE_LIMIT ))
-          schedule_active_jobs=0
+          schedule_active_jobs="$TOTAL_ACTIVE_JOBS"
+          signal_group_limit=0
           if [ "${{ inputs.test_mode }}" = "true" ]; then
-            schedule_active_jobs="$TOTAL_ACTIVE_JOBS"
+            signal_group_limit="${{ inputs.test_max_signal_groups }}"
           fi
 
           for job_index in "${JOBS[@]}"; do
@@ -372,7 +373,7 @@ jobs:
               --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"
               --job-wall-clock-seconds "${{ inputs.job_wall_clock_seconds }}"
               --schedule-active-jobs "$schedule_active_jobs"
-              --test-max-signal-groups "${{ inputs.test_max_signal_groups }}"
+              --test-max-signal-groups "$signal_group_limit"
               --optimized-evaluation-mode "${{ inputs.optimized_evaluation_mode }}"
               "${OPT_ARGS[@]}"
               --external-strategy-format jsonl
