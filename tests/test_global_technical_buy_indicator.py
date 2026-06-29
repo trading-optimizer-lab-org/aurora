@@ -4135,7 +4135,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--signal-first-phase signals" in text
     assert "--signal-first-phase exits" in text
     assert "--signal-events-dir" in text
-    assert "enable_block_merge" in text
+    assert "enable_block_merge" not in data[True]["workflow_dispatch"]["inputs"]
     assert "plan_blocks" in data["jobs"]
     assert "run_block" in data["jobs"]
     assert "merge_final" in data["jobs"]

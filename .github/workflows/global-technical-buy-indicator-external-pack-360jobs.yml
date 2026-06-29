@@ -51,10 +51,6 @@ on:
         description: "Enable cost diagnostics and scheduling manifest"
         required: true
         default: "true"
-      enable_block_merge:
-        description: "Enable logical-job block artifacts"
-        required: true
-        default: "true"
       test_max_signal_groups:
         description: "Maximum signal groups in test_mode for signal-first evaluation"
         required: true
@@ -83,10 +79,6 @@ on:
         description: "Fail job when an external rule cannot be mapped"
         required: true
         default: "false"
-      source_run_id:
-        description: "Ignored by full block mode; kept for CLI compatibility"
-        required: false
-        default: ""
       recovery_job_indices:
         description: "Optional comma-separated absolute logical job indices to run"
         required: false
