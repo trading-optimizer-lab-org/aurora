@@ -4030,6 +4030,13 @@ def test_external_merge_preserves_event_first_artifacts(tmp_path: Path) -> None:
     assert summary["zero_slow_deferred_mode"] is True
     assert summary["total_strategies_slow_deferred"] == 0
     assert summary["total_strategies_timed_out"] == 0
+    leaderboard = pd.read_csv(tmp_path / "final" / "leaderboard.csv")
+    assert summary["total_strategies_evaluated"] == len(leaderboard)
+    assert summary["strategies_evaluated_complete"] == len(leaderboard)
+    if leaderboard.empty:
+        assert summary["best_candidate_id"] is None
+    else:
+        assert summary["best_candidate_id"] in set(leaderboard["candidate_id"].astype(str))
     for name in (
         "compiled_signal_plan.csv",
         "event_store_manifest.csv",
@@ -4039,6 +4046,51 @@ def test_external_merge_preserves_event_first_artifacts(tmp_path: Path) -> None:
     ):
         assert (tmp_path / "final" / name).exists()
     assert pd.read_csv(tmp_path / "final" / "event_store_manifest.csv")["events_total"].tolist() == [123]
+
+
+def test_external_merge_reconciles_summary_with_real_leaderboard_rows(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 1,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 0,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "best_candidate_id": "missing_from_real_leaderboard",
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMING_DIAGNOSTIC_COLUMNS).to_csv(job / "timing_diagnostics_job_0000.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=1,
+        total_shards_requested=1,
+        total_jobs_requested=1,
+        candidate_count_per_job=1,
+    )
+
+    leaderboard = pd.read_csv(tmp_path / "final" / "leaderboard.csv")
+    assert leaderboard.empty
+    assert summary["total_strategies_evaluated"] == 0
+    assert summary["strategies_evaluated_complete"] == 0
+    assert summary["best_candidate_id"] is None
+    assert summary["best_adjusted_return_time_risk"] is None
 
 
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:

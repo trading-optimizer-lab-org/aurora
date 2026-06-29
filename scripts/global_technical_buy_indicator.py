@@ -7820,17 +7820,38 @@ def merge_external_strategy_pack_outputs(
                     break
         return int(total)
 
+    optimized_mode = next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy")
+    reconcile_counts_to_output_rows = optimized_mode == EVENT_FIRST_MODE
     completed_jobs = sum_summary("total_jobs_completed")
     if completed_jobs == 0:
         completed_jobs = int(len(summaries))
     completed_shards = sum_summary("total_shards_completed")
     if completed_shards == 0:
         completed_shards = int(len(summaries))
-    timed_out_total = sum_summary("strategies_timed_out", "total_strategies_timed_out")
+    leaderboard_row_count = int(len(leaderboard))
+    early_rejected_row_count = int(len(early_rejected))
+    loaded_total = (
+        int(len(timing))
+        if reconcile_counts_to_output_rows and not timing.empty
+        else sum_summary("strategies_loaded", "total_strategies_loaded")
+    )
+    if loaded_total == 0:
+        loaded_total = int(
+            leaderboard_row_count
+            + early_rejected_row_count
+            + len(unsupported)
+            + len(timeouts)
+            + len(runtime_errors)
+            + len(slow_deferred)
+        )
+    timed_out_total = int(len(timeouts)) if reconcile_counts_to_output_rows else sum_summary("strategies_timed_out", "total_strategies_timed_out")
     slow_deferred_total = sum_summary("strategies_slow_deferred", "total_strategies_slow_deferred")
+    if reconcile_counts_to_output_rows:
+        slow_deferred_total = int(len(slow_deferred))
     if slow_deferred_total == 0 and not slow_deferred.empty:
         slow_deferred_total = int(len(slow_deferred))
-    runtime_error_total = sum_summary("strategies_runtime_error", "total_strategies_runtime_error")
+    runtime_error_total = int(len(runtime_errors)) if reconcile_counts_to_output_rows else sum_summary("strategies_runtime_error", "total_strategies_runtime_error")
+    unsupported_total = int(len(unsupported)) if reconcile_counts_to_output_rows else sum_summary("strategies_unsupported", "total_strategies_unsupported")
     failed_total = sum_summary("strategies_failed", "total_strategies_failed")
     if failed_total == 0:
         failed_total = int(timed_out_total + runtime_error_total)
@@ -7877,19 +7898,19 @@ def merge_external_strategy_pack_outputs(
     zero_slow_deferred_mode = any(bool(item.get("zero_slow_deferred_mode")) for item in summaries)
     summary = {
         "total_strategies_requested": int(total_strategies_requested),
-        "total_strategies_loaded": sum_summary("strategies_loaded", "total_strategies_loaded"),
-        "total_strategies_evaluated": sum_summary("strategies_evaluated", "total_strategies_evaluated"),
-        "total_strategies_early_rejected": sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
+        "total_strategies_loaded": int(loaded_total),
+        "total_strategies_evaluated": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated", "total_strategies_evaluated"),
+        "total_strategies_early_rejected": int(early_rejected_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
         "total_strategies_slow_deferred": int(slow_deferred_total),
-        "total_strategies_unsupported": sum_summary("strategies_unsupported", "total_strategies_unsupported"),
+        "total_strategies_unsupported": int(unsupported_total),
         "total_strategies_runtime_error": int(runtime_error_total),
         "total_strategies_failed": int(failed_total),
         "total_strategies_timed_out": int(timed_out_total),
         "total_strategies_deduped": sum_summary("strategies_deduped", "total_strategies_deduped"),
         "total_strategies_signal_deduped": sum_summary("strategies_signal_deduped", "total_strategies_signal_deduped"),
         "strategies_signal_reused": sum_summary("strategies_signal_reused", "total_strategies_signal_deduped"),
-        "strategies_covered": sum_summary("strategies_covered", "total_strategies_loaded"),
-        "strategies_evaluated_complete": sum_summary("strategies_evaluated_complete", "total_strategies_evaluated"),
+        "strategies_covered": int(loaded_total),
+        "strategies_evaluated_complete": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated_complete", "total_strategies_evaluated"),
         "signal_groups_loaded": int(signal_groups_loaded),
         "signal_groups_evaluated": int(signal_groups_evaluated),
         "signal_groups_early_rejected": int(signal_groups_early_rejected),
@@ -7918,7 +7939,7 @@ def merge_external_strategy_pack_outputs(
         "total_jobs_failed": int(max(jobs_requested - completed_jobs, 0)),
         "candidate_count_per_job": inferred_candidate_count,
         "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
-        "optimized_evaluation_mode": next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
+        "optimized_evaluation_mode": optimized_mode,
         "zero_timeout_mode": bool(zero_timeout_mode),
         "zero_slow_deferred_mode": bool(zero_slow_deferred_mode),
         "signal_first_phase": next((str(item.get("signal_first_phase")) for item in summaries if item.get("signal_first_phase")), ""),
