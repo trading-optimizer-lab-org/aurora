@@ -984,38 +984,18 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
     volume = prepared["volume"].fillna(0.0)
     entry_cache = _frame_series_cache(prepared, "_gtbi_entry_signal_series_cache")
     exit_cache = _frame_series_cache(prepared, "_gtbi_exit_series_cache")
-    primitive_cache = _frame_series_cache(prepared, "_gtbi_signal_primitive_cache")
 
     for window in (10, 20, 21, 50, 63, 80, 100, 126, 150, 180, 200, 220, 252):
         if window <= 0:
             continue
-        sma = close.rolling(window, min_periods=window).mean()
-        ema = close.ewm(span=window, adjust=False, min_periods=window).mean()
-        entry_cache.setdefault(("sma", window), sma)
-        entry_cache.setdefault(("ema", window), ema)
-        primitive_cache.setdefault(("sma", window), sma)
-        primitive_cache.setdefault(("ema", window), ema)
+        entry_cache.setdefault(("sma", window), close.rolling(window, min_periods=window).mean())
+        entry_cache.setdefault(("ema", window), close.ewm(span=window, adjust=False, min_periods=window).mean())
         min_periods = min(window, len(prepared))
-        high_0 = high.rolling(window, min_periods=min_periods).max()
-        low_0 = low.rolling(window, min_periods=min_periods).min()
-        high_1 = high.shift(1).rolling(window, min_periods=window).max()
-        low_1 = low.shift(1).rolling(window, min_periods=window).min()
-        adv = volume.rolling(window, min_periods=min_periods).mean()
-        entry_cache.setdefault((f"high_0_{min_periods}", window), high_0)
-        entry_cache.setdefault((f"low_0_{min_periods}", window), low_0)
-        entry_cache.setdefault((f"high_1_{window}", window), high_1)
-        entry_cache.setdefault((f"low_1_{window}", window), low_1)
-        entry_cache.setdefault((f"vol_{min_periods}", window), adv)
-        primitive_cache.setdefault(("rolling_high", window, 0, min_periods), high_0)
-        primitive_cache.setdefault(("rolling_low", window, 0, min_periods), low_0)
-        primitive_cache.setdefault(("rolling_high", window, 1, window), high_1)
-        primitive_cache.setdefault(("rolling_low", window, 1, window), low_1)
-        primitive_cache.setdefault(("adv", window, min_periods), adv)
-        primitive_cache.setdefault(("pct_return", window), close / close.shift(window) - 1.0)
-    for window in (14, 20, 50):
-        primitive_cache.setdefault(("adr", window), ((high - low) / close.replace(0.0, np.nan)).rolling(window, min_periods=window).mean())
-    for period in (2, 5, 7, 10, 14):
-        primitive_cache.setdefault(("rsi", period), _rsi(close, period).fillna(50.0))
+        entry_cache.setdefault((f"high_0_{min_periods}", window), high.rolling(window, min_periods=min_periods).max())
+        entry_cache.setdefault((f"low_0_{min_periods}", window), low.rolling(window, min_periods=min_periods).min())
+        entry_cache.setdefault((f"high_1_{window}", window), high.shift(1).rolling(window, min_periods=window).max())
+        entry_cache.setdefault((f"low_1_{window}", window), low.shift(1).rolling(window, min_periods=window).min())
+        entry_cache.setdefault((f"vol_{min_periods}", window), volume.rolling(window, min_periods=min_periods).mean())
     for window in (10, 20, 21, 35, 50, 60):
         exit_cache.setdefault(("exit_ma", window), close.rolling(window, min_periods=window).mean())
 
@@ -1023,19 +1003,6 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
         benchmark = _prepare_ohlcv(benchmark_prices)
         spy_close = benchmark["close"].reindex(prepared.index).ffill()
         entry_cache.setdefault(("spy_close", id(benchmark), len(benchmark)), spy_close)
-        primitive_cache.setdefault(("spy_close", id(benchmark), len(benchmark)), spy_close)
-        rs_line = close / spy_close.replace(0.0, np.nan)
-        primitive_cache.setdefault(("rs_line", id(benchmark), len(benchmark)), rs_line)
-        for window in (20, 50, 63, 80, 100, 126, 150, 180, 200, 220, 252):
-            min_periods = min(window, len(prepared))
-            primitive_cache.setdefault(
-                ("rs_avg", window, id(benchmark), len(benchmark)),
-                rs_line.rolling(window, min_periods=min_periods).mean(),
-            )
-            primitive_cache.setdefault(
-                ("rs_high", window, id(benchmark), len(benchmark)),
-                rs_line.rolling(window, min_periods=min_periods).max(),
-            )
 
 
 def build_feature_store(
@@ -6139,10 +6106,7 @@ def run_external_strategy_pack_shard(
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
-    prewarm_feature_cache = (
-        str(optimized_evaluation_mode) == EVENT_FIRST_MODE
-        or str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}
-    )
+    prewarm_feature_cache = str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}
     feature_store = build_feature_store(
         symbol_frames,
         benchmark,
