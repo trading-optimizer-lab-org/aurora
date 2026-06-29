@@ -95,6 +95,18 @@ on:
         description: "Optional comma-separated absolute logical job indices to run"
         required: false
         default: ""
+      job_start_index:
+        description: "First logical job index for sliced full runs"
+        required: true
+        default: "0"
+      job_count:
+        description: "Number of logical jobs to run; 0 means all remaining jobs"
+        required: true
+        default: "0"
+      logical_jobs_per_block:
+        description: "Logical jobs executed inside each GitHub matrix job"
+        required: true
+        default: "30"
       test_mode:
         description: "Run only test_max_jobs logical jobs"
         required: true
@@ -260,9 +272,20 @@ jobs:
               total = max_logical_jobs
               if "${{ inputs.test_mode }}" == "true":
                   total = min(max(int("${{ inputs.test_max_jobs }}"), 1), total)
-              logical_jobs = list(range(total))
+                  logical_jobs = list(range(total))
+              else:
+                  start_index = max(int("${{ inputs.job_start_index }}"), 0)
+                  requested_count = int("${{ inputs.job_count }}")
+                  if start_index >= max_logical_jobs:
+                      logical_jobs = []
+                  else:
+                      if requested_count <= 0:
+                          end_index = max_logical_jobs
+                      else:
+                          end_index = min(start_index + requested_count, max_logical_jobs)
+                      logical_jobs = list(range(start_index, end_index))
 
-          logical_jobs_per_block = 30
+          logical_jobs_per_block = max(int("${{ inputs.logical_jobs_per_block }}"), 1)
           rows = []
           total_strategies = 0
           for block_index, start in enumerate(range(0, len(logical_jobs), logical_jobs_per_block)):

@@ -4117,15 +4117,20 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "original_shards = 360" in text
     assert "original_strategies_per_shard = 200" in text
     assert "max_logical_jobs = original_shards * chunks_per_shard" in text
-    assert "logical_jobs_per_block = 30" in text
+    assert 'start_index = max(int("${{ inputs.job_start_index }}"), 0)' in text
+    assert 'requested_count = int("${{ inputs.job_count }}")' in text
+    assert 'logical_jobs_per_block = max(int("${{ inputs.logical_jobs_per_block }}"), 1)' in text
     assert "len(rows) > 256" in text
     assert "max-parallel: 240" in text
     assert text.count("max-parallel: 180") == 0
     assert "max-parallel: 60" not in text
     assert "optimized_evaluation_v5_event_first" in text
     assert "--optimized-evaluation-mode" in text
-    assert len(data[True]["workflow_dispatch"]["inputs"]) <= 25
+    assert len(data[True]["workflow_dispatch"]["inputs"]) <= 28
     assert "test_max_signal_groups" in data[True]["workflow_dispatch"]["inputs"]
+    assert "job_start_index" in data[True]["workflow_dispatch"]["inputs"]
+    assert "job_count" in data[True]["workflow_dispatch"]["inputs"]
+    assert "logical_jobs_per_block" in data[True]["workflow_dispatch"]["inputs"]
     assert "--test-max-signal-groups" in text
     assert "--signal-first-phase signals" in text
     assert "--signal-first-phase exits" in text
