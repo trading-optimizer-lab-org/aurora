@@ -1282,6 +1282,21 @@ def test_signal_external_strategy_hash_ignores_exit_rules_but_not_entry_rules(tm
     assert gtbi.signal_external_strategy_hash(candidates[0]) != gtbi.signal_external_strategy_hash(candidates[2])
 
 
+def test_signal_external_strategy_hash_uses_effective_signal_config_not_labels() -> None:
+    first_payload = _external_strategy_payload("signal_hash_effective_a")
+    second_payload = _external_strategy_payload("signal_hash_effective_b")
+    second_payload["concept_id"] = "q_stair_step_breakout"
+    second_payload["market_overlay_id"] = "different_overlay_label"
+    second_payload["trend_profile_id"] = "different_trend_label"
+    second_payload["rs_profile_id"] = "different_rs_label"
+    second_payload["aggression_id"] = "different_aggression_label"
+    first = gtbi.external_strategy_to_config(first_payload)
+    second = gtbi.external_strategy_to_config(second_payload)
+
+    assert first.config == second.config
+    assert gtbi.signal_external_strategy_hash(first) == gtbi.signal_external_strategy_hash(second)
+
+
 def test_external_cost_scheduling_orders_fast_candidates_first() -> None:
     fast = _external_strategy_payload("fast_candidate")
     slow = _external_strategy_payload("slow_candidate")
@@ -2069,6 +2084,99 @@ def test_external_runner_reuses_signal_signature_for_exit_variants(
     assert dedupe["signal_deduped"].tolist() == [False, True]
 
 
+def test_event_first_runner_reuses_result_for_same_signal_and_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = _external_strategy_payload("same_signal_exit_a")
+    second_payload = _external_strategy_payload("same_signal_exit_b")
+    second_payload["concept_id"] = "q_stair_step_breakout"
+    second_payload["market_overlay_id"] = "different_overlay_label"
+    second_payload["trend_profile_id"] = "different_trend_label"
+    second_payload["rs_profile_id"] = "different_rs_label"
+    second_payload["aggression_id"] = "different_aggression_label"
+    candidates = [gtbi.external_strategy_to_config(first_payload), gtbi.external_strategy_to_config(second_payload)]
+    assert candidates[0].config == candidates[1].config
+    assert gtbi.canonical_external_strategy_hash(candidates[0]) != gtbi.canonical_external_strategy_hash(candidates[1])
+    assert gtbi.signal_external_strategy_hash(candidates[0]) == gtbi.signal_external_strategy_hash(candidates[1])
+    assert gtbi.exit_external_strategy_hash(candidates[0]) == gtbi.exit_external_strategy_hash(candidates[1])
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    spy = gtbi._prepare_ohlcv(_spy_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[70] = True
+    signal_calls = {"count": 0}
+    core_calls = {"count": 0}
+
+    def fake_load_candidates(*args: object, **kwargs: object) -> list[gtbi.ExternalStrategyCandidate]:
+        return candidates
+
+    def fake_entry_signal(*args: object, **kwargs: object) -> pd.Series:
+        signal_calls["count"] += 1
+        return signal
+
+    def fake_core(**kwargs: object) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, dict[str, object]]:
+        core_calls["count"] += 1
+        candidate_id = str(kwargs["candidate_id"])
+        row = {
+            "candidate_id": candidate_id,
+            "stage": 0,
+            "search_method": gtbi.EXTERNAL_SEARCH_METHOD,
+            "family": "minervini_sepa",
+            "score": 0.0,
+            "strict_quality_pass": False,
+            "adjusted_return_time_risk": 0.0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        diagnostic = {
+            "seconds_total": 0.1,
+            "seconds_feature_build": 0.0,
+            "seconds_signal": 0.0,
+            "seconds_simulation": 0.5,
+            "seconds_train": 0.1,
+            "seconds_validation": 0.1,
+            "symbols_total": 1,
+            "symbols_processed": 1,
+            "raw_signals_total": int(signal.sum()),
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+        }
+        return row, pd.DataFrame(columns=gtbi.TRADE_COLUMNS), pd.DataFrame(columns=gtbi.YEARLY_COLUMNS), diagnostic
+
+    monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
+    monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
+    monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
+    monkeypatch.setattr(gtbi, "entry_signal", fake_entry_signal)
+    monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
+    monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", lambda *args, **kwargs: (None, 0))
+    pack_dir = tmp_path / "prebuilt"
+    pack_dir.mkdir()
+    (pack_dir / "prices.parquet").write_text("stub", encoding="utf-8")
+    (pack_dir / "benchmark.parquet").write_text("stub", encoding="utf-8")
+
+    gtbi.run_external_strategy_pack_shard(
+        data_lake_root=tmp_path,
+        external_strategy_pack_path=tmp_path / "pack",
+        output_dir=tmp_path / "out" / "job-0000",
+        prebuilt_pack_dir=pack_dir,
+        external_strategy_shard_id=0,
+        external_strategy_limit=2,
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+        enable_dedupe=True,
+        enable_safe_prefilter=False,
+        job_wall_clock_seconds=0,
+    )
+
+    dedupe = pd.read_csv(tmp_path / "out" / "job-0000" / "dedupe_map_job_0000.csv")
+    timing = pd.read_csv(tmp_path / "out" / "job-0000" / "timing_diagnostics_job_0000.csv")
+    assert signal_calls["count"] == 1
+    assert core_calls["count"] == 1
+    assert dedupe["deduped"].tolist() == [False, True]
+    assert dedupe["signal_deduped"].tolist() == [False, True]
+    assert timing["result_status"].tolist() == ["evaluated", "deduped"]
+
+
 def test_external_runner_counts_signal_reuse_when_candidate_is_early_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2494,6 +2602,10 @@ def test_zero_timeout_specific_slow_precheck_does_not_false_reject_dense_superse
 @pytest.mark.parametrize(
     "concept",
     [
+        "academic_6_12m_momentum_reclaim",
+        "academic_52w_high_pullback_reclaim",
+        "adx_di_pullback_reversal",
+        "ep_gap_volume_continuation_proxy",
         "q_stair_step_reclaim",
         "q_stair_step_breakout",
         "bollinger_lower_band_reclaim_trend",

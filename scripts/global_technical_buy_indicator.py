@@ -886,6 +886,60 @@ class SignalPrimitiveStore:
             self.cache[key] = _rsi(self.close, int(period)).fillna(50.0)
         return self.cache[key]
 
+    def pct_return(self, lookback: int) -> pd.Series:
+        key = ("pct_return", int(lookback))
+        if key not in self.cache:
+            self.cache[key] = (self.close / self.close.shift(int(lookback)) - 1.0)
+        return self.cache[key]
+
+    def adr(self, window: int) -> pd.Series:
+        key = ("adr", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close.pct_change().abs().rolling(
+                int(window),
+                min_periods=int(window),
+            ).mean()
+        return self.cache[key]
+
+    def spy_close(self) -> pd.Series:
+        key = ("spy_close", id(self.benchmark), len(self.benchmark))
+        if key not in self.cache:
+            self.cache[key] = (
+                self.benchmark["close"].reindex(self.index).ffill()
+                if not self.benchmark.empty
+                else pd.Series(np.nan, index=self.index)
+            )
+        return self.cache[key]
+
+    def rs_line(self) -> pd.Series:
+        key = ("rs_line", id(self.benchmark), len(self.benchmark))
+        if key not in self.cache:
+            if self.benchmark.empty:
+                self.cache[key] = pd.Series(np.nan, index=self.index)
+            else:
+                self.cache[key] = self.close / self.spy_close().replace(0.0, np.nan)
+        return self.cache[key]
+
+    def rs_avg(self, window: int) -> pd.Series:
+        key = ("rs_avg", int(window), id(self.benchmark), len(self.benchmark))
+        if key not in self.cache:
+            rs_line = self.rs_line()
+            self.cache[key] = rs_line.rolling(
+                int(window),
+                min_periods=min(int(window), len(self.frame)),
+            ).mean()
+        return self.cache[key]
+
+    def rs_high(self, window: int) -> pd.Series:
+        key = ("rs_high", int(window), id(self.benchmark), len(self.benchmark))
+        if key not in self.cache:
+            rs_line = self.rs_line()
+            self.cache[key] = rs_line.rolling(
+                int(window),
+                min_periods=min(int(window), len(self.frame)),
+            ).max()
+        return self.cache[key]
+
     def close_gt_ema(self, window: int) -> pd.Series:
         key = ("close_gt_ema", int(window))
         if key not in self.cache:
@@ -916,10 +970,7 @@ class SignalPrimitiveStore:
             if self.benchmark.empty:
                 self.cache[key] = self.const(True)
             else:
-                spy_close = self.benchmark["close"].reindex(self.index).ffill()
-                rs_line = self.close / spy_close.replace(0.0, np.nan)
-                rs_avg = rs_line.rolling(int(window), min_periods=min(int(window), len(self.frame))).mean()
-                self.cache[key] = rs_line > rs_avg
+                self.cache[key] = self.rs_line() > self.rs_avg(int(window))
         return self.cache[key]
 
 
@@ -1384,10 +1435,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return rsi_line() <= config.rsi_max
 
     def spy_close() -> pd.Series:
-        key = ("spy_close", id(benchmark), len(benchmark))
-        if key not in cache:
-            cache[key] = benchmark["close"].reindex(index).ffill() if not benchmark.empty else pd.Series(np.nan, index=index)
-        return cache[key]
+        return primitives.spy_close()
 
     def rs_ok() -> pd.Series:
         if not config.require_rs:
@@ -1402,10 +1450,9 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
             len(benchmark),
         )
         if key not in cache:
-            rs_line = close / spy_close().replace(0.0, np.nan)
-            min_periods = min(config.rs_lookback, len(frame))
-            rs_avg = rs_line.rolling(config.rs_lookback, min_periods=min_periods).mean()
-            rs_high = rs_line.rolling(config.rs_lookback, min_periods=min_periods).max()
+            rs_line = primitives.rs_line()
+            rs_avg = primitives.rs_avg(config.rs_lookback)
+            rs_high = primitives.rs_high(config.rs_lookback)
             cache[key] = (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
         return cache[key]
 
@@ -1449,7 +1496,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return (close > resistance) & (volume > avg_volume(config.volume_lookback) * config.volume_multiple) & base_tight()
 
     def prior_runup() -> pd.Series:
-        return const(True) if not config.require_prior_runup else (close / close.shift(config.prior_runup_lookback) - 1.0) >= config.prior_runup_min_pct
+        return const(True) if not config.require_prior_runup else primitives.pct_return(config.prior_runup_lookback) >= config.prior_runup_min_pct
 
     def dryup() -> pd.Series:
         if not config.require_volume_dryup:
@@ -1459,8 +1506,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return recent_vol <= long_vol * config.volume_dryup_max_ratio
 
     def adr_ok() -> pd.Series:
-        adr = close.pct_change().abs().rolling(config.adr_lookback, min_periods=config.adr_lookback).mean()
-        return adr >= config.min_adr_pct
+        return primitives.adr(config.adr_lookback) >= config.min_adr_pct
 
     def episodic_gap() -> pd.Series:
         if not config.require_episodic_gap:
@@ -1625,11 +1671,8 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         signal = market_dip & (rs_ok() if config.require_rs else const(True))
     elif family in {"stability_rs_momentum_pullback", "stability_rs_reclaim_frequent", "stability_rs_pullback_breakout"}:
         if not benchmark.empty:
-            rs_line_for_reclaim = close / spy_close().replace(0.0, np.nan)
-            rs_avg_for_reclaim = rs_line_for_reclaim.rolling(
-                config.rs_lookback,
-                min_periods=min(config.rs_lookback, len(frame)),
-            ).mean()
+            rs_line_for_reclaim = primitives.rs_line()
+            rs_avg_for_reclaim = primitives.rs_avg(config.rs_lookback)
             rs_reclaim_ok = (
                 (rs_line_for_reclaim > rs_avg_for_reclaim)
                 & (rs_line_for_reclaim > rs_line_for_reclaim.shift(max(5, min(config.rs_lookback // 4, 21))))
@@ -1638,8 +1681,9 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
             rs_reclaim_ok = const(True)
         pullback_touch = (low <= sma(config.ma_short)) | (low <= ma21_sma()) | (close <= ma21_sma())
         rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
-        long_momentum = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(config.prior_runup_min_pct, 0.08)
-        frequent_runup = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(min(config.prior_runup_min_pct, 0.10), 0.03)
+        runup_return = primitives.pct_return(config.prior_runup_lookback)
+        long_momentum = runup_return >= max(config.prior_runup_min_pct, 0.08)
+        frequent_runup = runup_return >= max(min(config.prior_runup_min_pct, 0.10), 0.03)
         if family == "stability_rs_momentum_pullback":
             signal = (
                 stock_uptrend()
@@ -3270,16 +3314,16 @@ def canonical_external_strategy_hash(candidate: ExternalStrategyCandidate) -> st
 
 
 def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
-    """Hash only the effective entry/market/stock/RS signal definition."""
+    """Hash only fields that can change the evaluated entry signal.
 
-    payload = candidate.payload
+    External pack rows carry rich research metadata and source rule labels, but
+    the legacy-compatible evaluator first maps every row to IndicatorConfig and
+    then builds signals from that config alone. Hashing raw rule JSON here makes
+    v5 rebuild identical signals many times; hashing the effective signal config
+    preserves results while allowing safe signal-level dedupe.
+    """
+
     canonical = {
-        "family": _family_for_external_strategy(payload),
-        "concept_id": payload.get("concept_id"),
-        "market_overlay_id": payload.get("market_overlay_id"),
-        "trend_profile_id": payload.get("trend_profile_id"),
-        "rs_profile_id": payload.get("rs_profile_id"),
-        "aggression_id": payload.get("aggression_id"),
         "config_signal": {
             key: value
             for key, value in candidate.config.to_dict().items()
@@ -3293,28 +3337,6 @@ def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
                 "use_market_exit",
                 "exit_ma_days",
             }
-        },
-        "rules": {
-            "entry_rules": payload.get("entry_rules", {}),
-            "market_regime_rules": payload.get("market_regime_rules", {}),
-            "stock_trend_rules": payload.get("stock_trend_rules", {}),
-            "relative_strength_rules": payload.get("relative_strength_rules", {}),
-            "guardrails": {
-                key: value
-                for key, value in dict(payload.get("guardrails") or {}).items()
-                if key
-                in {
-                    "data_scope",
-                    "do_not_load_or_use_data_on_or_after",
-                    "locked_start_exclusive",
-                    "execution",
-                    "positioning",
-                    "min_market_cap_usd",
-                    "train_end",
-                    "validation_start",
-                    "validation_end",
-                }
-            },
         },
     }
     encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
@@ -3375,6 +3397,10 @@ V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
 }
 V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS = V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS
 V5_EVENT_FIRST_PRECHECK_CONCEPTS = {
+    "academic_6_12m_momentum_reclaim",
+    "academic_52w_high_pullback_reclaim",
+    "adx_di_pullback_reversal",
+    "ep_gap_volume_continuation_proxy",
     "three_weeks_tight_daily_proxy",
     "q_stair_step_reclaim",
     "macd_histogram_turnup_trend",
@@ -4237,6 +4263,23 @@ def _specific_slow_concept_precheck_signal(
         breakout = close > prepared["high"].shift(1).rolling(10, min_periods=3).max()
         signal = breakout & (volume > 0)
         return signal.fillna(False).astype(bool)
+    if concept == "ep_gap_volume_continuation_proxy":
+        avg_vol = volume.rolling(
+            config.volume_lookback,
+            min_periods=min(config.volume_lookback, len(prepared)),
+        ).mean()
+        resistance = prepared["high"].shift(1).rolling(
+            config.breakout_lookback,
+            min_periods=config.breakout_lookback,
+        ).max()
+        breakout = close > resistance
+        gap = (prepared["open"] / close.shift(1) - 1.0) >= config.episodic_gap_pct
+        volume_confirm = volume > avg_vol * max(config.volume_multiple, 1.5)
+        # The quallamaggie legacy formula requires (breakout | episodic_gap)
+        # plus stricter trend/runup/dryup/ADR/RSI/market gates. This is a safe
+        # upper bound for frequency impossibility checks only.
+        signal = (breakout | gap) & volume_confirm
+        return signal.fillna(False).astype(bool)
     if concept in {"bollinger_lower_band_reclaim_trend", "rs_pullback_hold_rebound"}:
         if not config.require_breakout:
             signal = (close > close.shift(1)) & (volume > 0)
@@ -4261,6 +4304,32 @@ def _specific_slow_concept_precheck_signal(
         # oneil_canslim family, where every final signal is a subset of
         # breakout & volume & optional base-tight. This precheck is therefore a
         # safe upper bound for rejecting impossible frequency profiles.
+        signal = (close > resistance) & (volume > avg_vol * config.volume_multiple) & base_tight
+        return signal.fillna(False).astype(bool)
+    if concept in {
+        "academic_6_12m_momentum_reclaim",
+        "academic_52w_high_pullback_reclaim",
+        "adx_di_pullback_reversal",
+    }:
+        resistance = prepared["high"].shift(1).rolling(
+            config.breakout_lookback,
+            min_periods=config.breakout_lookback,
+        ).max()
+        avg_vol = volume.rolling(
+            config.volume_lookback,
+            min_periods=min(config.volume_lookback, len(prepared)),
+        ).mean()
+        if config.require_base_tight:
+            base_range = (
+                prepared["high"].rolling(config.base_lookback, min_periods=config.base_lookback).max()
+                - prepared["low"].rolling(config.base_lookback, min_periods=config.base_lookback).min()
+            )
+            base_tight = (base_range / close.replace(0.0, np.nan)) <= config.max_base_range_pct
+        else:
+            base_tight = _safe_bool_series(True, index)
+        # These concepts map to oneil_canslim in the current evaluator:
+        # oneil_stack & rs_ok & breakout & rsi_ok & market_trend. Breakout is
+        # therefore a conservative superset, not a replacement signal.
         signal = (close > resistance) & (volume > avg_vol * config.volume_multiple) & base_tight
         return signal.fillna(False).astype(bool)
     return pd.Series(False, index=index)
@@ -6017,6 +6086,7 @@ def run_external_strategy_pack_shard(
     exit_group_manifest_rows: list[dict[str, Any]] = []
     signal_group_seconds: list[float] = []
     evaluation_cache: dict[str, tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
+    exit_evaluation_cache: dict[tuple[str, str], tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
     signal_evaluation_cache: dict[str, tuple[str, dict[str, pd.Series], dict[str, Any]]] = {}
     signal_events_to_write: dict[str, dict[str, pd.Series]] = {}
     ready_group_records_to_write: list[dict[str, Any]] = []
@@ -6688,6 +6758,7 @@ def run_external_strategy_pack_shard(
         candidate_id = str(payload.get("strategy_id"))
         canonical_hash = canonical_external_strategy_hash(candidate)
         signal_hash = signal_external_strategy_hash(candidate)
+        exit_hash = exit_external_strategy_hash(candidate)
         diagnostic_base = _external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash)
         cost_score, cost_bucket = _estimated_cost_score(
             payload,
@@ -6767,6 +6838,13 @@ def run_external_strategy_pack_shard(
         )
         try:
             cached = evaluation_cache.get(canonical_hash) if enable_dedupe else None
+            if enable_dedupe and cached is None:
+                cached_signal = signal_evaluation_cache.get(signal_hash)
+                if cached_signal is not None:
+                    signal_canonical_strategy_id = str(cached_signal[0])
+                    signal_deduped = str(candidate_id) != signal_canonical_strategy_id
+                if use_v3_signal_first:
+                    cached = exit_evaluation_cache.get((signal_hash, exit_hash))
             deduped = cached is not None
             if not deduped:
                 heartbeat_label = f"job={output_padded} candidate={candidate_id}"
@@ -6823,6 +6901,11 @@ def run_external_strategy_pack_shard(
                 with _candidate_evaluation_heartbeat(heartbeat_label):
                     row, trades, yearly, diagnostic = _evaluate_external_candidate_core(**eval_kwargs)
                 evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
+                if enable_dedupe and use_v3_signal_first:
+                    exit_evaluation_cache.setdefault(
+                        (signal_hash, exit_hash),
+                        (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic)),
+                    )
                 canonical_strategy_id = candidate_id
             else:
                 canonical_strategy_id, row, trades, yearly, diagnostic = cached
@@ -6836,6 +6919,10 @@ def run_external_strategy_pack_shard(
                 if not yearly.empty:
                     yearly["candidate_id"] = candidate_id
                 diagnostic["seconds_total"] = float(time.perf_counter() - candidate_start)
+                diagnostic["seconds_signal"] = 0.0
+                diagnostic["seconds_simulation"] = 0.0
+                diagnostic["seconds_train"] = 0.0
+                diagnostic["seconds_validation"] = 0.0
                 canonical_strategy_id = str(canonical_strategy_id)
             dedupe_rows.append(
                 {
