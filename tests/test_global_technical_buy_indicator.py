@@ -1574,6 +1574,43 @@ def test_signal_first_balancer_uses_lower_cost_signal_groups_for_smoke_window(tm
     assert selected_cost < skipped_cost
 
 
+def test_v5_signal_scheduler_caps_strategy_budget_per_job(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows: list[dict[str, object]] = []
+    for group_index in range(30):
+        for exit_index in range(16):
+            payload = _external_strategy_payload(
+                f"budget_group_{group_index}_exit_{exit_index}",
+                shard_id=0,
+                slot=len(rows),
+            )
+            payload["concept_id"] = "ep_gap_volume_continuation_proxy"
+            payload["entry_rules"]["breakout_lookback_days"] = 20 + group_index
+            payload["exit_rules"]["take_profit_pct"] = 0.03 + exit_index * 0.01
+            rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    selected, total_jobs, total_signal_groups = gtbi._balanced_external_signal_groups_for_job(
+        pack,
+        job_index=0,
+        signal_groups_per_job=10,
+        schedule_active_jobs=4,
+        max_signal_groups=None,
+        strategy_format="jsonl",
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+    )
+
+    assert total_jobs == 4
+    assert total_signal_groups <= 12
+    assert len(selected) <= 3
+    assert sum(len(group) for group in selected) <= 40
+
+
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
     assert gtbi._effective_job_deadline(
         optimized_evaluation_mode="optimized_evaluation_v2",

@@ -2766,6 +2766,63 @@ def _balanced_external_signal_groups_for_job(
     if max_signal_groups is not None and int(max_signal_groups) > 0:
         groups = groups[: int(max_signal_groups)]
     per_job = max(int(signal_groups_per_job), 1)
+    if str(optimized_evaluation_mode) == "optimized_evaluation_v5_event_first" and schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        active_jobs = max(int(schedule_active_jobs), 1)
+
+        def group_cost(group: list[ExternalStrategyCandidate]) -> float:
+            if not group:
+                return 0.0
+            max_cost = max(
+                float(_estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0])
+                for candidate in group
+            )
+            return float(max_cost * max(len(group), 1))
+
+        candidate_budget = max(per_job * 4, per_job)
+        group_budget = max(1, min(per_job, 5, int(math.ceil(candidate_budget / 4.0))))
+        max_window_groups = max(active_jobs * group_budget, 1)
+        window_groups = sorted(
+            groups,
+            key=lambda group: (
+                group_cost(group),
+                signal_external_strategy_hash(group[0]) if group else "",
+            ),
+        )
+        if len(window_groups) > max_window_groups:
+            window_groups = window_groups[:max_window_groups]
+        ordered = sorted(
+            window_groups,
+            key=lambda group: (
+                -group_cost(group),
+                signal_external_strategy_hash(group[0]) if group else "",
+            ),
+        )
+        buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(active_jobs)]
+        bucket_counts = [0 for _ in range(active_jobs)]
+        bucket_costs = [0.0 for _ in range(active_jobs)]
+        for group in ordered:
+            group_size = int(len(group))
+            available = [
+                idx
+                for idx, bucket in enumerate(buckets)
+                if len(bucket) < group_budget and bucket_counts[idx] + group_size <= candidate_budget
+            ]
+            if not available and group_size > candidate_budget:
+                available = [
+                    idx
+                    for idx, bucket in enumerate(buckets)
+                    if not bucket
+                ]
+            if not available:
+                break
+            target = min(available, key=lambda idx: (bucket_costs[idx], bucket_counts[idx], len(buckets[idx]), idx))
+            buckets[target].append(group)
+            bucket_counts[target] += group_size
+            bucket_costs[target] += group_cost(group)
+        total_signal_groups = int(sum(len(bucket) for bucket in buckets))
+        if total_signal_groups <= 0 or job_index < 0 or job_index >= active_jobs:
+            return [], active_jobs, total_signal_groups
+        return buckets[int(job_index)], active_jobs, total_signal_groups
     if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
         active_groups = max(int(schedule_active_jobs), 1) * per_job
         groups = groups[:active_groups]
