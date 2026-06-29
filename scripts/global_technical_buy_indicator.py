@@ -5981,8 +5981,6 @@ def run_external_strategy_pack_shard(
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
     prewarm_feature_cache = str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}
-    if use_event_first and signal_first_phase == "signals":
-        prewarm_feature_cache = True
     feature_store = build_feature_store(
         symbol_frames,
         benchmark,
