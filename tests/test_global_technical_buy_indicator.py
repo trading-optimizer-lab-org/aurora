@@ -4101,7 +4101,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert data["name"] == "Global Technical Buy Indicator External Pack 7200 Jobs"
     assert "workflow_dispatch" in data[True]
     assert "push" not in data[True]
-    assert text.count("runs-on: ubuntu-latest") >= 12
+    assert text.count("runs-on: ubuntu-latest") >= 4
     assert "self-hosted" not in text
     assert "C:\\" not in text
     assert "runner.temp" not in text
@@ -4116,11 +4116,13 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "gtbi-external-pack-data" in text
     assert "original_shards = 360" in text
     assert "original_strategies_per_shard = 200" in text
-    assert "chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit" in text
-    assert "jobs_per_block=180" in text
-    assert text.count("max-parallel: 180") == 40
+    assert "max_logical_jobs = original_shards * chunks_per_shard" in text
+    assert "logical_jobs_per_block = 30" in text
+    assert "len(rows) > 256" in text
+    assert "max-parallel: 240" in text
+    assert text.count("max-parallel: 180") == 0
     assert "max-parallel: 60" not in text
-    assert "optimized_evaluation_v4_zero_timeout" in text
+    assert "optimized_evaluation_v5_event_first" in text
     assert "--optimized-evaluation-mode" in text
     assert len(data[True]["workflow_dispatch"]["inputs"]) <= 25
     assert "test_max_signal_groups" in data[True]["workflow_dispatch"]["inputs"]
@@ -4129,19 +4131,20 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--signal-first-phase exits" in text
     assert "--signal-events-dir" in text
     assert "enable_block_merge" in text
-    assert "merge_block_0" in data["jobs"]
-    assert "merge_block_39" in data["jobs"]
-    assert "gtbi-external-pack-block-*-results" in text
-    assert "run_chunk_0" in data["jobs"]
-    assert "run_chunk_39" in data["jobs"]
+    assert "plan_blocks" in data["jobs"]
+    assert "run_block" in data["jobs"]
+    assert "merge_final" in data["jobs"]
+    assert "gtbi-external-pack-block-${{ matrix.block_padded }}" in text
+    assert "run_chunk_0" not in data["jobs"]
     assert "--prebuilt-pack-dir external-pack-data" in text
-    assert "--external-strategy-offset \"${{ steps.vars.outputs.strategy_offset }}\"" in text
+    assert '--external-strategy-offset "$strategy_offset"' in text
+    assert '--external-strategy-limit "$strategy_limit"' in text
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "job_wall_clock_seconds" in text
     assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
-    assert "SCHEDULE_ACTIVE_JOBS=0" in text
-    assert 'SCHEDULE_ACTIVE_JOBS="${{ inputs.test_max_jobs }}"' in text
-    assert '--schedule-active-jobs "$SCHEDULE_ACTIVE_JOBS"' in text
+    assert "schedule_active_jobs=0" in text
+    assert 'schedule_active_jobs="$TOTAL_ACTIVE_JOBS"' in text
+    assert '--schedule-active-jobs "$schedule_active_jobs"' in text
     assert "FAIL_ARGS=()" in text
     assert '"${FAIL_ARGS[@]}"' in text
     assert '"$FAIL_FLAG"' not in text
@@ -4150,13 +4153,11 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert 'gh run download "${{ github.run_id }}"' in text
     assert "requires_local_machine" not in text
     assert "optimized_evaluation_v5_event_first" in text
-    assert "smoke_test" in data["jobs"]
-    assert "merge_smoke" in data["jobs"]
-    assert "timeout-minutes: 35" in text
-    assert 'if: ${{ inputs.recovery_job_indices == \'\' && inputs.test_mode == \'true\' }}' in text
-    assert 'if: ${{ inputs.recovery_job_indices == \'\' && inputs.test_mode != \'true\' }}' in text
-    assert "matrix: ${{ fromJson(needs.plan_smoke.outputs.matrix) }}" in text
-    assert "gtbi-external-pack-smoke-results" in text
+    assert "smoke_test" not in data["jobs"]
+    assert "merge_smoke" not in data["jobs"]
+    assert "timeout-minutes: 360" in text
+    assert "matrix: ${{ fromJson(needs.plan_blocks.outputs.matrix) }}" in text
+    assert "total_jobs={len(logical_jobs)}" in text
 
 
 def test_optimized_evaluation_v1_workflow_alias_uses_v2_engine() -> None:
