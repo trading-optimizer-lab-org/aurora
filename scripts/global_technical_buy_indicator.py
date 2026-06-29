@@ -2779,7 +2779,7 @@ def _balanced_external_signal_groups_for_job(
             return float(max_cost * max(len(group), 1))
 
         candidate_budget = max(per_job * 4, per_job)
-        group_budget = max(1, min(per_job, 5, int(math.ceil(candidate_budget / 4.0))))
+        group_budget = max(1, per_job)
         max_window_groups = max(active_jobs * group_budget, 1)
         window_groups = sorted(
             groups,
@@ -6113,7 +6113,7 @@ def run_external_strategy_pack_shard(
         enabled=enable_feature_cache,
         prewarm=prewarm_feature_cache,
     )
-    if use_v3_signal_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
+    if use_v3_signal_first and not use_event_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
         job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
     print(
         "[gtbi] job "
