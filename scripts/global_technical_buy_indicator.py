@@ -2763,10 +2763,15 @@ def _balanced_external_signal_groups_for_job(
         all_candidates,
         optimized_evaluation_mode=optimized_evaluation_mode,
     )
-    if max_signal_groups is not None and int(max_signal_groups) > 0:
+    use_event_first_balanced_schedule = (
+        str(optimized_evaluation_mode) == EVENT_FIRST_MODE
+        and schedule_active_jobs is not None
+        and int(schedule_active_jobs) > 0
+    )
+    if max_signal_groups is not None and int(max_signal_groups) > 0 and not use_event_first_balanced_schedule:
         groups = groups[: int(max_signal_groups)]
     per_job = max(int(signal_groups_per_job), 1)
-    if str(optimized_evaluation_mode) == "optimized_evaluation_v5_event_first" and schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+    if use_event_first_balanced_schedule:
         active_jobs = max(int(schedule_active_jobs), 1)
 
         def group_base_cost(group: list[ExternalStrategyCandidate]) -> float:
@@ -2808,6 +2813,8 @@ def _balanced_external_signal_groups_for_job(
         ]
         group_budget = max(1, min(3, per_job))
         max_window_groups = max(active_jobs * group_budget, 1)
+        if max_signal_groups is not None and int(max_signal_groups) > 0 and int(max_signal_groups) < max_window_groups:
+            groups = groups[: int(max_signal_groups)]
         window_groups = sorted(
             groups,
             key=lambda group: (
@@ -3045,9 +3052,9 @@ def _event_first_final_quality_reject(row: dict[str, Any]) -> dict[str, Any] | N
         return None
     median = _finite_float(row.get("validation_median_trade_return_pct"), default=float("nan"))
     profit_factor = _finite_float(row.get("validation_profit_factor"), default=float("nan"))
-    if math.isfinite(median) and math.isfinite(profit_factor) and median <= 0.0 and profit_factor < 1.15:
+    if math.isfinite(median) and math.isfinite(profit_factor) and median <= 0.0 and profit_factor < 1.16:
         return {
-            "reason": "final_filter_validation_median_nonpositive_and_profit_factor_lt_1_15",
+            "reason": "final_filter_validation_median_nonpositive_and_profit_factor_lt_1_16",
             "split": "validation",
             "year": "",
             "actual": f"median={median:.6g};profit_factor={profit_factor:.6g}",
@@ -3066,7 +3073,7 @@ def _event_first_amortize_diagnostic(
     out = dict(diagnostic)
     for key, divisor in (
         ("seconds_signal", max(int(signal_group_size), 1)),
-        ("seconds_simulation", max(int(exit_group_size), 1)),
+        ("seconds_simulation", max(int(exit_group_size), int(signal_group_size), 1)),
     ):
         value = _finite_float(out.get(key), default=float("nan"))
         if math.isfinite(value) and value > 0.0:
