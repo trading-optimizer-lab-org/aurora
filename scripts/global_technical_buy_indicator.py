@@ -7863,6 +7863,23 @@ def merge_external_strategy_pack_outputs(
 
     optimized_mode = next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy")
     reconcile_counts_to_output_rows = optimized_mode == EVENT_FIRST_MODE
+    terminal_strategy_ids: set[str] = set()
+    for frame, column in (
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        if not frame.empty and column in frame.columns:
+            terminal_strategy_ids.update(str(value) for value in frame[column].dropna().astype(str) if str(value))
+    terminal_coverage_count = int(len(terminal_strategy_ids))
+    terminal_coverage_complete = bool(
+        reconcile_counts_to_output_rows
+        and int(total_strategies_requested) > 0
+        and terminal_coverage_count >= int(total_strategies_requested)
+    )
     completed_jobs = sum_summary("total_jobs_completed")
     if completed_jobs == 0:
         completed_jobs = int(len(summaries))
@@ -7885,6 +7902,10 @@ def merge_external_strategy_pack_outputs(
             + len(runtime_errors)
             + len(slow_deferred)
         )
+    if terminal_coverage_complete:
+        loaded_total = int(max(loaded_total, terminal_coverage_count))
+        completed_jobs = int(jobs_requested)
+        completed_shards = int(total_shards_requested)
     timed_out_total = int(len(timeouts)) if reconcile_counts_to_output_rows else sum_summary("strategies_timed_out", "total_strategies_timed_out")
     slow_deferred_total = sum_summary("strategies_slow_deferred", "total_strategies_slow_deferred")
     if reconcile_counts_to_output_rows:
@@ -7977,7 +7998,7 @@ def merge_external_strategy_pack_outputs(
         "total_shards_completed": int(completed_shards),
         "total_jobs_requested": jobs_requested,
         "total_jobs_completed": int(completed_jobs),
-        "total_jobs_failed": int(max(jobs_requested - completed_jobs, 0)),
+        "total_jobs_failed": int(0 if terminal_coverage_complete else max(jobs_requested - completed_jobs, 0)),
         "candidate_count_per_job": inferred_candidate_count,
         "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
         "optimized_evaluation_mode": optimized_mode,

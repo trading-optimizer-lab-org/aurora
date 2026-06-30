@@ -4201,6 +4201,75 @@ def test_external_merge_reconciles_summary_with_real_leaderboard_rows(tmp_path: 
     assert summary["best_adjusted_return_time_risk"] is None
 
 
+def test_external_merge_marks_recovered_event_first_coverage_complete(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "total_jobs_completed": 1,
+                "total_strategies_loaded": 2,
+                "total_strategies_evaluated": 1,
+                "total_strategies_early_rejected": 1,
+                "total_strategies_timed_out": 0,
+                "total_strategies_slow_deferred": 0,
+                "total_strategies_unsupported": 0,
+                "total_strategies_runtime_error": 0,
+                "total_strategies_failed": 0,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "evaluated_a",
+                "score": 0.0,
+                "adjusted_return_time_risk": 0.1,
+                "family": "oneil_canslim",
+            }
+        ]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "strategy_id": "early_b",
+                "reason": "validation_not_10_positive_years",
+                "split": "validation",
+                "year": 2011,
+                "actual": 0,
+                "threshold": 1,
+                "stage": "validation",
+                "seconds_until_reject": 0.1,
+                "symbols_processed": 1,
+            }
+        ]
+    ).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMING_DIAGNOSTIC_COLUMNS).to_csv(job / "timing_diagnostics_job_0000.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=2,
+        total_shards_requested=1,
+        total_jobs_requested=2,
+        candidate_count_per_job=1,
+    )
+
+    assert summary["strategies_covered"] == 2
+    assert summary["total_jobs_completed"] == 2
+    assert summary["total_jobs_failed"] == 0
+
+
 def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
     text = path.read_text(encoding="utf-8")
@@ -4229,7 +4298,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert 'requested_count = int("${{ inputs.job_count }}")' in text
     assert 'logical_jobs_per_block = max(int("${{ inputs.logical_jobs_per_block }}"), 1)' in text
     assert "len(rows) > 256" in text
-    assert "max-parallel: 240" in text
+    assert "max-parallel: 360" in text
     assert text.count("max-parallel: 180") == 0
     assert "max-parallel: 60" not in text
     assert "optimized_evaluation_v5_event_first" in text

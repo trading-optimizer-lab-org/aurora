@@ -315,7 +315,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 240
+      max-parallel: 360
       matrix: ${{ fromJson(needs.plan_blocks.outputs.matrix) }}
     env:
       PYTHONUNBUFFERED: "1"
