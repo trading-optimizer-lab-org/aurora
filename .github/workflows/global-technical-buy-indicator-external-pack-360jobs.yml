@@ -103,9 +103,22 @@ on:
         description: "Maximum logical jobs in test_mode"
         required: true
         default: "20"
+      merge_only:
+        description: "Only merge final result artifacts from existing run ids"
+        required: true
+        default: "false"
+      merge_source_run_ids:
+        description: "Comma-separated run ids whose final artifacts should be merged"
+        required: false
+        default: ""
+      merge_source_artifact_name:
+        description: "Final artifact name to download from each source run"
+        required: true
+        default: "global-technical-buy-indicator-external-pack-72000-results"
 
 jobs:
   build_external_pack:
+    if: ${{ inputs.merge_only != 'true' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
@@ -222,6 +235,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
+    if: ${{ inputs.merge_only != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -305,6 +319,7 @@ jobs:
           PY
 
   run_block:
+    if: ${{ inputs.merge_only != 'true' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -414,6 +429,7 @@ jobs:
           retention-days: 14
 
   merge_final:
+    if: ${{ inputs.merge_only != 'true' && always() }}
     needs:
       - plan_blocks
       - run_block
@@ -446,6 +462,65 @@ jobs:
             --total-strategies-requested "${{ needs.plan_blocks.outputs.total_strategies }}" \
             --total-shards-requested "360" \
             --total-jobs-requested "${{ needs.plan_blocks.outputs.total_jobs }}" \
+            --candidate-count-per-job "${{ inputs.candidate_count_per_job }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}"
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-external-pack-72000-results
+          path: final-results
+          retention-days: 30
+
+  merge_cross_run:
+    if: ${{ inputs.merge_only == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download source final artifacts
+        env:
+          SOURCE_RUN_IDS: ${{ inputs.merge_source_run_ids }}
+          SOURCE_ARTIFACT_NAME: ${{ inputs.merge_source_artifact_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SOURCE_RUN_IDS// }" ]; then
+            echo "merge_source_run_ids is required when merge_only=true" >&2
+            exit 2
+          fi
+          mkdir -p downloaded-cross-run
+          IFS=',' read -ra RUN_IDS <<< "$SOURCE_RUN_IDS"
+          for raw_run_id in "${RUN_IDS[@]}"; do
+            run_id="$(echo "$raw_run_id" | xargs)"
+            if [ -z "$run_id" ]; then
+              continue
+            fi
+            echo "::group::download $run_id"
+            gh run download "$run_id" \
+              --repo "${{ github.repository }}" \
+              --name "$SOURCE_ARTIFACT_NAME" \
+              --dir "downloaded-cross-run/run-$run_id"
+            echo "::endgroup::"
+          done
+      - name: Merge source run outputs
+        run: |
+          python scripts/merge_global_technical_buy_indicator_external_pack.py \
+            --shards-root downloaded-cross-run \
+            --output-dir final-results \
+            --total-strategies-requested "72000" \
+            --total-shards-requested "360" \
+            --total-jobs-requested "7200" \
             --candidate-count-per-job "${{ inputs.candidate_count_per_job }}" \
             --locked-start "${{ inputs.locked_start }}" \
             --train-end "${{ inputs.train_end }}" \
