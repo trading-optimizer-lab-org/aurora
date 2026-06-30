@@ -335,14 +335,14 @@ jobs:
       - name: Run logical jobs in this block
         env:
           JOB_INDICES_CSV: ${{ matrix.job_indices_csv }}
-          TOTAL_ACTIVE_JOBS: ${{ needs.plan_blocks.outputs.total_jobs }}
+          SCHEDULE_ACTIVE_JOBS: "240"
           CANDIDATE_LIMIT: ${{ needs.plan_blocks.outputs.candidate_limit }}
         run: |
           set -euo pipefail
           IFS=',' read -ra JOBS <<< "$JOB_INDICES_CSV"
           original_strategies_per_shard=200
           chunks_per_shard=$(( (original_strategies_per_shard + CANDIDATE_LIMIT - 1) / CANDIDATE_LIMIT ))
-          schedule_active_jobs="$TOTAL_ACTIVE_JOBS"
+          schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"
           signal_group_limit=0
           if [ "${{ inputs.test_mode }}" = "true" ]; then
             signal_group_limit="${{ inputs.test_max_signal_groups }}"

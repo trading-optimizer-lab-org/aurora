@@ -4195,7 +4195,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "job_wall_clock_seconds" in text
     assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
-    assert 'schedule_active_jobs="$TOTAL_ACTIVE_JOBS"' in text
+    assert 'SCHEDULE_ACTIVE_JOBS: "240"' in text
+    assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text
     assert 'signal_group_limit="${{ inputs.test_max_signal_groups }}"' in text
     assert '--schedule-active-jobs "$schedule_active_jobs"' in text
