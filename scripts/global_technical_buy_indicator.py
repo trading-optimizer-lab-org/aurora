@@ -6117,11 +6117,6 @@ def run_external_strategy_pack_shard(
             ]
             if group_candidates:
                 selected_signal_groups.append(group_candidates)
-        selected_signal_groups = _apply_schedule_subgroup(
-            selected_signal_groups,
-            schedule_subgroup_index=schedule_subgroup_index,
-            schedule_subgroup_count=schedule_subgroup_count,
-        )
         candidates = [candidate for group in selected_signal_groups for candidate in group]
         total_signal_groups_for_schedule = int(len(selected_signal_groups))
         summary_path = _summary_path_for_suffix(signal_events_dir, file_suffix)
