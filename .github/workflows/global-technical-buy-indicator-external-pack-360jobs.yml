@@ -103,22 +103,10 @@ on:
         description: "Maximum logical jobs in test_mode"
         required: true
         default: "20"
-      merge_only:
-        description: "Only merge final result artifacts from existing run ids"
-        required: true
-        default: "false"
-      merge_source_run_ids:
-        description: "Comma-separated run ids whose final artifacts should be merged"
-        required: false
-        default: ""
-      merge_source_artifact_name:
-        description: "Final artifact name to download from each source run"
-        required: true
-        default: "global-technical-buy-indicator-external-pack-72000-results"
 
 jobs:
   build_external_pack:
-    if: ${{ inputs.merge_only != 'true' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
@@ -235,7 +223,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
-    if: ${{ inputs.merge_only != 'true' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -319,7 +307,7 @@ jobs:
           PY
 
   run_block:
-    if: ${{ inputs.merge_only != 'true' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -429,7 +417,7 @@ jobs:
           retention-days: 14
 
   merge_final:
-    if: ${{ inputs.merge_only != 'true' && always() }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && always() }}
     needs:
       - plan_blocks
       - run_block
@@ -474,7 +462,7 @@ jobs:
           retention-days: 30
 
   merge_cross_run:
-    if: ${{ inputs.merge_only == 'true' }}
+    if: ${{ inputs.optimized_evaluation_mode == 'merge_cross_run' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -490,12 +478,12 @@ jobs:
           python -m pip install -e ".[data-cloud,ml]"
       - name: Download source final artifacts
         env:
-          SOURCE_RUN_IDS: ${{ inputs.merge_source_run_ids }}
-          SOURCE_ARTIFACT_NAME: ${{ inputs.merge_source_artifact_name }}
+          SOURCE_RUN_IDS: ${{ inputs.recovery_job_indices }}
+          SOURCE_ARTIFACT_NAME: global-technical-buy-indicator-external-pack-72000-results
         run: |
           set -euo pipefail
           if [ -z "${SOURCE_RUN_IDS// }" ]; then
-            echo "merge_source_run_ids is required when merge_only=true" >&2
+            echo "recovery_job_indices must contain source run ids when optimized_evaluation_mode=merge_cross_run" >&2
             exit 2
           fi
           mkdir -p downloaded-cross-run
