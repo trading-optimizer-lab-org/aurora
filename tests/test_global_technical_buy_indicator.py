@@ -1700,6 +1700,66 @@ def test_v5_signal_scheduler_uses_later_schedule_windows(tmp_path: Path) -> None
     assert first_ids.isdisjoint(second_ids)
 
 
+def test_v5_schedule_subgroups_partition_same_selected_signal_groups(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows: list[dict[str, object]] = []
+    for group_index in range(9):
+        for exit_index in range(3):
+            payload = _external_strategy_payload(
+                f"subgroup_{group_index}_exit_{exit_index}",
+                shard_id=0,
+                slot=len(rows),
+            )
+            payload["concept_id"] = "ep_gap_volume_continuation_proxy"
+            payload["entry_rules"]["breakout_lookback_days"] = 20 + group_index
+            payload["exit_rules"]["take_profit_pct"] = 0.03 + exit_index * 0.01
+            rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    selected, total_jobs, total_signal_groups = gtbi._balanced_external_signal_groups_for_job(
+        pack,
+        job_index=0,
+        signal_groups_per_job=10,
+        schedule_active_jobs=4,
+        max_signal_groups=None,
+        strategy_format="jsonl",
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+    )
+
+    full_ids = {
+        candidate.payload["strategy_id"]
+        for group in selected
+        for candidate in group
+    }
+    subgroup_ids: list[set[str]] = []
+    for subgroup_index in range(3):
+        subgroup = gtbi._apply_schedule_subgroup(
+            selected,
+            schedule_subgroup_index=subgroup_index,
+            schedule_subgroup_count=3,
+        )
+        subgroup_ids.append(
+            {
+                candidate.payload["strategy_id"]
+                for group in subgroup
+                for candidate in group
+            }
+        )
+
+    assert total_jobs == 4
+    assert total_signal_groups >= len(selected)
+    assert full_ids
+    assert set().union(*subgroup_ids) == full_ids
+    assert subgroup_ids[0].isdisjoint(subgroup_ids[1])
+    assert subgroup_ids[0].isdisjoint(subgroup_ids[2])
+    assert subgroup_ids[1].isdisjoint(subgroup_ids[2])
+
+
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
     assert gtbi._effective_job_deadline(
         optimized_evaluation_mode="optimized_evaluation_v2",

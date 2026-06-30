@@ -2917,6 +2917,25 @@ def _balanced_external_signal_groups_for_job(
     return buckets[int(job_index)], total_jobs, total_signal_groups
 
 
+def _apply_schedule_subgroup(
+    groups: list[list[ExternalStrategyCandidate]],
+    *,
+    schedule_subgroup_index: int = 0,
+    schedule_subgroup_count: int = 0,
+) -> list[list[ExternalStrategyCandidate]]:
+    schedule_subgroup_count = max(int(schedule_subgroup_count), 0)
+    schedule_subgroup_index = max(int(schedule_subgroup_index), 0)
+    if schedule_subgroup_count <= 1:
+        return groups
+    if schedule_subgroup_index >= schedule_subgroup_count:
+        raise ValueError("schedule_subgroup_index must be lower than schedule_subgroup_count")
+    return [
+        group
+        for index, group in enumerate(groups)
+        if index % schedule_subgroup_count == schedule_subgroup_index
+    ]
+
+
 def _effective_job_deadline(
     *,
     optimized_evaluation_mode: str,
@@ -6037,6 +6056,8 @@ def run_external_strategy_pack_shard(
     enable_cost_scheduling: bool = True,
     job_wall_clock_seconds: int = 300,
     schedule_active_jobs: int = 0,
+    schedule_subgroup_index: int = 0,
+    schedule_subgroup_count: int = 0,
     test_max_signal_groups: int = 0,
     signal_first_phase: str = "combined",
     signal_events_dir: Path | None = None,
@@ -6066,6 +6087,14 @@ def run_external_strategy_pack_shard(
         raise ValueError("signal_first_phase must be one of: combined, signals, exits")
     if not use_v3_signal_first:
         signal_first_phase = "combined"
+    schedule_subgroup_count = max(int(schedule_subgroup_count), 0)
+    schedule_subgroup_index = max(int(schedule_subgroup_index), 0)
+    if schedule_subgroup_count <= 1:
+        schedule_subgroup_count = 0
+        schedule_subgroup_index = 0
+    elif schedule_subgroup_index >= schedule_subgroup_count:
+        raise ValueError("schedule_subgroup_index must be lower than schedule_subgroup_count")
+
     signal_events_dir = Path(signal_events_dir) if signal_events_dir is not None else output_dir
     selected_signal_groups: list[list[ExternalStrategyCandidate]] | None = None
     signal_ready_records: list[dict[str, Any]] = []
@@ -6088,6 +6117,11 @@ def run_external_strategy_pack_shard(
             ]
             if group_candidates:
                 selected_signal_groups.append(group_candidates)
+        selected_signal_groups = _apply_schedule_subgroup(
+            selected_signal_groups,
+            schedule_subgroup_index=schedule_subgroup_index,
+            schedule_subgroup_count=schedule_subgroup_count,
+        )
         candidates = [candidate for group in selected_signal_groups for candidate in group]
         total_signal_groups_for_schedule = int(len(selected_signal_groups))
         summary_path = _summary_path_for_suffix(signal_events_dir, file_suffix)
@@ -6110,12 +6144,18 @@ def run_external_strategy_pack_shard(
             strategy_format=external_strategy_format,
             optimized_evaluation_mode=str(optimized_evaluation_mode),
         )
+        selected_signal_groups = _apply_schedule_subgroup(
+            selected_signal_groups,
+            schedule_subgroup_index=schedule_subgroup_index,
+            schedule_subgroup_count=schedule_subgroup_count,
+        )
         candidates = [candidate for group in selected_signal_groups for candidate in group]
         print(
             "[gtbi] job "
             f"{output_padded} using optimized_evaluation_v3_signal_first signal schedule "
             f"total_jobs={balanced_total_jobs} total_signal_groups={total_signal_groups_for_schedule} "
             f"active_jobs={schedule_active_jobs} signal_groups={len(selected_signal_groups)} "
+            f"schedule_subgroup={schedule_subgroup_index}/{schedule_subgroup_count or 1} "
             f"candidates={len(candidates)}",
             flush=True,
         )
@@ -7477,6 +7517,8 @@ def run_external_strategy_pack_shard(
         "candidate_timeout_seconds": int(candidate_timeout_seconds),
         "job_wall_clock_seconds": int(job_wall_clock_seconds),
         "schedule_active_jobs": int(schedule_active_jobs),
+        "schedule_subgroup_index": int(schedule_subgroup_index),
+        "schedule_subgroup_count": int(schedule_subgroup_count),
         "unique_config_evaluations": int(len(evaluation_cache)),
         "cached_config_reuses": int(deduped_count),
         "unique_signal_evaluations": int(unique_signal_evaluations_for_summary),
@@ -8097,6 +8139,8 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
     parser.add_argument("--job-wall-clock-seconds", type=int, default=300)
     parser.add_argument("--schedule-active-jobs", type=int, default=0)
+    parser.add_argument("--schedule-subgroup-index", type=int, default=0)
+    parser.add_argument("--schedule-subgroup-count", type=int, default=0)
     parser.add_argument("--test-max-signal-groups", type=int, default=0)
     parser.add_argument("--signal-first-phase", choices=("combined", "signals", "exits"), default="combined")
     parser.add_argument("--signal-events-dir", type=Path, default=None)
@@ -8125,6 +8169,8 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         candidate_timeout_seconds=args.candidate_timeout_seconds,
         job_wall_clock_seconds=args.job_wall_clock_seconds,
         schedule_active_jobs=args.schedule_active_jobs,
+        schedule_subgroup_index=args.schedule_subgroup_index,
+        schedule_subgroup_count=args.schedule_subgroup_count,
         test_max_signal_groups=args.test_max_signal_groups,
         signal_first_phase=args.signal_first_phase,
         signal_events_dir=args.signal_events_dir,

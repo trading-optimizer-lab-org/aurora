@@ -350,6 +350,13 @@ jobs:
           if [ "${{ inputs.test_mode }}" = "true" ]; then
             signal_group_limit="${{ inputs.test_max_signal_groups }}"
           fi
+          SUBGROUP_ARGS=()
+          if [ -n "${{ inputs.recovery_job_indices }}" ] && [ "${{ inputs.job_count }}" -gt 1 ]; then
+            SUBGROUP_ARGS=(
+              --schedule-subgroup-index "${{ inputs.job_start_index }}"
+              --schedule-subgroup-count "${{ inputs.job_count }}"
+            )
+          fi
 
           for job_index in "${JOBS[@]}"; do
             base_shard_id=$(( job_index / chunks_per_shard ))
@@ -387,6 +394,7 @@ jobs:
               --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"
               --job-wall-clock-seconds "${{ inputs.job_wall_clock_seconds }}"
               --schedule-active-jobs "$schedule_active_jobs"
+              "${SUBGROUP_ARGS[@]}"
               --test-max-signal-groups "$signal_group_limit"
               --optimized-evaluation-mode "${{ inputs.optimized_evaluation_mode }}"
               "${OPT_ARGS[@]}"
