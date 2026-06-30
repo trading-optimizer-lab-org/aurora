@@ -1652,6 +1652,54 @@ def test_v5_signal_scheduler_splits_large_signal_group_across_jobs(tmp_path: Pat
     assert sorted(len(group) for group in scheduled_groups) == [8, 20, 20]
 
 
+def test_v5_signal_scheduler_uses_later_schedule_windows(tmp_path: Path) -> None:
+    pack = tmp_path / "pack"
+    shard_dir = pack / "shards"
+    shard_dir.mkdir(parents=True)
+    rows: list[dict[str, object]] = []
+    for group_index in range(6):
+        payload = _external_strategy_payload(
+            f"window_group_{group_index}",
+            shard_id=0,
+            slot=group_index,
+        )
+        payload["concept_id"] = "ep_gap_volume_continuation_proxy"
+        payload["entry_rules"]["breakout_lookback_days"] = 20 + group_index
+        rows.append(payload)
+    (shard_dir / "shard_000.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    first_window, total_jobs, first_window_groups = gtbi._balanced_external_signal_groups_for_job(
+        pack,
+        job_index=0,
+        signal_groups_per_job=2,
+        schedule_active_jobs=2,
+        max_signal_groups=None,
+        strategy_format="jsonl",
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+    )
+    second_window, second_total_jobs, second_window_groups = gtbi._balanced_external_signal_groups_for_job(
+        pack,
+        job_index=2,
+        signal_groups_per_job=2,
+        schedule_active_jobs=2,
+        max_signal_groups=None,
+        strategy_format="jsonl",
+        optimized_evaluation_mode="optimized_evaluation_v5_event_first",
+    )
+
+    first_ids = {candidate.payload["strategy_id"] for group in first_window for candidate in group}
+    second_ids = {candidate.payload["strategy_id"] for group in second_window for candidate in group}
+    assert total_jobs == second_total_jobs == 2
+    assert first_window_groups == 4
+    assert second_window_groups == 2
+    assert first_ids
+    assert second_ids
+    assert first_ids.isdisjoint(second_ids)
+
+
 def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -> None:
     assert gtbi._effective_job_deadline(
         optimized_evaluation_mode="optimized_evaluation_v2",

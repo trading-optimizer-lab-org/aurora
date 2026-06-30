@@ -2813,9 +2813,7 @@ def _balanced_external_signal_groups_for_job(
         ]
         group_budget = max(1, min(3, per_job))
         max_window_groups = max(active_jobs * group_budget, 1)
-        if max_signal_groups is not None and int(max_signal_groups) > 0 and int(max_signal_groups) < max_window_groups:
-            groups = groups[: int(max_signal_groups)]
-        window_groups = sorted(
+        ordered_for_windows = sorted(
             groups,
             key=lambda group: (
                 group_base_cost(group),
@@ -2823,6 +2821,12 @@ def _balanced_external_signal_groups_for_job(
                 signal_external_strategy_hash(group[0]) if group else "",
             ),
         )
+        if max_signal_groups is not None and int(max_signal_groups) > 0:
+            ordered_for_windows = ordered_for_windows[: int(max_signal_groups)]
+        schedule_group = max(int(job_index) // active_jobs, 0)
+        schedule_position = int(job_index) % active_jobs
+        window_start = schedule_group * max_window_groups
+        window_groups = ordered_for_windows[window_start : window_start + max_window_groups]
         if len(window_groups) > max_window_groups:
             window_groups = window_groups[:max_window_groups]
         ordered = sorted(
@@ -2862,9 +2866,9 @@ def _balanced_external_signal_groups_for_job(
             bucket_counts[target] += group_size
             bucket_costs[target] += group_cost(group)
         total_signal_groups = int(sum(len(bucket) for bucket in buckets))
-        if total_signal_groups <= 0 or job_index < 0 or job_index >= active_jobs:
+        if total_signal_groups <= 0 or job_index < 0:
             return [], active_jobs, total_signal_groups
-        return buckets[int(job_index)], active_jobs, total_signal_groups
+        return buckets[schedule_position], active_jobs, total_signal_groups
     if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
         active_groups = max(int(schedule_active_jobs), 1) * per_job
         groups = groups[:active_groups]
