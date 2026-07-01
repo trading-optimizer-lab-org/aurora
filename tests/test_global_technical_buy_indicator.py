@@ -580,6 +580,8 @@ def test_trade_analysis_helpers_use_full_trade_frame() -> None:
     assert bottom.iloc[0]["return_pct"] == pytest.approx(-5.0)
     distribution = gtbi.trade_return_distribution(trades)
     assert int(distribution["trades"].sum()) == 3
+    selected = gtbi.selected_symbol_trades(trades, "AAA")
+    assert selected["symbol"].tolist() == ["AAA", "AAA"]
 
 
 def test_split_trade_frame_uses_iso_dates_without_pandas_datetime_conversion() -> None:

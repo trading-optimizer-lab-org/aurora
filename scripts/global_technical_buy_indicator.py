@@ -205,6 +205,7 @@ TICKER_TRADE_SUMMARY_COLUMNS = [
     "best_trade_pct",
     "worst_trade_pct",
 ]
+SELECTED_SYMBOL_TRADE_COLUMNS = TRADE_COLUMNS
 UNSUPPORTED_COLUMNS = ["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]
 TIMEOUT_COLUMNS = [
     "strategy_id",
@@ -2455,6 +2456,22 @@ def extreme_trades_by_return(trades: pd.DataFrame, *, n: int = 100, largest: boo
     if not rows:
         return pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
     return pd.concat(rows, ignore_index=True, sort=False)
+
+
+def selected_symbol_trades(trades: pd.DataFrame, symbols_csv: str | None = None) -> pd.DataFrame:
+    if trades.empty or "symbol" not in trades.columns:
+        return pd.DataFrame(columns=SELECTED_SYMBOL_TRADE_COLUMNS)
+    symbols_value = symbols_csv if symbols_csv is not None else os.environ.get("GTBI_SELECTED_SYMBOLS", "")
+    symbols = {item.strip().upper() for item in str(symbols_value).split(",") if item.strip()}
+    if not symbols:
+        return pd.DataFrame(columns=SELECTED_SYMBOL_TRADE_COLUMNS)
+    frame = trades.copy()
+    mask = frame["symbol"].astype(str).str.upper().isin(symbols)
+    selected = frame.loc[mask].copy()
+    for column in SELECTED_SYMBOL_TRADE_COLUMNS:
+        if column not in selected.columns:
+            selected[column] = pd.NA
+    return selected.loc[:, SELECTED_SYMBOL_TRADE_COLUMNS].sort_values(["candidate_id", "split", "entry_date", "symbol"]).reset_index(drop=True)
 
 
 def _candidate_score(train: dict[str, float]) -> float:
@@ -7597,6 +7614,7 @@ def run_external_strategy_pack_shard(
     ticker_summary = ticker_trade_summary(trades_out)
     top_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=True)
     bottom_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=False)
+    selected_trades = selected_symbol_trades(trades_out)
     unsupported = pd.DataFrame(unsupported_rows, columns=UNSUPPORTED_COLUMNS)
     timeouts = pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)
     slow_deferred = pd.DataFrame(slow_deferred_rows, columns=SLOW_DEFERRED_COLUMNS)
@@ -7622,6 +7640,7 @@ def run_external_strategy_pack_shard(
     ticker_summary.to_csv(output_dir / f"ticker_trade_summary_{file_suffix}.csv", index=False)
     top_trades_by_return.to_csv(output_dir / f"top_100_trades_by_return_{file_suffix}.csv", index=False)
     bottom_trades_by_return.to_csv(output_dir / f"bottom_100_trades_by_return_{file_suffix}.csv", index=False)
+    selected_trades.to_csv(output_dir / f"selected_symbol_trades_{file_suffix}.csv", index=False)
     trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
     unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
     timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
@@ -7793,6 +7812,7 @@ def merge_external_strategy_pack_outputs(
     ticker_summary_frames: list[pd.DataFrame] = []
     top_trade_frames: list[pd.DataFrame] = []
     bottom_trade_frames: list[pd.DataFrame] = []
+    selected_symbol_trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
     timeout_frames: list[pd.DataFrame] = []
     slow_deferred_frames: list[pd.DataFrame] = []
@@ -7876,6 +7896,9 @@ def merge_external_strategy_pack_outputs(
         ("bottom_100_trades_by_return_shard_*.csv", bottom_trade_frames),
         ("bottom_100_trades_by_return_job_*.csv", bottom_trade_frames),
         ("bottom_100_trades_by_return.csv", bottom_trade_frames),
+        ("selected_symbol_trades_shard_*.csv", selected_symbol_trade_frames),
+        ("selected_symbol_trades_job_*.csv", selected_symbol_trade_frames),
+        ("selected_symbol_trades.csv", selected_symbol_trade_frames),
     ):
         for path in sorted(shards_root.rglob(pattern)):
             frame = read_csv_or_empty(path)
@@ -8007,6 +8030,11 @@ def merge_external_strategy_pack_outputs(
         if bottom_trade_frames
         else pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
     )
+    selected_symbol_trade_rows = (
+        pd.concat(selected_symbol_trade_frames, ignore_index=True, sort=False)
+        if selected_symbol_trade_frames
+        else pd.DataFrame(columns=SELECTED_SYMBOL_TRADE_COLUMNS)
+    )
     trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
     unsupported = (
         pd.concat(unsupported_frames, ignore_index=True, sort=False)
@@ -8081,6 +8109,7 @@ def merge_external_strategy_pack_outputs(
     ticker_summary.to_csv(output_dir / "ticker_trade_summary.csv", index=False)
     top_trades_by_return.to_csv(output_dir / "top_100_trades_by_return.csv", index=False)
     bottom_trades_by_return.to_csv(output_dir / "bottom_100_trades_by_return.csv", index=False)
+    selected_symbol_trade_rows.to_csv(output_dir / "selected_symbol_trades.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
     timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)
