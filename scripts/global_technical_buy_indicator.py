@@ -170,6 +170,41 @@ SYMBOL_ENTRY_COUNTS_COLUMNS = [
     "unique_entry_symbols",
     "entries",
 ]
+ANNUAL_TRADE_EQUITY_COLUMNS = [
+    "candidate_id",
+    "split",
+    "year",
+    "trades",
+    "annual_trade_return_sum_pct",
+    "annual_avg_trade_return_pct",
+    "annual_median_trade_return_pct",
+    "annual_win_rate",
+    "annual_profit_factor",
+    "cumulative_trade_return_sum_pct",
+]
+TRADE_DISTRIBUTION_COLUMNS = [
+    "candidate_id",
+    "split",
+    "return_bin",
+    "return_pct_min",
+    "return_pct_max",
+    "trades",
+    "share",
+]
+TICKER_TRADE_SUMMARY_COLUMNS = [
+    "candidate_id",
+    "split",
+    "symbol",
+    "trades",
+    "sum_return_pct",
+    "avg_return_pct",
+    "median_return_pct",
+    "win_rate",
+    "profit_factor",
+    "avg_holding_days",
+    "best_trade_pct",
+    "worst_trade_pct",
+]
 UNSUPPORTED_COLUMNS = ["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]
 TIMEOUT_COLUMNS = [
     "strategy_id",
@@ -2273,6 +2308,153 @@ def symbol_entry_counts_by_year(trades: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     return grouped.loc[:, SYMBOL_ENTRY_COUNTS_COLUMNS].sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+
+
+def _profit_factor_from_return_series(values: pd.Series) -> float:
+    returns = pd.to_numeric(values, errors="coerce").dropna().astype(float)
+    if returns.empty:
+        return float("nan")
+    wins = returns[returns > 0.0].sum()
+    losses = returns[returns < 0.0].sum()
+    if losses < 0.0:
+        return float(wins / abs(losses))
+    return float("inf") if wins > 0.0 else float("nan")
+
+
+def annual_trade_equity_curve(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    required = {"candidate_id", "split", "exit_date", "return_pct", "holding_days"}
+    if not required.issubset(trades.columns):
+        return pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "split", "exit_date", "return_pct", "holding_days"]].copy()
+    frame["exit_date"] = pd.to_datetime(frame["exit_date"], errors="coerce")
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "exit_date", "return_pct"])
+    if frame.empty:
+        return pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    frame["year"] = frame["exit_date"].dt.year.astype(int)
+    rows: list[dict[str, Any]] = []
+    for (candidate_id, split, year), group in frame.groupby(["candidate_id", "split", "year"], dropna=False):
+        returns = pd.to_numeric(group["return_pct"], errors="coerce").dropna().astype(float)
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "split": split,
+                "year": int(year),
+                "trades": int(len(group)),
+                "annual_trade_return_sum_pct": float(returns.sum()) if len(returns) else float("nan"),
+                "annual_avg_trade_return_pct": float(returns.mean()) if len(returns) else float("nan"),
+                "annual_median_trade_return_pct": float(returns.median()) if len(returns) else float("nan"),
+                "annual_win_rate": float((returns > 0.0).mean()) if len(returns) else float("nan"),
+                "annual_profit_factor": _profit_factor_from_return_series(returns),
+                "cumulative_trade_return_sum_pct": float("nan"),
+            }
+        )
+    out = pd.DataFrame(rows, columns=ANNUAL_TRADE_EQUITY_COLUMNS).sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+    if not out.empty:
+        out["cumulative_trade_return_sum_pct"] = out.groupby(["candidate_id", "split"], dropna=False)[
+            "annual_trade_return_sum_pct"
+        ].cumsum()
+    return out
+
+
+def trade_return_distribution(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty or not {"candidate_id", "split", "return_pct"}.issubset(trades.columns):
+        return pd.DataFrame(columns=TRADE_DISTRIBUTION_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "split", "return_pct"]].copy()
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "return_pct"])
+    bins = [
+        (float("-inf"), -20.0, "< -20%"),
+        (-20.0, -10.0, "-20% a -10%"),
+        (-10.0, -5.0, "-10% a -5%"),
+        (-5.0, -2.0, "-5% a -2%"),
+        (-2.0, -1.0, "-2% a -1%"),
+        (-1.0, 0.0, "-1% a 0%"),
+        (0.0, 1.0, "0% a 1%"),
+        (1.0, 2.0, "1% a 2%"),
+        (2.0, 5.0, "2% a 5%"),
+        (5.0, 10.0, "5% a 10%"),
+        (10.0, 20.0, "10% a 20%"),
+        (20.0, float("inf"), "> 20%"),
+    ]
+    rows: list[dict[str, Any]] = []
+    for (candidate_id, split), group in frame.groupby(["candidate_id", "split"], dropna=False):
+        total = int(len(group))
+        returns = group["return_pct"]
+        for low, high, label in bins:
+            if math.isinf(low):
+                mask = returns < high
+            elif math.isinf(high):
+                mask = returns >= low
+            else:
+                mask = (returns >= low) & (returns < high)
+            count = int(mask.sum())
+            rows.append(
+                {
+                    "candidate_id": candidate_id,
+                    "split": split,
+                    "return_bin": label,
+                    "return_pct_min": low,
+                    "return_pct_max": high,
+                    "trades": count,
+                    "share": float(count / total) if total else float("nan"),
+                }
+            )
+    return pd.DataFrame(rows, columns=TRADE_DISTRIBUTION_COLUMNS)
+
+
+def ticker_trade_summary(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    required = {"candidate_id", "split", "symbol", "return_pct", "holding_days"}
+    if not required.issubset(trades.columns):
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "split", "symbol", "return_pct", "holding_days"]].copy()
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame["holding_days"] = pd.to_numeric(frame["holding_days"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "symbol", "return_pct"])
+    rows: list[dict[str, Any]] = []
+    for (candidate_id, split, symbol), group in frame.groupby(["candidate_id", "split", "symbol"], dropna=False):
+        returns = pd.to_numeric(group["return_pct"], errors="coerce").dropna().astype(float)
+        holding = pd.to_numeric(group["holding_days"], errors="coerce").dropna().astype(float)
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "split": split,
+                "symbol": symbol,
+                "trades": int(len(group)),
+                "sum_return_pct": float(returns.sum()) if len(returns) else float("nan"),
+                "avg_return_pct": float(returns.mean()) if len(returns) else float("nan"),
+                "median_return_pct": float(returns.median()) if len(returns) else float("nan"),
+                "win_rate": float((returns > 0.0).mean()) if len(returns) else float("nan"),
+                "profit_factor": _profit_factor_from_return_series(returns),
+                "avg_holding_days": float(holding.mean()) if len(holding) else float("nan"),
+                "best_trade_pct": float(returns.max()) if len(returns) else float("nan"),
+                "worst_trade_pct": float(returns.min()) if len(returns) else float("nan"),
+            }
+        )
+    return pd.DataFrame(rows, columns=TICKER_TRADE_SUMMARY_COLUMNS)
+
+
+def extreme_trades_by_return(trades: pd.DataFrame, *, n: int = 100, largest: bool) -> pd.DataFrame:
+    if trades.empty or "return_pct" not in trades.columns:
+        return pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    frame = trades.copy()
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "return_pct"])
+    rows: list[pd.DataFrame] = []
+    for (_candidate_id, _split), group in frame.groupby(["candidate_id", "split"], dropna=False):
+        selected = group.sort_values("return_pct", ascending=not largest).head(n).copy()
+        selected.insert(0, "rank", range(1, len(selected) + 1))
+        for column in TRADE_COLUMNS:
+            if column not in selected.columns:
+                selected[column] = pd.NA
+        rows.append(selected.loc[:, ["rank", *TRADE_COLUMNS]])
+    if not rows:
+        return pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    return pd.concat(rows, ignore_index=True, sort=False)
 
 
 def _candidate_score(train: dict[str, float]) -> float:
@@ -7410,6 +7592,11 @@ def run_external_strategy_pack_shard(
     yearly_out = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
     trades_out = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
     symbol_entry_counts = symbol_entry_counts_by_year(trades_out)
+    annual_equity = annual_trade_equity_curve(trades_out)
+    return_distribution = trade_return_distribution(trades_out)
+    ticker_summary = ticker_trade_summary(trades_out)
+    top_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=True)
+    bottom_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=False)
     unsupported = pd.DataFrame(unsupported_rows, columns=UNSUPPORTED_COLUMNS)
     timeouts = pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)
     slow_deferred = pd.DataFrame(slow_deferred_rows, columns=SLOW_DEFERRED_COLUMNS)
@@ -7430,6 +7617,11 @@ def run_external_strategy_pack_shard(
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
     yearly_out.to_csv(output_dir / f"yearly_trade_performance_{file_suffix}.csv", index=False)
     symbol_entry_counts.to_csv(output_dir / f"symbol_entry_counts_by_year_{file_suffix}.csv", index=False)
+    annual_equity.to_csv(output_dir / f"annual_trade_equity_curve_{file_suffix}.csv", index=False)
+    return_distribution.to_csv(output_dir / f"trade_return_distribution_{file_suffix}.csv", index=False)
+    ticker_summary.to_csv(output_dir / f"ticker_trade_summary_{file_suffix}.csv", index=False)
+    top_trades_by_return.to_csv(output_dir / f"top_100_trades_by_return_{file_suffix}.csv", index=False)
+    bottom_trades_by_return.to_csv(output_dir / f"bottom_100_trades_by_return_{file_suffix}.csv", index=False)
     trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
     unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
     timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
@@ -7596,6 +7788,11 @@ def merge_external_strategy_pack_outputs(
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
     symbol_entry_count_frames: list[pd.DataFrame] = []
+    annual_equity_frames: list[pd.DataFrame] = []
+    return_distribution_frames: list[pd.DataFrame] = []
+    ticker_summary_frames: list[pd.DataFrame] = []
+    top_trade_frames: list[pd.DataFrame] = []
+    bottom_trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
     timeout_frames: list[pd.DataFrame] = []
     slow_deferred_frames: list[pd.DataFrame] = []
@@ -7663,6 +7860,27 @@ def merge_external_strategy_pack_outputs(
         frame = read_csv_or_empty(path)
         if not frame.empty:
             symbol_entry_count_frames.append(frame)
+    for pattern, target in (
+        ("annual_trade_equity_curve_shard_*.csv", annual_equity_frames),
+        ("annual_trade_equity_curve_job_*.csv", annual_equity_frames),
+        ("annual_trade_equity_curve.csv", annual_equity_frames),
+        ("trade_return_distribution_shard_*.csv", return_distribution_frames),
+        ("trade_return_distribution_job_*.csv", return_distribution_frames),
+        ("trade_return_distribution.csv", return_distribution_frames),
+        ("ticker_trade_summary_shard_*.csv", ticker_summary_frames),
+        ("ticker_trade_summary_job_*.csv", ticker_summary_frames),
+        ("ticker_trade_summary.csv", ticker_summary_frames),
+        ("top_100_trades_by_return_shard_*.csv", top_trade_frames),
+        ("top_100_trades_by_return_job_*.csv", top_trade_frames),
+        ("top_100_trades_by_return.csv", top_trade_frames),
+        ("bottom_100_trades_by_return_shard_*.csv", bottom_trade_frames),
+        ("bottom_100_trades_by_return_job_*.csv", bottom_trade_frames),
+        ("bottom_100_trades_by_return.csv", bottom_trade_frames),
+    ):
+        for path in sorted(shards_root.rglob(pattern)):
+            frame = read_csv_or_empty(path)
+            if not frame.empty:
+                target.append(frame)
     for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv"), *shards_root.rglob("top_trades_sample.csv")]):
         frame = read_csv_or_empty(path)
         if not frame.empty:
@@ -7764,6 +7982,31 @@ def merge_external_strategy_pack_outputs(
         if symbol_entry_count_frames
         else pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
     )
+    annual_equity = (
+        pd.concat(annual_equity_frames, ignore_index=True, sort=False)
+        if annual_equity_frames
+        else pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    )
+    return_distribution = (
+        pd.concat(return_distribution_frames, ignore_index=True, sort=False)
+        if return_distribution_frames
+        else pd.DataFrame(columns=TRADE_DISTRIBUTION_COLUMNS)
+    )
+    ticker_summary = (
+        pd.concat(ticker_summary_frames, ignore_index=True, sort=False)
+        if ticker_summary_frames
+        else pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    )
+    top_trades_by_return = (
+        pd.concat(top_trade_frames, ignore_index=True, sort=False)
+        if top_trade_frames
+        else pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    )
+    bottom_trades_by_return = (
+        pd.concat(bottom_trade_frames, ignore_index=True, sort=False)
+        if bottom_trade_frames
+        else pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    )
     trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
     unsupported = (
         pd.concat(unsupported_frames, ignore_index=True, sort=False)
@@ -7833,6 +8076,11 @@ def merge_external_strategy_pack_outputs(
     filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
     yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
     symbol_entry_counts.to_csv(output_dir / "symbol_entry_counts_by_year.csv", index=False)
+    annual_equity.to_csv(output_dir / "annual_trade_equity_curve.csv", index=False)
+    return_distribution.to_csv(output_dir / "trade_return_distribution.csv", index=False)
+    ticker_summary.to_csv(output_dir / "ticker_trade_summary.csv", index=False)
+    top_trades_by_return.to_csv(output_dir / "top_100_trades_by_return.csv", index=False)
+    bottom_trades_by_return.to_csv(output_dir / "bottom_100_trades_by_return.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
     timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)

@@ -557,6 +557,31 @@ def test_symbol_entry_counts_by_year_counts_unique_symbols_by_entry_year() -> No
     assert train_2020["unique_entry_symbols"] == 1
 
 
+def test_trade_analysis_helpers_use_full_trade_frame() -> None:
+    trades = pd.DataFrame(
+        [
+            {"candidate_id": "c1", "symbol": "AAA", "split": "validation", "entry_date": "2021-01-01", "exit_date": "2021-01-02", "return_pct": 10.0, "holding_days": 1},
+            {"candidate_id": "c1", "symbol": "AAA", "split": "validation", "entry_date": "2021-01-03", "exit_date": "2021-01-04", "return_pct": -5.0, "holding_days": 1},
+            {"candidate_id": "c1", "symbol": "BBB", "split": "validation", "entry_date": "2022-01-03", "exit_date": "2022-01-04", "return_pct": 2.0, "holding_days": 1},
+        ]
+    )
+
+    equity = gtbi.annual_trade_equity_curve(trades)
+    assert equity.loc[equity["year"] == 2021, "annual_trade_return_sum_pct"].iloc[0] == pytest.approx(5.0)
+    assert equity.loc[equity["year"] == 2022, "cumulative_trade_return_sum_pct"].iloc[0] == pytest.approx(7.0)
+    ticker = gtbi.ticker_trade_summary(trades)
+    aaa = ticker[ticker["symbol"] == "AAA"].iloc[0]
+    assert aaa["trades"] == 2
+    assert aaa["sum_return_pct"] == pytest.approx(5.0)
+    top = gtbi.extreme_trades_by_return(trades, n=1, largest=True)
+    assert top.iloc[0]["symbol"] == "AAA"
+    assert top.iloc[0]["return_pct"] == pytest.approx(10.0)
+    bottom = gtbi.extreme_trades_by_return(trades, n=1, largest=False)
+    assert bottom.iloc[0]["return_pct"] == pytest.approx(-5.0)
+    distribution = gtbi.trade_return_distribution(trades)
+    assert int(distribution["trades"].sum()) == 3
+
+
 def test_split_trade_frame_uses_iso_dates_without_pandas_datetime_conversion() -> None:
     trades = pd.DataFrame(
         [
