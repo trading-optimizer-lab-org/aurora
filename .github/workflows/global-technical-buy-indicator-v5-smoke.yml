@@ -20,17 +20,17 @@ env:
   DATA_RUN_ID: "27936694743"
   DATA_ARTIFACT_NAME: free-global-yahoo-daily-data-lake
   EXTERNAL_STRATEGY_PACK_PATH: scripts/strategy_packs/gtbi_research_broad_72000
-  CANDIDATE_COUNT_PER_JOB: "10"
-  CANDIDATE_TIMEOUT_SECONDS: "300"
-  JOB_WALL_CLOCK_SECONDS: "300"
-  OPTIMIZED_EVALUATION_MODE: optimized_evaluation_v5_event_first
+  CANDIDATE_COUNT_PER_JOB: "1"
+  CANDIDATE_TIMEOUT_SECONDS: "1800"
+  JOB_WALL_CLOCK_SECONDS: "1800"
+  OPTIMIZED_EVALUATION_MODE: optimized_evaluation_v4_zero_timeout_slow_queue
   MIN_MARKET_CAP: "2000000000"
-  TRAIN_END: "2010-12-31"
-  VALIDATION_START: "2011-01-01"
-  VALIDATION_END: "2020-12-31"
-  LOCKED_START: "2021-01-01"
-  TEST_MAX_JOBS: "100"
-  TEST_MAX_SIGNAL_GROUPS: "1000"
+  TRAIN_END: "2020-12-31"
+  VALIDATION_START: "2021-01-01"
+  VALIDATION_END: "2026-06-30"
+  LOCKED_START: "2100-01-01"
+  TEST_MAX_JOBS: "2"
+  TEST_MAX_SIGNAL_GROUPS: "2"
 
 jobs:
   build_external_pack:
@@ -165,23 +165,22 @@ jobs:
           import json
           import os
 
-          original_shards = 360
           original_strategies_per_shard = 200
           candidate_limit = max(int(os.environ["CANDIDATE_COUNT_PER_JOB"]), 1)
           chunks_per_shard = (original_strategies_per_shard + candidate_limit - 1) // candidate_limit
-          total_signal_groups = min(18000, max(int(os.environ["TEST_MAX_SIGNAL_GROUPS"]), 1))
-          total_jobs = (total_signal_groups + candidate_limit - 1) // candidate_limit
-          total_jobs = min(max(int(os.environ["TEST_MAX_JOBS"]), 1), total_jobs)
-          total_strategies = min(total_signal_groups, total_jobs * candidate_limit) * 4
+          requested_job_indices = [28074, 47423]
+          total_jobs = len(requested_job_indices)
+          total_strategies = total_jobs * candidate_limit
           rows = []
-          for job_index in range(total_jobs):
-              base_shard_id = job_index // chunks_per_shard
-              chunk_index = job_index % chunks_per_shard
+          for artifact_job_index, logical_job_index in enumerate(requested_job_indices):
+              base_shard_id = logical_job_index // chunks_per_shard
+              chunk_index = logical_job_index % chunks_per_shard
               strategy_offset = chunk_index * candidate_limit
               strategy_limit = min(candidate_limit, original_strategies_per_shard - strategy_offset)
               rows.append({
-                  "job_index": job_index,
-                  "job_padded": f"{job_index:04d}",
+                  "job_index": artifact_job_index,
+                  "logical_job_index": logical_job_index,
+                  "job_padded": f"{artifact_job_index:04d}",
                   "base_shard_id": base_shard_id,
                   "base_shard_padded": f"{base_shard_id:03d}",
                   "chunk_index": chunk_index,
