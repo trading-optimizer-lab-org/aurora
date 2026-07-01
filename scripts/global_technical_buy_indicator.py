@@ -163,6 +163,13 @@ TRADE_COLUMNS = [
     "holding_days",
     "exit_reason",
 ]
+SYMBOL_ENTRY_COUNTS_COLUMNS = [
+    "candidate_id",
+    "split",
+    "year",
+    "unique_entry_symbols",
+    "entries",
+]
 UNSUPPORTED_COLUMNS = ["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]
 TIMEOUT_COLUMNS = [
     "strategy_id",
@@ -2246,6 +2253,26 @@ def yearly_trade_performance(trades: pd.DataFrame, benchmark_prices: pd.DataFram
             }
         )
     return pd.DataFrame(rows, columns=YEARLY_COLUMNS).sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+
+
+def symbol_entry_counts_by_year(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    required = {"candidate_id", "symbol", "split", "entry_date"}
+    if not required.issubset(trades.columns):
+        return pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "symbol", "split", "entry_date"]].copy()
+    frame["entry_date"] = pd.to_datetime(frame["entry_date"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "symbol", "split", "entry_date"])
+    if frame.empty:
+        return pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    frame["year"] = frame["entry_date"].dt.year.astype(int)
+    grouped = (
+        frame.groupby(["candidate_id", "split", "year"], dropna=False)
+        .agg(unique_entry_symbols=("symbol", "nunique"), entries=("symbol", "size"))
+        .reset_index()
+    )
+    return grouped.loc[:, SYMBOL_ENTRY_COUNTS_COLUMNS].sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
 
 
 def _candidate_score(train: dict[str, float]) -> float:
@@ -7382,6 +7409,7 @@ def run_external_strategy_pack_shard(
             )
     yearly_out = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
     trades_out = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
+    symbol_entry_counts = symbol_entry_counts_by_year(trades_out)
     unsupported = pd.DataFrame(unsupported_rows, columns=UNSUPPORTED_COLUMNS)
     timeouts = pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)
     slow_deferred = pd.DataFrame(slow_deferred_rows, columns=SLOW_DEFERRED_COLUMNS)
@@ -7401,6 +7429,7 @@ def run_external_strategy_pack_shard(
     leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
     yearly_out.to_csv(output_dir / f"yearly_trade_performance_{file_suffix}.csv", index=False)
+    symbol_entry_counts.to_csv(output_dir / f"symbol_entry_counts_by_year_{file_suffix}.csv", index=False)
     trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
     unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
     timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
@@ -7566,6 +7595,7 @@ def merge_external_strategy_pack_outputs(
     filtered_frames: list[pd.DataFrame] = []
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
+    symbol_entry_count_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
     timeout_frames: list[pd.DataFrame] = []
     slow_deferred_frames: list[pd.DataFrame] = []
@@ -7623,6 +7653,16 @@ def merge_external_strategy_pack_outputs(
         frame = read_csv_or_empty(path)
         if not frame.empty:
             yearly_frames.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("symbol_entry_counts_by_year_shard_*.csv"),
+            *shards_root.rglob("symbol_entry_counts_by_year_job_*.csv"),
+            *shards_root.rglob("symbol_entry_counts_by_year.csv"),
+        ]
+    ):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            symbol_entry_count_frames.append(frame)
     for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv"), *shards_root.rglob("top_trades_sample.csv")]):
         frame = read_csv_or_empty(path)
         if not frame.empty:
@@ -7719,6 +7759,11 @@ def merge_external_strategy_pack_outputs(
             ascending=[False, False, True],
         ).reset_index(drop=True)
     yearly = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
+    symbol_entry_counts = (
+        pd.concat(symbol_entry_count_frames, ignore_index=True, sort=False)
+        if symbol_entry_count_frames
+        else pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    )
     trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
     unsupported = (
         pd.concat(unsupported_frames, ignore_index=True, sort=False)
@@ -7787,6 +7832,7 @@ def merge_external_strategy_pack_outputs(
     leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
     filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
     yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
+    symbol_entry_counts.to_csv(output_dir / "symbol_entry_counts_by_year.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
     timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)

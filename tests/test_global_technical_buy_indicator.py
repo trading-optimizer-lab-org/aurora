@@ -535,6 +535,28 @@ def test_yearly_trade_performance_groups_closed_trades_and_adds_spy_return() -> 
     assert row_2010["spy_return_pct"] == pytest.approx(20.0)
 
 
+def test_symbol_entry_counts_by_year_counts_unique_symbols_by_entry_year() -> None:
+    trades = pd.DataFrame(
+        [
+            {"candidate_id": "c1", "symbol": "AAA", "split": "validation", "entry_date": "2021-12-31"},
+            {"candidate_id": "c1", "symbol": "AAA", "split": "validation", "entry_date": "2021-12-31"},
+            {"candidate_id": "c1", "symbol": "BBB", "split": "validation", "entry_date": "2021-06-01"},
+            {"candidate_id": "c1", "symbol": "CCC", "split": "validation", "entry_date": "2022-01-03"},
+            {"candidate_id": "c1", "symbol": "DDD", "split": "train", "entry_date": "2020-12-30"},
+        ]
+    )
+
+    out = gtbi.symbol_entry_counts_by_year(trades)
+
+    val_2021 = out[(out["split"] == "validation") & (out["year"] == 2021)].iloc[0]
+    assert val_2021["unique_entry_symbols"] == 2
+    assert val_2021["entries"] == 3
+    val_2022 = out[(out["split"] == "validation") & (out["year"] == 2022)].iloc[0]
+    assert val_2022["unique_entry_symbols"] == 1
+    train_2020 = out[(out["split"] == "train") & (out["year"] == 2020)].iloc[0]
+    assert train_2020["unique_entry_symbols"] == 1
+
+
 def test_split_trade_frame_uses_iso_dates_without_pandas_datetime_conversion() -> None:
     trades = pd.DataFrame(
         [
