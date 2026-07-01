@@ -23,7 +23,7 @@ env:
   CANDIDATE_COUNT_PER_JOB: "1"
   CANDIDATE_TIMEOUT_SECONDS: "1800"
   JOB_WALL_CLOCK_SECONDS: "1800"
-  OPTIMIZED_EVALUATION_MODE: optimized_evaluation_v4_zero_timeout_slow_queue
+  OPTIMIZED_EVALUATION_MODE: optimized_evaluation_v1
   MIN_MARKET_CAP: "2000000000"
   TRAIN_END: "2020-12-31"
   VALIDATION_START: "2021-01-01"
@@ -244,8 +244,7 @@ jobs:
             --validation-start "$VALIDATION_START"
             --validation-end "$VALIDATION_END"
           )
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --signal-first-phase signals --output-dir "signals/job-${{ matrix.job_padded }}"
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --signal-first-phase exits --signal-events-dir "signals/job-${{ matrix.job_padded }}" --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --output-dir "outputs/job-${{ matrix.job_padded }}"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload smoke job artifact
         if: always()
