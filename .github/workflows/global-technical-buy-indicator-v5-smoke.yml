@@ -21,8 +21,8 @@ env:
   DATA_ARTIFACT_NAME: free-global-yahoo-daily-data-lake
   EXTERNAL_STRATEGY_PACK_PATH: scripts/strategy_packs/gtbi_research_broad_72000
   CANDIDATE_COUNT_PER_JOB: "1"
-  CANDIDATE_TIMEOUT_SECONDS: "1800"
-  JOB_WALL_CLOCK_SECONDS: "1800"
+  CANDIDATE_TIMEOUT_SECONDS: "7200"
+  JOB_WALL_CLOCK_SECONDS: "7200"
   OPTIMIZED_EVALUATION_MODE: optimized_evaluation_v1
   MIN_MARKET_CAP: "2000000000"
   TRAIN_END: "2020-12-31"
@@ -198,7 +198,7 @@ jobs:
       - build_external_pack
       - plan_smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       max-parallel: 100
@@ -223,7 +223,7 @@ jobs:
           path: external-pack-data
       - name: Run smoke strategy job
         run: |
-          OPT_ARGS=(--enable-feature-cache --enable-dedupe --enable-safe-prefilter --enable-early-stopping --enable-cost-scheduling)
+          OPT_ARGS=(--enable-feature-cache --no-enable-dedupe --no-enable-safe-prefilter --no-enable-early-stopping --no-enable-cost-scheduling)
           RUN_ARGS=(
             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily"
             --prebuilt-pack-dir external-pack-data
@@ -244,7 +244,13 @@ jobs:
             --validation-start "$VALIDATION_START"
             --validation-end "$VALIDATION_END"
           )
-          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --output-dir "outputs/job-${{ matrix.job_padded }}"
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --output-dir "outputs/job-${{ matrix.job_padded }}" &
+          pid=$!
+          while kill -0 "$pid" 2>/dev/null; do
+            echo "[gtbi-locked-heartbeat] job=${{ matrix.job_padded }} logical=${{ matrix.logical_job_index }} still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            sleep 60
+          done
+          wait "$pid"
           rm -rf "outputs/job-${{ matrix.job_padded }}/_external_pack_data"
       - name: Upload smoke job artifact
         if: always()
