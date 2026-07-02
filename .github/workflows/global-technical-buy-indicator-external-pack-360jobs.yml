@@ -19,6 +19,22 @@ on:
         description: "Strategies evaluated per shard"
         required: true
         default: "200"
+      candidate_count_per_job:
+        description: "Strategies evaluated per job; preferred alias for candidate_count_per_shard"
+        required: false
+        default: ""
+      optimized_evaluation_mode:
+        description: "Evaluation mode label recorded in summaries"
+        required: false
+        default: "standard"
+      candidate_timeout_seconds:
+        description: "Per-candidate timeout seconds recorded in summaries"
+        required: false
+        default: "300"
+      job_wall_clock_seconds:
+        description: "Per-job wall clock budget seconds recorded in summaries"
+        required: false
+        default: "0"
       min_market_cap:
         description: "Minimum market cap in USD"
         required: true
@@ -51,12 +67,21 @@ on:
         description: "Maximum shards in test_mode, capped at 10"
         required: true
         default: "10"
+      test_max_jobs:
+        description: "Maximum jobs in test_mode; preferred alias for test_max_shards"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
       total_strategies_requested: ${{ steps.plan.outputs.total_strategies_requested }}
       total_shards_requested: ${{ steps.plan.outputs.total_shards_requested }}
       candidate_limit: ${{ steps.plan.outputs.candidate_limit }}
@@ -69,10 +94,12 @@ jobs:
           import os
 
           test_mode = "${{ inputs.test_mode }}".strip().lower() == "true"
-          requested_limit = max(int("${{ inputs.candidate_count_per_shard }}"), 1)
+          candidate_count_per_job = "${{ inputs.candidate_count_per_job }}".strip()
+          requested_limit = max(int(candidate_count_per_job or "${{ inputs.candidate_count_per_shard }}"), 1)
           if test_mode:
-              shard_count = min(max(int("${{ inputs.test_max_shards }}"), 1), 10)
-              candidate_limit = min(requested_limit, 5)
+              test_max_jobs = "${{ inputs.test_max_jobs }}".strip()
+              shard_count = min(max(int(test_max_jobs or "${{ inputs.test_max_shards }}"), 1), 360)
+              candidate_limit = requested_limit
           else:
               shard_count = 360
               candidate_limit = requested_limit
@@ -81,20 +108,21 @@ jobs:
               for shard in range(shard_count)
           ]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-              handle.write(f"matrix={json.dumps({'include': rows}, separators=(',', ':'))}\n")
+              handle.write(f"matrix_a={json.dumps({'include': rows[:180]}, separators=(',', ':'))}\n")
+              handle.write(f"matrix_b={json.dumps({'include': rows[180:]}, separators=(',', ':'))}\n")
               handle.write(f"total_strategies_requested={shard_count * candidate_limit}\n")
               handle.write(f"total_shards_requested={shard_count}\n")
               handle.write(f"candidate_limit={candidate_limit}\n")
           PY
 
-  run_shard:
+  run_shard_a:
     needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 60
-      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.matrix_a) }}
     permissions:
       actions: read
       contents: read
@@ -138,6 +166,79 @@ jobs:
             --external-strategy-format jsonl \
             "$FAIL_FLAG" \
             --min-market-cap "${{ inputs.min_market_cap }}" \
+            --optimized-evaluation-mode "${{ inputs.optimized_evaluation_mode }}" \
+            --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}" \
+            --job-wall-clock-seconds "${{ inputs.job_wall_clock_seconds }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --output-dir "outputs/shard-${{ matrix.shard_padded }}"
+          rm -rf "outputs/shard-${{ matrix.shard_padded }}/_external_pack_data"
+      - name: Upload shard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-external-pack-shard-${{ matrix.shard_padded }}
+          path: outputs/shard-${{ matrix.shard_padded }}
+          if-no-files-found: error
+          retention-days: 7
+
+  run_shard_b:
+    needs: [plan]
+    if: ${{ fromJSON(needs.plan.outputs.total_shards_requested) > 180 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.plan.outputs.matrix_b) }}
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QF_DATA_DIR: ${{ github.workspace }}/qf-data
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[data-cloud,ml]"
+      - name: Download clean global data lake once for this shard
+        run: |
+          mkdir -p "$QF_DATA_DIR/prices/free_us_daily"
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ inputs.data_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "${{ inputs.data_artifact_name }}" \
+              --dir "$QF_DATA_DIR/prices/free_us_daily"; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          exit 1
+      - name: Run external strategy shard
+        run: |
+          FAIL_FLAG="--no-external-strategy-fail-on-unsupported"
+          if [ "${{ inputs.fail_on_unsupported }}" = "true" ]; then
+            FAIL_FLAG="--external-strategy-fail-on-unsupported"
+          fi
+          python scripts/run_global_technical_buy_indicator_external_pack_shard.py \
+            --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
+            --external-strategy-pack-path "${{ inputs.external_strategy_pack_path }}" \
+            --external-strategy-shard-id "${{ matrix.shard }}" \
+            --external-strategy-limit "${{ matrix.candidate_limit }}" \
+            --external-strategy-format jsonl \
+            "$FAIL_FLAG" \
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            --optimized-evaluation-mode "${{ inputs.optimized_evaluation_mode }}" \
+            --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}" \
+            --job-wall-clock-seconds "${{ inputs.job_wall_clock_seconds }}" \
             --locked-start "${{ inputs.locked_start }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \
@@ -154,7 +255,7 @@ jobs:
           retention-days: 7
 
   merge:
-    needs: [plan, run_shard]
+    needs: [plan, run_shard_a, run_shard_b]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -184,6 +285,9 @@ jobs:
             --output-dir final-results \
             --total-strategies-requested "${{ needs.plan.outputs.total_strategies_requested }}" \
             --total-shards-requested "${{ needs.plan.outputs.total_shards_requested }}" \
+            --candidate-count-per-job "${{ needs.plan.outputs.candidate_limit }}" \
+            --optimized-evaluation-mode "${{ inputs.optimized_evaluation_mode }}" \
+            --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}" \
             --locked-start "${{ inputs.locked_start }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \

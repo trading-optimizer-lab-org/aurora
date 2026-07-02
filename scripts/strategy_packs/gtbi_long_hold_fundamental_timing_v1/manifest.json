@@ -1,0 +1,1843 @@
+{
+  "files": [
+    {
+      "bytes": 1485,
+      "path": "README.md",
+      "sha256": "bd6344b5dcbd2485b4d68e320e0fdb92019f634811a96de2a57534fadb3bf40a"
+    },
+    {
+      "bytes": 5681,
+      "path": "codex_prompt.md",
+      "sha256": "67d4d961e5881de8ae3a2d0f79eb638c868e429c68867f251502c4222713cd7f"
+    },
+    {
+      "bytes": 11510,
+      "path": "concept_catalog.csv",
+      "sha256": "a342f9dcb3f1276852b6d44cdaf55c26bddbbadc8fe5bd5a76686978eb573f52"
+    },
+    {
+      "bytes": 814,
+      "path": "run_config.json",
+      "sha256": "7ec6ec67c87290d5f21ffb0eea6f1621d58346710d70247b6960476c20f8db3e"
+    },
+    {
+      "bytes": 15085433,
+      "path": "strategy_pack_long_hold_v1.csv",
+      "sha256": "665f4b526f648086a537e43de64cb178a6cae73c8f9c8919ade4450b038965f7"
+    },
+    {
+      "bytes": 203361000,
+      "path": "strategy_pack_long_hold_v1.jsonl",
+      "sha256": "89663b75b521265539a4f962291b0bb129909b00d132ed2c5bc1ba972ae96111"
+    },
+    {
+      "bytes": 561080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_000.jsonl",
+      "sha256": "113dbf3d405cabfb17ac18e2ef86bf9aea19ffa84b33619e1dfa8bceab443e1a"
+    },
+    {
+      "bytes": 560278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_001.jsonl",
+      "sha256": "8c58edd17467f00fdafc16a68f722c92346a38236bf4fc44f1f819baf99b6276"
+    },
+    {
+      "bytes": 559918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_002.jsonl",
+      "sha256": "4feb3945b0fbaccbbd34b58e087efc7adfdf7aeaa11a7c822931020d5359e4df"
+    },
+    {
+      "bytes": 559846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_003.jsonl",
+      "sha256": "e30b76d20ebcd6bab08f300578a875a29dfe887090de227a10b84abd3585121e"
+    },
+    {
+      "bytes": 560718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_004.jsonl",
+      "sha256": "cf9073b89b3b5dc6e70fdefdc1ba94cedd05c8fc93bedd626bccb124175d7e4e"
+    },
+    {
+      "bytes": 562630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_005.jsonl",
+      "sha256": "6432c5580f439f872c2058e59f77ee286de3ca9aadc6a380ca496c963c540ebf"
+    },
+    {
+      "bytes": 556680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_006.jsonl",
+      "sha256": "00754071be606a069df1ace8ed210e788f7925ff6c56d30d94f646c4ba183874"
+    },
+    {
+      "bytes": 555878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_007.jsonl",
+      "sha256": "3eb2365d1bedeac41c018666e67e4f5b5040a9c2909112f228195e48b1bacc1e"
+    },
+    {
+      "bytes": 555518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_008.jsonl",
+      "sha256": "51312815958ff11f980042b8471f2fbbed9fe4ce992eaae73257528186ea9a94"
+    },
+    {
+      "bytes": 555446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_009.jsonl",
+      "sha256": "fc00fa1532f59f5ab5289c03153baa1f05c35bfee7ec30f6aef926511b5874ca"
+    },
+    {
+      "bytes": 556318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_010.jsonl",
+      "sha256": "081e81656ca2f7b72ace2f5f4980edf2a9c8627d8c95563773010439f36d0bd1"
+    },
+    {
+      "bytes": 558230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_011.jsonl",
+      "sha256": "e0cfc668a137d8f9a03539ea877ee7a6c449101edfd673a813c2421f7f6ba606"
+    },
+    {
+      "bytes": 563080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_012.jsonl",
+      "sha256": "55077f84adb91449eb693360c3f6bdfc3ddbf613d7ad8ee94b3b6ce8053f1e18"
+    },
+    {
+      "bytes": 562278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_013.jsonl",
+      "sha256": "051eb56df8565bdf2e5d7c438a1202a56b563a52fb3469788a2789ad1791192c"
+    },
+    {
+      "bytes": 561918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_014.jsonl",
+      "sha256": "df9325ee149c46257bdf05801a792d6ce3203e33c11144ced688b9b757ee4115"
+    },
+    {
+      "bytes": 561846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_015.jsonl",
+      "sha256": "d431b59d6a4d81eccf51289bc9b57d64438764f3a55bf16039e3c156245e7803"
+    },
+    {
+      "bytes": 562718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_016.jsonl",
+      "sha256": "60ce2a7037964d316d76f8e3249b5c8d3b08c4566b101e6cc6f3a36adfa313e8"
+    },
+    {
+      "bytes": 564630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_017.jsonl",
+      "sha256": "231c02e335e61a220839aa7d2fcad361a7746ba51925c282957d63065d116798"
+    },
+    {
+      "bytes": 566880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_018.jsonl",
+      "sha256": "6d6fe2489047bb581530b502a0e2467a6c719f96a5586919783b899dbc72bcd3"
+    },
+    {
+      "bytes": 566078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_019.jsonl",
+      "sha256": "70a8389309bc0f0313dd501119d78f087ebc19ced798d084a82f0147234934ba"
+    },
+    {
+      "bytes": 565718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_020.jsonl",
+      "sha256": "3ef2f6a4b4d3dee4142bda5a975d06d4832c7b87a054861c997130f10555176b"
+    },
+    {
+      "bytes": 565646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_021.jsonl",
+      "sha256": "a84c08022164b3a25ed38d652a37fe1cdd88f4c320bde04ec897fe1a58608da1"
+    },
+    {
+      "bytes": 566518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_022.jsonl",
+      "sha256": "0b40433d3be95b55708b05bca716ccebfe229e1fdcbb56ab0a732d654f2b29cf"
+    },
+    {
+      "bytes": 568430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_023.jsonl",
+      "sha256": "18c51fec23def4957e1abcb1e7a8679f77efc9b3f8cfb4a4720ff5e80dccb7c4"
+    },
+    {
+      "bytes": 561880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_024.jsonl",
+      "sha256": "f30dab8abff6b56119744df11d83ad4b1e792bbdcb1b3c35f0c89e45c2052e5b"
+    },
+    {
+      "bytes": 561078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_025.jsonl",
+      "sha256": "afef3222c7936a1936e5641e0ca3f58952df16f80f805fabdc0c9e2dffd17f01"
+    },
+    {
+      "bytes": 560718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_026.jsonl",
+      "sha256": "fadf592d96c82250a7a4c796416a8a64a45504af5546ed33fd63fa075fe26110"
+    },
+    {
+      "bytes": 560646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_027.jsonl",
+      "sha256": "6993cdd28f7dad10280d254c0dfab8c8ffca8d0fa0490cf2ec0fa7004bbe6965"
+    },
+    {
+      "bytes": 561518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_028.jsonl",
+      "sha256": "2a9f9aaf32ce0e2ec8b99b044f9618ea8d23466ea248558124c10104d0d8615c"
+    },
+    {
+      "bytes": 563430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_029.jsonl",
+      "sha256": "79c78fd5024ee98c75c996ff5c87eb5f6311bd1117c2856753a5abf508b95c6d"
+    },
+    {
+      "bytes": 556480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_030.jsonl",
+      "sha256": "94a9f8a83aabaab0d7fb8d51a90c90b6b68bdc02a4d5075e47e017cc24d4efd4"
+    },
+    {
+      "bytes": 555678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_031.jsonl",
+      "sha256": "53db04a165fd5e9976d529c0fe3d84fdda03c900d5c4e3653114fe368ca788ca"
+    },
+    {
+      "bytes": 555318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_032.jsonl",
+      "sha256": "92000a4a973ecf30045d8f0a0f7f162a584be0f65a9c5d751ffffc0d10a598b3"
+    },
+    {
+      "bytes": 555246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_033.jsonl",
+      "sha256": "f73c7476500f2fcd7837d671fdb9afb3557677f0aec0cf9d564f4a3118fb3628"
+    },
+    {
+      "bytes": 556118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_034.jsonl",
+      "sha256": "07f81cacb7c5abf40c082df53db6194e53665bf4a37ab6c55d96d0ffe2dab456"
+    },
+    {
+      "bytes": 558030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_035.jsonl",
+      "sha256": "7cc1950933b5ff7c2968de0ae362e040467e5de7f84a80792f6958129f0c23e4"
+    },
+    {
+      "bytes": 562880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_036.jsonl",
+      "sha256": "c662a351af99057d1241ca44eb67ef62a68c5c6e8debd53631a7b641aca5598f"
+    },
+    {
+      "bytes": 562078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_037.jsonl",
+      "sha256": "4d20a202137e558addd8add9a16cabe970de0808bfc3195cc345f6bafe830502"
+    },
+    {
+      "bytes": 561718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_038.jsonl",
+      "sha256": "19160e87a91560390cc1d169b5b5f45c1962ed828745bd363d7674e65a1f00dd"
+    },
+    {
+      "bytes": 561646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_039.jsonl",
+      "sha256": "7fdbd2c98f0a766ce536d3ae6cb0836fdc3a7cd9afe44c3209d125b3b3768b45"
+    },
+    {
+      "bytes": 562518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_040.jsonl",
+      "sha256": "2dbb8b992f7e5e65e65cc12309a8edd01ba35b4740ffeb24d236fff120f37f2d"
+    },
+    {
+      "bytes": 564430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_041.jsonl",
+      "sha256": "ed7cd4d22d5b9c0a6ef03ef7d9112bf671eff35e4c5809222cf3a6a51fbd0f90"
+    },
+    {
+      "bytes": 570680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_042.jsonl",
+      "sha256": "2736b7e426f820b2eee5297bd16c13124a05415d0c2993d277e785c3211126d6"
+    },
+    {
+      "bytes": 569878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_043.jsonl",
+      "sha256": "40463a01261d0d7e250d07a06758d01690aac075bfd5775477836996f63de4b5"
+    },
+    {
+      "bytes": 569518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_044.jsonl",
+      "sha256": "13068dfa474a2db7b44595350c2d6369bc2e4103ebe163a076a597c5b85522f2"
+    },
+    {
+      "bytes": 569446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_045.jsonl",
+      "sha256": "d8d55fd01ecd9d801bc0d44ae4dd9005cb9f36df1fd519b7871bc1d1c4dad0e7"
+    },
+    {
+      "bytes": 570318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_046.jsonl",
+      "sha256": "18338471759dfa0d241bf98134f173e84ed1a0572e77fa116a61ee81c96f6394"
+    },
+    {
+      "bytes": 572230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_047.jsonl",
+      "sha256": "5f9e995423eb07e76fc4ce5ac0d4620a5515991da501c93500806c56233fac68"
+    },
+    {
+      "bytes": 566680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_048.jsonl",
+      "sha256": "95614aae6cfe71bd45377dd2465b136c9040e678f755862576d24db0d0365a5d"
+    },
+    {
+      "bytes": 565878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_049.jsonl",
+      "sha256": "bec900b38063aa6798e6e54160372fae47fa72180950fec86f3ca1bb5c1f2da4"
+    },
+    {
+      "bytes": 565518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_050.jsonl",
+      "sha256": "840dc28908e6749c64cab35ab20fe886b62ad1e90c3e23a3c16aff2f6f63c995"
+    },
+    {
+      "bytes": 565446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_051.jsonl",
+      "sha256": "a9a239d9e42daa9d69f10c04872b45d052c9b40590d20dd44f780fdb6016bdbe"
+    },
+    {
+      "bytes": 566318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_052.jsonl",
+      "sha256": "06a516411954e16cbfe82091db6e99794183e37d76b2dea92ec7576109d72193"
+    },
+    {
+      "bytes": 568230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_053.jsonl",
+      "sha256": "4d743c001c72e7d1521f4bfb8d448298cbcd9f8caf93a363fc522dd3c560863a"
+    },
+    {
+      "bytes": 562880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_054.jsonl",
+      "sha256": "6e9a1b0fbe41e4d370067cd4b593f3d50a5203a23c57268a1987a7829b6e772f"
+    },
+    {
+      "bytes": 562078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_055.jsonl",
+      "sha256": "7c5e59ccd716f4e53678f0faab0094dfb5fe1986455b550dde88edac7fd7b7d8"
+    },
+    {
+      "bytes": 561718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_056.jsonl",
+      "sha256": "2c636e1191d3da6aa626be11bd90a9bc24b22116e735785a86d7edeb6cc6a63b"
+    },
+    {
+      "bytes": 561646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_057.jsonl",
+      "sha256": "50d5bd042141419c9dba2251408e94f8ec4a7dac237826209f75b2d6c2df30a9"
+    },
+    {
+      "bytes": 562518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_058.jsonl",
+      "sha256": "9b11b191dc6c16f6eb84625b517625a53d51b7a774dd001e5307d36ce6dde408"
+    },
+    {
+      "bytes": 564430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_059.jsonl",
+      "sha256": "1ed2802bc635d8884975e60e2f4ab454dfcdda8fad45c09baef8f9d65f83c5b1"
+    },
+    {
+      "bytes": 569280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_060.jsonl",
+      "sha256": "f9816a2e2b802949c984f85c129e8354523a0be569b4224a409e6178714dca30"
+    },
+    {
+      "bytes": 568478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_061.jsonl",
+      "sha256": "db1569f57bb57ac19b5daad54862c83a37940969bd6b798f4a3ff7ce5b9ab251"
+    },
+    {
+      "bytes": 568118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_062.jsonl",
+      "sha256": "5606cb61e9ed25c8ba578afadc03e2323e48b38fc230ee42179366cd43072bfa"
+    },
+    {
+      "bytes": 568046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_063.jsonl",
+      "sha256": "85ed094290d3c7b44774711d7f47baae9bce18c96f4b7bcfbfb810c6bd0ea717"
+    },
+    {
+      "bytes": 568918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_064.jsonl",
+      "sha256": "4071e0a4e002e47d9dcaee6024f06b4c19c57d4dc149a318297641bf300d3130"
+    },
+    {
+      "bytes": 570830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_065.jsonl",
+      "sha256": "20fb27308daf742239405ffc3c4f41364eacacfc9dee23198bbe50014e279d6d"
+    },
+    {
+      "bytes": 567080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_066.jsonl",
+      "sha256": "15220a8d443014f811c9523842c9034b8d6d3da8877e40fa1771bfceaa659db5"
+    },
+    {
+      "bytes": 566278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_067.jsonl",
+      "sha256": "604db9c55b847a8d3ceafaebf52a2e05a9e52e46f4ab03a7f80c6f621f8318f6"
+    },
+    {
+      "bytes": 565918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_068.jsonl",
+      "sha256": "3a09b27e29672f755177aba46fe513667f642cc6735e52bd6af2ebee89aea987"
+    },
+    {
+      "bytes": 565846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_069.jsonl",
+      "sha256": "c8525d207dbd17a1724e9ed3aa208e22710e5297b61055973579c275ac6b3fa3"
+    },
+    {
+      "bytes": 566718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_070.jsonl",
+      "sha256": "161b9e8bfff5a7fcc7eabd076ddd7f46a176aaccb92ee9426513c3f13fd53ba0"
+    },
+    {
+      "bytes": 568630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_071.jsonl",
+      "sha256": "5499ea723f421a0096ddb30b76e42d96dbc004b06cb7348fc0b393aa78d4e85e"
+    },
+    {
+      "bytes": 570880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_072.jsonl",
+      "sha256": "9575a240e9244bea59a4106b7c84360ad974237ca620838445d270ac86248aaf"
+    },
+    {
+      "bytes": 570078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_073.jsonl",
+      "sha256": "7303b3ec3a37469dc5615f3730b6d31c193500c160c802d417d1461ead625e25"
+    },
+    {
+      "bytes": 569718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_074.jsonl",
+      "sha256": "5bd337c2014f22338973899a9613266b98ef6c40bb0db7e3bbad89dbb47f73ff"
+    },
+    {
+      "bytes": 569646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_075.jsonl",
+      "sha256": "b23a951235d2a1043c48e85f0175931445fabc90e8308a518b7ddf1d26f06530"
+    },
+    {
+      "bytes": 570518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_076.jsonl",
+      "sha256": "9ae377b3b3b2db1566259d5086655739597aac4d858dd2b7d3d321916cc2bf83"
+    },
+    {
+      "bytes": 572430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_077.jsonl",
+      "sha256": "3ec5d0649f1d5a31b1f85ede6ae651d004f675ab91b49ecb005dad6cda38fd80"
+    },
+    {
+      "bytes": 569480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_078.jsonl",
+      "sha256": "d1575c7c8965e83c2ad73d1b56fc770c285582a01bacc0b176394f1cb198178f"
+    },
+    {
+      "bytes": 568678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_079.jsonl",
+      "sha256": "16d3e29396ef44c499eb084d51faa542e5129ef00fa69e633bc3893d828c668e"
+    },
+    {
+      "bytes": 568318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_080.jsonl",
+      "sha256": "f23fa0666ddded326a99468c9e852ac2707aa98113bf7cb7aaf62f227287cb68"
+    },
+    {
+      "bytes": 568246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_081.jsonl",
+      "sha256": "67373887ed488819586ccfae5fd3233ecfb1ba0af5e8dfa80eab0810c91cce7f"
+    },
+    {
+      "bytes": 569118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_082.jsonl",
+      "sha256": "e973db70defa241ced4d6402ff57abea878cb4f8572ff71dbf3779271a1787c8"
+    },
+    {
+      "bytes": 571030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_083.jsonl",
+      "sha256": "4e44e96f52d67654faa16ea7fc5afa7f4a0e4bafdb92cdaf1ec584f579852e45"
+    },
+    {
+      "bytes": 571480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_084.jsonl",
+      "sha256": "1347913816c70d6253c2c33047e0975cefa5a4d07edb13619aa1bede1b17d092"
+    },
+    {
+      "bytes": 570678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_085.jsonl",
+      "sha256": "6ca1718b971b349a38b71e4e731a113290ca202d41455744aada3c641c4aa410"
+    },
+    {
+      "bytes": 570318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_086.jsonl",
+      "sha256": "95930bd825958cf93b6228f7b20be6f5f5282ed02ab067885e21672f54d4c8ae"
+    },
+    {
+      "bytes": 570246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_087.jsonl",
+      "sha256": "76bd4f5f357f16458e359b48ad00168706d4b4b2820857e59f934195fb1eca26"
+    },
+    {
+      "bytes": 571118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_088.jsonl",
+      "sha256": "16117f7e1fe5a9d7376827ca0bfa0768abe9d7355545ce8ffe54b5a79fe5f4b2"
+    },
+    {
+      "bytes": 573030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_089.jsonl",
+      "sha256": "b48fd17aff4441cd95c6c7ef486dbdf357c8952a664ec50b1d2ffcbc7218b3c4"
+    },
+    {
+      "bytes": 569880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_090.jsonl",
+      "sha256": "8b0fcce04b3fefeafa048619d71c0fe9a528d556d4a50b0b41cec3f9d0a7bf59"
+    },
+    {
+      "bytes": 569078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_091.jsonl",
+      "sha256": "1978e38823ffae65cfc40c3232fdebecd715754075079141f0e5fea4609ef30b"
+    },
+    {
+      "bytes": 568718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_092.jsonl",
+      "sha256": "4195fb69764de429c7af557dc1b5591317fc2025da9f22378769a27467026aa2"
+    },
+    {
+      "bytes": 568646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_093.jsonl",
+      "sha256": "6612eaf3136695bd65fd376c291f4271736d406fda0ad8d4d28ae3e9b5fa572c"
+    },
+    {
+      "bytes": 569518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_094.jsonl",
+      "sha256": "1342fe8ca7d3549088d607dce92ef64f43b98575a3eab873894c0cc99fe2641b"
+    },
+    {
+      "bytes": 571430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_095.jsonl",
+      "sha256": "6d8391f7990125f36d2389eefd7278a35429b276cde90185a77061f614f93e22"
+    },
+    {
+      "bytes": 570280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_096.jsonl",
+      "sha256": "42ecacf6479b19f7e08b21917179c770d6c9d99fc22c624502408af6a30515f4"
+    },
+    {
+      "bytes": 569478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_097.jsonl",
+      "sha256": "21c0afd3ea6c6a69bb34642886f9e4852361c7a885b0e41e591cc0c0303dc329"
+    },
+    {
+      "bytes": 569118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_098.jsonl",
+      "sha256": "8908eab20d719b6904c97823118ba4a38f81e3010f962a5ed28131d6e291513a"
+    },
+    {
+      "bytes": 569046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_099.jsonl",
+      "sha256": "498e249a82306f69c12419216bd9619446feca5984bf68c797cee77d08594128"
+    },
+    {
+      "bytes": 569918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_100.jsonl",
+      "sha256": "e4c6dd968381508218637d0916dac0befef0824d1660be2652bdec86740c665b"
+    },
+    {
+      "bytes": 571830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_101.jsonl",
+      "sha256": "5d2637e36271966c2d2ace91ff862eec2e08055ada1ac6380fd56ca0b16582ae"
+    },
+    {
+      "bytes": 569480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_102.jsonl",
+      "sha256": "fe72e347a118b1a42ac6630ab5138e33658fb3892dfa93be11d57133cd683b43"
+    },
+    {
+      "bytes": 568678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_103.jsonl",
+      "sha256": "4ce2c2f601baf9900b7b1cdae917bc2afc70dc8ea644819b2d290bdac29b89bc"
+    },
+    {
+      "bytes": 568318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_104.jsonl",
+      "sha256": "2852a4ba66c4bc3f03717f719dfd2ea94597fc7faca9276762ad048bb2e1f1ab"
+    },
+    {
+      "bytes": 568246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_105.jsonl",
+      "sha256": "9757970aa840e6b6cc6535d9f53b4c3ad17c22543752b92f5506ce2309da2ef3"
+    },
+    {
+      "bytes": 569118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_106.jsonl",
+      "sha256": "b400e67fed0726ba761096340064b2c22f39c06367716961a1297fbd877bed43"
+    },
+    {
+      "bytes": 571030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_107.jsonl",
+      "sha256": "3238bb656b039b2fc9cf73a5d2ef8b8c7953a1689cb78b3084fa449ee7428a9c"
+    },
+    {
+      "bytes": 561680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_108.jsonl",
+      "sha256": "14c12fcbc906c890079bfa92da5ff85346d7338c010711a2ac8e4c240734e576"
+    },
+    {
+      "bytes": 560878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_109.jsonl",
+      "sha256": "8cf06f1d492583137946a6fc0a544daa43ab0cf47b7c60d8a7554adce04aa19f"
+    },
+    {
+      "bytes": 560518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_110.jsonl",
+      "sha256": "187b4638857902bbc0ca3a9a084044d60bd90676d7777ba39dc5a84b67ab0ff6"
+    },
+    {
+      "bytes": 560446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_111.jsonl",
+      "sha256": "4ef35cd9e452669848fa793ae9c411cbedd8a429a842b418c0833770c86d349d"
+    },
+    {
+      "bytes": 561318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_112.jsonl",
+      "sha256": "6bdc50943184ceccb0b4f632000e7690a67d64d7bee8533f72641b8a6c9f76be"
+    },
+    {
+      "bytes": 563230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_113.jsonl",
+      "sha256": "fe04a4463fafc063acab406a3fb582e27b3d9832fafb4f23ff257514d2785a66"
+    },
+    {
+      "bytes": 563880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_114.jsonl",
+      "sha256": "c483aa16ef7ea692585e33c02ecdba32e598a436cf907685bb89540f26be2e28"
+    },
+    {
+      "bytes": 563078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_115.jsonl",
+      "sha256": "0831fc88103d89a369c49dc225efd3842ba3499795c6985e939b34e1389efdaa"
+    },
+    {
+      "bytes": 562718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_116.jsonl",
+      "sha256": "84b6381ccfa09b8a729a4b3e50bf053e4e4dc8839a3f4950b31bb98c96a0bd47"
+    },
+    {
+      "bytes": 562646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_117.jsonl",
+      "sha256": "281e328dd7c5f03a71140b351a861448ec62a9f1b3b4f8b838cf0a48d09f3a74"
+    },
+    {
+      "bytes": 563518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_118.jsonl",
+      "sha256": "c1d5af9ebb2512d5bb886f60d96d58feba1b78c44c03d5690c775608b7ad847e"
+    },
+    {
+      "bytes": 565430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_119.jsonl",
+      "sha256": "2b44fb853241ae80c77d6b0b9ece608cd2df77f1e7cc6557af803cce73ac1c8f"
+    },
+    {
+      "bytes": 568280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_120.jsonl",
+      "sha256": "9376588a1bb9f9638bb5a7324f959b97275846fbb83f2c4fa0eabc1be34c47d4"
+    },
+    {
+      "bytes": 567478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_121.jsonl",
+      "sha256": "64bfed79d0b2838a8f661f91c5c434e5a7b67a9599396e1985f79f67d4fd73f7"
+    },
+    {
+      "bytes": 567118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_122.jsonl",
+      "sha256": "1775193f8138a3d1de8b6d4764f84b5744c337380d29d842ba0aacf79d2520e5"
+    },
+    {
+      "bytes": 567046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_123.jsonl",
+      "sha256": "4759fb16f80beb4c9e7eaa4dbbae71fa9cb90fd144e0e64732039d3b22b56dc0"
+    },
+    {
+      "bytes": 567918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_124.jsonl",
+      "sha256": "a69d1aed8bf4bf961a5b8bc3c7bd2ba85add23608cedc9f3c8c472fc91516b39"
+    },
+    {
+      "bytes": 569830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_125.jsonl",
+      "sha256": "68770f620be86a04a59c1c2cf7908405ff761013522bd0d7ec187da82961a0a6"
+    },
+    {
+      "bytes": 561480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_126.jsonl",
+      "sha256": "a6d0b3bae929fd752107a642a03caeaa9d73b8c84db27ddc7e8f7365de36d7db"
+    },
+    {
+      "bytes": 560678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_127.jsonl",
+      "sha256": "3f03c40adf6d7644fbbab3e115b1ec05dc8729f38dca9a69d3a3a980c1397ac6"
+    },
+    {
+      "bytes": 560318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_128.jsonl",
+      "sha256": "09b6bec8103fd0200d71fae10b823625683b87b137993d9d72938a607ad91310"
+    },
+    {
+      "bytes": 560246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_129.jsonl",
+      "sha256": "e6d9f2dfbd8cb85d81a43324e1d3060e1355de9bb85063c30d016af571ed8383"
+    },
+    {
+      "bytes": 561118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_130.jsonl",
+      "sha256": "907d436ad180d62b3a15d4effb926afe521d8ed0a841b527c581fc570002fb37"
+    },
+    {
+      "bytes": 563030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_131.jsonl",
+      "sha256": "6ea2a5833020078a22fdb542412e0ace134af8eb6b5287adbe4a7f69ea7e6a43"
+    },
+    {
+      "bytes": 574280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_132.jsonl",
+      "sha256": "3a11fefa36432f39c9dd53e33cab26ab0a40966a19a4d294af5a1f8308922c5d"
+    },
+    {
+      "bytes": 573478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_133.jsonl",
+      "sha256": "e0e9fb2cbfbb4914b9d4e7517777b50aba336f2810d8dafbafd5f6de7247bd07"
+    },
+    {
+      "bytes": 573118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_134.jsonl",
+      "sha256": "30abdbdedfd217db24ca192de945e23c9b203817c81149be58e5ac4020af0fb1"
+    },
+    {
+      "bytes": 573046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_135.jsonl",
+      "sha256": "1af414c5309e6f6c15070f9a43c97c7e46006145cfedfcab3c942cb3a2a4abb6"
+    },
+    {
+      "bytes": 573918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_136.jsonl",
+      "sha256": "dd9af64b9b3a8545d2448d4f1d9c3046728efd33dd7a0a01b6a1086dba75c5b9"
+    },
+    {
+      "bytes": 575830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_137.jsonl",
+      "sha256": "799fbbcca6b5e5da29db3ba001baf20ddfc29227796c8adeb60a6032df3ba0c1"
+    },
+    {
+      "bytes": 572680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_138.jsonl",
+      "sha256": "ef10705630f7e4d194be9cc61077bf391c0b1a848404243696c23b2a856df7bd"
+    },
+    {
+      "bytes": 571878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_139.jsonl",
+      "sha256": "759c581c1b2c1da3aaa7721082e3aab5851695b6b7a39f052c7bcd62c5cae35a"
+    },
+    {
+      "bytes": 571518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_140.jsonl",
+      "sha256": "bec6df0172c79af29348643c51b860d3c14c15fb1e4a6953694ef50f70c4a4cd"
+    },
+    {
+      "bytes": 571446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_141.jsonl",
+      "sha256": "6bf66c5d5deca106e6a2e42798d7a9eb055a5608a5237494a07bd2537f27853a"
+    },
+    {
+      "bytes": 572318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_142.jsonl",
+      "sha256": "65e6219d059566dbfe1e922ca0fd69ccb08d4f6194c8d9d0284e74813e595ffa"
+    },
+    {
+      "bytes": 574230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_143.jsonl",
+      "sha256": "8c95979f568fd543ce867f8b38110dbd13e02dfe5b5f1d9e3cdf84aa730a2131"
+    },
+    {
+      "bytes": 562680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_144.jsonl",
+      "sha256": "f90c9ee506114d2c391ecddc7e3bb4e04ec1ee427d997c9f5fd15643461b8619"
+    },
+    {
+      "bytes": 561878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_145.jsonl",
+      "sha256": "3ca4aff6bb9ed70e3e64db4393d799d0cfe22a54dd7cb5a7c3aaa360133aefb0"
+    },
+    {
+      "bytes": 561518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_146.jsonl",
+      "sha256": "04adeeb2d3cfd4b72c9d3782ab8b79cb33daf40d1d3289bf70cb92e2c7ca3818"
+    },
+    {
+      "bytes": 561446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_147.jsonl",
+      "sha256": "51c20a50b6892ddcfe31283f9d1c66e1bf797b44409a58326dfb1930196495a4"
+    },
+    {
+      "bytes": 562318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_148.jsonl",
+      "sha256": "4376e5ebbe5788d477bb8c14c9e91d7a7b3160ff50166988639e19e4f5ebf498"
+    },
+    {
+      "bytes": 564230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_149.jsonl",
+      "sha256": "4ef65b7c8bdfce1e5162c275e9419b4ef600c9d5acb0c69eb08d66b61533abe6"
+    },
+    {
+      "bytes": 560680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_150.jsonl",
+      "sha256": "5e34a70cc95bd1d4e749846b54657d5c56964a6acf5440543956f41428b1b2aa"
+    },
+    {
+      "bytes": 559878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_151.jsonl",
+      "sha256": "df32523fd2584a9a1e509e8d44cf2756c6428b1a638e17e2963059fd14ca7167"
+    },
+    {
+      "bytes": 559518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_152.jsonl",
+      "sha256": "5e669609cb8daa1dd6d49cb7784394d3cb82c79b3b96c66dfa8f34661c42a8aa"
+    },
+    {
+      "bytes": 559446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_153.jsonl",
+      "sha256": "9b278c793542ef94e27708f34ecac92c0799e6b65468ea4d573e5d6c77499f6a"
+    },
+    {
+      "bytes": 560318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_154.jsonl",
+      "sha256": "c05a0ca7ded1d2dc6d68d804783ac39a205c438adee97f41384b7600b17316ba"
+    },
+    {
+      "bytes": 562230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_155.jsonl",
+      "sha256": "c532b944aaf49653d5cac2328ca41212fd7c8320b78fde0e671450ae34850dc6"
+    },
+    {
+      "bytes": 566880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_156.jsonl",
+      "sha256": "88e278f0b78577648b90f4eae4d7c48e82ffb5f906ec9eb8b85dd086f09f36c9"
+    },
+    {
+      "bytes": 566078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_157.jsonl",
+      "sha256": "afe894417cd1175fb64cb3573eb64d7269ca5651c8f2227c58262d5a34401961"
+    },
+    {
+      "bytes": 565718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_158.jsonl",
+      "sha256": "91f1437817b536584b2250498f6bcf9c0e9108d37d3dd58141a0c1a2370d67e4"
+    },
+    {
+      "bytes": 565646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_159.jsonl",
+      "sha256": "52845dd31978be48e757b41bd74e408bf665fbfbce7151d9b0073fed1936a3d5"
+    },
+    {
+      "bytes": 566518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_160.jsonl",
+      "sha256": "d77cf67e59b96ce71530a4f45055257bc94c798fda4ecc2261713eef388b9c95"
+    },
+    {
+      "bytes": 568430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_161.jsonl",
+      "sha256": "6c9bf511b1c657a75f7fbfece03cbf69be339b1f8a42b0f555bf69b4bc96b2c6"
+    },
+    {
+      "bytes": 558280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_162.jsonl",
+      "sha256": "020a2a2585eb6f6389a22b7e5f01290fef5603a4b5ff739841af54ffe370b1cb"
+    },
+    {
+      "bytes": 557478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_163.jsonl",
+      "sha256": "539d6a7014f2ee8f9e4cfe2f2eea5226568a009ca4d1a8be4bc88ef560351335"
+    },
+    {
+      "bytes": 557118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_164.jsonl",
+      "sha256": "ec099f95a39767289e27c62610266d8d2c99518bebb135ffe3b20daf49bb6472"
+    },
+    {
+      "bytes": 557046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_165.jsonl",
+      "sha256": "619c294e6011945ea7cd41ba46d04632ecdde2943c508056c5cd9dafbd25b527"
+    },
+    {
+      "bytes": 557918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_166.jsonl",
+      "sha256": "1c3cf55726ec649e1378859345ce95695fc80cdf0618aeffcb3e7b6112bc4cf0"
+    },
+    {
+      "bytes": 559830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_167.jsonl",
+      "sha256": "9a04fa5c9d1d64f8cd91319e97d2a6cf2b079ab5df283cb1aff387ac9dcf79f2"
+    },
+    {
+      "bytes": 563080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_168.jsonl",
+      "sha256": "b7ca001b2ab0367f5f8e560b843d0392d9e5eb8fde0edebc2aa7694be00bc3b5"
+    },
+    {
+      "bytes": 562278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_169.jsonl",
+      "sha256": "4eb410059749eba8ed89d5dff49f655028779330363ab41d012815162240d8ed"
+    },
+    {
+      "bytes": 561918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_170.jsonl",
+      "sha256": "b43b8c37e63539fdeb09ff35f3b8d22e09969ec65bc206e435aa1a07dc23e535"
+    },
+    {
+      "bytes": 561846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_171.jsonl",
+      "sha256": "4f984f7db7be6bc68e9f49317608adb81a9e6e670504e33022771b5ef9f3f6b8"
+    },
+    {
+      "bytes": 562718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_172.jsonl",
+      "sha256": "c6aa589d7aadc73d20fe5ebcbc32429c74de1846b7c0a16948eb7e3ee5731735"
+    },
+    {
+      "bytes": 564630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_173.jsonl",
+      "sha256": "7c59f0a976a27a17f24db06a2a549471f6bd8a132c37e0c161e50b1848cb5f9c"
+    },
+    {
+      "bytes": 557480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_174.jsonl",
+      "sha256": "5fe6415324a03d41ece35b805e7de15a57d60d8aee23d2c639d43048ad8a2d0e"
+    },
+    {
+      "bytes": 556678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_175.jsonl",
+      "sha256": "b689f5506cbb089a3f17d54eea19db6e8b423f1d270c361f069db4d9a592c60c"
+    },
+    {
+      "bytes": 556318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_176.jsonl",
+      "sha256": "bf58926928b06ee8b8e7daa51264496ebdc767d9a72d6051387cc840b2408ff8"
+    },
+    {
+      "bytes": 556246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_177.jsonl",
+      "sha256": "915bd5c9788eacb6ec599b15630ac0283679f67ff0a006700e3590d8a9e2fe3e"
+    },
+    {
+      "bytes": 557118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_178.jsonl",
+      "sha256": "d3c3ca62a5ca1362e86611b2ae7047c0455886f195e13bda73e4e733e335a335"
+    },
+    {
+      "bytes": 559030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_179.jsonl",
+      "sha256": "d7f6c6f4db4d4678fe78cd247ad513594b1009ef9d5fe60d61684b62ac0dacbf"
+    },
+    {
+      "bytes": 565280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_180.jsonl",
+      "sha256": "c79cc5643b067cfcfbe70345a74d9ce68e7efd8998a5a3e54f2984447b1d2afd"
+    },
+    {
+      "bytes": 564478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_181.jsonl",
+      "sha256": "32daa0c9d08e33ca8078be6a4d99cc063662ad71358b03059df0c02685715254"
+    },
+    {
+      "bytes": 564118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_182.jsonl",
+      "sha256": "eaa126d8cc2c3c51bd288c404d2df9006d18889138c377da182ca169c5dba016"
+    },
+    {
+      "bytes": 564046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_183.jsonl",
+      "sha256": "fa8830947f83a4965f9fe228ee7e28871adeace76b16595b821fda1f8f7d4593"
+    },
+    {
+      "bytes": 564918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_184.jsonl",
+      "sha256": "6117f906d20a66513a931acbe135c078ff9bb325ef7b7015c3308a5fccb85000"
+    },
+    {
+      "bytes": 566830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_185.jsonl",
+      "sha256": "6c9a554f8eaa3a3380a930bc478c8867cbaebff1a1a00039138987708ead5c6a"
+    },
+    {
+      "bytes": 566080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_186.jsonl",
+      "sha256": "db2603d6fd6b2198d3fe0e53f88481e44b2f634ce91b1a841ce5de8d28fe7979"
+    },
+    {
+      "bytes": 565278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_187.jsonl",
+      "sha256": "bbe4fe9514d100849d4897a01a8e85ffaffa7f07b6090cba01313ba2901c3ceb"
+    },
+    {
+      "bytes": 564918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_188.jsonl",
+      "sha256": "52bc96002f49391ec8fd49793feb016f6cf7e2378a4836376821cdf54ee007a8"
+    },
+    {
+      "bytes": 564846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_189.jsonl",
+      "sha256": "4216136e865329d4864bfe83205755df955d84e51c4cd12098d9d2d0d27541b5"
+    },
+    {
+      "bytes": 565718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_190.jsonl",
+      "sha256": "2b112f2ded208de15dd489fa84143b16bfe8d3b4dc5744b793b45d47c521d491"
+    },
+    {
+      "bytes": 567630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_191.jsonl",
+      "sha256": "be534f356eea6e897def002add7c3bae77607415561a9c11eed5b150250ca7de"
+    },
+    {
+      "bytes": 563280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_192.jsonl",
+      "sha256": "3d28c1fcdce064e40b65b8eee95d9c048538e12fce55a53e9230db57092c3272"
+    },
+    {
+      "bytes": 562478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_193.jsonl",
+      "sha256": "8854dacf78d5497fa1d83c001b9d5be7d7c96971c91baa71080faa5626723360"
+    },
+    {
+      "bytes": 562118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_194.jsonl",
+      "sha256": "62530eaa5e856e6ae56870d85b806ebe010192042ea840c6ed12ce13c0519518"
+    },
+    {
+      "bytes": 562046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_195.jsonl",
+      "sha256": "c6efc249d032725182652a9372988a26a9457598d3a53f1a0da86ba719823ca4"
+    },
+    {
+      "bytes": 562918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_196.jsonl",
+      "sha256": "d15f9de572da6dabdccfff63ec9bc052644d0351ae9e2345464b762b06b8d851"
+    },
+    {
+      "bytes": 564830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_197.jsonl",
+      "sha256": "4a428ccaa1388b3bec85887a9ce99dbb28c8a5b65bab3e5e5356959a44bdb10f"
+    },
+    {
+      "bytes": 565680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_198.jsonl",
+      "sha256": "a7c7f6624c6cb29005cbc4d0d2d157c87d5a1ab92f562b8ae260999e27efa486"
+    },
+    {
+      "bytes": 564878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_199.jsonl",
+      "sha256": "759f8c0568fd7e7835f4508393188495cf9bfe1fa3d3b93eb46d5384864a7976"
+    },
+    {
+      "bytes": 564518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_200.jsonl",
+      "sha256": "29ed89a0059feba1cd551057fde507bf610c3119c0672f08a42974413826c2ac"
+    },
+    {
+      "bytes": 564446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_201.jsonl",
+      "sha256": "739ee30d07a7084125ec8878d2da283afa0f2793c3052e196e29438ad9700fa1"
+    },
+    {
+      "bytes": 565318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_202.jsonl",
+      "sha256": "73c554cb237c83ff2714a6acdbae4b32bcbc3aaa9e5eef2abf635225b8588502"
+    },
+    {
+      "bytes": 567230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_203.jsonl",
+      "sha256": "71fd98f715a45fea23b03412368365aa5b44c7a5b002190627decd62b4161dde"
+    },
+    {
+      "bytes": 562880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_204.jsonl",
+      "sha256": "d1961343cbb47b188c5d2e40e9ce7a012ba4e818f03fc5ffd3f52ade369b5712"
+    },
+    {
+      "bytes": 562078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_205.jsonl",
+      "sha256": "abab59cc79700ff5a51d16935604964c04a66e76e41936ad96c2ff70b6e9206c"
+    },
+    {
+      "bytes": 561718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_206.jsonl",
+      "sha256": "41731370290d7385c3ba48db2fa4852a63266168724c2bf89795cf87f40cdcd7"
+    },
+    {
+      "bytes": 561646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_207.jsonl",
+      "sha256": "e60304154f7b7c306437d12a54ef2397db99659c8adadd5ad5f4f98a86614548"
+    },
+    {
+      "bytes": 562518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_208.jsonl",
+      "sha256": "3cd6a4a65b165b147ec96a9f3826d560d2bf09eebf1f109faed8081d095c3ba0"
+    },
+    {
+      "bytes": 564430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_209.jsonl",
+      "sha256": "ad6cd02f29e7dd7f93b3bf308e8380d1d1c6c6a2079ccd884fcc6da83d7a6455"
+    },
+    {
+      "bytes": 557680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_210.jsonl",
+      "sha256": "b0a8de58698063a34604dc58ca9f261f8ba6ad60123f3d690960952a33cc913c"
+    },
+    {
+      "bytes": 556878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_211.jsonl",
+      "sha256": "381899b10c023747bd6778f862432cca138ae0353dd5507d02e8a2df4a1b77b3"
+    },
+    {
+      "bytes": 556518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_212.jsonl",
+      "sha256": "43fc5903e9ad73c47dd5953e56ae2f0052b69e91282f94064780b2d87d10f005"
+    },
+    {
+      "bytes": 556446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_213.jsonl",
+      "sha256": "97fe7a3131a44a49a6e24348da19709e4c8340ff6d2ff7cf9adf02f266002e29"
+    },
+    {
+      "bytes": 557318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_214.jsonl",
+      "sha256": "648a6ce2af1eed460e874411d6039c4e8f349b6528f10231e70d85731648c37f"
+    },
+    {
+      "bytes": 559230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_215.jsonl",
+      "sha256": "fb2a2ce837e037e77712eb244b9d0942db194c1dd7acf3d698395d1b2209cf42"
+    },
+    {
+      "bytes": 567480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_216.jsonl",
+      "sha256": "785e667b5495f15019b5ec22d257198ad14aead7fcd480e9e37d45114bca8b1d"
+    },
+    {
+      "bytes": 566678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_217.jsonl",
+      "sha256": "98cde9d85500361f060dc5f898b3c1d67328b9bac8cb8af46c17ed6f1d5fd014"
+    },
+    {
+      "bytes": 566318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_218.jsonl",
+      "sha256": "1d87ba2677f0778a2c2833e9038f9769cf64c9207d2c05abd3264cd5c9f54aa0"
+    },
+    {
+      "bytes": 566246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_219.jsonl",
+      "sha256": "c420f775dc7f498772bd7a261e0fc011a8dd8a286a495430ceb698e63336abc5"
+    },
+    {
+      "bytes": 567118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_220.jsonl",
+      "sha256": "ea8bf807fa3206b6ec1c85e47492356b75e625c0efabcb00bbbf1d9845fc860d"
+    },
+    {
+      "bytes": 569030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_221.jsonl",
+      "sha256": "686105ecaff0166cfd26d6e332b09065ede9d4a402c73f9061dccbecccfe58e4"
+    },
+    {
+      "bytes": 566480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_222.jsonl",
+      "sha256": "5a71a484cb79bca62d73c6e1476b43fc8d5cc1ebf86ba31e6a28937e856d9346"
+    },
+    {
+      "bytes": 565678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_223.jsonl",
+      "sha256": "5a6bca055f3c62cf22b9438852ed149b34de624fbba6376eae33ef58db67ebc2"
+    },
+    {
+      "bytes": 565318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_224.jsonl",
+      "sha256": "bd6a0b03f0d95fac0b9243388f989d71dce3ccaa953e3268bd3082ee9572fd8c"
+    },
+    {
+      "bytes": 565246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_225.jsonl",
+      "sha256": "dc070eb17572ad1c3ef4e4bbe21eb5b122b0559ee479e191529b2b0f8fe48173"
+    },
+    {
+      "bytes": 566118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_226.jsonl",
+      "sha256": "5322c877a79f3fc43def1ef542b5a9f8688f8186ea9df137a0f1a6fa747fe994"
+    },
+    {
+      "bytes": 568030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_227.jsonl",
+      "sha256": "cd905546fc5f84c78907c5136c0a4f9559ba4c61a48c25efac229c3ecd023eb9"
+    },
+    {
+      "bytes": 572080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_228.jsonl",
+      "sha256": "8336fab44595521428d82224687bb2ebea62d460e4e129f894f0bdd78da6e585"
+    },
+    {
+      "bytes": 571278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_229.jsonl",
+      "sha256": "25da2a340b1b434dda1c7cf52e94f0a834c5be87b23d2829b86cd66639b67ac3"
+    },
+    {
+      "bytes": 570918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_230.jsonl",
+      "sha256": "80dcdaafc81215182e1f8de3f81a508fbed62db1bad0e630649be184da2bf1a0"
+    },
+    {
+      "bytes": 570846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_231.jsonl",
+      "sha256": "d5e653eb2295d1f0a1d77a6cb0fb77b16b467699bd4a08bc9b747eb04d4b95fb"
+    },
+    {
+      "bytes": 571718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_232.jsonl",
+      "sha256": "f4eafdef9796e81e3066220eb180f423283d3894071cf9868b48fde03c5175d3"
+    },
+    {
+      "bytes": 573630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_233.jsonl",
+      "sha256": "ea0b9b876340f93508fd107dd072b8644170223794b4ea7db55bbe90978942ac"
+    },
+    {
+      "bytes": 563880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_234.jsonl",
+      "sha256": "ba71ed38ea308e663f7040f54560ace397f0ae6e488d771b76ff77dd4e87610d"
+    },
+    {
+      "bytes": 563078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_235.jsonl",
+      "sha256": "8d380719917192cf641a1bee127797db4af1682163dfbd1248e686b6b640abd3"
+    },
+    {
+      "bytes": 562718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_236.jsonl",
+      "sha256": "b6dd8d03f0fd4c31978e3c05346df5bad5180f54c4ca783657fca764fdc8038f"
+    },
+    {
+      "bytes": 562646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_237.jsonl",
+      "sha256": "444c95d0c961c729d186c582e2d9af19c35ddc03db3581a8352bf9fd24994845"
+    },
+    {
+      "bytes": 563518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_238.jsonl",
+      "sha256": "cc47f427f3a7bdb32e3f63417a651ad7674b3497f328e8ba9938efa6a056f0a4"
+    },
+    {
+      "bytes": 565430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_239.jsonl",
+      "sha256": "44220fd0e3498b21fec528c785a386d3763e0382b216a0e55c904b67c2a57c7b"
+    },
+    {
+      "bytes": 564280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_240.jsonl",
+      "sha256": "26d85097c69801fc80110fa26257602b9f957de65ea3a8308a9fb661f038f064"
+    },
+    {
+      "bytes": 563478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_241.jsonl",
+      "sha256": "491381ae1660357a94791b78d3fce631db1fc977889015b8d8d5909312a855ec"
+    },
+    {
+      "bytes": 563118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_242.jsonl",
+      "sha256": "ffaa46d20fc74baa51e1cbc785bd32b179e03f8afce4b4dafba8ee17a9812d79"
+    },
+    {
+      "bytes": 563046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_243.jsonl",
+      "sha256": "660caeff1e2f91649933b591edd5aba8abfcc994c91717749cc8b8e379cad71c"
+    },
+    {
+      "bytes": 563918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_244.jsonl",
+      "sha256": "904bae5b69b2f1dd18ad50ed0dc7441200ccbeba12b11630099baf97dfdab5a3"
+    },
+    {
+      "bytes": 565830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_245.jsonl",
+      "sha256": "a5e2283d08e1bb891d0be21fdb4190adb60927ff4f26cc16a78aaaf07388bb74"
+    },
+    {
+      "bytes": 570680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_246.jsonl",
+      "sha256": "0eeec86c7d2c23e6d1d74b264d02812ae87fe103e645fe2fb33f752f1a0e51aa"
+    },
+    {
+      "bytes": 569878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_247.jsonl",
+      "sha256": "04da6887caa974fc01249754d1e4d64b1071e35e773e4e328743736a5b553016"
+    },
+    {
+      "bytes": 569518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_248.jsonl",
+      "sha256": "f19c35188448786ef2243d82d10b38f1deec8d6a05b32d6dec99bdad954280eb"
+    },
+    {
+      "bytes": 569446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_249.jsonl",
+      "sha256": "8d80cea87edc7140d9963be2c8945c26ecebe25398534ab54cb6df850c2ecdd1"
+    },
+    {
+      "bytes": 570318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_250.jsonl",
+      "sha256": "993346cd8646a167c6c4416b50884eaaa4f9eba66dd17928bd163bc066d20b01"
+    },
+    {
+      "bytes": 572230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_251.jsonl",
+      "sha256": "198cebeb7b7f1d63b8408265360ddf106c2d458abb218014371c4e07ad026902"
+    },
+    {
+      "bytes": 572080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_252.jsonl",
+      "sha256": "11e499a0b7ca65213469615b78f0b68a81900e3fff98ff921da83200d6db1b74"
+    },
+    {
+      "bytes": 571278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_253.jsonl",
+      "sha256": "4b4dd5fe9594fa4b5ea2f77f9bb6dab30a4c04bb86fa472676d6a72fa0b71cfc"
+    },
+    {
+      "bytes": 570918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_254.jsonl",
+      "sha256": "82688d6829d8aa1498df6cf1902f93e2f43dfe373ebb6ab418a46240b55d023a"
+    },
+    {
+      "bytes": 570846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_255.jsonl",
+      "sha256": "d8d84ebb86416bf83b980fa76aae5406425a083c743bca5b1c1374007e1d8968"
+    },
+    {
+      "bytes": 571718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_256.jsonl",
+      "sha256": "1ba86a7f5ff7a76f51e6a820c23ca085ec61b47e487b6cbc1dcab5d2fc42d30b"
+    },
+    {
+      "bytes": 573630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_257.jsonl",
+      "sha256": "6feefb43a478930afc2cb48a88f29b6cded2048364ec3044187dfe283cbf9152"
+    },
+    {
+      "bytes": 561880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_258.jsonl",
+      "sha256": "bb1e19c8d685ef9f5cb608f792439970618e7116ece6527f032b3570a6adebc9"
+    },
+    {
+      "bytes": 561078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_259.jsonl",
+      "sha256": "3277b297c25c51e20df97d9a631696fce5924c2885427fe7b749d8c96d256e9d"
+    },
+    {
+      "bytes": 560718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_260.jsonl",
+      "sha256": "73bff5f3ee138c7af67454802ee532d3537c235f122b52fb0ffcbb10df2058d0"
+    },
+    {
+      "bytes": 560646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_261.jsonl",
+      "sha256": "1aaf0a0de8eebda13c2a52284bcd71c0d35de74ffbbc68f514a330d7e619df1b"
+    },
+    {
+      "bytes": 561518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_262.jsonl",
+      "sha256": "568378c8bfb19d5e660627d5b2731bec54d080cfbd213ad93e7b99801e453337"
+    },
+    {
+      "bytes": 563430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_263.jsonl",
+      "sha256": "9fa2bb82e952c9e2ea9cbe487f048ddf0d2e51a5cd131230384bbd71917c49f2"
+    },
+    {
+      "bytes": 568280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_264.jsonl",
+      "sha256": "af789c59b53dccd35881dd3cdfa0356cf407ac25a2cc4c365a949a0619874e2b"
+    },
+    {
+      "bytes": 567478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_265.jsonl",
+      "sha256": "99fc982e6fee211a43790169ee47b1bad801627c0df63d77c66ab8d54482b4dd"
+    },
+    {
+      "bytes": 567118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_266.jsonl",
+      "sha256": "8a99e34b9844c68080063c2a5706b1dd4afb19280ac5dd9068ec190d8d90cc03"
+    },
+    {
+      "bytes": 567046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_267.jsonl",
+      "sha256": "b97b5ba62c411d7a9f7afb0fbbbdeac80f5d1acb641457928997550ae7a61e01"
+    },
+    {
+      "bytes": 567918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_268.jsonl",
+      "sha256": "ddd583a6899839c60e3dfa012583e2bf96bbca4385aa7cf68a56d9092549a430"
+    },
+    {
+      "bytes": 569830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_269.jsonl",
+      "sha256": "f9d77d43e87a96cc9ecc3e2a737ee3e9ae45eaccb9e2d0a7f64d54c74573ade2"
+    },
+    {
+      "bytes": 564880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_270.jsonl",
+      "sha256": "30701e21482e722fe0f938b365926870c98ba4befea91ddf6ff98a7e0319ede0"
+    },
+    {
+      "bytes": 564078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_271.jsonl",
+      "sha256": "ddfcf812cd88e26f49efec1caabb4600ea6ba70626913ea969cb67367d63f3e9"
+    },
+    {
+      "bytes": 563718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_272.jsonl",
+      "sha256": "2cece2da6310dcd267f23a05b26983725ec36ba32587e96b47f5d02e654da041"
+    },
+    {
+      "bytes": 563646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_273.jsonl",
+      "sha256": "5b1d04abc97633395c57d0a4206da6dab8cd004ccc1a3576c9be0d74168dc676"
+    },
+    {
+      "bytes": 564518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_274.jsonl",
+      "sha256": "1f631f9af9a313215f1135d2543e9fcc489824783a1dd97e41af90c6873548b9"
+    },
+    {
+      "bytes": 566430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_275.jsonl",
+      "sha256": "a88345469d37a399b2c0cbab66c577c4d5479b2e3ee693483d545275067939e8"
+    },
+    {
+      "bytes": 565880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_276.jsonl",
+      "sha256": "6667318d8fe5fff22c6703af75136beda74a1ecee28feae143ec572164114f72"
+    },
+    {
+      "bytes": 565078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_277.jsonl",
+      "sha256": "2e00d66e62bef2c9baf473b4ecac8d523dcfc1132a8cfc2f4e8436b78f9f4b10"
+    },
+    {
+      "bytes": 564718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_278.jsonl",
+      "sha256": "28b6cea9ea11306a24f2517737304fd0ba016d3bba6e6b022c95c14d08c053b8"
+    },
+    {
+      "bytes": 564646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_279.jsonl",
+      "sha256": "f3d78f096572ce9c1db68ca065eebd8f61f5cdef1e562d582043f000fe12f645"
+    },
+    {
+      "bytes": 565518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_280.jsonl",
+      "sha256": "927938bd20bd29fa6eb51d5b715e75be65909704a48893a60440b8b3d927668d"
+    },
+    {
+      "bytes": 567430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_281.jsonl",
+      "sha256": "3ceb2d93e2efcd1804a2644cb9592e626ec30108183d269f7f4d03dfc5be53cd"
+    },
+    {
+      "bytes": 562680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_282.jsonl",
+      "sha256": "309f4310fdec488ccb390cd6b0d30e8162a45a2df2bc960528d62576113929a7"
+    },
+    {
+      "bytes": 561878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_283.jsonl",
+      "sha256": "f8685fdbc7fa39757ba308b5b40c15ac9c49f33dbde9c1856923be9448b239ab"
+    },
+    {
+      "bytes": 561518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_284.jsonl",
+      "sha256": "f3060462b6b799e924e6cc69cc96666b7360a7e65ab990b1720f6bc25e31e88e"
+    },
+    {
+      "bytes": 561446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_285.jsonl",
+      "sha256": "058b153703e4ddb53cb47008d825e5c3c685bd29fc87c8711dac5fd0bae5893b"
+    },
+    {
+      "bytes": 562318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_286.jsonl",
+      "sha256": "d42cf891ae60dc9a0c1993090c5ee98c1a5a1fd73d4c621f2f2c35444d28a0bd"
+    },
+    {
+      "bytes": 564230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_287.jsonl",
+      "sha256": "d3a589302b1f2e1acdef68c9ca2b72326444c9bbdc0aa9116b3be97c7f19cf3b"
+    },
+    {
+      "bytes": 566680,
+      "path": "strategy_pack_long_hold_v1_shards/shard_288.jsonl",
+      "sha256": "ca5dca12482a406c1fc259d84d5fc944242c4168967a1e34a0a1f2b681c3c559"
+    },
+    {
+      "bytes": 565878,
+      "path": "strategy_pack_long_hold_v1_shards/shard_289.jsonl",
+      "sha256": "33a555c1e7f4c9800af322e99f3e5d35c1426f4898fbe3d3e4f591dd33b85ae9"
+    },
+    {
+      "bytes": 565518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_290.jsonl",
+      "sha256": "293c3d42403774e7045c8ceeb412ced99b83acd18ed39ce91370215b130f9a0b"
+    },
+    {
+      "bytes": 565446,
+      "path": "strategy_pack_long_hold_v1_shards/shard_291.jsonl",
+      "sha256": "c523e88a443ac715262c07b28a61f5b0272c7cc7105c34f91729292c552f4be4"
+    },
+    {
+      "bytes": 566318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_292.jsonl",
+      "sha256": "953ac042f19375dbfdc03c528e5949beaff25b665b680dbebf1293f2efd4cc4c"
+    },
+    {
+      "bytes": 568230,
+      "path": "strategy_pack_long_hold_v1_shards/shard_293.jsonl",
+      "sha256": "28f18b9c9a74b1eda98e49e6ddb19e5746abdfc53c5bbb300411dbe31e250456"
+    },
+    {
+      "bytes": 569080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_294.jsonl",
+      "sha256": "d5522cdd3c15b682ae037ab09da08d5c97bd0284172cf8f4e5279465bb91322e"
+    },
+    {
+      "bytes": 568278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_295.jsonl",
+      "sha256": "126af42bd22ee33d467ad487e83dfafb3e993d295ae7684a4bbbc9079ec6a1b2"
+    },
+    {
+      "bytes": 567918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_296.jsonl",
+      "sha256": "b40e14733de209f72007e34e1003c7d21b3256805e6f524b1966c6b73125e15e"
+    },
+    {
+      "bytes": 567846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_297.jsonl",
+      "sha256": "0c07b9ccb3de1bdf22deca52f2b170cd568c2950991783f6e97b509b78b484de"
+    },
+    {
+      "bytes": 568718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_298.jsonl",
+      "sha256": "59dca09bdcfadd701c7018d0dc5af20a80f8e9a15acdf8e68641a704454f8eca"
+    },
+    {
+      "bytes": 570630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_299.jsonl",
+      "sha256": "c926a4e2dbfd71270d089fde49be81d8352ed86c6b147b4814107c820d40f639"
+    },
+    {
+      "bytes": 565080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_300.jsonl",
+      "sha256": "a0795f527043d707f28aa69ff82aaece2f2790721e1ace8236b14771481c52c3"
+    },
+    {
+      "bytes": 564278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_301.jsonl",
+      "sha256": "15878a8db616936c48e6f08a798816c413188200c84c8ee0f503f5564e4240e4"
+    },
+    {
+      "bytes": 563918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_302.jsonl",
+      "sha256": "311ce4075104518ba497f7405b045bce1517c782e0c97e76a6fa6ea2f6afb1bd"
+    },
+    {
+      "bytes": 563846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_303.jsonl",
+      "sha256": "dfcf3d0daeee113ea1c79f884bbbcc14c4c995d83615ff4eaaabb1716c11e2df"
+    },
+    {
+      "bytes": 564718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_304.jsonl",
+      "sha256": "0696ffd907e82a8ecfa0092d6be346a3eb136ada8a36558161a3a49e370a1507"
+    },
+    {
+      "bytes": 566630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_305.jsonl",
+      "sha256": "de3e0b1be104cca65f25b32f3e3ce2e9f69b60fce6d4ec4427a373c155687ea6"
+    },
+    {
+      "bytes": 564880,
+      "path": "strategy_pack_long_hold_v1_shards/shard_306.jsonl",
+      "sha256": "1938c71b6b1392310ee069a6d3e68f7797b5e549dd2f9f2f057ccd7848258db3"
+    },
+    {
+      "bytes": 564078,
+      "path": "strategy_pack_long_hold_v1_shards/shard_307.jsonl",
+      "sha256": "0972c7f2f8b838eb36c319028dac89638853790a45994d4a4db457376874c045"
+    },
+    {
+      "bytes": 563718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_308.jsonl",
+      "sha256": "d4dba376d304de6c451ed98254d20d5782b8595959de4f863b9c67a7b8fb3584"
+    },
+    {
+      "bytes": 563646,
+      "path": "strategy_pack_long_hold_v1_shards/shard_309.jsonl",
+      "sha256": "71d6bbbdf6f49a33b6bf11a9d6a9f0cd27b455c24f58de0121aa395ad0faa4c8"
+    },
+    {
+      "bytes": 564518,
+      "path": "strategy_pack_long_hold_v1_shards/shard_310.jsonl",
+      "sha256": "2fa2a6552c544072a8f1ca034c2a197c5d1904bb189b99a11c6f0d93604e752f"
+    },
+    {
+      "bytes": 566430,
+      "path": "strategy_pack_long_hold_v1_shards/shard_311.jsonl",
+      "sha256": "4270f5a559c6ac80c17bb1c26271e1cfb42716b5b05dd062d799da062cdf7393"
+    },
+    {
+      "bytes": 569480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_312.jsonl",
+      "sha256": "e0c6e9a2f1f556cb8c4769763ab698ae1b43e7e389ea77a3fd9d6f1695557b28"
+    },
+    {
+      "bytes": 568678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_313.jsonl",
+      "sha256": "6f196e3daae21685de598c5d30432b16617a140286dba2f02fd018cc341d0d19"
+    },
+    {
+      "bytes": 568318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_314.jsonl",
+      "sha256": "7bc2a705484257bea51eabf9698d3c9a59b0afa10e253d68af7dc53dee97b88d"
+    },
+    {
+      "bytes": 568246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_315.jsonl",
+      "sha256": "301595cdb66a1ec6d5e6fc49ae3e98dc191785cd17f45037fd731f341549eef7"
+    },
+    {
+      "bytes": 569118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_316.jsonl",
+      "sha256": "802e3562915a7b2ca5c7d0757f285f2963af6c28e96a950ff057fac0d64f11e4"
+    },
+    {
+      "bytes": 571030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_317.jsonl",
+      "sha256": "f8749c1a4ca5dcfbaffa9517a9dc71a13945f8bb22ebbbe7aa38212f6912f5b8"
+    },
+    {
+      "bytes": 565480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_318.jsonl",
+      "sha256": "ea97f318613034d7ff56b7f990bb567e8e7dc164ef8f12094e0051247879e67d"
+    },
+    {
+      "bytes": 564678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_319.jsonl",
+      "sha256": "86d254308fb58f91fadc7e0f4d84b3a2b893a3828fbcef30c1fcc63f16d0b592"
+    },
+    {
+      "bytes": 564318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_320.jsonl",
+      "sha256": "64fe7c90a16909a3411fed61affb70ee21c74326b8ebd540cd2f03d8cb1cc6f0"
+    },
+    {
+      "bytes": 564246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_321.jsonl",
+      "sha256": "e9d1560d75490985e3cac6459d6fe956bb0911ec2c7b2cd7728ee06475aff926"
+    },
+    {
+      "bytes": 565118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_322.jsonl",
+      "sha256": "61fcedcc274105fd768da1ddb5e61b4ac290987e0cad8843bb497317fa649312"
+    },
+    {
+      "bytes": 567030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_323.jsonl",
+      "sha256": "fc5fd2bd62d44634760aaadcd14db1e860dbbe6b2f2306a105eb2201b996366f"
+    },
+    {
+      "bytes": 556480,
+      "path": "strategy_pack_long_hold_v1_shards/shard_324.jsonl",
+      "sha256": "380356c479cba480894ee79e63736717dd9e99366dd2d5115a0e49b01164fadf"
+    },
+    {
+      "bytes": 555678,
+      "path": "strategy_pack_long_hold_v1_shards/shard_325.jsonl",
+      "sha256": "6c55a3ef50fa66fc5e8cf47dc0a4dbfc4e8b847f265c02f2335f5b6fe1124463"
+    },
+    {
+      "bytes": 555318,
+      "path": "strategy_pack_long_hold_v1_shards/shard_326.jsonl",
+      "sha256": "d23ae731597ec4331ea7fa76c3378ca9bb7d87519767b14c62a6330ee96470c3"
+    },
+    {
+      "bytes": 555246,
+      "path": "strategy_pack_long_hold_v1_shards/shard_327.jsonl",
+      "sha256": "06553d1368664b5b1a686637aa33e94d7a098a5a6a6a5043fe30a647b336dd03"
+    },
+    {
+      "bytes": 556118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_328.jsonl",
+      "sha256": "5bf887431d6563bc88127e726653ab3d2dfcde88fb5648f53f92ed9178f8cc64"
+    },
+    {
+      "bytes": 558030,
+      "path": "strategy_pack_long_hold_v1_shards/shard_329.jsonl",
+      "sha256": "79b5212740058da16bf9ea990b1f662547280050a84c0f1de72ac10e208a976d"
+    },
+    {
+      "bytes": 564280,
+      "path": "strategy_pack_long_hold_v1_shards/shard_330.jsonl",
+      "sha256": "fd3e431a05b37e7fca22777900bbfbd6ea763038c000cc28f88fc783ee1950c7"
+    },
+    {
+      "bytes": 563478,
+      "path": "strategy_pack_long_hold_v1_shards/shard_331.jsonl",
+      "sha256": "777771eaeccef4b1fb89db05631ae82905634a1b5c464f309b07a6376db7a273"
+    },
+    {
+      "bytes": 563118,
+      "path": "strategy_pack_long_hold_v1_shards/shard_332.jsonl",
+      "sha256": "bb659a73d8f535a16f6a916765d52390d027678d84acdfccb77f0d9cf6f074a3"
+    },
+    {
+      "bytes": 563046,
+      "path": "strategy_pack_long_hold_v1_shards/shard_333.jsonl",
+      "sha256": "038f524db830dd66129f775cb1bf0c0c819a5ca26eca3e446060e5c2e3f2e2e3"
+    },
+    {
+      "bytes": 563918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_334.jsonl",
+      "sha256": "93a3f77f13a55cd310430b88b9d6e72517dd7d5a0fb4b3527f1c9d6948044c70"
+    },
+    {
+      "bytes": 565830,
+      "path": "strategy_pack_long_hold_v1_shards/shard_335.jsonl",
+      "sha256": "5e791bc274ef350e94e39c0c3918f3e580f0acd9bec25f8ac617dc80f2218322"
+    },
+    {
+      "bytes": 563080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_336.jsonl",
+      "sha256": "db9f4371f15af62cb7b1812afe5c24902ac59f3bfb79fd8e0fcd910dbbec13e5"
+    },
+    {
+      "bytes": 562278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_337.jsonl",
+      "sha256": "71bac3e8fccbd03aa3682312bb93553c5a122b2f5031524f0f3f781372430c08"
+    },
+    {
+      "bytes": 561918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_338.jsonl",
+      "sha256": "092109db40faae44560df21dbeb2124f1611cc05ef61490d6516ec85e45cf4a1"
+    },
+    {
+      "bytes": 561846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_339.jsonl",
+      "sha256": "9f45caca22672fdb78c7d55a36a25d77b0de70f3b5e698fab3ec71339d748449"
+    },
+    {
+      "bytes": 562718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_340.jsonl",
+      "sha256": "24b6ecef8e61332eee329f6d43d35ca3eca6d6c200c04346ca4b46274516ad8f"
+    },
+    {
+      "bytes": 564630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_341.jsonl",
+      "sha256": "aa92d44a9b6eea015e602671f92bad00981f5ffd29bedb01c18479d37a98d313"
+    },
+    {
+      "bytes": 562080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_342.jsonl",
+      "sha256": "b0a63edff79d2d64ee9a7d57fbd1b6a334a747c873e7d1fd1d6cc3feebe4c9ac"
+    },
+    {
+      "bytes": 561278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_343.jsonl",
+      "sha256": "4ce19f401023055c4283a3001bd8563c14757ca6ae057bbe4a4769cfe057af45"
+    },
+    {
+      "bytes": 560918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_344.jsonl",
+      "sha256": "b7b07db2efc505dd61db926a51e8f97253fda99af8c463e1096a885a35831bbf"
+    },
+    {
+      "bytes": 560846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_345.jsonl",
+      "sha256": "b1a61f82c9300e4e2691062d558d0737402410b3c663ddc44a7376f6ad55e21a"
+    },
+    {
+      "bytes": 561718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_346.jsonl",
+      "sha256": "f40a8866ea36523d2694df9716439e38c58f10323e78a9f947fa67b0d911a58a"
+    },
+    {
+      "bytes": 563630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_347.jsonl",
+      "sha256": "c4757071dd12c6c04faefa6f81d954d77a3237be9090440755059934f60001c2"
+    },
+    {
+      "bytes": 568080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_348.jsonl",
+      "sha256": "3b78c1fe4d41f692a014156e7a33322994f8e61057051c4fbb8d162671653f14"
+    },
+    {
+      "bytes": 567278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_349.jsonl",
+      "sha256": "6d0eafc47e801c14c183c4c8fa44aef4c08114de827c3a8c6a8145722808c0db"
+    },
+    {
+      "bytes": 566918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_350.jsonl",
+      "sha256": "d187bc67b0420ae5f155f1f3999620fcd2e65d50d4100e37fdaf96604d010fc0"
+    },
+    {
+      "bytes": 566846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_351.jsonl",
+      "sha256": "dc3657823662e33d9a04d7dc0920f871b0cb680ae84801a152e36159647bb1b2"
+    },
+    {
+      "bytes": 567718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_352.jsonl",
+      "sha256": "dbd23600dc504110ba7c2213b15568c27e3bef7d772d3d44d4ca9c2abf3b89de"
+    },
+    {
+      "bytes": 569630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_353.jsonl",
+      "sha256": "ea233c769ab857958283224cfcd2a3153c96cfbcf2958fcd0225c47420b7995f"
+    },
+    {
+      "bytes": 559080,
+      "path": "strategy_pack_long_hold_v1_shards/shard_354.jsonl",
+      "sha256": "83ea62f20426b52b9aa90c12c62150cb01b2755c723a941943c1d165e64ad3cf"
+    },
+    {
+      "bytes": 558278,
+      "path": "strategy_pack_long_hold_v1_shards/shard_355.jsonl",
+      "sha256": "582ae3c9b9afee1fd842c748fef8d22c629d95991a98069e3da5a8d51ea7334e"
+    },
+    {
+      "bytes": 557918,
+      "path": "strategy_pack_long_hold_v1_shards/shard_356.jsonl",
+      "sha256": "3cc5cdaf517c5849eb46eadb41e01da2417876f7cf6db327a94498bc010a89e8"
+    },
+    {
+      "bytes": 557846,
+      "path": "strategy_pack_long_hold_v1_shards/shard_357.jsonl",
+      "sha256": "690d6cbb8e58a9b5deec501ea53756cfc75246b20cf44a37d418be38b0fbdb13"
+    },
+    {
+      "bytes": 558718,
+      "path": "strategy_pack_long_hold_v1_shards/shard_358.jsonl",
+      "sha256": "7298f16914179384511ad142d5aecee811444b3fdfe85a71abd08da9ec0041de"
+    },
+    {
+      "bytes": 560630,
+      "path": "strategy_pack_long_hold_v1_shards/shard_359.jsonl",
+      "sha256": "5d5c3cf93f7a63a13f364d3f43738e0d93013d9ec33658c5f0c3b01c6339b57f"
+    },
+    {
+      "bytes": 512,
+      "path": "validation_checklist.md",
+      "sha256": "abf119bf1e79ed4b1a803f38314c68ba9c2cab9a095530f17a2d214ac8a9b6c0"
+    }
+  ],
+  "pack_name": "gtbi_long_hold_fundamental_timing_v1",
+  "shard_count": 360,
+  "strategies_per_shard": 200,
+  "strategy_count": 72000
+}
