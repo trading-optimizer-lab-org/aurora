@@ -3694,6 +3694,45 @@ def test_external_pack_real_manifest_has_360_shards_and_72000_strategies() -> No
     assert len(gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=1)) == 1
 
 
+def test_long_hold_external_pack_real_config_loads_without_unsupported_rules() -> None:
+    pack = Path("scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1")
+    run_config = json.loads((pack / "run_config.json").read_text(encoding="utf-8"))
+
+    assert run_config["strategy_count"] == 72_000
+    assert run_config["shard_count"] == 360
+    assert run_config["strategies_per_shard"] == 200
+    assert len(list((pack / "shards").glob("shard_*.jsonl"))) == 360
+
+    candidates = gtbi.load_external_strategy_candidates(pack, shard_id=0, limit=10)
+
+    assert len(candidates) == 10
+    assert {item.payload["shard_id"] for item in candidates} == {0}
+    assert [item.payload["slot_in_shard"] for item in candidates] == list(range(10))
+    assert all(item.payload["schema_version"] == "gtbi_external_strategy_long_hold_v1" for item in candidates)
+    assert all(item.unsupported_rules == () for item in candidates)
+    assert all(item.config.family == "gtbi_long_hold" for item in candidates)
+    assert all(item.config.max_holding_days >= 45 for item in candidates)
+    assert all(item.config.minimum_holding_days_before_soft_exit >= 8 for item in candidates)
+
+
+def test_long_hold_quality_score_and_holding_columns_are_in_leaderboard_contract() -> None:
+    required = {
+        "long_hold_quality_score",
+        "holding_days_p50",
+        "holding_days_p75",
+        "holding_days_p90",
+        "percent_exits_under_5_days",
+        "percent_exits_under_10_days",
+        "validation_holding_days_p50",
+        "validation_holding_days_p75",
+        "validation_holding_days_p90",
+        "validation_percent_exits_under_5_days",
+        "validation_percent_exits_under_10_days",
+    }
+
+    assert required.issubset(set(gtbi.LEADERBOARD_COLUMNS))
+
+
 def test_external_merge_summary_preserves_locked_start_and_no_local_machine(tmp_path: Path) -> None:
     shard = tmp_path / "downloaded" / "gtbi-external-pack-shard-000"
     shard.mkdir(parents=True)

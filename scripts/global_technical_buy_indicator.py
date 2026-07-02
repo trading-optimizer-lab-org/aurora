@@ -8,6 +8,7 @@ import json
 import math
 import os
 import faulthandler
+import re
 import sys
 import threading
 import time
@@ -108,6 +109,21 @@ LEADERBOARD_COLUMNS = [
     "validation_max_drawdown_pct",
     "train_avg_holding_days",
     "validation_avg_holding_days",
+    "train_holding_days_p50",
+    "train_holding_days_p75",
+    "train_holding_days_p90",
+    "validation_holding_days_p50",
+    "validation_holding_days_p75",
+    "validation_holding_days_p90",
+    "holding_days_p50",
+    "holding_days_p75",
+    "holding_days_p90",
+    "train_percent_exits_under_5_days",
+    "train_percent_exits_under_10_days",
+    "validation_percent_exits_under_5_days",
+    "validation_percent_exits_under_10_days",
+    "percent_exits_under_5_days",
+    "percent_exits_under_10_days",
     "train_trades_per_year",
     "validation_trades_per_year",
     "selection_split",
@@ -125,6 +141,7 @@ LEADERBOARD_COLUMNS = [
     "train_2003_2010_min_profit_factor",
     "train_2003_2010_min_avg_trade_return_pct",
     "adjusted_return_time_risk",
+    "long_hold_quality_score",
     "scoring_profile",
     "locked_opened",
     "strategy_id",
@@ -468,6 +485,16 @@ class IndicatorConfig:
     exit_ma_days: int = 20
     market_ma_days: int = 200
     market_momentum_days: int = 21
+    entry_trigger_type: str = ""
+    entry_ma_days: int = 50
+    entry_ma_kind: str = "sma"
+    pullback_min_pct: float = 0.0
+    pullback_max_pct: float = 0.35
+    close_position_in_range_min: float = 0.0
+    trailing_stop_type: str = ""
+    take_profit_min_holding_days: int = 0
+    minimum_holding_days_before_soft_exit: int = 0
+    market_exit_confirmation_days: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -493,6 +520,108 @@ EXTERNAL_REQUIRED_FIELDS = (
     "source_quality_score",
     "codex_notes",
 )
+
+LONG_HOLD_SCHEMA_VERSION = "gtbi_external_strategy_long_hold_v1"
+
+LONG_HOLD_REQUIRED_FIELDS = (
+    "strategy_id",
+    "concept",
+    "family",
+    "entry_profile_id",
+    "market_profile_id",
+    "trend_profile_id",
+    "relative_strength_profile_id",
+    "exit_profile_id",
+    "entry_rules",
+    "market_regime_rules",
+    "stock_trend_rules",
+    "relative_strength_rules",
+    "exit_rules",
+    "execution",
+    "positioning",
+)
+
+LONG_HOLD_SUPPORTED_RULE_KEYS = {
+    "entry_rules": {
+        "atr_compression_required",
+        "base_min_days",
+        "breakout_confirmation_closes",
+        "breakout_lookback_days",
+        "close_above_base_high",
+        "close_above_sma150",
+        "close_position_in_range_min",
+        "contraction_lookback_days",
+        "entry_after_pullback_or_tightening",
+        "entry_on_reclaim_or_base_break",
+        "entry_on_stock_reclaim",
+        "entry_strictness",
+        "event_gap_min_pct",
+        "event_volume_min_adv20_mult",
+        "market_reclaim_required",
+        "oversold_indicator",
+        "oversold_threshold",
+        "post_event_window_days",
+        "prior_runup_min_pct",
+        "pullback_depth_max_pct",
+        "pullback_depth_min_pct",
+        "pullback_lookback_days",
+        "reclaim_level",
+        "reclaim_ma",
+        "release_confirmation",
+        "sma150_slope_30d_min_pct",
+        "stock_leadership_required",
+        "trend_required",
+        "trigger_type",
+        "undercut_lookback_days",
+        "volume_confirmation_min_adv20_mult",
+        "volume_expansion_min_adv20_mult",
+        "volume_on_signal_min_adv20_mult",
+    },
+    "market_regime_rules": {
+        "market_exit",
+        "spy_close_gt_sma200",
+        "spy_close_gt_sma50",
+        "spy_distribution_days_20_max",
+        "spy_heavy_down_days_10_max",
+        "spy_reclaim_ema20_or_sma50",
+        "spy_return_20d_min_pct",
+        "spy_return_63d_min_pct",
+        "spy_sma50_gt_sma200",
+    },
+    "stock_trend_rules": {
+        "close_gt_ema20",
+        "close_gt_ema50",
+        "close_gt_sma150",
+        "distance_from_52w_high_max_pct",
+        "ema20_gt_ema50",
+        "ema50_gt_sma100",
+        "ema50_slope_20d_min_pct",
+        "price_above_200d_low_pct_min",
+        "sma100_gt_sma200",
+        "sma150_gt_sma200",
+        "sma150_slope_30d_min_pct",
+        "sma50_gt_sma150",
+    },
+    "relative_strength_rules": {
+        "rs_63d_return_min_pct",
+        "rs_acceleration_required",
+        "rs_new_high_days",
+        "rs_ratio_above_ma",
+        "rs_ratio_vs_spy_ma_days",
+    },
+    "exit_rules": {
+        "allow_hard_stop_before_min_hold",
+        "atr_stop_mult",
+        "market_exit_confirmation_days",
+        "max_holding_days",
+        "minimum_holding_days_before_soft_exit",
+        "stop_loss_pct",
+        "take_profit_min_holding_days",
+        "take_profit_pct",
+        "target_avg_holding_days",
+        "trailing_stop_type",
+    },
+}
 
 
 EXTERNAL_SUPPORTED_RULE_KEYS = {
@@ -1607,7 +1736,59 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return (close > long) & (short > long) & (long >= long.shift(21))
 
     family = config.family
-    if family == "oneil_canslim":
+    if family == "gtbi_long_hold":
+        entry_ma_days = max(int(config.entry_ma_days or config.ma_short), 2)
+        entry_ma = ema(entry_ma_days) if str(config.entry_ma_kind).lower() == "ema" else sma(entry_ma_days)
+        long_trend = (
+            (close > sma150())
+            & (close > sma200())
+            & (sma150() > sma200())
+            & (sma150() >= sma150().shift(30))
+            & (close >= low_n() * max(config.above_low_multiple, 1.05))
+            & (close >= high_n() * max(config.near_high_pct, 0.50))
+        )
+        recent_high = high_roll(
+            max(10, int(config.breakout_lookback)),
+            shift=1,
+            min_periods=max(5, min(int(config.breakout_lookback), 30)),
+        )
+        recent_low = low_roll(
+            max(10, int(config.base_lookback)),
+            shift=1,
+            min_periods=max(5, min(int(config.base_lookback), 30)),
+        )
+        pullback_depth = ((recent_high - close) / recent_high.replace(0.0, np.nan)).clip(lower=0.0)
+        range_span = (recent_high - recent_low).replace(0.0, np.nan)
+        close_position = ((close - recent_low) / range_span).clip(lower=0.0, upper=1.0)
+        pullback_ok = (pullback_depth >= config.pullback_min_pct) & (pullback_depth <= config.pullback_max_pct)
+        close_position_ok = close_position >= float(config.close_position_in_range_min or 0.0)
+        volume_ok = volume >= avg_volume(20, min_periods=10) * max(float(config.volume_multiple), 0.5)
+        reclaim = (
+            (close > entry_ma)
+            & ((close.shift(1) <= entry_ma.shift(1)) | (low.shift(1) <= entry_ma.shift(1)) | pullback_ok.shift(1).fillna(False))
+            & (close > close.shift(1))
+        )
+        base_breakout = (close > recent_high) & volume_ok
+        shakeout = (low.shift(1) < recent_low.shift(1)) & (close > entry_ma) & (close > close.shift(1))
+        event_gap = ((frame["open"] / close.shift(1) - 1.0) >= config.episodic_gap_pct) & volume_ok
+        contraction_release = base_tight() & (reclaim | base_breakout | volume_ok)
+        trigger_type = str(config.entry_trigger_type or "").lower()
+        if "event" in trigger_type or "gap" in trigger_type:
+            long_hold_trigger = event_gap | (reclaim & pullback_ok)
+        elif "shakeout" in trigger_type or "undercut" in trigger_type:
+            long_hold_trigger = shakeout | (reclaim & pullback_ok)
+        elif "mean" in trigger_type or "oversold" in trigger_type:
+            long_hold_trigger = pullback_ok & reclaim & (rsi_line() <= max(float(config.rsi_max), 55.0))
+        elif "volatility" in trigger_type or "contraction" in trigger_type or "tight" in trigger_type:
+            long_hold_trigger = contraction_release & (reclaim | base_breakout)
+        elif "reclaim" in trigger_type:
+            long_hold_trigger = reclaim | (base_breakout & pullback_ok.shift(1).fillna(False))
+        elif "breakout" in trigger_type or "base" in trigger_type:
+            long_hold_trigger = base_breakout | (reclaim & close_position_ok)
+        else:
+            long_hold_trigger = reclaim | base_breakout | event_gap
+        signal = long_trend & (rs_ok() if config.require_rs else const(True)) & long_hold_trigger & close_position_ok & rsi_ok()
+    elif family == "oneil_canslim":
         signal = oneil_stack() & rs_ok() & breakout() & rsi_ok()
     elif family == "quallamaggie":
         signal = (trend_ok() | (close > sma(config.ma_short))) & prior_runup() & dryup() & (breakout() | episodic_gap()) & adr_ok() & rsi_ok()
@@ -1851,6 +2032,8 @@ def _simulate_trade_arrays_core(
     use_exit_ma: bool,
     use_market_exit: bool,
     max_holding_days: int,
+    take_profit_min_holding_days: int = 0,
+    minimum_holding_days_before_soft_exit: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     n = len(close_values)
     max_trades = len(signal_positions) + 1
@@ -1885,15 +2068,21 @@ def _simulate_trade_arrays_core(
 
         high_water = max(high_water, float(high_values[i]))
         reason_code = 0
+        holding_days = min(i + 1, n - 1) - entry_idx
+        soft_exit_allowed = holding_days >= minimum_holding_days_before_soft_exit
         if float(low_values[i]) <= entry_price * (1.0 - stop_loss_pct):
             reason_code = 1
-        elif take_profit_pct > 0.0 and float(high_values[i]) >= entry_price * (1.0 + take_profit_pct):
+        elif (
+            take_profit_pct > 0.0
+            and holding_days >= take_profit_min_holding_days
+            and float(high_values[i]) >= entry_price * (1.0 + take_profit_pct)
+        ):
             reason_code = 2
-        elif trailing_stop_pct > 0.0 and float(low_values[i]) <= high_water * (1.0 - trailing_stop_pct):
+        elif soft_exit_allowed and trailing_stop_pct > 0.0 and float(low_values[i]) <= high_water * (1.0 - trailing_stop_pct):
             reason_code = 3
-        elif use_exit_ma and math.isfinite(float(exit_ma_values[i])) and float(close_values[i]) < float(exit_ma_values[i]):
+        elif soft_exit_allowed and use_exit_ma and math.isfinite(float(exit_ma_values[i])) and float(close_values[i]) < float(exit_ma_values[i]):
             reason_code = 4
-        elif use_market_exit and bool(exit_signal_values[i]):
+        elif soft_exit_allowed and use_market_exit and bool(exit_signal_values[i]):
             reason_code = 5
         elif min(i + 1, n - 1) - entry_idx >= max_holding_days:
             reason_code = 6
@@ -1984,6 +2173,8 @@ def _simulate_trade_arrays(
                 bool(config.use_exit_ma),
                 bool(config.use_market_exit),
                 int(config.max_holding_days),
+                int(config.take_profit_min_holding_days),
+                int(config.minimum_holding_days_before_soft_exit),
             )
         except Exception:
             _NUMBA_SIMULATION_ENABLED = False
@@ -2002,6 +2193,8 @@ def _simulate_trade_arrays(
                 bool(config.use_exit_ma),
                 bool(config.use_market_exit),
                 int(config.max_holding_days),
+                int(config.take_profit_min_holding_days),
+                int(config.minimum_holding_days_before_soft_exit),
             )
     return _simulate_trade_arrays_core(
         open_values,
@@ -2017,6 +2210,8 @@ def _simulate_trade_arrays(
         bool(config.use_exit_ma),
         bool(config.use_market_exit),
         int(config.max_holding_days),
+        int(config.take_profit_min_holding_days),
+        int(config.minimum_holding_days_before_soft_exit),
     )
 
 
@@ -2039,6 +2234,16 @@ def _simulate_trade_records(
         if exit_signal is not None
         else _safe_bool_series(False, frame.index)
     )
+    confirmation_days = max(int(config.market_exit_confirmation_days or 1), 1)
+    if confirmation_days > 1:
+        exit_signal = (
+            exit_signal.astype(int)
+            .rolling(confirmation_days, min_periods=confirmation_days)
+            .sum()
+            .ge(confirmation_days)
+            .fillna(False)
+            .astype(bool)
+        )
     exit_ma_key = ("exit_ma", int(config.exit_ma_days))
     exit_ma_cache = _frame_series_cache(frame, "_gtbi_exit_series_cache")
     if exit_ma_key not in exit_ma_cache:
@@ -2194,6 +2399,11 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
             "trade_sortino": float("nan"),
             "max_drawdown_pct": float("nan"),
             "avg_holding_days": float("nan"),
+            "holding_days_p50": float("nan"),
+            "holding_days_p75": float("nan"),
+            "holding_days_p90": float("nan"),
+            "percent_exits_under_5_days": float("nan"),
+            "percent_exits_under_10_days": float("nan"),
             "trades_per_year": 0.0,
             "return_concentration": float("nan"),
         }
@@ -2216,6 +2426,7 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
     dd = np.exp(np.clip(log_dd, -745.0, 0.0)) - 1.0
     per_year = _exit_year_counts(trades["exit_date"].to_numpy(dtype=object, copy=False))
     concentration = float(max(per_year.values()) / len(trades)) if len(trades) and per_year else float("nan")
+    holding_days = pd.to_numeric(trades["holding_days"], errors="coerce").dropna()
     return {
         "trades": float(len(returns)),
         "avg_trade_return_pct": float(returns.mean() * 100.0),
@@ -2225,7 +2436,12 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
         "trade_sharpe": sharpe,
         "trade_sortino": sortino,
         "max_drawdown_pct": float(dd.min() * 100.0),
-        "avg_holding_days": float(pd.to_numeric(trades["holding_days"], errors="coerce").mean()),
+        "avg_holding_days": float(holding_days.mean()) if not holding_days.empty else float("nan"),
+        "holding_days_p50": float(holding_days.quantile(0.50)) if not holding_days.empty else float("nan"),
+        "holding_days_p75": float(holding_days.quantile(0.75)) if not holding_days.empty else float("nan"),
+        "holding_days_p90": float(holding_days.quantile(0.90)) if not holding_days.empty else float("nan"),
+        "percent_exits_under_5_days": float((holding_days < 5).mean()) if not holding_days.empty else float("nan"),
+        "percent_exits_under_10_days": float((holding_days < 10).mean()) if not holding_days.empty else float("nan"),
         "trades_per_year": trades_per_year,
         "return_concentration": concentration,
     }
@@ -2558,6 +2774,43 @@ def _ma_days(value: Any, default: int) -> int:
     return int(digits) if digits else int(default)
 
 
+def _long_hold_quality_score(row: dict[str, Any]) -> float:
+    """Secondary diagnostic score for longer-hold candidates.
+
+    This intentionally does not replace the final filter or primary ranking. It
+    only helps inspect strategies that actually hold positions for a meaningful
+    period instead of producing very short churn.
+    """
+
+    avg = _finite_float(row.get("validation_avg_trade_return_pct"), default=0.0)
+    med = _finite_float(row.get("validation_median_trade_return_pct"), default=0.0)
+    pf = min(_finite_float(row.get("validation_profit_factor"), default=0.0), 5.0)
+    adjusted = _finite_float(row.get("adjusted_return_time_risk"), default=0.0)
+    holding = _finite_float(row.get("validation_avg_holding_days"), default=0.0)
+    holding_p50 = _finite_float(row.get("validation_holding_days_p50"), default=0.0)
+    exits_under_10 = _finite_float(row.get("validation_percent_exits_under_10_days"), default=1.0)
+    drawdown = abs(_finite_float(row.get("validation_max_drawdown_pct"), default=100.0))
+    positive_years = _finite_float(row.get("validation_positive_years"), default=0.0)
+    yearly_pf = min(_finite_float(row.get("validation_min_yearly_profit_factor"), default=0.0), 2.0)
+    concentration = _finite_float(row.get("validation_max_profit_contribution_share"), default=1.0)
+    hold_bonus = min(max(holding - 15.0, 0.0), 75.0) * 0.06 + min(max(holding_p50 - 15.0, 0.0), 60.0) * 0.04
+    short_exit_penalty = max(exits_under_10, 0.0) * 4.0
+    low_hold_penalty = max(25.0 - holding, 0.0) * 0.35
+    return (
+        adjusted * 1000.0
+        + avg * 0.25
+        + med * 0.40
+        + pf * 1.25
+        + yearly_pf * 2.0
+        + positive_years * 0.30
+        + hold_bonus
+        - drawdown * 0.05
+        - short_exit_penalty
+        - low_hold_penalty
+        - max(concentration - 0.25, 0.0) * 8.0
+    )
+
+
 def _external_strategy_files(pack_path: Path, shard_id: int | None, strategy_format: str) -> list[Path]:
     pack_path = Path(pack_path)
     fmt = strategy_format.lower()
@@ -2615,9 +2868,12 @@ def _iter_external_strategy_payloads(path: Path) -> Iterable[dict[str, Any]]:
 
 def _external_unknown_rules(payload: dict[str, Any]) -> list[str]:
     unknown: list[str] = []
-    missing = [field for field in EXTERNAL_REQUIRED_FIELDS if field not in payload]
+    is_long_hold = str(payload.get("schema_version", "")).lower() == LONG_HOLD_SCHEMA_VERSION
+    required_fields = LONG_HOLD_REQUIRED_FIELDS if is_long_hold else EXTERNAL_REQUIRED_FIELDS
+    supported_rules = LONG_HOLD_SUPPORTED_RULE_KEYS if is_long_hold else EXTERNAL_SUPPORTED_RULE_KEYS
+    missing = [field for field in required_fields if field not in payload]
     unknown.extend(f"missing_required.{field}" for field in missing)
-    for section, supported in EXTERNAL_SUPPORTED_RULE_KEYS.items():
+    for section, supported in supported_rules.items():
         rules = payload.get(section) or {}
         if not isinstance(rules, dict):
             unknown.append(f"{section}.__not_object__")
@@ -2629,6 +2885,8 @@ def _external_unknown_rules(payload: dict[str, Any]) -> list[str]:
 
 
 def _family_for_external_strategy(payload: dict[str, Any]) -> str:
+    if str(payload.get("schema_version", "")).lower() == LONG_HOLD_SCHEMA_VERSION:
+        return "gtbi_long_hold"
     concept = str(payload.get("concept_id", "")).lower()
     if any(token in concept for token in ("breakout", "vcp", "squeeze", "inside", "stair_step")):
         return "quallamaggie"
@@ -2639,7 +2897,124 @@ def _family_for_external_strategy(payload: dict[str, Any]) -> str:
     return "quallamaggie"
 
 
+def _long_hold_external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCandidate:
+    unknown = _external_unknown_rules(payload)
+    entry = payload.get("entry_rules") or {}
+    market = payload.get("market_regime_rules") or {}
+    stock = payload.get("stock_trend_rules") or {}
+    rs_rules = payload.get("relative_strength_rules") or {}
+    exit_rules = payload.get("exit_rules") or {}
+    concept = str(payload.get("concept", "")).lower()
+    trigger_type = str(entry.get("trigger_type") or concept).lower()
+    reclaim_label = str(entry.get("reclaim_ma") or entry.get("reclaim_level") or "")
+    trailing_label = str(exit_rules.get("trailing_stop_type") or "")
+    entry_ma_days = _ma_days(reclaim_label, 50)
+    if entry_ma_days <= 0:
+        entry_ma_days = 50
+    entry_ma_kind = "ema" if "ema" in reclaim_label.lower() else "sma"
+    exit_ma_days = _ma_days(trailing_label, 50 if "ema50" in trailing_label.lower() else 20)
+    if exit_ma_days <= 0:
+        exit_ma_days = 20
+    pullback_max_pct = max(
+        _external_pct(entry.get("pullback_depth_max_pct"), default=0.0),
+        _external_pct(stock.get("distance_from_52w_high_max_pct"), default=0.0),
+        0.08,
+    )
+    pullback_min_pct = max(_external_pct(entry.get("pullback_depth_min_pct"), default=0.0), 0.0)
+    near_high_pct = 1.0 - max(_external_pct(stock.get("distance_from_52w_high_max_pct"), default=0.0), 0.02)
+    above_low_multiple = 1.0 + max(_external_pct(stock.get("price_above_200d_low_pct_min"), default=0.0), 0.05)
+    volume_multiple = max(
+        _finite_float(entry.get("volume_on_signal_min_adv20_mult"), default=0.0),
+        _finite_float(entry.get("volume_confirmation_min_adv20_mult"), default=0.0),
+        _finite_float(entry.get("volume_expansion_min_adv20_mult"), default=0.0),
+        _finite_float(entry.get("event_volume_min_adv20_mult"), default=0.0),
+        1.0,
+    )
+    market_exit = str(exit_rules.get("market_exit") or market.get("market_exit") or "")
+    config = IndicatorConfig(
+        family="gtbi_long_hold",
+        minervini_trend=bool(entry.get("trend_required", True) or stock),
+        require_rs=bool(rs_rules),
+        require_base_tight=bool(
+            entry.get("atr_compression_required")
+            or entry.get("entry_after_pullback_or_tightening")
+            or entry.get("base_min_days")
+            or entry.get("contraction_lookback_days")
+        ),
+        require_breakout=bool("breakout" in trigger_type or entry.get("close_above_base_high") or entry.get("entry_on_reclaim_or_base_break")),
+        require_pocket_pivot=False,
+        require_oneil_stack=False,
+        require_volume_dryup=bool(entry.get("release_confirmation") or "tight" in trigger_type),
+        require_prior_runup=bool(entry.get("prior_runup_min_pct")),
+        require_episodic_gap=bool("event" in trigger_type or entry.get("event_gap_min_pct")),
+        require_market_trend=bool(market),
+        strict_market_filter=False,
+        breakout_lookback=_external_int(entry.get("breakout_lookback_days"), 63, low=10, high=252),
+        base_lookback=_external_int(
+            entry.get("base_min_days") or entry.get("contraction_lookback_days") or entry.get("pullback_lookback_days"),
+            40,
+            low=5,
+            high=180,
+        ),
+        volume_lookback=20,
+        rs_lookback=_external_int(rs_rules.get("rs_ratio_vs_spy_ma_days") or rs_rules.get("rs_new_high_days"), 63, low=20, high=252),
+        high_lookback=252,
+        low_lookback=252,
+        ma_short=50 if entry_ma_days > 50 else max(entry_ma_days, 20),
+        ma_mid=150,
+        ma_long=200,
+        oneil_fast_ma=10,
+        oneil_mid_ma=21,
+        volume_multiple=float(np.clip(volume_multiple, 0.5, 5.0)),
+        max_base_range_pct=float(np.clip(pullback_max_pct, 0.03, 0.60)),
+        rs_near_high_pct=0.95 if rs_rules.get("rs_new_high_days") else 0.90,
+        near_high_pct=float(np.clip(near_high_pct, 0.50, 0.99)),
+        above_low_multiple=float(np.clip(above_low_multiple, 1.0, 3.0)),
+        rsi_period=14,
+        rsi_max=float(np.clip(_finite_float(entry.get("oversold_threshold"), default=74.0), 35.0, 95.0)),
+        prior_runup_lookback=63,
+        prior_runup_min_pct=float(np.clip(_external_pct(entry.get("prior_runup_min_pct"), default=0.0), 0.0, 1.5)),
+        volume_dryup_lookback=_external_int(entry.get("contraction_lookback_days"), 20, low=5, high=80),
+        volume_dryup_max_ratio=0.90,
+        episodic_gap_pct=float(np.clip(_external_pct(entry.get("event_gap_min_pct"), default=0.04), 0.0, 0.30)),
+        min_adr_pct=0.001,
+        stop_loss_pct=float(np.clip(_external_pct(exit_rules.get("stop_loss_pct"), 0.10), 0.005, 0.60)),
+        trailing_stop_pct=float(np.clip(_finite_float(exit_rules.get("atr_stop_mult"), default=0.0) * 0.03, 0.0, 0.80)),
+        take_profit_pct=float(np.clip(_external_pct(exit_rules.get("take_profit_pct"), 0.0), 0.0, 5.0)),
+        max_holding_days=_external_int(exit_rules.get("max_holding_days"), 120, low=5, high=520),
+        use_exit_ma=bool(trailing_label),
+        use_market_exit=bool(market_exit),
+        exit_ma_days=int(np.clip(exit_ma_days, 2, 250)),
+        market_ma_days=200 if market.get("spy_close_gt_sma200") or market.get("spy_sma50_gt_sma200") else 50,
+        market_momentum_days=63 if "63d" in json.dumps(market) else 20,
+        entry_trigger_type=trigger_type,
+        entry_ma_days=int(np.clip(entry_ma_days, 2, 250)),
+        entry_ma_kind=entry_ma_kind,
+        pullback_min_pct=float(np.clip(pullback_min_pct, 0.0, 0.80)),
+        pullback_max_pct=float(np.clip(pullback_max_pct, 0.01, 0.95)),
+        close_position_in_range_min=float(np.clip(_finite_float(entry.get("close_position_in_range_min"), default=0.0), 0.0, 1.0)),
+        trailing_stop_type=trailing_label,
+        take_profit_min_holding_days=_external_int(exit_rules.get("take_profit_min_holding_days"), 0, low=0, high=520),
+        minimum_holding_days_before_soft_exit=_external_int(exit_rules.get("minimum_holding_days_before_soft_exit"), 0, low=0, high=520),
+        market_exit_confirmation_days=_external_int(exit_rules.get("market_exit_confirmation_days"), 1, low=1, high=20),
+    )
+    approximated: list[str] = []
+    supported = LONG_HOLD_SUPPORTED_RULE_KEYS
+    for section in ("entry_rules", "market_regime_rules", "stock_trend_rules", "relative_strength_rules", "exit_rules"):
+        for key in (payload.get(section) or {}):
+            if key in supported.get(section, set()):
+                approximated.append(f"{section}.{key}")
+    return ExternalStrategyCandidate(
+        payload=payload,
+        config=config,
+        unsupported_rules=tuple(sorted(unknown)),
+        approximated_rules=tuple(sorted(approximated)),
+    )
+
+
 def external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCandidate:
+    if str(payload.get("schema_version", "")).lower() == LONG_HOLD_SCHEMA_VERSION:
+        return _long_hold_external_strategy_to_config(payload)
     unknown = _external_unknown_rules(payload)
     entry = payload.get("entry_rules") or {}
     market = payload.get("market_regime_rules") or {}
@@ -2857,7 +3232,17 @@ def load_external_strategy_candidates(
     max_count = None if limit is None or int(limit) <= 0 else int(limit)
     matched = 0
     for path in _external_strategy_files(Path(pack_path), shard_id, strategy_format):
+        inferred_shard_id: int | None = None
+        match = re.search(r"shard_(\d+)", path.stem)
+        if match:
+            inferred_shard_id = int(match.group(1))
+        slot_in_file = 0
         for payload in _iter_external_strategy_payloads(path):
+            if "shard_id" not in payload and inferred_shard_id is not None:
+                payload["shard_id"] = int(inferred_shard_id)
+            if "slot_in_shard" not in payload:
+                payload["slot_in_shard"] = int(slot_in_file)
+            slot_in_file += 1
             if shard_id is not None and int(payload.get("shard_id", -1)) != int(shard_id):
                 continue
             if matched < strategy_offset:
@@ -2940,18 +3325,25 @@ def _group_external_candidates_by_signal(
     *,
     optimized_evaluation_mode: str = "",
 ) -> list[list[ExternalStrategyCandidate]]:
+    ordered_input = list(candidates)
+    input_order = {id(candidate): index for index, candidate in enumerate(ordered_input)}
+
     def candidate_sort_key(candidate: ExternalStrategyCandidate) -> tuple[Any, ...]:
         return (
             _estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0],
             str(candidate.payload.get("concept_id", "")),
             int(candidate.payload.get("shard_id", 0)),
             int(candidate.payload.get("slot_in_shard", 0)),
+            input_order.get(id(candidate), 0),
             str(candidate.payload.get("strategy_id", "")),
         )
 
     groups: dict[str, list[ExternalStrategyCandidate]] = {}
-    for candidate in candidates:
-        groups.setdefault(signal_external_strategy_hash(candidate), []).append(candidate)
+    group_order: dict[str, int] = {}
+    for candidate in ordered_input:
+        signal_hash = signal_external_strategy_hash(candidate)
+        group_order.setdefault(signal_hash, input_order.get(id(candidate), 0))
+        groups.setdefault(signal_hash, []).append(candidate)
 
     def group_sort_key(group: list[ExternalStrategyCandidate]) -> tuple[Any, ...]:
         first = min(group, key=candidate_sort_key)
@@ -2962,6 +3354,7 @@ def _group_external_candidates_by_signal(
         return (
             cost,
             str(first.payload.get("concept_id", "")),
+            group_order.get(signal_external_strategy_hash(first), 0),
             signal_external_strategy_hash(first),
         )
 
@@ -2997,6 +3390,11 @@ def _balanced_external_signal_groups_for_job(
     if max_signal_groups is not None and int(max_signal_groups) > 0 and not use_event_first_balanced_schedule:
         groups = groups[: int(max_signal_groups)]
     per_job = max(int(signal_groups_per_job), 1)
+    group_position_by_hash = {
+        signal_external_strategy_hash(group[0]): index
+        for index, group in enumerate(groups)
+        if group
+    }
     if use_event_first_balanced_schedule:
         active_jobs = max(int(schedule_active_jobs), 1)
 
@@ -3044,6 +3442,7 @@ def _balanced_external_signal_groups_for_job(
             key=lambda group: (
                 group_base_cost(group),
                 -len(group),
+                group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
                 signal_external_strategy_hash(group[0]) if group else "",
             ),
         )
@@ -3059,6 +3458,7 @@ def _balanced_external_signal_groups_for_job(
             window_groups,
             key=lambda group: (
                 -group_cost(group),
+                group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
                 signal_external_strategy_hash(group[0]) if group else "",
             ),
         )
@@ -3119,6 +3519,7 @@ def _balanced_external_signal_groups_for_job(
         groups,
         key=lambda group: (
             -group_cost(group),
+            group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
             signal_external_strategy_hash(group[0]) if group else "",
         ),
     )
@@ -3572,6 +3973,7 @@ def evaluate_candidate(
     validation_years = max((_dt(validation_end) - _dt(validation_start)).days / 365.25, 1.0)
     train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
     validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    combined = summarize_trades(trades_df, years=max(train_years + validation_years, 1.0))
     yearly = yearly_trade_performance(trades_df, benchmark_prices)
     selected_metrics = validation if selection_split == "validation" else train
     score = _candidate_score(selected_metrics)
@@ -3605,7 +4007,17 @@ def evaluate_candidate(
         row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
         row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
         row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_holding_days_p50"] = metrics["holding_days_p50"]
+        row[f"{prefix}_holding_days_p75"] = metrics["holding_days_p75"]
+        row[f"{prefix}_holding_days_p90"] = metrics["holding_days_p90"]
+        row[f"{prefix}_percent_exits_under_5_days"] = metrics["percent_exits_under_5_days"]
+        row[f"{prefix}_percent_exits_under_10_days"] = metrics["percent_exits_under_10_days"]
         row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row["holding_days_p50"] = combined["holding_days_p50"]
+    row["holding_days_p75"] = combined["holding_days_p75"]
+    row["holding_days_p90"] = combined["holding_days_p90"]
+    row["percent_exits_under_5_days"] = combined["percent_exits_under_5_days"]
+    row["percent_exits_under_10_days"] = combined["percent_exits_under_10_days"]
     row.update(
         _strict_quality_metrics(
             row=row,
@@ -3623,6 +4035,7 @@ def evaluate_candidate(
     elif scoring_profile != "default":
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
+    row["long_hold_quality_score"] = _long_hold_quality_score(row)
     return row, trades_df, yearly
 
 
@@ -3664,12 +4077,12 @@ def canonical_external_strategy_hash(candidate: ExternalStrategyCandidate) -> st
         "config": candidate.config.to_dict(),
         "effective_rules": {
             "family": _family_for_external_strategy(payload),
-            "concept_id": payload.get("concept_id"),
-            "market_overlay_id": payload.get("market_overlay_id"),
+            "concept_id": payload.get("concept_id") or payload.get("concept"),
+            "market_overlay_id": payload.get("market_overlay_id") or payload.get("market_profile_id"),
             "trend_profile_id": payload.get("trend_profile_id"),
-            "rs_profile_id": payload.get("rs_profile_id"),
+            "rs_profile_id": payload.get("rs_profile_id") or payload.get("relative_strength_profile_id"),
             "exit_profile_id": payload.get("exit_profile_id"),
-            "aggression_id": payload.get("aggression_id"),
+            "aggression_id": payload.get("aggression_id") or payload.get("entry_profile_id"),
             "entry_rules": payload.get("entry_rules", {}),
             "market_regime_rules": payload.get("market_regime_rules", {}),
             "stock_trend_rules": payload.get("stock_trend_rules", {}),
@@ -3716,10 +4129,13 @@ def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
                 "stop_loss_pct",
                 "trailing_stop_pct",
                 "take_profit_pct",
+                "take_profit_min_holding_days",
                 "max_holding_days",
                 "use_exit_ma",
                 "use_market_exit",
                 "exit_ma_days",
+                "minimum_holding_days_before_soft_exit",
+                "market_exit_confirmation_days",
             }
         },
     }
@@ -3743,6 +4159,9 @@ def exit_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
             "use_exit_ma": config.use_exit_ma,
             "exit_ma_days": config.exit_ma_days,
             "use_market_exit": config.use_market_exit,
+            "take_profit_min_holding_days": config.take_profit_min_holding_days,
+            "minimum_holding_days_before_soft_exit": config.minimum_holding_days_before_soft_exit,
+            "market_exit_confirmation_days": config.market_exit_confirmation_days,
         },
         "market_regime_exit": {
             key: value
@@ -5028,6 +5447,7 @@ def evaluate_candidate_optimized(
     seconds_train = float(time.perf_counter() - train_start)
     validation_start_timer = time.perf_counter()
     validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    combined = summarize_trades(trades_df, years=max(train_years + validation_years, 1.0))
     yearly = yearly_trade_performance(trades_df, benchmark_prices)
     seconds_validation = float(time.perf_counter() - validation_start_timer)
 
@@ -5063,7 +5483,17 @@ def evaluate_candidate_optimized(
         row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
         row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
         row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_holding_days_p50"] = metrics["holding_days_p50"]
+        row[f"{prefix}_holding_days_p75"] = metrics["holding_days_p75"]
+        row[f"{prefix}_holding_days_p90"] = metrics["holding_days_p90"]
+        row[f"{prefix}_percent_exits_under_5_days"] = metrics["percent_exits_under_5_days"]
+        row[f"{prefix}_percent_exits_under_10_days"] = metrics["percent_exits_under_10_days"]
         row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row["holding_days_p50"] = combined["holding_days_p50"]
+    row["holding_days_p75"] = combined["holding_days_p75"]
+    row["holding_days_p90"] = combined["holding_days_p90"]
+    row["percent_exits_under_5_days"] = combined["percent_exits_under_5_days"]
+    row["percent_exits_under_10_days"] = combined["percent_exits_under_10_days"]
     row.update(
         _strict_quality_metrics(
             row=row,
@@ -5081,6 +5511,7 @@ def evaluate_candidate_optimized(
     elif scoring_profile != "default":
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
+    row["long_hold_quality_score"] = _long_hold_quality_score(row)
     diagnostic = {
         "seconds_total": float(time.perf_counter() - total_start),
         "seconds_feature_build": 0.0,
@@ -6004,6 +6435,38 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+    long_hold_quality = leaderboard.copy()
+    if not long_hold_quality.empty and "long_hold_quality_score" in long_hold_quality.columns:
+        long_hold_quality["_long_hold_quality_score_numeric"] = pd.to_numeric(
+            long_hold_quality["long_hold_quality_score"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        long_hold_quality = long_hold_quality.sort_values(
+            ["_long_hold_quality_score_numeric", "candidate_id"],
+            ascending=[False, True],
+        ).drop(columns=["_long_hold_quality_score_numeric"])
+    long_hold_quality.to_csv(output_dir / "long_hold_quality_leaderboard.csv", index=False)
+    long_hold_adjusted_holding_ge25 = leaderboard.copy()
+    if not long_hold_adjusted_holding_ge25.empty:
+        if "validation_avg_holding_days" not in long_hold_adjusted_holding_ge25.columns:
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"] = np.nan
+        holding_numeric = pd.to_numeric(
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"],
+            errors="coerce",
+        )
+        long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.loc[holding_numeric >= 25.0].copy()
+        if not long_hold_adjusted_holding_ge25.empty:
+            if "adjusted_return_time_risk" not in long_hold_adjusted_holding_ge25.columns:
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"] = np.nan
+            long_hold_adjusted_holding_ge25["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"],
+                errors="coerce",
+            ).fillna(float("-inf"))
+            long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.sort_values(
+                ["_adjusted_return_time_risk_numeric", "candidate_id"],
+                ascending=[False, True],
+            ).drop(columns=["_adjusted_return_time_risk_numeric"])
+    long_hold_adjusted_holding_ge25.to_csv(output_dir / "long_hold_adjusted_holding_ge25.csv", index=False)
     if not leaderboard.empty and "family" in leaderboard.columns:
         family = (
             leaderboard.groupby("family", dropna=False)
@@ -6246,12 +6709,12 @@ def _external_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         "strategy_id": str(payload.get("strategy_id", "")),
         "shard_id": int(payload.get("shard_id", -1)),
         "slot_in_shard": int(payload.get("slot_in_shard", -1)),
-        "concept_id": str(payload.get("concept_id", "")),
-        "market_overlay_id": str(payload.get("market_overlay_id", "")),
+        "concept_id": str(payload.get("concept_id") or payload.get("concept") or ""),
+        "market_overlay_id": str(payload.get("market_overlay_id") or payload.get("market_profile_id") or ""),
         "trend_profile_id": str(payload.get("trend_profile_id", "")),
-        "rs_profile_id": str(payload.get("rs_profile_id", "")),
+        "rs_profile_id": str(payload.get("rs_profile_id") or payload.get("relative_strength_profile_id") or ""),
         "exit_profile_id": str(payload.get("exit_profile_id", "")),
-        "aggression_id": str(payload.get("aggression_id", "")),
+        "aggression_id": str(payload.get("aggression_id") or payload.get("entry_profile_id") or ""),
         "source_quality_score": _finite_float(payload.get("source_quality_score"), default=float("nan")),
         "external_strategy_pack": True,
     }
@@ -7631,6 +8094,34 @@ def run_external_strategy_pack_shard(
     concept_precheck_diagnostics = pd.DataFrame(concept_precheck_rows, columns=CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS)
     exit_group_manifest = pd.DataFrame(exit_group_manifest_rows, columns=EXIT_GROUP_MANIFEST_COLUMNS)
 
+    long_hold_quality = leaderboard.copy()
+    if not long_hold_quality.empty and "long_hold_quality_score" in long_hold_quality.columns:
+        long_hold_quality["_long_hold_quality_score_numeric"] = pd.to_numeric(
+            long_hold_quality["long_hold_quality_score"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        long_hold_quality = long_hold_quality.sort_values(
+            ["_long_hold_quality_score_numeric", "candidate_id"],
+            ascending=[False, True],
+        ).drop(columns=["_long_hold_quality_score_numeric"])
+    long_hold_adjusted_holding_ge25 = leaderboard.copy()
+    if not long_hold_adjusted_holding_ge25.empty:
+        if "validation_avg_holding_days" not in long_hold_adjusted_holding_ge25.columns:
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"] = np.nan
+        holding_numeric_for_rank = pd.to_numeric(long_hold_adjusted_holding_ge25["validation_avg_holding_days"], errors="coerce")
+        long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.loc[holding_numeric_for_rank >= 25.0].copy()
+        if not long_hold_adjusted_holding_ge25.empty:
+            if "adjusted_return_time_risk" not in long_hold_adjusted_holding_ge25.columns:
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"] = np.nan
+            long_hold_adjusted_holding_ge25["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"],
+                errors="coerce",
+            ).fillna(float("-inf"))
+            long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.sort_values(
+                ["_adjusted_return_time_risk_numeric", "candidate_id"],
+                ascending=[False, True],
+            ).drop(columns=["_adjusted_return_time_risk_numeric"])
+
     leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
     filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
     yearly_out.to_csv(output_dir / f"yearly_trade_performance_{file_suffix}.csv", index=False)
@@ -7657,6 +8148,8 @@ def run_external_strategy_pack_shard(
     event_store_manifest.to_csv(output_dir / f"event_store_manifest_{file_suffix}.csv", index=False)
     concept_precheck_diagnostics.to_csv(output_dir / f"concept_precheck_diagnostics_{file_suffix}.csv", index=False)
     exit_group_manifest.to_csv(output_dir / f"exit_group_manifest_{file_suffix}.csv", index=False)
+    long_hold_quality.to_csv(output_dir / f"long_hold_quality_leaderboard_{file_suffix}.csv", index=False)
+    long_hold_adjusted_holding_ge25.to_csv(output_dir / f"long_hold_adjusted_holding_ge25_{file_suffix}.csv", index=False)
     cost_profile_v5 = {
         "optimized_evaluation_mode": str(optimized_evaluation_mode),
         "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
@@ -7697,6 +8190,22 @@ def run_external_strategy_pack_shard(
     best_filtered_row = _best_adjusted_row(filtered)
     best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
     best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
+    validation_avg_holding = (
+        pd.to_numeric(leaderboard.get("validation_avg_holding_days", pd.Series(dtype=float)), errors="coerce")
+        if not leaderboard.empty
+        else pd.Series(dtype=float)
+    )
+    validation_holding_ge25_count = int((validation_avg_holding >= 25.0).sum()) if len(validation_avg_holding) else 0
+    validation_holding_ge30_count = int((validation_avg_holding >= 30.0).sum()) if len(validation_avg_holding) else 0
+    validation_holding_p50 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.50))
+    validation_holding_p75 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.75))
+    validation_holding_p90 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.90))
+    validation_under_10_mean = (
+        pd.to_numeric(leaderboard.get("validation_percent_exits_under_10_days", pd.Series(dtype=float)), errors="coerce")
+        if not leaderboard.empty
+        else pd.Series(dtype=float)
+    )
+    validation_under_10_mean_value = None if validation_under_10_mean.dropna().empty else float(validation_under_10_mean.mean())
     strategies_loaded_for_summary = int(
         signal_phase_summary.get("strategies_loaded", len(candidates))
         if use_v3_signal_first and signal_first_phase == "exits"
@@ -7777,6 +8286,13 @@ def run_external_strategy_pack_shard(
         "requires_local_machine": False,
         "locked_opened": False,
         "filtered_candidates": int(len(filtered)),
+        "long_hold_quality_candidate_count": int(len(long_hold_quality)),
+        "validation_avg_holding_days_ge25_count": int(validation_holding_ge25_count),
+        "validation_avg_holding_days_ge30_count": int(validation_holding_ge30_count),
+        "validation_avg_holding_days_p50": validation_holding_p50,
+        "validation_avg_holding_days_p75": validation_holding_p75,
+        "validation_avg_holding_days_p90": validation_holding_p90,
+        "validation_percent_exits_under_10_days_mean": validation_under_10_mean_value,
         "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
         "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
         "best_adjusted_return_time_risk": best_adjusted,
@@ -8142,6 +8658,35 @@ def merge_external_strategy_pack_outputs(
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+    long_hold_quality = leaderboard.copy()
+    if not long_hold_quality.empty and "long_hold_quality_score" in long_hold_quality.columns:
+        long_hold_quality["_long_hold_quality_score_numeric"] = pd.to_numeric(
+            long_hold_quality["long_hold_quality_score"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        long_hold_quality = long_hold_quality.sort_values(
+            ["_long_hold_quality_score_numeric", "candidate_id"],
+            ascending=[False, True],
+        ).drop(columns=["_long_hold_quality_score_numeric"])
+    long_hold_quality.to_csv(output_dir / "long_hold_quality_leaderboard.csv", index=False)
+    long_hold_adjusted_holding_ge25 = leaderboard.copy()
+    if not long_hold_adjusted_holding_ge25.empty:
+        if "validation_avg_holding_days" not in long_hold_adjusted_holding_ge25.columns:
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"] = np.nan
+        holding_numeric_for_rank = pd.to_numeric(long_hold_adjusted_holding_ge25["validation_avg_holding_days"], errors="coerce")
+        long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.loc[holding_numeric_for_rank >= 25.0].copy()
+        if not long_hold_adjusted_holding_ge25.empty:
+            if "adjusted_return_time_risk" not in long_hold_adjusted_holding_ge25.columns:
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"] = np.nan
+            long_hold_adjusted_holding_ge25["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"],
+                errors="coerce",
+            ).fillna(float("-inf"))
+            long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.sort_values(
+                ["_adjusted_return_time_risk_numeric", "candidate_id"],
+                ascending=[False, True],
+            ).drop(columns=["_adjusted_return_time_risk_numeric"])
+    long_hold_adjusted_holding_ge25.to_csv(output_dir / "long_hold_adjusted_holding_ge25.csv", index=False)
 
     def summary_by(column: str) -> pd.DataFrame:
         if leaderboard.empty or column not in leaderboard.columns:

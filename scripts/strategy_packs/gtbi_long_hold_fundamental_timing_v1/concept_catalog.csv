@@ -1,0 +1,61 @@
+concept_index,family,concept,trigger_type,rationale,strategies
+0,long_trend_pullback,ema20_pullback_continuation,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+1,long_trend_pullback,sma50_first_touch_rebound,market_aware_leader_reentry,Use market pullbacks to time entries in fundamentally selected leaders.,1200
+2,long_trend_pullback,ema21_reclaim_after_dip,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+3,long_trend_pullback,rising_50d_base_reclaim,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+4,long_trend_pullback,ten_week_pullback_reclaim_proxy,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+5,long_trend_pullback,higher_low_trend_reentry,market_aware_leader_reentry,Use market pullbacks to time entries in fundamentally selected leaders.,1200
+6,relative_strength_leadership,rs_leader_pullback_to_ema20,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+7,relative_strength_leadership,rs_new_high_before_price_breakout,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+8,relative_strength_leadership,rs_line_reclaim_after_market_dip,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+9,relative_strength_leadership,rs_3m_acceleration_pullback,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+10,relative_strength_leadership,rs_momentum_base_breakout,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+11,relative_strength_leadership,rs_momentum_consolidation_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+12,base_breakout_long_hold,fifty_two_week_high_base_breakout_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+13,base_breakout_long_hold,donchian_55_breakout_trend_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+14,base_breakout_long_hold,volatility_contraction_breakout_long_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+15,base_breakout_long_hold,flat_base_breakout_volume_confirm,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+16,base_breakout_long_hold,cup_handle_breakout_proxy_long_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+17,base_breakout_long_hold,base_on_base_breakout_long_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+18,post_event_power_trend,earnings_gap_hold_pullback,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+19,post_event_power_trend,gap_up_sideways_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+20,post_event_power_trend,ep_base_breakout_long_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+21,post_event_power_trend,ep_pullback_to_ema20_hold,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+22,post_event_power_trend,high_volume_gap_continuation_hold,post_event_drift,Capture post-event drift while avoiding immediate exits; entries happen after proof of support or a controlled continuation.,1200
+23,post_event_power_trend,post_ep_rs_leader_reentry,post_event_drift,Capture post-event drift while avoiding immediate exits; entries happen after proof of support or a controlled continuation.,1200
+24,stage_two_trend,stage2_reclaim_30w_proxy,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+25,stage_two_trend,stage2_pullback_to_10w_proxy,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+26,stage_two_trend,stage2_breakout_after_base,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+27,stage_two_trend,stage2_low_vol_reaccumulation,stage2_continuation,Use long-term stage-two trend behavior as timing for fundamentally attractive stocks.,1200
+28,stage_two_trend,stage2_rs_rotation_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+29,stage_two_trend,stage2_slope_acceleration,stage2_continuation,Use long-term stage-two trend behavior as timing for fundamentally attractive stocks.,1200
+30,uptrend_reversion_entry,rsi40_rebound_in_uptrend,uptrend_mean_reversion,Buy short-term weakness only inside a durable uptrend; exits are deliberately slower than prior pack.,1200
+31,uptrend_reversion_entry,stochastic_oversold_reclaim_trend,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+32,uptrend_reversion_entry,three_day_pullback_reversal_trend,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+33,uptrend_reversion_entry,undercut_low_reclaim_in_uptrend,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+34,uptrend_reversion_entry,pullback_to_lower_bb_in_uptrend,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+35,uptrend_reversion_entry,market_dip_leader_rebound,market_aware_leader_reentry,Use market pullbacks to time entries in fundamentally selected leaders.,1200
+36,volatility_contraction_reclaim,atr_compression_reclaim_long_hold,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+37,volatility_contraction_reclaim,nr7_inside_bar_trend_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+38,volatility_contraction_reclaim,bollinger_squeeze_resolve_hold,volatility_contraction_release,"Enter after volatility compression resolves upward, with enough time for the new trend leg to develop.",1200
+39,volatility_contraction_reclaim,keltner_squeeze_pullback_hold,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+40,volatility_contraction_reclaim,volatility_contracting_pullback,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+41,volatility_contraction_reclaim,tight_range_above_ema50,volatility_contraction_release,"Enter after volatility compression resolves upward, with enough time for the new trend leg to develop.",1200
+42,low_risk_trend_continuation,low_volatility_leader_trend_entry,volatility_contraction_release,"Enter after volatility compression resolves upward, with enough time for the new trend leg to develop.",1200
+43,low_risk_trend_continuation,quiet_uptrend_pullback,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+44,low_risk_trend_continuation,low_atr_breakout_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+45,low_risk_trend_continuation,low_drawdown_rs_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+46,low_risk_trend_continuation,stable_compounder_ma_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+47,low_risk_trend_continuation,steady_trend_pullback_hold,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+48,shakeout_reclaim_long_hold,failed_breakdown_reclaim_to_trend,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+49,shakeout_reclaim_long_hold,shakeout_reclaim_base_hold,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+50,shakeout_reclaim_long_hold,ma200_spring_reclaim_hold,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+51,shakeout_reclaim_long_hold,bear_trap_stage2_reclaim,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+52,shakeout_reclaim_long_hold,false_breakout_reset_reclaim,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+53,shakeout_reclaim_long_hold,capitulation_reclaim_leader,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+54,market_aware_entries,spy_dip_leader_reentry,market_aware_leader_reentry,Use market pullbacks to time entries in fundamentally selected leaders.,1200
+55,market_aware_entries,market_reclaim_stock_leader,shakeout_reclaim,"Buy reclaim behavior after a shakeout, intended as an entry timing overlay after fundamental selection.",1200
+56,market_aware_entries,broad_market_pullback_quality_entry,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+57,market_aware_entries,spy_stage2_stock_pullback_hold,pullback_reclaim,"Buy a fundamentally selected leader on a controlled pullback and reclaim, then give the trade enough time to compound.",1200
+58,market_aware_entries,market_rotation_rs_breakout,base_breakout,"Buy a durable breakout from a base, but use wider exits and longer holding windows than the previous short-hold pack.",1200
+59,market_aware_entries,defensive_exit_market_overlay_entry,market_aware_leader_reentry,Use market pullbacks to time entries in fundamentally selected leaders.,1200
