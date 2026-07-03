@@ -8444,7 +8444,11 @@ def run_external_strategy_pack_shard(
         if use_v3_signal_first and signal_first_phase == "exits"
         else len(signal_evaluation_cache)
     )
-    signal_groups_requested_for_summary = int(external_strategy_limit if use_v3_signal_first else 0)
+    signal_groups_requested_for_summary = int(
+        signal_groups_loaded
+        if use_event_first and signal_first_phase == "exits"
+        else external_strategy_limit if use_v3_signal_first else 0
+    )
     strategies_requested_for_summary = int(strategies_loaded_for_summary if use_v3_signal_first else external_strategy_limit)
     numba_enabled, numba_reason = _numba_simulation_state()
     summary = {
