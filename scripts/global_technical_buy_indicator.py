@@ -142,6 +142,11 @@ LEADERBOARD_COLUMNS = [
     "train_2003_2010_min_avg_trade_return_pct",
     "adjusted_return_time_risk",
     "long_hold_quality_score",
+    "fundamental_timing_score_no_drawdown",
+    "return_pf_score",
+    "total_return_proxy",
+    "is_ultra_frequent",
+    "score_bucket",
     "scoring_profile",
     "locked_opened",
     "strategy_id",
@@ -2900,6 +2905,133 @@ def _long_hold_quality_score(row: dict[str, Any]) -> float:
     )
 
 
+def _score_bucket(value: float) -> str:
+    if not math.isfinite(value):
+        return "unknown"
+    if value >= 8.0:
+        return "excellent"
+    if value >= 5.0:
+        return "strong"
+    if value >= 2.5:
+        return "watchlist"
+    if value >= 0.0:
+        return "weak"
+    return "poor"
+
+
+def _fundamental_timing_score_no_drawdown(row: dict[str, Any]) -> float:
+    """Exploratory timing score for fundamental stock picks.
+
+    Drawdown is intentionally not used here. The score ranks buy/sell timing
+    overlays by trade quality, PF, positive years, duration, frequency, median
+    trade and early-exit behavior.
+    """
+
+    avg = float(np.clip(_finite_float(row.get("validation_avg_trade_return_pct"), default=0.0), -5.0, 8.0))
+    median = float(np.clip(_finite_float(row.get("validation_median_trade_return_pct"), default=0.0), -5.0, 5.0))
+    pf = float(np.clip(_finite_float(row.get("validation_profit_factor"), default=0.0), 0.0, 3.0))
+    positive_years = float(np.clip(_finite_float(row.get("validation_positive_years"), default=0.0), 0.0, 10.0))
+    median_positive_years = float(np.clip(_finite_float(row.get("validation_median_positive_years"), default=0.0), 0.0, 10.0))
+    holding = max(_finite_float(row.get("validation_avg_holding_days"), default=0.0), 0.0)
+    holding_p50 = max(_finite_float(row.get("validation_holding_days_p50"), default=0.0), 0.0)
+    trades_per_year = max(_finite_float(row.get("validation_trades_per_year"), default=0.0), 0.0)
+    exits_under_5 = float(np.clip(_finite_float(row.get("validation_percent_exits_under_5_days"), default=1.0), 0.0, 1.0))
+    exits_under_10 = float(np.clip(_finite_float(row.get("validation_percent_exits_under_10_days"), default=1.0), 0.0, 1.0))
+    train_pf = float(np.clip(_finite_float(row.get("train_profit_factor"), default=0.0), 0.0, 3.0))
+    train_positive_years = float(np.clip(_finite_float(row.get("train_2003_2010_positive_years"), default=0.0), 0.0, 8.0))
+    train_avg = float(np.clip(_finite_float(row.get("train_avg_trade_return_pct"), default=0.0), -5.0, 8.0))
+
+    avg_trade_component = avg * 1.25
+    profit_factor_component = max(pf - 1.0, 0.0) * 4.0 + max(pf - 1.4, 0.0) * 2.0
+    positive_years_component = positive_years * 0.65 + median_positive_years * 0.25
+    if holding < 25.0:
+        holding_component = -((25.0 - holding) * 0.35)
+    elif holding <= 60.0:
+        holding_component = 2.0 + min(holding - 25.0, 35.0) * 0.08 + min(max(holding_p50 - 20.0, 0.0), 40.0) * 0.04
+    elif holding <= 100.0:
+        holding_component = 4.8 - (holding - 60.0) * 0.03
+    else:
+        holding_component = 3.6 - min(holding - 100.0, 120.0) * 0.02
+    if trades_per_year < 50.0:
+        frequency_component = -4.0
+    elif trades_per_year < 200.0:
+        frequency_component = -1.5 + (trades_per_year - 50.0) / 150.0
+    elif trades_per_year <= 10_000.0:
+        frequency_component = 2.0 + min(math.log10(max(trades_per_year, 1.0) / 200.0), 2.0)
+    else:
+        frequency_component = 3.0
+    median_trade_component = median * 0.85 if median > 0.0 else median * 0.35 - (0.65 if median == 0.0 else 0.0)
+    low_early_exit_component = (1.0 - exits_under_5) * 0.9 + (1.0 - exits_under_10) * 1.4
+    train_sanity_component = max(train_pf - 1.0, 0.0) * 1.2 + train_positive_years * 0.18 + max(train_avg, 0.0) * 0.25
+
+    return float(
+        avg_trade_component
+        + profit_factor_component
+        + positive_years_component
+        + holding_component
+        + frequency_component
+        + median_trade_component
+        + low_early_exit_component
+        + train_sanity_component
+    )
+
+
+def _return_pf_score_no_drawdown(row: dict[str, Any]) -> float:
+    """Compact no-drawdown score focused only on return, PF and duration sanity."""
+
+    avg = float(np.clip(_finite_float(row.get("validation_avg_trade_return_pct"), default=0.0), -5.0, 8.0))
+    median = float(np.clip(_finite_float(row.get("validation_median_trade_return_pct"), default=0.0), -5.0, 5.0))
+    pf = float(np.clip(_finite_float(row.get("validation_profit_factor"), default=0.0), 0.0, 3.0))
+    holding = max(_finite_float(row.get("validation_avg_holding_days"), default=0.0), 0.0)
+    positive_years = float(np.clip(_finite_float(row.get("validation_positive_years"), default=0.0), 0.0, 10.0))
+    train_pf = float(np.clip(_finite_float(row.get("train_profit_factor"), default=0.0), 0.0, 3.0))
+    holding_bonus = 0.0
+    if holding >= 25.0:
+        holding_bonus += 1.0
+    if 30.0 <= holding <= 60.0:
+        holding_bonus += 0.75
+    return float(
+        avg * 1.4
+        + max(median, 0.0) * 0.7
+        + max(pf - 1.0, 0.0) * 5.0
+        + positive_years * 0.35
+        + max(train_pf - 1.0, 0.0)
+        + holding_bonus
+    )
+
+
+def _add_fundamental_timing_no_drawdown_fields(row: dict[str, Any]) -> None:
+    trades_per_year = _finite_float(row.get("validation_trades_per_year"), default=0.0)
+    avg_trade = _finite_float(row.get("validation_avg_trade_return_pct"), default=0.0)
+    total_return_proxy = avg_trade * trades_per_year * 10.0
+    score = _fundamental_timing_score_no_drawdown(row)
+    row["fundamental_timing_score_no_drawdown"] = score
+    row["return_pf_score"] = _return_pf_score_no_drawdown(row)
+    row["total_return_proxy"] = float(total_return_proxy) if math.isfinite(total_return_proxy) else float("nan")
+    row["is_ultra_frequent"] = bool(trades_per_year > 10_000.0)
+    row["score_bucket"] = _score_bucket(score)
+
+
+def _best_numeric_row(frame: pd.DataFrame, column: str, *, mask: pd.Series | None = None) -> pd.Series | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    ranked = frame.copy()
+    if mask is not None:
+        ranked = ranked.loc[mask.reindex(frame.index).fillna(False)].copy()
+    if ranked.empty:
+        return None
+    ranked[f"_{column}_numeric"] = pd.to_numeric(ranked[column], errors="coerce")
+    ranked = ranked[np.isfinite(ranked[f"_{column}_numeric"])]
+    if ranked.empty:
+        return None
+    sort_columns = [f"_{column}_numeric"]
+    ascending = [False]
+    if "candidate_id" in ranked.columns:
+        sort_columns.append("candidate_id")
+        ascending.append(True)
+    return ranked.sort_values(sort_columns, ascending=ascending).iloc[0]
+
+
 def _external_strategy_files(pack_path: Path, shard_id: int | None, strategy_format: str) -> list[Path]:
     pack_path = Path(pack_path)
     fmt = strategy_format.lower()
@@ -4117,6 +4249,7 @@ def evaluate_candidate(
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
     row["long_hold_quality_score"] = _long_hold_quality_score(row)
+    _add_fundamental_timing_no_drawdown_fields(row)
     return row, trades_df, yearly
 
 
@@ -5593,6 +5726,7 @@ def evaluate_candidate_optimized(
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
     row["long_hold_quality_score"] = _long_hold_quality_score(row)
+    _add_fundamental_timing_no_drawdown_fields(row)
     diagnostic = {
         "seconds_total": float(time.perf_counter() - total_start),
         "seconds_feature_build": 0.0,
@@ -8284,6 +8418,16 @@ def run_external_strategy_pack_shard(
     validation_holding_p50 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.50))
     validation_holding_p75 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.75))
     validation_holding_p90 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.90))
+    best_holding_ge25_row = _best_numeric_row(
+        leaderboard,
+        "adjusted_return_time_risk",
+        mask=validation_avg_holding >= 25.0 if len(validation_avg_holding) else pd.Series(dtype=bool),
+    )
+    best_no_drawdown_row = _best_numeric_row(leaderboard, "fundamental_timing_score_no_drawdown")
+    best_return_pf_row = _best_numeric_row(leaderboard, "return_pf_score")
+    best_avg_trade_row = _best_numeric_row(leaderboard, "validation_avg_trade_return_pct")
+    best_profit_factor_row = _best_numeric_row(leaderboard, "validation_profit_factor")
+    best_total_return_proxy_row = _best_numeric_row(leaderboard, "total_return_proxy")
     validation_under_10_mean = (
         pd.to_numeric(leaderboard.get("validation_percent_exits_under_10_days", pd.Series(dtype=float)), errors="coerce")
         if not leaderboard.empty
@@ -8300,6 +8444,8 @@ def run_external_strategy_pack_shard(
         if use_v3_signal_first and signal_first_phase == "exits"
         else len(signal_evaluation_cache)
     )
+    signal_groups_requested_for_summary = int(external_strategy_limit if use_v3_signal_first else 0)
+    strategies_requested_for_summary = int(strategies_loaded_for_summary if use_v3_signal_first else external_strategy_limit)
     numba_enabled, numba_reason = _numba_simulation_state()
     summary = {
         "shard_id": shard,
@@ -8308,7 +8454,9 @@ def run_external_strategy_pack_shard(
         "chunk_index": int(external_strategy_offset) // max(int(external_strategy_limit), 1),
         "strategy_offset": int(external_strategy_offset),
         "strategy_limit": int(external_strategy_limit),
-        "strategies_requested": int(external_strategy_limit),
+        "signal_groups_requested": int(signal_groups_requested_for_summary),
+        "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
+        "strategies_requested": int(strategies_requested_for_summary),
         "strategies_loaded": int(strategies_loaded_for_summary),
         "strategies_evaluated": int(len(rows)),
         "strategies_early_rejected": int(len(early_rejected)),
@@ -8323,7 +8471,6 @@ def run_external_strategy_pack_shard(
         "strategies_signal_reused": int(signal_deduped_count),
         "strategies_covered": int(strategies_loaded_for_summary),
         "strategies_evaluated_complete": int(len(rows)),
-        "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
         "signal_groups_evaluated": int(signal_groups_evaluated if use_v3_signal_first else len(signal_evaluation_cache)),
         "signal_groups_early_rejected": int(signal_groups_early_rejected),
         "signal_groups_timed_out": int(signal_groups_timed_out),
@@ -8381,6 +8528,13 @@ def run_external_strategy_pack_shard(
         "validation_avg_holding_days_p90": validation_holding_p90,
         "validation_percent_exits_under_10_days_mean": validation_under_10_mean_value,
         "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_overall": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_holding_ge25": None if best_holding_ge25_row is None else str(best_holding_ge25_row["candidate_id"]),
+        "best_candidate_id_no_drawdown_score": None if best_no_drawdown_row is None else str(best_no_drawdown_row["candidate_id"]),
+        "best_candidate_id_return_pf_score": None if best_return_pf_row is None else str(best_return_pf_row["candidate_id"]),
+        "best_candidate_id_avg_trade": None if best_avg_trade_row is None else str(best_avg_trade_row["candidate_id"]),
+        "best_candidate_id_profit_factor": None if best_profit_factor_row is None else str(best_profit_factor_row["candidate_id"]),
+        "best_candidate_id_total_return_proxy": None if best_total_return_proxy_row is None else str(best_total_return_proxy_row["candidate_id"]),
         "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
         "best_adjusted_return_time_risk": best_adjusted,
     }
@@ -8617,16 +8771,26 @@ def merge_external_strategy_pack_outputs(
             ascending=[False, False, True],
         ).reset_index(drop=True)
     yearly = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
+    validation_end_year = int(str(validation_end)[:4])
+    if not yearly.empty and "year" in yearly.columns:
+        yearly_years = pd.to_numeric(yearly["year"], errors="coerce")
+        yearly = yearly.loc[yearly_years <= validation_end_year].copy()
     symbol_entry_counts = (
         pd.concat(symbol_entry_count_frames, ignore_index=True, sort=False)
         if symbol_entry_count_frames
         else pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
     )
+    if not symbol_entry_counts.empty and "year" in symbol_entry_counts.columns:
+        symbol_years = pd.to_numeric(symbol_entry_counts["year"], errors="coerce")
+        symbol_entry_counts = symbol_entry_counts.loc[symbol_years <= validation_end_year].copy()
     annual_equity = (
         pd.concat(annual_equity_frames, ignore_index=True, sort=False)
         if annual_equity_frames
         else pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
     )
+    if not annual_equity.empty and "year" in annual_equity.columns:
+        equity_years = pd.to_numeric(annual_equity["year"], errors="coerce")
+        annual_equity = annual_equity.loc[equity_years <= validation_end_year].copy()
     return_distribution = (
         pd.concat(return_distribution_frames, ignore_index=True, sort=False)
         if return_distribution_frames
@@ -8810,6 +8974,21 @@ def merge_external_strategy_pack_outputs(
     best_filtered_row = _best_adjusted_row(filtered)
     best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
     best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
+    validation_avg_holding_for_best = (
+        pd.to_numeric(leaderboard.get("validation_avg_holding_days", pd.Series(dtype=float)), errors="coerce")
+        if not leaderboard.empty
+        else pd.Series(dtype=float)
+    )
+    best_holding_ge25_row = _best_numeric_row(
+        leaderboard,
+        "adjusted_return_time_risk",
+        mask=validation_avg_holding_for_best >= 25.0 if len(validation_avg_holding_for_best) else pd.Series(dtype=bool),
+    )
+    best_no_drawdown_row = _best_numeric_row(leaderboard, "fundamental_timing_score_no_drawdown")
+    best_return_pf_row = _best_numeric_row(leaderboard, "return_pf_score")
+    best_avg_trade_row = _best_numeric_row(leaderboard, "validation_avg_trade_return_pct")
+    best_profit_factor_row = _best_numeric_row(leaderboard, "validation_profit_factor")
+    best_total_return_proxy_row = _best_numeric_row(leaderboard, "total_return_proxy")
     jobs_requested = int(total_jobs_requested) if total_jobs_requested is not None else int(total_shards_requested)
     inferred_candidate_count = None
     if candidate_count_per_job is not None:
@@ -8920,10 +9099,16 @@ def merge_external_strategy_pack_outputs(
     signal_groups_slow_deferred = sum_summary("signal_groups_slow_deferred", "total_signal_groups_slow_deferred")
     if signal_groups_slow_deferred == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
         signal_groups_slow_deferred = int((signal_group_manifest["result_status"].astype(str) == "signal_slow_deferred").sum())
+    signal_groups_requested = sum_summary("signal_groups_requested")
+    if signal_groups_requested == 0 and reconcile_counts_to_output_rows:
+        signal_groups_requested = int(signal_groups_loaded)
+    strategy_slots_requested = int(total_strategies_requested)
+    strategies_requested_for_summary = int(loaded_total if reconcile_counts_to_output_rows else total_strategies_requested)
     zero_timeout_mode = any(bool(item.get("zero_timeout_mode")) for item in summaries)
     zero_slow_deferred_mode = any(bool(item.get("zero_slow_deferred_mode")) for item in summaries)
     summary = {
-        "total_strategies_requested": int(total_strategies_requested),
+        "total_strategies_requested": int(strategies_requested_for_summary),
+        "strategy_slots_requested": int(strategy_slots_requested),
         "total_strategies_loaded": int(loaded_total),
         "total_strategies_evaluated": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated", "total_strategies_evaluated"),
         "total_strategies_early_rejected": int(early_rejected_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
@@ -8935,6 +9120,14 @@ def merge_external_strategy_pack_outputs(
         "total_strategies_deduped": sum_summary("strategies_deduped", "total_strategies_deduped"),
         "total_strategies_signal_deduped": sum_summary("strategies_signal_deduped", "total_strategies_signal_deduped"),
         "strategies_signal_reused": sum_summary("strategies_signal_reused", "total_strategies_signal_deduped"),
+        "signal_groups_requested": int(signal_groups_requested),
+        "strategies_requested": int(strategies_requested_for_summary),
+        "strategies_loaded": int(loaded_total),
+        "strategies_evaluated": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated", "total_strategies_evaluated"),
+        "strategies_early_rejected": int(early_rejected_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
+        "strategies_timed_out": int(timed_out_total),
+        "strategies_runtime_error": int(runtime_error_total),
+        "strategies_unsupported": int(unsupported_total),
         "strategies_covered": int(loaded_total),
         "strategies_evaluated_complete": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated_complete", "total_strategies_evaluated"),
         "signal_groups_loaded": int(signal_groups_loaded),
@@ -8971,6 +9164,13 @@ def merge_external_strategy_pack_outputs(
         "signal_first_phase": next((str(item.get("signal_first_phase")) for item in summaries if item.get("signal_first_phase")), ""),
         "filtered_candidates": int(len(filtered)),
         "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_overall": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_holding_ge25": None if best_holding_ge25_row is None else str(best_holding_ge25_row["candidate_id"]),
+        "best_candidate_id_no_drawdown_score": None if best_no_drawdown_row is None else str(best_no_drawdown_row["candidate_id"]),
+        "best_candidate_id_return_pf_score": None if best_return_pf_row is None else str(best_return_pf_row["candidate_id"]),
+        "best_candidate_id_avg_trade": None if best_avg_trade_row is None else str(best_avg_trade_row["candidate_id"]),
+        "best_candidate_id_profit_factor": None if best_profit_factor_row is None else str(best_profit_factor_row["candidate_id"]),
+        "best_candidate_id_total_return_proxy": None if best_total_return_proxy_row is None else str(best_total_return_proxy_row["candidate_id"]),
         "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
         "best_adjusted_return_time_risk": best_adjusted,
         "ticker_trade_summary_rows_total": int(ticker_summary_rows_total),

@@ -3860,6 +3860,11 @@ def test_long_hold_external_pack_real_config_loads_without_unsupported_rules() -
 def test_long_hold_quality_score_and_holding_columns_are_in_leaderboard_contract() -> None:
     required = {
         "long_hold_quality_score",
+        "fundamental_timing_score_no_drawdown",
+        "return_pf_score",
+        "total_return_proxy",
+        "is_ultra_frequent",
+        "score_bucket",
         "holding_days_p50",
         "holding_days_p75",
         "holding_days_p90",
@@ -3873,6 +3878,30 @@ def test_long_hold_quality_score_and_holding_columns_are_in_leaderboard_contract
     }
 
     assert required.issubset(set(gtbi.LEADERBOARD_COLUMNS))
+
+
+def test_fundamental_timing_score_no_drawdown_ignores_drawdown() -> None:
+    row = {
+        "validation_avg_trade_return_pct": 1.4,
+        "validation_median_trade_return_pct": 0.2,
+        "validation_profit_factor": 1.55,
+        "validation_positive_years": 9,
+        "validation_median_positive_years": 8,
+        "validation_avg_holding_days": 36,
+        "validation_holding_days_p50": 31,
+        "validation_trades_per_year": 450,
+        "validation_percent_exits_under_5_days": 0.04,
+        "validation_percent_exits_under_10_days": 0.11,
+        "train_profit_factor": 1.2,
+        "train_2003_2010_positive_years": 6,
+        "train_avg_trade_return_pct": 0.3,
+        "validation_max_drawdown_pct": -5,
+    }
+    worse_drawdown = dict(row, validation_max_drawdown_pct=-95)
+
+    assert gtbi._fundamental_timing_score_no_drawdown(row) == pytest.approx(
+        gtbi._fundamental_timing_score_no_drawdown(worse_drawdown)
+    )
 
 
 def test_external_merge_summary_preserves_locked_start_and_no_local_machine(tmp_path: Path) -> None:
@@ -4429,6 +4458,118 @@ def test_external_merge_reconciles_summary_with_real_leaderboard_rows(tmp_path: 
     assert summary["strategies_evaluated_complete"] == 0
     assert summary["best_candidate_id"] is None
     assert summary["best_adjusted_return_time_risk"] is None
+
+
+def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "signal_groups_requested": 100,
+                "signal_groups_loaded": 100,
+                "signal_groups_evaluated": 100,
+                "strategies_requested": 5,
+                "strategies_loaded": 5,
+                "strategies_evaluated": 2,
+                "strategies_early_rejected": 1,
+                "strategies_timed_out": 1,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 1,
+                "strategies_failed": 2,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "high_adjusted_short_hold",
+                "score": 2.0,
+                "adjusted_return_time_risk": 0.9,
+                "fundamental_timing_score_no_drawdown": 4.0,
+                "return_pf_score": 4.0,
+                "total_return_proxy": 100.0,
+                "validation_avg_trade_return_pct": 0.8,
+                "validation_profit_factor": 1.3,
+                "validation_avg_holding_days": 12.0,
+                "family": "oneil_canslim",
+            },
+            {
+                "candidate_id": "best_no_drawdown_long_hold",
+                "score": 1.0,
+                "adjusted_return_time_risk": 0.2,
+                "fundamental_timing_score_no_drawdown": 9.0,
+                "return_pf_score": 8.0,
+                "total_return_proxy": 700.0,
+                "validation_avg_trade_return_pct": 1.4,
+                "validation_profit_factor": 1.7,
+                "validation_avg_holding_days": 35.0,
+                "family": "oneil_canslim",
+            },
+        ]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {"candidate_id": "best_no_drawdown_long_hold", "split": "validation", "year": 2020, "trades": 1},
+            {"candidate_id": "best_no_drawdown_long_hold", "split": "locked", "year": 2021, "trades": 1},
+        ]
+    ).to_csv(job / "yearly_trade_performance_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"strategy_id": "early_a", "reason": "validation_not_10_positive_years"}]
+    ).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"strategy_id": "timeout_a", "reason": "CandidateEvaluationTimeout"}]
+    ).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(
+        [{"strategy_id": "runtime_a", "error_type": "ValueError", "error_message": "boom"}]
+    ).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {"strategy_id": "high_adjusted_short_hold", "result_status": "evaluated"},
+            {"strategy_id": "best_no_drawdown_long_hold", "result_status": "evaluated"},
+            {"strategy_id": "early_a", "result_status": "early_rejected"},
+            {"strategy_id": "timeout_a", "result_status": "timeout"},
+            {"strategy_id": "runtime_a", "result_status": "runtime_error"},
+        ]
+    ).to_csv(job / "timing_diagnostics_job_0000.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=1000,
+        total_shards_requested=360,
+        total_jobs_requested=100,
+        candidate_count_per_job=10,
+        validation_end="2020-12-31",
+    )
+
+    leaderboard = pd.read_csv(tmp_path / "final" / "leaderboard.csv")
+    early = pd.read_csv(tmp_path / "final" / "early_rejected_strategies.csv")
+    timeouts = pd.read_csv(tmp_path / "final" / "timeout_strategies.csv")
+    runtime_errors = pd.read_csv(tmp_path / "final" / "runtime_errors.csv")
+    unsupported = pd.read_csv(tmp_path / "final" / "unsupported_strategies.csv")
+    assert summary["total_strategies_requested"] == 5
+    assert summary["strategy_slots_requested"] == 1000
+    assert summary["signal_groups_requested"] == 100
+    assert summary["signal_groups_loaded"] == 100
+    assert summary["strategies_loaded"] == len(leaderboard) + len(early) + len(timeouts) + len(runtime_errors) + len(unsupported)
+    assert summary["total_strategies_evaluated"] == len(leaderboard)
+    assert summary["best_candidate_id"] in set(leaderboard["candidate_id"].astype(str))
+    assert summary["best_candidate_id_overall"] == "high_adjusted_short_hold"
+    assert summary["best_candidate_id_holding_ge25"] == "best_no_drawdown_long_hold"
+    assert summary["best_candidate_id_no_drawdown_score"] == "best_no_drawdown_long_hold"
+    assert summary["best_candidate_id_return_pf_score"] == "best_no_drawdown_long_hold"
+    holding_by_id = leaderboard.set_index("candidate_id")["validation_avg_holding_days"].astype(float)
+    assert holding_by_id.loc[summary["best_candidate_id_holding_ge25"]] >= 25.0
+    yearly = pd.read_csv(tmp_path / "final" / "yearly_trade_performance.csv")
+    assert int(yearly["year"].max()) <= 2020
 
 
 def test_external_merge_marks_recovered_event_first_coverage_complete(tmp_path: Path) -> None:
