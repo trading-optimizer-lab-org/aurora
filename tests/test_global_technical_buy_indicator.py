@@ -3846,7 +3846,15 @@ def test_long_hold_external_pack_real_config_loads_without_unsupported_rules() -
     assert all(item.unsupported_rules == () for item in candidates)
     assert all(item.config.family == "gtbi_long_hold" for item in candidates)
     assert all(item.config.max_holding_days >= 45 for item in candidates)
-    assert all(item.config.minimum_holding_days_before_soft_exit >= 8 for item in candidates)
+    assert all(
+        item.config.minimum_holding_days_before_soft_exit >= run_config["minimum_target_avg_holding_days"]
+        for item in candidates
+    )
+    assert all(
+        item.config.take_profit_min_holding_days >= run_config["minimum_target_avg_holding_days"]
+        for item in candidates
+        if item.config.take_profit_pct > 0.0
+    )
 
 
 def test_long_hold_quality_score_and_holding_columns_are_in_leaderboard_contract() -> None:

@@ -2993,6 +2993,8 @@ def _long_hold_external_strategy_to_config(payload: dict[str, Any]) -> ExternalS
     stock = payload.get("stock_trend_rules") or {}
     rs_rules = payload.get("relative_strength_rules") or {}
     exit_rules = payload.get("exit_rules") or {}
+    risk_controls = payload.get("risk_controls") or {}
+    target_profile = payload.get("target_profile") or {}
     concept = str(payload.get("concept", "")).lower()
     trigger_type = str(entry.get("trigger_type") or concept).lower()
     reclaim_label = str(entry.get("reclaim_ma") or entry.get("reclaim_level") or "")
@@ -3020,6 +3022,20 @@ def _long_hold_external_strategy_to_config(payload: dict[str, Any]) -> ExternalS
         1.0,
     )
     market_exit = str(exit_rules.get("market_exit") or market.get("market_exit") or "")
+    raw_min_soft_exit_days = _external_int(exit_rules.get("minimum_holding_days_before_soft_exit"), 0, low=0, high=520)
+    raw_take_profit_min_days = _external_int(exit_rules.get("take_profit_min_holding_days"), 0, low=0, high=520)
+    min_target_holding_days = max(
+        _external_int(risk_controls.get("minimum_target_avg_holding_days"), 0, low=0, high=520),
+        _external_int(target_profile.get("min_acceptable_avg_holding_days"), 0, low=0, high=520),
+    )
+    delay_soft_exits = bool(risk_controls.get("soft_exit_delayed_until_minimum_holding_days"))
+    minimum_soft_exit_days = max(raw_min_soft_exit_days, min_target_holding_days) if delay_soft_exits else raw_min_soft_exit_days
+    take_profit_pct = float(np.clip(_external_pct(exit_rules.get("take_profit_pct"), 0.0), 0.0, 5.0))
+    take_profit_min_days = (
+        max(raw_take_profit_min_days, min_target_holding_days)
+        if delay_soft_exits and take_profit_pct > 0.0
+        else raw_take_profit_min_days
+    )
     config = IndicatorConfig(
         family="gtbi_long_hold",
         minervini_trend=bool(entry.get("trend_required", True) or stock),
@@ -3069,7 +3085,7 @@ def _long_hold_external_strategy_to_config(payload: dict[str, Any]) -> ExternalS
         min_adr_pct=0.001,
         stop_loss_pct=float(np.clip(_external_pct(exit_rules.get("stop_loss_pct"), 0.10), 0.005, 0.60)),
         trailing_stop_pct=float(np.clip(_finite_float(exit_rules.get("atr_stop_mult"), default=0.0) * 0.03, 0.0, 0.80)),
-        take_profit_pct=float(np.clip(_external_pct(exit_rules.get("take_profit_pct"), 0.0), 0.0, 5.0)),
+        take_profit_pct=take_profit_pct,
         max_holding_days=_external_int(exit_rules.get("max_holding_days"), 120, low=5, high=520),
         use_exit_ma=bool(trailing_label),
         use_market_exit=bool(market_exit),
@@ -3083,8 +3099,8 @@ def _long_hold_external_strategy_to_config(payload: dict[str, Any]) -> ExternalS
         pullback_max_pct=float(np.clip(pullback_max_pct, 0.01, 0.95)),
         close_position_in_range_min=float(np.clip(_finite_float(entry.get("close_position_in_range_min"), default=0.0), 0.0, 1.0)),
         trailing_stop_type=trailing_label,
-        take_profit_min_holding_days=_external_int(exit_rules.get("take_profit_min_holding_days"), 0, low=0, high=520),
-        minimum_holding_days_before_soft_exit=_external_int(exit_rules.get("minimum_holding_days_before_soft_exit"), 0, low=0, high=520),
+        take_profit_min_holding_days=take_profit_min_days,
+        minimum_holding_days_before_soft_exit=minimum_soft_exit_days,
         market_exit_confirmation_days=_external_int(exit_rules.get("market_exit_confirmation_days"), 1, low=1, high=20),
     )
     approximated: list[str] = []
