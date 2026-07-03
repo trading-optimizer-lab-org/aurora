@@ -584,6 +584,22 @@ def test_trade_analysis_helpers_use_full_trade_frame() -> None:
     assert selected["symbol"].tolist() == ["AAA", "AAA"]
 
 
+def test_ticker_trade_summary_cap_keeps_most_relevant_rows() -> None:
+    ticker = pd.DataFrame(
+        [
+            {"candidate_id": "c1", "split": "validation", "symbol": "AAA", "trades": 2, "sum_return_pct": 5.0},
+            {"candidate_id": "c2", "split": "validation", "symbol": "BBB", "trades": 9, "sum_return_pct": 1.0},
+            {"candidate_id": "c3", "split": "train", "symbol": "CCC", "trades": 4, "sum_return_pct": 20.0},
+            {"candidate_id": "c4", "split": "validation", "symbol": "DDD", "trades": 1, "sum_return_pct": 100.0},
+        ]
+    )
+
+    capped = gtbi._cap_ticker_trade_summary(ticker, limit=2)
+
+    assert capped["symbol"].tolist() == ["DDD", "CCC"]
+    assert len(capped) == 2
+
+
 def test_split_trade_frame_uses_iso_dates_without_pandas_datetime_conversion() -> None:
     trades = pd.DataFrame(
         [

@@ -222,6 +222,7 @@ TICKER_TRADE_SUMMARY_COLUMNS = [
     "best_trade_pct",
     "worst_trade_pct",
 ]
+MAX_TICKER_TRADE_SUMMARY_ROWS = 100_000
 SELECTED_SYMBOL_TRADE_COLUMNS = TRADE_COLUMNS
 UNSUPPORTED_COLUMNS = ["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]
 TIMEOUT_COLUMNS = [
@@ -2686,6 +2687,30 @@ def ticker_trade_summary(trades: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, columns=TICKER_TRADE_SUMMARY_COLUMNS)
+
+
+def _cap_ticker_trade_summary(ticker_summary: pd.DataFrame, *, limit: int = MAX_TICKER_TRADE_SUMMARY_ROWS) -> pd.DataFrame:
+    if ticker_summary.empty or int(limit) <= 0 or len(ticker_summary) <= int(limit):
+        return ticker_summary
+    frame = ticker_summary.copy()
+    sort_columns: list[str] = []
+    ascending: list[bool] = []
+    if "sum_return_pct" in frame.columns:
+        frame["_abs_sum_return_pct"] = pd.to_numeric(frame["sum_return_pct"], errors="coerce").abs().fillna(-np.inf)
+        sort_columns.append("_abs_sum_return_pct")
+        ascending.append(False)
+    if "trades" in frame.columns:
+        frame["_trades_sort"] = pd.to_numeric(frame["trades"], errors="coerce").fillna(-np.inf)
+        sort_columns.append("_trades_sort")
+        ascending.append(False)
+    for column in ("candidate_id", "split", "symbol"):
+        if column in frame.columns:
+            sort_columns.append(column)
+            ascending.append(True)
+    if sort_columns:
+        frame = frame.sort_values(sort_columns, ascending=ascending, kind="mergesort")
+    frame = frame.head(int(limit)).drop(columns=[col for col in ("_abs_sum_return_pct", "_trades_sort") if col in frame.columns])
+    return frame.loc[:, [column for column in TICKER_TRADE_SUMMARY_COLUMNS if column in frame.columns]]
 
 
 def extreme_trades_by_return(trades: pd.DataFrame, *, n: int = 100, largest: bool) -> pd.DataFrame:
@@ -8545,6 +8570,9 @@ def merge_external_strategy_pack_outputs(
         if ticker_summary_frames
         else pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
     )
+    ticker_summary_rows_total = int(len(ticker_summary))
+    ticker_summary = _cap_ticker_trade_summary(ticker_summary)
+    ticker_summary_rows_written = int(len(ticker_summary))
     top_trades_by_return = (
         pd.concat(top_trade_frames, ignore_index=True, sort=False)
         if top_trade_frames
@@ -8886,6 +8914,9 @@ def merge_external_strategy_pack_outputs(
         "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
         "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
         "best_adjusted_return_time_risk": best_adjusted,
+        "ticker_trade_summary_rows_total": int(ticker_summary_rows_total),
+        "ticker_trade_summary_rows_written": int(ticker_summary_rows_written),
+        "ticker_trade_summary_row_cap": int(MAX_TICKER_TRADE_SUMMARY_ROWS),
         "locked_start": str(locked_start),
         "train_end": str(train_end),
         "validation_start": str(validation_start),
