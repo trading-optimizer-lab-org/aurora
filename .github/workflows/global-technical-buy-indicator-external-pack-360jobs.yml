@@ -432,6 +432,7 @@ jobs:
       - plan_blocks
       - run_block
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PYTHONUNBUFFERED: "1"
@@ -474,6 +475,7 @@ jobs:
   merge_cross_run:
     if: ${{ inputs.optimized_evaluation_mode == 'merge_cross_run' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PYTHONUNBUFFERED: "1"
