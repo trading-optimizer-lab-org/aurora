@@ -600,6 +600,63 @@ def test_ticker_trade_summary_cap_keeps_most_relevant_rows() -> None:
     assert len(capped) == 2
 
 
+def test_external_merge_caps_ticker_trade_summary_without_losing_row_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gtbi, "MAX_TICKER_TRADE_SUMMARY_ROWS", 2)
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 4,
+                "strategies_evaluated": 1,
+                "strategies_unsupported": 0,
+                "strategies_failed": 0,
+                "ticker_trade_summary_rows_total": 4,
+                "ticker_trade_summary_rows_written": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {
+                "candidate_id": "c1",
+                "score": 1.0,
+                "adjusted_return_time_risk": 0.25,
+                "family": "gtbi_long_hold",
+                "concept_id": "concept_a",
+                "market_overlay_id": "market_a",
+            }
+        ]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(
+        [
+            {"candidate_id": "c1", "split": "validation", "symbol": "AAA", "trades": 2, "sum_return_pct": 5.0},
+            {"candidate_id": "c2", "split": "validation", "symbol": "BBB", "trades": 9, "sum_return_pct": 1.0},
+            {"candidate_id": "c3", "split": "train", "symbol": "CCC", "trades": 4, "sum_return_pct": 20.0},
+            {"candidate_id": "c4", "split": "validation", "symbol": "DDD", "trades": 1, "sum_return_pct": 100.0},
+        ]
+    ).to_csv(job / "ticker_trade_summary_job_0000.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=4,
+        total_shards_requested=360,
+        total_jobs_requested=1,
+        locked_start="2021-01-01",
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+    )
+
+    merged = pd.read_csv(tmp_path / "final" / "ticker_trade_summary.csv")
+    assert merged["symbol"].tolist() == ["DDD", "CCC"]
+    assert summary["ticker_trade_summary_rows_total"] == 4
+    assert summary["ticker_trade_summary_rows_written"] == 2
+    assert summary["ticker_trade_summary_row_cap"] == 2
+
+
 def test_split_trade_frame_uses_iso_dates_without_pandas_datetime_conversion() -> None:
     trades = pd.DataFrame(
         [

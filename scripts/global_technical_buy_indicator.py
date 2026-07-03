@@ -2713,6 +2713,37 @@ def _cap_ticker_trade_summary(ticker_summary: pd.DataFrame, *, limit: int = MAX_
     return frame.loc[:, [column for column in TICKER_TRADE_SUMMARY_COLUMNS if column in frame.columns]]
 
 
+def _count_csv_data_rows(path: Path) -> int:
+    if not path.exists() or not path.stat().st_size:
+        return 0
+    with path.open("rb") as handle:
+        lines = sum(1 for _ in handle)
+    return max(int(lines) - 1, 0)
+
+
+def _read_capped_ticker_trade_summary(path: Path, *, limit: int = MAX_TICKER_TRADE_SUMMARY_ROWS) -> tuple[pd.DataFrame, int]:
+    if not path.stat().st_size:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS), 0
+    total_rows = 0
+    capped = pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    try:
+        reader = pd.read_csv(path, chunksize=50_000)
+        for chunk in reader:
+            total_rows += int(len(chunk))
+            chunk = _cap_ticker_trade_summary(chunk, limit=limit)
+            if chunk.empty:
+                continue
+            capped = _cap_ticker_trade_summary(
+                pd.concat([capped, chunk], ignore_index=True, sort=False),
+                limit=limit,
+            )
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS), 0
+    except ValueError:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS), _count_csv_data_rows(path)
+    return capped, total_rows
+
+
 def extreme_trades_by_return(trades: pd.DataFrame, *, n: int = 100, largest: bool) -> pd.DataFrame:
     if trades.empty or "return_pct" not in trades.columns:
         return pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
@@ -8108,7 +8139,10 @@ def run_external_strategy_pack_shard(
     symbol_entry_counts = symbol_entry_counts_by_year(trades_out)
     annual_equity = annual_trade_equity_curve(trades_out)
     return_distribution = trade_return_distribution(trades_out)
-    ticker_summary = ticker_trade_summary(trades_out)
+    ticker_summary_full = ticker_trade_summary(trades_out)
+    ticker_summary_rows_total = int(len(ticker_summary_full))
+    ticker_summary = _cap_ticker_trade_summary(ticker_summary_full)
+    ticker_summary_rows_written = int(len(ticker_summary))
     top_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=True)
     bottom_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=False)
     selected_trades = selected_symbol_trades(trades_out)
@@ -8320,6 +8354,9 @@ def run_external_strategy_pack_shard(
         "requires_local_machine": False,
         "locked_opened": False,
         "filtered_candidates": int(len(filtered)),
+        "ticker_trade_summary_rows_total": int(ticker_summary_rows_total),
+        "ticker_trade_summary_rows_written": int(ticker_summary_rows_written),
+        "ticker_trade_summary_row_cap": int(MAX_TICKER_TRADE_SUMMARY_ROWS),
         "long_hold_quality_candidate_count": int(len(long_hold_quality)),
         "validation_avg_holding_days_ge25_count": int(validation_holding_ge25_count),
         "validation_avg_holding_days_ge30_count": int(validation_holding_ge30_count),
@@ -8437,9 +8474,6 @@ def merge_external_strategy_pack_outputs(
         ("trade_return_distribution_shard_*.csv", return_distribution_frames),
         ("trade_return_distribution_job_*.csv", return_distribution_frames),
         ("trade_return_distribution.csv", return_distribution_frames),
-        ("ticker_trade_summary_shard_*.csv", ticker_summary_frames),
-        ("ticker_trade_summary_job_*.csv", ticker_summary_frames),
-        ("ticker_trade_summary.csv", ticker_summary_frames),
         ("top_100_trades_by_return_shard_*.csv", top_trade_frames),
         ("top_100_trades_by_return_job_*.csv", top_trade_frames),
         ("top_100_trades_by_return.csv", top_trade_frames),
@@ -8454,6 +8488,23 @@ def merge_external_strategy_pack_outputs(
             frame = read_csv_or_empty(path)
             if not frame.empty:
                 target.append(frame)
+    ticker_summary = pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    ticker_summary_rows_total = 0
+    for path in sorted(
+        [
+            *shards_root.rglob("ticker_trade_summary_shard_*.csv"),
+            *shards_root.rglob("ticker_trade_summary_job_*.csv"),
+            *shards_root.rglob("ticker_trade_summary.csv"),
+        ]
+    ):
+        frame, row_count = _read_capped_ticker_trade_summary(path, limit=MAX_TICKER_TRADE_SUMMARY_ROWS)
+        ticker_summary_rows_total += int(row_count)
+        if not frame.empty:
+            ticker_summary = _cap_ticker_trade_summary(
+                pd.concat([ticker_summary, frame], ignore_index=True, sort=False),
+                limit=MAX_TICKER_TRADE_SUMMARY_ROWS,
+            )
+    ticker_summary_rows_written = int(len(ticker_summary))
     for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv"), *shards_root.rglob("top_trades_sample.csv")]):
         frame = read_csv_or_empty(path)
         if not frame.empty:
@@ -8565,14 +8616,6 @@ def merge_external_strategy_pack_outputs(
         if return_distribution_frames
         else pd.DataFrame(columns=TRADE_DISTRIBUTION_COLUMNS)
     )
-    ticker_summary = (
-        pd.concat(ticker_summary_frames, ignore_index=True, sort=False)
-        if ticker_summary_frames
-        else pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
-    )
-    ticker_summary_rows_total = int(len(ticker_summary))
-    ticker_summary = _cap_ticker_trade_summary(ticker_summary)
-    ticker_summary_rows_written = int(len(ticker_summary))
     top_trades_by_return = (
         pd.concat(top_trade_frames, ignore_index=True, sort=False)
         if top_trade_frames
