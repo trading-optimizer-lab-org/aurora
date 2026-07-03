@@ -4385,6 +4385,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert 'start_index = max(int("${{ inputs.job_start_index }}"), 0)' in text
     assert 'requested_count = int("${{ inputs.job_count }}")' in text
     assert 'logical_jobs_per_block = max(int("${{ inputs.logical_jobs_per_block }}"), 1)' in text
+    assert 'if "${{ inputs.test_mode }}" == "true":' in text
+    assert "logical_jobs_per_block = 1" in text
     assert "len(rows) > 256" in text
     assert "max-parallel: 360" in text
     assert text.count("max-parallel: 180") == 0

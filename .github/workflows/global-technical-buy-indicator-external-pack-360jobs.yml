@@ -276,6 +276,8 @@ jobs:
                       logical_jobs = list(range(start_index, end_index))
 
           logical_jobs_per_block = max(int("${{ inputs.logical_jobs_per_block }}"), 1)
+          if "${{ inputs.test_mode }}" == "true":
+              logical_jobs_per_block = 1
           rows = []
           total_strategies = 0
           for block_index, start in enumerate(range(0, len(logical_jobs), logical_jobs_per_block)):
