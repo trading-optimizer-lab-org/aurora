@@ -1150,14 +1150,17 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
     prepared = _prepare_ohlcv(frame)
     if prepared.empty:
         return
+    benchmark = _prepare_ohlcv(benchmark_prices)
     close = prepared["close"]
     high = prepared["high"]
     low = prepared["low"]
     volume = prepared["volume"].fillna(0.0)
     entry_cache = _frame_series_cache(prepared, "_gtbi_entry_signal_series_cache")
+    primitive_cache = _frame_series_cache(prepared, "_gtbi_signal_primitive_cache")
     exit_cache = _frame_series_cache(prepared, "_gtbi_exit_series_cache")
+    market_cache = _frame_series_cache(prepared, "_gtbi_market_trend_cache")
 
-    for window in (10, 20, 21, 50, 63, 80, 100, 126, 150, 180, 200, 220, 252):
+    for window in (10, 20, 21, 40, 42, 50, 55, 63, 80, 100, 126, 150, 180, 200, 220, 252):
         if window <= 0:
             continue
         entry_cache.setdefault(("sma", window), close.rolling(window, min_periods=window).mean())
@@ -1168,13 +1171,42 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
         entry_cache.setdefault((f"high_1_{window}", window), high.shift(1).rolling(window, min_periods=window).max())
         entry_cache.setdefault((f"low_1_{window}", window), low.shift(1).rolling(window, min_periods=window).min())
         entry_cache.setdefault((f"vol_{min_periods}", window), volume.rolling(window, min_periods=min_periods).mean())
+    for window, min_periods in ((55, 30), (40, 30)):
+        entry_cache.setdefault((f"high_1_{min_periods}", window), high.shift(1).rolling(window, min_periods=min_periods).max())
+        entry_cache.setdefault((f"low_1_{min_periods}", window), low.shift(1).rolling(window, min_periods=min_periods).min())
+    entry_cache.setdefault(("vol_10", 20), volume.rolling(20, min_periods=10).mean())
+    entry_cache.setdefault(("rsi", 14), _rsi(close, 14).fillna(50.0))
     for window in (10, 20, 21, 35, 50, 60):
         exit_cache.setdefault(("exit_ma", window), close.rolling(window, min_periods=window).mean())
 
-    if not benchmark_prices.empty:
-        benchmark = _prepare_ohlcv(benchmark_prices)
+    if not benchmark.empty:
+        benchmark_identity = (id(benchmark), len(benchmark))
         spy_close = benchmark["close"].reindex(prepared.index).ffill()
-        entry_cache.setdefault(("spy_close", id(benchmark), len(benchmark)), spy_close)
+        entry_cache.setdefault(("spy_close", *benchmark_identity), spy_close)
+        primitive_cache.setdefault(("spy_close", *benchmark_identity), spy_close)
+        rs_line = close / spy_close.replace(0.0, np.nan)
+        primitive_cache.setdefault(("rs_line", *benchmark_identity), rs_line)
+        for window in (42, 63, 126):
+            rs_avg = rs_line.rolling(window, min_periods=min(window, len(prepared))).mean()
+            rs_high = rs_line.rolling(window, min_periods=min(window, len(prepared))).max()
+            primitive_cache.setdefault(("rs_avg", window, *benchmark_identity), rs_avg)
+            primitive_cache.setdefault(("rs_high", window, *benchmark_identity), rs_high)
+            for near_high_pct in (0.90, 0.95):
+                entry_cache.setdefault(
+                    ("rs_ok", window, round(float(near_high_pct), 8), *benchmark_identity),
+                    (rs_line > rs_avg) & (rs_line >= rs_high * float(near_high_pct)),
+                )
+        for market_ma_days in (50, 200):
+            for market_momentum_days in (20, 63):
+                market_config = IndicatorConfig(
+                    market_ma_days=market_ma_days,
+                    market_momentum_days=market_momentum_days,
+                    strict_market_filter=False,
+                )
+                market_cache.setdefault(
+                    ("market_trend", *benchmark_identity, market_ma_days, market_momentum_days, False),
+                    _market_trend_ok(prepared.index, benchmark, market_config),
+                )
 
 
 def build_feature_store(
@@ -1185,12 +1217,13 @@ def build_feature_store(
     prewarm: bool = True,
 ) -> FeatureStore:
     start = time.perf_counter()
+    benchmark = _prepare_ohlcv(benchmark_prices)
     if enabled and prewarm:
         for frame in symbol_frames.values():
-            _prewarm_common_features(frame, benchmark_prices)
+            _prewarm_common_features(frame, benchmark)
     return FeatureStore(
         symbol_frames=symbol_frames,
-        benchmark_prices=benchmark_prices,
+        benchmark_prices=benchmark,
         seconds_build=float(time.perf_counter() - start),
         enabled=bool(enabled),
     )

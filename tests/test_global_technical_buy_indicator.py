@@ -1852,6 +1852,64 @@ def test_feature_store_preserves_entry_signals() -> None:
     assert store.seconds_build >= 0.0
 
 
+def test_feature_store_prewarms_long_hold_signal_primitives() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(320))
+    spy = gtbi._prepare_ohlcv(_spy_frame(320))
+    config = gtbi.IndicatorConfig(
+        family="gtbi_long_hold",
+        minervini_trend=True,
+        require_rs=True,
+        require_base_tight=True,
+        require_breakout=True,
+        require_market_trend=True,
+        breakout_lookback=55,
+        base_lookback=40,
+        rs_lookback=42,
+        high_lookback=252,
+        low_lookback=252,
+        ma_short=20,
+        ma_mid=150,
+        ma_long=200,
+        rsi_period=14,
+        rsi_max=95.0,
+        volume_multiple=1.1,
+        max_base_range_pct=0.30,
+        near_high_pct=0.50,
+        above_low_multiple=1.05,
+        market_ma_days=200,
+        market_momentum_days=20,
+        entry_trigger_type="base_breakout",
+        entry_ma_days=20,
+        entry_ma_kind="ema",
+        pullback_min_pct=0.02,
+        pullback_max_pct=0.20,
+        close_position_in_range_min=0.20,
+    )
+
+    baseline = gtbi.entry_signal(frame.copy(), spy.copy(), config)
+    store = gtbi.build_feature_store({"AAA": frame}, spy, enabled=True)
+    entry_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_entry_signal_series_cache")
+    primitive_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_signal_primitive_cache")
+    market_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_market_trend_cache")
+    benchmark = store.benchmark_prices
+    benchmark_key = (id(benchmark), len(benchmark))
+
+    assert ("high_1_30", 55) in entry_cache
+    assert ("low_1_30", 40) in entry_cache
+    assert ("high_0_40", 40) in entry_cache
+    assert ("low_0_40", 40) in entry_cache
+    assert ("vol_10", 20) in entry_cache
+    assert ("rsi", 14) in entry_cache
+    assert ("rs_line", *benchmark_key) in primitive_cache
+    assert ("rs_avg", 42, *benchmark_key) in primitive_cache
+    assert ("rs_high", 42, *benchmark_key) in primitive_cache
+    assert ("market_trend", *benchmark_key, 200, 20, False) in market_cache
+
+    cached = gtbi.entry_signal(store.symbol_frames["AAA"], store.benchmark_prices, config)
+
+    pd.testing.assert_series_equal(baseline, cached)
+
+
 def test_signal_primitive_store_reuses_boolean_primitives() -> None:
     frame = gtbi._prepare_ohlcv(_breakout_frame(140))
     spy = gtbi._prepare_ohlcv(_spy_frame(140))
