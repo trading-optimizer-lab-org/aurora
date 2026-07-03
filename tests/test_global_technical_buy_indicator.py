@@ -1660,7 +1660,7 @@ def test_v5_signal_scheduler_caps_strategy_budget_per_job(tmp_path: Path) -> Non
     assert sum(len(group) for group in selected) <= 50
 
 
-def test_v5_signal_scheduler_splits_large_signal_group_across_jobs(tmp_path: Path) -> None:
+def test_v5_signal_scheduler_keeps_large_signal_group_in_one_job(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     shard_dir = pack / "shards"
     shard_dir.mkdir(parents=True)
@@ -1681,6 +1681,7 @@ def test_v5_signal_scheduler_splits_large_signal_group_across_jobs(tmp_path: Pat
     )
 
     scheduled_groups: list[list[gtbi.ExternalStrategyCandidate]] = []
+    non_empty_jobs = 0
     for job_index in range(4):
         selected, total_jobs, total_signal_groups = gtbi._balanced_external_signal_groups_for_job(
             pack,
@@ -1692,13 +1693,15 @@ def test_v5_signal_scheduler_splits_large_signal_group_across_jobs(tmp_path: Pat
             optimized_evaluation_mode="optimized_evaluation_v5_event_first",
         )
         assert total_jobs == 4
-        assert total_signal_groups == 3
-        assert sum(len(group) for group in selected) <= 20
+        assert total_signal_groups == 1
+        if selected:
+            non_empty_jobs += 1
         scheduled_groups.extend(selected)
 
-    assert len(scheduled_groups) == 3
+    assert non_empty_jobs == 1
+    assert len(scheduled_groups) == 1
     assert sum(len(group) for group in scheduled_groups) == 48
-    assert sorted(len(group) for group in scheduled_groups) == [8, 20, 20]
+    assert len({gtbi.signal_external_strategy_hash(candidate) for candidate in scheduled_groups[0]}) == 1
 
 
 def test_v5_signal_scheduler_uses_later_schedule_windows(tmp_path: Path) -> None:

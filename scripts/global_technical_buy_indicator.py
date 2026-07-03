@@ -3444,30 +3444,6 @@ def _balanced_external_signal_groups_for_job(
             return float(base_cost + max(len(group), 1) * 0.25)
 
         candidate_budget = max(per_job * 5, per_job)
-        max_signal_chunk_candidates = max(8, min(20, candidate_budget))
-
-        def split_large_signal_group(group: list[ExternalStrategyCandidate]) -> list[list[ExternalStrategyCandidate]]:
-            if len(group) <= max_signal_chunk_candidates:
-                return [group]
-            ordered_candidates = sorted(
-                group,
-                key=lambda candidate: (
-                    exit_external_strategy_hash(candidate),
-                    int(candidate.payload.get("shard_id", 0)),
-                    int(candidate.payload.get("slot_in_shard", 0)),
-                    str(candidate.payload.get("strategy_id", "")),
-                ),
-            )
-            return [
-                ordered_candidates[start : start + max_signal_chunk_candidates]
-                for start in range(0, len(ordered_candidates), max_signal_chunk_candidates)
-            ]
-
-        groups = [
-            chunk
-            for group in groups
-            for chunk in split_large_signal_group(group)
-        ]
         group_budget = max(1, min(3, per_job))
         max_window_groups = max(active_jobs * group_budget, 1)
         ordered_for_windows = sorted(
