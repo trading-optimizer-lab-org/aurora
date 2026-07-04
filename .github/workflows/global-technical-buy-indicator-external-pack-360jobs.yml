@@ -104,9 +104,37 @@ on:
         required: true
         default: "20"
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
+  orchestrate_longhold_72k:
+    if: ${{ inputs.optimized_evaluation_mode == 'orchestrate_longhold_72k' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run GitHub-only long-hold orchestrator
+        run: |
+          python scripts/orchestrate_gtbi_longhold_72k.py \
+            --repo "${{ github.repository }}" \
+            --branch "${{ github.ref_name }}" \
+            --workflow "global-technical-buy-indicator-external-pack-360jobs.yml" \
+            --loop-minutes 300 \
+            --sleep-seconds 300 \
+            --max-parallel-logical-jobs 360 \
+            --max-new-waves-per-pass 2 \
+            --self-dispatch
+
   build_external_pack:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
@@ -223,7 +251,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -309,7 +337,7 @@ jobs:
           PY
 
   run_block:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -427,7 +455,7 @@ jobs:
           retention-days: 14
 
   merge_final:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && always() }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && always() }}
     needs:
       - plan_blocks
       - run_block
