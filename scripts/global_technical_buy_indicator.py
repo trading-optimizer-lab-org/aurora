@@ -8981,6 +8981,67 @@ def merge_external_strategy_pack_outputs(
     slow_deferred = drop_superseded_rows(slow_deferred, "strategy_id")
     runtime_errors = drop_superseded_rows(runtime_errors, "strategy_id")
     unsupported = drop_superseded_rows(unsupported, "strategy_id")
+
+    def slot_id_map_from_frame(frame: pd.DataFrame, id_column: str) -> dict[str, int]:
+        if frame.empty or id_column not in frame.columns:
+            return {}
+        if "shard_id" not in frame.columns or "slot_in_shard" not in frame.columns:
+            return {}
+        shards = pd.to_numeric(frame["shard_id"], errors="coerce")
+        slots = pd.to_numeric(frame["slot_in_shard"], errors="coerce")
+        ids = frame[id_column].astype(str)
+        out: dict[str, int] = {}
+        for strategy_id, shard, slot in zip(ids, shards, slots):
+            if not strategy_id or pd.isna(shard) or pd.isna(slot):
+                continue
+            out[str(strategy_id)] = int(shard) * 200 + int(slot)
+        return out
+
+    terminal_id_to_slot: dict[str, int] = {}
+    for frame, column in (
+        (job_manifest, "strategy_id"),
+        (timing, "strategy_id"),
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        terminal_id_to_slot.update(slot_id_map_from_frame(frame, column))
+
+    terminal_slot_values: list[int] = []
+    for frame, column in (
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        if frame.empty or column not in frame.columns:
+            continue
+        for strategy_id in frame[column].dropna().astype(str):
+            slot = terminal_id_to_slot.get(strategy_id)
+            if slot is not None:
+                terminal_slot_values.append(int(slot))
+    expected_slots = set(range(max(int(total_strategies_requested), 0)))
+    terminal_slot_set = set(terminal_slot_values)
+    actual_missing_slots = sorted(expected_slots - terminal_slot_set)
+    actual_extra_slots = sorted(slot for slot in terminal_slot_set if slot not in expected_slots)
+    actual_overlap_count = int(len(terminal_slot_values) - len(terminal_slot_set))
+    missing_strategies = pd.DataFrame(
+        [
+            {
+                "strategy_id": f"slot_{slot}",
+                "shard_id": int(slot) // 200,
+                "slot_in_shard": int(slot) % 200,
+                "reason": "missing_terminal_result",
+            }
+            for slot in actual_missing_slots
+        ],
+        columns=["strategy_id", "shard_id", "slot_in_shard", "reason"],
+    )
     slow_queue_manifest = (
         pd.concat(slow_queue_frames, ignore_index=True, sort=False)
         if slow_queue_frames
@@ -9033,6 +9094,7 @@ def merge_external_strategy_pack_outputs(
     slow_deferred.to_csv(output_dir / "slow_deferred_strategies.csv", index=False)
     early_rejected.to_csv(output_dir / "early_rejected_strategies.csv", index=False)
     runtime_errors.to_csv(output_dir / "runtime_errors.csv", index=False)
+    missing_strategies.to_csv(output_dir / "missing_strategies.csv", index=False)
     timing.to_csv(output_dir / "timing_diagnostics.csv", index=False)
     dedupe_map.to_csv(output_dir / "dedupe_map.csv", index=False)
     job_manifest.to_csv(output_dir / "job_manifest.csv", index=False)
@@ -9394,6 +9456,9 @@ def merge_external_strategy_pack_outputs(
     strict_missing = max(int(total_strategies_requested) - strict_success_rows, 0)
     strict_extra = max(strict_success_rows - int(total_strategies_requested), 0)
     strict_overlaps = int(terminal_duplicate_ids)
+    missing_count = int(len(actual_missing_slots))
+    extra_count = int(len(actual_extra_slots))
+    overlap_count = int(actual_overlap_count)
     summary = {
         "total_strategies_requested": int(strategies_requested_for_summary),
         "strategy_slots_requested": int(strategy_slots_requested),
@@ -9478,6 +9543,9 @@ def merge_external_strategy_pack_outputs(
         "strict_missing": int(strict_missing),
         "strict_extra": int(strict_extra),
         "strict_overlaps": int(strict_overlaps),
+        "missing": int(missing_count),
+        "extra": int(extra_count),
+        "overlaps": int(overlap_count),
     }
     strict_violations: list[dict[str, Any]] = []
     if strict_final_eval_mode:
@@ -9489,9 +9557,9 @@ def merge_external_strategy_pack_outputs(
             ("unsupported", int(unsupported_total), 0),
             ("slow_deferred", int(slow_deferred_total), 0),
             ("leaderboard_plus_early_rejected", int(strict_success_rows), int(total_strategies_requested)),
-            ("missing", int(strict_missing), 0),
-            ("extra", int(strict_extra), 0),
-            ("overlaps", int(strict_overlaps), 0),
+            ("missing", int(missing_count), 0),
+            ("extra", int(extra_count), 0),
+            ("overlaps", int(overlap_count), 0),
         )
         for name, actual, expected in strict_checks:
             if actual != expected:

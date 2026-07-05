@@ -4548,7 +4548,7 @@ def test_external_merge_strict_final_rejects_incomplete_leaderboard_plus_early(t
         encoding="utf-8",
     )
     pd.DataFrame(
-        [{"candidate_id": "ok", "score": 1.0, "adjusted_return_time_risk": 0.1}]
+        [{"candidate_id": "ok", "score": 1.0, "adjusted_return_time_risk": 0.1, "shard_id": 0, "slot_in_shard": 0}]
     ).to_csv(job / "leaderboard_job_0000.csv", index=False)
     pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
     pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
@@ -4597,10 +4597,10 @@ def test_external_merge_strict_final_accepts_leaderboard_plus_early_coverage(tmp
         encoding="utf-8",
     )
     pd.DataFrame(
-        [{"candidate_id": "ok", "score": 1.0, "adjusted_return_time_risk": 0.1}]
+        [{"candidate_id": "ok", "score": 1.0, "adjusted_return_time_risk": 0.1, "shard_id": 0, "slot_in_shard": 0}]
     ).to_csv(job / "leaderboard_job_0000.csv", index=False)
     pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
-    pd.DataFrame([{"strategy_id": "early", "reason": "validation_not_10_positive_years"}]).to_csv(
+    pd.DataFrame([{"strategy_id": "early", "reason": "validation_not_10_positive_years", "shard_id": 0, "slot_in_shard": 1}]).to_csv(
         job / "early_rejected_strategies_job_0000.csv",
         index=False,
     )
@@ -4672,7 +4672,9 @@ def test_external_merge_recovered_result_supersedes_prior_timeout(tmp_path: Path
         index=False,
     )
     pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(original / "leaderboard.csv", index=False)
-    pd.DataFrame([{"candidate_id": "recovered", "score": 1.0, "adjusted_return_time_risk": 0.1}]).to_csv(
+    pd.DataFrame(
+        [{"candidate_id": "recovered", "score": 1.0, "adjusted_return_time_risk": 0.1, "shard_id": 0, "slot_in_shard": 0}]
+    ).to_csv(
         recovery / "leaderboard.csv",
         index=False,
     )
