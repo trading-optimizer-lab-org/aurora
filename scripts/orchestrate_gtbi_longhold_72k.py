@@ -1045,6 +1045,12 @@ def main() -> int:
             for raw in raw_runs
             if parse_utc(str(raw.get("createdAt") or "1970-01-01T00:00:00Z")) >= min_created_at
         ]
+        if validated_sha:
+            raw_runs = [
+                raw
+                for raw in raw_runs
+                if str(raw.get("headSha") or "") == validated_sha
+            ]
         runs, load_failures = load_runs_info(
             args.repo,
             raw_runs,
