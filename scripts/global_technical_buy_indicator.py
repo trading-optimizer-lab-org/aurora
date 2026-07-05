@@ -8558,6 +8558,8 @@ def merge_external_strategy_pack_outputs(
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
+    fill_missing_timeouts_pack_path: Path | None = None,
+    fill_missing_timeouts_reason: str = "missing_slot_classified_as_timeout_in_merge",
 ) -> dict[str, Any]:
     shards_root = Path(shards_root)
     output_dir = Path(output_dir)
@@ -8591,11 +8593,11 @@ def merge_external_strategy_pack_outputs(
     exit_group_manifest_frames: list[pd.DataFrame] = []
     cost_profile_v5_rows: list[dict[str, Any]] = []
     rule_rows: list[dict[str, Any]] = []
-    def read_csv_or_empty(path: Path) -> pd.DataFrame:
+    def read_csv_or_empty(path: Path, *, nrows: int | None = None) -> pd.DataFrame:
         if not path.stat().st_size:
             return pd.DataFrame()
         try:
-            return pd.read_csv(path)
+            return pd.read_csv(path, nrows=nrows)
         except pd.errors.EmptyDataError:
             return pd.DataFrame()
 
@@ -8679,10 +8681,14 @@ def merge_external_strategy_pack_outputs(
                 limit=MAX_TICKER_TRADE_SUMMARY_ROWS,
             )
     ticker_summary_rows_written = int(len(ticker_summary))
+    top_trades_sample_remaining = 5000
     for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv"), *shards_root.rglob("top_trades_sample.csv")]):
-        frame = read_csv_or_empty(path)
+        if top_trades_sample_remaining <= 0:
+            break
+        frame = read_csv_or_empty(path, nrows=top_trades_sample_remaining)
         if not frame.empty:
             trade_frames.append(frame)
+            top_trades_sample_remaining -= int(len(frame))
     for path in sorted(
         [
             *shards_root.rglob("unsupported_strategies_shard_*.csv"),
@@ -8844,6 +8850,116 @@ def merge_external_strategy_pack_outputs(
         if job_manifest_frames
         else pd.DataFrame(columns=JOB_MANIFEST_COLUMNS)
     )
+
+    synthetic_missing_timeout_count = 0
+    if fill_missing_timeouts_pack_path is not None and int(total_strategies_requested) > 0:
+        fill_pack_path = Path(fill_missing_timeouts_pack_path)
+        if not fill_pack_path.exists():
+            raise FileNotFoundError(f"fill-missing strategy pack path does not exist: {fill_pack_path}")
+        if "shard_id" in job_manifest.columns and "slot_in_shard" in job_manifest.columns:
+            manifest_shards = pd.to_numeric(job_manifest["shard_id"], errors="coerce")
+            manifest_slots = pd.to_numeric(job_manifest["slot_in_shard"], errors="coerce")
+            covered_slots = {
+                int(shard) * 200 + int(slot)
+                for shard, slot in zip(manifest_shards, manifest_slots)
+                if pd.notna(shard) and pd.notna(slot)
+            }
+        else:
+            covered_slots = set()
+        missing_slots = [slot for slot in range(int(total_strategies_requested)) if slot not in covered_slots]
+        if missing_slots:
+            fill_shards_root = fill_pack_path / "shards" if (fill_pack_path / "shards").exists() else fill_pack_path
+            slots_by_shard: dict[int, set[int]] = {}
+            for slot in missing_slots:
+                slots_by_shard.setdefault(int(slot) // 200, set()).add(int(slot) % 200)
+            timeout_rows: list[dict[str, Any]] = []
+            timing_rows: list[dict[str, Any]] = []
+            manifest_rows: list[dict[str, Any]] = []
+            chunks_per_shard = int(math.ceil(200 / max(int(candidate_count_per_job or 10), 1)))
+            for shard_id, wanted_slots in sorted(slots_by_shard.items()):
+                shard_path = fill_shards_root / f"shard_{shard_id:03d}.jsonl"
+                if not shard_path.exists():
+                    raise FileNotFoundError(f"cannot fill missing slots; shard file missing: {shard_path}")
+                with shard_path.open(encoding="utf-8") as handle:
+                    for slot_in_shard, line in enumerate(handle):
+                        if slot_in_shard not in wanted_slots:
+                            continue
+                        payload = json.loads(line)
+                        strategy_id = str(payload.get("strategy_id") or f"missing_{shard_id:03d}_{slot_in_shard:03d}")
+                        family = str(payload.get("family", ""))
+                        concept = str(payload.get("concept", ""))
+                        market_overlay = str(payload.get("market_profile_id") or payload.get("market_overlay") or "")
+                        trend_filter = str(payload.get("trend_profile_id") or payload.get("stock_trend_profile_id") or "")
+                        relative_strength_filter = str(payload.get("rs_profile_id") or payload.get("relative_strength_profile_id") or "")
+                        exit_rule = str(payload.get("exit_profile_id") or "")
+                        aggressiveness = str(payload.get("aggression_id") or payload.get("aggressiveness") or "")
+                        chunk_index = int(slot_in_shard) // max(int(candidate_count_per_job or 10), 1)
+                        job_id = int(shard_id) * chunks_per_shard + chunk_index
+                        timeout_rows.append(
+                            {
+                                "strategy_id": strategy_id,
+                                "shard_id": int(shard_id),
+                                "slot_in_shard": int(slot_in_shard),
+                                "family": family,
+                                "concept": concept,
+                                "market_overlay": market_overlay,
+                                "trend_filter": trend_filter,
+                                "relative_strength_filter": relative_strength_filter,
+                                "exit_rule": exit_rule,
+                                "aggressiveness": aggressiveness,
+                                "reason": fill_missing_timeouts_reason,
+                                "seconds_until_timeout": np.nan,
+                            }
+                        )
+                        timing_rows.append(
+                            {
+                                "strategy_id": strategy_id,
+                                "job_id": int(job_id),
+                                "shard_id": int(shard_id),
+                                "slot_in_shard": int(slot_in_shard),
+                                "family": family,
+                                "concept": concept,
+                                "market_overlay": market_overlay,
+                                "trend_filter": trend_filter,
+                                "relative_strength_filter": relative_strength_filter,
+                                "exit_rule": exit_rule,
+                                "aggressiveness": aggressiveness,
+                                "seconds_total": np.nan,
+                                "seconds_feature_build": 0.0,
+                                "seconds_signal": np.nan,
+                                "seconds_simulation": 0.0,
+                                "seconds_train": 0.0,
+                                "seconds_validation": 0.0,
+                                "symbols_total": 0,
+                                "symbols_processed": 0,
+                                "raw_signals_total": 0,
+                                "trades_total": 0,
+                                "train_trades": 0,
+                                "validation_trades": 0,
+                                "result_status": "timeout",
+                                "reject_reason": fill_missing_timeouts_reason,
+                                "timeout": True,
+                                "early_rejected": False,
+                                "runtime_error": False,
+                            }
+                        )
+                        manifest_rows.append(
+                            {
+                                "job_id": int(job_id),
+                                "strategy_id": strategy_id,
+                                "shard_id": int(shard_id),
+                                "slot_in_shard": int(slot_in_shard),
+                                "canonical_hash": "",
+                                "signal_hash": "",
+                                "cost_score": "",
+                                "estimated_cost_bucket": "merge_timeout",
+                            }
+                        )
+            synthetic_missing_timeout_count = int(len(timeout_rows))
+            if timeout_rows:
+                timeouts = pd.concat([timeouts, pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)], ignore_index=True, sort=False)
+                timing = pd.concat([timing, pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)], ignore_index=True, sort=False)
+                job_manifest = pd.concat([job_manifest, pd.DataFrame(manifest_rows, columns=JOB_MANIFEST_COLUMNS)], ignore_index=True, sort=False)
     slow_queue_manifest = (
         pd.concat(slow_queue_frames, ignore_index=True, sort=False)
         if slow_queue_frames
@@ -8974,15 +9090,137 @@ def merge_external_strategy_pack_outputs(
     summary_by("concept_id").to_csv(output_dir / "concept_summary.csv", index=False)
     summary_by("market_overlay_id").to_csv(output_dir / "market_overlay_summary.csv", index=False)
 
+    def _rank_by_numeric(frame: pd.DataFrame, column: str, *, ascending: bool = False) -> pd.DataFrame:
+        ranked = frame.copy()
+        if ranked.empty:
+            return ranked
+        if column not in ranked.columns:
+            ranked[column] = np.nan
+        tie_column = "candidate_id" if "candidate_id" in ranked.columns else "strategy_id"
+        ranked[f"_{column}_numeric"] = pd.to_numeric(ranked[column], errors="coerce").fillna(
+            float("inf") if ascending else float("-inf")
+        )
+        ranked = ranked.sort_values([f"_{column}_numeric", tie_column], ascending=[ascending, True])
+        return ranked.drop(columns=[f"_{column}_numeric"])
+
+    no_drawdown_ranked = _rank_by_numeric(leaderboard, "fundamental_timing_score_no_drawdown")
+    no_drawdown_ranked.to_csv(output_dir / "long_hold_no_drawdown_ranking.csv", index=False)
+    no_drawdown_ranked.head(100).to_csv(output_dir / "top_100_no_drawdown_score.csv", index=False)
+    _rank_by_numeric(leaderboard, "validation_avg_trade_return_pct").head(100).to_csv(
+        output_dir / "top_100_by_avg_trade_return.csv",
+        index=False,
+    )
+    _rank_by_numeric(leaderboard, "validation_profit_factor").head(100).to_csv(
+        output_dir / "top_100_by_profit_factor.csv",
+        index=False,
+    )
+    _rank_by_numeric(leaderboard, "total_return_proxy").head(100).to_csv(
+        output_dir / "top_100_by_total_return_proxy.csv",
+        index=False,
+    )
+
+    def _numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
+        if frame.empty:
+            return pd.Series(dtype=float)
+        if column not in frame.columns:
+            return pd.Series(np.nan, index=frame.index, dtype=float)
+        return pd.to_numeric(frame[column], errors="coerce")
+
+    holding_days = _numeric_series(leaderboard, "validation_avg_holding_days")
+    _rank_by_numeric(leaderboard.loc[holding_days >= 25.0].copy(), "fundamental_timing_score_no_drawdown").head(100).to_csv(
+        output_dir / "top_100_holding_ge25.csv",
+        index=False,
+    )
+    _rank_by_numeric(
+        leaderboard.loc[(holding_days >= 30.0) & (holding_days <= 60.0)].copy(),
+        "fundamental_timing_score_no_drawdown",
+    ).head(100).to_csv(output_dir / "top_100_holding_30_to_60.csv", index=False)
+    _rank_by_numeric(leaderboard, "validation_positive_years").head(100).to_csv(
+        output_dir / "top_100_positive_years.csv",
+        index=False,
+    )
+    _rank_by_numeric(leaderboard, "percent_exits_under_10_days", ascending=True).head(100).to_csv(
+        output_dir / "top_100_low_early_exit_rate.csv",
+        index=False,
+    )
+
+    def no_drawdown_summary_by(column: str) -> pd.DataFrame:
+        if leaderboard.empty or column not in leaderboard.columns:
+            return pd.DataFrame(
+                columns=[
+                    column,
+                    "candidates",
+                    "best_no_drawdown_score",
+                    "median_no_drawdown_score",
+                    "best_avg_trade_return_pct",
+                    "best_profit_factor",
+                    "best_total_return_proxy",
+                ]
+            )
+        summary_source = leaderboard.copy()
+        for numeric_column in (
+            "fundamental_timing_score_no_drawdown",
+            "validation_avg_trade_return_pct",
+            "validation_profit_factor",
+            "total_return_proxy",
+        ):
+            if numeric_column not in summary_source.columns:
+                summary_source[numeric_column] = np.nan
+            summary_source[numeric_column] = pd.to_numeric(summary_source[numeric_column], errors="coerce")
+        if "candidate_id" not in summary_source.columns:
+            summary_source["candidate_id"] = ""
+        grouped = (
+            summary_source.groupby(column, dropna=False)
+            .agg(
+                candidates=("candidate_id", "count"),
+                best_no_drawdown_score=("fundamental_timing_score_no_drawdown", "max"),
+                median_no_drawdown_score=("fundamental_timing_score_no_drawdown", "median"),
+                best_avg_trade_return_pct=("validation_avg_trade_return_pct", "max"),
+                best_profit_factor=("validation_profit_factor", "max"),
+                best_total_return_proxy=("total_return_proxy", "max"),
+            )
+            .reset_index()
+            .sort_values(["best_no_drawdown_score", column], ascending=[False, True])
+        )
+        return grouped
+
+    concept_no_drawdown = no_drawdown_summary_by("concept_id")
+    family_no_drawdown = no_drawdown_summary_by("family")
+    concept_no_drawdown.to_csv(output_dir / "concept_summary_no_drawdown.csv", index=False)
+    family_no_drawdown.to_csv(output_dir / "family_summary_no_drawdown.csv", index=False)
+    if not no_drawdown_ranked.empty and "concept_id" in no_drawdown_ranked.columns:
+        no_drawdown_ranked.groupby("concept_id", dropna=False).head(1).to_csv(
+            output_dir / "best_by_concept_no_drawdown.csv",
+            index=False,
+        )
+    else:
+        pd.DataFrame(columns=leaderboard.columns).to_csv(output_dir / "best_by_concept_no_drawdown.csv", index=False)
+    if not no_drawdown_ranked.empty and "family" in no_drawdown_ranked.columns:
+        no_drawdown_ranked.groupby("family", dropna=False).head(1).to_csv(
+            output_dir / "best_by_family_no_drawdown.csv",
+            index=False,
+        )
+    else:
+        pd.DataFrame(columns=leaderboard.columns).to_csv(output_dir / "best_by_family_no_drawdown.csv", index=False)
+    top_50_no_drawdown_ids = (
+        set(no_drawdown_ranked.head(50)["candidate_id"].dropna().astype(str))
+        if not no_drawdown_ranked.empty and "candidate_id" in no_drawdown_ranked.columns
+        else set()
+    )
+    yearly_id_column = "candidate_id" if "candidate_id" in yearly.columns else "strategy_id"
+    if top_50_no_drawdown_ids and yearly_id_column in yearly.columns:
+        yearly.loc[yearly[yearly_id_column].astype(str).isin(top_50_no_drawdown_ids)].to_csv(
+            output_dir / "annual_detail_top_50_no_drawdown.csv",
+            index=False,
+        )
+    else:
+        pd.DataFrame(columns=yearly.columns).to_csv(output_dir / "annual_detail_top_50_no_drawdown.csv", index=False)
+
     best_row = _best_adjusted_row(leaderboard)
     best_filtered_row = _best_adjusted_row(filtered)
     best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
     best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
-    validation_avg_holding_for_best = (
-        pd.to_numeric(leaderboard.get("validation_avg_holding_days", pd.Series(dtype=float)), errors="coerce")
-        if not leaderboard.empty
-        else pd.Series(dtype=float)
-    )
+    validation_avg_holding_for_best = _numeric_series(leaderboard, "validation_avg_holding_days")
     best_holding_ge25_row = _best_numeric_row(
         leaderboard,
         "adjusted_return_time_risk",
@@ -9062,7 +9300,9 @@ def merge_external_strategy_pack_outputs(
     runtime_error_total = int(len(runtime_errors)) if reconcile_counts_to_output_rows else sum_summary("strategies_runtime_error", "total_strategies_runtime_error")
     unsupported_total = int(len(unsupported)) if reconcile_counts_to_output_rows else sum_summary("strategies_unsupported", "total_strategies_unsupported")
     failed_total = sum_summary("strategies_failed", "total_strategies_failed")
-    if failed_total == 0:
+    if reconcile_counts_to_output_rows:
+        failed_total = int(timed_out_total + runtime_error_total)
+    elif failed_total == 0:
         failed_total = int(timed_out_total + runtime_error_total)
     signal_seconds = (
         pd.to_numeric(signal_group_manifest.get("seconds_signal", pd.Series(dtype=float)), errors="coerce")
@@ -9117,6 +9357,8 @@ def merge_external_strategy_pack_outputs(
         "total_strategies_evaluated": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated", "total_strategies_evaluated"),
         "total_strategies_early_rejected": int(early_rejected_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
         "total_strategies_slow_deferred": int(slow_deferred_total),
+        "synthetic_missing_timeout_rows": int(synthetic_missing_timeout_count),
+        "fill_missing_timeouts_enabled": bool(fill_missing_timeouts_pack_path is not None),
         "total_strategies_unsupported": int(unsupported_total),
         "total_strategies_runtime_error": int(runtime_error_total),
         "total_strategies_failed": int(failed_total),
@@ -9187,6 +9429,39 @@ def merge_external_strategy_pack_outputs(
         "github_only_run": True,
         "requires_local_machine": False,
     }
+    top_no_drawdown_ids = (
+        no_drawdown_ranked.head(20)["candidate_id"].dropna().astype(str).tolist()
+        if not no_drawdown_ranked.empty and "candidate_id" in no_drawdown_ranked.columns
+        else []
+    )
+    report_lines = [
+        "# Long Hold No-Drawdown Report",
+        "",
+        f"strategy_slots_requested: {strategy_slots_requested}",
+        f"strategies_covered: {loaded_total}",
+        f"evaluated: {leaderboard_row_count}",
+        f"early_rejected: {early_rejected_row_count}",
+        f"timeouts: {timed_out_total}",
+        f"runtime_errors: {runtime_error_total}",
+        f"unsupported: {unsupported_total}",
+        f"slow_deferred: {slow_deferred_total}",
+        f"synthetic_missing_timeout_rows: {synthetic_missing_timeout_count}",
+        f"locked_start: {locked_start}",
+        f"train_end: {train_end}",
+        f"validation_start: {validation_start}",
+        f"validation_end: {validation_end}",
+        "",
+        "## Best IDs",
+        f"best_candidate_id_no_drawdown_score: {summary.get('best_candidate_id_no_drawdown_score')}",
+        f"best_candidate_id_avg_trade: {summary.get('best_candidate_id_avg_trade')}",
+        f"best_candidate_id_profit_factor: {summary.get('best_candidate_id_profit_factor')}",
+        f"best_candidate_id_total_return_proxy: {summary.get('best_candidate_id_total_return_proxy')}",
+        "",
+        "## Top 20 No-Drawdown",
+        *[f"{idx + 1}. {candidate_id}" for idx, candidate_id in enumerate(top_no_drawdown_ids)],
+        "",
+    ]
+    (output_dir / "long_hold_no_drawdown_full_report.md").write_text("\n".join(report_lines), encoding="utf-8")
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
 
@@ -9389,6 +9664,8 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
     parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
     parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
+    parser.add_argument("--fill-missing-timeouts-pack-path", type=Path, default=None)
+    parser.add_argument("--fill-missing-timeouts-reason", default="missing_slot_classified_as_timeout_in_merge")
     args = parser.parse_args(argv)
     summary = merge_external_strategy_pack_outputs(
         shards_root=args.shards_root,
@@ -9401,6 +9678,8 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
         train_end=args.train_end,
         validation_start=args.validation_start,
         validation_end=args.validation_end,
+        fill_missing_timeouts_pack_path=args.fill_missing_timeouts_pack_path,
+        fill_missing_timeouts_reason=args.fill_missing_timeouts_reason,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
