@@ -365,6 +365,27 @@ def cancel_duplicate_active_waves(repo: str, runs: list[RunInfo], excluded: set[
     return cancelled
 
 
+def cancel_duplicate_active_recoveries(repo: str, runs: list[RunInfo], excluded: set[int]) -> list[int]:
+    by_slots: dict[tuple[int, ...], list[RunInfo]] = {}
+    for run in runs:
+        if run.run_id in excluded or run.is_full_wave_shape or not run.is_active:
+            continue
+        logicals = tuple(run.logicals)
+        if not logicals:
+            continue
+        by_slots.setdefault(logicals, []).append(run)
+    cancelled: list[int] = []
+    for recovery_runs in by_slots.values():
+        if len(recovery_runs) < 2:
+            continue
+        keep = sorted(recovery_runs, key=lambda item: item.created_at)[0]
+        for duplicate in sorted(recovery_runs, key=lambda item: item.created_at)[1:]:
+            print(f"cancel duplicate active recovery run {duplicate.run_id}; keeping {keep.run_id}")
+            cancel_run(repo, duplicate.run_id)
+            cancelled.append(duplicate.run_id)
+    return cancelled
+
+
 def recovery_slots_covered(runs: list[RunInfo], excluded: set[int], *, completed_only: bool = False) -> set[int]:
     covered: set[int] = set()
     for run in runs:
@@ -414,11 +435,15 @@ def dispatch_next_actions(
     excluded: set[int],
     max_parallel_logical_jobs: int,
     max_new_waves: int,
+    pending_recovery_slots: set[int],
+    pending_waves: set[int],
 ) -> bool:
     changed = False
     cancel_duplicate_active_waves(repo, runs, excluded)
+    cancel_duplicate_active_recoveries(repo, runs, excluded)
     chosen_waves = choose_wave_runs(runs, excluded)
     recovery_covered = recovery_slots_covered(runs, excluded)
+    recovery_covered |= pending_recovery_slots
     recovery_completed = recovery_slots_covered(runs, excluded, completed_only=True)
 
     for wave, run in sorted(chosen_waves.items()):
@@ -433,7 +458,8 @@ def dispatch_next_actions(
                 if slot not in recovery_covered:
                     missing_slots.append(slot)
         if missing_slots:
-            slots_csv = ",".join(str(slot) for slot in sorted(set(missing_slots)))
+            unique_missing_slots = sorted(set(missing_slots))
+            slots_csv = ",".join(str(slot) for slot in unique_missing_slots)
             print(f"dispatch recovery for wave {wave}, run {run.run_id}, slots={slots_csv}")
             run_workflow(
                 repo,
@@ -444,12 +470,13 @@ def dispatch_next_actions(
                 job_count=0,
                 recovery_job_indices=slots_csv,
             )
+            pending_recovery_slots.update(unique_missing_slots)
             return True
 
     active_count = active_logical_jobs(runs, excluded)
     launched = 0
     for wave in range(TOTAL_WAVES):
-        if wave in chosen_waves:
+        if wave in chosen_waves or wave in pending_waves:
             continue
         if active_count + WAVE_LOGICAL_JOBS > max_parallel_logical_jobs and launched > 0:
             break
@@ -465,6 +492,7 @@ def dispatch_next_actions(
             job_start_index=first,
             job_count=WAVE_LOGICAL_JOBS,
         )
+        pending_waves.add(wave)
         active_count += WAVE_LOGICAL_JOBS
         launched += 1
         changed = True
@@ -554,7 +582,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-waves-per-pass", type=int, default=2)
     parser.add_argument(
         "--exclude-run-ids",
-        default="28666430744,28701453837,28701456697,28716016695,28717957514",
+        default=(
+            "28666430744,28701453837,28701456697,28716016695,28717957514,"
+            "28718300497,28730731060,28730858683,28730950197"
+        ),
     )
     parser.add_argument("--self-dispatch", action="store_true")
     parser.add_argument("--once", action="store_true")
@@ -574,6 +605,8 @@ def main() -> int:
     }
     deadline = time.monotonic() + max(args.loop_minutes, 1) * 60
     artifact_cache: dict[int, bool] = {}
+    pending_recovery_slots: set[int] = set()
+    pending_waves: set[int] = set()
 
     while True:
         print(f"orchestrator pass at {datetime.now(timezone.utc).isoformat()}")
@@ -600,6 +633,8 @@ def main() -> int:
             excluded=excluded,
             max_parallel_logical_jobs=args.max_parallel_logical_jobs,
             max_new_waves=args.max_new_waves_per_pass,
+            pending_recovery_slots=pending_recovery_slots,
+            pending_waves=pending_waves,
         )
         merge = completed_merge_run(runs, excluded)
         if merge is not None:
@@ -611,10 +646,7 @@ def main() -> int:
             if args.self_dispatch:
                 self_dispatch(args.repo, args.branch)
             return 0
-        if changed:
-            time.sleep(min(args.sleep_seconds, 120))
-        else:
-            time.sleep(args.sleep_seconds)
+        time.sleep(args.sleep_seconds)
 
 
 if __name__ == "__main__":
