@@ -8963,6 +8963,24 @@ def merge_external_strategy_pack_outputs(
                 timeouts = pd.concat([timeouts, pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)], ignore_index=True, sort=False)
                 timing = pd.concat([timing, pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)], ignore_index=True, sort=False)
                 job_manifest = pd.concat([job_manifest, pd.DataFrame(manifest_rows, columns=JOB_MANIFEST_COLUMNS)], ignore_index=True, sort=False)
+    terminal_success_ids: set[str] = set()
+    if not leaderboard.empty and "candidate_id" in leaderboard.columns:
+        terminal_success_ids.update(str(value) for value in leaderboard["candidate_id"].dropna().astype(str) if str(value))
+    if not early_rejected.empty and "strategy_id" in early_rejected.columns:
+        terminal_success_ids.update(str(value) for value in early_rejected["strategy_id"].dropna().astype(str) if str(value))
+
+    def drop_superseded_rows(frame: pd.DataFrame, strategy_column: str) -> pd.DataFrame:
+        if frame.empty or strategy_column not in frame.columns or not terminal_success_ids:
+            return frame
+        return frame.loc[~frame[strategy_column].astype(str).isin(terminal_success_ids)].copy()
+
+    # Cross-run recoveries produce a real terminal result for a strategy that may
+    # have timed out in an earlier source run. The real result wins; otherwise a
+    # strict final merge would keep stale timeout rows forever.
+    timeouts = drop_superseded_rows(timeouts, "strategy_id")
+    slow_deferred = drop_superseded_rows(slow_deferred, "strategy_id")
+    runtime_errors = drop_superseded_rows(runtime_errors, "strategy_id")
+    unsupported = drop_superseded_rows(unsupported, "strategy_id")
     slow_queue_manifest = (
         pd.concat(slow_queue_frames, ignore_index=True, sort=False)
         if slow_queue_frames

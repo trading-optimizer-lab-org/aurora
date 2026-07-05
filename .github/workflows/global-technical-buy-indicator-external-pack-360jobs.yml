@@ -131,6 +131,9 @@ jobs:
             --sleep-seconds 300 \
             --max-parallel-logical-jobs 360 \
             --max-new-waves-per-pass 2 \
+            --recovery-timeout-seconds 1800 \
+            --recovery-wall-clock-seconds 2100 \
+            --validated-sha "${{ github.sha }}" \
             --self-dispatch
 
   build_external_pack:

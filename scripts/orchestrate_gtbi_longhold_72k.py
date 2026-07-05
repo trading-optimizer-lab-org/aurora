@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -23,6 +24,9 @@ ORIGINAL_SHARDS = 360
 STRATEGIES_PER_SHARD = 200
 WAVE_LOGICAL_JOBS = 180
 TOTAL_WAVES = 40
+DEFAULT_RECOVERY_TIMEOUT_SECONDS = 1800
+DEFAULT_RECOVERY_WALL_CLOCK_SECONDS = 2100
+DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK = 1
 
 
 RUN_BLOCK_RE = re.compile(r"run_block \((\d+),\s*([^,]+),\s*(\d+),\s*(\d+)\)")
@@ -92,6 +96,30 @@ class RunInfo:
             if block.status == "completed" and block.conclusion not in {"success", "skipped"}:
                 failed.append(block.logical)
         return sorted(failed)
+
+
+@dataclass(frozen=True)
+class ArtifactInspection:
+    run_id: int
+    timeout_slots: set[int]
+    slow_deferred_slots: set[int]
+    runtime_error_slots: set[int]
+    unsupported_slots: set[int]
+    synthetic_missing_timeout_rows: int
+    fill_missing_timeouts_enabled: bool
+
+    @property
+    def recoverable_slots(self) -> set[int]:
+        return set(self.timeout_slots) | set(self.slow_deferred_slots)
+
+    @property
+    def unresolved_slots(self) -> set[int]:
+        return (
+            set(self.timeout_slots)
+            | set(self.slow_deferred_slots)
+            | set(self.runtime_error_slots)
+            | set(self.unsupported_slots)
+        )
 
 
 def run_cmd(args: list[str], *, check: bool = True) -> str:
@@ -178,6 +206,94 @@ def artifact_exists(repo: str, run_id: int) -> bool:
     return False
 
 
+def _int_from_row(row: dict[str, str], key: str) -> int | None:
+    value = str(row.get(key, "")).strip()
+    if not value:
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def slot_from_strategy_row(row: dict[str, str], *, candidate_limit: int = 10) -> int | None:
+    shard_id = _int_from_row(row, "shard_id")
+    slot_in_shard = _int_from_row(row, "slot_in_shard")
+    if shard_id is not None and slot_in_shard is not None:
+        if shard_id < 0 or shard_id >= ORIGINAL_SHARDS:
+            return None
+        if slot_in_shard < 0 or slot_in_shard >= STRATEGIES_PER_SHARD:
+            return None
+        return shard_id * STRATEGIES_PER_SHARD + slot_in_shard
+    logical_job_id = _int_from_row(row, "logical_job_id")
+    if logical_job_id is not None and candidate_limit == 1:
+        if 0 <= logical_job_id < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
+            return logical_job_id
+    return None
+
+
+def _slots_from_csv(path: Path) -> set[int]:
+    if not path.exists() or path.stat().st_size == 0:
+        return set()
+    slots: set[int] = set()
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            slot = slot_from_strategy_row(row)
+            if slot is not None:
+                slots.add(slot)
+    return slots
+
+
+def inspect_artifact_dir(path: Path, *, run_id: int = 0) -> ArtifactInspection:
+    path = Path(path)
+    summary_path = path / "summary.json"
+    summary: dict[str, Any] = {}
+    if summary_path.exists() and summary_path.stat().st_size:
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            summary = {}
+    return ArtifactInspection(
+        run_id=int(run_id),
+        timeout_slots=_slots_from_csv(path / "timeout_strategies.csv"),
+        slow_deferred_slots=_slots_from_csv(path / "slow_deferred_strategies.csv"),
+        runtime_error_slots=_slots_from_csv(path / "runtime_errors.csv"),
+        unsupported_slots=_slots_from_csv(path / "unsupported_strategies.csv"),
+        synthetic_missing_timeout_rows=int(summary.get("synthetic_missing_timeout_rows", 0) or 0),
+        fill_missing_timeouts_enabled=bool(summary.get("fill_missing_timeouts_enabled", False)),
+    )
+
+
+def download_and_inspect_artifact(
+    repo: str,
+    run_id: int,
+    artifact_root: Path,
+    cache: dict[int, ArtifactInspection],
+) -> ArtifactInspection:
+    if run_id in cache:
+        return cache[run_id]
+    target = Path(artifact_root) / f"run-{run_id}"
+    if not target.exists():
+        target.mkdir(parents=True, exist_ok=True)
+        run_cmd(
+            [
+                "gh",
+                "run",
+                "download",
+                str(run_id),
+                "--repo",
+                repo,
+                "--name",
+                ARTIFACT_NAME,
+                "--dir",
+                str(target),
+            ]
+        )
+    inspection = inspect_artifact_dir(target, run_id=run_id)
+    cache[run_id] = inspection
+    return inspection
+
+
 def load_run_info(repo: str, run: dict[str, Any], artifact_cache: dict[int, bool]) -> RunInfo:
     run_id = int(run["databaseId"])
     view = gh_json(
@@ -247,6 +363,9 @@ def run_workflow(
     *,
     mode: str,
     candidate_count_per_job: int,
+    candidate_timeout_seconds: int = 300,
+    job_wall_clock_seconds: int = 300,
+    logical_jobs_per_block: int = 1,
     job_start_index: int = 0,
     job_count: int = 0,
     recovery_job_indices: str = "",
@@ -269,9 +388,9 @@ def run_workflow(
         "-f",
         f"candidate_count_per_job={candidate_count_per_job}",
         "-f",
-        "candidate_timeout_seconds=300",
+        f"candidate_timeout_seconds={candidate_timeout_seconds}",
         "-f",
-        "job_wall_clock_seconds=300",
+        f"job_wall_clock_seconds={job_wall_clock_seconds}",
         "-f",
         f"optimized_evaluation_mode={mode}",
         "-f",
@@ -297,7 +416,7 @@ def run_workflow(
         "-f",
         "fail_on_unsupported=false",
         "-f",
-        "logical_jobs_per_block=1",
+        f"logical_jobs_per_block={logical_jobs_per_block}",
         "-f",
         "test_mode=false",
         "-f",
@@ -437,14 +556,41 @@ def dispatch_next_actions(
     max_new_waves: int,
     pending_recovery_slots: set[int],
     pending_waves: set[int],
+    artifact_root: Path,
+    artifact_inspection_cache: dict[int, ArtifactInspection],
+    recovery_timeout_seconds: int,
+    recovery_wall_clock_seconds: int,
 ) -> bool:
     changed = False
     cancel_duplicate_active_waves(repo, runs, excluded)
     cancel_duplicate_active_recoveries(repo, runs, excluded)
     chosen_waves = choose_wave_runs(runs, excluded)
+    completed_recovery_unresolved: set[int] = set()
+    for run in sorted(runs, key=lambda item: item.created_at):
+        if (
+            run.run_id in excluded
+            or run.is_full_wave_shape
+            or not run.is_completed
+            or not run.has_final_artifact
+            or run.conclusion == "cancelled"
+            or not run.blocks
+        ):
+            continue
+        try:
+            inspection = download_and_inspect_artifact(repo, run.run_id, artifact_root, artifact_inspection_cache)
+        except Exception as exc:  # noqa: BLE001 - GitHub artifact hiccups should not kill the whole pass
+            print(f"warning: could not inspect recovery artifact {run.run_id}: {exc}", flush=True)
+            continue
+        completed_recovery_unresolved.update(inspection.unresolved_slots)
+    completed_recovery_slots = recovery_slots_covered(runs, excluded, completed_only=True)
+    pending_recovery_slots.difference_update(completed_recovery_slots)
+    pending_recovery_slots.difference_update(completed_recovery_unresolved)
     recovery_covered = recovery_slots_covered(runs, excluded)
     recovery_covered |= pending_recovery_slots
+    recovery_covered.difference_update(completed_recovery_unresolved)
     recovery_completed = recovery_slots_covered(runs, excluded, completed_only=True)
+    recovery_completed.difference_update(completed_recovery_unresolved)
+    active_count = active_logical_jobs(runs, excluded)
 
     for wave, run in sorted(chosen_waves.items()):
         if not (run.is_completed and run.has_final_artifact and run.conclusion not in {None, "cancelled"}):
@@ -466,6 +612,9 @@ def dispatch_next_actions(
                 branch,
                 mode="optimized_evaluation_v5_event_first",
                 candidate_count_per_job=1,
+                candidate_timeout_seconds=recovery_timeout_seconds,
+                job_wall_clock_seconds=recovery_wall_clock_seconds,
+                logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
                 job_start_index=0,
                 job_count=0,
                 recovery_job_indices=slots_csv,
@@ -473,7 +622,58 @@ def dispatch_next_actions(
             pending_recovery_slots.update(unique_missing_slots)
             return True
 
-    active_count = active_logical_jobs(runs, excluded)
+    recoverable_timeout_slots: set[int] = set()
+    for run in sorted(runs, key=lambda item: item.created_at):
+        if (
+            run.run_id in excluded
+            or not run.is_completed
+            or not run.has_final_artifact
+            or run.conclusion == "cancelled"
+            or not run.blocks
+        ):
+            continue
+        if not run.is_full_wave_shape and not run.logicals:
+            continue
+        try:
+            inspection = download_and_inspect_artifact(repo, run.run_id, artifact_root, artifact_inspection_cache)
+        except Exception as exc:  # noqa: BLE001 - leave the run for a later orchestrator pass
+            print(f"warning: could not inspect artifact {run.run_id}: {exc}", flush=True)
+            continue
+        if inspection.synthetic_missing_timeout_rows or inspection.fill_missing_timeouts_enabled:
+            print(
+                f"run {run.run_id} has synthetic/fill-missing rows; strict merge will not use it "
+                f"(synthetic={inspection.synthetic_missing_timeout_rows}, fill={inspection.fill_missing_timeouts_enabled})",
+                flush=True,
+            )
+        recoverable_timeout_slots.update(inspection.recoverable_slots)
+    pending_timeout_slots = sorted(slot for slot in recoverable_timeout_slots if slot not in recovery_covered)
+    if pending_timeout_slots:
+        available = max(max_parallel_logical_jobs - active_count, 0)
+        if available <= 0:
+            print(f"waiting: {len(pending_timeout_slots)} timeout slots need recovery but capacity is full")
+            return False
+        launch_slots = pending_timeout_slots[: min(len(pending_timeout_slots), available)]
+        slots_csv = ",".join(str(slot) for slot in launch_slots)
+        print(
+            f"dispatch timeout recovery for {len(launch_slots)} slots "
+            f"(remaining={len(pending_timeout_slots) - len(launch_slots)})",
+            flush=True,
+        )
+        run_workflow(
+            repo,
+            branch,
+            mode="optimized_evaluation_v5_event_first",
+            candidate_count_per_job=1,
+            candidate_timeout_seconds=recovery_timeout_seconds,
+            job_wall_clock_seconds=recovery_wall_clock_seconds,
+            logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
+            job_start_index=0,
+            job_count=0,
+            recovery_job_indices=slots_csv,
+        )
+        pending_recovery_slots.update(launch_slots)
+        return True
+
     launched = 0
     for wave in range(TOTAL_WAVES):
         if wave in chosen_waves or wave in pending_waves:
@@ -580,6 +780,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inspect-workers", type=int, default=8)
     parser.add_argument("--max-parallel-logical-jobs", type=int, default=360)
     parser.add_argument("--max-new-waves-per-pass", type=int, default=2)
+    parser.add_argument("--recovery-timeout-seconds", type=int, default=DEFAULT_RECOVERY_TIMEOUT_SECONDS)
+    parser.add_argument("--recovery-wall-clock-seconds", type=int, default=DEFAULT_RECOVERY_WALL_CLOCK_SECONDS)
+    parser.add_argument("--artifact-inspection-root", type=Path, default=Path(".gtbi-orchestrator-artifacts"))
+    parser.add_argument("--validated-sha", default=os.environ.get("GITHUB_SHA", VALIDATED_SHA))
     parser.add_argument(
         "--exclude-run-ids",
         default=(
@@ -598,6 +802,7 @@ def parse_utc(value: str) -> datetime:
 
 def main() -> int:
     args = parse_args()
+    validated_sha = str(args.validated_sha or os.environ.get("GITHUB_SHA") or VALIDATED_SHA)
     excluded = {
         int(item.strip())
         for item in str(args.exclude_run_ids).split(",")
@@ -605,6 +810,7 @@ def main() -> int:
     }
     deadline = time.monotonic() + max(args.loop_minutes, 1) * 60
     artifact_cache: dict[int, bool] = {}
+    artifact_inspection_cache: dict[int, ArtifactInspection] = {}
     pending_recovery_slots: set[int] = set()
     pending_waves: set[int] = set()
 
@@ -625,7 +831,7 @@ def main() -> int:
         )
         if load_failures:
             print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
-        runs = [run for run in runs if run.head_sha == VALIDATED_SHA or run.is_active or run.has_final_artifact]
+        runs = [run for run in runs if run.head_sha == validated_sha]
         changed = dispatch_next_actions(
             repo=args.repo,
             branch=args.branch,
@@ -635,6 +841,10 @@ def main() -> int:
             max_new_waves=args.max_new_waves_per_pass,
             pending_recovery_slots=pending_recovery_slots,
             pending_waves=pending_waves,
+            artifact_root=args.artifact_inspection_root,
+            artifact_inspection_cache=artifact_inspection_cache,
+            recovery_timeout_seconds=args.recovery_timeout_seconds,
+            recovery_wall_clock_seconds=args.recovery_wall_clock_seconds,
         )
         merge = completed_merge_run(runs, excluded)
         if merge is not None:

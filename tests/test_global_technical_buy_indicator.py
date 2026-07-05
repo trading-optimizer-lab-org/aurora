@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from scripts import global_technical_buy_indicator as gtbi
+from scripts import orchestrate_gtbi_longhold_72k as gtbi_orchestrator
 
 
 def _breakout_frame(rows: int = 90) -> pd.DataFrame:
@@ -4624,6 +4625,131 @@ def test_external_merge_strict_final_accepts_leaderboard_plus_early_coverage(tmp
     assert summary["total_strategies_timed_out"] == 0
     assert summary["strict_leaderboard_plus_early_rejected"] == 2
     assert json.loads((tmp_path / "final" / "strict_final_validation_report.json").read_text(encoding="utf-8"))["ok"] is True
+
+
+def test_external_merge_recovered_result_supersedes_prior_timeout(tmp_path: Path) -> None:
+    original = tmp_path / "downloaded" / "run-original"
+    recovery = tmp_path / "downloaded" / "run-recovery"
+    original.mkdir(parents=True)
+    recovery.mkdir(parents=True)
+    for folder, summary in (
+        (
+            original,
+            {
+                "strategies_loaded": 1,
+                "strategies_evaluated": 0,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 1,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 1,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+            },
+        ),
+        (
+            recovery,
+            {
+                "strategies_loaded": 1,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 0,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+            },
+        ),
+    ):
+        (folder / "summary.json").write_text(json.dumps(summary, sort_keys=True), encoding="utf-8")
+        pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(folder / "early_rejected_strategies.csv", index=False)
+        pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(folder / "slow_deferred_strategies.csv", index=False)
+        pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(folder / "runtime_errors.csv", index=False)
+        pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(folder / "unsupported_strategies.csv", index=False)
+    pd.DataFrame([{"strategy_id": "recovered", "shard_id": 0, "slot_in_shard": 0, "reason": "timeout"}]).to_csv(
+        original / "timeout_strategies.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(original / "leaderboard.csv", index=False)
+    pd.DataFrame([{"candidate_id": "recovered", "score": 1.0, "adjusted_return_time_risk": 0.1}]).to_csv(
+        recovery / "leaderboard.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(recovery / "timeout_strategies.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=1,
+        total_shards_requested=1,
+        total_jobs_requested=2,
+        candidate_count_per_job=1,
+        strict_final_eval_mode=True,
+    )
+
+    assert summary["strict_final_pass"] is True
+    assert summary["total_strategies_timed_out"] == 0
+    assert pd.read_csv(tmp_path / "final" / "timeout_strategies.csv").empty
+    assert pd.read_csv(tmp_path / "final" / "leaderboard.csv")["candidate_id"].tolist() == ["recovered"]
+
+
+def test_orchestrator_extracts_timeout_and_slow_slots_from_artifact(tmp_path: Path) -> None:
+    (tmp_path / "summary.json").write_text(
+        json.dumps({"synthetic_missing_timeout_rows": 0, "fill_missing_timeouts_enabled": False}),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            {"strategy_id": "a", "shard_id": 2, "slot_in_shard": 3},
+            {"strategy_id": "bad", "shard_id": 999, "slot_in_shard": 3},
+        ]
+    ).to_csv(tmp_path / "timeout_strategies.csv", index=False)
+    pd.DataFrame([{"strategy_id": "b", "shard_id": 1, "slot_in_shard": 4}]).to_csv(
+        tmp_path / "slow_deferred_strategies.csv",
+        index=False,
+    )
+    pd.DataFrame([{"strategy_id": "c", "shard_id": 3, "slot_in_shard": 5}]).to_csv(
+        tmp_path / "runtime_errors.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(tmp_path / "unsupported_strategies.csv", index=False)
+
+    inspection = gtbi_orchestrator.inspect_artifact_dir(tmp_path, run_id=123)
+
+    assert inspection.timeout_slots == {403}
+    assert inspection.slow_deferred_slots == {204}
+    assert inspection.runtime_error_slots == {605}
+    assert inspection.recoverable_slots == {204, 403}
+    assert inspection.unresolved_slots == {204, 403, 605}
+
+
+def test_orchestrator_recovery_dispatch_uses_long_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(args: list[str], *, check: bool = True) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(gtbi_orchestrator, "run_cmd", fake_run_cmd)
+
+    gtbi_orchestrator.run_workflow(
+        "trading-optimizer-lab-org/aurora",
+        "codex/gtbi-github-only-external-pack-72000",
+        mode="optimized_evaluation_v5_event_first",
+        candidate_count_per_job=1,
+        candidate_timeout_seconds=1800,
+        job_wall_clock_seconds=2100,
+        logical_jobs_per_block=1,
+        recovery_job_indices="204,403",
+    )
+
+    args = calls[0]
+    assert "candidate_count_per_job=1" in args
+    assert "candidate_timeout_seconds=1800" in args
+    assert "job_wall_clock_seconds=2100" in args
+    assert "logical_jobs_per_block=1" in args
+    assert "recovery_job_indices=204,403" in args
 
 
 def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
