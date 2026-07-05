@@ -636,19 +636,19 @@ def dispatch_recovery_slots(
                 recovery_job_indices=slots_csv,
             )
     else:
-        # The current evaluator does not yet expose symbol-bucket execution.
-        # Keep the manifest explicit and retry with one-strategy jobs so the
-        # strict merge still fails rather than silently fabricating coverage.
-        run_workflow(
-            repo,
-            branch,
-            mode="optimized_evaluation_v5_event_first",
-            candidate_count_per_job=1,
-            candidate_timeout_seconds=config.candidate_timeout_seconds,
-            job_wall_clock_seconds=config.job_wall_clock_seconds,
-            logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
-            recovery_job_indices=slots_csv,
-        )
+        for symbol_bucket_index in range(max(config.symbol_bucket_count, 1)):
+            run_workflow(
+                repo,
+                branch,
+                mode="optimized_evaluation_v5_event_first_symbol_bucket",
+                candidate_count_per_job=1,
+                candidate_timeout_seconds=config.candidate_timeout_seconds,
+                job_wall_clock_seconds=config.job_wall_clock_seconds,
+                logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
+                job_start_index=symbol_bucket_index,
+                job_count=max(config.symbol_bucket_count, 1),
+                recovery_job_indices=slots_csv,
+            )
     for slot in launch_slots:
         recovery_round_by_slot[slot] = int(config.recovery_round)
     print(

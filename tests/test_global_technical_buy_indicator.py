@@ -4648,6 +4648,29 @@ def test_symbol_bucket_trade_merge_removes_duplicates_without_losing_unique_rows
     assert not merged.duplicated(subset=["candidate_id", "symbol", "entry_date", "exit_date"]).any()
 
 
+def test_symbol_bucket_frame_partition_is_deterministic_and_complete() -> None:
+    frames = {
+        symbol: pd.DataFrame({"close": [float(index + 1)]})
+        for index, symbol in enumerate(["CCC", "AAA", "EEE", "BBB", "DDD"])
+    }
+
+    buckets = [
+        gtbi._apply_symbol_bucket(frames, symbol_bucket_index=index, symbol_bucket_count=3)
+        for index in range(3)
+    ]
+
+    covered = set().union(*(set(bucket) for bucket in buckets))
+    assert covered == set(frames)
+    assert set(buckets[0]).isdisjoint(buckets[1])
+    assert set(buckets[0]).isdisjoint(buckets[2])
+    assert set(buckets[1]).isdisjoint(buckets[2])
+    assert list(buckets[0]) == ["AAA", "DDD"]
+    assert list(buckets[1]) == ["BBB", "EEE"]
+    assert list(buckets[2]) == ["CCC"]
+    with pytest.raises(ValueError, match="symbol_bucket_index"):
+        gtbi._apply_symbol_bucket(frames, symbol_bucket_index=3, symbol_bucket_count=3)
+
+
 def test_subgroup_terminal_merge_dedupes_and_reports_missing_ids() -> None:
     first = pd.DataFrame([{"strategy_id": "a", "reason": "early"}, {"strategy_id": "b", "reason": "early"}])
     second = pd.DataFrame([{"strategy_id": "b", "reason": "early-again"}, {"strategy_id": "c", "reason": "early"}])
@@ -4852,6 +4875,43 @@ def test_orchestrator_dispatches_round_one_subgroups(monkeypatch: pytest.MonkeyP
         assert "recovery_job_indices=204,403" in args
     manifest = pd.read_csv(tmp_path / "recovery_manifest_round_1.csv")
     assert len(manifest) == 10
+
+
+def test_orchestrator_dispatches_round_four_symbol_buckets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(args: list[str], *, check: bool = True) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(gtbi_orchestrator, "run_cmd", fake_run_cmd)
+
+    launched = gtbi_orchestrator.dispatch_recovery_slots(
+        repo="trading-optimizer-lab-org/aurora",
+        branch="codex/gtbi-github-only-external-pack-72000",
+        slots=[204],
+        records={},
+        recovery_round_by_slot={204: 3},
+        max_parallel_logical_jobs=360,
+        active_count=0,
+        manifest_dir=tmp_path,
+    )
+
+    assert launched == [204]
+    assert len(calls) == 10
+    for bucket_index, args in enumerate(calls):
+        assert "optimized_evaluation_mode=optimized_evaluation_v5_event_first_symbol_bucket" in args
+        assert "candidate_count_per_job=1" in args
+        assert "candidate_timeout_seconds=1800" in args
+        assert "job_wall_clock_seconds=2100" in args
+        assert f"job_start_index={bucket_index}" in args
+        assert "job_count=10" in args
+        assert "recovery_job_indices=204" in args
+    manifest = pd.read_csv(tmp_path / "recovery_manifest_round_4.csv")
+    assert len(manifest) == 10
+    assert manifest["partition_type"].unique().tolist() == ["symbol_bucket"]
+    assert set(manifest["symbol_bucket_index"]) == set(range(10))
+    assert manifest["symbol_bucket_count"].unique().tolist() == [10]
 
 
 def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
@@ -5079,6 +5139,9 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--signal-first-phase signals" in text
     assert "--signal-first-phase exits" in text
     assert "--signal-events-dir" in text
+    assert "optimized_evaluation_v5_event_first_symbol_bucket" in text
+    assert "--symbol-bucket-index" in text
+    assert "--symbol-bucket-count" in text
     assert "enable_block_merge" not in data[True]["workflow_dispatch"]["inputs"]
     assert "plan_blocks" in data["jobs"]
     assert "run_block" in data["jobs"]

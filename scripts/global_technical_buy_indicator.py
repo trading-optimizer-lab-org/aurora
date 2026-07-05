@@ -3620,7 +3620,7 @@ def _balanced_external_signal_groups_for_job(
         optimized_evaluation_mode=optimized_evaluation_mode,
     )
     use_event_first_balanced_schedule = (
-        str(optimized_evaluation_mode) == EVENT_FIRST_MODE
+        _is_event_first_mode(str(optimized_evaluation_mode))
         and schedule_active_jobs is not None
         and int(schedule_active_jobs) > 0
     )
@@ -4407,7 +4407,14 @@ V3_SIGNAL_TIMEOUT_CONCEPT_SCORES = {
 ZERO_TIMEOUT_MODE = "optimized_evaluation_v4_zero_timeout"
 ZERO_TIMEOUT_SLOW_QUEUE_MODE = "optimized_evaluation_v4_zero_timeout_slow_queue"
 EVENT_FIRST_MODE = "optimized_evaluation_v5_event_first"
-SIGNAL_FIRST_MODES = {"optimized_evaluation_v3_signal_first", ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE, EVENT_FIRST_MODE}
+EVENT_FIRST_SYMBOL_BUCKET_MODE = "optimized_evaluation_v5_event_first_symbol_bucket"
+SIGNAL_FIRST_MODES = {
+    "optimized_evaluation_v3_signal_first",
+    ZERO_TIMEOUT_MODE,
+    ZERO_TIMEOUT_SLOW_QUEUE_MODE,
+    EVENT_FIRST_MODE,
+    EVENT_FIRST_SYMBOL_BUCKET_MODE,
+}
 V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
     "macd_histogram_turnup_trend",
     "post_ep_pullback_reclaim_proxy",
@@ -4473,7 +4480,7 @@ def _estimated_cost_score(
     }
     score = float(RECOVERY_FAST_CONCEPT_SCORES.get(concept, 0.0))
     score += float(V3_SIGNAL_TIMEOUT_CONCEPT_SCORES.get(concept, 0.0))
-    if str(optimized_evaluation_mode) == EVENT_FIRST_MODE:
+    if _is_event_first_mode(str(optimized_evaluation_mode)):
         score += float(v5_event_first_expensive_concepts.get(concept, 0.0))
     if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
         score += 9.0
@@ -4503,7 +4510,12 @@ def _estimated_cost_score(
 
 
 def _is_zero_timeout_mode(optimized_evaluation_mode: str) -> bool:
-    return str(optimized_evaluation_mode) in {ZERO_TIMEOUT_MODE, ZERO_TIMEOUT_SLOW_QUEUE_MODE, EVENT_FIRST_MODE}
+    return str(optimized_evaluation_mode) in {
+        ZERO_TIMEOUT_MODE,
+        ZERO_TIMEOUT_SLOW_QUEUE_MODE,
+        EVENT_FIRST_MODE,
+        EVENT_FIRST_SYMBOL_BUCKET_MODE,
+    }
 
 
 def _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode: str) -> bool:
@@ -4511,7 +4523,7 @@ def _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode: str) -> bool:
 
 
 def _is_event_first_mode(optimized_evaluation_mode: str) -> bool:
-    return str(optimized_evaluation_mode) == EVENT_FIRST_MODE
+    return str(optimized_evaluation_mode) in {EVENT_FIRST_MODE, EVENT_FIRST_SYMBOL_BUCKET_MODE}
 
 
 def _zero_timeout_defer_reason(
@@ -6260,6 +6272,25 @@ def _load_symbol_frames(prices_path: Path) -> dict[str, pd.DataFrame]:
     }
 
 
+def _apply_symbol_bucket(
+    symbol_frames: dict[str, pd.DataFrame],
+    *,
+    symbol_bucket_index: int = 0,
+    symbol_bucket_count: int = 0,
+) -> dict[str, pd.DataFrame]:
+    bucket_count = max(int(symbol_bucket_count), 0)
+    bucket_index = max(int(symbol_bucket_index), 0)
+    if bucket_count <= 1:
+        return symbol_frames
+    if bucket_index >= bucket_count:
+        raise ValueError("symbol_bucket_index must be lower than symbol_bucket_count")
+    return {
+        symbol: frame
+        for position, (symbol, frame) in enumerate(sorted(symbol_frames.items()))
+        if position % bucket_count == bucket_index
+    }
+
+
 def run_stage(
     *,
     pack_dir: Path,
@@ -6962,6 +6993,8 @@ def run_external_strategy_pack_shard(
     schedule_active_jobs: int = 0,
     schedule_subgroup_index: int = 0,
     schedule_subgroup_count: int = 0,
+    symbol_bucket_index: int = 0,
+    symbol_bucket_count: int = 0,
     test_max_signal_groups: int = 0,
     signal_first_phase: str = "combined",
     signal_events_dir: Path | None = None,
@@ -6998,6 +7031,13 @@ def run_external_strategy_pack_shard(
         schedule_subgroup_index = 0
     elif schedule_subgroup_index >= schedule_subgroup_count:
         raise ValueError("schedule_subgroup_index must be lower than schedule_subgroup_count")
+    symbol_bucket_count = max(int(symbol_bucket_count), 0)
+    symbol_bucket_index = max(int(symbol_bucket_index), 0)
+    if symbol_bucket_count <= 1:
+        symbol_bucket_count = 0
+        symbol_bucket_index = 0
+    elif symbol_bucket_index >= symbol_bucket_count:
+        raise ValueError("symbol_bucket_index must be lower than symbol_bucket_count")
 
     signal_events_dir = Path(signal_events_dir) if signal_events_dir is not None else output_dir
     selected_signal_groups: list[list[ExternalStrategyCandidate]] | None = None
@@ -7133,7 +7173,13 @@ def run_external_strategy_pack_shard(
         missing = [name for name in ("prices.parquet", "benchmark.parquet") if not (pack_dir / name).exists()]
         if missing:
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
-    symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
+    loaded_symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
+    loaded_symbol_count = int(len(loaded_symbol_frames))
+    symbol_frames = _apply_symbol_bucket(
+        loaded_symbol_frames,
+        symbol_bucket_index=symbol_bucket_index,
+        symbol_bucket_count=symbol_bucket_count,
+    )
     benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
     prewarm_feature_cache = str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}
     feature_store = build_feature_store(
@@ -7147,7 +7193,8 @@ def run_external_strategy_pack_shard(
     print(
         "[gtbi] job "
         f"{output_padded} loaded {len(candidates)} candidates "
-        f"({len(evaluable)} evaluable), symbols={len(symbol_frames)}, "
+        f"({len(evaluable)} evaluable), symbols={len(symbol_frames)}/{loaded_symbol_count}, "
+        f"symbol_bucket={symbol_bucket_index}/{symbol_bucket_count or 1}, "
         f"feature_cache={bool(feature_store.enabled)}",
         flush=True,
     )
@@ -8351,6 +8398,8 @@ def run_external_strategy_pack_shard(
     bottom_trades_by_return.to_csv(output_dir / f"bottom_100_trades_by_return_{file_suffix}.csv", index=False)
     selected_trades.to_csv(output_dir / f"selected_symbol_trades_{file_suffix}.csv", index=False)
     trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
+    if symbol_bucket_count > 1:
+        trades_out.to_csv(output_dir / f"symbol_bucket_trades_{file_suffix}.csv", index=False)
     unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
     timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
     slow_deferred.to_csv(output_dir / f"slow_deferred_strategies_{file_suffix}.csv", index=False)
@@ -8498,6 +8547,9 @@ def run_external_strategy_pack_shard(
         "schedule_active_jobs": int(schedule_active_jobs),
         "schedule_subgroup_index": int(schedule_subgroup_index),
         "schedule_subgroup_count": int(schedule_subgroup_count),
+        "symbol_bucket_index": int(symbol_bucket_index),
+        "symbol_bucket_count": int(symbol_bucket_count),
+        "symbol_bucket_mode": bool(symbol_bucket_count > 1),
         "unique_config_evaluations": int(len(evaluation_cache)),
         "cached_config_reuses": int(deduped_count),
         "unique_signal_evaluations": int(unique_signal_evaluations_for_summary),
@@ -8513,6 +8565,8 @@ def run_external_strategy_pack_shard(
         "enable_cost_scheduling": bool(enable_cost_scheduling),
         "seconds_feature_store_build": float(feature_store.seconds_build),
         "symbols": int(len(symbol_frames)),
+        "symbols_universe_total": int(loaded_symbol_count),
+        "symbols_after_bucket": int(len(symbol_frames)),
         "locked_start": str(locked_start),
         "train_end": str(train_end),
         "validation_start": str(validation_start),
@@ -9330,7 +9384,7 @@ def merge_external_strategy_pack_outputs(
         return int(total)
 
     optimized_mode = next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy")
-    reconcile_counts_to_output_rows = optimized_mode == EVENT_FIRST_MODE
+    reconcile_counts_to_output_rows = _is_event_first_mode(optimized_mode)
     terminal_strategy_ids: set[str] = set()
     for frame, column in (
         (leaderboard, "candidate_id"),
@@ -9796,6 +9850,8 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--schedule-active-jobs", type=int, default=0)
     parser.add_argument("--schedule-subgroup-index", type=int, default=0)
     parser.add_argument("--schedule-subgroup-count", type=int, default=0)
+    parser.add_argument("--symbol-bucket-index", type=int, default=0)
+    parser.add_argument("--symbol-bucket-count", type=int, default=0)
     parser.add_argument("--test-max-signal-groups", type=int, default=0)
     parser.add_argument("--signal-first-phase", choices=("combined", "signals", "exits"), default="combined")
     parser.add_argument("--signal-events-dir", type=Path, default=None)
@@ -9826,6 +9882,8 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         schedule_active_jobs=args.schedule_active_jobs,
         schedule_subgroup_index=args.schedule_subgroup_index,
         schedule_subgroup_count=args.schedule_subgroup_count,
+        symbol_bucket_index=args.symbol_bucket_index,
+        symbol_bucket_count=args.symbol_bucket_count,
         test_max_signal_groups=args.test_max_signal_groups,
         signal_first_phase=args.signal_first_phase,
         signal_events_dir=args.signal_events_dir,

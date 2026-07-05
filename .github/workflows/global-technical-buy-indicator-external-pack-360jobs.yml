@@ -391,12 +391,19 @@ jobs:
           if [ "${{ inputs.test_mode }}" = "true" ]; then
             signal_group_limit="${{ inputs.test_max_signal_groups }}"
           fi
-          SUBGROUP_ARGS=()
+          PARTITION_ARGS=()
           if [ -n "${{ inputs.recovery_job_indices }}" ] && [ "${{ inputs.job_count }}" -gt 1 ]; then
-            SUBGROUP_ARGS=(
-              --schedule-subgroup-index "${{ inputs.job_start_index }}"
-              --schedule-subgroup-count "${{ inputs.job_count }}"
-            )
+            if [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v5_event_first_symbol_bucket" ]; then
+              PARTITION_ARGS=(
+                --symbol-bucket-index "${{ inputs.job_start_index }}"
+                --symbol-bucket-count "${{ inputs.job_count }}"
+              )
+            else
+              PARTITION_ARGS=(
+                --schedule-subgroup-index "${{ inputs.job_start_index }}"
+                --schedule-subgroup-count "${{ inputs.job_count }}"
+              )
+            fi
           fi
 
           for job_index in "${JOBS[@]}"; do
@@ -435,7 +442,7 @@ jobs:
               --candidate-timeout-seconds "${{ inputs.candidate_timeout_seconds }}"
               --job-wall-clock-seconds "${{ inputs.job_wall_clock_seconds }}"
               --schedule-active-jobs "$schedule_active_jobs"
-              "${SUBGROUP_ARGS[@]}"
+              "${PARTITION_ARGS[@]}"
               --test-max-signal-groups "$signal_group_limit"
               --optimized-evaluation-mode "${{ inputs.optimized_evaluation_mode }}"
               "${OPT_ARGS[@]}"
@@ -448,7 +455,7 @@ jobs:
               --validation-end "${{ inputs.validation_end }}"
             )
 
-            if [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v3_signal_first" ] || [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v4_zero_timeout" ] || [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v5_event_first" ]; then
+            if [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v3_signal_first" ] || [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v4_zero_timeout" ] || [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v5_event_first" ] || [ "${{ inputs.optimized_evaluation_mode }}" = "optimized_evaluation_v5_event_first_symbol_bucket" ]; then
               python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --signal-first-phase signals --output-dir "signals/job-$job_padded"
               python scripts/run_global_technical_buy_indicator_external_pack_shard.py "${RUN_ARGS[@]}" --signal-first-phase exits --signal-events-dir "signals/job-$job_padded" --output-dir "outputs/job-$job_padded"
             else
