@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -207,6 +208,30 @@ def load_run_info(repo: str, run: dict[str, Any], artifact_cache: dict[int, bool
         job_names={str(job.get("name") or "") for job in (view.get("jobs") or [])},
         has_final_artifact=has_artifact,
     )
+
+
+def load_runs_info(
+    repo: str,
+    raw_runs: list[dict[str, Any]],
+    artifact_cache: dict[int, bool],
+    *,
+    max_workers: int = 8,
+) -> tuple[list[RunInfo], int]:
+    infos: list[RunInfo] = []
+    failures = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(load_run_info, repo, raw, artifact_cache): int(raw["databaseId"])
+            for raw in raw_runs
+        }
+        for future in as_completed(futures):
+            run_id = futures[future]
+            try:
+                infos.append(future.result())
+            except Exception as exc:  # noqa: BLE001 - keep GitHub hiccups from killing orchestration
+                failures += 1
+                print(f"warning: could not inspect run {run_id}: {exc}", flush=True)
+    return infos, failures
 
 
 def slots_for_logical_job(logical_job: int, candidate_limit: int = 10) -> list[int]:
@@ -524,6 +549,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sleep-seconds", type=int, default=300)
     parser.add_argument("--run-list-limit", type=int, default=200)
     parser.add_argument("--min-run-created-at", default="2026-07-04T00:00:00Z")
+    parser.add_argument("--inspect-workers", type=int, default=8)
     parser.add_argument("--max-parallel-logical-jobs", type=int, default=360)
     parser.add_argument("--max-new-waves-per-pass", type=int, default=2)
     parser.add_argument(
@@ -558,7 +584,14 @@ def main() -> int:
             for raw in raw_runs
             if parse_utc(str(raw.get("createdAt") or "1970-01-01T00:00:00Z")) >= min_created_at
         ]
-        runs = [load_run_info(args.repo, raw, artifact_cache) for raw in raw_runs]
+        runs, load_failures = load_runs_info(
+            args.repo,
+            raw_runs,
+            artifact_cache,
+            max_workers=max(args.inspect_workers, 1),
+        )
+        if load_failures:
+            print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
         runs = [run for run in runs if run.head_sha == VALIDATED_SHA or run.is_active or run.has_final_artifact]
         changed = dispatch_next_actions(
             repo=args.repo,
