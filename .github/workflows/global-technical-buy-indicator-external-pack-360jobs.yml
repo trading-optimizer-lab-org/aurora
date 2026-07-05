@@ -554,7 +554,9 @@ jobs:
             --locked-start "${{ inputs.locked_start }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}"
+            --validation-end "${{ inputs.validation_end }}" \
+            --fill-missing-timeouts-pack-path "${{ inputs.external_strategy_pack_path }}" \
+            --fill-missing-timeouts-reason "missing_slot_classified_as_timeout_in_merge_cross_run"
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:
