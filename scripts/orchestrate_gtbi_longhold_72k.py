@@ -181,11 +181,19 @@ def recovery_config_for_round(recovery_round: int) -> RecoveryRoundConfig:
     return RecoveryRoundConfig(4, "symbol_bucket", 0, 10, 1800, 2100)
 
 
-def run_cmd(args: list[str], *, check: bool = True) -> str:
+def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) -> str:
     attempts = 4 if check else 1
     last_proc: subprocess.CompletedProcess[str] | None = None
     for attempt in range(attempts):
-        proc = subprocess.run(args, check=False, text=True, capture_output=True)
+        try:
+            proc = subprocess.run(args, check=False, text=True, capture_output=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            proc = subprocess.CompletedProcess(
+                args=args,
+                returncode=124,
+                stdout=exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout or ""),
+                stderr=exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "command timed out"),
+            )
         last_proc = proc
         if proc.returncode == 0:
             return proc.stdout
@@ -1035,6 +1043,7 @@ def main() -> int:
     recovery_round_by_slot: dict[int, int] = {}
     pending_recovery_slots: set[int] = set()
     pending_waves: set[int] = set()
+    current_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
 
     while True:
         print(f"orchestrator pass at {datetime.now(timezone.utc).isoformat()}")
@@ -1050,6 +1059,12 @@ def main() -> int:
                 raw
                 for raw in raw_runs
                 if str(raw.get("headSha") or "") == validated_sha
+            ]
+        if current_run_id:
+            raw_runs = [
+                raw
+                for raw in raw_runs
+                if int(raw.get("databaseId") or 0) != current_run_id
             ]
         runs, load_failures = load_runs_info(
             args.repo,
