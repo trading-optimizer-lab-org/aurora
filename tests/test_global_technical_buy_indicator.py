@@ -5259,7 +5259,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "self-hosted" not in text
     assert "C:\\" not in text
     assert "runner.temp" not in text
-    assert "scripts/strategy_packs/gtbi_research_broad_72000" in text
+    assert "scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1" in text
     assert "global-technical-buy-indicator-external-pack-72000-results" in text
     assert "Normalize data lake layout and ensure SPY benchmark exists" in text
     assert "out_path = out_dir / \"SPY.parquet\"" in text
@@ -5312,7 +5312,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "gtbi-longhold-orchestrator-recovery-manifests" in text
     assert "recovery-manifests" in text
     assert "--validated-sha \"${{ github.sha }}\"" in text
-    assert 'SCHEDULE_ACTIVE_JOBS: "240"' in text
+    assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text
     assert 'signal_group_limit="${{ inputs.test_max_signal_groups }}"' in text

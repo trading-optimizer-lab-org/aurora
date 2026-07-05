@@ -14,7 +14,7 @@ on:
       external_strategy_pack_path:
         description: "Repo path containing the external strategy pack"
         required: true
-        default: "scripts/strategy_packs/gtbi_research_broad_72000"
+        default: "scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1"
       candidate_count_per_job:
         description: "Strategies evaluated per logical job"
         required: true
@@ -379,7 +379,7 @@ jobs:
       - name: Run logical jobs in this block
         env:
           JOB_INDICES_CSV: ${{ matrix.job_indices_csv }}
-          SCHEDULE_ACTIVE_JOBS: "240"
+          SCHEDULE_ACTIVE_JOBS: "360"
           CANDIDATE_LIMIT: ${{ needs.plan_blocks.outputs.candidate_limit }}
         run: |
           set -euo pipefail

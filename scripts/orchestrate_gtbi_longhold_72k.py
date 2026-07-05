@@ -19,7 +19,7 @@ ARTIFACT_NAME = "global-technical-buy-indicator-external-pack-72000-results"
 WORKFLOW_FILE = "global-technical-buy-indicator-external-pack-360jobs.yml"
 BRANCH = "codex/gtbi-github-only-external-pack-72000"
 PACK_PATH = "scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1"
-VALIDATED_SHA = "c834095b309cb56491f411c67ea5a280bbd70e81"
+VALIDATED_SHA = ""
 ORIGINAL_SHARDS = 360
 STRATEGIES_PER_SHARD = 200
 WAVE_LOGICAL_JOBS = 180
@@ -1053,6 +1053,7 @@ def main() -> int:
         )
         if load_failures:
             print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
+    if validated_sha:
         runs = [run for run in runs if run.head_sha == validated_sha]
         changed = dispatch_next_actions(
             repo=args.repo,
