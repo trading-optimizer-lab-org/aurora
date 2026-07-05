@@ -1074,8 +1074,8 @@ def main() -> int:
         )
         if load_failures:
             print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
-    if validated_sha:
-        runs = [run for run in runs if run.head_sha == validated_sha]
+        if validated_sha:
+            runs = [run for run in runs if run.head_sha == validated_sha]
         changed = dispatch_next_actions(
             repo=args.repo,
             branch=args.branch,

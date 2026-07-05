@@ -5066,6 +5066,40 @@ def test_orchestrator_dispatches_round_four_symbol_buckets(monkeypatch: pytest.M
     assert manifest["symbol_bucket_count"].unique().tolist() == [10]
 
 
+def test_orchestrator_main_once_dispatches_after_loading_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "orchestrate_gtbi_longhold_72k.py",
+            "--repo",
+            "trading-optimizer-lab-org/aurora",
+            "--branch",
+            "codex/gtbi-github-only-external-pack-72000",
+            "--workflow",
+            "global-technical-buy-indicator-external-pack-360jobs.yml",
+            "--validated-sha",
+            "abc123",
+            "--once",
+        ],
+    )
+    monkeypatch.setattr(gtbi_orchestrator, "list_runs", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(gtbi_orchestrator, "load_runs_info", lambda *_args, **_kwargs: ([], 0))
+    monkeypatch.setattr(gtbi_orchestrator, "completed_merge_run", lambda *_args, **_kwargs: None)
+
+    def fake_dispatch_next_actions(**kwargs: object) -> bool:
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(gtbi_orchestrator, "dispatch_next_actions", fake_dispatch_next_actions)
+
+    assert gtbi_orchestrator.main() == 0
+    assert len(calls) == 1
+    assert calls[0]["branch"] == "codex/gtbi-github-only-external-pack-72000"
+
+
 def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
     job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
     job.mkdir(parents=True)
