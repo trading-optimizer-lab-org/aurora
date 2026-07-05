@@ -4460,6 +4460,172 @@ def test_external_merge_reconciles_summary_with_real_leaderboard_rows(tmp_path: 
     assert summary["best_adjusted_return_time_risk"] is None
 
 
+def test_external_merge_strict_final_rejects_timeout_rows(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 1,
+                "strategies_evaluated": 0,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 1,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 1,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame([{"strategy_id": "slow", "reason": "timeout"}]).to_csv(
+        job / "timeout_strategies_job_0000.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+
+    with pytest.raises(ValueError, match="strict final merge failed"):
+        gtbi.merge_external_strategy_pack_outputs(
+            shards_root=tmp_path / "downloaded",
+            output_dir=tmp_path / "final",
+            total_strategies_requested=1,
+            total_shards_requested=1,
+            total_jobs_requested=1,
+            candidate_count_per_job=1,
+            strict_final_eval_mode=True,
+        )
+
+    summary = json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["final_strict_eval_mode"] is True
+    assert summary["strict_final_pass"] is False
+    assert {"check": "timeouts", "actual": 1, "expected": 0} in summary["strict_final_violations"]
+
+
+def test_external_merge_strict_final_rejects_fill_missing_timeouts(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="does not permit fill_missing_timeouts_pack_path"):
+        gtbi.merge_external_strategy_pack_outputs(
+            shards_root=tmp_path / "downloaded",
+            output_dir=tmp_path / "final",
+            total_strategies_requested=1,
+            total_shards_requested=1,
+            total_jobs_requested=1,
+            candidate_count_per_job=1,
+            fill_missing_timeouts_pack_path=tmp_path,
+            strict_final_eval_mode=True,
+        )
+
+
+def test_external_merge_strict_final_rejects_incomplete_leaderboard_plus_early(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 1,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 0,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [{"candidate_id": "ok", "score": 1.0, "adjusted_return_time_risk": 0.1}]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+
+    with pytest.raises(ValueError, match="strict final merge failed"):
+        gtbi.merge_external_strategy_pack_outputs(
+            shards_root=tmp_path / "downloaded",
+            output_dir=tmp_path / "final",
+            total_strategies_requested=2,
+            total_shards_requested=1,
+            total_jobs_requested=2,
+            candidate_count_per_job=1,
+            strict_final_eval_mode=True,
+        )
+
+    summary = json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["strict_leaderboard_plus_early_rejected"] == 1
+    assert {"check": "leaderboard_plus_early_rejected", "actual": 1, "expected": 2} in summary["strict_final_violations"]
+    assert {"check": "missing", "actual": 1, "expected": 0} in summary["strict_final_violations"]
+
+
+def test_external_merge_strict_final_accepts_leaderboard_plus_early_coverage(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 2,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 1,
+                "strategies_timed_out": 0,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+                "zero_timeout_mode": True,
+                "zero_slow_deferred_mode": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [{"candidate_id": "ok", "score": 1.0, "adjusted_return_time_risk": 0.1}]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame([{"strategy_id": "early", "reason": "validation_not_10_positive_years"}]).to_csv(
+        job / "early_rejected_strategies_job_0000.csv",
+        index=False,
+    )
+    pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=2,
+        total_shards_requested=1,
+        total_jobs_requested=2,
+        candidate_count_per_job=1,
+        strict_final_eval_mode=True,
+    )
+
+    assert summary["final_strict_eval_mode"] is True
+    assert summary["strict_final_pass"] is True
+    assert summary["strict_final_violation_count"] == 0
+    assert summary["total_strategies_timed_out"] == 0
+    assert summary["strict_leaderboard_plus_early_rejected"] == 2
+    assert json.loads((tmp_path / "final" / "strict_final_validation_report.json").read_text(encoding="utf-8"))["ok"] is True
+
+
 def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
     job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
     job.mkdir(parents=True)
@@ -4697,6 +4863,9 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "job_wall_clock_seconds" in text
     assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
+    assert "--strict-final-eval-mode" in text
+    assert "--fill-missing-timeouts-pack-path" not in text
+    assert "--fill-missing-timeouts-reason" not in text
     assert 'SCHEDULE_ACTIVE_JOBS: "240"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text

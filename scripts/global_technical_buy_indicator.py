@@ -8560,7 +8560,10 @@ def merge_external_strategy_pack_outputs(
     validation_end: str = DEFAULT_VALIDATION_END,
     fill_missing_timeouts_pack_path: Path | None = None,
     fill_missing_timeouts_reason: str = "missing_slot_classified_as_timeout_in_merge",
+    strict_final_eval_mode: bool = False,
 ) -> dict[str, Any]:
+    if strict_final_eval_mode and fill_missing_timeouts_pack_path is not None:
+        raise ValueError("strict final merge does not permit fill_missing_timeouts_pack_path")
     shards_root = Path(shards_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -9260,6 +9263,25 @@ def merge_external_strategy_pack_outputs(
         if not frame.empty and column in frame.columns:
             terminal_strategy_ids.update(str(value) for value in frame[column].dropna().astype(str) if str(value))
     terminal_coverage_count = int(len(terminal_strategy_ids))
+    terminal_rows_by_strategy = 0
+    terminal_duplicate_ids = 0
+    terminal_id_frames: list[pd.Series] = []
+    for frame, column in (
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        if not frame.empty and column in frame.columns:
+            values = frame[column].dropna().astype(str)
+            values = values.loc[values != ""]
+            terminal_rows_by_strategy += int(len(values))
+            terminal_id_frames.append(values)
+    if terminal_id_frames:
+        terminal_all_ids = pd.concat(terminal_id_frames, ignore_index=True)
+        terminal_duplicate_ids = int(terminal_all_ids.duplicated().sum())
     terminal_coverage_complete = bool(
         reconcile_counts_to_output_rows
         and int(total_strategies_requested) > 0
@@ -9350,6 +9372,10 @@ def merge_external_strategy_pack_outputs(
     strategies_requested_for_summary = int(loaded_total if reconcile_counts_to_output_rows else total_strategies_requested)
     zero_timeout_mode = any(bool(item.get("zero_timeout_mode")) for item in summaries)
     zero_slow_deferred_mode = any(bool(item.get("zero_slow_deferred_mode")) for item in summaries)
+    strict_success_rows = int(leaderboard_row_count + early_rejected_row_count)
+    strict_missing = max(int(total_strategies_requested) - strict_success_rows, 0)
+    strict_extra = max(strict_success_rows - int(total_strategies_requested), 0)
+    strict_overlaps = int(terminal_duplicate_ids)
     summary = {
         "total_strategies_requested": int(strategies_requested_for_summary),
         "strategy_slots_requested": int(strategy_slots_requested),
@@ -9428,7 +9454,37 @@ def merge_external_strategy_pack_outputs(
         "validation_end": str(validation_end),
         "github_only_run": True,
         "requires_local_machine": False,
+        "final_strict_eval_mode": bool(strict_final_eval_mode),
+        "strict_terminal_rows": int(terminal_rows_by_strategy),
+        "strict_leaderboard_plus_early_rejected": int(strict_success_rows),
+        "strict_missing": int(strict_missing),
+        "strict_extra": int(strict_extra),
+        "strict_overlaps": int(strict_overlaps),
     }
+    strict_violations: list[dict[str, Any]] = []
+    if strict_final_eval_mode:
+        strict_checks = (
+            ("timeouts", int(timed_out_total), 0),
+            ("synthetic_missing_timeout_rows", int(synthetic_missing_timeout_count), 0),
+            ("fill_missing_timeouts_enabled", int(bool(fill_missing_timeouts_pack_path is not None)), 0),
+            ("runtime_errors", int(runtime_error_total), 0),
+            ("unsupported", int(unsupported_total), 0),
+            ("slow_deferred", int(slow_deferred_total), 0),
+            ("leaderboard_plus_early_rejected", int(strict_success_rows), int(total_strategies_requested)),
+            ("missing", int(strict_missing), 0),
+            ("extra", int(strict_extra), 0),
+            ("overlaps", int(strict_overlaps), 0),
+        )
+        for name, actual, expected in strict_checks:
+            if actual != expected:
+                strict_violations.append({"check": name, "actual": actual, "expected": expected})
+        if str(locked_start) != DEFAULT_LOCKED_START:
+            strict_violations.append({"check": "locked_start", "actual": str(locked_start), "expected": DEFAULT_LOCKED_START})
+        if str(validation_end) != DEFAULT_VALIDATION_END:
+            strict_violations.append({"check": "validation_end", "actual": str(validation_end), "expected": DEFAULT_VALIDATION_END})
+    summary["strict_final_pass"] = bool(strict_final_eval_mode and not strict_violations)
+    summary["strict_final_violation_count"] = int(len(strict_violations))
+    summary["strict_final_violations"] = strict_violations
     top_no_drawdown_ids = (
         no_drawdown_ranked.head(20)["candidate_id"].dropna().astype(str).tolist()
         if not no_drawdown_ranked.empty and "candidate_id" in no_drawdown_ranked.columns
@@ -9463,6 +9519,17 @@ def merge_external_strategy_pack_outputs(
     ]
     (output_dir / "long_hold_no_drawdown_full_report.md").write_text("\n".join(report_lines), encoding="utf-8")
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    if strict_final_eval_mode and strict_violations:
+        (output_dir / "strict_final_validation_report.json").write_text(
+            json.dumps({"ok": False, "violations": strict_violations}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        raise ValueError(f"strict final merge failed: {strict_violations}")
+    if strict_final_eval_mode:
+        (output_dir / "strict_final_validation_report.json").write_text(
+            json.dumps({"ok": True, "violations": []}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     return summary
 
 
@@ -9666,6 +9733,7 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
     parser.add_argument("--fill-missing-timeouts-pack-path", type=Path, default=None)
     parser.add_argument("--fill-missing-timeouts-reason", default="missing_slot_classified_as_timeout_in_merge")
+    parser.add_argument("--strict-final-eval-mode", action="store_true")
     args = parser.parse_args(argv)
     summary = merge_external_strategy_pack_outputs(
         shards_root=args.shards_root,
@@ -9680,6 +9748,7 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
         validation_end=args.validation_end,
         fill_missing_timeouts_pack_path=args.fill_missing_timeouts_pack_path,
         fill_missing_timeouts_reason=args.fill_missing_timeouts_reason,
+        strict_final_eval_mode=args.strict_final_eval_mode,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
