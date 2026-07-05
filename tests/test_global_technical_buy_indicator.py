@@ -4627,6 +4627,41 @@ def test_external_merge_strict_final_accepts_leaderboard_plus_early_coverage(tmp
     assert json.loads((tmp_path / "final" / "strict_final_validation_report.json").read_text(encoding="utf-8"))["ok"] is True
 
 
+def test_symbol_bucket_trade_merge_removes_duplicates_without_losing_unique_rows() -> None:
+    first = pd.DataFrame(
+        [
+            {"candidate_id": "a", "symbol": "AAA", "entry_date": "2019-01-02", "exit_date": "2019-02-01", "return_pct": 1.0},
+            {"candidate_id": "a", "symbol": "BBB", "entry_date": "2019-01-03", "exit_date": "2019-02-02", "return_pct": 2.0},
+        ]
+    )
+    second = pd.DataFrame(
+        [
+            {"candidate_id": "a", "symbol": "AAA", "entry_date": "2019-01-02", "exit_date": "2019-02-01", "return_pct": 1.0},
+            {"candidate_id": "a", "symbol": "CCC", "entry_date": "2019-01-04", "exit_date": "2019-02-03", "return_pct": 3.0},
+        ]
+    )
+
+    merged = gtbi.merge_symbol_bucket_trade_frames([first, second])
+
+    assert len(merged) == 3
+    assert set(merged["symbol"]) == {"AAA", "BBB", "CCC"}
+    assert not merged.duplicated(subset=["candidate_id", "symbol", "entry_date", "exit_date"]).any()
+
+
+def test_subgroup_terminal_merge_dedupes_and_reports_missing_ids() -> None:
+    first = pd.DataFrame([{"strategy_id": "a", "reason": "early"}, {"strategy_id": "b", "reason": "early"}])
+    second = pd.DataFrame([{"strategy_id": "b", "reason": "early-again"}, {"strategy_id": "c", "reason": "early"}])
+
+    merged, missing = gtbi.merge_subgroup_terminal_frames(
+        [first, second],
+        expected_strategy_ids=["a", "b", "c", "d"],
+    )
+
+    assert len(merged) == 3
+    assert not merged["strategy_id"].duplicated().any()
+    assert missing == ["d"]
+
+
 def test_external_merge_recovered_result_supersedes_prior_timeout(tmp_path: Path) -> None:
     original = tmp_path / "downloaded" / "run-original"
     recovery = tmp_path / "downloaded" / "run-recovery"

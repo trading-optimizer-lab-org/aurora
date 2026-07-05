@@ -9619,6 +9619,46 @@ def merge_external_strategy_pack_outputs(
     return summary
 
 
+def merge_symbol_bucket_trade_frames(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
+    non_empty = [frame.copy() for frame in frames if frame is not None and not frame.empty]
+    if not non_empty:
+        return pd.DataFrame(columns=TRADE_COLUMNS)
+    merged = pd.concat(non_empty, ignore_index=True, sort=False)
+    id_column = "strategy_id" if "strategy_id" in merged.columns else "candidate_id"
+    date_column = "date" if "date" in merged.columns else "entry_date"
+    key_columns = [column for column in (id_column, "symbol", date_column, "exit_date") if column in merged.columns]
+    if key_columns:
+        merged = merged.drop_duplicates(subset=key_columns, keep="last")
+        merged = merged.sort_values(key_columns).reset_index(drop=True)
+    return merged
+
+
+def merge_subgroup_terminal_frames(
+    frames: Iterable[pd.DataFrame],
+    *,
+    expected_strategy_ids: Iterable[str] | None = None,
+    id_column: str = "strategy_id",
+) -> tuple[pd.DataFrame, list[str]]:
+    non_empty = [frame.copy() for frame in frames if frame is not None and not frame.empty]
+    if not non_empty:
+        merged = pd.DataFrame(columns=[id_column])
+    else:
+        merged = pd.concat(non_empty, ignore_index=True, sort=False)
+        if id_column not in merged.columns and "candidate_id" in merged.columns:
+            id_column = "candidate_id"
+        if id_column in merged.columns:
+            merged = merged.drop_duplicates(subset=[id_column], keep="last")
+            merged = merged.sort_values(id_column).reset_index(drop=True)
+    expected = {str(value) for value in expected_strategy_ids or []}
+    present = (
+        set(merged[id_column].dropna().astype(str))
+        if id_column in merged.columns
+        else set()
+    )
+    missing = sorted(expected - present)
+    return merged, missing
+
+
 def _default_run_root() -> Path:
     return base_data_dir() / "runs" / CAMPAIGN_ID
 
