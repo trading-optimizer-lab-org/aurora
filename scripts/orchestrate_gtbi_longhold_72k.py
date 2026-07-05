@@ -27,6 +27,25 @@ TOTAL_WAVES = 40
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 1800
 DEFAULT_RECOVERY_WALL_CLOCK_SECONDS = 2100
 DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK = 1
+RECOVERY_MANIFEST_COLUMNS = [
+    "strategy_id",
+    "logical_job_id",
+    "block_id",
+    "concept",
+    "family",
+    "signal_hash",
+    "exit_hash",
+    "timeout_reason",
+    "previous_runtime_seconds",
+    "recovery_round",
+    "partition_type",
+    "subgroup_index",
+    "subgroup_count",
+    "symbol_bucket_index",
+    "symbol_bucket_count",
+    "candidate_timeout_seconds",
+    "job_wall_clock_seconds",
+]
 
 
 RUN_BLOCK_RE = re.compile(r"run_block \((\d+),\s*([^,]+),\s*(\d+),\s*(\d+)\)")
@@ -105,6 +124,7 @@ class ArtifactInspection:
     slow_deferred_slots: set[int]
     runtime_error_slots: set[int]
     unsupported_slots: set[int]
+    recoverable_records: dict[int, StrategyRecoveryRecord]
     synthetic_missing_timeout_rows: int
     fill_missing_timeouts_enabled: bool
 
@@ -120,6 +140,45 @@ class ArtifactInspection:
             | set(self.runtime_error_slots)
             | set(self.unsupported_slots)
         )
+
+
+@dataclass(frozen=True)
+class StrategyRecoveryRecord:
+    strategy_id: str
+    slot: int
+    shard_id: int
+    slot_in_shard: int
+    family: str = ""
+    concept: str = ""
+    market_overlay: str = ""
+    trend_filter: str = ""
+    relative_strength_filter: str = ""
+    exit_rule: str = ""
+    signal_hash: str = ""
+    exit_hash: str = ""
+    timeout_reason: str = ""
+    previous_runtime_seconds: str = ""
+
+
+@dataclass(frozen=True)
+class RecoveryRoundConfig:
+    recovery_round: int
+    partition_type: str
+    subgroup_count: int
+    symbol_bucket_count: int
+    candidate_timeout_seconds: int
+    job_wall_clock_seconds: int
+
+
+def recovery_config_for_round(recovery_round: int) -> RecoveryRoundConfig:
+    round_number = max(1, min(int(recovery_round), 4))
+    if round_number == 1:
+        return RecoveryRoundConfig(1, "signal_subgroup", 5, 0, 900, 1200)
+    if round_number == 2:
+        return RecoveryRoundConfig(2, "signal_subgroup", 10, 0, 1800, 2100)
+    if round_number == 3:
+        return RecoveryRoundConfig(3, "signal_subgroup", 20, 0, 1800, 2100)
+    return RecoveryRoundConfig(4, "symbol_bucket", 0, 10, 1800, 2100)
 
 
 def run_cmd(args: list[str], *, check: bool = True) -> str:
@@ -244,6 +303,49 @@ def _slots_from_csv(path: Path) -> set[int]:
     return slots
 
 
+def _text_from_row(row: dict[str, str], *keys: str) -> str:
+    for key in keys:
+        value = str(row.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def _recovery_records_from_csv(path: Path) -> dict[int, StrategyRecoveryRecord]:
+    if not path.exists() or path.stat().st_size == 0:
+        return {}
+    records: dict[int, StrategyRecoveryRecord] = {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            slot = slot_from_strategy_row(row)
+            if slot is None:
+                continue
+            shard_id = slot // STRATEGIES_PER_SHARD
+            slot_in_shard = slot % STRATEGIES_PER_SHARD
+            records[slot] = StrategyRecoveryRecord(
+                strategy_id=_text_from_row(row, "strategy_id") or f"slot_{slot}",
+                slot=int(slot),
+                shard_id=int(shard_id),
+                slot_in_shard=int(slot_in_shard),
+                family=_text_from_row(row, "family"),
+                concept=_text_from_row(row, "concept"),
+                market_overlay=_text_from_row(row, "market_overlay", "market_overlay_id"),
+                trend_filter=_text_from_row(row, "trend_filter", "trend_profile_id"),
+                relative_strength_filter=_text_from_row(row, "relative_strength_filter", "rs_profile_id"),
+                exit_rule=_text_from_row(row, "exit_rule", "exit_profile_id"),
+                signal_hash=_text_from_row(row, "signal_hash"),
+                exit_hash=_text_from_row(row, "exit_hash"),
+                timeout_reason=_text_from_row(row, "reason", "reject_reason", "result_status"),
+                previous_runtime_seconds=_text_from_row(
+                    row,
+                    "seconds_until_timeout",
+                    "seconds_until_deferred",
+                    "seconds_total",
+                ),
+            )
+    return records
+
+
 def inspect_artifact_dir(path: Path, *, run_id: int = 0) -> ArtifactInspection:
     path = Path(path)
     summary_path = path / "summary.json"
@@ -253,12 +355,16 @@ def inspect_artifact_dir(path: Path, *, run_id: int = 0) -> ArtifactInspection:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             summary = {}
+    timeout_records = _recovery_records_from_csv(path / "timeout_strategies.csv")
+    slow_deferred_records = _recovery_records_from_csv(path / "slow_deferred_strategies.csv")
+    recoverable_records = {**slow_deferred_records, **timeout_records}
     return ArtifactInspection(
         run_id=int(run_id),
-        timeout_slots=_slots_from_csv(path / "timeout_strategies.csv"),
-        slow_deferred_slots=_slots_from_csv(path / "slow_deferred_strategies.csv"),
+        timeout_slots=set(timeout_records),
+        slow_deferred_slots=set(slow_deferred_records),
         runtime_error_slots=_slots_from_csv(path / "runtime_errors.csv"),
         unsupported_slots=_slots_from_csv(path / "unsupported_strategies.csv"),
+        recoverable_records=recoverable_records,
         synthetic_missing_timeout_rows=int(summary.get("synthetic_missing_timeout_rows", 0) or 0),
         fill_missing_timeouts_enabled=bool(summary.get("fill_missing_timeouts_enabled", False)),
     )
@@ -431,6 +537,128 @@ def run_workflow(
     run_cmd(args)
 
 
+def write_recovery_manifest(
+    *,
+    manifest_dir: Path,
+    slots: list[int],
+    records: dict[int, StrategyRecoveryRecord],
+    config: RecoveryRoundConfig,
+) -> Path:
+    manifest_dir = Path(manifest_dir)
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / f"recovery_manifest_round_{config.recovery_round}.csv"
+    rows: list[dict[str, Any]] = []
+    subgroup_indices = range(max(config.subgroup_count, 1))
+    symbol_bucket_indices = range(max(config.symbol_bucket_count, 1))
+    for slot in slots:
+        record = records.get(slot)
+        if record is None:
+            record = StrategyRecoveryRecord(
+                strategy_id=f"slot_{slot}",
+                slot=int(slot),
+                shard_id=int(slot) // STRATEGIES_PER_SHARD,
+                slot_in_shard=int(slot) % STRATEGIES_PER_SHARD,
+                timeout_reason="missing_or_failed_logical_job",
+            )
+        partitions = subgroup_indices if config.partition_type == "signal_subgroup" else symbol_bucket_indices
+        for partition_index in partitions:
+            rows.append(
+                {
+                    "strategy_id": record.strategy_id,
+                    "logical_job_id": int(slot),
+                    "block_id": int(slot),
+                    "concept": record.concept,
+                    "family": record.family,
+                    "signal_hash": record.signal_hash,
+                    "exit_hash": record.exit_hash,
+                    "timeout_reason": record.timeout_reason,
+                    "previous_runtime_seconds": record.previous_runtime_seconds,
+                    "recovery_round": int(config.recovery_round),
+                    "partition_type": config.partition_type,
+                    "subgroup_index": int(partition_index) if config.partition_type == "signal_subgroup" else 0,
+                    "subgroup_count": int(config.subgroup_count),
+                    "symbol_bucket_index": int(partition_index) if config.partition_type == "symbol_bucket" else 0,
+                    "symbol_bucket_count": int(config.symbol_bucket_count),
+                    "candidate_timeout_seconds": int(config.candidate_timeout_seconds),
+                    "job_wall_clock_seconds": int(config.job_wall_clock_seconds),
+                }
+            )
+    write_header = not manifest_path.exists()
+    with manifest_path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RECOVERY_MANIFEST_COLUMNS)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(rows)
+    return manifest_path
+
+
+def dispatch_recovery_slots(
+    *,
+    repo: str,
+    branch: str,
+    slots: list[int],
+    records: dict[int, StrategyRecoveryRecord],
+    recovery_round_by_slot: dict[int, int],
+    max_parallel_logical_jobs: int,
+    active_count: int,
+    manifest_dir: Path,
+) -> list[int]:
+    if not slots:
+        return []
+    slots_by_round: dict[int, list[int]] = {}
+    for slot in sorted(dict.fromkeys(slots)):
+        round_number = min(recovery_round_by_slot.get(slot, 0) + 1, 4)
+        slots_by_round.setdefault(round_number, []).append(slot)
+    round_number = min(slots_by_round)
+    config = recovery_config_for_round(round_number)
+    fanout = max(config.subgroup_count or config.symbol_bucket_count or 1, 1)
+    available = max(max_parallel_logical_jobs - active_count, 0)
+    if available <= 0:
+        return []
+    max_slots = max(available // fanout, 1)
+    launch_slots = slots_by_round[round_number][:max_slots]
+    if not launch_slots:
+        return []
+    write_recovery_manifest(manifest_dir=manifest_dir, slots=launch_slots, records=records, config=config)
+    slots_csv = ",".join(str(slot) for slot in launch_slots)
+    if config.partition_type == "signal_subgroup":
+        for subgroup_index in range(max(config.subgroup_count, 1)):
+            run_workflow(
+                repo,
+                branch,
+                mode="optimized_evaluation_v5_event_first",
+                candidate_count_per_job=1,
+                candidate_timeout_seconds=config.candidate_timeout_seconds,
+                job_wall_clock_seconds=config.job_wall_clock_seconds,
+                logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
+                job_start_index=subgroup_index,
+                job_count=max(config.subgroup_count, 1),
+                recovery_job_indices=slots_csv,
+            )
+    else:
+        # The current evaluator does not yet expose symbol-bucket execution.
+        # Keep the manifest explicit and retry with one-strategy jobs so the
+        # strict merge still fails rather than silently fabricating coverage.
+        run_workflow(
+            repo,
+            branch,
+            mode="optimized_evaluation_v5_event_first",
+            candidate_count_per_job=1,
+            candidate_timeout_seconds=config.candidate_timeout_seconds,
+            job_wall_clock_seconds=config.job_wall_clock_seconds,
+            logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
+            recovery_job_indices=slots_csv,
+        )
+    for slot in launch_slots:
+        recovery_round_by_slot[slot] = int(config.recovery_round)
+    print(
+        f"dispatch recovery round {config.recovery_round} partition={config.partition_type} "
+        f"slots={len(launch_slots)} fanout={fanout}",
+        flush=True,
+    )
+    return launch_slots
+
+
 def cancel_run(repo: str, run_id: int) -> None:
     run_cmd(["gh", "run", "cancel", str(run_id), "--repo", repo], check=False)
 
@@ -558,12 +786,13 @@ def dispatch_next_actions(
     pending_waves: set[int],
     artifact_root: Path,
     artifact_inspection_cache: dict[int, ArtifactInspection],
-    recovery_timeout_seconds: int,
-    recovery_wall_clock_seconds: int,
+    recovery_round_by_slot: dict[int, int],
+    recovery_manifest_dir: Path,
 ) -> bool:
     changed = False
     cancel_duplicate_active_waves(repo, runs, excluded)
-    cancel_duplicate_active_recoveries(repo, runs, excluded)
+    # Intentional subgroup recoveries share the same logical slots, so the old
+    # duplicate-canceller would kill valid round fanout.
     chosen_waves = choose_wave_runs(runs, excluded)
     completed_recovery_unresolved: set[int] = set()
     for run in sorted(runs, key=lambda item: item.created_at):
@@ -605,24 +834,24 @@ def dispatch_next_actions(
                     missing_slots.append(slot)
         if missing_slots:
             unique_missing_slots = sorted(set(missing_slots))
-            slots_csv = ",".join(str(slot) for slot in unique_missing_slots)
-            print(f"dispatch recovery for wave {wave}, run {run.run_id}, slots={slots_csv}")
-            run_workflow(
-                repo,
-                branch,
-                mode="optimized_evaluation_v5_event_first",
-                candidate_count_per_job=1,
-                candidate_timeout_seconds=recovery_timeout_seconds,
-                job_wall_clock_seconds=recovery_wall_clock_seconds,
-                logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
-                job_start_index=0,
-                job_count=0,
-                recovery_job_indices=slots_csv,
+            launched_slots = dispatch_recovery_slots(
+                repo=repo,
+                branch=branch,
+                slots=unique_missing_slots,
+                records={},
+                recovery_round_by_slot=recovery_round_by_slot,
+                max_parallel_logical_jobs=max_parallel_logical_jobs,
+                active_count=active_count,
+                manifest_dir=recovery_manifest_dir,
             )
-            pending_recovery_slots.update(unique_missing_slots)
+            if not launched_slots:
+                print(f"waiting: failed logical jobs need recovery but capacity is full: wave={wave}")
+                return False
+            pending_recovery_slots.update(launched_slots)
             return True
 
     recoverable_timeout_slots: set[int] = set()
+    recoverable_records: dict[int, StrategyRecoveryRecord] = {}
     for run in sorted(runs, key=lambda item: item.created_at):
         if (
             run.run_id in excluded
@@ -646,32 +875,23 @@ def dispatch_next_actions(
                 flush=True,
             )
         recoverable_timeout_slots.update(inspection.recoverable_slots)
+        recoverable_records.update(inspection.recoverable_records)
     pending_timeout_slots = sorted(slot for slot in recoverable_timeout_slots if slot not in recovery_covered)
     if pending_timeout_slots:
-        available = max(max_parallel_logical_jobs - active_count, 0)
-        if available <= 0:
+        launched_slots = dispatch_recovery_slots(
+            repo=repo,
+            branch=branch,
+            slots=pending_timeout_slots,
+            records=recoverable_records,
+            recovery_round_by_slot=recovery_round_by_slot,
+            max_parallel_logical_jobs=max_parallel_logical_jobs,
+            active_count=active_count,
+            manifest_dir=recovery_manifest_dir,
+        )
+        if not launched_slots:
             print(f"waiting: {len(pending_timeout_slots)} timeout slots need recovery but capacity is full")
             return False
-        launch_slots = pending_timeout_slots[: min(len(pending_timeout_slots), available)]
-        slots_csv = ",".join(str(slot) for slot in launch_slots)
-        print(
-            f"dispatch timeout recovery for {len(launch_slots)} slots "
-            f"(remaining={len(pending_timeout_slots) - len(launch_slots)})",
-            flush=True,
-        )
-        run_workflow(
-            repo,
-            branch,
-            mode="optimized_evaluation_v5_event_first",
-            candidate_count_per_job=1,
-            candidate_timeout_seconds=recovery_timeout_seconds,
-            job_wall_clock_seconds=recovery_wall_clock_seconds,
-            logical_jobs_per_block=DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK,
-            job_start_index=0,
-            job_count=0,
-            recovery_job_indices=slots_csv,
-        )
-        pending_recovery_slots.update(launch_slots)
+        pending_recovery_slots.update(launched_slots)
         return True
 
     launched = 0
@@ -783,6 +1003,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recovery-timeout-seconds", type=int, default=DEFAULT_RECOVERY_TIMEOUT_SECONDS)
     parser.add_argument("--recovery-wall-clock-seconds", type=int, default=DEFAULT_RECOVERY_WALL_CLOCK_SECONDS)
     parser.add_argument("--artifact-inspection-root", type=Path, default=Path(".gtbi-orchestrator-artifacts"))
+    parser.add_argument("--recovery-manifest-dir", type=Path, default=Path("recovery-manifests"))
     parser.add_argument("--validated-sha", default=os.environ.get("GITHUB_SHA", VALIDATED_SHA))
     parser.add_argument(
         "--exclude-run-ids",
@@ -811,6 +1032,7 @@ def main() -> int:
     deadline = time.monotonic() + max(args.loop_minutes, 1) * 60
     artifact_cache: dict[int, bool] = {}
     artifact_inspection_cache: dict[int, ArtifactInspection] = {}
+    recovery_round_by_slot: dict[int, int] = {}
     pending_recovery_slots: set[int] = set()
     pending_waves: set[int] = set()
 
@@ -843,8 +1065,8 @@ def main() -> int:
             pending_waves=pending_waves,
             artifact_root=args.artifact_inspection_root,
             artifact_inspection_cache=artifact_inspection_cache,
-            recovery_timeout_seconds=args.recovery_timeout_seconds,
-            recovery_wall_clock_seconds=args.recovery_wall_clock_seconds,
+            recovery_round_by_slot=recovery_round_by_slot,
+            recovery_manifest_dir=args.recovery_manifest_dir,
         )
         merge = completed_merge_run(runs, excluded)
         if merge is not None:

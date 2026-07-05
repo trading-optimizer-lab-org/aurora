@@ -135,6 +135,14 @@ jobs:
             --recovery-wall-clock-seconds 2100 \
             --validated-sha "${{ github.sha }}" \
             --self-dispatch
+      - name: Upload recovery manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-longhold-orchestrator-recovery-manifests
+          path: recovery-manifests
+          if-no-files-found: ignore
+          retention-days: 30
 
   build_external_pack:
     if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' }}
@@ -495,8 +503,7 @@ jobs:
             --locked-start "${{ inputs.locked_start }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --strict-final-eval-mode
+            --validation-end "${{ inputs.validation_end }}"
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:

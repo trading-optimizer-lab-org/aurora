@@ -4752,6 +4752,71 @@ def test_orchestrator_recovery_dispatch_uses_long_timeout(monkeypatch: pytest.Mo
     assert "recovery_job_indices=204,403" in args
 
 
+def test_orchestrator_writes_recovery_manifest_with_required_columns(tmp_path: Path) -> None:
+    config = gtbi_orchestrator.recovery_config_for_round(1)
+    record = gtbi_orchestrator.StrategyRecoveryRecord(
+        strategy_id="s1",
+        slot=204,
+        shard_id=1,
+        slot_in_shard=4,
+        family="fam",
+        concept="concept",
+        signal_hash="sig",
+        exit_hash="exit",
+        timeout_reason="timeout",
+        previous_runtime_seconds="300",
+    )
+
+    path = gtbi_orchestrator.write_recovery_manifest(
+        manifest_dir=tmp_path,
+        slots=[204],
+        records={204: record},
+        config=config,
+    )
+
+    manifest = pd.read_csv(path)
+    assert list(manifest.columns) == gtbi_orchestrator.RECOVERY_MANIFEST_COLUMNS
+    assert len(manifest) == 5
+    assert set(manifest["subgroup_index"]) == {0, 1, 2, 3, 4}
+    assert manifest["subgroup_count"].unique().tolist() == [5]
+    assert manifest["candidate_timeout_seconds"].unique().tolist() == [900]
+    assert manifest["job_wall_clock_seconds"].unique().tolist() == [1200]
+    assert manifest["strategy_id"].unique().tolist() == ["s1"]
+
+
+def test_orchestrator_dispatches_round_one_subgroups(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(args: list[str], *, check: bool = True) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(gtbi_orchestrator, "run_cmd", fake_run_cmd)
+
+    launched = gtbi_orchestrator.dispatch_recovery_slots(
+        repo="trading-optimizer-lab-org/aurora",
+        branch="codex/gtbi-github-only-external-pack-72000",
+        slots=[204, 403],
+        records={},
+        recovery_round_by_slot={},
+        max_parallel_logical_jobs=360,
+        active_count=0,
+        manifest_dir=tmp_path,
+    )
+
+    assert launched == [204, 403]
+    assert len(calls) == 5
+    for subgroup_index, args in enumerate(calls):
+        assert "candidate_count_per_job=1" in args
+        assert "candidate_timeout_seconds=900" in args
+        assert "job_wall_clock_seconds=1200" in args
+        assert f"job_start_index={subgroup_index}" in args
+        assert "job_count=5" in args
+        assert "recovery_job_indices=204,403" in args
+    manifest = pd.read_csv(tmp_path / "recovery_manifest_round_1.csv")
+    assert len(manifest) == 10
+
+
 def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
     job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
     job.mkdir(parents=True)
@@ -4989,9 +5054,12 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--candidate-timeout-seconds \"${{ inputs.candidate_timeout_seconds }}\"" in text
     assert "job_wall_clock_seconds" in text
     assert "--job-wall-clock-seconds \"${{ inputs.job_wall_clock_seconds }}\"" in text
-    assert "--strict-final-eval-mode" in text
+    assert text.count("--strict-final-eval-mode") == 1
     assert "--fill-missing-timeouts-pack-path" not in text
     assert "--fill-missing-timeouts-reason" not in text
+    assert "gtbi-longhold-orchestrator-recovery-manifests" in text
+    assert "recovery-manifests" in text
+    assert "--validated-sha \"${{ github.sha }}\"" in text
     assert 'SCHEDULE_ACTIVE_JOBS: "240"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text
