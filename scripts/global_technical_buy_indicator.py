@@ -8650,11 +8650,35 @@ def merge_external_strategy_pack_outputs(
     exit_group_manifest_frames: list[pd.DataFrame] = []
     cost_profile_v5_rows: list[dict[str, Any]] = []
     rule_rows: list[dict[str, Any]] = []
+    symbol_bucket_source_metadata: dict[Path, dict[str, Any]] = {}
+
+    def annotate_symbol_bucket_source(frame: pd.DataFrame, path: Path) -> pd.DataFrame:
+        metadata = symbol_bucket_source_metadata.get(path.parent)
+        if not metadata or frame.empty:
+            return frame
+        frame = frame.copy()
+        for column, value in metadata.items():
+            frame[column] = value
+        return frame
+
+    def has_symbol_bucket_rows(frame: pd.DataFrame) -> bool:
+        if frame.empty:
+            return False
+        if "symbol_bucket_mode" in frame.columns:
+            mode_values = frame["symbol_bucket_mode"].astype(str).str.lower()
+            if bool(mode_values.isin({"true", "1", "yes"}).any()):
+                return True
+        if "symbol_bucket_count" in frame.columns:
+            bucket_counts = pd.to_numeric(frame["symbol_bucket_count"], errors="coerce").fillna(0)
+            if bool((bucket_counts > 1).any()):
+                return True
+        return False
+
     def read_csv_or_empty(path: Path, *, nrows: int | None = None) -> pd.DataFrame:
         if not path.stat().st_size:
             return pd.DataFrame()
         try:
-            return pd.read_csv(path, nrows=nrows)
+            return annotate_symbol_bucket_source(pd.read_csv(path, nrows=nrows), path)
         except pd.errors.EmptyDataError:
             return pd.DataFrame()
 
@@ -8665,7 +8689,17 @@ def merge_external_strategy_pack_outputs(
             *shards_root.rglob("summary.json"),
         ]
     ):
-        summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
+        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        summaries.append(summary_payload)
+        symbol_bucket_count = int(summary_payload.get("symbol_bucket_count", 0) or 0)
+        if bool(summary_payload.get("symbol_bucket_mode")) or symbol_bucket_count > 1:
+            symbol_bucket_source_metadata[summary_path.parent] = {
+                "symbol_bucket_mode": True,
+                "symbol_bucket_index": int(summary_payload.get("symbol_bucket_index", 0) or 0),
+                "symbol_bucket_count": symbol_bucket_count,
+                "symbols_universe_total": int(summary_payload.get("symbols_universe_total", 0) or 0),
+                "symbols_after_bucket": int(summary_payload.get("symbols_after_bucket", 0) or 0),
+            }
     for path in sorted([*shards_root.rglob("leaderboard_shard_*.csv"), *shards_root.rglob("leaderboard_job_*.csv"), *shards_root.rglob("leaderboard.csv")]):
         frame = read_csv_or_empty(path)
         if not frame.empty:
@@ -8745,7 +8779,13 @@ def merge_external_strategy_pack_outputs(
         frame = read_csv_or_empty(path, nrows=top_trades_sample_remaining)
         if not frame.empty:
             trade_frames.append(frame)
-            top_trades_sample_remaining -= int(len(frame))
+            if not has_symbol_bucket_rows(frame):
+                top_trades_sample_remaining -= int(len(frame))
+    symbol_bucket_trade_frames: list[pd.DataFrame] = []
+    for path in sorted([*shards_root.rglob("symbol_bucket_trades_shard_*.csv"), *shards_root.rglob("symbol_bucket_trades_job_*.csv"), *shards_root.rglob("symbol_bucket_trades.csv")]):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            symbol_bucket_trade_frames.append(frame)
     for path in sorted(
         [
             *shards_root.rglob("unsupported_strategies_shard_*.csv"),
@@ -8906,6 +8946,83 @@ def merge_external_strategy_pack_outputs(
         pd.concat(job_manifest_frames, ignore_index=True, sort=False)
         if job_manifest_frames
         else pd.DataFrame(columns=JOB_MANIFEST_COLUMNS)
+    )
+    symbol_bucket_partial_outputs: dict[str, pd.DataFrame] = {}
+
+    def symbol_bucket_partial_mask(frame: pd.DataFrame) -> pd.Series:
+        if frame.empty:
+            return pd.Series(False, index=frame.index, dtype=bool)
+        mask = pd.Series(False, index=frame.index, dtype=bool)
+        if "symbol_bucket_mode" in frame.columns:
+            mode_values = frame["symbol_bucket_mode"].astype(str).str.lower()
+            mask = mask | mode_values.isin({"true", "1", "yes"})
+        if "symbol_bucket_count" in frame.columns:
+            bucket_counts = pd.to_numeric(frame["symbol_bucket_count"], errors="coerce").fillna(0)
+            mask = mask | (bucket_counts > 1)
+        return mask
+
+    def split_symbol_bucket_partials(name: str, frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            symbol_bucket_partial_outputs[name] = pd.DataFrame(columns=frame.columns)
+            return frame
+        mask = symbol_bucket_partial_mask(frame)
+        partial = frame.loc[mask].copy()
+        complete = frame.loc[~mask].copy()
+        symbol_bucket_partial_outputs[name] = partial
+        return complete
+
+    leaderboard = split_symbol_bucket_partials("leaderboard", leaderboard)
+    filtered = split_symbol_bucket_partials("filtered_leaderboard", filtered)
+    yearly = split_symbol_bucket_partials("yearly_trade_performance", yearly)
+    symbol_entry_counts = split_symbol_bucket_partials("symbol_entry_counts_by_year", symbol_entry_counts)
+    annual_equity = split_symbol_bucket_partials("annual_trade_equity_curve", annual_equity)
+    return_distribution = split_symbol_bucket_partials("trade_return_distribution", return_distribution)
+    ticker_summary = split_symbol_bucket_partials("ticker_trade_summary", ticker_summary)
+    top_trades_by_return = split_symbol_bucket_partials("top_100_trades_by_return", top_trades_by_return)
+    bottom_trades_by_return = split_symbol_bucket_partials("bottom_100_trades_by_return", bottom_trades_by_return)
+    selected_symbol_trade_rows = split_symbol_bucket_partials("selected_symbol_trades", selected_symbol_trade_rows)
+    trades = split_symbol_bucket_partials("top_trades_sample", trades)
+    unsupported = split_symbol_bucket_partials("unsupported_strategies", unsupported)
+    timeouts = split_symbol_bucket_partials("timeout_strategies", timeouts)
+    slow_deferred = split_symbol_bucket_partials("slow_deferred_strategies", slow_deferred)
+    early_rejected = split_symbol_bucket_partials("early_rejected_strategies", early_rejected)
+    runtime_errors = split_symbol_bucket_partials("runtime_errors", runtime_errors)
+    timing = split_symbol_bucket_partials("timing_diagnostics", timing)
+    dedupe_map = split_symbol_bucket_partials("dedupe_map", dedupe_map)
+    job_manifest = split_symbol_bucket_partials("job_manifest", job_manifest)
+    symbol_bucket_trades = (
+        pd.concat(symbol_bucket_trade_frames, ignore_index=True, sort=False)
+        if symbol_bucket_trade_frames
+        else pd.DataFrame(columns=TRADE_COLUMNS)
+    )
+    symbol_bucket_partial_outputs["symbol_bucket_trades"] = symbol_bucket_trades
+    symbol_bucket_partial_terminal_ids: set[str] = set()
+    for frame_name, id_column in (
+        ("leaderboard", "candidate_id"),
+        ("early_rejected_strategies", "strategy_id"),
+        ("timeout_strategies", "strategy_id"),
+        ("runtime_errors", "strategy_id"),
+        ("unsupported_strategies", "strategy_id"),
+        ("slow_deferred_strategies", "strategy_id"),
+    ):
+        partial_frame = symbol_bucket_partial_outputs.get(frame_name, pd.DataFrame())
+        if not partial_frame.empty and id_column in partial_frame.columns:
+            symbol_bucket_partial_terminal_ids.update(
+                str(value) for value in partial_frame[id_column].dropna().astype(str) if str(value)
+            )
+    symbol_bucket_partial_strategy_count = int(len(symbol_bucket_partial_terminal_ids))
+    symbol_bucket_partial_terminal_rows = int(
+        sum(
+            len(symbol_bucket_partial_outputs.get(name, pd.DataFrame()))
+            for name in (
+                "leaderboard",
+                "early_rejected_strategies",
+                "timeout_strategies",
+                "runtime_errors",
+                "unsupported_strategies",
+                "slow_deferred_strategies",
+            )
+        )
     )
 
     synthetic_missing_timeout_count = 0
@@ -9143,6 +9260,8 @@ def merge_external_strategy_pack_outputs(
     bottom_trades_by_return.to_csv(output_dir / "bottom_100_trades_by_return.csv", index=False)
     selected_symbol_trade_rows.to_csv(output_dir / "selected_symbol_trades.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
+    for name, frame in symbol_bucket_partial_outputs.items():
+        frame.to_csv(output_dir / f"symbol_bucket_partial_{name}.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
     timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)
     slow_deferred.to_csv(output_dir / "slow_deferred_strategies.csv", index=False)
@@ -9600,6 +9719,10 @@ def merge_external_strategy_pack_outputs(
         "missing": int(missing_count),
         "extra": int(extra_count),
         "overlaps": int(overlap_count),
+        "symbol_bucket_partial_terminal_rows": int(symbol_bucket_partial_terminal_rows),
+        "symbol_bucket_partial_strategy_count": int(symbol_bucket_partial_strategy_count),
+        "symbol_bucket_partial_trade_rows": int(len(symbol_bucket_trades)),
+        "symbol_bucket_merge_complete": bool(symbol_bucket_partial_terminal_rows == 0 and len(symbol_bucket_trades) == 0),
     }
     strict_violations: list[dict[str, Any]] = []
     if strict_final_eval_mode:
@@ -9618,6 +9741,14 @@ def merge_external_strategy_pack_outputs(
         for name, actual, expected in strict_checks:
             if actual != expected:
                 strict_violations.append({"check": name, "actual": actual, "expected": expected})
+        if symbol_bucket_partial_terminal_rows or len(symbol_bucket_trades):
+            strict_violations.append(
+                {
+                    "check": "unmerged_symbol_bucket_partials",
+                    "actual": int(symbol_bucket_partial_terminal_rows + len(symbol_bucket_trades)),
+                    "expected": 0,
+                }
+            )
         if str(locked_start) != DEFAULT_LOCKED_START:
             strict_violations.append({"check": "locked_start", "actual": str(locked_start), "expected": DEFAULT_LOCKED_START})
         if str(validation_end) != DEFAULT_VALIDATION_END:

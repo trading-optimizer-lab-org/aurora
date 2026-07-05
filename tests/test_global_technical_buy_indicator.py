@@ -4627,6 +4627,61 @@ def test_external_merge_strict_final_accepts_leaderboard_plus_early_coverage(tmp
     assert json.loads((tmp_path / "final" / "strict_final_validation_report.json").read_text(encoding="utf-8"))["ok"] is True
 
 
+def test_external_merge_strict_final_rejects_unmerged_symbol_bucket_partials(tmp_path: Path) -> None:
+    job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
+    job.mkdir(parents=True)
+    (job / "summary_job_0000.json").write_text(
+        json.dumps(
+            {
+                "strategies_loaded": 1,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 0,
+                "strategies_slow_deferred": 0,
+                "strategies_unsupported": 0,
+                "strategies_runtime_error": 0,
+                "strategies_failed": 0,
+                "optimized_evaluation_mode": "optimized_evaluation_v5_event_first_symbol_bucket",
+                "symbol_bucket_mode": True,
+                "symbol_bucket_index": 0,
+                "symbol_bucket_count": 10,
+                "symbols_universe_total": 100,
+                "symbols_after_bucket": 10,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [{"candidate_id": "partial", "score": 1.0, "adjusted_return_time_risk": 0.1, "shard_id": 0, "slot_in_shard": 0}]
+    ).to_csv(job / "leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / "filtered_leaderboard_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / "early_rejected_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(job / "timeout_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / "runtime_errors_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / "unsupported_strategies_job_0000.csv", index=False)
+    pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / "slow_deferred_strategies_job_0000.csv", index=False)
+
+    with pytest.raises(ValueError, match="strict final merge failed"):
+        gtbi.merge_external_strategy_pack_outputs(
+            shards_root=tmp_path / "downloaded",
+            output_dir=tmp_path / "final",
+            total_strategies_requested=1,
+            total_shards_requested=1,
+            total_jobs_requested=1,
+            candidate_count_per_job=1,
+            strict_final_eval_mode=True,
+        )
+
+    summary = json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["total_strategies_evaluated"] == 0
+    assert summary["symbol_bucket_partial_strategy_count"] == 1
+    assert summary["symbol_bucket_merge_complete"] is False
+    assert {"check": "unmerged_symbol_bucket_partials", "actual": 1, "expected": 0} in summary["strict_final_violations"]
+    assert pd.read_csv(tmp_path / "final" / "leaderboard.csv").empty
+    assert pd.read_csv(tmp_path / "final" / "symbol_bucket_partial_leaderboard.csv")["candidate_id"].tolist() == ["partial"]
+
+
 def test_symbol_bucket_trade_merge_removes_duplicates_without_losing_unique_rows() -> None:
     first = pd.DataFrame(
         [
