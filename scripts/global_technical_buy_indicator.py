@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -5756,6 +5756,163 @@ def evaluate_candidate_optimized(
     return row, trades_df, yearly, diagnostic
 
 
+def rebuild_external_candidate_from_trades(
+    *,
+    candidate_id: str,
+    trades: pd.DataFrame,
+    metadata: Mapping[str, Any] | None = None,
+    partial_yearly: pd.DataFrame | None = None,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+    selection_split: str = "validation",
+    min_selection_trades_per_year: int = 100,
+    scoring_profile: str = "strict_quality",
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
+    metadata = dict(metadata or {})
+    trades_df = trades.copy() if trades is not None and not trades.empty else pd.DataFrame(columns=TRADE_COLUMNS)
+    if not trades_df.empty:
+        trades_df["candidate_id"] = str(candidate_id)
+        if "split" not in trades_df.columns:
+            trades_df["split"] = ""
+        trades_df["split"] = trades_df["split"].astype(object)
+    trades_df = split_trade_frame(
+        trades_df,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
+    train_years = max(_date64_days_between(train_end_day, np.datetime64("1900-01-01", "D")) / 365.25, 1.0)
+    if not trades_df.empty and "split" in trades_df.columns and "exit_date" in trades_df.columns:
+        first_train_day: np.datetime64 | None = None
+        for split_value, exit_value in zip(trades_df["split"].to_numpy(dtype=object), trades_df["exit_date"].to_numpy(dtype=object)):
+            if str(split_value) != "train":
+                continue
+            exit_day = _exit_date64_from_value(exit_value)
+            if exit_day is None:
+                continue
+            if first_train_day is None or exit_day < first_train_day:
+                first_train_day = exit_day
+        if first_train_day is not None:
+            train_years = max(_date64_days_between(train_end_day, first_train_day) / 365.25, 1.0)
+    validation_years = max(_date64_days_between(validation_end_day, validation_start_day) / 365.25, 1.0)
+    train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
+    validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    combined = summarize_trades(trades_df, years=max(train_years + validation_years, 1.0))
+    yearly = yearly_trade_performance(trades_df, pd.DataFrame())
+    if partial_yearly is not None and not partial_yearly.empty and not yearly.empty:
+        if {"split", "year", "spy_return_pct"}.issubset(partial_yearly.columns) and {"split", "year"}.issubset(yearly.columns):
+            spy_rows = partial_yearly[["split", "year", "spy_return_pct"]].dropna(subset=["split", "year"]).copy()
+            if not spy_rows.empty:
+                spy_rows["year"] = pd.to_numeric(spy_rows["year"], errors="coerce")
+                spy_rows = spy_rows.dropna(subset=["year"]).copy()
+                spy_rows["year"] = spy_rows["year"].astype(int)
+                spy_map = spy_rows.drop_duplicates(["split", "year"]).set_index(["split", "year"])["spy_return_pct"]
+                yearly = yearly.copy()
+                yearly["spy_return_pct"] = [
+                    spy_map.get((str(row_split), int(row_year)), np.nan)
+                    for row_split, row_year in zip(yearly["split"], yearly["year"])
+                ]
+    selected_metrics = validation if selection_split == "validation" else train
+    score = _candidate_score(selected_metrics)
+    selection_min_yearly_trades = _min_yearly_trades_for_selection(
+        yearly,
+        selection_split=selection_split,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    if int(min_selection_trades_per_year) > 0 and selection_min_yearly_trades < int(min_selection_trades_per_year):
+        score = -1e9 + float(selection_min_yearly_trades)
+
+    def meta_text(*keys: str, default: str = "") -> str:
+        for key in keys:
+            value = metadata.get(key)
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            text = str(value)
+            if text:
+                return text
+        return default
+
+    def meta_int(*keys: str, default: int = 0) -> int:
+        for key in keys:
+            value = metadata.get(key)
+            number = _finite_float(value, default=float("nan"))
+            if number is not None and math.isfinite(number):
+                return int(number)
+        return int(default)
+
+    row: dict[str, Any] = {
+        "candidate_id": str(candidate_id),
+        "stage": meta_int("stage", "shard_id", default=0),
+        "search_method": meta_text("search_method", default=EXTERNAL_SEARCH_METHOD),
+        "family": meta_text("family", default="external_pack"),
+        "score": score,
+        "selection_split": str(selection_split),
+        "selection_min_yearly_trades": int(selection_min_yearly_trades),
+        "min_selection_trades_per_year": int(min_selection_trades_per_year),
+        "scoring_profile": str(scoring_profile),
+        "locked_opened": False,
+        "strategy_id": meta_text("strategy_id", "candidate_id", default=str(candidate_id)),
+        "shard_id": meta_int("shard_id", default=0),
+        "slot_in_shard": meta_int("slot_in_shard", default=0),
+        "concept_id": meta_text("concept_id", "concept"),
+        "market_overlay_id": meta_text("market_overlay_id", "market_overlay"),
+        "trend_profile_id": meta_text("trend_profile_id", "trend_filter"),
+        "rs_profile_id": meta_text("rs_profile_id", "relative_strength_filter"),
+        "exit_profile_id": meta_text("exit_profile_id", "exit_rule"),
+        "aggression_id": meta_text("aggression_id", "aggressiveness"),
+        "source_quality_score": _finite_float(metadata.get("source_quality_score"), default=np.nan),
+        "symbol_bucket_merged": True,
+        "symbol_bucket_trade_rows": int(len(trades_df)),
+    }
+    for prefix, metrics in (("train", train), ("validation", validation)):
+        row[f"{prefix}_trades"] = int(metrics["trades"])
+        row[f"{prefix}_avg_trade_return_pct"] = metrics["avg_trade_return_pct"]
+        row[f"{prefix}_median_trade_return_pct"] = metrics["median_trade_return_pct"]
+        row[f"{prefix}_win_rate"] = metrics["win_rate"]
+        row[f"{prefix}_profit_factor"] = metrics["profit_factor"]
+        row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
+        row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
+        row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_holding_days_p50"] = metrics["holding_days_p50"]
+        row[f"{prefix}_holding_days_p75"] = metrics["holding_days_p75"]
+        row[f"{prefix}_holding_days_p90"] = metrics["holding_days_p90"]
+        row[f"{prefix}_percent_exits_under_5_days"] = metrics["percent_exits_under_5_days"]
+        row[f"{prefix}_percent_exits_under_10_days"] = metrics["percent_exits_under_10_days"]
+        row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row["holding_days_p50"] = combined["holding_days_p50"]
+    row["holding_days_p75"] = combined["holding_days_p75"]
+    row["holding_days_p90"] = combined["holding_days_p90"]
+    row["percent_exits_under_5_days"] = combined["percent_exits_under_5_days"]
+    row["percent_exits_under_10_days"] = combined["percent_exits_under_10_days"]
+    row.update(
+        _strict_quality_metrics(
+            row=row,
+            yearly=yearly,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+    )
+    if scoring_profile == "strict_quality":
+        row["score"] = _strict_quality_score(row)
+    elif scoring_profile == "frequency_quality":
+        row["score"] = _frequency_quality_score(row)
+    elif scoring_profile == "stability_quality":
+        row["score"] = _stability_quality_score(row)
+    elif scoring_profile != "default":
+        raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
+    row["long_hold_quality_score"] = _long_hold_quality_score(row)
+    _add_fundamental_timing_no_drawdown_fields(row)
+    return row, trades_df, yearly
+
+
 def _evaluate_external_candidate_core(
     *,
     config: IndicatorConfig,
@@ -8996,6 +9153,81 @@ def merge_external_strategy_pack_outputs(
         else pd.DataFrame(columns=TRADE_COLUMNS)
     )
     symbol_bucket_partial_outputs["symbol_bucket_trades"] = symbol_bucket_trades
+    symbol_bucket_terminal_names = (
+        "leaderboard",
+        "early_rejected_strategies",
+        "timeout_strategies",
+        "runtime_errors",
+        "unsupported_strategies",
+        "slow_deferred_strategies",
+    )
+    symbol_bucket_bad_terminal_names = (
+        "timeout_strategies",
+        "runtime_errors",
+        "unsupported_strategies",
+        "slow_deferred_strategies",
+    )
+    symbol_bucket_info: dict[str, dict[str, Any]] = {}
+
+    def _symbol_bucket_id_from_row(row: Mapping[str, Any], id_column: str) -> str:
+        value = row.get(id_column)
+        if value is None and id_column != "candidate_id":
+            value = row.get("candidate_id")
+        if value is None and id_column != "strategy_id":
+            value = row.get("strategy_id")
+        if value is None:
+            return ""
+        text = str(value)
+        return text if text and text.lower() != "nan" else ""
+
+    def _symbol_bucket_int(row: Mapping[str, Any], key: str, default: int = -1) -> int:
+        value = row.get(key)
+        number = _finite_float(value, default=float("nan"))
+        return int(number) if number is not None and math.isfinite(number) else int(default)
+
+    def _record_symbol_bucket_row(row: Mapping[str, Any], *, id_column: str, bad_terminal: bool = False) -> None:
+        strategy_id = _symbol_bucket_id_from_row(row, id_column)
+        if not strategy_id:
+            return
+        info = symbol_bucket_info.setdefault(
+            strategy_id,
+            {"indices": set(), "count": 0, "bad_rows": 0, "metadata": {}},
+        )
+        bucket_count = _symbol_bucket_int(row, "symbol_bucket_count", default=0)
+        bucket_index = _symbol_bucket_int(row, "symbol_bucket_index", default=-1)
+        if bucket_count > 1:
+            info["count"] = max(int(info.get("count", 0)), int(bucket_count))
+        if bucket_index >= 0:
+            info["indices"].add(int(bucket_index))
+        if bad_terminal:
+            info["bad_rows"] = int(info.get("bad_rows", 0)) + 1
+        if not info.get("metadata"):
+            info["metadata"] = dict(row)
+
+    for frame_name, id_column in (
+        ("leaderboard", "candidate_id"),
+        ("early_rejected_strategies", "strategy_id"),
+        ("timeout_strategies", "strategy_id"),
+        ("runtime_errors", "strategy_id"),
+        ("unsupported_strategies", "strategy_id"),
+        ("slow_deferred_strategies", "strategy_id"),
+        ("timing_diagnostics", "strategy_id"),
+        ("job_manifest", "strategy_id"),
+    ):
+        partial_frame = symbol_bucket_partial_outputs.get(frame_name, pd.DataFrame())
+        if partial_frame.empty:
+            continue
+        for row in partial_frame.to_dict(orient="records"):
+            _record_symbol_bucket_row(
+                row,
+                id_column=id_column,
+                bad_terminal=frame_name in symbol_bucket_bad_terminal_names,
+            )
+    if not symbol_bucket_trades.empty:
+        trade_id_column = "candidate_id" if "candidate_id" in symbol_bucket_trades.columns else "strategy_id"
+        for row in symbol_bucket_trades.to_dict(orient="records"):
+            _record_symbol_bucket_row(row, id_column=trade_id_column, bad_terminal=False)
+
     symbol_bucket_partial_terminal_ids: set[str] = set()
     for frame_name, id_column in (
         ("leaderboard", "candidate_id"),
@@ -9012,18 +9244,150 @@ def merge_external_strategy_pack_outputs(
             )
     symbol_bucket_partial_strategy_count = int(len(symbol_bucket_partial_terminal_ids))
     symbol_bucket_partial_terminal_rows = int(
-        sum(
-            len(symbol_bucket_partial_outputs.get(name, pd.DataFrame()))
-            for name in (
-                "leaderboard",
-                "early_rejected_strategies",
-                "timeout_strategies",
-                "runtime_errors",
-                "unsupported_strategies",
-                "slow_deferred_strategies",
+        sum(len(symbol_bucket_partial_outputs.get(name, pd.DataFrame())) for name in symbol_bucket_terminal_names)
+    )
+
+    symbol_bucket_merged_strategy_ids: set[str] = set()
+    symbol_bucket_unmerged_strategy_ids: set[str] = set()
+    merged_bucket_rows: list[dict[str, Any]] = []
+    merged_bucket_early_rows: list[dict[str, Any]] = []
+    merged_bucket_yearly_frames: list[pd.DataFrame] = []
+    merged_bucket_trade_sample_frames: list[pd.DataFrame] = []
+    merged_bucket_symbol_entry_frames: list[pd.DataFrame] = []
+    merged_bucket_annual_equity_frames: list[pd.DataFrame] = []
+    merged_bucket_return_distribution_frames: list[pd.DataFrame] = []
+    merged_bucket_ticker_summary_frames: list[pd.DataFrame] = []
+    merged_bucket_top_trade_frames: list[pd.DataFrame] = []
+    merged_bucket_bottom_trade_frames: list[pd.DataFrame] = []
+    if symbol_bucket_info:
+        trade_id_column = "candidate_id" if "candidate_id" in symbol_bucket_trades.columns else "strategy_id"
+        for strategy_id, info in sorted(symbol_bucket_info.items()):
+            bucket_count = int(info.get("count", 0) or 0)
+            bucket_indices = set(int(value) for value in info.get("indices", set()))
+            expected_indices = set(range(bucket_count)) if bucket_count > 1 else set()
+            if bucket_count <= 1 or bucket_indices != expected_indices or int(info.get("bad_rows", 0) or 0) > 0:
+                symbol_bucket_unmerged_strategy_ids.add(str(strategy_id))
+                continue
+            strategy_trade_rows = (
+                symbol_bucket_trades.loc[symbol_bucket_trades[trade_id_column].astype(str) == str(strategy_id)].copy()
+                if not symbol_bucket_trades.empty and trade_id_column in symbol_bucket_trades.columns
+                else pd.DataFrame(columns=TRADE_COLUMNS)
             )
+            merged_strategy_trades = merge_symbol_bucket_trade_frames([strategy_trade_rows])
+            partial_yearly = symbol_bucket_partial_outputs.get("yearly_trade_performance", pd.DataFrame())
+            if not partial_yearly.empty:
+                yearly_id_column = "candidate_id" if "candidate_id" in partial_yearly.columns else "strategy_id"
+                if yearly_id_column in partial_yearly.columns:
+                    partial_yearly = partial_yearly.loc[partial_yearly[yearly_id_column].astype(str) == str(strategy_id)].copy()
+            metadata = dict(info.get("metadata") or {})
+            row, rebuilt_trades, rebuilt_yearly = rebuild_external_candidate_from_trades(
+                candidate_id=str(strategy_id),
+                trades=merged_strategy_trades,
+                metadata=metadata,
+                partial_yearly=partial_yearly,
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+                selection_split="validation",
+                min_selection_trades_per_year=100,
+                scoring_profile="strict_quality",
+            )
+            row["symbol_bucket_count"] = int(bucket_count)
+            row["symbol_bucket_merged"] = True
+            final_reject = _event_first_final_quality_reject(row)
+            if final_reject is not None:
+                early_row = {
+                    "strategy_id": str(strategy_id),
+                    "reason": str(final_reject["reason"]),
+                    "split": str(final_reject.get("split", "")),
+                    "year": final_reject.get("year", ""),
+                    "actual": final_reject.get("actual", ""),
+                    "threshold": final_reject.get("threshold", ""),
+                    "stage": "symbol_bucket_final_filter",
+                    "seconds_until_reject": "",
+                    "symbols_processed": "",
+                    "shard_id": row.get("shard_id", metadata.get("shard_id", 0)),
+                    "slot_in_shard": row.get("slot_in_shard", metadata.get("slot_in_shard", 0)),
+                    "family": row.get("family", metadata.get("family", "")),
+                    "concept": row.get("concept_id", metadata.get("concept", "")),
+                    "market_overlay": row.get("market_overlay_id", metadata.get("market_overlay", "")),
+                    "trend_filter": row.get("trend_profile_id", metadata.get("trend_filter", "")),
+                    "relative_strength_filter": row.get("rs_profile_id", metadata.get("relative_strength_filter", "")),
+                    "exit_rule": row.get("exit_profile_id", metadata.get("exit_rule", "")),
+                    "aggressiveness": row.get("aggression_id", metadata.get("aggressiveness", "")),
+                    "symbol_bucket_merged": True,
+                    "symbol_bucket_count": int(bucket_count),
+                }
+                merged_bucket_early_rows.append(early_row)
+            else:
+                merged_bucket_rows.append(row)
+                if not rebuilt_yearly.empty:
+                    merged_bucket_yearly_frames.append(rebuilt_yearly)
+                if not rebuilt_trades.empty:
+                    merged_bucket_trade_sample_frames.append(rebuilt_trades.head(5000))
+                    merged_bucket_symbol_entry_frames.append(symbol_entry_counts_by_year(rebuilt_trades))
+                    merged_bucket_annual_equity_frames.append(annual_trade_equity_curve(rebuilt_trades))
+                    merged_bucket_return_distribution_frames.append(trade_return_distribution(rebuilt_trades))
+                    merged_bucket_ticker_summary_frames.append(ticker_trade_summary(rebuilt_trades).head(MAX_TICKER_TRADE_SUMMARY_ROWS))
+                    ranked_returns = rebuilt_trades.copy()
+                    ranked_returns["_return_pct_numeric"] = pd.to_numeric(ranked_returns.get("return_pct", np.nan), errors="coerce")
+                    merged_bucket_top_trade_frames.append(
+                        ranked_returns.sort_values("_return_pct_numeric", ascending=False)
+                        .head(100)
+                        .drop(columns=["_return_pct_numeric"])
+                    )
+                    merged_bucket_bottom_trade_frames.append(
+                        ranked_returns.sort_values("_return_pct_numeric", ascending=True)
+                        .head(100)
+                        .drop(columns=["_return_pct_numeric"])
+                    )
+            symbol_bucket_merged_strategy_ids.add(str(strategy_id))
+    if merged_bucket_rows:
+        leaderboard = pd.concat([leaderboard, pd.DataFrame(merged_bucket_rows)], ignore_index=True, sort=False)
+    if merged_bucket_early_rows:
+        early_rejected = pd.concat([early_rejected, pd.DataFrame(merged_bucket_early_rows)], ignore_index=True, sort=False)
+    if merged_bucket_yearly_frames:
+        yearly = pd.concat([yearly, *merged_bucket_yearly_frames], ignore_index=True, sort=False)
+    if merged_bucket_trade_sample_frames:
+        trades = pd.concat([trades, *merged_bucket_trade_sample_frames], ignore_index=True, sort=False)
+    if merged_bucket_symbol_entry_frames:
+        symbol_entry_counts = pd.concat([symbol_entry_counts, *merged_bucket_symbol_entry_frames], ignore_index=True, sort=False)
+    if merged_bucket_annual_equity_frames:
+        annual_equity = pd.concat([annual_equity, *merged_bucket_annual_equity_frames], ignore_index=True, sort=False)
+    if merged_bucket_return_distribution_frames:
+        return_distribution = pd.concat([return_distribution, *merged_bucket_return_distribution_frames], ignore_index=True, sort=False)
+    if merged_bucket_ticker_summary_frames:
+        ticker_summary = pd.concat([ticker_summary, *merged_bucket_ticker_summary_frames], ignore_index=True, sort=False)
+    if merged_bucket_top_trade_frames:
+        top_trades_by_return = pd.concat([top_trades_by_return, *merged_bucket_top_trade_frames], ignore_index=True, sort=False)
+    if merged_bucket_bottom_trade_frames:
+        bottom_trades_by_return = pd.concat([bottom_trades_by_return, *merged_bucket_bottom_trade_frames], ignore_index=True, sort=False)
+    if not leaderboard.empty:
+        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    if not leaderboard.empty and "strict_quality_pass" in leaderboard.columns:
+        filtered = leaderboard.loc[leaderboard["strict_quality_pass"].astype(str).str.lower().isin({"true", "1"})].copy()
+    else:
+        filtered = pd.DataFrame(columns=leaderboard.columns if not leaderboard.empty else LEADERBOARD_COLUMNS)
+    if not filtered.empty:
+        filtered = filtered.sort_values(["adjusted_return_time_risk", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    symbol_bucket_unmerged_strategy_count = int(len(symbol_bucket_unmerged_strategy_ids))
+    symbol_bucket_unmerged_terminal_rows = int(
+        sum(
+            len(
+                frame.loc[
+                    frame[( "candidate_id" if "candidate_id" in frame.columns else "strategy_id")].astype(str).isin(symbol_bucket_unmerged_strategy_ids)
+                ]
+            )
+            for frame in (symbol_bucket_partial_outputs.get(name, pd.DataFrame()) for name in symbol_bucket_terminal_names)
+            if not frame.empty and ("candidate_id" in frame.columns or "strategy_id" in frame.columns)
         )
     )
+    if not symbol_bucket_trades.empty and trade_id_column in symbol_bucket_trades.columns:
+        symbol_bucket_unmerged_trade_rows = int(
+            symbol_bucket_trades[trade_id_column].astype(str).isin(symbol_bucket_unmerged_strategy_ids).sum()
+        )
+    else:
+        symbol_bucket_unmerged_trade_rows = 0
 
     synthetic_missing_timeout_count = 0
     if fill_missing_timeouts_pack_path is not None and int(total_strategies_requested) > 0:
@@ -9722,7 +10086,11 @@ def merge_external_strategy_pack_outputs(
         "symbol_bucket_partial_terminal_rows": int(symbol_bucket_partial_terminal_rows),
         "symbol_bucket_partial_strategy_count": int(symbol_bucket_partial_strategy_count),
         "symbol_bucket_partial_trade_rows": int(len(symbol_bucket_trades)),
-        "symbol_bucket_merge_complete": bool(symbol_bucket_partial_terminal_rows == 0 and len(symbol_bucket_trades) == 0),
+        "symbol_bucket_merged_strategy_count": int(len(symbol_bucket_merged_strategy_ids)),
+        "symbol_bucket_unmerged_strategy_count": int(symbol_bucket_unmerged_strategy_count),
+        "symbol_bucket_unmerged_terminal_rows": int(symbol_bucket_unmerged_terminal_rows),
+        "symbol_bucket_unmerged_trade_rows": int(symbol_bucket_unmerged_trade_rows),
+        "symbol_bucket_merge_complete": bool(symbol_bucket_unmerged_strategy_count == 0),
     }
     strict_violations: list[dict[str, Any]] = []
     if strict_final_eval_mode:
@@ -9741,11 +10109,11 @@ def merge_external_strategy_pack_outputs(
         for name, actual, expected in strict_checks:
             if actual != expected:
                 strict_violations.append({"check": name, "actual": actual, "expected": expected})
-        if symbol_bucket_partial_terminal_rows or len(symbol_bucket_trades):
+        if symbol_bucket_unmerged_strategy_count:
             strict_violations.append(
                 {
                     "check": "unmerged_symbol_bucket_partials",
-                    "actual": int(symbol_bucket_partial_terminal_rows + len(symbol_bucket_trades)),
+                    "actual": int(symbol_bucket_unmerged_strategy_count),
                     "expected": 0,
                 }
             )

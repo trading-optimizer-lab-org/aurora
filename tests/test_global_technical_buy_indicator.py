@@ -4682,6 +4682,103 @@ def test_external_merge_strict_final_rejects_unmerged_symbol_bucket_partials(tmp
     assert pd.read_csv(tmp_path / "final" / "symbol_bucket_partial_leaderboard.csv")["candidate_id"].tolist() == ["partial"]
 
 
+def test_external_merge_strict_final_rebuilds_complete_symbol_bucket_partials(tmp_path: Path) -> None:
+    def write_bucket(bucket_index: int) -> None:
+        job = tmp_path / "downloaded" / f"gtbi-external-pack-job-000{bucket_index}"
+        job.mkdir(parents=True)
+        (job / f"summary_job_000{bucket_index}.json").write_text(
+            json.dumps(
+                {
+                    "strategies_loaded": 1,
+                    "strategies_evaluated": 1,
+                    "strategies_early_rejected": 0,
+                    "strategies_timed_out": 0,
+                    "strategies_slow_deferred": 0,
+                    "strategies_unsupported": 0,
+                    "strategies_runtime_error": 0,
+                    "strategies_failed": 0,
+                    "optimized_evaluation_mode": "optimized_evaluation_v5_event_first_symbol_bucket",
+                    "symbol_bucket_mode": True,
+                    "symbol_bucket_index": bucket_index,
+                    "symbol_bucket_count": 2,
+                    "symbols_universe_total": 4,
+                    "symbols_after_bucket": 2,
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        pd.DataFrame(
+            [
+                {
+                    "candidate_id": "merged",
+                    "score": 1.0,
+                    "adjusted_return_time_risk": 0.1,
+                    "shard_id": 0,
+                    "slot_in_shard": 0,
+                    "family": "fundamental_timing",
+                    "concept_id": "test_concept",
+                    "market_overlay_id": "test_overlay",
+                    "trend_profile_id": "test_trend",
+                    "rs_profile_id": "test_rs",
+                    "exit_profile_id": "test_exit",
+                    "aggression_id": "test_aggressive",
+                }
+            ]
+        ).to_csv(job / f"leaderboard_job_000{bucket_index}.csv", index=False)
+        pd.DataFrame(columns=gtbi.LEADERBOARD_COLUMNS).to_csv(job / f"filtered_leaderboard_job_000{bucket_index}.csv", index=False)
+        pd.DataFrame(columns=gtbi.EARLY_REJECT_COLUMNS).to_csv(job / f"early_rejected_strategies_job_000{bucket_index}.csv", index=False)
+        pd.DataFrame(columns=gtbi.TIMEOUT_COLUMNS).to_csv(job / f"timeout_strategies_job_000{bucket_index}.csv", index=False)
+        pd.DataFrame(columns=gtbi.RUNTIME_ERROR_COLUMNS).to_csv(job / f"runtime_errors_job_000{bucket_index}.csv", index=False)
+        pd.DataFrame(columns=gtbi.UNSUPPORTED_COLUMNS).to_csv(job / f"unsupported_strategies_job_000{bucket_index}.csv", index=False)
+        pd.DataFrame(columns=gtbi.SLOW_DEFERRED_COLUMNS).to_csv(job / f"slow_deferred_strategies_job_000{bucket_index}.csv", index=False)
+        rows = []
+        for year in range(2003, 2021):
+            for trade_index in range(bucket_index, 160, 2):
+                entry_date = pd.Timestamp(year=year, month=1, day=2) + pd.Timedelta(days=trade_index * 2)
+                exit_date = entry_date + pd.Timedelta(days=1)
+                rows.append(
+                    {
+                        "candidate_id": "merged",
+                        "symbol": f"S{bucket_index}{trade_index:03d}",
+                        "split": "",
+                        "entry_date": entry_date.date().isoformat(),
+                        "exit_date": exit_date.date().isoformat(),
+                        "entry_price": 100.0,
+                        "exit_price": 100.2,
+                        "return_pct": 0.2,
+                        "holding_days": 1,
+                        "exit_reason": "test_exit",
+                    }
+                )
+        pd.DataFrame(rows, columns=gtbi.TRADE_COLUMNS).to_csv(job / f"symbol_bucket_trades_job_000{bucket_index}.csv", index=False)
+
+    write_bucket(0)
+    write_bucket(1)
+
+    summary = gtbi.merge_external_strategy_pack_outputs(
+        shards_root=tmp_path / "downloaded",
+        output_dir=tmp_path / "final",
+        total_strategies_requested=1,
+        total_shards_requested=1,
+        total_jobs_requested=2,
+        candidate_count_per_job=1,
+        strict_final_eval_mode=True,
+    )
+
+    leaderboard = pd.read_csv(tmp_path / "final" / "leaderboard.csv")
+    assert summary["strict_final_pass"] is True
+    assert summary["symbol_bucket_partial_strategy_count"] == 1
+    assert summary["symbol_bucket_merged_strategy_count"] == 1
+    assert summary["symbol_bucket_unmerged_strategy_count"] == 0
+    assert summary["symbol_bucket_merge_complete"] is True
+    assert leaderboard["candidate_id"].tolist() == ["merged"]
+    assert bool(leaderboard.loc[0, "symbol_bucket_merged"]) is True
+    assert int(leaderboard.loc[0, "train_trades"]) == 1280
+    assert int(leaderboard.loc[0, "validation_trades"]) == 1600
+    assert pd.read_csv(tmp_path / "final" / "symbol_bucket_partial_leaderboard.csv")["candidate_id"].tolist() == ["merged", "merged"]
+
+
 def test_symbol_bucket_trade_merge_removes_duplicates_without_losing_unique_rows() -> None:
     first = pd.DataFrame(
         [
