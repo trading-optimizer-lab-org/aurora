@@ -94,14 +94,37 @@ class RunInfo:
 
 
 def run_cmd(args: list[str], *, check: bool = True) -> str:
-    proc = subprocess.run(args, check=False, text=True, capture_output=True)
-    if check and proc.returncode != 0:
+    attempts = 4 if check else 1
+    last_proc: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(attempts):
+        proc = subprocess.run(args, check=False, text=True, capture_output=True)
+        last_proc = proc
+        if proc.returncode == 0:
+            return proc.stdout
+        transient = any(
+            token in proc.stderr
+            for token in (
+                "HTTP 500",
+                "HTTP 502",
+                "HTTP 503",
+                "HTTP 504",
+                "Server Error",
+                "Bad Gateway",
+            )
+        )
+        if not check or not transient or attempt == attempts - 1:
+            break
+        sleep_for = 10 * (attempt + 1)
+        print(f"transient gh failure, retrying in {sleep_for}s: {' '.join(args)}", flush=True)
+        time.sleep(sleep_for)
+    assert last_proc is not None
+    if check and last_proc.returncode != 0:
         raise RuntimeError(
             "command failed: "
             + " ".join(args)
-            + f"\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+            + f"\nstdout:\n{last_proc.stdout}\nstderr:\n{last_proc.stderr}"
         )
-    return proc.stdout
+    return last_proc.stdout
 
 
 def gh_json(args: list[str]) -> Any:
@@ -500,6 +523,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--loop-minutes", type=int, default=300)
     parser.add_argument("--sleep-seconds", type=int, default=300)
     parser.add_argument("--run-list-limit", type=int, default=200)
+    parser.add_argument("--min-run-created-at", default="2026-07-04T00:00:00Z")
     parser.add_argument("--max-parallel-logical-jobs", type=int, default=360)
     parser.add_argument("--max-new-waves-per-pass", type=int, default=2)
     parser.add_argument(
@@ -509,6 +533,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--self-dispatch", action="store_true")
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
+
+
+def parse_utc(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
 def main() -> int:
@@ -524,6 +552,12 @@ def main() -> int:
     while True:
         print(f"orchestrator pass at {datetime.now(timezone.utc).isoformat()}")
         raw_runs = list_runs(args.repo, args.workflow, args.branch, args.run_list_limit)
+        min_created_at = parse_utc(args.min_run_created_at)
+        raw_runs = [
+            raw
+            for raw in raw_runs
+            if parse_utc(str(raw.get("createdAt") or "1970-01-01T00:00:00Z")) >= min_created_at
+        ]
         runs = [load_run_info(args.repo, raw, artifact_cache) for raw in raw_runs]
         runs = [run for run in runs if run.head_sha == VALIDATED_SHA or run.is_active or run.has_final_artifact]
         changed = dispatch_next_actions(
