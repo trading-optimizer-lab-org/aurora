@@ -5403,7 +5403,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '000e7b35b020615baa0cc724fac67e3436174adf,'
         'aa59907d1bd7fe80846b9b3f31d99259e2fa1568,'
         '619dc3c3fe96499e1040bab225efaf2035bc953e,'
-        '40d7e6e68af25619a889fd587a5b9a1407bd93eb,${{ github.sha }}"'
+        '40d7e6e68af25619a889fd587a5b9a1407bd93eb,'
+        '99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,${{ github.sha }}"'
     ) in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
@@ -5467,6 +5468,40 @@ def test_gtbi_v5_smoke_workflow_is_push_only_small_github_smoke() -> None:
     assert "locked_start" not in text
     assert "LOCKED_START: \"2021-01-01\"" in text
     assert "VALIDATION_END: \"2020-12-31\"" in text
+
+
+def test_longhold_orchestrator_counts_only_active_run_blocks() -> None:
+    merging_run = gtbi_orchestrator.RunInfo(
+        run_id=1,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:30:00Z",
+        url="https://example.invalid/1",
+        head_sha="abc",
+        blocks=[
+            gtbi_orchestrator.RunBlock(logical=0, status="completed", conclusion="success"),
+            gtbi_orchestrator.RunBlock(logical=1, status="completed", conclusion="failure"),
+        ],
+        job_names={"merge_final"},
+    )
+    active_run = gtbi_orchestrator.RunInfo(
+        run_id=2,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:30:00Z",
+        url="https://example.invalid/2",
+        head_sha="abc",
+        blocks=[
+            gtbi_orchestrator.RunBlock(logical=180, status="completed", conclusion="success"),
+            gtbi_orchestrator.RunBlock(logical=181, status="in_progress", conclusion=None),
+        ],
+        job_names={"run_block", "merge_final"},
+    )
+
+    assert gtbi_orchestrator.active_logical_jobs([merging_run], set()) == 0
+    assert gtbi_orchestrator.active_logical_jobs([merging_run, active_run], set()) == 1
 
 
 def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_timeout_risk() -> None:

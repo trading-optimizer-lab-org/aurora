@@ -764,7 +764,7 @@ def active_logical_jobs(runs: list[RunInfo], excluded: set[int]) -> int:
         if run.run_id in excluded:
             continue
         if run.is_active:
-            total += len(run.blocks)
+            total += sum(1 for block in run.blocks if block.status != "completed")
     return total
 
 
@@ -808,7 +808,7 @@ def dispatch_next_actions(
     for wave in range(TOTAL_WAVES):
         if wave in chosen_waves or wave in pending_waves:
             continue
-        if active_count + WAVE_LOGICAL_JOBS > max_parallel_logical_jobs and launched > 0:
+        if active_count + WAVE_LOGICAL_JOBS > max_parallel_logical_jobs:
             break
         if active_count >= max_parallel_logical_jobs:
             break
