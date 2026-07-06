@@ -5405,9 +5405,11 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '619dc3c3fe96499e1040bab225efaf2035bc953e,'
         '40d7e6e68af25619a889fd587a5b9a1407bd93eb,'
         '99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,'
-        'e7dd3de7066a04ef7029ce758e74a4e5248c0e12,${{ github.sha }}"'
+        'e7dd3de7066a04ef7029ce758e74a4e5248c0e12,'
+        'bc02a1a543135d33fd629b7a30569ec3e010b4e1,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
+    assert '--min-run-created-at "2026-07-06T09:30:00Z"' in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text
@@ -5504,6 +5506,13 @@ def test_longhold_orchestrator_counts_only_active_run_blocks() -> None:
 
     assert gtbi_orchestrator.active_logical_jobs([merging_run], set()) == 0
     assert gtbi_orchestrator.active_logical_jobs([merging_run, active_run], set()) == 1
+
+
+def test_longhold_orchestrator_retries_github_rate_limits() -> None:
+    text = Path("scripts/orchestrate_gtbi_longhold_72k.py").read_text(encoding="utf-8")
+
+    assert "rate limit exceeded" in text
+    assert "60 * (attempt + 1)" in text
 
 
 def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_timeout_risk() -> None:

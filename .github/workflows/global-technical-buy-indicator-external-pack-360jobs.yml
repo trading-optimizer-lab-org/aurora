@@ -130,12 +130,13 @@ jobs:
             --loop-minutes 300 \
             --sleep-seconds 60 \
             --run-list-limit 1000 \
+            --min-run-created-at "2026-07-06T09:30:00Z" \
             --inspect-workers 32 \
             --max-parallel-logical-jobs 360 \
             --max-new-waves-per-pass 2 \
             --recovery-timeout-seconds 1800 \
             --recovery-wall-clock-seconds 2100 \
-            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,9458f22ee8c49eb18693bc62dbc4e0093bd2b477,cf78ebf6e975ae41eced6b0964a7336abd12cda5,000e7b35b020615baa0cc724fac67e3436174adf,aa59907d1bd7fe80846b9b3f31d99259e2fa1568,619dc3c3fe96499e1040bab225efaf2035bc953e,40d7e6e68af25619a889fd587a5b9a1407bd93eb,99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,e7dd3de7066a04ef7029ce758e74a4e5248c0e12,${{ github.sha }}" \
+            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,9458f22ee8c49eb18693bc62dbc4e0093bd2b477,cf78ebf6e975ae41eced6b0964a7336abd12cda5,000e7b35b020615baa0cc724fac67e3436174adf,aa59907d1bd7fe80846b9b3f31d99259e2fa1568,619dc3c3fe96499e1040bab225efaf2035bc953e,40d7e6e68af25619a889fd587a5b9a1407bd93eb,99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,e7dd3de7066a04ef7029ce758e74a4e5248c0e12,bc02a1a543135d33fd629b7a30569ec3e010b4e1,${{ github.sha }}" \
             --self-dispatch
       - name: Upload recovery manifests
         if: always()

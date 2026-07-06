@@ -200,6 +200,7 @@ def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) 
         transient = any(
             token in proc.stderr
             for token in (
+                "rate limit exceeded",
                 "HTTP 500",
                 "HTTP 502",
                 "HTTP 503",
@@ -210,7 +211,7 @@ def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) 
         )
         if not check or not transient or attempt == attempts - 1:
             break
-        sleep_for = 10 * (attempt + 1)
+        sleep_for = 60 * (attempt + 1) if "rate limit exceeded" in proc.stderr else 10 * (attempt + 1)
         print(f"transient gh failure, retrying in {sleep_for}s: {' '.join(args)}", flush=True)
         time.sleep(sleep_for)
     assert last_proc is not None
