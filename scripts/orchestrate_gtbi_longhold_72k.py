@@ -182,7 +182,7 @@ def recovery_config_for_round(recovery_round: int) -> RecoveryRoundConfig:
 
 
 def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) -> str:
-    attempts = 4 if check else 1
+    attempts = 12 if check else 1
     last_proc: subprocess.CompletedProcess[str] | None = None
     for attempt in range(attempts):
         try:
@@ -211,7 +211,7 @@ def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) 
         )
         if not check or not transient or attempt == attempts - 1:
             break
-        sleep_for = 60 * (attempt + 1) if "rate limit exceeded" in proc.stderr else 10 * (attempt + 1)
+        sleep_for = min(900, 120 * (attempt + 1)) if "rate limit exceeded" in proc.stderr else 10 * (attempt + 1)
         print(f"transient gh failure, retrying in {sleep_for}s: {' '.join(args)}", flush=True)
         time.sleep(sleep_for)
     assert last_proc is not None

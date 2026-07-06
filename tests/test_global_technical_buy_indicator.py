@@ -5406,9 +5406,12 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '40d7e6e68af25619a889fd587a5b9a1407bd93eb,'
         '99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,'
         'e7dd3de7066a04ef7029ce758e74a4e5248c0e12,'
-        'bc02a1a543135d33fd629b7a30569ec3e010b4e1,${{ github.sha }}"'
+        'bc02a1a543135d33fd629b7a30569ec3e010b4e1,'
+        '5195ce3457c9baeac7eb68c3b7c329f4171bf65f,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
+    assert "--run-list-limit 240" in text
+    assert "--inspect-workers 8" in text
     assert '--min-run-created-at "2026-07-06T09:30:00Z"' in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
@@ -5512,7 +5515,8 @@ def test_longhold_orchestrator_retries_github_rate_limits() -> None:
     text = Path("scripts/orchestrate_gtbi_longhold_72k.py").read_text(encoding="utf-8")
 
     assert "rate limit exceeded" in text
-    assert "60 * (attempt + 1)" in text
+    assert "attempts = 12" in text
+    assert "min(900, 120 * (attempt + 1))" in text
 
 
 def test_external_pack_1800jobs_workflow_splits_into_10_strategy_jobs_after_25_timeout_risk() -> None:
