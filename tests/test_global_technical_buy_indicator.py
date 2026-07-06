@@ -3582,17 +3582,25 @@ def test_compact_signal_events_roundtrip_preserves_signal_positions(tmp_path: Pa
     frame = gtbi._prepare_ohlcv(_breakout_frame(180))
     signal = pd.Series(False, index=frame.index)
     signal.iloc[[12, 70, 121]] = True
+    other_signal = pd.Series(False, index=frame.index)
+    other_signal.iloc[[5, 99]] = True
 
     path = tmp_path / "signal_events_job_0000.npz"
     gtbi._write_compact_signal_events(
         path,
-        signal_events={"hash_a": {"AAA": signal}},
+        signal_events={"hash_a": {"AAA": signal}, "hash_b": {"AAA": other_signal}},
         symbol_frames={"AAA": frame},
     )
+    raw = np.load(path, allow_pickle=False)
+    assert "event_symbol_index" in raw.files
+    assert "event_symbols" in raw.files
+    assert "event_symbol" not in raw.files
+
     loaded = gtbi._load_compact_signal_events(path, symbol_frames={"AAA": frame})
 
-    assert list(loaded) == ["hash_a"]
+    assert list(loaded) == ["hash_a", "hash_b"]
     pd.testing.assert_series_equal(loaded["hash_a"]["AAA"], signal)
+    pd.testing.assert_series_equal(loaded["hash_b"]["AAA"], other_signal)
 
 
 def test_signal_first_split_phase_writes_events_and_exits_reuse_them(

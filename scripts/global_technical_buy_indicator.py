@@ -4731,9 +4731,11 @@ def _write_compact_signal_events(
         flush=True,
     )
     signal_hashes: list[str] = []
-    signal_indices: list[int] = []
-    event_symbols: list[str] = []
-    event_positions: list[int] = []
+    symbol_keys = sorted(str(symbol) for symbol in symbol_frames)
+    symbol_to_index = {symbol: index for index, symbol in enumerate(symbol_keys)}
+    signal_index_chunks: list[np.ndarray] = []
+    symbol_index_chunks: list[np.ndarray] = []
+    event_position_chunks: list[np.ndarray] = []
     for signal_index, (signal_hash, signals_by_symbol) in enumerate(signal_events.items()):
         signal_hashes.append(str(signal_hash))
         for symbol, signal in signals_by_symbol.items():
@@ -4745,19 +4747,37 @@ def _write_compact_signal_events(
             positions = np.flatnonzero(aligned.to_numpy(dtype=bool))
             if positions.size == 0:
                 continue
-            signal_indices.extend([signal_index] * int(positions.size))
-            event_symbols.extend([symbol_key] * int(positions.size))
-            event_positions.extend(int(pos) for pos in positions)
+            signal_index_chunks.append(np.full(int(positions.size), int(signal_index), dtype=np.int32))
+            symbol_index_chunks.append(
+                np.full(int(positions.size), int(symbol_to_index[symbol_key]), dtype=np.int32)
+            )
+            event_position_chunks.append(positions.astype(np.int32, copy=False))
+    event_signal_index = (
+        np.concatenate(signal_index_chunks).astype(np.int32, copy=False)
+        if signal_index_chunks
+        else np.asarray([], dtype=np.int32)
+    )
+    event_symbol_index = (
+        np.concatenate(symbol_index_chunks).astype(np.int32, copy=False)
+        if symbol_index_chunks
+        else np.asarray([], dtype=np.int32)
+    )
+    event_pos = (
+        np.concatenate(event_position_chunks).astype(np.int32, copy=False)
+        if event_position_chunks
+        else np.asarray([], dtype=np.int32)
+    )
     print(
-        f"[gtbi] write_signal_events_save path={path} signal_hashes={len(signal_hashes)} events={len(event_positions)}",
+        f"[gtbi] write_signal_events_save path={path} signal_hashes={len(signal_hashes)} events={len(event_pos)}",
         flush=True,
     )
-    np.savez_compressed(
+    np.savez(
         path,
         signal_hashes=np.asarray(signal_hashes, dtype=str),
-        event_signal_index=np.asarray(signal_indices, dtype=np.int32),
-        event_symbol=np.asarray(event_symbols, dtype=str),
-        event_pos=np.asarray(event_positions, dtype=np.int32),
+        event_symbols=np.asarray(symbol_keys, dtype=str),
+        event_signal_index=event_signal_index,
+        event_symbol_index=event_symbol_index,
+        event_pos=event_pos,
     )
     print(f"[gtbi] write_signal_events_done path={path}", flush=True)
 
@@ -4775,7 +4795,20 @@ def _load_compact_signal_events(
     signal_hashes = [str(value) for value in signal_hashes_array.tolist()]
     by_hash: dict[str, dict[str, pd.Series]] = {signal_hash: {} for signal_hash in signal_hashes}
     event_signal_index = loaded["event_signal_index"] if "event_signal_index" in loaded.files else np.asarray([], dtype=np.int32)
-    event_symbol = loaded["event_symbol"] if "event_symbol" in loaded.files else np.asarray([], dtype=str)
+    if "event_symbol_index" in loaded.files and "event_symbols" in loaded.files:
+        symbol_lookup = [str(value) for value in loaded["event_symbols"].tolist()]
+        event_symbol = np.asarray(
+            [
+                symbol_lookup[int(index)]
+                for index in loaded["event_symbol_index"].tolist()
+                if 0 <= int(index) < len(symbol_lookup)
+            ],
+            dtype=str,
+        )
+        valid_length = min(len(event_signal_index), len(event_symbol), len(loaded["event_pos"] if "event_pos" in loaded.files else []))
+        event_signal_index = event_signal_index[:valid_length]
+    else:
+        event_symbol = loaded["event_symbol"] if "event_symbol" in loaded.files else np.asarray([], dtype=str)
     event_pos = loaded["event_pos"] if "event_pos" in loaded.files else np.asarray([], dtype=np.int32)
     for signal_index, symbol, pos in zip(event_signal_index.tolist(), event_symbol.tolist(), event_pos.tolist()):
         signal_idx = int(signal_index)
