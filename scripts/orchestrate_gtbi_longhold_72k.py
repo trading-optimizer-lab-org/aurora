@@ -802,6 +802,39 @@ def dispatch_next_actions(
     # Intentional subgroup recoveries share the same logical slots, so the old
     # duplicate-canceller would kill valid round fanout.
     chosen_waves = choose_wave_runs(runs, excluded)
+    active_count = active_logical_jobs(runs, excluded)
+
+    launched = 0
+    for wave in range(TOTAL_WAVES):
+        if wave in chosen_waves or wave in pending_waves:
+            continue
+        if active_count + WAVE_LOGICAL_JOBS > max_parallel_logical_jobs and launched > 0:
+            break
+        if active_count >= max_parallel_logical_jobs:
+            break
+        first, last = wave_range(wave)
+        print(f"dispatch missing wave {wave}: logical jobs {first}-{last}")
+        run_workflow(
+            repo,
+            branch,
+            mode="optimized_evaluation_v5_event_first",
+            candidate_count_per_job=10,
+            job_start_index=first,
+            job_count=WAVE_LOGICAL_JOBS,
+        )
+        pending_waves.add(wave)
+        active_count += WAVE_LOGICAL_JOBS
+        launched += 1
+        changed = True
+        if launched >= max_new_waves:
+            break
+    if changed:
+        return True
+
+    if len(chosen_waves) < TOTAL_WAVES:
+        print(f"waiting: {len(chosen_waves)}/{TOTAL_WAVES} waves have usable active/completed runs")
+        return False
+
     completed_recovery_unresolved: set[int] = set()
     for run in sorted(runs, key=lambda item: item.created_at):
         if (
@@ -827,8 +860,6 @@ def dispatch_next_actions(
     recovery_covered.difference_update(completed_recovery_unresolved)
     recovery_completed = recovery_slots_covered(runs, excluded, completed_only=True)
     recovery_completed.difference_update(completed_recovery_unresolved)
-    active_count = active_logical_jobs(runs, excluded)
-
     for wave, run in sorted(chosen_waves.items()):
         if not (run.is_completed and run.has_final_artifact and run.conclusion not in {None, "cancelled"}):
             continue
@@ -901,37 +932,6 @@ def dispatch_next_actions(
             return False
         pending_recovery_slots.update(launched_slots)
         return True
-
-    launched = 0
-    for wave in range(TOTAL_WAVES):
-        if wave in chosen_waves or wave in pending_waves:
-            continue
-        if active_count + WAVE_LOGICAL_JOBS > max_parallel_logical_jobs and launched > 0:
-            break
-        if active_count >= max_parallel_logical_jobs:
-            break
-        first, last = wave_range(wave)
-        print(f"dispatch missing wave {wave}: logical jobs {first}-{last}")
-        run_workflow(
-            repo,
-            branch,
-            mode="optimized_evaluation_v5_event_first",
-            candidate_count_per_job=10,
-            job_start_index=first,
-            job_count=WAVE_LOGICAL_JOBS,
-        )
-        pending_waves.add(wave)
-        active_count += WAVE_LOGICAL_JOBS
-        launched += 1
-        changed = True
-        if launched >= max_new_waves:
-            break
-    if changed:
-        return True
-
-    if len(chosen_waves) < TOTAL_WAVES:
-        print(f"waiting: {len(chosen_waves)}/{TOTAL_WAVES} waves have usable active/completed runs")
-        return False
 
     source_run_ids: list[int] = []
     recoveries_needed = False
