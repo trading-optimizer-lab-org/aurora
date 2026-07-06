@@ -5400,7 +5400,9 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '--validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,'
         '9458f22ee8c49eb18693bc62dbc4e0093bd2b477,'
         'cf78ebf6e975ae41eced6b0964a7336abd12cda5,'
-        '000e7b35b020615baa0cc724fac67e3436174adf,${{ github.sha }}"'
+        '000e7b35b020615baa0cc724fac67e3436174adf,'
+        'aa59907d1bd7fe80846b9b3f31d99259e2fa1568,'
+        '619dc3c3fe96499e1040bab225efaf2035bc953e,${{ github.sha }}"'
     ) in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
