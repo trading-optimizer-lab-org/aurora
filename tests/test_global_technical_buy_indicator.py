@@ -5404,8 +5404,10 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         'aa59907d1bd7fe80846b9b3f31d99259e2fa1568,'
         '619dc3c3fe96499e1040bab225efaf2035bc953e,'
         '40d7e6e68af25619a889fd587a5b9a1407bd93eb,'
-        '99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,${{ github.sha }}"'
+        '99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,'
+        'e7dd3de7066a04ef7029ce758e74a4e5248c0e12,${{ github.sha }}"'
     ) in text
+    assert "--sleep-seconds 60" in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text
