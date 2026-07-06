@@ -5402,7 +5402,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         'cf78ebf6e975ae41eced6b0964a7336abd12cda5,'
         '000e7b35b020615baa0cc724fac67e3436174adf,'
         'aa59907d1bd7fe80846b9b3f31d99259e2fa1568,'
-        '619dc3c3fe96499e1040bab225efaf2035bc953e,${{ github.sha }}"'
+        '619dc3c3fe96499e1040bab225efaf2035bc953e,'
+        '40d7e6e68af25619a889fd587a5b9a1407bd93eb,${{ github.sha }}"'
     ) in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
@@ -5420,7 +5421,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "optimized_evaluation_v5_event_first" in text
     assert "smoke_test" not in data["jobs"]
     assert "merge_smoke" not in data["jobs"]
-    assert "timeout-minutes: 360" in text
+    assert "timeout-minutes: 75" in text
     assert "matrix: ${{ fromJson(needs.plan_blocks.outputs.matrix) }}" in text
     assert "total_jobs={len(logical_jobs)}" in text
 
