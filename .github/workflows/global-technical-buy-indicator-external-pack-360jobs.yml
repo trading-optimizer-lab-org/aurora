@@ -130,11 +130,12 @@ jobs:
             --loop-minutes 300 \
             --sleep-seconds 300 \
             --run-list-limit 1000 \
+            --inspect-workers 32 \
             --max-parallel-logical-jobs 360 \
             --max-new-waves-per-pass 2 \
             --recovery-timeout-seconds 1800 \
             --recovery-wall-clock-seconds 2100 \
-            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,${{ github.sha }}" \
+            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,9458f22ee8c49eb18693bc62dbc4e0093bd2b477,${{ github.sha }}" \
             --self-dispatch
       - name: Upload recovery manifests
         if: always()

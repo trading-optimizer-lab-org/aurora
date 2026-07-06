@@ -422,7 +422,7 @@ def load_run_info(repo: str, run: dict[str, Any], artifact_cache: dict[int, bool
         ]
     )
     has_artifact = False
-    if view.get("status") == "completed":
+    if view.get("status") == "completed" and view.get("conclusion") == "success":
         if run_id not in artifact_cache:
             artifact_cache[run_id] = artifact_exists(repo, run_id)
         has_artifact = artifact_cache[run_id]
@@ -1071,12 +1071,14 @@ def main() -> int:
                 for raw in raw_runs
                 if int(raw.get("databaseId") or 0) != current_run_id
             ]
+        print(f"candidate runs after filters: {len(raw_runs)}", flush=True)
         runs, load_failures = load_runs_info(
             args.repo,
             raw_runs,
             artifact_cache,
             max_workers=max(args.inspect_workers, 1),
         )
+        print(f"inspected runs: {len(runs)}", flush=True)
         if load_failures:
             print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
         if validated_shas:

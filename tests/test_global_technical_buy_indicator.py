@@ -5350,7 +5350,10 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--fill-missing-timeouts-reason" not in text
     assert "gtbi-longhold-orchestrator-recovery-manifests" in text
     assert "recovery-manifests" in text
-    assert '--validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,${{ github.sha }}"' in text
+    assert (
+        '--validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,'
+        '9458f22ee8c49eb18693bc62dbc4e0093bd2b477,${{ github.sha }}"'
+    ) in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text
