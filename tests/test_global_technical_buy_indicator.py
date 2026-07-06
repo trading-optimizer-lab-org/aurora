@@ -5352,7 +5352,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "recovery-manifests" in text
     assert (
         '--validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,'
-        '9458f22ee8c49eb18693bc62dbc4e0093bd2b477,${{ github.sha }}"'
+        '9458f22ee8c49eb18693bc62dbc4e0093bd2b477,'
+        'cf78ebf6e975ae41eced6b0964a7336abd12cda5,${{ github.sha }}"'
     ) in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
