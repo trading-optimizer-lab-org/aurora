@@ -422,7 +422,7 @@ def load_run_info(repo: str, run: dict[str, Any], artifact_cache: dict[int, bool
         ]
     )
     has_artifact = False
-    if view.get("status") == "completed" and view.get("conclusion") == "success":
+    if view.get("status") == "completed" and view.get("conclusion") != "cancelled":
         if run_id not in artifact_cache:
             artifact_cache[run_id] = artifact_exists(repo, run_id)
         has_artifact = artifact_cache[run_id]

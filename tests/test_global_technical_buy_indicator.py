@@ -4944,6 +4944,44 @@ def test_orchestrator_extracts_timeout_and_slow_slots_from_artifact(tmp_path: Pa
     assert inspection.unresolved_slots == {204, 403, 605}
 
 
+def test_orchestrator_keeps_failed_run_artifact_for_partial_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_gh_json(args: list[str]) -> dict:
+        assert args[:2] == ["run", "view"]
+        return {
+            "status": "completed",
+            "conclusion": "failure",
+            "createdAt": "2026-07-06T10:00:00Z",
+            "updatedAt": "2026-07-06T10:10:00Z",
+            "url": "https://example.invalid/run",
+            "headSha": "sha",
+            "jobs": [
+                {"name": "run_block (0, 000, 540, 1)", "status": "completed", "conclusion": "success"},
+                {"name": "run_block (1, 001, 541, 1)", "status": "completed", "conclusion": "failure"},
+                {"name": "merge_final", "status": "completed", "conclusion": "success"},
+            ],
+        }
+
+    monkeypatch.setattr(gtbi_orchestrator, "gh_json", fake_gh_json)
+    monkeypatch.setattr(gtbi_orchestrator, "artifact_exists", lambda _repo, _run_id: True)
+
+    info = gtbi_orchestrator.load_run_info(
+        "trading-optimizer-lab-org/aurora",
+        {
+            "databaseId": 123,
+            "createdAt": "2026-07-06T10:00:00Z",
+            "updatedAt": "2026-07-06T10:10:00Z",
+            "url": "https://example.invalid/run",
+            "headSha": "sha",
+        },
+        {},
+    )
+
+    assert info.is_completed is True
+    assert info.conclusion == "failure"
+    assert info.has_final_artifact is True
+    assert info.failed_logicals == [541]
+
+
 def test_orchestrator_recovery_dispatch_uses_long_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
