@@ -129,11 +129,12 @@ jobs:
             --workflow "global-technical-buy-indicator-external-pack-360jobs.yml" \
             --loop-minutes 300 \
             --sleep-seconds 300 \
+            --run-list-limit 1000 \
             --max-parallel-logical-jobs 360 \
             --max-new-waves-per-pass 2 \
             --recovery-timeout-seconds 1800 \
             --recovery-wall-clock-seconds 2100 \
-            --validated-sha "${{ github.sha }}" \
+            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,${{ github.sha }}" \
             --self-dispatch
       - name: Upload recovery manifests
         if: always()
@@ -163,7 +164,44 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[data-cloud,ml]"
+      - name: Try reusable external pack data from previous GitHub run
+        id: reuse_pack
+        run: |
+          set -euo pipefail
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+          mkdir -p external-pack-data
+          run_ids="$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "${{ github.workflow }}" \
+            --branch "${{ github.ref_name }}" \
+            --limit 100 \
+            --json databaseId,status,conclusion \
+            --jq '.[] | select(.status=="completed" and .conclusion=="success") | .databaseId')"
+          for run_id in $run_ids; do
+            if [ "$run_id" = "${{ github.run_id }}" ]; then
+              continue
+            fi
+            artifact_name="$(gh api "repos/${{ github.repository }}/actions/runs/$run_id/artifacts?per_page=100" \
+              --jq '.artifacts[]? | select(.name=="gtbi-external-pack-data" and .expired==false) | .name' | head -n 1)"
+            if [ "$artifact_name" = "gtbi-external-pack-data" ]; then
+              echo "Reusing gtbi-external-pack-data from run $run_id"
+              rm -rf external-pack-data
+              mkdir -p external-pack-data
+              for attempt in 1 2 3 4; do
+                if gh run download "$run_id" \
+                  --repo "${{ github.repository }}" \
+                  --name "gtbi-external-pack-data" \
+                  --dir external-pack-data; then
+                  echo "reused=true" >> "$GITHUB_OUTPUT"
+                  echo "source_run_id=$run_id" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                sleep $((attempt * 20))
+              done
+            fi
+          done
       - name: Download data lake artifact
+        if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.data_run_id }}
@@ -171,6 +209,7 @@ jobs:
           path: ${{ env.QF_DATA_DIR }}/prices/free_us_daily
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Normalize data lake layout and ensure SPY benchmark exists
+        if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -245,6 +284,7 @@ jobs:
           spy[keep].to_parquet(out_path, index=False)
           PY
       - name: Build reusable external pack data
+        if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
         run: |
           python scripts/build_global_technical_buy_indicator_pack.py \
             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
@@ -493,11 +533,18 @@ jobs:
           python -m pip install -e ".[data-cloud,ml]"
       - name: Download block artifacts
         run: |
+          set -euo pipefail
           mkdir -p downloaded-blocks
-          gh run download "${{ github.run_id }}" \
-            --repo "${{ github.repository }}" \
-            --pattern "gtbi-external-pack-block-*" \
-            --dir downloaded-blocks
+          for attempt in 1 2 3 4 5; do
+            if gh run download "${{ github.run_id }}" \
+              --repo "${{ github.repository }}" \
+              --pattern "gtbi-external-pack-block-*" \
+              --dir downloaded-blocks; then
+              exit 0
+            fi
+            sleep $((attempt * 30))
+          done
+          exit 1
       - name: Merge outputs
         run: |
           python scripts/merge_global_technical_buy_indicator_external_pack.py \
@@ -552,10 +599,18 @@ jobs:
               continue
             fi
             echo "::group::download $run_id"
-            gh run download "$run_id" \
-              --repo "${{ github.repository }}" \
-              --name "$SOURCE_ARTIFACT_NAME" \
-              --dir "downloaded-cross-run/run-$run_id"
+            for attempt in 1 2 3 4 5; do
+              if gh run download "$run_id" \
+                --repo "${{ github.repository }}" \
+                --name "$SOURCE_ARTIFACT_NAME" \
+                --dir "downloaded-cross-run/run-$run_id"; then
+                break
+              fi
+              if [ "$attempt" = "5" ]; then
+                exit 1
+              fi
+              sleep $((attempt * 30))
+            done
             echo "::endgroup::"
           done
       - name: Merge source run outputs

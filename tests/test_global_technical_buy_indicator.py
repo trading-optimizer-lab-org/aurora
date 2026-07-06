@@ -5100,6 +5100,11 @@ def test_orchestrator_main_once_dispatches_after_loading_runs(monkeypatch: pytes
     assert calls[0]["branch"] == "codex/gtbi-github-only-external-pack-72000"
 
 
+def test_orchestrator_parse_validated_shas_accepts_multiple_values() -> None:
+    values = gtbi_orchestrator.parse_validated_shas("old-sha, new-sha,,")
+    assert values == {"old-sha", "new-sha"}
+
+
 def test_external_merge_event_first_summary_counts_and_no_drawdown_bests(tmp_path: Path) -> None:
     job = tmp_path / "downloaded" / "gtbi-external-pack-job-0000"
     job.mkdir(parents=True)
@@ -5345,7 +5350,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--fill-missing-timeouts-reason" not in text
     assert "gtbi-longhold-orchestrator-recovery-manifests" in text
     assert "recovery-manifests" in text
-    assert "--validated-sha \"${{ github.sha }}\"" in text
+    assert '--validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,${{ github.sha }}"' in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text
     assert "signal_group_limit=0" in text

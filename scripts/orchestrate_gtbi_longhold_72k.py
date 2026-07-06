@@ -1029,9 +1029,14 @@ def parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
+def parse_validated_shas(value: str) -> set[str]:
+    return {item.strip() for item in str(value or "").split(",") if item.strip()}
+
+
 def main() -> int:
     args = parse_args()
     validated_sha = str(args.validated_sha or os.environ.get("GITHUB_SHA") or VALIDATED_SHA)
+    validated_shas = parse_validated_shas(validated_sha)
     excluded = {
         int(item.strip())
         for item in str(args.exclude_run_ids).split(",")
@@ -1054,11 +1059,11 @@ def main() -> int:
             for raw in raw_runs
             if parse_utc(str(raw.get("createdAt") or "1970-01-01T00:00:00Z")) >= min_created_at
         ]
-        if validated_sha:
+        if validated_shas:
             raw_runs = [
                 raw
                 for raw in raw_runs
-                if str(raw.get("headSha") or "") == validated_sha
+                if str(raw.get("headSha") or "") in validated_shas
             ]
         if current_run_id:
             raw_runs = [
@@ -1074,8 +1079,8 @@ def main() -> int:
         )
         if load_failures:
             print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
-        if validated_sha:
-            runs = [run for run in runs if run.head_sha == validated_sha]
+        if validated_shas:
+            runs = [run for run in runs if run.head_sha in validated_shas]
         changed = dispatch_next_actions(
             repo=args.repo,
             branch=args.branch,
