@@ -5699,7 +5699,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     ) in text
     assert "--sleep-seconds 60" in text
     assert "--run-list-limit 1000" in text
-    assert "--inspect-workers 8" in text
+    assert "--inspect-workers 32" in text
     assert '--min-run-created-at "2026-07-06T07:00:00Z"' in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
     assert 'schedule_active_jobs="$SCHEDULE_ACTIVE_JOBS"' in text

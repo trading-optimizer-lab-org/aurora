@@ -131,7 +131,7 @@ jobs:
             --sleep-seconds 60 \
             --run-list-limit 1000 \
             --min-run-created-at "2026-07-06T07:00:00Z" \
-            --inspect-workers 8 \
+            --inspect-workers 32 \
             --max-parallel-logical-jobs 360 \
             --max-new-waves-per-pass 2 \
             --recovery-timeout-seconds 1800 \
