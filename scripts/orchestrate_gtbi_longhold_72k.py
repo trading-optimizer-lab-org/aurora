@@ -952,34 +952,6 @@ def dispatch_next_actions(
         print(f"waiting: {len(chosen_waves)}/{TOTAL_WAVES} waves have usable active/completed runs")
         return False
 
-    preload_failures = preload_artifact_inspections(
-        repo=repo,
-        runs=runs,
-        excluded=excluded,
-        artifact_root=artifact_root,
-        artifact_inspection_cache=artifact_inspection_cache,
-        max_workers=artifact_workers,
-    )
-    if preload_failures:
-        print(f"warning: {preload_failures} artifact inspections failed during preload", flush=True)
-
-    completed_recovery_unresolved: set[int] = set()
-    for run in sorted(runs, key=lambda item: item.created_at):
-        if (
-            run.run_id in excluded
-            or run.is_full_wave_shape
-            or not run.is_completed
-            or not run.has_final_artifact
-            or run.conclusion == "cancelled"
-            or not run.blocks
-        ):
-            continue
-        try:
-            inspection = download_and_inspect_artifact(repo, run.run_id, artifact_root, artifact_inspection_cache)
-        except Exception as exc:  # noqa: BLE001 - GitHub artifact hiccups should not kill the whole pass
-            print(f"warning: could not inspect recovery artifact {run.run_id}: {exc}", flush=True)
-            continue
-        completed_recovery_unresolved.update(inspection.unresolved_slots)
     completed_recovery_slots = recovery_slots_covered(runs, excluded, completed_only=True)
     retry_failed_recovery_slots = failed_recovery_slots(runs, excluded)
     if retry_failed_recovery_slots:
@@ -988,15 +960,12 @@ def dispatch_next_actions(
             flush=True,
         )
     pending_recovery_slots.difference_update(completed_recovery_slots)
-    pending_recovery_slots.difference_update(completed_recovery_unresolved)
     pending_recovery_slots.difference_update(retry_failed_recovery_slots)
     recovery_covered = recovery_slots_covered(runs, excluded)
     recovery_covered |= pending_recovery_slots
     recovery_covered.difference_update(retry_failed_recovery_slots)
-    recovery_covered.difference_update(completed_recovery_unresolved)
     recovery_completed = recovery_slots_covered(runs, excluded, completed_only=True)
     recovery_completed.difference_update(retry_failed_recovery_slots)
-    recovery_completed.difference_update(completed_recovery_unresolved)
     for wave, run in sorted(chosen_waves.items()):
         if not (run.is_completed and run.has_final_artifact and run.conclusion not in {None, "cancelled"}):
             continue
@@ -1026,9 +995,25 @@ def dispatch_next_actions(
             pending_recovery_slots.update(launched_slots)
             return True
 
+    # Base wave artifacts are the only artifacts needed to discover original
+    # timeout slots. Completed recovery artifacts are intentionally not scanned
+    # here: there can be hundreds of subgroup artifacts, and the strict final
+    # merge validates that they removed every timeout before accepting output.
+    base_wave_runs = list(chosen_waves.values())
+    preload_failures = preload_artifact_inspections(
+        repo=repo,
+        runs=base_wave_runs,
+        excluded=excluded,
+        artifact_root=artifact_root,
+        artifact_inspection_cache=artifact_inspection_cache,
+        max_workers=artifact_workers,
+    )
+    if preload_failures:
+        print(f"warning: {preload_failures} artifact inspections failed during preload", flush=True)
+
     recoverable_timeout_slots: set[int] = set()
     recoverable_records: dict[int, StrategyRecoveryRecord] = {}
-    for run in sorted(runs, key=lambda item: item.created_at):
+    for run in sorted(base_wave_runs, key=lambda item: item.created_at):
         if (
             run.run_id in excluded
             or not run.is_completed
