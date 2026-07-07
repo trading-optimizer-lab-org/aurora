@@ -5459,10 +5459,11 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         'bc02a1a543135d33fd629b7a30569ec3e010b4e1,'
         '5195ce3457c9baeac7eb68c3b7c329f4171bf65f,'
         '76dfe249f60852ca50861dc69f498cb97599e12d,'
-        '82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,${{ github.sha }}"'
+        '82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,'
+        '3ada236bc44c4926758d45e8847f260420ed1431,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
-    assert "--run-list-limit 240" in text
+    assert "--run-list-limit 500" in text
     assert "--inspect-workers 8" in text
     assert '--min-run-created-at "2026-07-06T07:00:00Z"' in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
