@@ -129,14 +129,14 @@ jobs:
             --workflow "global-technical-buy-indicator-external-pack-360jobs.yml" \
             --loop-minutes 300 \
             --sleep-seconds 60 \
-            --run-list-limit 500 \
+            --run-list-limit 1000 \
             --min-run-created-at "2026-07-06T07:00:00Z" \
             --inspect-workers 8 \
             --max-parallel-logical-jobs 360 \
             --max-new-waves-per-pass 2 \
             --recovery-timeout-seconds 1800 \
             --recovery-wall-clock-seconds 2100 \
-            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,9458f22ee8c49eb18693bc62dbc4e0093bd2b477,cf78ebf6e975ae41eced6b0964a7336abd12cda5,000e7b35b020615baa0cc724fac67e3436174adf,aa59907d1bd7fe80846b9b3f31d99259e2fa1568,619dc3c3fe96499e1040bab225efaf2035bc953e,40d7e6e68af25619a889fd587a5b9a1407bd93eb,99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,e7dd3de7066a04ef7029ce758e74a4e5248c0e12,bc02a1a543135d33fd629b7a30569ec3e010b4e1,5195ce3457c9baeac7eb68c3b7c329f4171bf65f,76dfe249f60852ca50861dc69f498cb97599e12d,82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,3ada236bc44c4926758d45e8847f260420ed1431,${{ github.sha }}" \
+            --validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,9458f22ee8c49eb18693bc62dbc4e0093bd2b477,cf78ebf6e975ae41eced6b0964a7336abd12cda5,000e7b35b020615baa0cc724fac67e3436174adf,aa59907d1bd7fe80846b9b3f31d99259e2fa1568,619dc3c3fe96499e1040bab225efaf2035bc953e,40d7e6e68af25619a889fd587a5b9a1407bd93eb,99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,e7dd3de7066a04ef7029ce758e74a4e5248c0e12,bc02a1a543135d33fd629b7a30569ec3e010b4e1,5195ce3457c9baeac7eb68c3b7c329f4171bf65f,76dfe249f60852ca50861dc69f498cb97599e12d,82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,3ada236bc44c4926758d45e8847f260420ed1431,b9b7a4e732d8db0ed6b15a28e5a6745c24812c62,${{ github.sha }}" \
             --self-dispatch
       - name: Upload recovery manifests
         if: always()
