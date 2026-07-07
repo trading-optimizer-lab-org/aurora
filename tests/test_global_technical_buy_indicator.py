@@ -5099,6 +5099,59 @@ def test_orchestrator_list_runs_paginates_github_api(monkeypatch: pytest.MonkeyP
     }
 
 
+def test_orchestrator_list_runs_stops_at_min_created_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested_pages: list[str] = []
+
+    def fake_gh_json(args: list[str]) -> dict[str, object]:
+        endpoint = args[1]
+        requested_pages.append(endpoint)
+        page = endpoint.rsplit("page=", 1)[-1]
+        if page == "1":
+            return {
+                "workflow_runs": [
+                    {
+                        "id": idx,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "created_at": "2026-07-06T08:00:00Z",
+                        "updated_at": "2026-07-06T08:01:00Z",
+                        "html_url": f"https://example.invalid/{idx}",
+                        "head_sha": "sha-a",
+                    }
+                    for idx in range(100)
+                ]
+            }
+        if page == "2":
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 100,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "created_at": "2026-07-06T06:59:00Z",
+                        "updated_at": "2026-07-06T07:00:00Z",
+                        "html_url": "https://example.invalid/100",
+                        "head_sha": "sha-old",
+                    }
+                    for _ in range(100)
+                ]
+            }
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(gtbi_orchestrator, "gh_json", fake_gh_json)
+
+    runs = gtbi_orchestrator.list_runs(
+        "trading-optimizer-lab-org/aurora",
+        "global-technical-buy-indicator-external-pack-360jobs.yml",
+        "codex/gtbi-github-only-external-pack-72000",
+        1000,
+        "2026-07-06T07:00:00Z",
+    )
+
+    assert len(runs) == 100
+    assert [endpoint.rsplit("page=", 1)[-1] for endpoint in requested_pages] == ["1", "2"]
+
+
 def test_orchestrator_recovery_dispatch_uses_long_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

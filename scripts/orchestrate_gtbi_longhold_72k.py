@@ -246,11 +246,18 @@ def parse_blocks(jobs: list[dict[str, Any]]) -> list[RunBlock]:
     return sorted(blocks, key=lambda block: block.logical)
 
 
-def list_runs(repo: str, workflow: str, branch: str, limit: int) -> list[dict[str, Any]]:
+def list_runs(
+    repo: str,
+    workflow: str,
+    branch: str,
+    limit: int,
+    min_created_at: str | None = None,
+) -> list[dict[str, Any]]:
     del limit  # Historical CLI option; the orchestrator must not lose old runs.
     runs: list[dict[str, Any]] = []
     encoded_branch = quote(branch, safe="")
     encoded_workflow = quote(workflow, safe="")
+    min_created = parse_utc(min_created_at) if min_created_at else None
     page = 1
     while True:
         data = gh_json(
@@ -263,7 +270,12 @@ def list_runs(repo: str, workflow: str, branch: str, limit: int) -> list[dict[st
         page_runs = data.get("workflow_runs", [])
         if not page_runs:
             break
+        reached_older_run = False
         for raw in page_runs:
+            created_at = str(raw.get("created_at") or "1970-01-01T00:00:00Z")
+            if min_created is not None and parse_utc(created_at) < min_created:
+                reached_older_run = True
+                continue
             runs.append(
                 {
                     "databaseId": raw.get("id"),
@@ -276,6 +288,8 @@ def list_runs(repo: str, workflow: str, branch: str, limit: int) -> list[dict[st
                 }
             )
         if len(page_runs) < 100:
+            break
+        if reached_older_run:
             break
         page += 1
     return runs
@@ -1088,8 +1102,14 @@ def main() -> int:
 
     while True:
         print(f"orchestrator pass at {datetime.now(timezone.utc).isoformat()}")
-        raw_runs = list_runs(args.repo, args.workflow, args.branch, args.run_list_limit)
         min_created_at = parse_utc(args.min_run_created_at)
+        raw_runs = list_runs(
+            args.repo,
+            args.workflow,
+            args.branch,
+            args.run_list_limit,
+            args.min_run_created_at,
+        )
         raw_runs = [
             raw
             for raw in raw_runs
