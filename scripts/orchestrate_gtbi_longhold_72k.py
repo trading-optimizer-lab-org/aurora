@@ -1250,7 +1250,12 @@ def main() -> int:
         if args.once:
             return 0
         if changed:
-            print("work dispatched; continuing immediately to keep GitHub capacity full", flush=True)
+            pause = min(max(args.sleep_seconds, 1), 30)
+            print(
+                f"work dispatched; pausing {pause}s for GitHub run state to refresh",
+                flush=True,
+            )
+            time.sleep(pause)
             continue
         if time.monotonic() + args.sleep_seconds > deadline:
             if args.self_dispatch:
