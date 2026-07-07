@@ -303,6 +303,19 @@ def artifact_exists(repo: str, run_id: int) -> bool:
     return False
 
 
+def run_jobs(repo: str, run_id: int) -> list[dict[str, Any]]:
+    jobs: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        data = gh_json(["api", f"/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}"])
+        batch = data.get("jobs", [])
+        jobs.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return jobs
+
+
 def _int_from_row(row: dict[str, str], key: str) -> int | None:
     value = str(row.get(key, "")).strip()
     if not value:
@@ -440,32 +453,24 @@ def download_and_inspect_artifact(
 
 def load_run_info(repo: str, run: dict[str, Any], artifact_cache: dict[int, bool]) -> RunInfo:
     run_id = int(run["databaseId"])
-    view = gh_json(
-        [
-            "run",
-            "view",
-            str(run_id),
-            "--repo",
-            repo,
-            "--json",
-            "jobs,status,conclusion,createdAt,updatedAt,url,headSha",
-        ]
-    )
+    jobs = run_jobs(repo, run_id)
     has_artifact = False
-    if view.get("status") == "completed" and view.get("conclusion") != "cancelled":
+    status = str(run.get("status") or "")
+    conclusion = run.get("conclusion")
+    if status == "completed" and conclusion != "cancelled":
         if run_id not in artifact_cache:
             artifact_cache[run_id] = artifact_exists(repo, run_id)
         has_artifact = artifact_cache[run_id]
     return RunInfo(
         run_id=run_id,
-        status=str(view.get("status") or ""),
-        conclusion=view.get("conclusion"),
-        created_at=str(view.get("createdAt") or run.get("createdAt") or ""),
-        updated_at=str(view.get("updatedAt") or run.get("updatedAt") or ""),
-        url=str(view.get("url") or run.get("url") or ""),
-        head_sha=str(view.get("headSha") or run.get("headSha") or ""),
-        blocks=parse_blocks(view.get("jobs") or []),
-        job_names={str(job.get("name") or "") for job in (view.get("jobs") or [])},
+        status=status,
+        conclusion=conclusion,
+        created_at=str(run.get("createdAt") or ""),
+        updated_at=str(run.get("updatedAt") or ""),
+        url=str(run.get("url") or ""),
+        head_sha=str(run.get("headSha") or ""),
+        blocks=parse_blocks(jobs),
+        job_names={str(job.get("name") or "") for job in jobs},
         has_final_artifact=has_artifact,
     )
 

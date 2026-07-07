@@ -4946,14 +4946,8 @@ def test_orchestrator_extracts_timeout_and_slow_slots_from_artifact(tmp_path: Pa
 
 def test_orchestrator_keeps_failed_run_artifact_for_partial_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_gh_json(args: list[str]) -> dict:
-        assert args[:2] == ["run", "view"]
+        assert args[:2] == ["api", "/repos/trading-optimizer-lab-org/aurora/actions/runs/123/jobs?per_page=100&page=1"]
         return {
-            "status": "completed",
-            "conclusion": "failure",
-            "createdAt": "2026-07-06T10:00:00Z",
-            "updatedAt": "2026-07-06T10:10:00Z",
-            "url": "https://example.invalid/run",
-            "headSha": "sha",
             "jobs": [
                 {"name": "run_block (0, 000, 540, 1)", "status": "completed", "conclusion": "success"},
                 {"name": "run_block (1, 001, 541, 1)", "status": "completed", "conclusion": "failure"},
@@ -4968,6 +4962,8 @@ def test_orchestrator_keeps_failed_run_artifact_for_partial_coverage(monkeypatch
         "trading-optimizer-lab-org/aurora",
         {
             "databaseId": 123,
+            "status": "completed",
+            "conclusion": "failure",
             "createdAt": "2026-07-06T10:00:00Z",
             "updatedAt": "2026-07-06T10:10:00Z",
             "url": "https://example.invalid/run",
