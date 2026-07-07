@@ -1249,6 +1249,9 @@ def main() -> int:
             return 0
         if args.once:
             return 0
+        if changed:
+            print("work dispatched; continuing immediately to keep GitHub capacity full", flush=True)
+            continue
         if time.monotonic() + args.sleep_seconds > deadline:
             if args.self_dispatch:
                 self_dispatch(args.repo, args.branch)
