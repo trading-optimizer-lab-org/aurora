@@ -807,6 +807,19 @@ def recovery_slots_covered(runs: list[RunInfo], excluded: set[int], *, completed
     return covered
 
 
+def failed_recovery_slots(runs: list[RunInfo], excluded: set[int]) -> set[int]:
+    failed: set[int] = set()
+    for run in runs:
+        if run.run_id in excluded or run.is_full_wave_shape or not run.is_completed:
+            continue
+        if run.conclusion != "failure" and run.has_final_artifact:
+            continue
+        for logical in run.logicals:
+            if 0 <= logical < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
+                failed.add(logical)
+    return failed
+
+
 def active_logical_jobs(runs: list[RunInfo], excluded: set[int]) -> int:
     total = 0
     for run in runs:
@@ -902,12 +915,21 @@ def dispatch_next_actions(
             continue
         completed_recovery_unresolved.update(inspection.unresolved_slots)
     completed_recovery_slots = recovery_slots_covered(runs, excluded, completed_only=True)
+    retry_failed_recovery_slots = failed_recovery_slots(runs, excluded)
+    if retry_failed_recovery_slots:
+        print(
+            f"retrying {len(retry_failed_recovery_slots)} slots from failed recovery runs",
+            flush=True,
+        )
     pending_recovery_slots.difference_update(completed_recovery_slots)
     pending_recovery_slots.difference_update(completed_recovery_unresolved)
+    pending_recovery_slots.difference_update(retry_failed_recovery_slots)
     recovery_covered = recovery_slots_covered(runs, excluded)
     recovery_covered |= pending_recovery_slots
+    recovery_covered.difference_update(retry_failed_recovery_slots)
     recovery_covered.difference_update(completed_recovery_unresolved)
     recovery_completed = recovery_slots_covered(runs, excluded, completed_only=True)
+    recovery_completed.difference_update(retry_failed_recovery_slots)
     recovery_completed.difference_update(completed_recovery_unresolved)
     for wave, run in sorted(chosen_waves.items()):
         if not (run.is_completed and run.has_final_artifact and run.conclusion not in {None, "cancelled"}):

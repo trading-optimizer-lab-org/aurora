@@ -5032,6 +5032,41 @@ def test_orchestrator_reuses_completed_run_info_cache(monkeypatch: pytest.Monkey
     assert {info.run_id for info in infos} == {1, 2}
 
 
+def test_orchestrator_failed_recovery_slots_are_retryable() -> None:
+    failed_recovery = gtbi_orchestrator.RunInfo(
+        run_id=10,
+        status="completed",
+        conclusion="failure",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/10",
+        head_sha="sha",
+        blocks=[
+            gtbi_orchestrator.RunBlock(logical=4089, status="completed", conclusion="failure"),
+            gtbi_orchestrator.RunBlock(logical=4090, status="completed", conclusion="success"),
+        ],
+        job_names={"run_block"},
+        has_final_artifact=False,
+    )
+    successful_recovery = gtbi_orchestrator.RunInfo(
+        run_id=11,
+        status="completed",
+        conclusion="success",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/11",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=4091, status="completed", conclusion="success")],
+        job_names={"run_block"},
+        has_final_artifact=True,
+    )
+
+    assert gtbi_orchestrator.failed_recovery_slots([failed_recovery, successful_recovery], set()) == {
+        4089,
+        4090,
+    }
+
+
 def test_orchestrator_list_runs_paginates_github_api(monkeypatch: pytest.MonkeyPatch) -> None:
     requested_pages: list[str] = []
 
