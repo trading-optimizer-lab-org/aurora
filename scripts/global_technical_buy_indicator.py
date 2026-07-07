@@ -9531,6 +9531,59 @@ def merge_external_strategy_pack_outputs(
                 timeouts = pd.concat([timeouts, pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)], ignore_index=True, sort=False)
                 timing = pd.concat([timing, pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)], ignore_index=True, sort=False)
                 job_manifest = pd.concat([job_manifest, pd.DataFrame(manifest_rows, columns=JOB_MANIFEST_COLUMNS)], ignore_index=True, sort=False)
+    def drop_duplicate_strategy_rows(frame: pd.DataFrame, strategy_column: str) -> pd.DataFrame:
+        if frame.empty or strategy_column not in frame.columns:
+            return frame
+        return frame.drop_duplicates(subset=[strategy_column], keep="first").copy()
+
+    def drop_duplicate_detail_rows(frame: pd.DataFrame, strategy_column: str, keys: list[str]) -> pd.DataFrame:
+        if frame.empty or strategy_column not in frame.columns:
+            return frame
+        subset = [key for key in keys if key in frame.columns]
+        if strategy_column not in subset:
+            subset.insert(0, strategy_column)
+        if not subset:
+            return frame
+        return frame.drop_duplicates(subset=subset, keep="first").copy()
+
+    leaderboard = drop_duplicate_strategy_rows(leaderboard, "candidate_id")
+    filtered = drop_duplicate_strategy_rows(filtered, "candidate_id")
+    early_rejected = drop_duplicate_strategy_rows(early_rejected, "strategy_id")
+
+    leaderboard_ids = (
+        set(leaderboard["candidate_id"].dropna().astype(str))
+        if not leaderboard.empty and "candidate_id" in leaderboard.columns
+        else set()
+    )
+    if leaderboard_ids and not early_rejected.empty and "strategy_id" in early_rejected.columns:
+        early_rejected = early_rejected.loc[~early_rejected["strategy_id"].astype(str).isin(leaderboard_ids)].copy()
+
+    yearly = drop_duplicate_detail_rows(yearly, "candidate_id", ["candidate_id", "split", "year"])
+    trades = drop_duplicate_detail_rows(
+        trades,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "entry_price", "exit_price"],
+    )
+    symbol_entry_counts = drop_duplicate_detail_rows(symbol_entry_counts, "candidate_id", ["candidate_id", "year", "symbol"])
+    annual_equity = drop_duplicate_detail_rows(annual_equity, "candidate_id", ["candidate_id", "year"])
+    return_distribution = drop_duplicate_detail_rows(return_distribution, "candidate_id", ["candidate_id", "bucket"])
+    ticker_summary = drop_duplicate_detail_rows(ticker_summary, "candidate_id", ["candidate_id", "symbol"])
+    top_trades_by_return = drop_duplicate_detail_rows(
+        top_trades_by_return,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "trade_return_pct"],
+    )
+    bottom_trades_by_return = drop_duplicate_detail_rows(
+        bottom_trades_by_return,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "trade_return_pct"],
+    )
+    selected_symbol_trade_rows = drop_duplicate_detail_rows(
+        selected_symbol_trade_rows,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "trade_return_pct"],
+    )
+
     terminal_success_ids: set[str] = set()
     if not leaderboard.empty and "candidate_id" in leaderboard.columns:
         terminal_success_ids.update(str(value) for value in leaderboard["candidate_id"].dropna().astype(str) if str(value))
