@@ -5617,7 +5617,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,'
         '3ada236bc44c4926758d45e8847f260420ed1431,'
         'b9b7a4e732d8db0ed6b15a28e5a6745c24812c62,'
-        'b14ca727630be8b207e81cda134641f240cacbe2,${{ github.sha }}"'
+        'b14ca727630be8b207e81cda134641f240cacbe2,'
+        '161f4f21724b061048ff2bd2572834ce966b8f95,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
     assert "--run-list-limit 1000" in text
