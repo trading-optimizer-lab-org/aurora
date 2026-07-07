@@ -4945,7 +4945,7 @@ def test_orchestrator_extracts_timeout_and_slow_slots_from_artifact(tmp_path: Pa
 
 
 def test_orchestrator_keeps_failed_run_artifact_for_partial_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_gh_json(args: list[str]) -> dict:
+    def fake_gh_json(args: list[str], **_kwargs: object) -> dict:
         assert args[:2] == ["api", "/repos/trading-optimizer-lab-org/aurora/actions/runs/123/jobs?per_page=100&page=1"]
         return {
             "jobs": [
@@ -5799,7 +5799,7 @@ def test_longhold_orchestrator_retries_github_rate_limits() -> None:
     text = Path("scripts/orchestrate_gtbi_longhold_72k.py").read_text(encoding="utf-8")
 
     assert "rate limit exceeded" in text
-    assert "attempts = 12" in text
+    assert "12 if check else 1" in text
     assert "min(900, 120 * (attempt + 1))" in text
 
 

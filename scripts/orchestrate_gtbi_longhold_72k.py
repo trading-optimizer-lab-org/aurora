@@ -182,8 +182,14 @@ def recovery_config_for_round(recovery_round: int) -> RecoveryRoundConfig:
     return RecoveryRoundConfig(4, "symbol_bucket", 0, 10, 1800, 2100)
 
 
-def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) -> str:
-    attempts = 12 if check else 1
+def run_cmd(
+    args: list[str],
+    *,
+    check: bool = True,
+    timeout_seconds: int = 120,
+    attempts: int | None = None,
+) -> str:
+    attempts = (12 if check else 1) if attempts is None else max(int(attempts), 1)
     last_proc: subprocess.CompletedProcess[str] | None = None
     for attempt in range(attempts):
         try:
@@ -225,8 +231,8 @@ def run_cmd(args: list[str], *, check: bool = True, timeout_seconds: int = 120) 
     return last_proc.stdout
 
 
-def gh_json(args: list[str]) -> Any:
-    return json.loads(run_cmd(["gh", *args]))
+def gh_json(args: list[str], *, timeout_seconds: int = 120, attempts: int | None = None) -> Any:
+    return json.loads(run_cmd(["gh", *args], timeout_seconds=timeout_seconds, attempts=attempts))
 
 
 def parse_blocks(jobs: list[dict[str, Any]]) -> list[RunBlock]:
@@ -307,7 +313,11 @@ def run_jobs(repo: str, run_id: int) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
     page = 1
     while True:
-        data = gh_json(["api", f"/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}"])
+        data = gh_json(
+            ["api", f"/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}"],
+            timeout_seconds=30,
+            attempts=1,
+        )
         batch = data.get("jobs", [])
         jobs.extend(batch)
         if len(batch) < 100:
