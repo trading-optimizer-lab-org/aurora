@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 
 ARTIFACT_NAME = "global-technical-buy-indicator-external-pack-72000-results"
@@ -246,24 +247,38 @@ def parse_blocks(jobs: list[dict[str, Any]]) -> list[RunBlock]:
 
 
 def list_runs(repo: str, workflow: str, branch: str, limit: int) -> list[dict[str, Any]]:
-    output = run_cmd(
-        [
-            "gh",
-            "run",
-            "list",
-            "--repo",
-            repo,
-            "--workflow",
-            workflow,
-            "--branch",
-            branch,
-            "--limit",
-            str(limit),
-            "--json",
-            "databaseId,status,conclusion,createdAt,updatedAt,url,headSha",
-        ]
-    )
-    return json.loads(output)
+    del limit  # Historical CLI option; the orchestrator must not lose old runs.
+    runs: list[dict[str, Any]] = []
+    encoded_branch = quote(branch, safe="")
+    encoded_workflow = quote(workflow, safe="")
+    page = 1
+    while True:
+        data = gh_json(
+            [
+                "api",
+                f"/repos/{repo}/actions/workflows/{encoded_workflow}/runs"
+                f"?branch={encoded_branch}&per_page=100&page={page}",
+            ]
+        )
+        page_runs = data.get("workflow_runs", [])
+        if not page_runs:
+            break
+        for raw in page_runs:
+            runs.append(
+                {
+                    "databaseId": raw.get("id"),
+                    "status": raw.get("status"),
+                    "conclusion": raw.get("conclusion"),
+                    "createdAt": raw.get("created_at"),
+                    "updatedAt": raw.get("updated_at"),
+                    "url": raw.get("html_url"),
+                    "headSha": raw.get("head_sha"),
+                }
+            )
+        if len(page_runs) < 100:
+            break
+        page += 1
+    return runs
 
 
 def artifact_exists(repo: str, run_id: int) -> bool:

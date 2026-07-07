@@ -5032,6 +5032,73 @@ def test_orchestrator_reuses_completed_run_info_cache(monkeypatch: pytest.Monkey
     assert {info.run_id for info in infos} == {1, 2}
 
 
+def test_orchestrator_list_runs_paginates_github_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested_pages: list[str] = []
+
+    def fake_gh_json(args: list[str]) -> dict[str, object]:
+        endpoint = args[1]
+        requested_pages.append(endpoint)
+        page = endpoint.rsplit("page=", 1)[-1]
+        if page == "1":
+            return {
+                "workflow_runs": [
+                    {
+                        "id": idx,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "created_at": f"2026-07-06T10:{idx:02d}:00Z",
+                        "updated_at": f"2026-07-06T10:{idx:02d}:30Z",
+                        "html_url": f"https://example.invalid/{idx}",
+                        "head_sha": "sha-a",
+                    }
+                    for idx in range(100)
+                ]
+            }
+        if page == "2":
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 100,
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "created_at": "2026-07-06T11:40:00Z",
+                        "updated_at": "2026-07-06T11:41:00Z",
+                        "html_url": "https://example.invalid/100",
+                        "head_sha": "sha-b",
+                    }
+                ]
+            }
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(gtbi_orchestrator, "gh_json", fake_gh_json)
+
+    runs = gtbi_orchestrator.list_runs(
+        "trading-optimizer-lab-org/aurora",
+        "global-technical-buy-indicator-external-pack-360jobs.yml",
+        "codex/gtbi-github-only-external-pack-72000",
+        1000,
+    )
+
+    assert len(runs) == 101
+    assert requested_pages == [
+        "/repos/trading-optimizer-lab-org/aurora/actions/workflows/"
+        "global-technical-buy-indicator-external-pack-360jobs.yml/runs"
+        "?branch=codex%2Fgtbi-github-only-external-pack-72000&per_page=100&page=1",
+        "/repos/trading-optimizer-lab-org/aurora/actions/workflows/"
+        "global-technical-buy-indicator-external-pack-360jobs.yml/runs"
+        "?branch=codex%2Fgtbi-github-only-external-pack-72000&per_page=100&page=2",
+    ]
+    assert runs[100] == {
+        "databaseId": 100,
+        "status": "in_progress",
+        "conclusion": None,
+        "createdAt": "2026-07-06T11:40:00Z",
+        "updatedAt": "2026-07-06T11:41:00Z",
+        "url": "https://example.invalid/100",
+        "headSha": "sha-b",
+    }
+
+
 def test_orchestrator_recovery_dispatch_uses_long_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
@@ -5461,7 +5528,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '76dfe249f60852ca50861dc69f498cb97599e12d,'
         '82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,'
         '3ada236bc44c4926758d45e8847f260420ed1431,'
-        'b9b7a4e732d8db0ed6b15a28e5a6745c24812c62,${{ github.sha }}"'
+        'b9b7a4e732d8db0ed6b15a28e5a6745c24812c62,'
+        'b14ca727630be8b207e81cda134641f240cacbe2,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
     assert "--run-list-limit 1000" in text
