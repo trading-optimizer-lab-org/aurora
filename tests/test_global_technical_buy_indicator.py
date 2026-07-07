@@ -4982,6 +4982,56 @@ def test_orchestrator_keeps_failed_run_artifact_for_partial_coverage(monkeypatch
     assert info.failed_logicals == [541]
 
 
+def test_orchestrator_reuses_completed_run_info_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    cached = gtbi_orchestrator.RunInfo(
+        run_id=1,
+        status="completed",
+        conclusion="success",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/1",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=0, status="completed", conclusion="success")],
+        job_names={"run_block", "merge_final"},
+        has_final_artifact=True,
+    )
+    active = gtbi_orchestrator.RunInfo(
+        run_id=2,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:11:00Z",
+        url="https://example.invalid/2",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=1, status="in_progress", conclusion=None)],
+        job_names={"run_block", "merge_final"},
+        has_final_artifact=False,
+    )
+    calls: list[int] = []
+
+    def fake_load_run_info(_repo: str, raw: dict[str, object], _artifact_cache: dict[int, bool]) -> gtbi_orchestrator.RunInfo:
+        calls.append(int(raw["databaseId"]))
+        return active
+
+    monkeypatch.setattr(gtbi_orchestrator, "load_run_info", fake_load_run_info)
+    run_info_cache = {1: cached}
+
+    infos, failures = gtbi_orchestrator.load_runs_info(
+        "trading-optimizer-lab-org/aurora",
+        [
+            {"databaseId": 1, "updatedAt": "2026-07-06T10:10:00Z"},
+            {"databaseId": 2, "updatedAt": "2026-07-06T10:11:00Z"},
+        ],
+        {},
+        run_info_cache,
+        max_workers=1,
+    )
+
+    assert failures == 0
+    assert calls == [2]
+    assert {info.run_id for info in infos} == {1, 2}
+
+
 def test_orchestrator_recovery_dispatch_uses_long_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
@@ -5408,7 +5458,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         'e7dd3de7066a04ef7029ce758e74a4e5248c0e12,'
         'bc02a1a543135d33fd629b7a30569ec3e010b4e1,'
         '5195ce3457c9baeac7eb68c3b7c329f4171bf65f,'
-        '76dfe249f60852ca50861dc69f498cb97599e12d,${{ github.sha }}"'
+        '76dfe249f60852ca50861dc69f498cb97599e12d,'
+        '82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
     assert "--run-list-limit 240" in text

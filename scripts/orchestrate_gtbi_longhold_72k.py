@@ -445,20 +445,39 @@ def load_runs_info(
     repo: str,
     raw_runs: list[dict[str, Any]],
     artifact_cache: dict[int, bool],
+    run_info_cache: dict[int, RunInfo] | None = None,
     *,
     max_workers: int = 8,
 ) -> tuple[list[RunInfo], int]:
     infos: list[RunInfo] = []
     failures = 0
+    run_info_cache = run_info_cache if run_info_cache is not None else {}
+    to_load: list[dict[str, Any]] = []
+    for raw in raw_runs:
+        run_id = int(raw["databaseId"])
+        cached = run_info_cache.get(run_id)
+        raw_updated_at = str(raw.get("updatedAt") or "")
+        if (
+            cached is not None
+            and cached.is_completed
+            and cached.updated_at == raw_updated_at
+            and (cached.has_final_artifact or cached.conclusion == "cancelled")
+        ):
+            infos.append(cached)
+        else:
+            to_load.append(raw)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
             pool.submit(load_run_info, repo, raw, artifact_cache): int(raw["databaseId"])
-            for raw in raw_runs
+            for raw in to_load
         }
         for future in as_completed(futures):
             run_id = futures[future]
             try:
-                infos.append(future.result())
+                info = future.result()
+                infos.append(info)
+                if info.is_completed and (info.has_final_artifact or info.conclusion == "cancelled"):
+                    run_info_cache[run_id] = info
             except Exception as exc:  # noqa: BLE001 - keep GitHub hiccups from killing orchestration
                 failures += 1
                 print(f"warning: could not inspect run {run_id}: {exc}", flush=True)
@@ -1045,6 +1064,7 @@ def main() -> int:
     }
     deadline = time.monotonic() + max(args.loop_minutes, 1) * 60
     artifact_cache: dict[int, bool] = {}
+    run_info_cache: dict[int, RunInfo] = {}
     artifact_inspection_cache: dict[int, ArtifactInspection] = {}
     recovery_round_by_slot: dict[int, int] = {}
     pending_recovery_slots: set[int] = set()
@@ -1077,6 +1097,7 @@ def main() -> int:
             args.repo,
             raw_runs,
             artifact_cache,
+            run_info_cache,
             max_workers=max(args.inspect_workers, 1),
         )
         print(f"inspected runs: {len(runs)}", flush=True)
