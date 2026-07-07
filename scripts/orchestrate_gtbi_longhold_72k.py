@@ -844,6 +844,60 @@ def completed_merge_run(runs: list[RunInfo], excluded: set[int]) -> RunInfo | No
     return None
 
 
+def artifact_inspection_candidates(runs: list[RunInfo], excluded: set[int]) -> list[RunInfo]:
+    return [
+        run
+        for run in runs
+        if run.run_id not in excluded
+        and run.is_completed
+        and run.has_final_artifact
+        and run.conclusion != "cancelled"
+        and bool(run.blocks)
+    ]
+
+
+def preload_artifact_inspections(
+    *,
+    repo: str,
+    runs: list[RunInfo],
+    excluded: set[int],
+    artifact_root: Path,
+    artifact_inspection_cache: dict[int, ArtifactInspection],
+    max_workers: int = 8,
+) -> int:
+    candidates = [
+        run
+        for run in artifact_inspection_candidates(runs, excluded)
+        if run.run_id not in artifact_inspection_cache
+    ]
+    if not candidates:
+        return 0
+    print(
+        f"preloading {len(candidates)} artifact inspections with {max_workers} workers",
+        flush=True,
+    )
+    failures = 0
+    with ThreadPoolExecutor(max_workers=max(max_workers, 1)) as pool:
+        futures = {
+            pool.submit(
+                download_and_inspect_artifact,
+                repo,
+                run.run_id,
+                artifact_root,
+                artifact_inspection_cache,
+            ): run.run_id
+            for run in candidates
+        }
+        for future in as_completed(futures):
+            run_id = futures[future]
+            try:
+                future.result()
+            except Exception as exc:  # noqa: BLE001 - transient artifact failures are retried next pass
+                failures += 1
+                print(f"warning: could not preload artifact {run_id}: {exc}", flush=True)
+    return failures
+
+
 def dispatch_next_actions(
     *,
     repo: str,
@@ -858,6 +912,7 @@ def dispatch_next_actions(
     artifact_inspection_cache: dict[int, ArtifactInspection],
     recovery_round_by_slot: dict[int, int],
     recovery_manifest_dir: Path,
+    artifact_workers: int = 8,
 ) -> bool:
     changed = False
     cancel_duplicate_active_waves(repo, runs, excluded)
@@ -896,6 +951,17 @@ def dispatch_next_actions(
     if len(chosen_waves) < TOTAL_WAVES:
         print(f"waiting: {len(chosen_waves)}/{TOTAL_WAVES} waves have usable active/completed runs")
         return False
+
+    preload_failures = preload_artifact_inspections(
+        repo=repo,
+        runs=runs,
+        excluded=excluded,
+        artifact_root=artifact_root,
+        artifact_inspection_cache=artifact_inspection_cache,
+        max_workers=artifact_workers,
+    )
+    if preload_failures:
+        print(f"warning: {preload_failures} artifact inspections failed during preload", flush=True)
 
     completed_recovery_unresolved: set[int] = set()
     for run in sorted(runs, key=lambda item: item.created_at):
@@ -1175,6 +1241,7 @@ def main() -> int:
             artifact_inspection_cache=artifact_inspection_cache,
             recovery_round_by_slot=recovery_round_by_slot,
             recovery_manifest_dir=args.recovery_manifest_dir,
+            artifact_workers=max(args.inspect_workers, 1),
         )
         merge = completed_merge_run(runs, excluded)
         if merge is not None:

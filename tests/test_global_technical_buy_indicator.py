@@ -5067,6 +5067,82 @@ def test_orchestrator_failed_recovery_slots_are_retryable() -> None:
     }
 
 
+def test_orchestrator_preloads_only_completed_artifact_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    eligible = gtbi_orchestrator.RunInfo(
+        run_id=21,
+        status="completed",
+        conclusion="success",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/21",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=1, status="completed", conclusion="success")],
+        job_names={"run_block", "merge_final"},
+        has_final_artifact=True,
+    )
+    active = gtbi_orchestrator.RunInfo(
+        run_id=22,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/22",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=2, status="in_progress", conclusion=None)],
+        job_names={"run_block"},
+        has_final_artifact=False,
+    )
+    merge_only = gtbi_orchestrator.RunInfo(
+        run_id=23,
+        status="completed",
+        conclusion="success",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/23",
+        head_sha="sha",
+        blocks=[],
+        job_names={"merge_cross_run"},
+        has_final_artifact=True,
+    )
+    calls: list[int] = []
+
+    def fake_download(
+        _repo: str,
+        run_id: int,
+        _artifact_root: Path,
+        cache: dict[int, gtbi_orchestrator.ArtifactInspection],
+    ) -> gtbi_orchestrator.ArtifactInspection:
+        calls.append(run_id)
+        inspection = gtbi_orchestrator.ArtifactInspection(
+            run_id=run_id,
+            timeout_slots=set(),
+            slow_deferred_slots=set(),
+            runtime_error_slots=set(),
+            unsupported_slots=set(),
+            recoverable_records={},
+            synthetic_missing_timeout_rows=0,
+            fill_missing_timeouts_enabled=False,
+        )
+        cache[run_id] = inspection
+        return inspection
+
+    monkeypatch.setattr(gtbi_orchestrator, "download_and_inspect_artifact", fake_download)
+    cache: dict[int, gtbi_orchestrator.ArtifactInspection] = {}
+
+    failures = gtbi_orchestrator.preload_artifact_inspections(
+        repo="trading-optimizer-lab-org/aurora",
+        runs=[eligible, active, merge_only],
+        excluded=set(),
+        artifact_root=tmp_path,
+        artifact_inspection_cache=cache,
+        max_workers=2,
+    )
+
+    assert failures == 0
+    assert calls == [21]
+    assert set(cache) == {21}
+
+
 def test_orchestrator_list_runs_paginates_github_api(monkeypatch: pytest.MonkeyPatch) -> None:
     requested_pages: list[str] = []
 
@@ -5618,7 +5694,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
         '3ada236bc44c4926758d45e8847f260420ed1431,'
         'b9b7a4e732d8db0ed6b15a28e5a6745c24812c62,'
         'b14ca727630be8b207e81cda134641f240cacbe2,'
-        '161f4f21724b061048ff2bd2572834ce966b8f95,${{ github.sha }}"'
+        '161f4f21724b061048ff2bd2572834ce966b8f95,'
+        'ff72d6b1ff5a9ce0fea180ec2a207da8cc1250e3,${{ github.sha }}"'
     ) in text
     assert "--sleep-seconds 60" in text
     assert "--run-list-limit 1000" in text
