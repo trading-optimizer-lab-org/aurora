@@ -20,7 +20,7 @@ ARTIFACT_NAME = "global-technical-buy-indicator-external-pack-72000-results"
 WORKFLOW_FILE = "global-technical-buy-indicator-external-pack-360jobs.yml"
 BRANCH = "codex/gtbi-github-only-external-pack-72000"
 PACK_PATH = "scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1"
-VALIDATED_SHA = ""
+VALIDATED_SHA = "af95e2145a3009c912c1a877fdecc35bc59e7d52,c7f1623d91089424fb31c11c3755d565ef5e5a30"
 ORIGINAL_SHARDS = 360
 STRATEGIES_PER_SHARD = 200
 WAVE_LOGICAL_JOBS = 180
@@ -1152,7 +1152,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recovery-wall-clock-seconds", type=int, default=DEFAULT_RECOVERY_WALL_CLOCK_SECONDS)
     parser.add_argument("--artifact-inspection-root", type=Path, default=Path(".gtbi-orchestrator-artifacts"))
     parser.add_argument("--recovery-manifest-dir", type=Path, default=Path("recovery-manifests"))
-    parser.add_argument("--validated-sha", default=os.environ.get("GITHUB_SHA", VALIDATED_SHA))
+    default_validated_sha = ",".join(
+        item for item in (os.environ.get("GITHUB_SHA", ""), VALIDATED_SHA) if item
+    )
+    parser.add_argument("--validated-sha", default=default_validated_sha)
     parser.add_argument(
         "--exclude-run-ids",
         default=(
