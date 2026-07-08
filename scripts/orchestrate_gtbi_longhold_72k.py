@@ -832,7 +832,7 @@ def failed_recovery_slots(runs: list[RunInfo], excluded: set[int]) -> set[int]:
         for logical in run.logicals:
             if 0 <= logical < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
                 failed.add(logical)
-    return failed - recovery_slots_covered(runs, excluded)
+    return failed
 
 
 def active_logical_jobs(runs: list[RunInfo], excluded: set[int]) -> int:
@@ -931,8 +931,7 @@ def dispatch_next_actions(
 ) -> bool:
     changed = False
     cancelled_waves = cancel_duplicate_active_waves(repo, runs, excluded)
-    cancelled_recoveries = cancel_duplicate_active_recoveries(repo, runs, excluded)
-    if cancelled_waves or cancelled_recoveries:
+    if cancelled_waves:
         return True
     # Intentional subgroup recoveries share the same logical slots, so the old
     # duplicate-canceller would kill valid round fanout.
