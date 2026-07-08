@@ -129,7 +129,7 @@ jobs:
             --workflow "global-technical-buy-indicator-external-pack-360jobs.yml" \
             --loop-minutes 300 \
             --sleep-seconds 60 \
-            --run-list-limit 1000 \
+            --run-list-limit 5000 \
             --min-run-created-at "2026-07-06T07:00:00Z" \
             --inspect-workers 32 \
             --max-parallel-logical-jobs 360 \
