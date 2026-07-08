@@ -5063,6 +5063,35 @@ def test_orchestrator_failed_recovery_slots_are_retryable() -> None:
     }
 
 
+def test_orchestrator_does_not_retry_failed_recovery_slot_when_active_duplicate_covers_it() -> None:
+    failed_recovery = gtbi_orchestrator.RunInfo(
+        run_id=12,
+        status="completed",
+        conclusion="cancelled",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/12",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=2210, status="completed", conclusion="cancelled")],
+        job_names={"run_block"},
+        has_final_artifact=False,
+    )
+    active_duplicate = gtbi_orchestrator.RunInfo(
+        run_id=13,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:01:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/13",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=2210, status="in_progress", conclusion=None)],
+        job_names={"run_block"},
+        has_final_artifact=False,
+    )
+
+    assert gtbi_orchestrator.failed_recovery_slots([failed_recovery, active_duplicate], set()) == set()
+
+
 def test_orchestrator_preloads_only_completed_artifact_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     eligible = gtbi_orchestrator.RunInfo(
         run_id=21,
