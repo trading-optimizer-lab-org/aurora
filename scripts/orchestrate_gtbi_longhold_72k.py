@@ -20,14 +20,19 @@ ARTIFACT_NAME = "global-technical-buy-indicator-external-pack-72000-results"
 WORKFLOW_FILE = "global-technical-buy-indicator-external-pack-360jobs.yml"
 BRANCH = "codex/gtbi-github-only-external-pack-72000"
 PACK_PATH = "scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1"
-VALIDATED_SHA = "af95e2145a3009c912c1a877fdecc35bc59e7d52,c7f1623d91089424fb31c11c3755d565ef5e5a30"
+VALIDATED_SHA = (
+    "af95e2145a3009c912c1a877fdecc35bc59e7d52,"
+    "c7f1623d91089424fb31c11c3755d565ef5e5a30,"
+    "32d836538b1e6ab44bc25e008099e18ef968fbbb"
+)
 ORIGINAL_SHARDS = 360
 STRATEGIES_PER_SHARD = 200
 WAVE_LOGICAL_JOBS = 180
 TOTAL_WAVES = 40
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 1800
 DEFAULT_RECOVERY_WALL_CLOCK_SECONDS = 2100
-DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK = 1
+DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK = 10
+MAX_RECOVERY_MATRIX_BLOCKS = 180
 RECOVERY_MANIFEST_COLUMNS = [
     "strategy_id",
     "logical_job_id",
@@ -49,7 +54,7 @@ RECOVERY_MANIFEST_COLUMNS = [
 ]
 
 
-RUN_BLOCK_RE = re.compile(r"run_block \((\d+),\s*([^,]+),\s*(\d+),\s*(\d+)\)")
+RUN_BLOCK_RE = re.compile(r"^run_block \((\d+),\s*([^,]+),\s*(.+),\s*(\d+)\)$")
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,7 @@ class RunBlock:
     logical: int
     status: str
     conclusion: str | None
+    matrix_block: int = 0
 
 
 @dataclass
@@ -70,6 +76,7 @@ class RunInfo:
     head_sha: str
     blocks: list[RunBlock]
     job_names: set[str]
+    display_title: str = ""
     has_final_artifact: bool = False
 
     @property
@@ -174,12 +181,12 @@ class RecoveryRoundConfig:
 def recovery_config_for_round(recovery_round: int) -> RecoveryRoundConfig:
     round_number = max(1, min(int(recovery_round), 4))
     if round_number == 1:
-        return RecoveryRoundConfig(1, "signal_subgroup", 5, 0, 900, 1200)
+        return RecoveryRoundConfig(1, "signal_subgroup", 1, 0, 900, 1200)
     if round_number == 2:
-        return RecoveryRoundConfig(2, "signal_subgroup", 10, 0, 1800, 2100)
+        return RecoveryRoundConfig(2, "signal_subgroup", 1, 0, 1800, 2100)
     if round_number == 3:
-        return RecoveryRoundConfig(3, "signal_subgroup", 20, 0, 1800, 2100)
-    return RecoveryRoundConfig(4, "symbol_bucket", 0, 10, 1800, 2100)
+        return RecoveryRoundConfig(3, "symbol_bucket", 0, 10, 1800, 2100)
+    return RecoveryRoundConfig(4, "symbol_bucket", 0, 20, 1800, 2100)
 
 
 def run_cmd(
@@ -242,13 +249,19 @@ def parse_blocks(jobs: list[dict[str, Any]]) -> list[RunBlock]:
         match = RUN_BLOCK_RE.match(name)
         if not match:
             continue
-        blocks.append(
-            RunBlock(
-                logical=int(match.group(3)),
-                status=str(job.get("status") or ""),
-                conclusion=job.get("conclusion"),
+        logicals = [int(value.strip()) for value in match.group(3).split(",") if value.strip()]
+        declared_count = int(match.group(4))
+        if declared_count != len(logicals):
+            continue
+        for logical in logicals:
+            blocks.append(
+                RunBlock(
+                    logical=logical,
+                    status=str(job.get("status") or ""),
+                    conclusion=job.get("conclusion"),
+                    matrix_block=int(match.group(1)),
+                )
             )
-        )
     return sorted(blocks, key=lambda block: block.logical)
 
 
@@ -291,6 +304,7 @@ def list_runs(
                     "updatedAt": raw.get("updated_at"),
                     "url": raw.get("html_url"),
                     "headSha": raw.get("head_sha"),
+                    "displayTitle": raw.get("display_title"),
                 }
             )
         if len(page_runs) < 100:
@@ -481,6 +495,7 @@ def load_run_info(repo: str, run: dict[str, Any], artifact_cache: dict[int, bool
         head_sha=str(run.get("headSha") or ""),
         blocks=parse_blocks(jobs),
         job_names={str(job.get("name") or "") for job in jobs},
+        display_title=str(run.get("displayTitle") or ""),
         has_final_artifact=has_artifact,
     )
 
@@ -687,7 +702,12 @@ def dispatch_recovery_slots(
     available = max(max_parallel_logical_jobs - active_count, 0)
     if available <= 0:
         return []
-    max_slots = max(available // fanout, 1)
+    max_slots_by_capacity = max(
+        (available * DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK) // fanout,
+        1,
+    )
+    max_slots_by_matrix = MAX_RECOVERY_MATRIX_BLOCKS * DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK
+    max_slots = min(max_slots_by_capacity, max_slots_by_matrix)
     launch_slots = slots_by_round[round_number][:max_slots]
     if not launch_slots:
         return []
@@ -816,23 +836,61 @@ def recovery_slots_covered(runs: list[RunInfo], excluded: set[int], *, completed
                 continue
         elif not (run.is_active or completed):
             continue
-        for logical in run.logicals:
-            if 0 <= logical < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
-                covered.add(logical)
+        for block in run.blocks:
+            if completed_only:
+                usable = block.status == "completed" and block.conclusion == "success"
+            elif run.is_active:
+                usable = block.status != "completed" or block.conclusion == "success"
+            else:
+                usable = block.status == "completed" and block.conclusion == "success"
+            if usable and 0 <= block.logical < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
+                covered.add(block.logical)
     return covered
 
 
+def _recovery_partition_key(run: RunInfo) -> str:
+    title = str(run.display_title or "")
+    if "symbol_bucket" not in title:
+        return "whole"
+    match = re.search(r"partition=(\d+)/(\d+)", title)
+    if match is None:
+        return title
+    return f"symbol_bucket:{match.group(1)}/{match.group(2)}"
+
+
 def failed_recovery_slots(runs: list[RunInfo], excluded: set[int]) -> set[int]:
-    failed: set[int] = set()
+    successful: set[tuple[int, str]] = set()
+    for run in runs:
+        if (
+            run.run_id in excluded
+            or run.is_full_wave_shape
+            or not run.is_completed
+            or not run.has_final_artifact
+            or run.conclusion == "cancelled"
+        ):
+            continue
+        partition_key = _recovery_partition_key(run)
+        for block in run.blocks:
+            if block.status == "completed" and block.conclusion == "success":
+                successful.add((block.logical, partition_key))
+
+    failed: set[tuple[int, str]] = set()
     for run in runs:
         if run.run_id in excluded or run.is_full_wave_shape or not run.is_completed:
             continue
         if run.conclusion != "failure" and run.has_final_artifact:
             continue
-        for logical in run.logicals:
-            if 0 <= logical < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
-                failed.add(logical)
-    return failed
+        partition_key = _recovery_partition_key(run)
+        failed_blocks = [
+            block
+            for block in run.blocks
+            if block.status == "completed" and block.conclusion not in {"success", "skipped"}
+        ]
+        candidate_blocks = run.blocks if not run.has_final_artifact else (failed_blocks or run.blocks)
+        for block in candidate_blocks:
+            if 0 <= block.logical < ORIGINAL_SHARDS * STRATEGIES_PER_SHARD:
+                failed.add((block.logical, partition_key))
+    return {logical for logical, key in failed - successful}
 
 
 def active_logical_jobs(runs: list[RunInfo], excluded: set[int]) -> int:
@@ -841,8 +899,93 @@ def active_logical_jobs(runs: list[RunInfo], excluded: set[int]) -> int:
         if run.run_id in excluded:
             continue
         if run.is_active:
-            total += sum(1 for block in run.blocks if block.status != "completed")
+            total += len(
+                {
+                    block.matrix_block
+                    for block in run.blocks
+                    if block.status != "completed"
+                }
+            )
     return total
+
+
+def estimated_pending_recovery_blocks(
+    pending_slots: set[int],
+    observed_slots: set[int],
+) -> int:
+    invisible_count = len(set(pending_slots) - set(observed_slots))
+    if invisible_count <= 0:
+        return 0
+    return (
+        invisible_count + DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK - 1
+    ) // DEFAULT_RECOVERY_LOGICAL_JOBS_PER_BLOCK
+
+
+def active_recovery_run_ids(runs: list[RunInfo], excluded: set[int]) -> list[int]:
+    return sorted(
+        run.run_id
+        for run in runs
+        if run.run_id not in excluded
+        and not run.is_full_wave_shape
+        and run.is_active
+        and bool(run.blocks)
+    )
+
+
+def recovery_round_from_run(run: RunInfo) -> int:
+    title = str(run.display_title or "")
+    if "recovery=true" not in title:
+        return 0
+    if "symbol_bucket" in title:
+        match = re.search(r"partition=\d+/(\d+)", title)
+        bucket_count = int(match.group(1)) if match is not None else 0
+        return 4 if bucket_count >= 20 else 3
+    match = re.search(r"timeout=(\d+)", title)
+    timeout_seconds = int(match.group(1)) if match is not None else 0
+    return 2 if timeout_seconds >= 1800 else 1
+
+
+def infer_recovery_rounds(runs: list[RunInfo]) -> dict[int, int]:
+    rounds: dict[int, int] = {}
+    for run in runs:
+        round_number = recovery_round_from_run(run)
+        if round_number <= 0 or run.is_full_wave_shape:
+            continue
+        for logical in run.logicals:
+            rounds[logical] = max(rounds.get(logical, 0), round_number)
+    return rounds
+
+
+def select_recovery_source_runs(runs: list[RunInfo], excluded: set[int]) -> list[RunInfo]:
+    selected: dict[tuple[Any, ...], RunInfo] = {}
+    for run in sorted(runs, key=lambda item: item.created_at):
+        if (
+            run.run_id in excluded
+            or run.is_full_wave_shape
+            or not run.is_completed
+            or not run.has_final_artifact
+            or run.conclusion == "cancelled"
+            or not run.blocks
+        ):
+            continue
+        logicals = tuple(run.logicals)
+        if "symbol_bucket" in run.display_title:
+            key: tuple[Any, ...] = ("symbol_bucket", logicals, run.display_title)
+        else:
+            key = ("complete", logicals)
+        previous = selected.get(key)
+        if previous is None:
+            selected[key] = run
+            continue
+        previous_successes = sum(block.conclusion == "success" for block in previous.blocks)
+        run_successes = sum(block.conclusion == "success" for block in run.blocks)
+        if (run_successes, run.conclusion == "success", run.created_at) >= (
+            previous_successes,
+            previous.conclusion == "success",
+            previous.created_at,
+        ):
+            selected[key] = run
+    return sorted(selected.values(), key=lambda item: item.created_at)
 
 
 def completed_merge_run(runs: list[RunInfo], excluded: set[int]) -> RunInfo | None:
@@ -937,6 +1080,11 @@ def dispatch_next_actions(
     # duplicate-canceller would kill valid round fanout.
     chosen_waves = choose_wave_runs(runs, excluded)
     active_count = active_logical_jobs(runs, excluded)
+    observed_recovery_slots = recovery_slots_covered(runs, excluded)
+    active_count += estimated_pending_recovery_blocks(
+        pending_recovery_slots,
+        observed_recovery_slots,
+    )
 
     launched = 0
     for wave in range(TOTAL_WAVES):
@@ -1088,15 +1236,13 @@ def dispatch_next_actions(
         print("waiting: recoveries still needed")
         return False
 
+    active_recoveries = active_recovery_run_ids(runs, excluded)
+    if active_recoveries:
+        print(f"waiting: recovery runs still active: {active_recoveries[:20]}")
+        return False
+
     recovery_source_ids = [
-        run.run_id
-        for run in sorted(runs, key=lambda item: item.created_at)
-        if run.run_id not in excluded
-        and not run.is_full_wave_shape
-        and run.is_completed
-        and run.has_final_artifact
-        and run.conclusion != "cancelled"
-        and run.blocks
+        run.run_id for run in select_recovery_source_runs(runs, excluded)
     ]
     source_run_ids.extend(recovery_source_ids)
     source_csv = ",".join(str(run_id) for run_id in dict.fromkeys(source_run_ids))
@@ -1233,6 +1379,11 @@ def main() -> int:
             print(f"warning: skipped {load_failures} runs due to inspect errors", flush=True)
         if validated_shas:
             runs = [run for run in runs if run.head_sha in validated_shas]
+        for slot, round_number in infer_recovery_rounds(runs).items():
+            recovery_round_by_slot[slot] = max(
+                recovery_round_by_slot.get(slot, 0),
+                round_number,
+            )
         changed = dispatch_next_actions(
             repo=args.repo,
             branch=args.branch,

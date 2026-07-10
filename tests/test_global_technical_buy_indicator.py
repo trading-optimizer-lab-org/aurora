@@ -5063,6 +5063,176 @@ def test_orchestrator_failed_recovery_slots_are_retryable() -> None:
     }
 
 
+def test_orchestrator_does_not_retry_slot_already_completed_elsewhere() -> None:
+    failed = gtbi_orchestrator.RunInfo(
+        run_id=31,
+        status="completed",
+        conclusion="failure",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/31",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=4089, status="completed", conclusion="failure")],
+        job_names={"run_block"},
+        has_final_artifact=True,
+    )
+    completed = gtbi_orchestrator.RunInfo(
+        run_id=32,
+        status="completed",
+        conclusion="success",
+        created_at="2026-07-06T10:01:00Z",
+        updated_at="2026-07-06T10:11:00Z",
+        url="https://example.invalid/32",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=4089, status="completed", conclusion="success")],
+        job_names={"run_block"},
+        has_final_artifact=True,
+    )
+
+    assert gtbi_orchestrator.failed_recovery_slots([failed, completed], set()) == set()
+
+
+def test_orchestrator_parses_multi_logical_block_as_one_active_runner() -> None:
+    blocks = gtbi_orchestrator.parse_blocks(
+        [
+            {
+                "name": "run_block (7, 007, 4089,4090,4091, 3)",
+                "status": "in_progress",
+                "conclusion": None,
+            }
+        ]
+    )
+    run = gtbi_orchestrator.RunInfo(
+        run_id=33,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:01:00Z",
+        url="https://example.invalid/33",
+        head_sha="sha",
+        blocks=blocks,
+        job_names={"run_block"},
+    )
+
+    assert [block.logical for block in blocks] == [4089, 4090, 4091]
+    assert gtbi_orchestrator.active_logical_jobs([run], set()) == 1
+
+
+def test_orchestrator_selects_one_identical_recovery_artifact_but_keeps_symbol_buckets() -> None:
+    def make_run(run_id: int, title: str) -> gtbi_orchestrator.RunInfo:
+        return gtbi_orchestrator.RunInfo(
+            run_id=run_id,
+            status="completed",
+            conclusion="success",
+            created_at=f"2026-07-06T10:0{run_id}:00Z",
+            updated_at=f"2026-07-06T10:1{run_id}:00Z",
+            url=f"https://example.invalid/{run_id}",
+            head_sha="sha",
+            blocks=[gtbi_orchestrator.RunBlock(logical=4089, status="completed", conclusion="success")],
+            job_names={"run_block", "merge_final"},
+            display_title=title,
+            has_final_artifact=True,
+        )
+
+    duplicate_a = make_run(1, "Global Technical Buy Indicator External Pack 7200 Jobs")
+    duplicate_b = make_run(2, "Global Technical Buy Indicator External Pack 7200 Jobs")
+    bucket_0 = make_run(3, "GTBI recovery symbol_bucket partition=0/10")
+    bucket_1 = make_run(4, "GTBI recovery symbol_bucket partition=1/10")
+
+    selected = gtbi_orchestrator.select_recovery_source_runs(
+        [duplicate_a, duplicate_b, bucket_0, bucket_1],
+        set(),
+    )
+
+    assert [run.run_id for run in selected] == [2, 3, 4]
+
+
+def test_orchestrator_infers_progressive_rounds_from_recovery_run_titles() -> None:
+    def make_run(run_id: int, title: str, logical: int) -> gtbi_orchestrator.RunInfo:
+        return gtbi_orchestrator.RunInfo(
+            run_id=run_id,
+            status="completed",
+            conclusion="failure",
+            created_at=f"2026-07-06T10:0{run_id}:00Z",
+            updated_at=f"2026-07-06T10:1{run_id}:00Z",
+            url=f"https://example.invalid/{run_id}",
+            head_sha="sha",
+            blocks=[gtbi_orchestrator.RunBlock(logical=logical, status="completed", conclusion="failure")],
+            job_names={"run_block"},
+            display_title=title,
+            has_final_artifact=True,
+        )
+
+    rounds = gtbi_orchestrator.infer_recovery_rounds(
+        [
+            make_run(1, "GTBI mode=optimized_evaluation_v5_event_first timeout=900 partition=0/1 recovery=true", 10),
+            make_run(2, "GTBI mode=optimized_evaluation_v5_event_first timeout=1800 partition=0/1 recovery=true", 11),
+            make_run(3, "GTBI mode=optimized_evaluation_v5_event_first_symbol_bucket timeout=1800 partition=0/10 recovery=true", 12),
+            make_run(4, "GTBI mode=optimized_evaluation_v5_event_first_symbol_bucket timeout=1800 partition=0/20 recovery=true", 13),
+        ]
+    )
+
+    assert rounds == {10: 1, 11: 2, 12: 3, 13: 4}
+
+
+def test_orchestrator_symbol_bucket_failure_is_not_masked_by_other_bucket() -> None:
+    failed_bucket = gtbi_orchestrator.RunInfo(
+        run_id=41,
+        status="completed",
+        conclusion="failure",
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:10:00Z",
+        url="https://example.invalid/41",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=4089, status="completed", conclusion="failure")],
+        job_names={"run_block"},
+        display_title="GTBI mode=optimized_evaluation_v5_event_first_symbol_bucket timeout=1800 partition=0/10 recovery=true",
+        has_final_artifact=True,
+    )
+    successful_other_bucket = gtbi_orchestrator.RunInfo(
+        run_id=42,
+        status="completed",
+        conclusion="success",
+        created_at="2026-07-06T10:01:00Z",
+        updated_at="2026-07-06T10:11:00Z",
+        url="https://example.invalid/42",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=4089, status="completed", conclusion="success")],
+        job_names={"run_block"},
+        display_title="GTBI mode=optimized_evaluation_v5_event_first_symbol_bucket timeout=1800 partition=1/10 recovery=true",
+        has_final_artifact=True,
+    )
+
+    assert gtbi_orchestrator.failed_recovery_slots(
+        [failed_bucket, successful_other_bucket],
+        set(),
+    ) == {4089}
+
+
+def test_orchestrator_detects_active_recovery_before_final_merge() -> None:
+    active = gtbi_orchestrator.RunInfo(
+        run_id=51,
+        status="in_progress",
+        conclusion=None,
+        created_at="2026-07-06T10:00:00Z",
+        updated_at="2026-07-06T10:01:00Z",
+        url="https://example.invalid/51",
+        head_sha="sha",
+        blocks=[gtbi_orchestrator.RunBlock(logical=4089, status="in_progress", conclusion=None)],
+        job_names={"run_block"},
+        display_title="GTBI mode=optimized_evaluation_v5_event_first timeout=900 partition=0/1 recovery=true",
+    )
+
+    assert gtbi_orchestrator.active_recovery_run_ids([active], set()) == [51]
+
+
+def test_orchestrator_reserves_runner_capacity_for_dispatched_invisible_slots() -> None:
+    pending = set(range(1800))
+    observed = set(range(300))
+
+    assert gtbi_orchestrator.estimated_pending_recovery_blocks(pending, observed) == 150
+
+
 def test_orchestrator_preloads_only_completed_artifact_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     eligible = gtbi_orchestrator.RunInfo(
         run_id=21,
@@ -5203,6 +5373,7 @@ def test_orchestrator_list_runs_paginates_github_api(monkeypatch: pytest.MonkeyP
         "updatedAt": "2026-07-06T11:41:00Z",
         "url": "https://example.invalid/100",
         "headSha": "sha-b",
+        "displayTitle": None,
     }
 
 
@@ -5311,15 +5482,53 @@ def test_orchestrator_writes_recovery_manifest_with_required_columns(tmp_path: P
 
     manifest = pd.read_csv(path)
     assert list(manifest.columns) == gtbi_orchestrator.RECOVERY_MANIFEST_COLUMNS
-    assert len(manifest) == 5
-    assert set(manifest["subgroup_index"]) == {0, 1, 2, 3, 4}
-    assert manifest["subgroup_count"].unique().tolist() == [5]
+    assert len(manifest) == 1
+    assert set(manifest["subgroup_index"]) == {0}
+    assert manifest["subgroup_count"].unique().tolist() == [1]
     assert manifest["candidate_timeout_seconds"].unique().tolist() == [900]
     assert manifest["job_wall_clock_seconds"].unique().tolist() == [1200]
     assert manifest["strategy_id"].unique().tolist() == ["s1"]
 
 
-def test_orchestrator_dispatches_round_one_subgroups(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_orchestrator_round_one_runs_once_and_batches_ten_slots_per_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_cmd(args: list[str], *, check: bool = True) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(gtbi_orchestrator, "run_cmd", fake_run_cmd)
+    slots = list(range(5000))
+
+    launched = gtbi_orchestrator.dispatch_recovery_slots(
+        repo="trading-optimizer-lab-org/aurora",
+        branch="codex/gtbi-github-only-external-pack-72000",
+        slots=slots,
+        records={},
+        recovery_round_by_slot={},
+        max_parallel_logical_jobs=360,
+        active_count=0,
+        manifest_dir=tmp_path,
+    )
+
+    assert len(launched) == 1800
+    assert len(calls) == 1
+    args = calls[0]
+    assert "candidate_count_per_job=1" in args
+    assert "candidate_timeout_seconds=900" in args
+    assert "job_wall_clock_seconds=1200" in args
+    assert "logical_jobs_per_block=10" in args
+    assert "job_start_index=0" in args
+    assert "job_count=1" in args
+    manifest = pd.read_csv(tmp_path / "recovery_manifest_round_1.csv")
+    assert len(manifest) == 1800
+    assert manifest["subgroup_count"].unique().tolist() == [1]
+
+
+def test_orchestrator_dispatches_round_one_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def fake_run_cmd(args: list[str], *, check: bool = True) -> str:
@@ -5340,16 +5549,17 @@ def test_orchestrator_dispatches_round_one_subgroups(monkeypatch: pytest.MonkeyP
     )
 
     assert launched == [204, 403]
-    assert len(calls) == 5
+    assert len(calls) == 1
     for subgroup_index, args in enumerate(calls):
         assert "candidate_count_per_job=1" in args
         assert "candidate_timeout_seconds=900" in args
         assert "job_wall_clock_seconds=1200" in args
         assert f"job_start_index={subgroup_index}" in args
-        assert "job_count=5" in args
+        assert "job_count=1" in args
+        assert "logical_jobs_per_block=10" in args
         assert "recovery_job_indices=204,403" in args
     manifest = pd.read_csv(tmp_path / "recovery_manifest_round_1.csv")
-    assert len(manifest) == 10
+    assert len(manifest) == 2
 
 
 def test_orchestrator_dispatches_round_four_symbol_buckets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -5373,20 +5583,21 @@ def test_orchestrator_dispatches_round_four_symbol_buckets(monkeypatch: pytest.M
     )
 
     assert launched == [204]
-    assert len(calls) == 10
+    assert len(calls) == 20
     for bucket_index, args in enumerate(calls):
         assert "optimized_evaluation_mode=optimized_evaluation_v5_event_first_symbol_bucket" in args
         assert "candidate_count_per_job=1" in args
         assert "candidate_timeout_seconds=1800" in args
         assert "job_wall_clock_seconds=2100" in args
         assert f"job_start_index={bucket_index}" in args
-        assert "job_count=10" in args
+        assert "job_count=20" in args
+        assert "logical_jobs_per_block=10" in args
         assert "recovery_job_indices=204" in args
     manifest = pd.read_csv(tmp_path / "recovery_manifest_round_4.csv")
-    assert len(manifest) == 10
+    assert len(manifest) == 20
     assert manifest["partition_type"].unique().tolist() == ["symbol_bucket"]
-    assert set(manifest["symbol_bucket_index"]) == set(range(10))
-    assert manifest["symbol_bucket_count"].unique().tolist() == [10]
+    assert set(manifest["symbol_bucket_index"]) == set(range(20))
+    assert manifest["symbol_bucket_count"].unique().tolist() == [20]
 
 
 def test_orchestrator_main_once_dispatches_after_loading_runs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5673,28 +5884,11 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "--fill-missing-timeouts-reason" not in text
     assert "gtbi-longhold-orchestrator-recovery-manifests" in text
     assert "recovery-manifests" in text
-    assert (
-        '--validated-sha "1b866eef09b44ea21ff67038901aa620330ecd0f,'
-        '9458f22ee8c49eb18693bc62dbc4e0093bd2b477,'
-        'cf78ebf6e975ae41eced6b0964a7336abd12cda5,'
-        '000e7b35b020615baa0cc724fac67e3436174adf,'
-        'aa59907d1bd7fe80846b9b3f31d99259e2fa1568,'
-        '619dc3c3fe96499e1040bab225efaf2035bc953e,'
-        '40d7e6e68af25619a889fd587a5b9a1407bd93eb,'
-        '99908c9793223a8e18d4ea1fbbad4e2e5fd227ca,'
-        'e7dd3de7066a04ef7029ce758e74a4e5248c0e12,'
-        'bc02a1a543135d33fd629b7a30569ec3e010b4e1,'
-        '5195ce3457c9baeac7eb68c3b7c329f4171bf65f,'
-        '76dfe249f60852ca50861dc69f498cb97599e12d,'
-        '82f8d2e9579b58e0e9956537bdb8c327b01ea9d8,'
-        '3ada236bc44c4926758d45e8847f260420ed1431,'
-        'b9b7a4e732d8db0ed6b15a28e5a6745c24812c62,'
-        'b14ca727630be8b207e81cda134641f240cacbe2,'
-        '161f4f21724b061048ff2bd2572834ce966b8f95,'
-        'ff72d6b1ff5a9ce0fea180ec2a207da8cc1250e3,${{ github.sha }}"'
-    ) in text
+    assert "--validated-sha" not in text
+    assert "run-name:" in text
+    assert "recovery=${{ inputs.recovery_job_indices != '' }}" in text
     assert "--sleep-seconds 60" in text
-    assert "--run-list-limit 1000" in text
+    assert "--run-list-limit 5000" in text
     assert "--inspect-workers 32" in text
     assert '--min-run-created-at "2026-07-06T07:00:00Z"' in text
     assert 'SCHEDULE_ACTIVE_JOBS: "360"' in text
@@ -5715,6 +5909,8 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "merge_smoke" not in data["jobs"]
     assert "timeout-minutes: 75" in text
     assert "matrix: ${{ fromJson(needs.plan_blocks.outputs.matrix) }}" in text
+    assert "name: run_block (${{ matrix.block_index }}, ${{ matrix.block_padded }}, ${{ matrix.job_indices_csv }}, ${{ matrix.logical_jobs }})" in text
+    assert "recovery block still contains" in text
     assert "total_jobs={len(logical_jobs)}" in text
 
 

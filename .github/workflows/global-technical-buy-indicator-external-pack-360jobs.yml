@@ -1,4 +1,6 @@
 name: Global Technical Buy Indicator External Pack 7200 Jobs
+run-name: >-
+  GTBI mode=${{ inputs.optimized_evaluation_mode }} timeout=${{ inputs.candidate_timeout_seconds }} partition=${{ inputs.job_start_index }}/${{ inputs.job_count }} recovery=${{ inputs.recovery_job_indices != '' }}
 
 on:
   workflow_dispatch:
@@ -136,7 +138,6 @@ jobs:
             --max-new-waves-per-pass 2 \
             --recovery-timeout-seconds 1800 \
             --recovery-wall-clock-seconds 2100 \
-            --validated-sha "" \
             --self-dispatch
       - name: Upload recovery manifests
         if: always()
@@ -390,6 +391,7 @@ jobs:
           PY
 
   run_block:
+    name: run_block (${{ matrix.block_index }}, ${{ matrix.block_padded }}, ${{ matrix.job_indices_csv }}, ${{ matrix.logical_jobs }})
     if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' }}
     needs:
       - build_external_pack
@@ -506,6 +508,22 @@ jobs:
             rm -rf "outputs/job-$job_padded/_external_pack_data"
             echo "::endgroup::"
           done
+
+          if [ -n "${{ inputs.recovery_job_indices }}" ]; then
+            python - <<'PY'
+          import csv
+          import sys
+          from pathlib import Path
+
+          timeout_rows = 0
+          for path in Path("outputs").rglob("timeout_strategies*.csv"):
+              with path.open(newline="", encoding="utf-8") as handle:
+                  timeout_rows += sum(1 for _ in csv.DictReader(handle))
+          if timeout_rows:
+              print(f"recovery block still contains {timeout_rows} timeout rows", file=sys.stderr)
+              raise SystemExit(42)
+          PY
+          fi
       - name: Upload block artifact
         if: always()
         uses: actions/upload-artifact@v4
