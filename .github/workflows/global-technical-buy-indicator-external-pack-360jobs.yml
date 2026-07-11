@@ -744,7 +744,10 @@ jobs:
               "artifact_name": f"gtbi-v6-plan-{os.environ['GITHUB_RUN_ID']}",
               "matrix_a": json.dumps({"include": selected_a}, separators=(",", ":")),
               "matrix_b": json.dumps({"include": selected_b}, separators=(",", ":")),
-              "block_matrix": Path("v6-plan/block_matrix.json").read_text(encoding="utf-8").strip(),
+              "block_matrix": json.dumps(
+                  json.loads(Path("v6-plan/block_matrix.json").read_text(encoding="utf-8")),
+                  separators=(",", ":"),
+              ),
               "selected_worker_ids": ",".join(str(row["worker_id"]) for row in selected),
               "count_a": str(len(selected_a)),
               "count_b": str(len(selected_b)),

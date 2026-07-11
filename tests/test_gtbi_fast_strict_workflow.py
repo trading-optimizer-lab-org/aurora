@@ -58,6 +58,8 @@ def test_v6_test_mode_runs_only_selected_workers_and_never_enters_full_reducers(
     assert publish["env"]["TEST_MODE"] == "${{ inputs.test_mode }}"
     assert publish["env"]["TEST_MAX_JOBS"] == "${{ inputs.test_max_jobs }}"
     assert "selected = all_workers[:limit]" in publish["run"]
+    assert '"block_matrix": json.dumps(' in publish["run"]
+    assert 'json.loads(Path("v6-plan/block_matrix.json")' in publish["run"]
 
     smoke = jobs["v6_smoke_validate"]
     assert smoke["needs"] == ["v6_plan", "v6_worker_a", "v6_worker_b"]
