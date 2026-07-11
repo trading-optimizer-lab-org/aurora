@@ -18,13 +18,22 @@ def _candidate(
     shard_id: int,
     slot_in_shard: int,
     stop_loss_pct: float = 0.08,
+    trailing_stop_pct: float = 0.18,
+    trailing_stop_type: str = "",
+    take_profit_pct: float = 0.0,
+    max_holding_days: int = 30,
+    breakout_lookback: int = 50,
     concept_id: str = "baseline",
     metadata: str = "research-a",
 ) -> gtbi.ExternalStrategyCandidate:
     config = gtbi.IndicatorConfig(
         family="minervini_sepa",
         stop_loss_pct=stop_loss_pct,
-        max_holding_days=30,
+        trailing_stop_pct=trailing_stop_pct,
+        trailing_stop_type=trailing_stop_type,
+        take_profit_pct=take_profit_pct,
+        max_holding_days=max_holding_days,
+        breakout_lookback=breakout_lookback,
     )
     payload = {
         "strategy_id": strategy_id,
@@ -32,7 +41,13 @@ def _candidate(
         "slot_in_shard": slot_in_shard,
         "concept_id": concept_id,
         "research_metadata": metadata,
-        "exit_rules": {"stop_loss_pct": stop_loss_pct},
+        "exit_rules": {
+            "stop_loss_pct": stop_loss_pct,
+            "trailing_stop_pct": trailing_stop_pct,
+            "trailing_stop_type": trailing_stop_type,
+            "take_profit_pct": take_profit_pct,
+            "max_holding_days": max_holding_days,
+        },
     }
     return gtbi.ExternalStrategyCandidate(payload, config, (), ())
 
@@ -47,6 +62,8 @@ def _plan_inputs(tmp_path: Path, **overrides: object) -> dict[str, object]:
         "worker_count": 2,
         "expected_strategy_count": 4,
         "expected_unique_group_count": None,
+        "expected_unique_signal_bundle_count": None,
+        "expected_exit_variants_per_signal": None,
         "code_sha": "code-sha",
         "data_run_identity": "data-run-1",
         "train_end": "2010-12-31",
@@ -85,6 +102,120 @@ def test_economic_hash_changes_when_effective_exit_changes() -> None:
     assert strict.economic_evaluation_hash(baseline) != strict.economic_evaluation_hash(changed_exit)
 
 
+def test_five_exit_variants_share_one_signal_hash_and_have_distinct_exit_hashes() -> None:
+    candidates = [
+        _candidate(
+            f"exit-{index}",
+            shard_id=0,
+            slot_in_shard=index,
+            stop_loss_pct=0.06 + index / 100,
+            trailing_stop_pct=0.10 + index / 100,
+            trailing_stop_type=("atr" if index == 4 else "percent"),
+            take_profit_pct=index / 100,
+            max_holding_days=20 + index,
+        )
+        for index in range(5)
+    ]
+
+    assert len({strict.signal_evaluation_hash(candidate) for candidate in candidates}) == 1
+    assert len({strict.exit_evaluation_hash(candidate) for candidate in candidates}) == 5
+
+
+def test_signal_hash_keeps_market_timing_fields_that_are_not_proven_exit_only() -> None:
+    baseline = _candidate("baseline", shard_id=0, slot_in_shard=0)
+    changed_market_timing = replace(
+        baseline,
+        config=replace(baseline.config, market_ma_days=150),
+    )
+
+    assert strict.signal_evaluation_hash(baseline) != strict.signal_evaluation_hash(changed_market_timing)
+
+
+def test_plan_rejects_signal_bundle_with_wrong_exit_variant_cardinality(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidates = [
+        _candidate(f"exit-{index}", shard_id=0, slot_in_shard=index, stop_loss_pct=0.06 + index / 100)
+        for index in range(4)
+    ]
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
+
+    with pytest.raises(ValueError, match="exit variants"):
+        strict.create_campaign_plan(
+            **_plan_inputs(
+                tmp_path,
+                worker_count=1,
+                expected_strategy_count=4,
+                expected_exit_variants_per_signal=5,
+            )
+        )
+
+
+def test_plan_assigns_whole_signal_bundles_deterministically(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidates = [
+        _candidate(
+            f"signal-{signal}-exit-{exit_index}",
+            shard_id=0,
+            slot_in_shard=signal * 5 + exit_index,
+            stop_loss_pct=0.05 + exit_index / 100,
+            concept_id=("q_stair_step_reclaim" if signal == 0 else "baseline"),
+            breakout_lookback=50 + signal,
+        )
+        for signal in range(2)
+        for exit_index in range(5)
+    ]
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
+
+    first = strict.create_campaign_plan(
+        **_plan_inputs(
+            tmp_path,
+            worker_count=2,
+            expected_strategy_count=10,
+            expected_unique_group_count=10,
+            expected_unique_signal_bundle_count=2,
+            expected_exit_variants_per_signal=5,
+        )
+    )
+    second = strict.create_campaign_plan(
+        **_plan_inputs(
+            tmp_path,
+            output_dir=tmp_path / "output-second",
+            worker_count=2,
+            expected_strategy_count=10,
+            expected_unique_group_count=10,
+            expected_unique_signal_bundle_count=2,
+            expected_exit_variants_per_signal=5,
+        )
+    )
+
+    assert first["bundle_assignments"] == second["bundle_assignments"]
+    with (tmp_path / "output" / "worker_manifest.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert sorted(sum(row["worker_id"] == worker_id for row in rows) for worker_id in {"0", "1"}) == [5, 5]
+    for signal_hash in {row["signal_hash"] for row in rows}:
+        assert len({row["worker_id"] for row in rows if row["signal_hash"] == signal_hash}) == 1
+
+
+def test_verify_campaign_artifacts_detects_tampered_plan_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidates = [_candidate("one", shard_id=0, slot_in_shard=0)]
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
+
+    strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=1))
+    strict.verify_campaign_artifacts(tmp_path / "output")
+    alias_map = tmp_path / "output" / "alias_map.csv"
+    alias_map.write_text(alias_map.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="artifact"):
+        strict.verify_campaign_artifacts(tmp_path / "output")
+
+
 @pytest.mark.parametrize(
     "changed",
     [
@@ -99,6 +230,8 @@ def test_economic_hash_changes_when_effective_exit_changes() -> None:
         {"execution_mode": "other-mode"},
         {"universe_identity": "other-universe"},
         {"dependency_lock_identity": "other-lock"},
+        {"artifact_inventory": [{"path": "alias_map.csv", "sha256": "other", "size_bytes": 1}]},
+        {"plan_content": {"assignments": {"other": 1}}},
     ],
 )
 def test_campaign_fingerprint_changes_for_every_bound_input(changed: dict[str, object]) -> None:
@@ -114,6 +247,8 @@ def test_campaign_fingerprint_changes_for_every_bound_input(changed: dict[str, o
         "execution_mode": "optimized_evaluation_v5_event_first",
         "universe_identity": "us-equities-v1",
         "dependency_lock_identity": "lock-sha",
+        "artifact_inventory": [{"path": "alias_map.csv", "sha256": "artifact", "size_bytes": 1}],
+        "plan_content": {"assignments": {"economic": 0}},
     }
 
     assert strict.campaign_fingerprint(**base) != strict.campaign_fingerprint(**(base | changed))
@@ -141,13 +276,16 @@ def test_plan_groups_deterministically_and_keeps_lowest_global_slot(monkeypatch:
     ]
     monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
 
-    manifest = strict.create_campaign_plan(**_plan_inputs(tmp_path))
+    manifest = strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1))
 
     assert manifest["counts"] == {
         "candidate_count": 4,
         "unique_economic_groups": 3,
+        "unique_signal_bundles": 1,
         "expected_unique_group_count": None,
-        "worker_count": 2,
+        "expected_unique_signal_bundle_count": None,
+        "expected_exit_variants_per_signal": None,
+        "worker_count": 1,
     }
     with (tmp_path / "output" / "worker_manifest.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -171,6 +309,7 @@ def test_plan_validates_and_records_expected_unique_group_count(monkeypatch: pyt
         **_plan_inputs(
             tmp_path,
             output_dir=tmp_path / "valid-output",
+            worker_count=1,
             expected_unique_group_count=3,
         )
     )
@@ -192,15 +331,19 @@ def test_cli_defaults_to_3600_expected_unique_groups() -> None:
     )
 
     assert strict.DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT == 3_600
+    assert strict.DEFAULT_EXPECTED_UNIQUE_SIGNAL_BUNDLE_COUNT == 720
+    assert strict.DEFAULT_EXIT_VARIANTS_PER_SIGNAL == 5
     assert args.expected_unique_group_count == 3_600
+    assert args.expected_unique_signal_bundle_count == 720
+    assert args.expected_exit_variants_per_signal == 5
 
 
 def test_plan_uses_deterministic_lpt_and_exact_matrix_boundaries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     candidates = [
-        _candidate("slow", shard_id=0, slot_in_shard=0, concept_id="q_stair_step_reclaim"),
-        _candidate("medium", shard_id=0, slot_in_shard=1, concept_id="keltner_pullback_reclaim", stop_loss_pct=0.10),
-        _candidate("fast", shard_id=0, slot_in_shard=2, concept_id="baseline", stop_loss_pct=0.12),
-        _candidate("other", shard_id=0, slot_in_shard=3, concept_id="baseline", stop_loss_pct=0.14),
+        _candidate("slow", shard_id=0, slot_in_shard=0, concept_id="q_stair_step_reclaim", breakout_lookback=50),
+        _candidate("medium", shard_id=0, slot_in_shard=1, concept_id="keltner_pullback_reclaim", stop_loss_pct=0.10, breakout_lookback=51),
+        _candidate("fast", shard_id=0, slot_in_shard=2, concept_id="baseline", stop_loss_pct=0.12, breakout_lookback=52),
+        _candidate("other", shard_id=0, slot_in_shard=3, concept_id="baseline", stop_loss_pct=0.14, breakout_lookback=53),
     ]
     monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
 
@@ -222,10 +365,10 @@ def test_plan_uses_deterministic_lpt_and_exact_matrix_boundaries(monkeypatch: py
 
 def test_lpt_uses_positive_cost_and_preserves_raw_score(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     candidates = [
-        _candidate("positive", shard_id=0, slot_in_shard=0, stop_loss_pct=0.10),
-        _candidate("zero", shard_id=0, slot_in_shard=1, stop_loss_pct=0.11),
-        _candidate("negative-a", shard_id=0, slot_in_shard=2, stop_loss_pct=0.12),
-        _candidate("negative-b", shard_id=0, slot_in_shard=3, stop_loss_pct=0.13),
+        _candidate("positive", shard_id=0, slot_in_shard=0, stop_loss_pct=0.10, breakout_lookback=50),
+        _candidate("zero", shard_id=0, slot_in_shard=1, stop_loss_pct=0.11, breakout_lookback=51),
+        _candidate("negative-a", shard_id=0, slot_in_shard=2, stop_loss_pct=0.12, breakout_lookback=52),
+        _candidate("negative-b", shard_id=0, slot_in_shard=3, stop_loss_pct=0.13, breakout_lookback=53),
     ]
     raw_scores = {"positive": 2.0, "zero": 0.0, "negative-a": -5.0, "negative-b": -6.0}
 
@@ -246,7 +389,13 @@ def test_lpt_uses_positive_cost_and_preserves_raw_score(monkeypatch: pytest.Monk
 
 def test_default_matrix_and_block_boundaries_cover_all_360_workers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     candidates = [
-        _candidate(f"strategy-{index}", shard_id=index // 200, slot_in_shard=index % 200, stop_loss_pct=0.01 + index / 1_000)
+        _candidate(
+            f"strategy-{index}",
+            shard_id=index // 200,
+            slot_in_shard=index % 200,
+            stop_loss_pct=0.01 + index / 1_000,
+            breakout_lookback=50 + index,
+        )
         for index in range(360)
     ]
     monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
@@ -269,7 +418,7 @@ def test_campaign_manifest_declares_sha256_and_size_for_every_worker_artifact(
 ) -> None:
     candidates = [
         _candidate("first", shard_id=0, slot_in_shard=0),
-        _candidate("second", shard_id=0, slot_in_shard=1, stop_loss_pct=0.12),
+        _candidate("second", shard_id=0, slot_in_shard=1, stop_loss_pct=0.12, breakout_lookback=51),
     ]
     monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
 
@@ -359,7 +508,7 @@ def test_plan_rejects_output_directory_that_already_contains_files(
 def test_plan_preserves_source_identity_in_canonical_payload_and_alias_map(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     candidates = [
         _candidate("canonical", shard_id=3, slot_in_shard=7),
-        _candidate("second", shard_id=3, slot_in_shard=8, stop_loss_pct=0.12),
+        _candidate("second", shard_id=3, slot_in_shard=8, stop_loss_pct=0.12, breakout_lookback=51),
     ]
     monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
 
@@ -378,6 +527,8 @@ def test_plan_preserves_source_identity_in_canonical_payload_and_alias_map(monke
     assert aliases[0].keys() == {
         "strategy_id",
         "evaluation_hash",
+        "signal_hash",
+        "exit_hash",
         "canonical_strategy_id",
         "source_shard_id",
         "source_slot_in_shard",

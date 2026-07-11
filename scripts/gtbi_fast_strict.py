@@ -18,6 +18,8 @@ from scripts import global_technical_buy_indicator as gtbi
 DEFAULT_WORKER_COUNT = 360
 DEFAULT_EXPECTED_STRATEGY_COUNT = 72_000
 DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT = 3_600
+DEFAULT_EXPECTED_UNIQUE_SIGNAL_BUNDLE_COUNT = 720
+DEFAULT_EXIT_VARIANTS_PER_SIGNAL = 5
 DEFAULT_TRAIN_END = "2010-12-31"
 DEFAULT_VALIDATION_START = "2011-01-01"
 DEFAULT_VALIDATION_END = "2020-12-31"
@@ -34,6 +36,8 @@ class _CandidateRecord:
     source_slot_in_shard: int
     global_slot: int
     evaluation_hash: str
+    signal_hash: str
+    exit_hash: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,31 @@ class _EconomicGroup:
     scheduling_cost: float
 
 
+@dataclass(frozen=True)
+class _SignalBundle:
+    signal_hash: str
+    groups: tuple[_EconomicGroup, ...]
+    raw_cost_score: float
+    scheduling_cost: float
+
+
+_EXIT_ONLY_CONFIG_FIELDS = frozenset(
+    {
+        "stop_loss_pct",
+        "trailing_stop_pct",
+        "trailing_stop_type",
+        "take_profit_pct",
+        "take_profit_min_holding_days",
+        "max_holding_days",
+        "use_exit_ma",
+        "use_market_exit",
+        "exit_ma_days",
+        "minimum_holding_days_before_soft_exit",
+        "market_exit_confirmation_days",
+    }
+)
+
+
 def _canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
@@ -52,6 +81,34 @@ def _canonical_json(value: Any) -> bytes:
 def economic_evaluation_hash(candidate: gtbi.ExternalStrategyCandidate) -> str:
     """Return the hash of only the effective evaluator configuration."""
     return hashlib.sha256(_canonical_json(candidate.config.to_dict())).hexdigest()
+
+
+def signal_evaluation_hash(candidate: gtbi.ExternalStrategyCandidate) -> str:
+    """Return the hash of config fields that determine the entry signal."""
+    signal_config = {
+        key: value
+        for key, value in candidate.config.to_dict().items()
+        if key not in _EXIT_ONLY_CONFIG_FIELDS
+    }
+    return hashlib.sha256(_canonical_json({"config_signal": signal_config})).hexdigest()
+
+
+def exit_evaluation_hash(candidate: gtbi.ExternalStrategyCandidate) -> str:
+    """Return the hash of the exit definition applied after a shared signal."""
+    config = candidate.config.to_dict()
+    payload = candidate.payload
+    exit_config = {key: config[key] for key in _EXIT_ONLY_CONFIG_FIELDS if key in config}
+    canonical = {
+        "exit_profile_id": payload.get("exit_profile_id"),
+        "exit_rules": payload.get("exit_rules", {}),
+        "config_exit": exit_config,
+        "market_regime_exit": {
+            key: value
+            for key, value in dict(payload.get("market_regime_rules") or {}).items()
+            if key in {"use_market_exit", "market_ma_days", "market_momentum_days", "strict_market_filter"}
+        },
+    }
+    return hashlib.sha256(_canonical_json(canonical)).hexdigest()
 
 
 def strategy_pack_digest(pack_path: Path) -> str:
@@ -90,6 +147,8 @@ def campaign_fingerprint(
     execution_mode: str,
     universe_identity: str,
     dependency_lock_identity: str,
+    artifact_inventory: list[dict[str, Any]] | None = None,
+    plan_content: dict[str, Any] | None = None,
 ) -> str:
     """Hash the immutable execution and data context for one campaign."""
     inputs = {
@@ -104,6 +163,8 @@ def campaign_fingerprint(
         "execution_mode": str(execution_mode),
         "universe_identity": str(universe_identity),
         "dependency_lock_identity": str(dependency_lock_identity),
+        "artifact_inventory": artifact_inventory,
+        "plan_content": plan_content,
     }
     return hashlib.sha256(_canonical_json(inputs)).hexdigest()
 
@@ -147,6 +208,8 @@ def _candidate_records(candidates: list[gtbi.ExternalStrategyCandidate]) -> list
                 source_slot_in_shard=source_slot_in_shard,
                 global_slot=global_slot,
                 evaluation_hash=economic_evaluation_hash(candidate),
+                signal_hash=signal_evaluation_hash(candidate),
+                exit_hash=exit_evaluation_hash(candidate),
             )
         )
     return records
@@ -178,18 +241,48 @@ def _economic_groups(records: list[_CandidateRecord], execution_mode: str) -> li
     return groups
 
 
-def _lpt_assign(groups: list[_EconomicGroup], worker_count: int) -> tuple[dict[str, int], list[list[_EconomicGroup]], list[float]]:
-    worker_groups: list[list[_EconomicGroup]] = [[] for _ in range(worker_count)]
+def _signal_bundles(groups: list[_EconomicGroup]) -> list[_SignalBundle]:
+    grouped: dict[str, list[_EconomicGroup]] = {}
+    for group in groups:
+        signal_hashes = {record.signal_hash for record in group.records}
+        if len(signal_hashes) != 1:
+            raise ValueError(f"economic group {group.evaluation_hash} has inconsistent signal hashes")
+        grouped.setdefault(next(iter(signal_hashes)), []).append(group)
+    bundles: list[_SignalBundle] = []
+    for signal_hash, members in grouped.items():
+        ordered_members = tuple(sorted(members, key=lambda item: item.evaluation_hash))
+        bundles.append(
+            _SignalBundle(
+                signal_hash=signal_hash,
+                groups=ordered_members,
+                raw_cost_score=sum(group.raw_cost_score for group in ordered_members),
+                scheduling_cost=sum(group.scheduling_cost for group in ordered_members),
+            )
+        )
+    return bundles
+
+
+def _lpt_assign(
+    bundles: list[_SignalBundle],
+    worker_count: int,
+) -> tuple[dict[str, int], list[list[_SignalBundle]], list[float]]:
+    worker_groups: list[list[_SignalBundle]] = [[] for _ in range(worker_count)]
     worker_costs = [0.0] * worker_count
     assignments: dict[str, int] = {}
-    for group in sorted(groups, key=lambda item: (-item.scheduling_cost, item.evaluation_hash)):
+    bundle_capacity = len(bundles) // worker_count if len(bundles) % worker_count == 0 else None
+    for bundle in sorted(bundles, key=lambda item: (-item.scheduling_cost, item.signal_hash)):
+        eligible_workers = range(worker_count)
+        if bundle_capacity is not None:
+            eligible_workers = [
+                worker_id for worker_id in eligible_workers if len(worker_groups[worker_id]) < bundle_capacity
+            ]
         worker_id = min(
-            range(worker_count),
+            eligible_workers,
             key=lambda index: (worker_costs[index], len(worker_groups[index]), index),
         )
-        worker_groups[worker_id].append(group)
-        worker_costs[worker_id] += group.scheduling_cost
-        assignments[group.evaluation_hash] = worker_id
+        worker_groups[worker_id].append(bundle)
+        worker_costs[worker_id] += bundle.scheduling_cost
+        assignments[bundle.signal_hash] = worker_id
     return assignments, worker_groups, worker_costs
 
 
@@ -222,11 +315,12 @@ def _artifact_metadata(output_dir: Path, relative_paths: Iterable[Path]) -> list
     return artifacts
 
 
-def _matrix_workers(worker_ids: Iterable[int], worker_groups: list[list[_EconomicGroup]], worker_costs: list[float]) -> list[dict[str, Any]]:
+def _matrix_workers(worker_ids: Iterable[int], worker_groups: list[list[_SignalBundle]], worker_costs: list[float]) -> list[dict[str, Any]]:
     return [
         {
             "worker_id": worker_id,
-            "group_count": len(worker_groups[worker_id]),
+            "group_count": sum(len(bundle.groups) for bundle in worker_groups[worker_id]),
+            "bundle_count": len(worker_groups[worker_id]),
             "scheduling_cost": worker_costs[worker_id],
         }
         for worker_id in worker_ids
@@ -240,6 +334,8 @@ def create_campaign_plan(
     worker_count: int = DEFAULT_WORKER_COUNT,
     expected_strategy_count: int = DEFAULT_EXPECTED_STRATEGY_COUNT,
     expected_unique_group_count: int | None = DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT,
+    expected_unique_signal_bundle_count: int | None = DEFAULT_EXPECTED_UNIQUE_SIGNAL_BUNDLE_COUNT,
+    expected_exit_variants_per_signal: int | None = DEFAULT_EXIT_VARIANTS_PER_SIGNAL,
     code_sha: str,
     data_run_identity: str,
     train_end: str = DEFAULT_TRAIN_END,
@@ -274,9 +370,37 @@ def create_campaign_plan(
             f"unique economic group count {len(groups)} differs from expected count "
             f"{expected_unique_group_count}"
         )
-    assignments, worker_groups, worker_costs = _lpt_assign(groups, worker_count)
+    bundles = _signal_bundles(groups)
+    if expected_unique_signal_bundle_count is not None and len(bundles) != expected_unique_signal_bundle_count:
+        raise ValueError(
+            f"unique signal bundle count {len(bundles)} differs from expected count "
+            f"{expected_unique_signal_bundle_count}"
+        )
+    if expected_exit_variants_per_signal is not None:
+        for bundle in bundles:
+            exit_hashes = {group.representative.exit_hash for group in bundle.groups}
+            if len(bundle.groups) != expected_exit_variants_per_signal or len(exit_hashes) != expected_exit_variants_per_signal:
+                raise ValueError(
+                    f"signal bundle {bundle.signal_hash} has {len(bundle.groups)} economic configs and "
+                    f"{len(exit_hashes)} distinct exit variants; expected {expected_exit_variants_per_signal}"
+                )
+    bundle_assignments, worker_groups, worker_costs = _lpt_assign(bundles, worker_count)
     if any(not worker for worker in worker_groups):
-        raise ValueError("at least one worker is empty after economic grouping")
+        raise ValueError("at least one worker is empty after signal bundle grouping")
+    assignments = {
+        group.evaluation_hash: bundle_assignments[bundle.signal_hash]
+        for bundle in bundles
+        for group in bundle.groups
+    }
+    if (
+        worker_count == DEFAULT_WORKER_COUNT
+        and expected_strategy_count == DEFAULT_EXPECTED_STRATEGY_COUNT
+        and expected_unique_group_count == DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT
+        and expected_unique_signal_bundle_count == DEFAULT_EXPECTED_UNIQUE_SIGNAL_BUNDLE_COUNT
+        and expected_exit_variants_per_signal == DEFAULT_EXIT_VARIANTS_PER_SIGNAL
+        and any(len(worker_bundles) != 2 or sum(len(bundle.groups) for bundle in worker_bundles) != 10 for worker_bundles in worker_groups)
+    ):
+        raise ValueError("real pack must assign exactly two signal bundles and ten economic configs per worker")
 
     canonical_pack = output / "canonical_pack"
     canonical_pack.mkdir(parents=True, exist_ok=True)
@@ -294,14 +418,14 @@ def create_campaign_plan(
         "universe_identity": str(universe_identity),
         "dependency_lock_identity": str(dependency_lock_identity),
     }
-    fingerprint = campaign_fingerprint(**inputs)
-
     alias_rows: list[dict[str, Any]] = []
     manifest_rows: list[dict[str, Any]] = []
-    for worker_id, assigned_groups in enumerate(worker_groups):
+    for worker_id, assigned_bundles in enumerate(worker_groups):
         canonical_path = canonical_pack / f"strategies_shard_{worker_id:03d}.jsonl"
         with canonical_path.open("w", encoding="utf-8") as handle:
-            for slot_in_shard, group in enumerate(assigned_groups):
+            for slot_in_shard, group in enumerate(
+                group for bundle in assigned_bundles for group in bundle.groups
+            ):
                 representative = group.representative
                 payload = dict(representative.candidate.payload)
                 payload["source_shard_id"] = representative.source_shard_id
@@ -312,6 +436,8 @@ def create_campaign_plan(
                 manifest_rows.append(
                     {
                         "evaluation_hash": group.evaluation_hash,
+                        "signal_hash": group.representative.signal_hash,
+                        "exit_hash": group.representative.exit_hash,
                         "canonical_strategy_id": representative.strategy_id,
                         "source_shard_id": representative.source_shard_id,
                         "source_slot_in_shard": representative.source_slot_in_shard,
@@ -326,6 +452,8 @@ def create_campaign_plan(
                         {
                             "strategy_id": record.strategy_id,
                             "evaluation_hash": group.evaluation_hash,
+                            "signal_hash": record.signal_hash,
+                            "exit_hash": record.exit_hash,
                             "canonical_strategy_id": representative.strategy_id,
                             "source_shard_id": record.source_shard_id,
                             "source_slot_in_shard": record.source_slot_in_shard,
@@ -341,6 +469,8 @@ def create_campaign_plan(
         [
             "strategy_id",
             "evaluation_hash",
+            "signal_hash",
+            "exit_hash",
             "canonical_strategy_id",
             "source_shard_id",
             "source_slot_in_shard",
@@ -353,6 +483,8 @@ def create_campaign_plan(
         output / "worker_manifest.csv",
         [
             "evaluation_hash",
+            "signal_hash",
+            "exit_hash",
             "canonical_strategy_id",
             "source_shard_id",
             "source_slot_in_shard",
@@ -395,20 +527,56 @@ def create_campaign_plan(
             "block_matrix.json",
         )
     )
+    counts = {
+        "candidate_count": len(records),
+        "unique_economic_groups": len(groups),
+        "unique_signal_bundles": len(bundles),
+        "expected_unique_group_count": expected_unique_group_count,
+        "expected_unique_signal_bundle_count": expected_unique_signal_bundle_count,
+        "expected_exit_variants_per_signal": expected_exit_variants_per_signal,
+        "worker_count": worker_count,
+    }
+    artifacts = _artifact_metadata(output, artifact_paths)
+    plan_content = {
+        "assignments": assignments,
+        "bundle_assignments": bundle_assignments,
+        "counts": counts,
+    }
+    fingerprint = campaign_fingerprint(
+        **inputs,
+        artifact_inventory=artifacts,
+        plan_content=plan_content,
+    )
     manifest = {
         "campaign_fingerprint": fingerprint,
         "inputs": inputs,
-        "counts": {
-            "candidate_count": len(records),
-            "unique_economic_groups": len(groups),
-            "expected_unique_group_count": expected_unique_group_count,
-            "worker_count": worker_count,
-        },
+        "counts": counts,
         "assignments": assignments,
-        "artifacts": _artifact_metadata(output, artifact_paths),
+        "bundle_assignments": bundle_assignments,
+        "plan_content": plan_content,
+        "artifacts": artifacts,
     }
     _write_json(output / "campaign_manifest.json", manifest)
     return manifest
+
+
+def verify_campaign_artifacts(output_dir: Path) -> None:
+    """Verify the planned artifacts and the recomputable campaign fingerprint."""
+    output = Path(output_dir)
+    manifest = json.loads((output / "campaign_manifest.json").read_text(encoding="utf-8"))
+    expected_artifacts = manifest.get("artifacts")
+    if not isinstance(expected_artifacts, list):
+        raise ValueError("campaign manifest has no artifact inventory")
+    actual_artifacts = _artifact_metadata(output, [Path(str(item["path"])) for item in expected_artifacts])
+    if actual_artifacts != expected_artifacts:
+        raise ValueError("campaign artifact inventory does not match manifest")
+    recomputed = campaign_fingerprint(
+        **manifest["inputs"],
+        artifact_inventory=expected_artifacts,
+        plan_content=manifest["plan_content"],
+    )
+    if recomputed != manifest.get("campaign_fingerprint"):
+        raise ValueError("campaign fingerprint does not match manifest plan content")
 
 
 def _current_code_sha() -> str:
@@ -435,6 +603,16 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT,
     )
+    parser.add_argument(
+        "--expected-unique-signal-bundle-count",
+        type=int,
+        default=DEFAULT_EXPECTED_UNIQUE_SIGNAL_BUNDLE_COUNT,
+    )
+    parser.add_argument(
+        "--expected-exit-variants-per-signal",
+        type=int,
+        default=DEFAULT_EXIT_VARIANTS_PER_SIGNAL,
+    )
     parser.add_argument("--code-sha", default=None)
     parser.add_argument("--data-run-identity", required=True)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
@@ -457,6 +635,8 @@ def main(argv: list[str] | None = None) -> int:
         worker_count=args.workers,
         expected_strategy_count=args.expected_strategy_count,
         expected_unique_group_count=args.expected_unique_group_count,
+        expected_unique_signal_bundle_count=args.expected_unique_signal_bundle_count,
+        expected_exit_variants_per_signal=args.expected_exit_variants_per_signal,
         code_sha=args.code_sha or _current_code_sha(),
         data_run_identity=args.data_run_identity,
         train_end=args.train_end,
