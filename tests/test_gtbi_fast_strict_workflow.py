@@ -324,5 +324,5 @@ def test_v6_dependency_lock_is_minimal_and_pinned() -> None:
     assert lines
     assert all("==" in line for line in lines)
     packages = {line.split("==", 1)[0].lower() for line in lines}
-    assert {"numpy", "pandas", "pyarrow", "numba", "platformdirs"} <= packages
+    assert {"numpy", "pandas", "pyarrow", "numba", "platformdirs", "scipy"} <= packages
     assert not packages & {"scikit-learn", "statsmodels", "hmmlearn", "lightgbm", "xgboost"}
