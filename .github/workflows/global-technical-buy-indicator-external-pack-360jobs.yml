@@ -149,7 +149,7 @@ jobs:
           retention-days: 30
 
   build_external_pack:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
@@ -305,7 +305,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -392,7 +392,7 @@ jobs:
 
   run_block:
     name: run_block (${{ matrix.block_index }}, ${{ matrix.block_padded }}, ${{ matrix.job_indices_csv }}, ${{ matrix.logical_jobs }})
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -533,7 +533,7 @@ jobs:
           retention-days: 14
 
   merge_final:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && always() }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && always() }}
     needs:
       - plan_blocks
       - run_block
@@ -927,7 +927,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           sparse-checkout-cone-mode: false
-          sparse-checkout: /scripts/gtbi_fast_strict_inventory.py
+          sparse-checkout: |
+            /scripts/gtbi_fast_strict_inventory.py
+            /scripts/download_gtbi_v6_worker_artifacts.py
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -945,14 +947,15 @@ jobs:
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
             --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
             > worker-artifacts.txt
-      - name: Download available worker artifacts
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ github.run_id }}
-          pattern: gtbi-v6-worker-*
-          path: worker-artifacts
-          merge-multiple: false
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all listed worker artifacts without action cap
+        run: |
+          python scripts/download_gtbi_v6_worker_artifacts.py \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --names-file worker-artifacts.txt \
+            --output-dir worker-artifacts \
+            --max-workers 24 \
+            --retries 3
       - name: Generate first missing-worker matrices from validated inventory
         run: |
           set -euo pipefail
@@ -1034,7 +1037,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           sparse-checkout-cone-mode: false
-          sparse-checkout: /scripts/gtbi_fast_strict_inventory.py
+          sparse-checkout: |
+            /scripts/gtbi_fast_strict_inventory.py
+            /scripts/download_gtbi_v6_worker_artifacts.py
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -1052,14 +1057,15 @@ jobs:
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
             --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
             > worker-artifacts.txt
-      - name: Download available worker artifacts
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ github.run_id }}
-          pattern: gtbi-v6-worker-*
-          path: worker-artifacts
-          merge-multiple: false
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all listed worker artifacts without action cap
+        run: |
+          python scripts/download_gtbi_v6_worker_artifacts.py \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --names-file worker-artifacts.txt \
+            --output-dir worker-artifacts \
+            --max-workers 24 \
+            --retries 3
       - name: Generate second missing-worker matrices from validated inventory
         run: |
           set -euo pipefail
@@ -1136,7 +1142,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           sparse-checkout-cone-mode: false
-          sparse-checkout: /scripts/gtbi_fast_strict_inventory.py
+          sparse-checkout: |
+            /scripts/gtbi_fast_strict_inventory.py
+            /scripts/download_gtbi_v6_worker_artifacts.py
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -1154,14 +1162,15 @@ jobs:
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
             --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
             > worker-artifacts.txt
-      - name: Download all candidate worker artifacts
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ github.run_id }}
-          pattern: gtbi-v6-worker-*
-          path: worker-artifacts
-          merge-multiple: false
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all listed worker artifacts without action cap
+        run: |
+          python scripts/download_gtbi_v6_worker_artifacts.py \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --names-file worker-artifacts.txt \
+            --output-dir worker-artifacts \
+            --max-workers 24 \
+            --retries 3
       - name: Select one validated artifact for every worker
         run: |
           set -euo pipefail
@@ -1369,6 +1378,266 @@ jobs:
             gh api --method DELETE \
               "repos/${{ github.repository }}/actions/artifacts/$artifact_id"
           done < v6-intermediate-artifacts.tsv
+
+  v6_recover_inventory:
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_merge_existing' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      block_matrix: ${{ steps.outputs.outputs.block_matrix }}
+      plan_artifact_name: ${{ steps.outputs.outputs.plan_artifact_name }}
+      inventory_artifact_name: ${{ steps.outputs.outputs.inventory_artifact_name }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+      SOURCE_RUN_ID: ${{ inputs.data_run_id }}
+    steps:
+      - name: Checkout strict inventory downloader
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/gtbi_fast_strict_inventory.py
+            /scripts/download_gtbi_v6_worker_artifacts.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify source run has one plan and exactly 360 worker artifacts
+        run: |
+          set -euo pipefail
+          test "$(gh run view "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --json status --jq .status)" = "completed"
+          gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
+            | sort -u > worker-artifacts.txt
+          test "$(wc -l < worker-artifacts.txt)" -eq 360
+          plan_name="gtbi-v6-plan-$SOURCE_RUN_ID"
+          plan_count="$(gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            --jq ".artifacts[] | select((.expired == false) and (.name == \"$plan_name\")) | .name" \
+            | wc -l)"
+          test "$plan_count" -eq 1
+      - name: Download source sealed plan
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.data_run_id }}
+          name: gtbi-v6-plan-${{ inputs.data_run_id }}
+          path: v6-plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all 360 source workers without action cap
+        run: |
+          python scripts/download_gtbi_v6_worker_artifacts.py \
+            --repo "${{ github.repository }}" \
+            --run-id "$SOURCE_RUN_ID" \
+            --names-file worker-artifacts.txt \
+            --output-dir worker-artifacts \
+            --expected-count 360 \
+            --max-workers 24 \
+            --retries 3
+      - name: Validate exact source inventory
+        run: |
+          python scripts/gtbi_fast_strict_inventory.py \
+            --campaign-manifest v6-plan/campaign_manifest.json \
+            --input-root worker-artifacts \
+            --output-dir final-inventory
+          jq -e '.complete == true and .missing_worker_count == 0 and .valid_worker_count == 360 and .invalid_worker_count == 0' \
+            final-inventory/inventory_summary.json
+      - name: Publish recovery graph outputs
+        id: outputs
+        run: |
+          echo "block_matrix=$(jq -c . v6-plan/block_matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "plan_artifact_name=gtbi-v6-recovery-plan-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "inventory_artifact_name=gtbi-v6-recovery-inventory-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+      - name: Upload source sealed plan into recovery run
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-v6-recovery-plan-${{ github.run_id }}
+          path: v6-plan
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 3
+      - name: Upload validated source inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-v6-recovery-inventory-${{ github.run_id }}
+          path: final-inventory
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 3
+
+  v6_recover_merge_block:
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_merge_existing' }}
+    needs: [v6_recover_inventory]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.v6_recover_inventory.outputs.block_matrix) }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+      SOURCE_RUN_ID: ${{ inputs.data_run_id }}
+      WORKER_IDS: ${{ join(matrix.worker_ids, ',') }}
+    steps:
+      - name: Checkout strict block merger
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /scripts/*.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download validated source inventory
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.run_id }}
+          name: gtbi-v6-recovery-inventory-${{ github.run_id }}
+          path: final-inventory
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: List source worker artifacts
+        run: |
+          gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
+            > worker-artifacts.txt
+      - name: Download exactly eighteen validated source workers
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra workers <<< "$WORKER_IDS"
+          test "${#workers[@]}" -eq 18
+          for worker_id in "${workers[@]}"; do
+            artifact_root="$(awk -F, -v id="$worker_id" 'NR > 1 {gsub(/\r/, "", $1); if ($1 == id) {gsub(/\r/, "", $2); print $2}}' final-inventory/selected_workers.csv)"
+            test -n "$artifact_root"
+            artifact_name="$(basename "$artifact_root")"
+            grep -Fxq "$artifact_name" worker-artifacts.txt
+            gh run download "$SOURCE_RUN_ID" \
+              --repo "${{ github.repository }}" \
+              --name "$artifact_name" \
+              --dir "block-inputs/$artifact_name"
+          done
+      - name: Merge strict recovered worker block
+        run: |
+          python scripts/merge_gtbi_fast_strict_block.py \
+            --input-root block-inputs \
+            --output-dir block-output \
+            --block-id "${{ matrix.block_id }}" \
+            --worker-ids "$WORKER_IDS"
+      - name: Upload recovered block
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-v6-recovery-block-${{ matrix.block_id }}-run-${{ github.run_id }}
+          path: block-output
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 3
+
+  v6_recover_final_merge:
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_merge_existing' }}
+    needs: [v6_recover_merge_block]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+    steps:
+      - name: Checkout strict final reducer and exact strategy pack
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /scripts/*.py
+            /scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1/**
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download recovery sealed plan
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.run_id }}
+          name: gtbi-v6-recovery-plan-${{ github.run_id }}
+          path: v6-plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download exactly twenty recovered block artifacts
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-recovery-block-"))) | .name' \
+            > block-artifacts.txt
+          for block_id in $(seq 0 19); do
+            artifact_name="gtbi-v6-recovery-block-$block_id-run-${{ github.run_id }}"
+            grep -Fxq "$artifact_name" block-artifacts.txt
+            gh run download "${{ github.run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "$artifact_name" \
+              --dir "block-inputs/$artifact_name"
+          done
+      - name: Run strict recovered final merge
+        run: |
+          python scripts/merge_gtbi_fast_strict_final.py \
+            --plan-root v6-plan \
+            --blocks-root block-inputs \
+            --original-pack "${{ inputs.external_strategy_pack_path }}" \
+            --output-dir final-results \
+            --expected-alias-count 72000 \
+            --expected-block-count 20 \
+            --expected-worker-count 360
+      - name: Validate recovered final artifact before upload
+        run: |
+          python scripts/validate_gtbi_fast_strict_artifact.py \
+            final-results \
+            --expected-strategy-count 72000 \
+            --output-json final-results/strict_validation.json
+      - name: Upload exact recovered final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-technical-buy-indicator-long-hold-fast-strict-v6-results
+          path: final-results
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 30
+
+  v6_recover_cleanup:
+    if: ${{ success() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_merge_existing' }}
+    needs: [v6_recover_final_merge]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Delete recovery-run intermediate artifacts only
+        continue-on-error: true
+        run: |
+          gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(
+              (.expired == false) and
+              (.name != "global-technical-buy-indicator-long-hold-fast-strict-v6-results") and
+              (.name | startswith("gtbi-v6-recovery-"))
+            ) | .id' \
+            > recovery-artifact-ids.txt
+          while read -r artifact_id; do
+            test -n "$artifact_id"
+            gh api --method DELETE "repos/${{ github.repository }}/actions/artifacts/$artifact_id"
+          done < recovery-artifact-ids.txt
 
   merge_cross_run:
     if: ${{ inputs.optimized_evaluation_mode == 'merge_cross_run' }}

@@ -11,6 +11,7 @@ WORKER = ROOT / ".github/workflows/gtbi-fast-strict-v6-worker.yml"
 LOCK = ROOT / "requirements/gtbi-fast-strict.lock"
 FINAL_MERGER = ROOT / "scripts/merge_gtbi_fast_strict_final.py"
 V6_MODE = "optimized_evaluation_v6_fast_strict"
+V6_MERGE_MODE = "optimized_evaluation_v6_merge_existing"
 
 
 def _workflow(path: Path) -> dict:
@@ -44,6 +45,10 @@ def test_registered_workflow_contains_complete_v6_graph() -> None:
         "v6_merge_block",
         "v6_final_merge",
         "v6_cleanup",
+        "v6_recover_inventory",
+        "v6_recover_merge_block",
+        "v6_recover_final_merge",
+        "v6_recover_cleanup",
     }
     assert expected <= set(jobs)
     assert jobs["v6_final_merge"]["needs"] == ["v6_merge_block"]
@@ -77,6 +82,30 @@ def test_v6_test_mode_runs_only_selected_workers_and_never_enters_full_reducers(
         "v6_cleanup",
     ):
         assert "inputs.test_mode != 'true'" in jobs[name]["if"]
+
+
+def test_v6_merge_existing_reuses_exact_worker_artifacts_without_evaluation() -> None:
+    jobs = _workflow(ENTRY)["jobs"]
+    inventory = jobs["v6_recover_inventory"]
+    assert V6_MERGE_MODE in inventory["if"]
+    inventory_text = yaml.safe_dump(inventory, sort_keys=True)
+    assert "${{ inputs.data_run_id }}" in inventory_text
+    assert "python scripts/download_gtbi_v6_worker_artifacts.py" in inventory_text
+    assert "--expected-count 360" in inventory_text
+    assert ".valid_worker_count" in inventory_text
+    assert ".invalid_worker_count" in inventory_text
+
+    blocks = jobs["v6_recover_merge_block"]
+    assert blocks["strategy"]["max-parallel"] == 20
+    assert blocks["needs"] == ["v6_recover_inventory"]
+    assert "run_gtbi_fast_strict_worker.py" not in yaml.safe_dump(blocks)
+
+    final = jobs["v6_recover_final_merge"]
+    assert final["needs"] == ["v6_recover_merge_block"]
+    final_text = yaml.safe_dump(final, sort_keys=True)
+    assert "merge_gtbi_fast_strict_final.py" in final_text
+    assert "validate_gtbi_fast_strict_artifact.py" in final_text
+    assert "global-technical-buy-indicator-long-hold-fast-strict-v6-results" in final_text
 
 
 def test_v6_uses_live_explicit_data_pack_inputs() -> None:
@@ -165,6 +194,8 @@ def test_retry_rounds_and_final_selection_use_validated_inventory() -> None:
     assert "gtbi-v6-worker-" in text
     assert text.count("artifact_roots=(worker-artifacts/gtbi-v6-worker-*)") == 3
     assert text.count("sort -u worker-artifacts.txt") == 3
+    assert text.count("python scripts/download_gtbi_v6_worker_artifacts.py") == 3
+    assert "pattern: gtbi-v6-worker-*" not in text
 
 
 def test_v6_worker_is_persistent_combined_sparse_and_exact() -> None:
@@ -309,6 +340,7 @@ def test_legacy_jobs_exclude_v6_mode() -> None:
     jobs = _workflow(ENTRY)["jobs"]
     for name in ("build_external_pack", "plan_blocks", "run_block", "merge_final"):
         assert V6_MODE in str(jobs[name]["if"])
+        assert V6_MERGE_MODE in str(jobs[name]["if"])
 
 
 def test_worker_workflow_is_reusable_only() -> None:
