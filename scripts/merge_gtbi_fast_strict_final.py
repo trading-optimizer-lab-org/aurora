@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from scripts import gtbi_fast_strict as planner
 from scripts import gtbi_fast_strict_results as results
 
 
-BLOCK_CSV_RE = re.compile(r"^(?P<kind>.+)_job_block_\d+\.csv$")
+BLOCK_ARTIFACT_RE = re.compile(r"^(?P<kind>.+)_job_block_\d+\.(?P<extension>csv|jsonl)$")
 LIGHTWEIGHT_KINDS = {
     "leaderboard": ("leaderboard.csv", gtbi.LEADERBOARD_COLUMNS),
     "early_rejected_strategies": ("early_rejected_strategies.csv", gtbi.EARLY_REJECT_COLUMNS),
@@ -73,6 +74,7 @@ def _load_plan(
     expected_alias_count: int,
     expected_worker_count: int,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
+    planner.verify_campaign_artifacts(Path(plan_root))
     campaign_path = Path(plan_root) / "campaign_manifest.json"
     campaign = _json(campaign_path)
     fingerprint = str(campaign.get("campaign_fingerprint") or "")
@@ -95,6 +97,8 @@ def _load_plan(
     worker_manifest = results._read_csv(Path(plan_root) / "worker_manifest.csv")
     required_worker_columns = {
         "evaluation_hash",
+        "signal_hash",
+        "exit_hash",
         "canonical_strategy_id",
         "source_shard_id",
         "source_slot_in_shard",
@@ -126,10 +130,11 @@ def _load_plan(
         raise ValueError("alias map canonical membership does not match worker manifest")
     for canonical_id, aliases in aliases_by_canonical:
         manifest_row = canonical_manifest.loc[str(canonical_id)]
-        if aliases["evaluation_hash"].astype(str).nunique() != 1:
-            raise ValueError(f"aliases disagree on economic hash for {canonical_id}")
-        if str(aliases["evaluation_hash"].iloc[0]) != str(manifest_row["evaluation_hash"]):
-            raise ValueError(f"alias map economic hash does not match worker manifest for {canonical_id}")
+        for hash_name in ("evaluation_hash", "signal_hash", "exit_hash"):
+            if aliases[hash_name].astype(str).nunique() != 1:
+                raise ValueError(f"aliases disagree on {hash_name} for {canonical_id}")
+            if str(aliases[hash_name].iloc[0]) != str(manifest_row[hash_name]):
+                raise ValueError(f"alias map {hash_name} does not match worker manifest for {canonical_id}")
         if pd.to_numeric(aliases["worker_id"], errors="raise").astype(int).nunique() != 1:
             raise ValueError(f"aliases disagree on worker for {canonical_id}")
         if int(aliases["worker_id"].iloc[0]) != int(manifest_row["worker_id"]):
@@ -197,20 +202,27 @@ def _combine_canonical_results(
     canonical_root = output / "canonical_results"
     canonical_root.mkdir(parents=True, exist_ok=False)
     frames: dict[str, list[pd.DataFrame]] = {name: [] for name in LIGHTWEIGHT_KINDS}
-    heavy_frames: dict[str, list[pd.DataFrame]] = {}
+    canonical_frames: dict[str, list[pd.DataFrame]] = {}
+    canonical_jsonl: dict[str, list[str]] = {}
     for _, _, files in blocks:
         for path in files:
-            match = BLOCK_CSV_RE.match(path.name)
+            match = BLOCK_ARTIFACT_RE.match(path.name)
             if match is None:
                 continue
             kind = str(match.group("kind"))
+            extension = str(match.group("extension"))
+            if extension == "jsonl":
+                canonical_jsonl.setdefault(kind, []).extend(
+                    line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+                )
+                continue
             frame = results._read_csv(path)
             if kind in FAILURE_KINDS and not frame.empty:
                 raise ValueError(f"block contains failure rows in {kind}")
             if kind in frames:
                 frames[kind].append(frame)
             else:
-                heavy_frames.setdefault(kind, []).append(frame)
+                canonical_frames.setdefault(kind, []).append(frame)
 
     combined: dict[str, pd.DataFrame] = {}
     for kind, (filename, columns) in LIGHTWEIGHT_KINDS.items():
@@ -226,12 +238,14 @@ def _combine_canonical_results(
         results._write_csv(canonical_root / filename, frame, columns)
         combined[kind] = frame
 
-    details_root = canonical_root / "trade_details"
-    if heavy_frames:
-        details_root.mkdir()
-        for kind, source in sorted(heavy_frames.items()):
-            frame = pd.concat(source, ignore_index=True, sort=False)
-            results._write_csv(details_root / f"{kind}.csv", frame)
+    for kind, source in sorted(canonical_frames.items()):
+        frame = pd.concat(source, ignore_index=True, sort=False)
+        results._write_csv(canonical_root / f"{kind}.csv", frame)
+    for kind, lines in sorted(canonical_jsonl.items()):
+        (canonical_root / f"{kind}.jsonl").write_text(
+            "\n".join(lines) + ("\n" if lines else ""),
+            encoding="utf-8",
+        )
     return canonical_root, combined["leaderboard"]
 
 
@@ -251,13 +265,20 @@ def _validate_canonical_terminals(
     actual = leaderboard_ids | rejected_ids
     if actual != expected:
         raise ValueError("canonical terminal membership does not match worker manifest")
-    if not leaderboard_ids:
-        raise ValueError("best strategy is missing from leaderboard")
     if int(expected_alias_count) <= 0:
         raise ValueError("expected alias count must be positive")
 
 
-def merge_final_results(
+def _publish_canonical_summaries(canonical_root: Path, output: Path) -> None:
+    for path in sorted(canonical_root.iterdir()):
+        if not path.is_file():
+            continue
+        stem = path.stem
+        if stem.startswith("top_") or stem.startswith(("family_", "concept_", "market_")):
+            shutil.copyfile(path, output / path.name)
+
+
+def _merge_final_results_into(
     *,
     plan_root: Path,
     blocks_root: Path,
@@ -269,9 +290,6 @@ def merge_final_results(
 ) -> dict[str, Any]:
     """Verify a V6 campaign, reduce canonical blocks, then expand aliases exactly once."""
     output = Path(output_dir)
-    if output.is_file() or (output.exists() and any(output.rglob("*"))):
-        raise ValueError(f"output directory already contains files: {output}")
-    output.mkdir(parents=True, exist_ok=True)
 
     campaign, _alias_map, worker_manifest = _load_plan(
         Path(plan_root),
@@ -285,7 +303,7 @@ def merge_final_results(
     if sorted(matrix_workers) != list(range(expected_worker_count)):
         raise ValueError("block matrix must cover every worker exactly once")
     blocks = _verified_blocks(Path(blocks_root), fingerprint=fingerprint, expected_blocks=expected_blocks)
-    canonical_root, leaderboard = _combine_canonical_results(blocks, output)
+    canonical_root, _leaderboard = _combine_canonical_results(blocks, output)
     (canonical_root / "campaign_manifest.json").write_text(
         json.dumps(campaign, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -324,15 +342,22 @@ def merge_final_results(
         output / "canonical_trade_detail_alias_map.csv",
         dedupe[["strategy_id", "canonical_strategy_id", *results.HASH_COLUMNS]],
     )
-    best_strategy_id = str(leaderboard.iloc[0]["candidate_id"])
-    if best_strategy_id not in set(leaderboard["candidate_id"].astype(str)):
-        raise ValueError("best strategy is not in leaderboard")
+    published_leaderboard = results._read_csv(aliases_root / "leaderboard_job_aliases.csv")
+    if published_leaderboard.empty:
+        best_candidate_id = None
+        best_adjusted_return_time_risk = None
+    else:
+        best_row = published_leaderboard.iloc[0]
+        best_candidate_id = str(best_row["candidate_id"])
+        best_value = best_row.get("adjusted_return_time_risk")
+        best_adjusted_return_time_risk = None if pd.isna(best_value) else float(best_value)
     summary = {
         **expansion,
         "campaign_fingerprint": fingerprint,
         "canonical_group_count": int(len(worker_manifest)),
         "total_terminal_identities": terminal_count,
-        "best_candidate_id": best_strategy_id,
+        "best_candidate_id": best_candidate_id,
+        "best_adjusted_return_time_risk": best_adjusted_return_time_risk,
         "total_strategies_requested": int(expected_alias_count),
         "total_strategies_loaded": int(expected_alias_count),
         "github_only_run": True,
@@ -344,6 +369,8 @@ def merge_final_results(
         "early_rejected_strategies_job_aliases.csv": "early_rejected_strategies.csv",
         "dedupe_map_job_aliases.csv": "dedupe_map.csv",
         "yearly_trade_performance_job_aliases.csv": "yearly_trade_performance.csv",
+        "filtered_leaderboard_job_aliases.csv": "filtered_leaderboard.csv",
+        "timing_diagnostics_job_aliases.csv": "timing_diagnostics.csv",
         "timeout_strategies_job_aliases.csv": "timeout_strategies.csv",
         "runtime_errors_job_aliases.csv": "runtime_errors.csv",
         "unsupported_strategies_job_aliases.csv": "unsupported_strategies.csv",
@@ -354,6 +381,7 @@ def merge_final_results(
         if not source.is_file():
             raise ValueError(f"alias expansion did not produce {source_name}")
         shutil.copyfile(source, output / destination_name)
+    _publish_canonical_summaries(canonical_root, output)
     (output / "campaign_manifest.json").write_text(
         json.dumps(campaign, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -368,6 +396,39 @@ def merge_final_results(
     )
     (output / "_SUCCESS").write_text(f"{fingerprint}\n", encoding="utf-8")
     return summary
+
+
+def merge_final_results(
+    *,
+    plan_root: Path,
+    blocks_root: Path,
+    original_pack_path: Path,
+    output_dir: Path,
+    expected_alias_count: int = 72_000,
+    expected_block_count: int = 20,
+    expected_worker_count: int = 360,
+) -> dict[str, Any]:
+    """Publish a fully verified final artifact atomically from a sibling directory."""
+    output = Path(output_dir)
+    if output.exists():
+        raise ValueError(f"output directory already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}.tmp-", dir=output.parent))
+    try:
+        summary = _merge_final_results_into(
+            plan_root=plan_root,
+            blocks_root=blocks_root,
+            original_pack_path=original_pack_path,
+            output_dir=temporary,
+            expected_alias_count=expected_alias_count,
+            expected_block_count=expected_block_count,
+            expected_worker_count=expected_worker_count,
+        )
+        temporary.replace(output)
+        return summary
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
 
 
 def _parser() -> argparse.ArgumentParser:

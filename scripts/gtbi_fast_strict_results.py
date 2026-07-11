@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from scripts import global_technical_buy_indicator as gtbi
-from scripts.gtbi_fast_strict import economic_evaluation_hash
+from scripts import gtbi_fast_strict as planner
 
 
 ALIAS_COLUMNS = [
@@ -117,6 +117,36 @@ def _records_by_id(frame: pd.DataFrame, id_column: str) -> dict[str, dict[str, A
     }
 
 
+def _planned_hash(alias: pd.Series, name: str, actual: str) -> str:
+    if name not in alias.index or pd.isna(alias[name]) or not str(alias[name]).strip():
+        return actual
+    planned = str(alias[name])
+    if planned != actual:
+        raise ValueError(f"{name} mismatch for alias {alias['strategy_id']}")
+    return planned
+
+
+def _rank_leaderboard(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    return frame.sort_values(["score", "candidate_id"], ascending=[False, True], kind="mergesort").reset_index(drop=True)
+
+
+def _filtered_leaderboard(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "strict_quality_pass" not in frame.columns:
+        return pd.DataFrame(columns=frame.columns)
+    filtered = frame.loc[
+        frame["strict_quality_pass"].astype(str).str.lower().isin({"true", "1"})
+    ].copy()
+    if filtered.empty:
+        return filtered
+    return filtered.sort_values(
+        ["adjusted_return_time_risk", "candidate_id"],
+        ascending=[False, True],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+
 def expand_canonical_results(
     *,
     canonical_results_root: Path,
@@ -196,17 +226,25 @@ def expand_canonical_results(
         canonical_id = str(alias["canonical_strategy_id"])
         evaluation_hash = str(alias["evaluation_hash"])
         candidate = candidates[strategy_id]
-        actual_hash = economic_evaluation_hash(candidate)
+        actual_hash = planner.economic_evaluation_hash(candidate)
         if actual_hash != evaluation_hash:
             raise ValueError(f"economic hash mismatch for alias {strategy_id}")
         canonical_candidate = candidates.get(canonical_id)
-        if canonical_candidate is None or economic_evaluation_hash(canonical_candidate) != evaluation_hash:
+        if canonical_candidate is None or planner.economic_evaluation_hash(canonical_candidate) != evaluation_hash:
             raise ValueError(f"unknown or mismatched canonical strategy {canonical_id}")
         hashes = {
             "economic_hash": evaluation_hash,
             "canonical_hash": gtbi.canonical_external_strategy_hash(candidate),
-            "signal_hash": gtbi.signal_external_strategy_hash(candidate),
-            "exit_hash": gtbi.exit_external_strategy_hash(candidate),
+            "signal_hash": _planned_hash(
+                alias,
+                "signal_hash",
+                planner.signal_evaluation_hash(candidate),
+            ),
+            "exit_hash": _planned_hash(
+                alias,
+                "exit_hash",
+                planner.exit_evaluation_hash(candidate),
+            ),
         }
 
         if canonical_id in leaderboard_by_id:
@@ -270,7 +308,8 @@ def expand_canonical_results(
             }
         )
 
-    expanded_leaderboard = pd.DataFrame(leaderboard_rows)
+    expanded_leaderboard = _rank_leaderboard(pd.DataFrame(leaderboard_rows))
+    expanded_filtered = _filtered_leaderboard(expanded_leaderboard)
     expanded_rejected = pd.DataFrame(rejected_rows)
     expanded_yearly = (
         pd.concat(yearly_frames, ignore_index=True, sort=False)
@@ -281,7 +320,7 @@ def expand_canonical_results(
     _write_csv(output / "leaderboard_job_aliases.csv", expanded_leaderboard, gtbi.LEADERBOARD_COLUMNS)
     _write_csv(
         output / "filtered_leaderboard_job_aliases.csv",
-        pd.DataFrame(columns=expanded_leaderboard.columns),
+        expanded_filtered,
         list(expanded_leaderboard.columns),
     )
     _write_csv(output / "early_rejected_strategies_job_aliases.csv", expanded_rejected, gtbi.EARLY_REJECT_COLUMNS)

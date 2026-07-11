@@ -80,6 +80,7 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
             {
                 "candidate_id": "canonical-ok",
                 "score": 12.5,
+                "adjusted_return_time_risk": 3.5,
                 "strict_quality_pass": True,
                 "strategy_id": "canonical-ok",
                 "shard_id": 99,
