@@ -170,8 +170,21 @@ def _verify_campaign(campaign: dict[str, Any]) -> dict[str, Any]:
     fingerprint = str(campaign.get("campaign_fingerprint") or "")
     if not fingerprint:
         raise ValueError("campaign manifest has no fingerprint")
+    artifact_inventory = campaign.get("artifacts")
+    if not isinstance(artifact_inventory, list):
+        raise ValueError("campaign manifest has no artifact inventory")
+    plan_content = campaign.get("plan_content")
+    if not isinstance(plan_content, dict):
+        raise ValueError("campaign manifest has no plan content")
     fingerprint_inputs = {field: inputs[field] for field in _REQUIRED_CAMPAIGN_INPUTS}
-    if strict.campaign_fingerprint(**fingerprint_inputs) != fingerprint:
+    if (
+        strict.campaign_fingerprint(
+            **fingerprint_inputs,
+            artifact_inventory=artifact_inventory,
+            plan_content=plan_content,
+        )
+        != fingerprint
+    ):
         raise ValueError("campaign fingerprint does not match campaign inputs")
     for field, expected in _STRICT_DATES.items():
         if str(inputs[field]) != expected:
@@ -258,7 +271,7 @@ def _verify_plan_coherence(
     worker_id: int,
     shard_relative: Path,
     artifact_records: dict[str, dict[str, Any]],
-) -> int:
+) -> tuple[int, list[str]]:
     required_paths = ("worker_manifest.csv", "alias_map.csv", shard_relative.as_posix())
     for relative in required_paths:
         record = artifact_records.get(relative)
@@ -312,7 +325,15 @@ def _verify_plan_coherence(
             raise ValueError("alias map does not match worker manifest")
     if set(str(row["canonical_strategy_id"]) for row in worker_aliases) != set(canonical_ids):
         raise ValueError("alias map does not cover every canonical strategy")
-    return len(canonical_ids)
+    return len(canonical_ids), canonical_ids
+
+
+def _worker_output_records(output_dir: Path) -> list[dict[str, Any]]:
+    return [
+        _file_record(path, output_dir)
+        for path in sorted(output_dir.iterdir(), key=lambda item: item.name)
+        if path.is_file() and path.name != "worker_manifest.json"
+    ]
 
 
 def _worker_group_count(worker_manifest_path: Path, worker_id: int) -> int:
@@ -370,7 +391,7 @@ def run_worker(
 
     shard_relative = Path("canonical_pack") / f"strategies_shard_{int(worker_id):03d}.jsonl"
     artifact_records = _artifact_records(campaign)
-    canonical_count = _verify_plan_coherence(
+    canonical_count, canonical_ids = _verify_plan_coherence(
         plan=plan,
         worker_id=int(worker_id),
         shard_relative=shard_relative,
@@ -441,6 +462,20 @@ def run_worker(
         )
         (temporary_output / "campaign_manifest.json").write_text(
             Path(campaign_manifest_path).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (temporary_output / "worker_manifest.json").write_text(
+            json.dumps(
+                {
+                    "worker_id": int(worker_id),
+                    "campaign_fingerprint": fingerprint,
+                    "canonical_ids": canonical_ids,
+                    "files": _worker_output_records(temporary_output),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
         temporary_output.replace(output)

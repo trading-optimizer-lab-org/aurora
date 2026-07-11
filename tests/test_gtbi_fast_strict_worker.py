@@ -76,29 +76,40 @@ def _worker_fixture(tmp_path: Path) -> dict[str, Path]:
         "universe_identity": "universe-id",
         "dependency_lock_identity": "dependency-lock-id",
     }
+    artifacts = [
+        {
+            "path": "canonical_pack/strategies_shard_000.jsonl",
+            "sha256": _sha(shard),
+            "size_bytes": shard.stat().st_size,
+        },
+        {
+            "path": "worker_manifest.csv",
+            "sha256": _sha(worker_manifest),
+            "size_bytes": worker_manifest.stat().st_size,
+        },
+        {
+            "path": "alias_map.csv",
+            "sha256": _sha(alias_map),
+            "size_bytes": alias_map.stat().st_size,
+        },
+    ]
+    plan_content = {
+        "assignments": {"abc": 0},
+        "bundle_assignments": {"signal-abc": 0},
+        "counts": {"candidate_count": 1, "unique_economic_groups": 1, "worker_count": 1},
+    }
     campaign = plan / "campaign_manifest.json"
     campaign.write_text(
         json.dumps(
             {
-                "campaign_fingerprint": strict.campaign_fingerprint(**inputs),
+                "campaign_fingerprint": strict.campaign_fingerprint(
+                    **inputs,
+                    artifact_inventory=artifacts,
+                    plan_content=plan_content,
+                ),
                 "inputs": inputs,
-                "artifacts": [
-                    {
-                        "path": "canonical_pack/strategies_shard_000.jsonl",
-                        "sha256": _sha(shard),
-                        "size_bytes": shard.stat().st_size,
-                    },
-                    {
-                        "path": "worker_manifest.csv",
-                        "sha256": _sha(worker_manifest),
-                        "size_bytes": worker_manifest.stat().st_size,
-                    },
-                    {
-                        "path": "alias_map.csv",
-                        "sha256": _sha(alias_map),
-                        "size_bytes": alias_map.stat().st_size,
-                    },
-                ],
+                "artifacts": artifacts,
+                "plan_content": plan_content,
             }
         ),
         encoding="utf-8",
@@ -154,6 +165,90 @@ def test_worker_invokes_combined_evaluator_once_with_exact_flags(
     assert call["locked_start"] == "2021-01-01"
     assert summary["campaign_fingerprint"] == json.loads(paths["campaign"].read_text(encoding="utf-8"))["campaign_fingerprint"]
     assert summary["worker_id"] == 0
+
+
+def test_worker_output_manifest_satisfies_block_merge_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import merge_gtbi_fast_strict_block as block
+    from scripts import run_gtbi_fast_strict_worker as worker
+
+    paths = _worker_fixture(tmp_path)
+
+    def run(**kwargs: object) -> dict[str, object]:
+        output_dir = Path(str(kwargs["output_dir"]))
+        (output_dir / "leaderboard_job_000.csv").write_text(
+            "candidate_id,score\none,1.0\n",
+            encoding="utf-8",
+        )
+        return {
+            "total_strategies_evaluated": 1,
+            "total_strategies_early_rejected": 0,
+            "total_strategies_timed_out": 0,
+            "total_strategies_runtime_error": 0,
+            "total_strategies_unsupported": 0,
+            "total_strategies_slow_deferred": 0,
+        }
+
+    monkeypatch.setattr(worker.gtbi, "run_external_strategy_pack_shard", run)
+    summary = worker.run_worker(
+        campaign_manifest_path=paths["campaign"],
+        data_manifest_path=paths["data_manifest"],
+        plan_root=paths["plan"],
+        data_pack_root=paths["data"],
+        worker_id=0,
+        output_dir=paths["output"],
+    )
+
+    manifest, canonical_ids = block._verify_worker_manifest(
+        worker_root=paths["output"],
+        worker_id=0,
+        fingerprint=str(summary["campaign_fingerprint"]),
+        canonical_count=1,
+    )
+    assert canonical_ids == ["one"]
+    assert manifest["worker_id"] == 0
+    assert {record["path"] for record in manifest["files"]} == {
+        "campaign_manifest.json",
+        "leaderboard_job_000.csv",
+        "worker_summary.json",
+    }
+
+
+@pytest.mark.parametrize("tampered_component", ("artifacts", "plan_content"))
+def test_worker_rejects_campaign_fingerprint_tampered_plan_component(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tampered_component: str,
+) -> None:
+    from scripts import run_gtbi_fast_strict_worker as worker
+
+    paths = _worker_fixture(tmp_path)
+    campaign = json.loads(paths["campaign"].read_text(encoding="utf-8"))
+    if tampered_component == "artifacts":
+        campaign["artifacts"][0]["sha256"] = "0" * 64
+    else:
+        campaign["plan_content"]["counts"]["candidate_count"] = 2
+    paths["campaign"].write_text(json.dumps(campaign), encoding="utf-8")
+    called = False
+
+    def run(**kwargs: object) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr(worker.gtbi, "run_external_strategy_pack_shard", run)
+    with pytest.raises(ValueError, match="campaign fingerprint"):
+        worker.run_worker(
+            campaign_manifest_path=paths["campaign"],
+            data_manifest_path=paths["data_manifest"],
+            plan_root=paths["plan"],
+            data_pack_root=paths["data"],
+            worker_id=0,
+            output_dir=paths["output"],
+        )
+    assert called is False
 
 
 def test_worker_fails_before_evaluation_on_digest_mismatch(
@@ -257,6 +352,11 @@ def test_worker_rejects_canonical_shard_inconsistent_with_manifest(
     campaign = json.loads(paths["campaign"].read_text(encoding="utf-8"))
     campaign["artifacts"][0]["sha256"] = _sha(shard)
     campaign["artifacts"][0]["size_bytes"] = shard.stat().st_size
+    campaign["campaign_fingerprint"] = worker.strict.campaign_fingerprint(
+        **campaign["inputs"],
+        artifact_inventory=campaign["artifacts"],
+        plan_content=campaign["plan_content"],
+    )
     paths["campaign"].write_text(json.dumps(campaign), encoding="utf-8")
     called = False
 
@@ -328,7 +428,11 @@ def test_worker_rejects_prepared_data_at_locked_boundary(
     paths["data_manifest"].write_text(json.dumps(data_manifest), encoding="utf-8")
     campaign = json.loads(paths["campaign"].read_text(encoding="utf-8"))
     campaign["inputs"]["data_run_identity"] = data_manifest["data_pack_identity"]
-    campaign["campaign_fingerprint"] = strict.campaign_fingerprint(**campaign["inputs"])
+    campaign["campaign_fingerprint"] = strict.campaign_fingerprint(
+        **campaign["inputs"],
+        artifact_inventory=campaign["artifacts"],
+        plan_content=campaign["plan_content"],
+    )
     paths["campaign"].write_text(json.dumps(campaign), encoding="utf-8")
     called = False
 
@@ -365,7 +469,11 @@ def test_worker_rejects_non_strict_date_bounds_before_evaluation(
     campaign = json.loads(paths["campaign"].read_text(encoding="utf-8"))
     campaign["inputs"]["validation_end"] = "2021-01-01"
     campaign["inputs"]["data_run_identity"] = data_manifest["data_pack_identity"]
-    campaign["campaign_fingerprint"] = strict.campaign_fingerprint(**campaign["inputs"])
+    campaign["campaign_fingerprint"] = strict.campaign_fingerprint(
+        **campaign["inputs"],
+        artifact_inventory=campaign["artifacts"],
+        plan_content=campaign["plan_content"],
+    )
     paths["campaign"].write_text(json.dumps(campaign), encoding="utf-8")
     called = False
 
