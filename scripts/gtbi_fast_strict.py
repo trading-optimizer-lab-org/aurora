@@ -17,6 +17,7 @@ from scripts import global_technical_buy_indicator as gtbi
 
 DEFAULT_WORKER_COUNT = 360
 DEFAULT_EXPECTED_STRATEGY_COUNT = 72_000
+DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT = 3_600
 DEFAULT_TRAIN_END = "2010-12-31"
 DEFAULT_VALIDATION_START = "2011-01-01"
 DEFAULT_VALIDATION_END = "2020-12-31"
@@ -40,7 +41,8 @@ class _EconomicGroup:
     evaluation_hash: str
     representative: _CandidateRecord
     records: tuple[_CandidateRecord, ...]
-    estimated_cost: float
+    raw_cost_score: float
+    scheduling_cost: float
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -112,7 +114,13 @@ def _candidate_records(candidates: list[gtbi.ExternalStrategyCandidate]) -> list
     global_slots: set[int] = set()
     for candidate in candidates:
         payload = candidate.payload
-        strategy_id = str(payload.get("strategy_id", ""))
+        raw_strategy_id = payload.get("strategy_id")
+        strategy_id = "" if raw_strategy_id is None else str(raw_strategy_id)
+        if not strategy_id.strip():
+            raise ValueError("strategy_id must not be empty")
+        if candidate.unsupported_rules:
+            rules = ", ".join(candidate.unsupported_rules)
+            raise ValueError(f"candidate {strategy_id!r} has unsupported rules: {rules}")
         if strategy_id in strategy_ids:
             raise ValueError(f"duplicate strategy_id: {strategy_id}")
         try:
@@ -120,9 +128,13 @@ def _candidate_records(candidates: list[gtbi.ExternalStrategyCandidate]) -> list
             source_slot_in_shard = int(payload["slot_in_shard"])
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"candidate {strategy_id!r} has invalid source identity") from error
-        if not 0 <= source_slot_in_shard <= 71_999:
-            raise ValueError(f"source_slot_in_shard must be between 0 and 71999: {source_slot_in_shard}")
+        if not 0 <= source_shard_id <= 359:
+            raise ValueError(f"source_shard_id must be between 0 and 359: {source_shard_id}")
+        if not 0 <= source_slot_in_shard <= 199:
+            raise ValueError(f"source_slot_in_shard must be between 0 and 199: {source_slot_in_shard}")
         global_slot = source_shard_id * 200 + source_slot_in_shard
+        if not 0 <= global_slot <= 71_999:
+            raise ValueError(f"global_slot must be between 0 and 71999: {global_slot}")
         if global_slot in global_slots:
             raise ValueError(f"duplicate global_slot: {global_slot}")
         strategy_ids.add(strategy_id)
@@ -148,7 +160,7 @@ def _economic_groups(records: list[_CandidateRecord], execution_mode: str) -> li
     for evaluation_hash, members in grouped.items():
         ordered_members = tuple(sorted(members, key=lambda item: (item.global_slot, item.strategy_id)))
         representative = ordered_members[0]
-        estimated_cost = float(
+        raw_cost_score = float(
             gtbi._estimated_cost_score(
                 representative.candidate.payload,
                 optimized_evaluation_mode=execution_mode,
@@ -159,7 +171,8 @@ def _economic_groups(records: list[_CandidateRecord], execution_mode: str) -> li
                 evaluation_hash=evaluation_hash,
                 representative=representative,
                 records=ordered_members,
-                estimated_cost=estimated_cost,
+                raw_cost_score=raw_cost_score,
+                scheduling_cost=max(1.0, raw_cost_score),
             )
         )
     return groups
@@ -169,13 +182,13 @@ def _lpt_assign(groups: list[_EconomicGroup], worker_count: int) -> tuple[dict[s
     worker_groups: list[list[_EconomicGroup]] = [[] for _ in range(worker_count)]
     worker_costs = [0.0] * worker_count
     assignments: dict[str, int] = {}
-    for group in sorted(groups, key=lambda item: (-item.estimated_cost, item.evaluation_hash)):
+    for group in sorted(groups, key=lambda item: (-item.scheduling_cost, item.evaluation_hash)):
         worker_id = min(
             range(worker_count),
             key=lambda index: (worker_costs[index], len(worker_groups[index]), index),
         )
         worker_groups[worker_id].append(group)
-        worker_costs[worker_id] += group.estimated_cost
+        worker_costs[worker_id] += group.scheduling_cost
         assignments[group.evaluation_hash] = worker_id
     return assignments, worker_groups, worker_costs
 
@@ -191,12 +204,30 @@ def _write_csv(path: Path, fieldnames: list[str], rows: Iterable[dict[str, Any]]
         writer.writerows(rows)
 
 
+def _artifact_metadata(output_dir: Path, relative_paths: Iterable[Path]) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    for relative_path in sorted(relative_paths, key=lambda path: path.as_posix()):
+        path = output_dir / relative_path
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        artifacts.append(
+            {
+                "path": relative_path.as_posix(),
+                "sha256": digest.hexdigest(),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    return artifacts
+
+
 def _matrix_workers(worker_ids: Iterable[int], worker_groups: list[list[_EconomicGroup]], worker_costs: list[float]) -> list[dict[str, Any]]:
     return [
         {
             "worker_id": worker_id,
             "group_count": len(worker_groups[worker_id]),
-            "estimated_cost": worker_costs[worker_id],
+            "scheduling_cost": worker_costs[worker_id],
         }
         for worker_id in worker_ids
     ]
@@ -208,6 +239,7 @@ def create_campaign_plan(
     *,
     worker_count: int = DEFAULT_WORKER_COUNT,
     expected_strategy_count: int = DEFAULT_EXPECTED_STRATEGY_COUNT,
+    expected_unique_group_count: int | None = DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT,
     code_sha: str,
     data_run_identity: str,
     train_end: str = DEFAULT_TRAIN_END,
@@ -223,6 +255,9 @@ def create_campaign_plan(
     """Create a deterministic worker plan and all campaign artifacts."""
     if worker_count <= 0:
         raise ValueError("worker_count must be greater than zero")
+    output = Path(output_dir)
+    if output.is_file() or (output.exists() and any(path.is_file() for path in output.rglob("*"))):
+        raise ValueError(f"output directory already contains files: {output}")
     candidates = gtbi.load_external_strategy_candidates(
         Path(pack_path),
         shard_id=None,
@@ -234,11 +269,15 @@ def create_campaign_plan(
         raise ValueError(f"candidate count {len(candidates)} differs from expected count {expected_strategy_count}")
     records = _candidate_records(candidates)
     groups = _economic_groups(records, execution_mode)
+    if expected_unique_group_count is not None and len(groups) != expected_unique_group_count:
+        raise ValueError(
+            f"unique economic group count {len(groups)} differs from expected count "
+            f"{expected_unique_group_count}"
+        )
     assignments, worker_groups, worker_costs = _lpt_assign(groups, worker_count)
     if any(not worker for worker in worker_groups):
         raise ValueError("at least one worker is empty after economic grouping")
 
-    output = Path(output_dir)
     canonical_pack = output / "canonical_pack"
     canonical_pack.mkdir(parents=True, exist_ok=True)
     pack_digest = strategy_pack_digest(Path(pack_path))
@@ -278,7 +317,8 @@ def create_campaign_plan(
                         "source_slot_in_shard": representative.source_slot_in_shard,
                         "global_slot": representative.global_slot,
                         "worker_id": worker_id,
-                        "estimated_cost": group.estimated_cost,
+                        "raw_cost_score": group.raw_cost_score,
+                        "scheduling_cost": group.scheduling_cost,
                     }
                 )
                 for record in group.records:
@@ -318,21 +358,42 @@ def create_campaign_plan(
             "source_slot_in_shard",
             "global_slot",
             "worker_id",
-            "estimated_cost",
+            "raw_cost_score",
+            "scheduling_cost",
         ],
         manifest_rows,
     )
     matrix_split = min(180, worker_count)
-    _write_json(output / "matrix_a.json", {"workers": _matrix_workers(range(matrix_split), worker_groups, worker_costs)})
-    _write_json(output / "matrix_b.json", {"workers": _matrix_workers(range(matrix_split, worker_count), worker_groups, worker_costs)})
+    _write_json(
+        output / "matrix_a.json",
+        {"include": _matrix_workers(range(matrix_split), worker_groups, worker_costs)},
+    )
+    _write_json(
+        output / "matrix_b.json",
+        {"include": _matrix_workers(range(matrix_split, worker_count), worker_groups, worker_costs)},
+    )
     _write_json(
         output / "block_matrix.json",
         {
-            "blocks": [
+            "include": [
                 {"block_id": block_id, "worker_ids": list(range(start, min(start + 18, worker_count)))}
                 for block_id, start in enumerate(range(0, worker_count, 18))
             ]
         },
+    )
+    artifact_paths = [
+        Path("canonical_pack") / f"strategies_shard_{worker_id:03d}.jsonl"
+        for worker_id in range(worker_count)
+    ]
+    artifact_paths.extend(
+        Path(name)
+        for name in (
+            "alias_map.csv",
+            "worker_manifest.csv",
+            "matrix_a.json",
+            "matrix_b.json",
+            "block_matrix.json",
+        )
     )
     manifest = {
         "campaign_fingerprint": fingerprint,
@@ -340,9 +401,11 @@ def create_campaign_plan(
         "counts": {
             "candidate_count": len(records),
             "unique_economic_groups": len(groups),
+            "expected_unique_group_count": expected_unique_group_count,
             "worker_count": worker_count,
         },
         "assignments": assignments,
+        "artifacts": _artifact_metadata(output, artifact_paths),
     }
     _write_json(output / "campaign_manifest.json", manifest)
     return manifest
@@ -367,6 +430,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKER_COUNT)
     parser.add_argument("--expected-strategy-count", type=int, default=DEFAULT_EXPECTED_STRATEGY_COUNT)
+    parser.add_argument(
+        "--expected-unique-group-count",
+        type=int,
+        default=DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT,
+    )
     parser.add_argument("--code-sha", default=None)
     parser.add_argument("--data-run-identity", required=True)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
@@ -388,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
         args.output_dir,
         worker_count=args.workers,
         expected_strategy_count=args.expected_strategy_count,
+        expected_unique_group_count=args.expected_unique_group_count,
         code_sha=args.code_sha or _current_code_sha(),
         data_run_identity=args.data_run_identity,
         train_end=args.train_end,

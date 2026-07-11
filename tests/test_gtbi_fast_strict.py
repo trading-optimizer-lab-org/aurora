@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -45,6 +46,7 @@ def _plan_inputs(tmp_path: Path, **overrides: object) -> dict[str, object]:
         "output_dir": tmp_path / "output",
         "worker_count": 2,
         "expected_strategy_count": 4,
+        "expected_unique_group_count": None,
         "code_sha": "code-sha",
         "data_run_identity": "data-run-1",
         "train_end": "2010-12-31",
@@ -144,12 +146,53 @@ def test_plan_groups_deterministically_and_keeps_lowest_global_slot(monkeypatch:
     assert manifest["counts"] == {
         "candidate_count": 4,
         "unique_economic_groups": 3,
+        "expected_unique_group_count": None,
         "worker_count": 2,
     }
     with (tmp_path / "output" / "worker_manifest.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     grouped = next(row for row in rows if row["canonical_strategy_id"] == "representative")
     assert grouped["global_slot"] == "1"
+
+
+def test_plan_validates_and_records_expected_unique_group_count(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    candidates = [
+        _candidate("alias", shard_id=0, slot_in_shard=0),
+        _candidate("canonical", shard_id=0, slot_in_shard=1),
+        _candidate("second", shard_id=0, slot_in_shard=2, stop_loss_pct=0.12),
+        _candidate("third", shard_id=0, slot_in_shard=3, stop_loss_pct=0.14),
+    ]
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
+
+    with pytest.raises(ValueError, match="unique economic group count"):
+        strict.create_campaign_plan(**_plan_inputs(tmp_path, expected_unique_group_count=4))
+
+    manifest = strict.create_campaign_plan(
+        **_plan_inputs(
+            tmp_path,
+            output_dir=tmp_path / "valid-output",
+            expected_unique_group_count=3,
+        )
+    )
+    assert manifest["counts"]["expected_unique_group_count"] == 3
+
+
+def test_cli_defaults_to_3600_expected_unique_groups() -> None:
+    args = strict._parser().parse_args(
+        [
+            "pack",
+            "output",
+            "--data-run-identity",
+            "data-run",
+            "--universe-identity",
+            "universe",
+            "--dependency-lock-identity",
+            "lock",
+        ]
+    )
+
+    assert strict.DEFAULT_EXPECTED_UNIQUE_GROUP_COUNT == 3_600
+    assert args.expected_unique_group_count == 3_600
 
 
 def test_plan_uses_deterministic_lpt_and_exact_matrix_boundaries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -169,9 +212,36 @@ def test_plan_uses_deterministic_lpt_and_exact_matrix_boundaries(monkeypatch: py
     matrix_a = json.loads((tmp_path / "output" / "matrix_a.json").read_text(encoding="utf-8"))
     matrix_b = json.loads((tmp_path / "output" / "matrix_b.json").read_text(encoding="utf-8"))
     blocks = json.loads((tmp_path / "output" / "block_matrix.json").read_text(encoding="utf-8"))
-    assert [row["worker_id"] for row in matrix_a["workers"]] == [0, 1]
-    assert matrix_b["workers"] == []
-    assert blocks["blocks"] == [{"block_id": 0, "worker_ids": [0, 1]}]
+    assert set(matrix_a) == {"include"}
+    assert set(matrix_b) == {"include"}
+    assert set(blocks) == {"include"}
+    assert [row["worker_id"] for row in matrix_a["include"]] == [0, 1]
+    assert matrix_b["include"] == []
+    assert blocks["include"] == [{"block_id": 0, "worker_ids": [0, 1]}]
+
+
+def test_lpt_uses_positive_cost_and_preserves_raw_score(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    candidates = [
+        _candidate("positive", shard_id=0, slot_in_shard=0, stop_loss_pct=0.10),
+        _candidate("zero", shard_id=0, slot_in_shard=1, stop_loss_pct=0.11),
+        _candidate("negative-a", shard_id=0, slot_in_shard=2, stop_loss_pct=0.12),
+        _candidate("negative-b", shard_id=0, slot_in_shard=3, stop_loss_pct=0.13),
+    ]
+    raw_scores = {"positive": 2.0, "zero": 0.0, "negative-a": -5.0, "negative-b": -6.0}
+
+    def estimate(payload: dict[str, object], *, optimized_evaluation_mode: str) -> tuple[float, str]:
+        return raw_scores[str(payload["strategy_id"])], "fixture"
+
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
+    monkeypatch.setattr(strict.gtbi, "_estimated_cost_score", estimate)
+
+    strict.create_campaign_plan(**_plan_inputs(tmp_path))
+
+    with (tmp_path / "output" / "worker_manifest.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert sorted(float(row["raw_cost_score"]) for row in rows) == [-6.0, -5.0, 0.0, 2.0]
+    assert sorted(float(row["scheduling_cost"]) for row in rows) == [1.0, 1.0, 1.0, 2.0]
+    assert sorted(sum(row["worker_id"] == worker_id for row in rows) for worker_id in {"0", "1"}) == [2, 2]
 
 
 def test_default_matrix_and_block_boundaries_cover_all_360_workers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -186,9 +256,42 @@ def test_default_matrix_and_block_boundaries_cover_all_360_workers(monkeypatch: 
     matrix_a = json.loads((tmp_path / "output" / "matrix_a.json").read_text(encoding="utf-8"))
     matrix_b = json.loads((tmp_path / "output" / "matrix_b.json").read_text(encoding="utf-8"))
     blocks = json.loads((tmp_path / "output" / "block_matrix.json").read_text(encoding="utf-8"))
-    assert [row["worker_id"] for row in matrix_a["workers"]] == list(range(180))
-    assert [row["worker_id"] for row in matrix_b["workers"]] == list(range(180, 360))
-    assert [block["worker_ids"] for block in blocks["blocks"]] == [list(range(start, start + 18)) for start in range(0, 360, 18)]
+    assert [row["worker_id"] for row in matrix_a["include"]] == list(range(180))
+    assert [row["worker_id"] for row in matrix_b["include"]] == list(range(180, 360))
+    assert [block["worker_ids"] for block in blocks["include"]] == [
+        list(range(start, start + 18)) for start in range(0, 360, 18)
+    ]
+
+
+def test_campaign_manifest_declares_sha256_and_size_for_every_worker_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidates = [
+        _candidate("first", shard_id=0, slot_in_shard=0),
+        _candidate("second", shard_id=0, slot_in_shard=1, stop_loss_pct=0.12),
+    ]
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture(candidates))
+
+    manifest = strict.create_campaign_plan(
+        **_plan_inputs(tmp_path, worker_count=2, expected_strategy_count=2)
+    )
+
+    expected_paths = {
+        "canonical_pack/strategies_shard_000.jsonl",
+        "canonical_pack/strategies_shard_001.jsonl",
+        "alias_map.csv",
+        "worker_manifest.csv",
+        "matrix_a.json",
+        "matrix_b.json",
+        "block_matrix.json",
+    }
+    assert {artifact["path"] for artifact in manifest["artifacts"]} == expected_paths
+    for artifact in manifest["artifacts"]:
+        path = tmp_path / "output" / artifact["path"]
+        content = path.read_bytes()
+        assert artifact["size_bytes"] == len(content)
+        assert artifact["sha256"] == hashlib.sha256(content).hexdigest()
 
 
 @pytest.mark.parametrize(
@@ -203,6 +306,54 @@ def test_plan_rejects_duplicate_identity(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     with pytest.raises(ValueError, match=message):
         strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=2))
+
+
+@pytest.mark.parametrize(
+    "candidate, message",
+    [
+        (_candidate("", shard_id=0, slot_in_shard=0), "strategy_id must not be empty"),
+        (_candidate("bad-shard", shard_id=360, slot_in_shard=0), "source_shard_id"),
+        (_candidate("bad-slot", shard_id=0, slot_in_shard=200), "source_slot_in_shard"),
+    ],
+)
+def test_plan_rejects_invalid_source_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    candidate: gtbi.ExternalStrategyCandidate,
+    message: str,
+) -> None:
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture([candidate]))
+
+    with pytest.raises(ValueError, match=message):
+        strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=1))
+
+
+def test_plan_rejects_candidate_with_unsupported_rules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    candidate = replace(
+        _candidate("unsupported", shard_id=0, slot_in_shard=0),
+        unsupported_rules=("entry_rules.unknown_rule",),
+    )
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture([candidate]))
+
+    with pytest.raises(ValueError, match="unsupported rules"):
+        strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=1))
+
+
+def test_plan_rejects_output_directory_that_already_contains_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidate = _candidate("one", shard_id=0, slot_in_shard=0)
+    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture([candidate]))
+    output = tmp_path / "output"
+    (output / "stale").mkdir(parents=True)
+    stale_file = output / "stale" / "old-plan.json"
+    stale_file.write_text("stale", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="output directory already contains files"):
+        strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=1))
+
+    assert stale_file.read_text(encoding="utf-8") == "stale"
 
 
 def test_plan_preserves_source_identity_in_canonical_payload_and_alias_map(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -236,10 +387,6 @@ def test_plan_preserves_source_identity_in_canonical_payload_and_alias_map(monke
 
 
 def test_plan_rejects_wrong_candidate_count_empty_worker_and_out_of_range_slot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture([_candidate("one", shard_id=0, slot_in_shard=72_000)]))
-    with pytest.raises(ValueError, match="source_slot_in_shard"):
-        strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=1))
-
     monkeypatch.setattr(strict.gtbi, "load_external_strategy_candidates", _load_fixture([_candidate("one", shard_id=0, slot_in_shard=0)]))
     with pytest.raises(ValueError, match="candidate count"):
         strict.create_campaign_plan(**_plan_inputs(tmp_path, worker_count=1, expected_strategy_count=2))

@@ -49,3 +49,22 @@ No backtests or research campaigns were run.
 ## Concerns
 
 None. The implementation uses the evaluator's existing private cost estimator, `_estimated_cost_score`, because it is the established GTBI cost model used to order work.
+
+## Review fixes
+
+The first review found identity and provenance gaps. The follow-up change:
+
+- validates non-empty strategy IDs, shard range 0..359, slot range 0..199,
+  and global range 0..71999;
+- rejects unsupported strategies and stale output directories;
+- requires 3,600 unique economic groups by default;
+- uses strictly positive scheduling costs while preserving the raw score;
+- emits GitHub-native matrix objects;
+- records SHA-256 and byte size for all canonical shards and planning files.
+
+Fresh verification after these fixes:
+
+```text
+30 passed in 5.78s
+All checks passed!
+```
