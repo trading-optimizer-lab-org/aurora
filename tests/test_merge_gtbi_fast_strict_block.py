@@ -243,6 +243,51 @@ def test_block_merge_recomputes_campaign_fingerprint(tmp_path: Path) -> None:
         )
 
 
+def test_block_merge_accepts_planner_campaign_fingerprint_with_artifacts_and_plan_content(
+    tmp_path: Path,
+) -> None:
+    from scripts import merge_gtbi_fast_strict_block as block
+    from scripts.gtbi_fast_strict import campaign_fingerprint
+
+    inputs = tmp_path / "inputs"
+    _worker(inputs, 0)
+    worker = inputs / "gtbi-v6-block-00-worker-000"
+    campaign_path = worker / "campaign_manifest.json"
+    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+    campaign["artifacts"] = [
+        {
+            "path": "canonical_pack/strategies_shard_000.jsonl",
+            "sha256": "a" * 64,
+            "size_bytes": 42,
+        }
+    ]
+    campaign["plan_content"] = {
+        "assignments": {"economic-hash": 0},
+        "bundle_assignments": {"signal-hash": 0},
+        "counts": {"worker_count": 1, "unique_signal_bundles": 1},
+    }
+    campaign["campaign_fingerprint"] = campaign_fingerprint(
+        **campaign["inputs"],
+        artifact_inventory=campaign["artifacts"],
+        plan_content=campaign["plan_content"],
+    )
+    campaign_path.write_text(json.dumps(campaign), encoding="utf-8")
+    summary_path = worker / "worker_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["campaign_fingerprint"] = campaign["campaign_fingerprint"]
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    _write_worker_manifest(worker, 0, str(campaign["campaign_fingerprint"]), ["candidate-0"])
+
+    result = block.merge_block(
+        input_root=inputs,
+        output_dir=tmp_path / "output",
+        block_id=0,
+        expected_worker_ids=[0],
+    )
+
+    assert result["campaign_fingerprint"] == campaign["campaign_fingerprint"]
+
+
 def test_block_merge_rejects_tampered_worker_file_digest_atomically(tmp_path: Path) -> None:
     from scripts import merge_gtbi_fast_strict_block as block
 

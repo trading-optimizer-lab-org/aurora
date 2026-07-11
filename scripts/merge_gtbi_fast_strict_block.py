@@ -170,8 +170,18 @@ def _validated_campaign(campaign_path: Path) -> tuple[dict[str, Any], str]:
     inputs = campaign.get("inputs")
     if not fingerprint or not isinstance(inputs, dict):
         raise ValueError(f"campaign manifest is incomplete: {campaign_path}")
+    artifacts = campaign.get("artifacts")
+    plan_content = campaign.get("plan_content")
+    if artifacts is not None and not isinstance(artifacts, list):
+        raise ValueError(f"campaign manifest artifact inventory is invalid: {campaign_path}")
+    if plan_content is not None and not isinstance(plan_content, dict):
+        raise ValueError(f"campaign manifest plan content is invalid: {campaign_path}")
     try:
-        recomputed = campaign_fingerprint(**inputs)
+        recomputed = campaign_fingerprint(
+            **inputs,
+            artifact_inventory=artifacts,
+            plan_content=plan_content,
+        )
     except TypeError as error:
         raise ValueError(f"campaign manifest inputs are invalid: {campaign_path}") from error
     if fingerprint != recomputed:
