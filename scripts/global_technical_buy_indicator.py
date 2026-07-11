@@ -991,6 +991,43 @@ def _frame_series_cache(frame: pd.DataFrame, namespace: str) -> dict[tuple[Any, 
     return cache
 
 
+def _exact_float_cache_token(value: float) -> str:
+    """Represent an effective float exactly instead of merging nearby values."""
+    return float(value).hex()
+
+
+def _benchmark_cache_identity(frame: pd.DataFrame) -> str:
+    """Return a content-bound identity shared safely by per-symbol caches."""
+    cached = frame.attrs.get("_gtbi_benchmark_content_identity")
+    if isinstance(cached, str) and cached:
+        return cached
+    columns = [column for column in ("date", "close") if column in frame.columns]
+    selected = frame.loc[:, columns] if columns else frame
+    digest = hashlib.sha256()
+    digest.update(json.dumps(columns, separators=(",", ":")).encode("utf-8"))
+    digest.update(
+        pd.util.hash_pandas_object(selected, index=True, categorize=False)
+        .to_numpy(dtype=np.uint64, copy=False)
+        .tobytes()
+    )
+    identity = digest.hexdigest()
+    frame.attrs["_gtbi_benchmark_content_identity"] = identity
+    return identity
+
+
+def _normalize_timing_diagnostic(diagnostic: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep wall timing while ensuring total covers independently timed phases."""
+    normalized = dict(diagnostic)
+    wall_seconds = max(_finite_float(normalized.get("seconds_total"), default=0.0), 0.0)
+    phase_seconds = sum(
+        max(_finite_float(normalized.get(key), default=0.0), 0.0)
+        for key in ("seconds_feature_build", "seconds_signal", "seconds_simulation")
+    )
+    normalized["seconds_wall_candidate"] = wall_seconds
+    normalized["seconds_total"] = max(wall_seconds, phase_seconds)
+    return normalized
+
+
 @dataclass
 class FeatureStore:
     """Per-job feature cache attached to prepared symbol frames."""
@@ -1013,6 +1050,7 @@ class SignalPrimitiveStore:
         self.volume = self.frame["volume"].fillna(0.0) if not self.frame.empty else pd.Series(dtype=float)
         self.index = self.frame.index
         self.cache = _frame_series_cache(self.frame, "_gtbi_signal_primitive_cache")
+        self.benchmark_identity = _benchmark_cache_identity(self.benchmark)
 
     def const(self, value: bool) -> pd.Series:
         return _safe_bool_series(value, self.index)
@@ -1080,7 +1118,7 @@ class SignalPrimitiveStore:
         return self.cache[key]
 
     def spy_close(self) -> pd.Series:
-        key = ("spy_close", id(self.benchmark), len(self.benchmark))
+        key = ("spy_close", self.benchmark_identity)
         if key not in self.cache:
             self.cache[key] = (
                 self.benchmark["close"].reindex(self.index).ffill()
@@ -1090,7 +1128,7 @@ class SignalPrimitiveStore:
         return self.cache[key]
 
     def rs_line(self) -> pd.Series:
-        key = ("rs_line", id(self.benchmark), len(self.benchmark))
+        key = ("rs_line", self.benchmark_identity)
         if key not in self.cache:
             if self.benchmark.empty:
                 self.cache[key] = pd.Series(np.nan, index=self.index)
@@ -1099,7 +1137,7 @@ class SignalPrimitiveStore:
         return self.cache[key]
 
     def rs_avg(self, window: int) -> pd.Series:
-        key = ("rs_avg", int(window), id(self.benchmark), len(self.benchmark))
+        key = ("rs_avg", int(window), self.benchmark_identity)
         if key not in self.cache:
             rs_line = self.rs_line()
             self.cache[key] = rs_line.rolling(
@@ -1109,7 +1147,7 @@ class SignalPrimitiveStore:
         return self.cache[key]
 
     def rs_high(self, window: int) -> pd.Series:
-        key = ("rs_high", int(window), id(self.benchmark), len(self.benchmark))
+        key = ("rs_high", int(window), self.benchmark_identity)
         if key not in self.cache:
             rs_line = self.rs_line()
             self.cache[key] = rs_line.rolling(
@@ -1137,13 +1175,13 @@ class SignalPrimitiveStore:
         return self.cache[key]
 
     def volume_gt_adv(self, window: int, multiple: float) -> pd.Series:
-        key = ("volume_gt_adv", int(window), round(float(multiple), 8))
+        key = ("volume_gt_adv", int(window), _exact_float_cache_token(multiple))
         if key not in self.cache:
             self.cache[key] = self.volume > self.adv(int(window)) * float(multiple)
         return self.cache[key]
 
     def rs_ratio_gt_ma(self, window: int) -> pd.Series:
-        key = ("rs_ratio_gt_ma", int(window), id(self.benchmark), len(self.benchmark))
+        key = ("rs_ratio_gt_ma", int(window), self.benchmark_identity)
         if key not in self.cache:
             if self.benchmark.empty:
                 self.cache[key] = self.const(True)
@@ -1186,7 +1224,7 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
         exit_cache.setdefault(("exit_ma", window), close.rolling(window, min_periods=window).mean())
 
     if not benchmark.empty:
-        benchmark_identity = (id(benchmark), len(benchmark))
+        benchmark_identity = (_benchmark_cache_identity(benchmark),)
         spy_close = benchmark["close"].reindex(prepared.index).ffill()
         entry_cache.setdefault(("spy_close", *benchmark_identity), spy_close)
         primitive_cache.setdefault(("spy_close", *benchmark_identity), spy_close)
@@ -1199,7 +1237,7 @@ def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame
             primitive_cache.setdefault(("rs_high", window, *benchmark_identity), rs_high)
             for near_high_pct in (0.90, 0.95):
                 entry_cache.setdefault(
-                    ("rs_ok", window, round(float(near_high_pct), 8), *benchmark_identity),
+                    ("rs_ok", window, _exact_float_cache_token(near_high_pct), *benchmark_identity),
                     (rs_line > rs_avg) & (rs_line >= rs_high * float(near_high_pct)),
                 )
         for market_ma_days in (50, 200):
@@ -1283,8 +1321,7 @@ def _market_trend_ok_for_frame(frame: pd.DataFrame, benchmark_prices: pd.DataFra
     benchmark = _prepare_ohlcv(benchmark_prices)
     key = (
         "market_trend",
-        id(benchmark),
-        len(benchmark),
+        _benchmark_cache_identity(benchmark),
         int(config.market_ma_days),
         int(config.market_momentum_days),
         bool(config.strict_market_filter),
@@ -1656,9 +1693,8 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         key = (
             "rs_ok",
             int(config.rs_lookback),
-            round(float(config.rs_near_high_pct), 8),
-            id(benchmark),
-            len(benchmark),
+            _exact_float_cache_token(config.rs_near_high_pct),
+            _benchmark_cache_identity(benchmark),
         )
         if key not in cache:
             rs_line = primitives.rs_line()
@@ -8432,6 +8468,10 @@ def run_external_strategy_pack_shard(
                 signal_group_size=signal_group_size_by_hash.get(signal_hash, 1),
                 exit_group_size=exit_group_size_by_key.get((signal_hash, exit_hash), 1),
             )
+            diagnostic["seconds_feature_build"] = float(
+                feature_store.seconds_build / max(len(evaluable), 1)
+            )
+            diagnostic = _normalize_timing_diagnostic(diagnostic)
             final_reject = _event_first_final_quality_reject(row)
             if final_reject is not None:
                 reject_reason = str(final_reject["reason"])
@@ -8473,6 +8513,7 @@ def run_external_strategy_pack_shard(
         if not trades.empty:
             trade_frames.append(trades)
         diagnostic["seconds_feature_build"] = float(feature_store.seconds_build / max(len(evaluable), 1))
+        diagnostic = _normalize_timing_diagnostic(diagnostic)
         timing_rows.append(
             {
                 **diagnostic_base,

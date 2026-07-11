@@ -1969,7 +1969,7 @@ def test_feature_store_prewarms_long_hold_signal_primitives() -> None:
     primitive_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_signal_primitive_cache")
     market_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_market_trend_cache")
     benchmark = store.benchmark_prices
-    benchmark_key = (id(benchmark), len(benchmark))
+    benchmark_key = (gtbi._benchmark_cache_identity(benchmark),)
 
     assert ("high_1_30", 55) in entry_cache
     assert ("low_1_30", 40) in entry_cache
