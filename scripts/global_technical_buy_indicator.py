@@ -8790,6 +8790,49 @@ def run_external_strategy_pack_shard(
     return summary
 
 
+def _duplicate_comparison_value(value: Any) -> tuple[str, str]:
+    """Return an exact, hashable representation for duplicate validation."""
+    try:
+        if bool(pd.isna(value)):
+            return ("missing", "")
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (float, np.floating)):
+        return ("float", float(value).hex())
+    if isinstance(value, np.generic):
+        value = value.item()
+    return (type(value).__name__, repr(value))
+
+
+def _assert_consistent_duplicate_rows(
+    frame: pd.DataFrame,
+    identity_columns: list[str],
+    *,
+    label: str,
+) -> None:
+    """Fail before dedupe when the same result identity has different content."""
+    if frame.empty:
+        return
+    missing = [column for column in identity_columns if column not in frame.columns]
+    if missing:
+        return
+    duplicate_mask = frame.duplicated(subset=identity_columns, keep=False)
+    if not bool(duplicate_mask.any()):
+        return
+    value_columns = sorted(str(column) for column in frame.columns)
+    duplicate_rows = frame.loc[duplicate_mask]
+    group_key: str | list[str] = identity_columns[0] if len(identity_columns) == 1 else identity_columns
+    for identity, group in duplicate_rows.groupby(group_key, dropna=False, sort=False):
+        normalized = {
+            tuple(_duplicate_comparison_value(row[column]) for column in value_columns)
+            for _, row in group.iterrows()
+        }
+        if len(normalized) > 1:
+            raise ValueError(
+                f"conflicting duplicate {label} rows for identity {identity!r}"
+            )
+
+
 def merge_external_strategy_pack_outputs(
     *,
     shards_root: Path,
@@ -9531,6 +9574,19 @@ def merge_external_strategy_pack_outputs(
                 timeouts = pd.concat([timeouts, pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)], ignore_index=True, sort=False)
                 timing = pd.concat([timing, pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)], ignore_index=True, sort=False)
                 job_manifest = pd.concat([job_manifest, pd.DataFrame(manifest_rows, columns=JOB_MANIFEST_COLUMNS)], ignore_index=True, sort=False)
+    _assert_consistent_duplicate_rows(leaderboard, ["candidate_id"], label="leaderboard")
+    _assert_consistent_duplicate_rows(early_rejected, ["strategy_id"], label="early_rejected")
+    _assert_consistent_duplicate_rows(
+        yearly,
+        ["candidate_id", "split", "year"],
+        label="yearly",
+    )
+    _assert_consistent_duplicate_rows(
+        trades,
+        ["candidate_id", "symbol", "entry_date", "exit_date"],
+        label="trades",
+    )
+
     def drop_duplicate_strategy_rows(frame: pd.DataFrame, strategy_column: str) -> pd.DataFrame:
         if frame.empty or strategy_column not in frame.columns:
             return frame
