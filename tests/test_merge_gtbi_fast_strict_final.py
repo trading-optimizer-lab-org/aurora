@@ -251,8 +251,8 @@ def test_final_reducer_verifies_provenance_expands_light_rows_and_publishes_succ
         expected_worker_count=2,
     )
 
-    aliases = pd.read_csv(paths["output"] / "aliases" / "leaderboard_job_aliases.csv")
-    hashes = pd.read_csv(paths["output"] / "aliases" / "dedupe_map_job_aliases.csv")
+    aliases = pd.read_csv(paths["output"] / "leaderboard.csv")
+    hashes = pd.read_csv(paths["output"] / "dedupe_map.csv")
     heavy_aliases = pd.read_csv(paths["output"] / "canonical_trade_detail_alias_map.csv")
     assert aliases["candidate_id"].tolist() == ["canonical-reject", "alias-ok", "canonical-ok"]
     assert set(hashes) >= {"economic_hash", "canonical_hash", "signal_hash", "exit_hash"}
@@ -274,9 +274,52 @@ def test_final_reducer_verifies_provenance_expands_light_rows_and_publishes_succ
     assert (paths["output"] / "top_trades_sample.csv").is_file()
     assert (paths["output"] / "family_summary.csv").is_file()
     assert (paths["output"] / "top_indicator_rules.jsonl").is_file()
+    assert not (paths["output"] / "aliases").exists()
     from scripts import validate_gtbi_fast_strict_artifact as validator
 
     assert validator.validate_artifact(paths["output"], expected_strategy_count=3)["valid"] is True
+
+
+def test_final_reducer_streams_large_canonical_csvs_without_loading_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import merge_gtbi_fast_strict_final as final
+
+    paths = _fixture(tmp_path, monkeypatch, second_evaluated=True)
+    _add_block_csv(
+        paths["blocks"] / "block-00",
+        "ticker_trade_summary_job_block_00.csv",
+        [{"candidate_id": "canonical-ok", "symbol": "AAA", "trades": 2}],
+    )
+    _add_block_csv(
+        paths["blocks"] / "block-01",
+        "ticker_trade_summary_job_block_01.csv",
+        [{"candidate_id": "canonical-reject", "symbol": "BBB", "trades": 3}],
+    )
+    original_read = final.results._read_csv
+
+    def guarded_read(path: Path, *args: object, **kwargs: object) -> pd.DataFrame:
+        if Path(path).name.startswith("ticker_trade_summary_job_block_"):
+            raise AssertionError("large canonical CSV was loaded into memory")
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(final.results, "_read_csv", guarded_read)
+    final.merge_final_results(
+        plan_root=paths["plan"],
+        blocks_root=paths["blocks"],
+        original_pack_path=paths["original_pack"],
+        output_dir=paths["output"],
+        expected_alias_count=3,
+        expected_block_count=2,
+        expected_worker_count=2,
+    )
+
+    streamed = pd.read_csv(paths["output"] / "canonical_results/ticker_trade_summary.csv")
+    assert streamed.to_dict("records") == [
+        {"candidate_id": "canonical-ok", "symbol": "AAA", "trades": 2},
+        {"candidate_id": "canonical-reject", "symbol": "BBB", "trades": 3},
+    ]
 
 
 def test_final_reducer_rejects_worker_repeated_across_blocks(

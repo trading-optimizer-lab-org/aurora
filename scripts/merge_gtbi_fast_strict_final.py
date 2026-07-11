@@ -195,6 +195,33 @@ def _verified_blocks(
     return [blocks[block_id] for block_id in sorted(blocks)]
 
 
+def _csv_has_data_rows(path: Path) -> bool:
+    with Path(path).open("rb") as handle:
+        handle.readline()
+        return any(line.strip() for line in handle)
+
+
+def _stream_csv_files(paths: list[Path], destination: Path) -> None:
+    header: bytes | None = None
+    with Path(destination).open("wb") as output:
+        for path in paths:
+            with Path(path).open("rb") as source:
+                current = source.readline().rstrip(b"\r\n")
+                if header is None:
+                    header = current
+                    output.write(header + b"\n")
+                elif current != header:
+                    raise ValueError(f"CSV header mismatch while streaming {path.name}")
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+
+
+def _stream_jsonl_files(paths: list[Path], destination: Path) -> None:
+    with Path(destination).open("wb") as output:
+        for path in paths:
+            with Path(path).open("rb") as source:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+
+
 def _combine_canonical_results(
     blocks: list[tuple[dict[str, Any], Path, list[Path]]],
     output: Path,
@@ -202,8 +229,8 @@ def _combine_canonical_results(
     canonical_root = output / "canonical_results"
     canonical_root.mkdir(parents=True, exist_ok=False)
     frames: dict[str, list[pd.DataFrame]] = {name: [] for name in LIGHTWEIGHT_KINDS}
-    canonical_frames: dict[str, list[pd.DataFrame]] = {}
-    canonical_jsonl: dict[str, list[str]] = {}
+    canonical_paths: dict[str, list[Path]] = {}
+    canonical_jsonl_paths: dict[str, list[Path]] = {}
     for _, _, files in blocks:
         for path in files:
             match = BLOCK_ARTIFACT_RE.match(path.name)
@@ -212,17 +239,17 @@ def _combine_canonical_results(
             kind = str(match.group("kind"))
             extension = str(match.group("extension"))
             if extension == "jsonl":
-                canonical_jsonl.setdefault(kind, []).extend(
-                    line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-                )
+                canonical_jsonl_paths.setdefault(kind, []).append(path)
+                continue
+            if kind in FAILURE_KINDS:
+                if _csv_has_data_rows(path):
+                    raise ValueError(f"block contains failure rows in {kind}")
+                continue
+            if kind not in frames:
+                canonical_paths.setdefault(kind, []).append(path)
                 continue
             frame = results._read_csv(path)
-            if kind in FAILURE_KINDS and not frame.empty:
-                raise ValueError(f"block contains failure rows in {kind}")
-            if kind in frames:
-                frames[kind].append(frame)
-            else:
-                canonical_frames.setdefault(kind, []).append(frame)
+            frames[kind].append(frame)
 
     combined: dict[str, pd.DataFrame] = {}
     for kind, (filename, columns) in LIGHTWEIGHT_KINDS.items():
@@ -238,14 +265,10 @@ def _combine_canonical_results(
         results._write_csv(canonical_root / filename, frame, columns)
         combined[kind] = frame
 
-    for kind, source in sorted(canonical_frames.items()):
-        frame = pd.concat(source, ignore_index=True, sort=False)
-        results._write_csv(canonical_root / f"{kind}.csv", frame)
-    for kind, lines in sorted(canonical_jsonl.items()):
-        (canonical_root / f"{kind}.jsonl").write_text(
-            "\n".join(lines) + ("\n" if lines else ""),
-            encoding="utf-8",
-        )
+    for kind, paths in sorted(canonical_paths.items()):
+        _stream_csv_files(paths, canonical_root / f"{kind}.csv")
+    for kind, paths in sorted(canonical_jsonl_paths.items()):
+        _stream_jsonl_files(paths, canonical_root / f"{kind}.jsonl")
     return canonical_root, combined["leaderboard"]
 
 
@@ -393,6 +416,7 @@ def _merge_final_results_into(
         if not source.is_file():
             raise ValueError(f"alias expansion did not produce {source_name}")
         shutil.copyfile(source, output / destination_name)
+    shutil.rmtree(aliases_root)
     _publish_canonical_summaries(canonical_root, output)
     (output / "campaign_manifest.json").write_text(
         json.dumps(campaign, indent=2, sort_keys=True) + "\n",
