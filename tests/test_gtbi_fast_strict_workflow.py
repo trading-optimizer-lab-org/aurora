@@ -33,6 +33,7 @@ def test_registered_workflow_contains_complete_v6_graph() -> None:
         "v6_plan",
         "v6_worker_a",
         "v6_worker_b",
+        "v6_smoke_validate",
         "v6_retry_plan_1",
         "v6_retry_1_a",
         "v6_retry_1_b",
@@ -48,11 +49,39 @@ def test_registered_workflow_contains_complete_v6_graph() -> None:
     assert jobs["v6_final_merge"]["needs"] == ["v6_merge_block"]
 
 
+def test_v6_test_mode_runs_only_selected_workers_and_never_enters_full_reducers() -> None:
+    workflow = _workflow(ENTRY)
+    jobs = workflow["jobs"]
+    plan = jobs["v6_plan"]
+    assert "selected_worker_ids" in plan["outputs"]
+    publish = plan["steps"][-2]
+    assert publish["env"]["TEST_MODE"] == "${{ inputs.test_mode }}"
+    assert publish["env"]["TEST_MAX_JOBS"] == "${{ inputs.test_max_jobs }}"
+    assert "selected = all_workers[:limit]" in publish["run"]
+
+    smoke = jobs["v6_smoke_validate"]
+    assert smoke["needs"] == ["v6_plan", "v6_worker_a", "v6_worker_b"]
+    assert "inputs.test_mode == 'true'" in smoke["if"]
+    smoke_text = yaml.safe_dump(smoke, sort_keys=True)
+    assert "--expected-worker-ids" in smoke_text
+    assert "gtbi-v6-fast-strict-smoke-results" in smoke_text
+
+    for name in (
+        "v6_retry_plan_1",
+        "v6_retry_plan_2",
+        "v6_final_inventory",
+        "v6_merge_block",
+        "v6_final_merge",
+        "v6_cleanup",
+    ):
+        assert "inputs.test_mode != 'true'" in jobs[name]["if"]
+
+
 def test_v6_uses_live_explicit_data_pack_inputs() -> None:
     workflow = _workflow(ENTRY)
     inputs = _trigger(workflow)["workflow_dispatch"]["inputs"]
-    assert inputs["data_pack_run_id"]["default"] == "29148013009"
-    assert inputs["data_pack_artifact_name"]["default"] == "gtbi-external-pack-data"
+    assert inputs["data_run_id"]["default"] == "29148013009"
+    assert inputs["data_artifact_name"]["default"] == "gtbi-external-pack-data"
     text = ENTRY.read_text(encoding="utf-8")
     assert "27936694743" not in text
     assert "8247340714" not in text
@@ -60,15 +89,30 @@ def test_v6_uses_live_explicit_data_pack_inputs() -> None:
     download = next(
         step for step in build["steps"] if step.get("uses") == "actions/download-artifact@v4"
     )
-    assert download["with"]["run-id"] == "${{ inputs.data_pack_run_id }}"
-    assert download["with"]["name"] == "${{ inputs.data_pack_artifact_name }}"
+    assert download["with"]["run-id"] == "${{ inputs.data_run_id }}"
+    assert download["with"]["name"] == "${{ inputs.data_artifact_name }}"
+    worker = _workflow(WORKER)
+    worker_inputs = _trigger(worker)["workflow_call"]["inputs"]
+    assert "data_artifact_run_id" in worker_inputs
+    assert "data_manifest_artifact_name" in worker_inputs
+    worker_downloads = [
+        step
+        for step in worker["jobs"]["run"]["steps"]
+        if step.get("uses") == "actions/download-artifact@v4"
+    ]
+    assert worker_downloads[0]["with"]["run-id"] == "${{ inputs.data_artifact_run_id }}"
+    assert worker_downloads[0]["with"]["name"] == "${{ inputs.data_artifact_name }}"
+    assert worker_downloads[0]["with"]["path"] == "v6-data/data-pack"
+    assert worker_downloads[1]["with"]["name"] == "${{ inputs.data_manifest_artifact_name }}"
+    assert worker_downloads[1]["with"]["path"] == "v6-data"
 
 
-def test_legacy_data_inputs_remain_separate_from_v6_pack_inputs() -> None:
+def test_source_inputs_are_shared_without_exceeding_dispatch_limit() -> None:
     workflow = _workflow(ENTRY)
     inputs = _trigger(workflow)["workflow_dispatch"]["inputs"]
-    assert inputs["data_run_id"]["default"] == ""
-    assert inputs["data_artifact_name"]["default"] == ""
+    assert len(inputs) <= 25
+    assert "data_pack_run_id" not in inputs
+    assert "data_pack_artifact_name" not in inputs
     legacy_download = next(
         step
         for step in workflow["jobs"]["build_external_pack"]["steps"]
@@ -137,6 +181,10 @@ def test_v6_worker_is_persistent_combined_sparse_and_exact() -> None:
     assert "--candidate-timeout-seconds" not in text
     assert "signal-first-phase signals" not in text
     assert "signal-first-phase exits" not in text
+    assert job["env"]["GTBI_SYMBOL_WORKERS"] == "4"
+    assert job["env"]["OMP_NUM_THREADS"] == "1"
+    assert job["env"]["OPENBLAS_NUM_THREADS"] == "1"
+    assert job["env"]["MKL_NUM_THREADS"] == "1"
 
 
 def test_v6_final_contract_is_strict_hash_bound_and_exactly_named() -> None:
@@ -236,8 +284,7 @@ def test_v6_artifacts_fail_closed_and_use_required_retention() -> None:
             else 3
         )
         assert config["retention-days"] == expected_retention
-        expected_compression = 0 if str(config["name"]).startswith("gtbi-v6-data-") else 1
-        assert config["compression-level"] == expected_compression
+        assert config["compression-level"] == 1
 
 
 def test_v6_cleanup_is_current_run_only_tolerant_and_preserves_final() -> None:

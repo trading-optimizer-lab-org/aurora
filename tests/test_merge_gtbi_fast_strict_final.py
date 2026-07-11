@@ -262,9 +262,15 @@ def test_final_reducer_verifies_provenance_expands_light_rows_and_publishes_succ
     assert summary["min_market_cap"] == 2_000_000_000
     assert summary["best_candidate_id"] == "canonical-reject"
     assert summary["best_adjusted_return_time_risk"] == 7.0
+    assert summary["total_jobs_requested"] == 2
+    assert summary["total_jobs_completed"] == 2
+    assert summary["total_jobs_failed"] == 0
+    assert summary["candidate_timeout_seconds"] == 0
+    assert summary["optimized_evaluation_mode"] == "optimized_evaluation_v6_fast_strict"
     assert (paths["output"] / "_SUCCESS").is_file()
     assert (paths["output"] / "filtered_leaderboard.csv").is_file()
     assert (paths["output"] / "timing_diagnostics.csv").is_file()
+    assert (paths["output"] / "job_manifest.csv").is_file()
     assert (paths["output"] / "top_trades_sample.csv").is_file()
     assert (paths["output"] / "family_summary.csv").is_file()
     assert (paths["output"] / "top_indicator_rules.jsonl").is_file()

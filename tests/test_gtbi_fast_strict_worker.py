@@ -640,6 +640,60 @@ def test_data_manifest_is_content_bound_and_deterministic(tmp_path: Path) -> Non
     assert first["data_pack_identity"] != changed["data_pack_identity"]
 
 
+def test_data_manifest_seals_date_bounds_once(tmp_path: Path) -> None:
+    from scripts import run_gtbi_fast_strict_worker as worker
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "prices.csv").write_text(
+        "date,close\n2020-12-30,99\n2020-12-31,100\n",
+        encoding="utf-8",
+    )
+
+    manifest = worker.create_data_pack_manifest(
+        data_pack_root=data,
+        output_path=tmp_path / "manifest.json",
+        source_data_run_id="run",
+        source_artifact_name="artifact",
+        universe_identity="universe",
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+        locked_start="2021-01-01",
+    )
+
+    assert manifest["date_bounds"] == [
+        {
+            "column": "date",
+            "max": "2020-12-31T00:00:00+00:00",
+            "min": "2020-12-30T00:00:00+00:00",
+            "non_null_rows": 2,
+            "path": "prices.csv",
+        }
+    ]
+
+
+def test_data_manifest_rejects_locked_rows_during_single_seal(tmp_path: Path) -> None:
+    from scripts import run_gtbi_fast_strict_worker as worker
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "prices.csv").write_text("date,close\n2021-01-01,100\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="locked_start"):
+        worker.create_data_pack_manifest(
+            data_pack_root=data,
+            output_path=tmp_path / "manifest.json",
+            source_data_run_id="run",
+            source_artifact_name="artifact",
+            universe_identity="universe",
+            train_end="2010-12-31",
+            validation_start="2011-01-01",
+            validation_end="2020-12-31",
+            locked_start="2021-01-01",
+        )
+
+
 def test_exact_float_cache_tokens_do_not_collide() -> None:
     assert gtbi._exact_float_cache_token(0.123456781) != gtbi._exact_float_cache_token(0.123456789)
 

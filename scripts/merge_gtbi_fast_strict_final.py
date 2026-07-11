@@ -360,6 +360,17 @@ def _merge_final_results_into(
         "best_adjusted_return_time_risk": best_adjusted_return_time_risk,
         "total_strategies_requested": int(expected_alias_count),
         "total_strategies_loaded": int(expected_alias_count),
+        "total_strategies_failed": 0,
+        "total_jobs_requested": int(expected_worker_count),
+        "total_jobs_completed": int(expected_worker_count),
+        "total_jobs_failed": 0,
+        "candidate_count_per_job": (
+            int(len(worker_manifest) // expected_worker_count)
+            if len(worker_manifest) % expected_worker_count == 0
+            else None
+        ),
+        "candidate_timeout_seconds": 0,
+        "optimized_evaluation_mode": "optimized_evaluation_v6_fast_strict",
         "github_only_run": True,
         "requires_local_machine": False,
         "strict_final_pass": True,
@@ -368,6 +379,7 @@ def _merge_final_results_into(
         "leaderboard_job_aliases.csv": "leaderboard.csv",
         "early_rejected_strategies_job_aliases.csv": "early_rejected_strategies.csv",
         "dedupe_map_job_aliases.csv": "dedupe_map.csv",
+        "job_manifest_job_aliases.csv": "job_manifest.csv",
         "yearly_trade_performance_job_aliases.csv": "yearly_trade_performance.csv",
         "filtered_leaderboard_job_aliases.csv": "filtered_leaderboard.csv",
         "timing_diagnostics_job_aliases.csv": "timing_diagnostics.csv",

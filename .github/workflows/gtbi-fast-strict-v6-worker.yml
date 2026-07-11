@@ -6,7 +6,13 @@ on:
       artifact_run_id:
         required: true
         type: string
+      data_artifact_run_id:
+        required: true
+        type: string
       data_artifact_name:
+        required: true
+        type: string
+      data_manifest_artifact_name:
         required: true
         type: string
       plan_artifact_name:
@@ -32,6 +38,11 @@ jobs:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
       QF_DATA_DIR: /tmp/aurora-data
+      GTBI_SYMBOL_WORKERS: "4"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
     steps:
       - name: Checkout worker code only
         uses: actions/checkout@v4
@@ -54,8 +65,15 @@ jobs:
       - name: Download immutable data pack
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.artifact_run_id }}
+          run-id: ${{ inputs.data_artifact_run_id }}
           name: ${{ inputs.data_artifact_name }}
+          path: v6-data/data-pack
+          github-token: ${{ github.token }}
+      - name: Download sealed data manifest
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id }}
+          name: ${{ inputs.data_manifest_artifact_name }}
           path: v6-data
           github-token: ${{ github.token }}
       - name: Download sealed campaign plan

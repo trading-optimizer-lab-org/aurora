@@ -5996,7 +5996,7 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
 
-    assert data["name"] == "Global Technical Buy Indicator External Pack 7200 Jobs"
+    assert data["name"] == "Global Technical Buy Indicator External Pack and Fast Strict V6"
     assert "workflow_dispatch" in data[True]
     assert "push" not in data[True]
     assert text.count("runs-on: ubuntu-latest") >= 4
@@ -6022,7 +6022,9 @@ def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
     assert "logical_jobs_per_block = 1" in text
     assert "len(rows) > 256" in text
     assert "max-parallel: 360" in text
-    assert text.count("max-parallel: 180") == 0
+    # V6 uses two independent matrices of 180 to consume the account's real
+    # 360-runner concurrency without exceeding GitHub's 256-job matrix limit.
+    assert text.count("max-parallel: 180") == 6
     assert "max-parallel: 60" not in text
     assert "optimized_evaluation_v5_event_first" in text
     assert "--optimized-evaluation-mode" in text

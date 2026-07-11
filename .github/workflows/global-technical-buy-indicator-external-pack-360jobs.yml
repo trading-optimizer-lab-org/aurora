@@ -6,19 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       data_run_id:
-        description: "Legacy source data run id; required for legacy evaluation modes"
-        required: false
-        default: ""
-      data_artifact_name:
-        description: "Legacy source data artifact; required for legacy evaluation modes"
-        required: false
-        default: ""
-      data_pack_run_id:
-        description: "Run id containing the immutable GTBI data pack"
+        description: "Source run id: immutable GTBI pack for V6, data lake for legacy modes"
         required: true
         default: "29148013009"
-      data_pack_artifact_name:
-        description: "Immutable GTBI data pack artifact"
+      data_artifact_name:
+        description: "Source artifact: immutable GTBI pack for V6, data lake for legacy modes"
         required: true
         default: "gtbi-external-pack-data"
       external_strategy_pack_path:
@@ -40,7 +32,7 @@ on:
       optimized_evaluation_mode:
         description: "Evaluation engine mode"
         required: true
-        default: "optimized_evaluation_v5_event_first"
+        default: "optimized_evaluation_v6_fast_strict"
       enable_feature_cache:
         description: "Enable per-job FeatureStore cache"
         required: true
@@ -626,16 +618,16 @@ jobs:
         run: |
           set -euo pipefail
           gh api --paginate \
-            "repos/${{ github.repository }}/actions/runs/${{ inputs.data_pack_run_id }}/artifacts?per_page=100" \
-            --jq '.artifacts[] | select((.expired == false) and (.name == "${{ inputs.data_pack_artifact_name }}")) | [.name, .size_in_bytes] | @tsv' \
+            "repos/${{ github.repository }}/actions/runs/${{ inputs.data_run_id }}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select((.expired == false) and (.name == "${{ inputs.data_artifact_name }}")) | [.name, .size_in_bytes] | @tsv' \
             > source-artifact.tsv
           test "$(wc -l < source-artifact.tsv)" -eq 1
           test "$(cut -f2 source-artifact.tsv)" -gt 0
       - name: Download immutable data pack by run and name
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.data_pack_run_id }}
-          name: ${{ inputs.data_pack_artifact_name }}
+          run-id: ${{ inputs.data_run_id }}
+          name: ${{ inputs.data_artifact_name }}
           path: v6-data/data-pack
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Seal immutable data pack
@@ -645,8 +637,8 @@ jobs:
           python scripts/run_gtbi_fast_strict_worker.py manifest \
             --data-pack-root v6-data/data-pack \
             --output v6-data/data_manifest.json \
-            --source-data-run-id "${{ inputs.data_pack_run_id }}" \
-            --source-artifact-name "${{ inputs.data_pack_artifact_name }}" \
+            --source-data-run-id "${{ inputs.data_run_id }}" \
+            --source-artifact-name "${{ inputs.data_artifact_name }}" \
             --universe-identity "long-cash-next-session-open-min-market-cap-${{ inputs.min_market_cap }}" \
             --train-end "${{ inputs.train_end }}" \
             --validation-start "${{ inputs.validation_start }}" \
@@ -658,15 +650,15 @@ jobs:
           test "$(jq -r '.validation_start' v6-data/data_manifest.json)" = "2011-01-01"
           test "$(jq -r '.validation_end' v6-data/data_manifest.json)" = "2020-12-31"
           test "$(jq -r '.locked_start' v6-data/data_manifest.json)" = "2021-01-01"
-          echo "artifact_name=gtbi-v6-data-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=gtbi-v6-data-manifest-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
           echo "data_identity=$data_identity" >> "$GITHUB_OUTPUT"
-      - name: Upload sealed data pack
+      - name: Upload sealed data manifest only
         uses: actions/upload-artifact@v4
         with:
-          name: gtbi-v6-data-${{ github.run_id }}
-          path: v6-data
+          name: gtbi-v6-data-manifest-${{ github.run_id }}
+          path: v6-data/data_manifest.json
           if-no-files-found: error
-          compression-level: 0
+          compression-level: 1
           retention-days: 3
 
   v6_plan:
@@ -679,6 +671,9 @@ jobs:
       matrix_a: ${{ steps.outputs.outputs.matrix_a }}
       matrix_b: ${{ steps.outputs.outputs.matrix_b }}
       block_matrix: ${{ steps.outputs.outputs.block_matrix }}
+      selected_worker_ids: ${{ steps.outputs.outputs.selected_worker_ids }}
+      count_a: ${{ steps.outputs.outputs.count_a }}
+      count_b: ${{ steps.outputs.outputs.count_b }}
     env:
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
       PYTHONUNBUFFERED: "1"
@@ -723,12 +718,41 @@ jobs:
           python -c "from pathlib import Path; from scripts.gtbi_fast_strict import verify_campaign_artifacts; verify_campaign_artifacts(Path('v6-plan'))"
       - name: Publish matrices
         id: outputs
+        env:
+          TEST_MODE: ${{ inputs.test_mode }}
+          TEST_MAX_JOBS: ${{ inputs.test_max_jobs }}
         run: |
           set -euo pipefail
-          echo "artifact_name=gtbi-v6-plan-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
-          echo "matrix_a=$(jq -c . v6-plan/matrix_a.json)" >> "$GITHUB_OUTPUT"
-          echo "matrix_b=$(jq -c . v6-plan/matrix_b.json)" >> "$GITHUB_OUTPUT"
-          echo "block_matrix=$(jq -c . v6-plan/block_matrix.json)" >> "$GITHUB_OUTPUT"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          matrix_a = json.loads(Path("v6-plan/matrix_a.json").read_text(encoding="utf-8"))["include"]
+          matrix_b = json.loads(Path("v6-plan/matrix_b.json").read_text(encoding="utf-8"))["include"]
+          all_workers = sorted(matrix_a + matrix_b, key=lambda row: int(row["worker_id"]))
+          if os.environ["TEST_MODE"].lower() == "true":
+              limit = int(os.environ["TEST_MAX_JOBS"])
+              if not 1 <= limit <= len(all_workers):
+                  raise SystemExit(f"test_max_jobs must be in 1..{len(all_workers)}")
+              selected = all_workers[:limit]
+          else:
+              selected = all_workers
+          selected_a = [row for row in selected if int(row["worker_id"]) < 180]
+          selected_b = [row for row in selected if int(row["worker_id"]) >= 180]
+          outputs = {
+              "artifact_name": f"gtbi-v6-plan-{os.environ['GITHUB_RUN_ID']}",
+              "matrix_a": json.dumps({"include": selected_a}, separators=(",", ":")),
+              "matrix_b": json.dumps({"include": selected_b}, separators=(",", ":")),
+              "block_matrix": Path("v6-plan/block_matrix.json").read_text(encoding="utf-8").strip(),
+              "selected_worker_ids": ",".join(str(row["worker_id"]) for row in selected),
+              "count_a": str(len(selected_a)),
+              "count_b": str(len(selected_b)),
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              for key, value in outputs.items():
+                  handle.write(f"{key}={value}\n")
+          PY
       - name: Upload sealed global plan
         uses: actions/upload-artifact@v4
         with:
@@ -739,7 +763,7 @@ jobs:
           retention-days: 3
 
   v6_worker_a:
-    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && needs.v6_plan.outputs.count_a != '0' }}
     needs: [v6_build_data, v6_plan]
     strategy:
       fail-fast: false
@@ -748,13 +772,15 @@ jobs:
     uses: ./.github/workflows/gtbi-fast-strict-v6-worker.yml
     with:
       artifact_run_id: ${{ github.run_id }}
-      data_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
+      data_artifact_run_id: ${{ inputs.data_run_id }}
+      data_artifact_name: ${{ inputs.data_artifact_name }}
+      data_manifest_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
       plan_artifact_name: ${{ needs.v6_plan.outputs.artifact_name }}
       worker_id: ${{ matrix.worker_id }}
       attempt: 0
 
   v6_worker_b:
-    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && needs.v6_plan.outputs.count_b != '0' }}
     needs: [v6_build_data, v6_plan]
     strategy:
       fail-fast: false
@@ -763,13 +789,126 @@ jobs:
     uses: ./.github/workflows/gtbi-fast-strict-v6-worker.yml
     with:
       artifact_run_id: ${{ github.run_id }}
-      data_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
+      data_artifact_run_id: ${{ inputs.data_run_id }}
+      data_artifact_name: ${{ inputs.data_artifact_name }}
+      data_manifest_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
       plan_artifact_name: ${{ needs.v6_plan.outputs.artifact_name }}
       worker_id: ${{ matrix.worker_id }}
       attempt: 0
 
+  v6_smoke_validate:
+    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode == 'true' && needs.v6_plan.result == 'success' }}
+    needs: [v6_plan, v6_worker_a, v6_worker_b]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+      EXPECTED_WORKER_IDS: ${{ needs.v6_plan.outputs.selected_worker_ids }}
+    steps:
+      - name: Checkout strict inventory and block merger
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /scripts/*.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download sealed plan
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.run_id }}
+          name: gtbi-v6-plan-${{ github.run_id }}
+          path: v6-plan
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: List smoke worker artifacts
+        run: |
+          gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
+            > worker-artifacts.txt
+      - name: Download smoke worker artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.run_id }}
+          pattern: gtbi-v6-worker-*
+          path: worker-artifacts
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate exact smoke inventory
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_WORKER_IDS"
+          shopt -s nullglob
+          artifact_roots=(worker-artifacts/gtbi-v6-worker-*)
+          listed_count="$(sort -u worker-artifacts.txt | sed '/^$/d' | wc -l)"
+          test "${#artifact_roots[@]}" -eq "$listed_count"
+          python scripts/gtbi_fast_strict_inventory.py \
+            --campaign-manifest v6-plan/campaign_manifest.json \
+            --input-root worker-artifacts \
+            --expected-worker-ids "$EXPECTED_WORKER_IDS" \
+            --output-dir smoke-inventory
+          expected_count="$(awk -F, '{print NF}' <<< "$EXPECTED_WORKER_IDS")"
+          jq -e --argjson expected "$expected_count" \
+            '.complete == true and .missing_worker_count == 0 and .valid_worker_count == $expected and .expected_worker_count == $expected' \
+            smoke-inventory/inventory_summary.json
+      - name: Exercise strict block merge on real smoke outputs
+        run: |
+          set -euo pipefail
+          python scripts/merge_gtbi_fast_strict_block.py \
+            --input-root worker-artifacts \
+            --output-dir smoke-block \
+            --block-id 0 \
+            --worker-ids "$EXPECTED_WORKER_IDS"
+          mkdir -p smoke-output
+          cp -R smoke-inventory smoke-output/inventory
+          cp -R smoke-block smoke-output/block
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("smoke-inventory/inventory_summary.json").read_text(encoding="utf-8"))
+          block = json.loads(Path("smoke-block/summary_job_block_00.json").read_text(encoding="utf-8"))
+          summary = {
+              "optimized_evaluation_mode": "optimized_evaluation_v6_fast_strict",
+              "smoke_complete": True,
+              "campaign_fingerprint": inventory["campaign_fingerprint"],
+              "selected_worker_ids": inventory["expected_worker_ids"],
+              "total_jobs_requested": inventory["expected_worker_count"],
+              "total_jobs_completed": inventory["valid_worker_count"],
+              "total_strategies_loaded": block["total_strategies_loaded"],
+              "total_strategies_evaluated": block["total_strategies_evaluated"],
+              "total_strategies_early_rejected": block["total_strategies_early_rejected"],
+              "total_strategies_timed_out": 0,
+              "total_strategies_runtime_error": 0,
+              "total_strategies_unsupported": 0,
+              "total_strategies_slow_deferred": 0,
+          }
+          Path("smoke-output/smoke_summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Upload strict V6 smoke result
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-v6-fast-strict-smoke-results
+          path: smoke-output
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 3
+
   v6_retry_plan_1:
-    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && needs.v6_plan.result == 'success' }}
+    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode != 'true' && needs.v6_plan.result == 'success' }}
     needs: [v6_plan, v6_worker_a, v6_worker_b]
     runs-on: ubuntu-24.04
     outputs:
@@ -851,7 +990,9 @@ jobs:
     uses: ./.github/workflows/gtbi-fast-strict-v6-worker.yml
     with:
       artifact_run_id: ${{ github.run_id }}
-      data_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
+      data_artifact_run_id: ${{ inputs.data_run_id }}
+      data_artifact_name: ${{ inputs.data_artifact_name }}
+      data_manifest_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
       plan_artifact_name: ${{ needs.v6_plan.outputs.artifact_name }}
       worker_id: ${{ matrix.worker_id }}
       attempt: 1
@@ -866,13 +1007,15 @@ jobs:
     uses: ./.github/workflows/gtbi-fast-strict-v6-worker.yml
     with:
       artifact_run_id: ${{ github.run_id }}
-      data_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
+      data_artifact_run_id: ${{ inputs.data_run_id }}
+      data_artifact_name: ${{ inputs.data_artifact_name }}
+      data_manifest_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
       plan_artifact_name: ${{ needs.v6_plan.outputs.artifact_name }}
       worker_id: ${{ matrix.worker_id }}
       attempt: 1
 
   v6_retry_plan_2:
-    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && needs.v6_plan.result == 'success' }}
+    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode != 'true' && needs.v6_plan.result == 'success' }}
     needs: [v6_plan, v6_retry_1_a, v6_retry_1_b]
     runs-on: ubuntu-24.04
     outputs:
@@ -954,7 +1097,9 @@ jobs:
     uses: ./.github/workflows/gtbi-fast-strict-v6-worker.yml
     with:
       artifact_run_id: ${{ github.run_id }}
-      data_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
+      data_artifact_run_id: ${{ inputs.data_run_id }}
+      data_artifact_name: ${{ inputs.data_artifact_name }}
+      data_manifest_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
       plan_artifact_name: ${{ needs.v6_plan.outputs.artifact_name }}
       worker_id: ${{ matrix.worker_id }}
       attempt: 2
@@ -969,13 +1114,15 @@ jobs:
     uses: ./.github/workflows/gtbi-fast-strict-v6-worker.yml
     with:
       artifact_run_id: ${{ github.run_id }}
-      data_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
+      data_artifact_run_id: ${{ inputs.data_run_id }}
+      data_artifact_name: ${{ inputs.data_artifact_name }}
+      data_manifest_artifact_name: ${{ needs.v6_build_data.outputs.artifact_name }}
       plan_artifact_name: ${{ needs.v6_plan.outputs.artifact_name }}
       worker_id: ${{ matrix.worker_id }}
       attempt: 2
 
   v6_final_inventory:
-    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && needs.v6_plan.result == 'success' }}
+    if: ${{ always() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode != 'true' && needs.v6_plan.result == 'success' }}
     needs: [v6_plan, v6_retry_2_a, v6_retry_2_b]
     runs-on: ubuntu-24.04
     env:
@@ -1038,7 +1185,7 @@ jobs:
           retention-days: 3
 
   v6_merge_block:
-    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode != 'true' }}
     needs: [v6_plan, v6_final_inventory]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1113,7 +1260,7 @@ jobs:
           retention-days: 3
 
   v6_final_merge:
-    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode != 'true' }}
     needs: [v6_merge_block]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1187,7 +1334,7 @@ jobs:
           retention-days: 30
 
   v6_cleanup:
-    if: ${{ success() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' }}
+    if: ${{ success() && inputs.optimized_evaluation_mode == 'optimized_evaluation_v6_fast_strict' && inputs.test_mode != 'true' }}
     needs: [v6_final_merge]
     runs-on: ubuntu-24.04
     permissions:

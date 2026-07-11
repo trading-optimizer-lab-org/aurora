@@ -72,6 +72,7 @@ def inventory_workers(
     campaign_manifest_path: Path,
     input_roots: Iterable[Path],
     output_dir: Path,
+    expected_worker_ids: Iterable[int] | None = None,
 ) -> dict[str, Any]:
     """Validate available workers and emit only the exact missing retry matrices."""
 
@@ -80,6 +81,16 @@ def inventory_workers(
     if not fingerprint:
         raise ValueError("campaign manifest has no campaign_fingerprint")
     worker_count = _worker_count(campaign)
+    if expected_worker_ids is None:
+        expected = set(range(worker_count))
+    else:
+        expected_values = [int(value) for value in expected_worker_ids]
+        expected = set(expected_values)
+        if not expected or len(expected) != len(expected_values):
+            raise ValueError("expected_worker_ids must be non-empty and unique")
+        outside = sorted(value for value in expected if not 0 <= value < worker_count)
+        if outside:
+            raise ValueError(f"expected workers outside campaign range: {outside}")
     output = Path(output_dir)
     if output.exists():
         raise ValueError(f"output path already exists: {output}")
@@ -95,6 +106,10 @@ def inventory_workers(
                 campaign_fingerprint=fingerprint,
                 worker_count=worker_count,
             )
+            if worker_id not in expected:
+                raise ValueError(
+                    f"worker {worker_id} is outside explicitly expected worker set"
+                )
             if reason is not None:
                 invalid.append(
                     {
@@ -108,10 +123,13 @@ def inventory_workers(
                 raise ValueError(f"duplicate valid artifacts for worker {worker_id}")
             valid[worker_id] = summary_path.parent.resolve()
 
-    missing = sorted(set(range(worker_count)) - set(valid))
+    missing = sorted(expected - set(valid))
     payload = {
         "campaign_fingerprint": fingerprint,
         "worker_count": worker_count,
+        "campaign_worker_count": worker_count,
+        "expected_worker_count": len(expected),
+        "expected_worker_ids": sorted(expected),
         "valid_worker_count": len(valid),
         "invalid_worker_count": len(invalid),
         "missing_worker_count": len(missing),
@@ -143,15 +161,27 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--campaign-manifest", type=Path, required=True)
     parser.add_argument("--input-root", action="append", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--expected-worker-ids",
+        help="Optional comma-separated exact worker subset for a strict smoke inventory",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    expected_worker_ids = None
+    if args.expected_worker_ids is not None:
+        expected_worker_ids = [
+            int(value.strip())
+            for value in str(args.expected_worker_ids).split(",")
+            if value.strip()
+        ]
     result = inventory_workers(
         campaign_manifest_path=args.campaign_manifest,
         input_roots=args.input_root,
         output_dir=args.output_dir,
+        expected_worker_ids=expected_worker_ids,
     )
     print(json.dumps(result, sort_keys=True))
     return 0

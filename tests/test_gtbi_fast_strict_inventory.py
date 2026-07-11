@@ -95,6 +95,41 @@ def test_inventory_accepts_complete_campaign(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "out/matrix_b.json").read_text()) == {"include": []}
 
 
+def test_inventory_accepts_exact_smoke_worker_subset(tmp_path: Path) -> None:
+    campaign = _campaign(tmp_path, worker_count=360)
+    artifacts = tmp_path / "artifacts"
+    for worker_id in (0, 1, 180, 181):
+        _worker(artifacts, worker_id)
+
+    result = inventory.inventory_workers(
+        campaign_manifest_path=campaign,
+        input_roots=[artifacts],
+        output_dir=tmp_path / "out",
+        expected_worker_ids=[0, 1, 180, 181],
+    )
+
+    assert result["campaign_worker_count"] == 360
+    assert result["expected_worker_count"] == 4
+    assert result["valid_worker_count"] == 4
+    assert result["missing_worker_ids"] == []
+    assert result["complete"] is True
+
+
+def test_inventory_rejects_worker_outside_explicit_subset(tmp_path: Path) -> None:
+    campaign = _campaign(tmp_path, worker_count=360)
+    artifacts = tmp_path / "artifacts"
+    _worker(artifacts, 0)
+    _worker(artifacts, 2)
+
+    with pytest.raises(ValueError, match="outside explicitly expected worker set"):
+        inventory.inventory_workers(
+            campaign_manifest_path=campaign,
+            input_roots=[artifacts],
+            output_dir=tmp_path / "out",
+            expected_worker_ids=[0, 1],
+        )
+
+
 def test_inventory_treats_nonterminal_artifact_as_missing(tmp_path: Path) -> None:
     campaign = _campaign(tmp_path, worker_count=1)
     artifacts = tmp_path / "artifacts"

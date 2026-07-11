@@ -84,6 +84,7 @@ def create_data_pack_manifest(
     files = [_file_record(path, root) for path in sorted(root.rglob("*")) if path.is_file()]
     if not files:
         raise ValueError("data pack contains no files")
+    date_bounds = _collect_date_bounds(root, locked_start=str(locked_start))
     identity_payload = {
         "source_data_run_id": str(source_data_run_id),
         "source_artifact_name": str(source_artifact_name),
@@ -94,6 +95,7 @@ def create_data_pack_manifest(
         "locked_start": str(locked_start),
         "min_market_cap": min_market_cap,
         "files": files,
+        "date_bounds": date_bounds,
     }
     manifest = {
         **identity_payload,
@@ -148,7 +150,13 @@ def _data_identity_payload(data_manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("data manifest has no files")
     if any(not isinstance(record, dict) for record in files):
         raise ValueError("data manifest records must be objects")
-    return {field: data_manifest[field] for field in _DATA_IDENTITY_FIELDS} | {"files": files}
+    payload = {field: data_manifest[field] for field in _DATA_IDENTITY_FIELDS} | {"files": files}
+    if "date_bounds" in data_manifest:
+        bounds = data_manifest["date_bounds"]
+        if not isinstance(bounds, list):
+            raise ValueError("data manifest date_bounds must be a list")
+        payload["date_bounds"] = bounds
+    return payload
 
 
 def _verify_data_manifest(data_manifest: dict[str, Any], data_root: Path) -> str:
@@ -219,7 +227,94 @@ def _date_columns(path: Path) -> list[str]:
     return [column for column in columns if str(column).strip().lower() in {"date", "datetime", "timestamp"}]
 
 
-def _verify_prepared_data_bounds(data_root: Path, locked_start: str) -> None:
+def _read_dates(path: Path, columns: list[str]) -> pd.DataFrame:
+    if path.suffix.lower() == ".parquet":
+        return pd.read_parquet(path, columns=columns)
+    return pd.read_csv(path, usecols=columns)
+
+
+def _collect_date_bounds(data_root: Path, *, locked_start: str) -> list[dict[str, Any]]:
+    boundary = pd.Timestamp(locked_start, tz="UTC")
+    records: list[dict[str, Any]] = []
+    for path in sorted(Path(data_root).rglob("*")):
+        if not path.is_file():
+            continue
+        columns = _date_columns(path)
+        if not columns:
+            continue
+        try:
+            frame = _read_dates(path, columns)
+        except Exception as error:
+            raise ValueError(f"cannot seal prepared data bounds in {path.name}") from error
+        for column in columns:
+            dates = pd.to_datetime(frame[column], errors="coerce", utc=True).dropna()
+            if dates.empty:
+                raise ValueError(f"prepared data {path.name} has no valid {column} values")
+            minimum = dates.min()
+            maximum = dates.max()
+            if maximum >= boundary:
+                raise ValueError(f"prepared data {path.name} exposes a row at or after locked_start")
+            records.append(
+                {
+                    "path": path.relative_to(data_root).as_posix(),
+                    "column": str(column),
+                    "min": minimum.isoformat(),
+                    "max": maximum.isoformat(),
+                    "non_null_rows": int(len(dates)),
+                }
+            )
+    return records
+
+
+def _verify_sealed_date_bounds(
+    data_root: Path,
+    *,
+    locked_start: str,
+    date_bounds: list[dict[str, Any]],
+) -> None:
+    boundary = pd.Timestamp(locked_start, tz="UTC")
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in date_bounds:
+        if not isinstance(raw, dict):
+            raise ValueError("data manifest date bound must be an object")
+        relative = _relative_manifest_path(raw)
+        column = str(raw.get("column") or "")
+        key = (relative.as_posix(), column)
+        if not column or key in records:
+            raise ValueError("data manifest has invalid or duplicate date bounds")
+        records[key] = raw
+
+    expected: set[tuple[str, str]] = set()
+    for path in sorted(Path(data_root).rglob("*")):
+        if not path.is_file():
+            continue
+        for column in _date_columns(path):
+            expected.add((path.relative_to(data_root).as_posix(), str(column)))
+    if set(records) != expected:
+        raise ValueError("data manifest date bounds do not cover every dated data file")
+    for key, record in records.items():
+        minimum = pd.to_datetime(record.get("min"), errors="coerce", utc=True)
+        maximum = pd.to_datetime(record.get("max"), errors="coerce", utc=True)
+        if pd.isna(minimum) or pd.isna(maximum) or minimum > maximum:
+            raise ValueError(f"data manifest has invalid date bounds for {key[0]}")
+        if int(record.get("non_null_rows", 0) or 0) <= 0:
+            raise ValueError(f"data manifest has empty date bounds for {key[0]}")
+        if maximum >= boundary:
+            raise ValueError(f"prepared data {key[0]} exposes a row at or after locked_start")
+
+
+def _verify_prepared_data_bounds(
+    data_root: Path,
+    locked_start: str,
+    date_bounds: list[dict[str, Any]] | None = None,
+) -> None:
+    if date_bounds is not None:
+        _verify_sealed_date_bounds(
+            data_root,
+            locked_start=locked_start,
+            date_bounds=date_bounds,
+        )
+        return
     boundary = pd.Timestamp(locked_start, tz="UTC")
     for path in sorted(data_root.rglob("*")):
         if not path.is_file():
@@ -387,7 +482,11 @@ def run_worker(
     if data_pack_identity != str(inputs["data_run_identity"]):
         raise ValueError("data pack identity does not match campaign")
     _verify_data_campaign_binding(data_manifest, inputs)
-    _verify_prepared_data_bounds(data_root, str(inputs["locked_start"]))
+    _verify_prepared_data_bounds(
+        data_root,
+        str(inputs["locked_start"]),
+        data_manifest.get("date_bounds"),
+    )
 
     shard_relative = Path("canonical_pack") / f"strategies_shard_{int(worker_id):03d}.jsonl"
     artifact_records = _artifact_records(campaign)
