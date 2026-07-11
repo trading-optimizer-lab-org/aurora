@@ -1,0 +1,84 @@
+name: GTBI Fast Strict V6 Worker
+
+on:
+  workflow_call:
+    inputs:
+      artifact_run_id:
+        required: true
+        type: string
+      data_artifact_name:
+        required: true
+        type: string
+      plan_artifact_name:
+        required: true
+        type: string
+      worker_id:
+        required: true
+        type: number
+      attempt:
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+      PYTHONUNBUFFERED: "1"
+      PYTHONFAULTHANDLER: "1"
+      QF_DATA_DIR: /tmp/aurora-data
+    steps:
+      - name: Checkout worker code only
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /pyproject.toml
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /scripts/*.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download immutable data pack
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id }}
+          name: ${{ inputs.data_artifact_name }}
+          path: v6-data
+          github-token: ${{ github.token }}
+      - name: Download sealed campaign plan
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id }}
+          name: ${{ inputs.plan_artifact_name }}
+          path: v6-plan
+          github-token: ${{ github.token }}
+      - name: Run one persistent exact worker
+        run: |
+          python scripts/run_gtbi_fast_strict_worker.py run \
+            --campaign-manifest v6-plan/campaign_manifest.json \
+            --data-manifest v6-data/data_manifest.json \
+            --plan-root v6-plan \
+            --data-pack-root v6-data/data-pack \
+            --worker-id "${{ inputs.worker_id }}" \
+            --output-dir worker-output
+      - name: Upload validated worker artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-v6-worker-${{ inputs.worker_id }}-attempt-${{ inputs.attempt }}-run-${{ inputs.artifact_run_id }}
+          path: worker-output
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 3
