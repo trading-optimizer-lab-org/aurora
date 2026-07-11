@@ -91,6 +91,7 @@ def test_v6_merge_existing_reuses_exact_worker_artifacts_without_evaluation() ->
     inventory_text = yaml.safe_dump(inventory, sort_keys=True)
     assert "${{ inputs.data_run_id }}" in inventory_text
     assert "python scripts/download_gtbi_v6_worker_artifacts.py" in inventory_text
+    assert "--inventory-file worker-artifacts.tsv" in inventory_text
     assert "--expected-count 360" in inventory_text
     assert ".valid_worker_count" in inventory_text
     assert ".invalid_worker_count" in inventory_text
@@ -195,6 +196,7 @@ def test_retry_rounds_and_final_selection_use_validated_inventory() -> None:
     assert text.count("artifact_roots=(worker-artifacts/gtbi-v6-worker-*)") == 3
     assert text.count("sort -u worker-artifacts.txt") == 3
     assert text.count("python scripts/download_gtbi_v6_worker_artifacts.py") == 3
+    assert text.count("--inventory-file worker-artifacts.tsv") == 3
     assert "pattern: gtbi-v6-worker-*" not in text
 
 

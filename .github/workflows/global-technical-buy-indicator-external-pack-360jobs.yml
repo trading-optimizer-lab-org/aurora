@@ -945,17 +945,18 @@ jobs:
         run: |
           gh api --paginate \
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
-            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
-            > worker-artifacts.txt
-      - name: Download all listed worker artifacts without action cap
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | [.id, .name] | @tsv' \
+            > worker-artifacts.tsv
+          cut -f2 worker-artifacts.tsv > worker-artifacts.txt
+      - name: Download all listed worker archives directly by artifact id
         run: |
           python scripts/download_gtbi_v6_worker_artifacts.py \
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
-            --names-file worker-artifacts.txt \
+            --inventory-file worker-artifacts.tsv \
             --output-dir worker-artifacts \
-            --max-workers 24 \
-            --retries 3
+            --max-workers 4 \
+            --retries 5
       - name: Generate first missing-worker matrices from validated inventory
         run: |
           set -euo pipefail
@@ -1055,17 +1056,18 @@ jobs:
         run: |
           gh api --paginate \
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
-            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
-            > worker-artifacts.txt
-      - name: Download all listed worker artifacts without action cap
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | [.id, .name] | @tsv' \
+            > worker-artifacts.tsv
+          cut -f2 worker-artifacts.tsv > worker-artifacts.txt
+      - name: Download all listed worker archives directly by artifact id
         run: |
           python scripts/download_gtbi_v6_worker_artifacts.py \
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
-            --names-file worker-artifacts.txt \
+            --inventory-file worker-artifacts.tsv \
             --output-dir worker-artifacts \
-            --max-workers 24 \
-            --retries 3
+            --max-workers 4 \
+            --retries 5
       - name: Generate second missing-worker matrices from validated inventory
         run: |
           set -euo pipefail
@@ -1160,17 +1162,18 @@ jobs:
         run: |
           gh api --paginate \
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100" \
-            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
-            > worker-artifacts.txt
-      - name: Download all listed worker artifacts without action cap
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | [.id, .name] | @tsv' \
+            > worker-artifacts.tsv
+          cut -f2 worker-artifacts.tsv > worker-artifacts.txt
+      - name: Download all listed worker archives directly by artifact id
         run: |
           python scripts/download_gtbi_v6_worker_artifacts.py \
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
-            --names-file worker-artifacts.txt \
+            --inventory-file worker-artifacts.tsv \
             --output-dir worker-artifacts \
-            --max-workers 24 \
-            --retries 3
+            --max-workers 4 \
+            --retries 5
       - name: Select one validated artifact for every worker
         run: |
           set -euo pipefail
@@ -1409,8 +1412,9 @@ jobs:
           test "$(gh run view "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --json status --jq .status)" = "completed"
           gh api --paginate \
             "repos/${{ github.repository }}/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
-            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | .name' \
-            | sort -u > worker-artifacts.txt
+            --jq '.artifacts[] | select((.expired == false) and (.name | startswith("gtbi-v6-worker-"))) | [.id, .name] | @tsv' \
+            | sort -u -k2,2 > worker-artifacts.tsv
+          cut -f2 worker-artifacts.tsv > worker-artifacts.txt
           test "$(wc -l < worker-artifacts.txt)" -eq 360
           plan_name="gtbi-v6-plan-$SOURCE_RUN_ID"
           plan_count="$(gh api --paginate \
@@ -1425,16 +1429,16 @@ jobs:
           name: gtbi-v6-plan-${{ inputs.data_run_id }}
           path: v6-plan
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download all 360 source workers without action cap
+      - name: Download all 360 source worker archives directly by artifact id
         run: |
           python scripts/download_gtbi_v6_worker_artifacts.py \
             --repo "${{ github.repository }}" \
             --run-id "$SOURCE_RUN_ID" \
-            --names-file worker-artifacts.txt \
+            --inventory-file worker-artifacts.tsv \
             --output-dir worker-artifacts \
             --expected-count 360 \
-            --max-workers 24 \
-            --retries 3
+            --max-workers 4 \
+            --retries 5
       - name: Validate exact source inventory
         run: |
           python scripts/gtbi_fast_strict_inventory.py \

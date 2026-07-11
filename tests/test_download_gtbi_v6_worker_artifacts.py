@@ -15,6 +15,17 @@ def test_load_names_accepts_more_than_actions_download_artifact_limit(tmp_path: 
     assert downloader.load_artifact_names(path, prefix="gtbi-v6-worker-") == sorted(names)
 
 
+def test_load_inventory_keeps_all_artifact_ids_beyond_300(tmp_path: Path) -> None:
+    path = tmp_path / "inventory.tsv"
+    rows = [f"{10_000 + worker}\tgtbi-v6-worker-{worker}-attempt-0-run-123" for worker in range(360)]
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    inventory = downloader.load_artifact_inventory(path, prefix="gtbi-v6-worker-")
+
+    assert len(inventory) == 360
+    assert inventory["gtbi-v6-worker-359-attempt-0-run-123"] == 10_359
+
+
 @pytest.mark.parametrize(
     "name",
     ["../escape", "gtbi-v6-worker-/escape", "wrong-prefix", "gtbi-v6-worker-0\\escape"],
@@ -53,4 +64,3 @@ def test_parallel_download_requires_every_artifact_directory(
 
     assert result["downloaded_count"] == 8
     assert sorted(observed) == sorted(names)
-
