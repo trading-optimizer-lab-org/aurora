@@ -22,6 +22,7 @@ ALIAS_COLUMNS = [
     "global_slot",
     "worker_id",
 ]
+HASH_COLUMNS = ["economic_hash", "canonical_hash", "signal_hash", "exit_hash"]
 
 
 def _read_csv(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
@@ -45,6 +46,22 @@ def _campaign_fingerprint(path: Path) -> str:
     if not fingerprint:
         raise ValueError(f"campaign manifest has no fingerprint: {path}")
     return fingerprint
+
+
+def _campaign_inputs(path: Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    inputs = dict(payload.get("inputs") or {})
+    required = (
+        "train_end",
+        "validation_start",
+        "validation_end",
+        "locked_start",
+        "min_market_cap",
+    )
+    missing = [name for name in required if inputs.get(name) in (None, "")]
+    if missing:
+        raise ValueError(f"campaign manifest is missing inputs: {', '.join(missing)}")
+    return inputs
 
 
 def _validate_alias_map(alias_map: pd.DataFrame, expected_alias_count: int) -> None:
@@ -117,6 +134,7 @@ def expand_canonical_results(
     output.mkdir(parents=True, exist_ok=True)
 
     fingerprint = _campaign_fingerprint(Path(campaign_manifest_path))
+    inputs = _campaign_inputs(Path(campaign_manifest_path))
     canonical_manifest = canonical_root / "campaign_manifest.json"
     if _campaign_fingerprint(canonical_manifest) != fingerprint:
         raise ValueError("campaign fingerprint mismatch between canonical results and plan")
@@ -184,6 +202,12 @@ def expand_canonical_results(
         canonical_candidate = candidates.get(canonical_id)
         if canonical_candidate is None or economic_evaluation_hash(canonical_candidate) != evaluation_hash:
             raise ValueError(f"unknown or mismatched canonical strategy {canonical_id}")
+        hashes = {
+            "economic_hash": evaluation_hash,
+            "canonical_hash": gtbi.canonical_external_strategy_hash(candidate),
+            "signal_hash": gtbi.signal_external_strategy_hash(candidate),
+            "exit_hash": gtbi.exit_external_strategy_hash(candidate),
+        }
 
         if canonical_id in leaderboard_by_id:
             row = dict(leaderboard_by_id[canonical_id])
@@ -220,16 +244,16 @@ def expand_canonical_results(
                 "canonical_strategy_id": canonical_id,
                 "evaluation_hash": evaluation_hash,
                 "deduped": strategy_id != canonical_id,
+                **hashes,
             }
         )
         timing_rows.append(canonical_timing)
         dedupe_rows.append(
             {
                 "strategy_id": strategy_id,
-                "canonical_hash": evaluation_hash,
+                **hashes,
                 "canonical_strategy_id": canonical_id,
                 "deduped": strategy_id != canonical_id,
-                "signal_hash": evaluation_hash,
                 "signal_canonical_strategy_id": canonical_id,
                 "signal_deduped": strategy_id != canonical_id,
             }
@@ -240,8 +264,7 @@ def expand_canonical_results(
                 "strategy_id": strategy_id,
                 "shard_id": int(alias["source_shard_id"]),
                 "slot_in_shard": int(alias["source_slot_in_shard"]),
-                "canonical_hash": evaluation_hash,
-                "signal_hash": evaluation_hash,
+                **hashes,
                 "cost_score": "",
                 "estimated_cost_bucket": "economic_alias",
             }
@@ -291,10 +314,11 @@ def expand_canonical_results(
         "total_strategies_unsupported": 0,
         "total_strategies_slow_deferred": 0,
         "strategy_slots_requested": int(len(alias_map)),
-        "locked_start": "2021-01-01",
-        "train_end": "2010-12-31",
-        "validation_start": "2011-01-01",
-        "validation_end": "2020-12-31",
+        "locked_start": str(inputs["locked_start"]),
+        "train_end": str(inputs["train_end"]),
+        "validation_start": str(inputs["validation_start"]),
+        "validation_end": str(inputs["validation_end"]),
+        "min_market_cap": inputs["min_market_cap"],
     }
     (output / "summary_job_aliases.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",

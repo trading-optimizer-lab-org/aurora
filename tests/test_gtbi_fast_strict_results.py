@@ -165,9 +165,19 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
         ],
     )
     campaign = tmp_path / "campaign_manifest.json"
-    campaign.write_text(json.dumps({"campaign_fingerprint": "campaign-fp"}), encoding="utf-8")
+    campaign_payload = {
+        "campaign_fingerprint": "campaign-fp",
+        "inputs": {
+            "train_end": "2010-12-31",
+            "validation_start": "2011-01-01",
+            "validation_end": "2020-12-31",
+            "locked_start": "2021-01-01",
+            "min_market_cap": 2_000_000_000,
+        },
+    }
+    campaign.write_text(json.dumps(campaign_payload), encoding="utf-8")
     (canonical_root / "campaign_manifest.json").write_text(
-        json.dumps({"campaign_fingerprint": "campaign-fp"}),
+        json.dumps(campaign_payload),
         encoding="utf-8",
     )
     pack = tmp_path / "pack"
