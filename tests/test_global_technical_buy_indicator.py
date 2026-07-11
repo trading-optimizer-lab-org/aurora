@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 import subprocess
 import sys
@@ -1405,6 +1406,26 @@ def test_signal_external_strategy_hash_ignores_exit_rules_but_not_entry_rules(tm
     assert gtbi.signal_external_strategy_hash(candidates[0]) != gtbi.signal_external_strategy_hash(candidates[2])
 
 
+def test_exit_only_trailing_stop_types_share_signal_but_keep_five_economic_variants() -> None:
+    candidates = [
+        gtbi.ExternalStrategyCandidate(
+            payload={
+                "strategy_id": f"trailing_exit_{index}",
+                "exit_profile_id": f"trailing_{trailing_stop_type}",
+                "exit_rules": {"trailing_stop_type": trailing_stop_type},
+            },
+            config=gtbi.IndicatorConfig(trailing_stop_type=trailing_stop_type),
+            unsupported_rules=(),
+            approximated_rules=(),
+        )
+        for index, trailing_stop_type in enumerate(("close", "low", "atr", "chandelier", "ema"))
+    ]
+
+    assert len({gtbi.signal_external_strategy_hash(candidate) for candidate in candidates}) == 1
+    assert len({gtbi.canonical_external_strategy_hash(candidate) for candidate in candidates}) == 5
+    assert len({gtbi.exit_external_strategy_hash(candidate) for candidate in candidates}) == 5
+
+
 def test_signal_external_strategy_hash_uses_effective_signal_config_not_labels() -> None:
     first_payload = _external_strategy_payload("signal_hash_effective_a")
     second_payload = _external_strategy_payload("signal_hash_effective_b")
@@ -1904,35 +1925,8 @@ def test_optimized_v2_does_not_use_job_wall_clock_as_hard_candidate_deadline() -
     ) == 400.0
 
 
-def test_feature_store_preserves_entry_signals() -> None:
-    frame = gtbi._prepare_ohlcv(_breakout_frame(140))
-    spy = gtbi._prepare_ohlcv(_spy_frame(140))
-    config = gtbi.IndicatorConfig(
-        family="minervini_sepa",
-        minervini_trend=False,
-        require_rs=False,
-        require_base_tight=True,
-        require_breakout=True,
-        breakout_lookback=20,
-        base_lookback=20,
-        volume_lookback=20,
-        volume_multiple=1.5,
-        max_base_range_pct=0.20,
-        rsi_max=100.0,
-    )
-
-    baseline = gtbi.entry_signal(frame.copy(), spy.copy(), config)
-    store = gtbi.build_feature_store({"AAA": frame}, spy, enabled=True)
-    cached = gtbi.entry_signal(store.symbol_frames["AAA"], store.benchmark_prices, config)
-
-    pd.testing.assert_series_equal(baseline, cached)
-    assert store.seconds_build >= 0.0
-
-
-def test_feature_store_prewarms_long_hold_signal_primitives() -> None:
-    frame = gtbi._prepare_ohlcv(_breakout_frame(320))
-    spy = gtbi._prepare_ohlcv(_spy_frame(320))
-    config = gtbi.IndicatorConfig(
+def _representative_long_hold_configs() -> tuple[gtbi.IndicatorConfig, ...]:
+    common = dict(
         family="gtbi_long_hold",
         minervini_trend=True,
         require_rs=True,
@@ -1962,27 +1956,111 @@ def test_feature_store_prewarms_long_hold_signal_primitives() -> None:
         pullback_max_pct=0.20,
         close_position_in_range_min=0.20,
     )
+    return (
+        gtbi.IndicatorConfig(**common),
+        gtbi.IndicatorConfig(
+            **{
+                **common,
+                "entry_trigger_type": "reclaim",
+                "entry_ma_days": 50,
+                "entry_ma_kind": "sma",
+                "volume_multiple": 1.0000000000000002,
+            }
+        ),
+    )
+
+
+def test_lazy_long_hold_signals_match_public_reference_without_lookahead() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(420))
+    spy = gtbi._prepare_ohlcv(_spy_frame(420))
+
+    assert gtbi.entry_signal is not gtbi._entry_signal_optimized
+    for config in _representative_long_hold_configs():
+        reference = gtbi.entry_signal(frame.copy(), spy.copy(), config)
+        optimized = gtbi._entry_signal_optimized(frame.copy(), spy.copy(), config)
+        pd.testing.assert_series_equal(optimized, reference)
+
+        changed_future = frame.copy()
+        changed_future.loc[changed_future.index[-1], ["open", "high", "low", "close", "adj_close", "volume"]] *= 7.0
+        changed = gtbi._entry_signal_optimized(changed_future, spy, config)
+        pd.testing.assert_series_equal(changed.iloc[:-1], reference.iloc[:-1])
+
+
+def test_long_hold_optimized_evaluation_matches_reference_trades_yearly_metrics_and_score() -> None:
+    frames = {
+        symbol: gtbi._prepare_ohlcv(_breakout_frame(700).assign(symbol=symbol))
+        for symbol in ("AAA", "BBB")
+    }
+    spy = gtbi._prepare_ohlcv(_spy_frame(700))
+    config = _representative_long_hold_configs()[0]
+
+    reference_row, reference_trades, reference_yearly = gtbi.evaluate_candidate(
+        config=config,
+        candidate_id="long_hold_equivalence",
+        stage=0,
+        symbol_frames=frames,
+        benchmark_prices=spy,
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+        selection_split="validation",
+        scoring_profile="strict_quality",
+    )
+    optimized_row, optimized_trades, optimized_yearly, _ = gtbi.evaluate_candidate_optimized(
+        config=config,
+        candidate_id="long_hold_equivalence",
+        stage=0,
+        symbol_frames=frames,
+        benchmark_prices=spy,
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+        selection_split="validation",
+        scoring_profile="strict_quality",
+        enable_safe_prefilter=False,
+        enable_early_stopping=False,
+    )
+
+    pd.testing.assert_frame_equal(optimized_trades, reference_trades, check_exact=True)
+    pd.testing.assert_frame_equal(optimized_yearly, reference_yearly, check_exact=True)
+    pd.testing.assert_series_equal(pd.Series(optimized_row), pd.Series(reference_row), check_exact=True)
+    assert np.float64(optimized_row["score"]).tobytes() == np.float64(reference_row["score"]).tobytes()
+
+
+def test_feature_store_is_content_bound_frozen_and_does_not_use_dataframe_attrs() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(320))
+    spy = gtbi._prepare_ohlcv(_spy_frame(320))
+    store = gtbi.build_feature_store({"AAA": frame}, spy, enabled=True)
+    primitives = store.primitives_for("AAA", frame, spy)
+
+    assert frame.attrs == {}
+    assert spy.attrs == {}
+    assert store.seconds_build >= 0.0
+    with pytest.raises(FrozenInstanceError):
+        store.enabled = False
+
+    same = primitives.volume_gt_adv(20, 1.0)
+    adjacent = primitives.volume_gt_adv(20, np.nextafter(1.0, np.inf))
+    assert same is primitives.volume_gt_adv(20, 1.0)
+    assert same is not adjacent
+
+    changed = frame.copy()
+    changed.loc[changed.index[-1], "close"] += 1.0
+    changed_primitives = store.primitives_for("AAA", changed, spy)
+    assert changed_primitives.frame_identity != primitives.frame_identity
+    assert frame.attrs == {}
+    assert changed.attrs == {}
+
+
+def test_feature_store_preserves_long_hold_signal_primitives() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(320))
+    spy = gtbi._prepare_ohlcv(_spy_frame(320))
+    config = _representative_long_hold_configs()[0]
 
     baseline = gtbi.entry_signal(frame.copy(), spy.copy(), config)
     store = gtbi.build_feature_store({"AAA": frame}, spy, enabled=True)
-    entry_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_entry_signal_series_cache")
-    primitive_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_signal_primitive_cache")
-    market_cache = gtbi._frame_series_cache(store.symbol_frames["AAA"], "_gtbi_market_trend_cache")
-    benchmark = store.benchmark_prices
-    benchmark_key = (gtbi._benchmark_cache_identity(benchmark),)
-
-    assert ("high_1_30", 55) in entry_cache
-    assert ("low_1_30", 40) in entry_cache
-    assert ("high_0_40", 40) in entry_cache
-    assert ("low_0_40", 40) in entry_cache
-    assert ("vol_10", 20) in entry_cache
-    assert ("rsi", 14) in entry_cache
-    assert ("rs_line", *benchmark_key) in primitive_cache
-    assert ("rs_avg", 42, *benchmark_key) in primitive_cache
-    assert ("rs_high", 42, *benchmark_key) in primitive_cache
-    assert ("market_trend", *benchmark_key, 200, 20, False) in market_cache
-
-    cached = gtbi.entry_signal(store.symbol_frames["AAA"], store.benchmark_prices, config)
+    primitives = store.primitives_for("AAA", frame, spy)
+    cached = gtbi._entry_signal_optimized(frame, spy, config, primitive_store=primitives)
 
     pd.testing.assert_series_equal(baseline, cached)
 
@@ -2004,6 +2082,99 @@ def test_signal_primitive_store_reuses_boolean_primitives() -> None:
     assert len(breakout_20) == len(frame)
     assert len(volume_breakout) == len(frame)
     assert len(rs_filter) == len(frame)
+
+
+def test_sparse_int32_signal_positions_match_dense_trade_simulation() -> None:
+    frame = gtbi._prepare_ohlcv(_breakout_frame(180))
+    signal = pd.Series(False, index=frame.index)
+    signal.iloc[[70, 95, 130, 160]] = True
+    positions = np.flatnonzero(signal.to_numpy(dtype=bool)[:-1]).astype(np.int32)
+    config = gtbi.IndicatorConfig(
+        stop_loss_pct=0.08,
+        trailing_stop_pct=0.12,
+        take_profit_pct=0.15,
+        max_holding_days=35,
+        use_exit_ma=True,
+        exit_ma_days=20,
+    )
+
+    dense = gtbi.simulate_trades("AAA", frame, signal, config, split="validation", candidate_id="sparse")
+    sparse = gtbi.simulate_trades(
+        "AAA",
+        frame,
+        signal,
+        config,
+        split="validation",
+        candidate_id="sparse",
+        signal_positions=positions,
+    )
+
+    assert positions.dtype == np.int32
+    pd.testing.assert_frame_equal(sparse, dense, check_exact=True)
+
+
+def test_parallel_symbol_signal_build_is_ordered_and_float64_exact() -> None:
+    symbols = ("DDD", "AAA", "CCC", "BBB")
+    frames = {
+        symbol: gtbi._prepare_ohlcv(_breakout_frame(420).assign(symbol=symbol))
+        for symbol in symbols
+    }
+    spy = gtbi._prepare_ohlcv(_spy_frame(420))
+    config = _representative_long_hold_configs()[1]
+    serial_store = gtbi.build_feature_store(frames, spy, enabled=True, prewarm=False)
+    parallel_store = gtbi.build_feature_store(frames, spy, enabled=True, prewarm=False)
+
+    serial, serial_diagnostic = gtbi._build_signals_by_symbol(
+        config=config,
+        candidate_id="serial",
+        symbol_frames=frames,
+        benchmark_prices=spy,
+        feature_store=serial_store,
+        max_workers=1,
+    )
+    parallel, parallel_diagnostic = gtbi._build_signals_by_symbol(
+        config=config,
+        candidate_id="parallel",
+        symbol_frames=frames,
+        benchmark_prices=spy,
+        feature_store=parallel_store,
+        max_workers=4,
+    )
+
+    assert list(parallel) == list(serial)
+    assert serial_diagnostic["raw_signals_total"] == parallel_diagnostic["raw_signals_total"]
+    for symbol in serial:
+        pd.testing.assert_series_equal(parallel[symbol], serial[symbol], check_exact=True)
+        assert parallel.event_positions[symbol].dtype == np.int32
+        np.testing.assert_array_equal(parallel.event_positions[symbol], serial.event_positions[symbol])
+
+    serial_row, serial_trades, serial_yearly, _ = gtbi.evaluate_candidate_optimized(
+        config=config,
+        candidate_id="parallel_exact",
+        stage=0,
+        symbol_frames=frames,
+        benchmark_prices=spy,
+        selection_split="validation",
+        scoring_profile="strict_quality",
+        enable_safe_prefilter=False,
+        enable_early_stopping=False,
+        precomputed_signals_by_symbol=serial,
+    )
+    parallel_row, parallel_trades, parallel_yearly, _ = gtbi.evaluate_candidate_optimized(
+        config=config,
+        candidate_id="parallel_exact",
+        stage=0,
+        symbol_frames=frames,
+        benchmark_prices=spy,
+        selection_split="validation",
+        scoring_profile="strict_quality",
+        enable_safe_prefilter=False,
+        enable_early_stopping=False,
+        precomputed_signals_by_symbol=parallel,
+    )
+    pd.testing.assert_frame_equal(parallel_trades, serial_trades, check_exact=True)
+    pd.testing.assert_frame_equal(parallel_yearly, serial_yearly, check_exact=True)
+    pd.testing.assert_series_equal(pd.Series(parallel_row), pd.Series(serial_row), check_exact=True)
 
 
 def test_simulate_trades_executes_next_session_open_with_array_safe_rules() -> None:
@@ -2427,7 +2598,7 @@ def test_external_runner_reuses_signal_signature_for_exit_variants(
     monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
     monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
     monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
-    monkeypatch.setattr(gtbi, "entry_signal", fake_entry_signal)
+    monkeypatch.setattr(gtbi, "_entry_signal_optimized", fake_entry_signal)
     monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
     pack_dir = tmp_path / "prebuilt"
     pack_dir.mkdir()
@@ -2517,7 +2688,7 @@ def test_event_first_runner_reuses_result_for_same_signal_and_exit(
     monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
     monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
     monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
-    monkeypatch.setattr(gtbi, "entry_signal", fake_entry_signal)
+    monkeypatch.setattr(gtbi, "_entry_signal_optimized", fake_entry_signal)
     monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
     monkeypatch.setattr(gtbi, "_safe_prefilter_raw_signals", lambda *args, **kwargs: (None, 0))
     pack_dir = tmp_path / "prebuilt"
@@ -2588,7 +2759,7 @@ def test_external_runner_counts_signal_reuse_when_candidate_is_early_rejected(
     monkeypatch.setattr(gtbi, "load_external_strategy_candidates", fake_load_candidates)
     monkeypatch.setattr(gtbi, "_load_symbol_frames", lambda path: {"AAA": frame})
     monkeypatch.setattr(gtbi.pd, "read_parquet", lambda path: spy)
-    monkeypatch.setattr(gtbi, "entry_signal", fake_entry_signal)
+    monkeypatch.setattr(gtbi, "_entry_signal_optimized", fake_entry_signal)
     monkeypatch.setattr(gtbi, "_evaluate_external_candidate_core", fake_core)
     pack_dir = tmp_path / "prebuilt"
     pack_dir.mkdir()

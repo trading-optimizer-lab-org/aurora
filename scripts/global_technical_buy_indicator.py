@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import math
@@ -14,6 +15,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 import numpy as np
@@ -996,23 +998,23 @@ def _exact_float_cache_token(value: float) -> str:
     return float(value).hex()
 
 
-def _benchmark_cache_identity(frame: pd.DataFrame) -> str:
-    """Return a content-bound identity shared safely by per-symbol caches."""
-    cached = frame.attrs.get("_gtbi_benchmark_content_identity")
-    if isinstance(cached, str) and cached:
-        return cached
-    columns = [column for column in ("date", "close") if column in frame.columns]
-    selected = frame.loc[:, columns] if columns else frame
+def _frame_content_identity(frame: pd.DataFrame, columns: Iterable[str] | None = None) -> str:
+    """Return an identity derived from current content without mutating the frame."""
+    selected_columns = [column for column in (columns or frame.columns) if column in frame.columns]
+    selected = frame.loc[:, selected_columns] if selected_columns else frame
     digest = hashlib.sha256()
-    digest.update(json.dumps(columns, separators=(",", ":")).encode("utf-8"))
+    digest.update(json.dumps(selected_columns, separators=(",", ":")).encode("utf-8"))
     digest.update(
         pd.util.hash_pandas_object(selected, index=True, categorize=False)
         .to_numpy(dtype=np.uint64, copy=False)
         .tobytes()
     )
-    identity = digest.hexdigest()
-    frame.attrs["_gtbi_benchmark_content_identity"] = identity
-    return identity
+    return digest.hexdigest()
+
+
+def _benchmark_cache_identity(frame: pd.DataFrame) -> str:
+    """Return a fresh content identity so in-place edits cannot reuse stale features."""
+    return _frame_content_identity(frame, ("date", "close"))
 
 
 def _normalize_timing_diagnostic(diagnostic: Mapping[str, Any]) -> dict[str, Any]:
@@ -1028,14 +1030,34 @@ def _normalize_timing_diagnostic(diagnostic: Mapping[str, Any]) -> dict[str, Any
     return normalized
 
 
-@dataclass
+@dataclass(frozen=True)
 class FeatureStore:
-    """Per-job feature cache attached to prepared symbol frames."""
+    """Immutable per-job index of content-bound per-symbol primitive stores."""
 
-    symbol_frames: dict[str, pd.DataFrame]
+    symbol_frames: Mapping[str, pd.DataFrame]
     benchmark_prices: pd.DataFrame
+    primitive_stores: Mapping[str, SignalPrimitiveStore]
     seconds_build: float = 0.0
     enabled: bool = True
+
+    def primitives_for(
+        self,
+        symbol: str,
+        frame: pd.DataFrame,
+        benchmark_prices: pd.DataFrame,
+    ) -> SignalPrimitiveStore:
+        prepared = _prepare_ohlcv(frame)
+        benchmark = _prepare_ohlcv(benchmark_prices)
+        frame_identity = _frame_content_identity(prepared, PRICE_COLUMNS)
+        benchmark_identity = _benchmark_cache_identity(benchmark)
+        existing = self.primitive_stores.get(str(symbol)) if self.enabled else None
+        if (
+            existing is not None
+            and existing.frame_identity == frame_identity
+            and existing.benchmark_identity == benchmark_identity
+        ):
+            return existing
+        return SignalPrimitiveStore(prepared, benchmark)
 
 
 class SignalPrimitiveStore:
@@ -1049,8 +1071,11 @@ class SignalPrimitiveStore:
         self.low = self.frame["low"] if not self.frame.empty else pd.Series(dtype=float)
         self.volume = self.frame["volume"].fillna(0.0) if not self.frame.empty else pd.Series(dtype=float)
         self.index = self.frame.index
-        self.cache = _frame_series_cache(self.frame, "_gtbi_signal_primitive_cache")
+        self.frame_identity = _frame_content_identity(self.frame, PRICE_COLUMNS)
         self.benchmark_identity = _benchmark_cache_identity(self.benchmark)
+        self.cache: dict[tuple[Any, ...], pd.Series] = {}
+        self.entry_cache: dict[tuple[Any, ...], pd.Series] = {}
+        self.market_cache: dict[tuple[Any, ...], pd.Series] = {}
 
     def const(self, value: bool) -> pd.Series:
         return _safe_bool_series(value, self.index)
@@ -1189,6 +1214,19 @@ class SignalPrimitiveStore:
                 self.cache[key] = self.rs_line() > self.rs_avg(int(window))
         return self.cache[key]
 
+    def market_trend(self, config: IndicatorConfig) -> pd.Series:
+        key = (
+            "market_trend",
+            self.frame_identity,
+            self.benchmark_identity,
+            int(config.market_ma_days),
+            int(config.market_momentum_days),
+            bool(config.strict_market_filter),
+        )
+        if key not in self.market_cache:
+            self.market_cache[key] = _market_trend_ok(self.index, self.benchmark, config)
+        return self.market_cache[key]
+
 
 def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame) -> None:
     prepared = _prepare_ohlcv(frame)
@@ -1262,12 +1300,19 @@ def build_feature_store(
 ) -> FeatureStore:
     start = time.perf_counter()
     benchmark = _prepare_ohlcv(benchmark_prices)
-    if enabled and prewarm:
-        for frame in symbol_frames.values():
-            _prewarm_common_features(frame, benchmark)
+    prepared_frames = {str(symbol): _prepare_ohlcv(frame) for symbol, frame in symbol_frames.items()}
+    primitive_stores = (
+        {
+            symbol: SignalPrimitiveStore(frame, benchmark)
+            for symbol, frame in prepared_frames.items()
+        }
+        if enabled
+        else {}
+    )
     return FeatureStore(
-        symbol_frames=symbol_frames,
+        symbol_frames=MappingProxyType(prepared_frames),
         benchmark_prices=benchmark,
+        primitive_stores=MappingProxyType(primitive_stores),
         seconds_build=float(time.perf_counter() - start),
         enabled=bool(enabled),
     )
@@ -1619,7 +1664,13 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
     return (signal & market_trend).fillna(False).astype(bool)
 
 
-def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+def _entry_signal_optimized(
+    prices: pd.DataFrame,
+    benchmark_prices: pd.DataFrame,
+    config: IndicatorConfig,
+    *,
+    primitive_store: SignalPrimitiveStore | None = None,
+) -> pd.Series:
     """Return same-day buy indicator with lazy per-family feature calculation."""
 
     frame = _prepare_ohlcv(prices)
@@ -1631,8 +1682,8 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     low = frame["low"]
     volume = frame["volume"].fillna(0.0)
     index = frame.index
-    cache = _frame_series_cache(frame, "_gtbi_entry_signal_series_cache")
-    primitives = SignalPrimitiveStore(frame, benchmark)
+    primitives = primitive_store or SignalPrimitiveStore(frame, benchmark)
+    cache = primitives.entry_cache
 
     def const(value: bool) -> pd.Series:
         return primitives.const(value)
@@ -1704,7 +1755,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return cache[key]
 
     def market_trend() -> pd.Series:
-        return _market_trend_ok_for_frame(frame, benchmark, config) if config.require_market_trend else const(True)
+        return primitives.market_trend(config) if config.require_market_trend else const(True)
 
     def trend_ok() -> pd.Series:
         if not config.minervini_trend:
@@ -2042,7 +2093,9 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     return (signal & market_trend()).fillna(False).astype(bool)
 
 
-entry_signal = _entry_signal_optimized
+def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+    """Public reference path retained for differential compatibility checks."""
+    return _entry_signal_optimized(prices, benchmark_prices, config)
 
 
 def _open_or_close(frame: pd.DataFrame, idx: int) -> float:
@@ -2299,11 +2352,20 @@ def _simulate_trade_records(
     split: str,
     candidate_id: str = "",
     exit_signal: pd.Series | None = None,
+    signal_positions: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     frame = _prepare_ohlcv(prices)
     if frame.empty or len(frame) < 3:
         return []
-    signal = signal.reindex(frame.index).fillna(False).astype(bool)
+    if signal_positions is None:
+        signal = signal.reindex(frame.index).fillna(False).astype(bool)
+        signal_values = signal.to_numpy(dtype=bool, copy=False)
+        positions = np.flatnonzero(signal_values[:-1]).astype(np.int32, copy=False)
+    else:
+        positions = np.asarray(signal_positions, dtype=np.int32)
+        if positions.ndim != 1:
+            raise ValueError("signal_positions must be a one-dimensional array")
+        positions = positions[(positions >= 0) & (positions < len(frame) - 1)]
     exit_signal = (
         exit_signal.reindex(frame.index).fillna(False).astype(bool)
         if exit_signal is not None
@@ -2324,9 +2386,7 @@ def _simulate_trade_records(
     if exit_ma_key not in exit_ma_cache:
         exit_ma_cache[exit_ma_key] = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
     exit_ma = exit_ma_cache[exit_ma_key]
-    signal_values = signal.to_numpy(dtype=bool)
-    signal_positions = np.flatnonzero(signal_values[:-1])
-    if len(signal_positions) == 0:
+    if len(positions) == 0:
         return []
     open_values = frame["open"].to_numpy(dtype=float, copy=False)
     high_values = frame["high"].to_numpy(dtype=float, copy=False)
@@ -2344,7 +2404,7 @@ def _simulate_trade_records(
         close_values,
         exit_ma_values,
         exit_signal_values,
-        signal_positions,
+        positions,
         config,
     )
     if count <= 0:
@@ -2383,6 +2443,7 @@ def simulate_trades(
     split: str,
     candidate_id: str = "",
     exit_signal: pd.Series | None = None,
+    signal_positions: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Simulate long/cash trades from a buy indicator, executing next session."""
 
@@ -2394,6 +2455,7 @@ def simulate_trades(
         split=split,
         candidate_id=candidate_id,
         exit_signal=exit_signal,
+        signal_positions=signal_positions,
     )
     return pd.DataFrame(records, columns=TRADE_COLUMNS)
 
@@ -4378,6 +4440,7 @@ def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
             not in {
                 "stop_loss_pct",
                 "trailing_stop_pct",
+                "trailing_stop_type",
                 "take_profit_pct",
                 "take_profit_min_holding_days",
                 "max_holding_days",
@@ -5555,6 +5618,28 @@ def _safe_prefilter_raw_signals(
     return None, int(sum(validation_counts.values()))
 
 
+class SignalMap(dict[str, pd.Series]):
+    """Dense compatibility view plus sparse positions retained for simulation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.event_positions: dict[str, np.ndarray] = {}
+
+
+def _signal_event_positions(signal: pd.Series) -> np.ndarray:
+    values = signal.fillna(False).to_numpy(dtype=bool, copy=False)
+    return np.flatnonzero(values[:-1]).astype(np.int32, copy=False)
+
+
+def _configured_symbol_workers() -> int:
+    raw = os.environ.get("GTBI_SYMBOL_WORKERS", "1").strip()
+    try:
+        requested = int(raw)
+    except ValueError:
+        requested = 1
+    return max(1, min(requested, 4))
+
+
 def _build_signals_by_symbol(
     *,
     config: IndicatorConfig,
@@ -5562,29 +5647,59 @@ def _build_signals_by_symbol(
     symbol_frames: dict[str, pd.DataFrame],
     benchmark_prices: pd.DataFrame,
     deadline: float | None = None,
+    feature_store: FeatureStore | None = None,
+    max_workers: int = 1,
 ) -> tuple[dict[str, pd.Series], dict[str, Any]]:
     signal_start = time.perf_counter()
-    signals_by_symbol: dict[str, pd.Series] = {}
+    signals_by_symbol = SignalMap()
     symbols_processed = 0
     raw_signals_total = 0
-    for symbol, frame in symbol_frames.items():
+
+    def build_one(item: tuple[str, pd.DataFrame]) -> tuple[str, pd.Series, np.ndarray]:
+        symbol, frame = item
         if deadline is not None and time.perf_counter() >= deadline:
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
-        symbols_processed += 1
-        signal = entry_signal(frame, benchmark_prices, config)
-        if symbols_processed % 250 == 0:
-            print(
-                f"[gtbi] candidate={candidate_id} signal_progress={symbols_processed}/{len(symbol_frames)}",
-                flush=True,
-            )
-        if signal.empty or not bool(signal.any()):
+        primitive_store = (
+            feature_store.primitives_for(symbol, frame, benchmark_prices)
+            if feature_store is not None and feature_store.enabled
+            else None
+        )
+        signal = _entry_signal_optimized(
+            frame,
+            benchmark_prices,
+            config,
+            primitive_store=primitive_store,
+        )
+        positions = _signal_event_positions(signal) if not signal.empty else np.empty(0, dtype=np.int32)
+        return symbol, signal, positions
+
+    items = list(symbol_frames.items())
+    worker_count = max(1, min(int(max_workers), 4))
+    if worker_count == 1:
+        built = map(build_one, items)
+    else:
+        executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="gtbi-signal")
+        built = executor.map(build_one, items)
+    try:
+        for symbol, signal, positions in built:
+            symbols_processed += 1
+            if symbols_processed % 250 == 0:
+                print(
+                    f"[gtbi] candidate={candidate_id} signal_progress={symbols_processed}/{len(symbol_frames)}",
+                    flush=True,
+                )
+            if signal.empty or not bool(signal.any()):
+                if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
+                    raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
+                continue
+            signals_by_symbol[symbol] = signal
+            signals_by_symbol.event_positions[symbol] = positions
+            raw_signals_total += int(signal.sum())
             if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
                 raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
-            continue
-        signals_by_symbol[symbol] = signal
-        raw_signals_total += int(signal.sum())
-        if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
-            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
+    finally:
+        if worker_count > 1:
+            executor.shutdown(wait=True, cancel_futures=True)
     return signals_by_symbol, {
         "seconds_signal": float(time.perf_counter() - signal_start),
         "symbols_processed": int(symbols_processed),
@@ -5613,14 +5728,24 @@ def evaluate_candidate_optimized(
     precomputed_signal_seconds: float | None = None,
     precomputed_symbols_processed: int | None = None,
     precomputed_raw_signals_total: int | None = None,
+    feature_store: FeatureStore | None = None,
+    symbol_workers: int = 1,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     total_start = time.perf_counter()
     if precomputed_signals_by_symbol is not None:
-        signals_by_symbol = {
-            str(symbol): signal
-            for symbol, signal in precomputed_signals_by_symbol.items()
-            if str(symbol) in symbol_frames and not signal.empty and bool(signal.any())
-        }
+        signals_by_symbol = SignalMap()
+        precomputed_positions = getattr(precomputed_signals_by_symbol, "event_positions", {})
+        for symbol, signal in precomputed_signals_by_symbol.items():
+            symbol = str(symbol)
+            if symbol not in symbol_frames or signal.empty or not bool(signal.any()):
+                continue
+            signals_by_symbol[symbol] = signal
+            positions = precomputed_positions.get(symbol)
+            signals_by_symbol.event_positions[symbol] = (
+                np.asarray(positions, dtype=np.int32)
+                if positions is not None
+                else _signal_event_positions(signal)
+            )
         symbols_processed = int(precomputed_symbols_processed if precomputed_symbols_processed is not None else len(symbol_frames))
         raw_signals_total = int(
             precomputed_raw_signals_total
@@ -5635,6 +5760,8 @@ def evaluate_candidate_optimized(
             symbol_frames=symbol_frames,
             benchmark_prices=benchmark_prices,
             deadline=deadline,
+            feature_store=feature_store,
+            max_workers=symbol_workers,
         )
         seconds_signal = float(signal_diagnostic["seconds_signal"])
         symbols_processed = int(signal_diagnostic["symbols_processed"])
@@ -5682,6 +5809,7 @@ def evaluate_candidate_optimized(
     train_end_day = np.datetime64(str(train_end), "D")
     validation_start_day = np.datetime64(str(validation_start), "D")
     validation_end_day = np.datetime64(str(validation_end), "D")
+    event_positions = signals_by_symbol.event_positions
     for symbol, signal in signals_by_symbol.items():
         if deadline is not None and time.perf_counter() >= deadline:
             raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
@@ -5697,6 +5825,7 @@ def evaluate_candidate_optimized(
             split="unassigned",
             candidate_id=candidate_id,
             exit_signal=market_exit,
+            signal_positions=event_positions.get(symbol),
         )
         for record in raw_records:
             exit_day = _exit_date64_from_value(record.get("exit_date"))
@@ -6000,6 +6129,8 @@ def _evaluate_external_candidate_core(
     precomputed_signal_seconds: float | None = None,
     precomputed_symbols_processed: int | None = None,
     precomputed_raw_signals_total: int | None = None,
+    feature_store: FeatureStore | None = None,
+    symbol_workers: int = 1,
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2", *SIGNAL_FIRST_MODES}:
         return evaluate_candidate_optimized(
@@ -6022,6 +6153,8 @@ def _evaluate_external_candidate_core(
             precomputed_signal_seconds=precomputed_signal_seconds,
             precomputed_symbols_processed=precomputed_symbols_processed,
             precomputed_raw_signals_total=precomputed_raw_signals_total,
+            feature_store=feature_store,
+            symbol_workers=symbol_workers,
         )
 
     start = time.perf_counter()
@@ -7414,6 +7547,7 @@ def run_external_strategy_pack_shard(
         enabled=enable_feature_cache,
         prewarm=prewarm_feature_cache,
     )
+    symbol_workers = _configured_symbol_workers()
     if use_v3_signal_first and not use_event_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
         job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
     print(
@@ -7878,6 +8012,8 @@ def run_external_strategy_pack_shard(
                         symbol_frames=symbol_frames,
                         benchmark_prices=benchmark,
                         deadline=signal_deadline,
+                        feature_store=feature_store,
+                        max_workers=symbol_workers,
                     )
                 print(
                     f"[gtbi] signal_complete job={output_padded} candidate={first_id} "
@@ -8224,6 +8360,8 @@ def run_external_strategy_pack_shard(
                     "optimized_evaluation_mode": optimized_evaluation_mode,
                     "enable_safe_prefilter": enable_safe_prefilter,
                     "enable_early_stopping": enable_early_stopping,
+                    "feature_store": feature_store,
+                    "symbol_workers": symbol_workers,
                 }
                 candidate_deadlines: list[float] = []
                 if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
@@ -8246,6 +8384,8 @@ def run_external_strategy_pack_shard(
                                 symbol_frames=symbol_frames,
                                 benchmark_prices=benchmark,
                                 deadline=eval_kwargs["deadline"],
+                                feature_store=feature_store,
+                                max_workers=symbol_workers,
                             )
                         signal_evaluation_cache[signal_hash] = (candidate_id, signals_by_symbol, signal_diagnostic)
                         signal_canonical_strategy_id = candidate_id
