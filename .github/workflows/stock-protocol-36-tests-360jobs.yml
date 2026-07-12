@@ -247,7 +247,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: signal, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-signal-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-signal-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_signal_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -269,7 +269,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: signal, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-signal-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-signal-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_signal:
     if: ${{ inputs.validation_only != 'true' }}
@@ -302,7 +302,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -313,7 +313,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: weights, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-weights-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-weights-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_weights_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -323,7 +323,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -334,7 +334,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: weights, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-weights-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-weights-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_weights:
     if: ${{ inputs.validation_only != 'true' }}
@@ -367,7 +367,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -378,7 +378,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: entries, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-entries-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-entries-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_entries_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -388,7 +388,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -399,7 +399,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: entries, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-entries-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-entries-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_entries:
     if: ${{ inputs.validation_only != 'true' }}
@@ -432,7 +432,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -443,7 +443,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: exits, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-exits-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-exits-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_exits_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -453,7 +453,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -464,7 +464,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: exits, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-exits-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-exits-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_exits:
     if: ${{ inputs.validation_only != 'true' }}
@@ -497,7 +497,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -508,7 +508,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: portfolio, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-portfolio-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-portfolio-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_portfolio_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -518,7 +518,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -529,7 +529,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: portfolio, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-portfolio-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-portfolio-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_portfolio:
     if: ${{ inputs.validation_only != 'true' }}
@@ -562,7 +562,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -573,7 +573,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: costs, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-costs-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-costs-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_costs_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -583,7 +583,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -594,7 +594,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: costs, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-costs-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-costs-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_costs:
     if: ${{ inputs.validation_only != 'true' }}
@@ -627,7 +627,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -638,7 +638,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: walk_forward, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-walk-forward-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-walk-forward-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_walk_forward_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -648,7 +648,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -659,7 +659,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: walk_forward, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-walk-forward-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-walk-forward-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_walk_forward:
     if: ${{ inputs.validation_only != 'true' }}
@@ -692,7 +692,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_a) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -703,7 +703,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: robustness, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-robustness-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-robustness-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_robustness_b:
     if: ${{ inputs.validation_only != 'true' }}
@@ -713,7 +713,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 180
-      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+      matrix: {shard: "${{ fromJSON(needs.plan.outputs.matrix_b) }}"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -724,7 +724,7 @@ jobs:
       - uses: ./.github/actions/stock-protocol-stage
         with: {phase: robustness, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
       - uses: actions/upload-artifact@v4
-        with: {name: stock-protocol-robustness-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+        with: {name: "stock-protocol-robustness-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   finalize:
     if: ${{ inputs.validation_only != 'true' }}
