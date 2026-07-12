@@ -77,14 +77,6 @@ on:
         description: "Locked/OOS start date, excluded from all packs"
         required: true
         default: "2021-01-01"
-      include_locked:
-        description: "Run a separate forward/locked evaluation after training and validation"
-        required: true
-        default: "false"
-      forward_end:
-        description: "End date for the separate locked evaluation; max uses source benchmark end"
-        required: true
-        default: "max"
       fail_on_unsupported:
         description: "Fail job when an external rule cannot be mapped"
         required: true
@@ -120,7 +112,7 @@ permissions:
 
 jobs:
   clean_portfolio_v7:
-    if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7' }}
+    if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
@@ -139,8 +131,8 @@ jobs:
       INPUT_VALIDATION_START: ${{ inputs.validation_start }}
       INPUT_VALIDATION_END: ${{ inputs.validation_end }}
       INPUT_LOCKED_START: ${{ inputs.locked_start }}
-      INPUT_INCLUDE_LOCKED: ${{ inputs.include_locked }}
-      INPUT_FORWARD_END: ${{ inputs.forward_end }}
+      INPUT_INCLUDE_LOCKED: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+      INPUT_FORWARD_END: "max"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

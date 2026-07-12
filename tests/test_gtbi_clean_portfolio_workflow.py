@@ -42,8 +42,8 @@ def test_workflow_exposes_separate_locked_forward_pass_inputs() -> None:
     payload = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     on = payload.get("on", payload.get(True))
     inputs = on["workflow_dispatch"]["inputs"]
-    assert inputs["include_locked"]["default"] == "false"
-    assert inputs["forward_end"]["default"] == "max"
+    assert len(inputs) <= 25
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "--include-locked" in text
+    assert "clean_portfolio_v7_locked" in text
     assert "INPUT_INCLUDE_LOCKED" in text
+    assert 'INPUT_FORWARD_END: "max"' in text
