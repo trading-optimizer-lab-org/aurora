@@ -371,20 +371,28 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download full-history data shards for locked mode
         if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.data_run_id }}
+          pattern: free-global-yahoo-universe
+          path: ${{ github.workspace }}/incoming-data/universe
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download full-history price shards for locked mode
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.data_run_id }}
+          pattern: free-global-yahoo-price-shard-*
+          path: ${{ github.workspace }}/incoming-data/shards
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assemble full-history data lake for locked mode
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
         run: |
           set -euo pipefail
           incoming="$GITHUB_WORKSPACE/incoming-data"
           mkdir -p "$incoming" "$QF_DATA_DIR/prices/free_us_daily"
-          gh run download "${{ inputs.data_run_id }}" \
-            --repo "${{ github.repository }}" \
-            --name free-global-yahoo-universe \
-            --dir "$incoming/universe"
-          for shard in $(seq 0 31); do
-            gh run download "${{ inputs.data_run_id }}" \
-              --repo "${{ github.repository }}" \
-              --name "free-global-yahoo-price-shard-$shard" \
-              --dir "$incoming/shard-$shard"
-          done
           lake="$QF_DATA_DIR/prices/free_us_daily"
           mkdir -p "$lake/normalized" "$lake/raw/yfinance" "$lake/universe" "$lake/metadata"
           while IFS= read -r path; do cp "$path" "$lake/normalized/$(basename "$path")"; done < <(find "$incoming" -type f -path '*/normalized/*.parquet')
