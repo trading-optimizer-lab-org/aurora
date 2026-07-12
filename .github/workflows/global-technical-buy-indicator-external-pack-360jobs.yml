@@ -162,7 +162,7 @@ jobs:
             position_sizes="0.005,0.0135,0.025"
             max_positions="10,20"
           fi
-          python scripts/run_gtbi_clean_portfolio.py \
+          python -m scripts.run_gtbi_clean_portfolio \
             --data-pack-root "${{ steps.data.outputs.root }}" \
             --strategy-pack-root "${{ inputs.external_strategy_pack_path }}" \
             --strategy-id "lhv1_2f6eb0c50f_fam_00_v1004" \
