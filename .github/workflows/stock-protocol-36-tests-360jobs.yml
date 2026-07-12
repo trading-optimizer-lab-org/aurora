@@ -30,6 +30,7 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}
   QF_DATA_DIR: ${{ github.workspace }}/qf-data
   MANIFEST: config/stock_protocol_36_tests.yaml
   DATA_END: "2020-12-31"
