@@ -51,6 +51,11 @@ def _merge_catalog(src_catalog: Path, dst_catalog: Path) -> int:
     if not src_catalog.exists():
         return 0
     with sqlite3.connect(src_catalog) as src:
+        has_downloads = src.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='downloads'"
+        ).fetchone()
+        if not has_downloads:
+            return 0
         rows = src.execute(
             """
             SELECT
