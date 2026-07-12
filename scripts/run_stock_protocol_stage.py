@@ -98,7 +98,7 @@ def run_stage(
             trades = build_portfolio(trades, dict(task["variant"]))
         cost_bps = int(task["variant"].get("cost_bps", 0))
         returns = trades["gross_return"] if not trades.empty else pd.Series(dtype=float)
-        metrics = compute_metrics(returns, trades, cost_bps=cost_bps)
+        metrics = compute_metrics(returns, trades, costs_bps=cost_bps)
         rows.append({
             **task,
             "variant": json.dumps(task["variant"], sort_keys=True),
