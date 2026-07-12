@@ -122,7 +122,7 @@ def run_stage(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", dest="manifest_path", type=Path, required=True)
     parser.add_argument("--pack-root", type=Path, required=True)
     parser.add_argument("--phase", required=True)
     parser.add_argument("--shard-id", type=int, required=True)
