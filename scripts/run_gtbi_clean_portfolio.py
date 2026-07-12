@@ -21,6 +21,7 @@ from scripts.gtbi_clean_portfolio import (
     DataQualityPolicy,
     MAX_TERMINAL_MARK_DAYS,
     PortfolioConfig,
+    PortfolioResult,
     choose_train_selected_result,
     prepare_signal_portfolio_data,
     sanitize_symbol_prices,
@@ -483,6 +484,33 @@ RESULT_SUMMARY_FIELDS = (
 )
 
 
+def _empty_portfolio_result(config: PortfolioConfig) -> PortfolioResult:
+    summary = {
+        "ending_equity": float(config.initial_capital),
+        "total_return_pct": 0.0,
+        "cagr_pct": 0.0,
+        "max_drawdown_pct": 0.0,
+        "worst_year_pct": 0.0,
+        "positive_years": 0,
+        "years": 0,
+        "trades_accepted": 0,
+        "entries_skipped": 0,
+        "max_open_positions": 0,
+        "max_gross_exposure": 0.0,
+        "position_size_pct": float(config.position_size_pct),
+        "max_positions": int(config.max_positions),
+        "transaction_cost_bps_per_side": float(config.transaction_cost_bps_per_side),
+        "slippage_bps_per_side": float(config.slippage_bps_per_side),
+    }
+    return PortfolioResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        summary,
+    )
+
+
 def _train_sweep_row(*, position_size: float, max_positions: int, train_result: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "position_size_pct": float(position_size),
@@ -515,6 +543,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     data_pack_root = Path(args.data_pack_root)
     include_locked = bool(args.include_locked)
+    locked_only = bool(args.locked_only)
+    if locked_only and not include_locked:
+        raise ValueError("locked_only requires include_locked")
     forward_end = (
         resolve_forward_end(data_pack_root, args.forward_end)
         if include_locked
@@ -555,24 +586,27 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     signal_diagnostics["entry_priority_method"] = (
         f"relative_strength_{int(args.priority_lookback_days)}d_at_signal_close"
     )
-    train_data = prepare_signal_portfolio_data(
-        signals,
-        frames,
-        market_exit_signals=market_exits,
-        priority_scores=priority_scores,
-        start=args.train_start,
-        end=args.train_end,
-        indicator_config=candidate.config,
-    )
-    validation_data = prepare_signal_portfolio_data(
-        signals,
-        frames,
-        market_exit_signals=market_exits,
-        priority_scores=priority_scores,
-        start=args.validation_start,
-        end=args.validation_end,
-        indicator_config=candidate.config,
-    )
+    train_data = None
+    validation_data = None
+    if not locked_only:
+        train_data = prepare_signal_portfolio_data(
+            signals,
+            frames,
+            market_exit_signals=market_exits,
+            priority_scores=priority_scores,
+            start=args.train_start,
+            end=args.train_end,
+            indicator_config=candidate.config,
+        )
+        validation_data = prepare_signal_portfolio_data(
+            signals,
+            frames,
+            market_exit_signals=market_exits,
+            priority_scores=priority_scores,
+            start=args.validation_start,
+            end=args.validation_end,
+            indicator_config=candidate.config,
+        )
     locked_data = (
         prepare_signal_portfolio_data(
             signals,
@@ -587,47 +621,78 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
 
-    position_sizes = parse_float_grid(args.position_sizes)
-    max_positions_grid = parse_int_grid(args.max_positions_grid)
-    sweep_rows: list[dict[str, Any]] = []
-    for max_positions in max_positions_grid:
-        for position_size in position_sizes:
-            portfolio_config = PortfolioConfig(
-                initial_capital=float(args.initial_capital),
-                position_size_pct=position_size,
-                max_positions=max_positions,
-                max_gross_exposure=1.0,
-                transaction_cost_bps_per_side=float(args.transaction_cost_bps_per_side),
-                slippage_bps_per_side=float(args.slippage_bps_per_side),
-                allow_fractional_shares=bool(args.allow_fractional_shares),
-            )
-            train_result = simulate_prepared_signal_portfolio(train_data, portfolio_config=portfolio_config)
-            sweep_rows.append(
-                _train_sweep_row(
-                    position_size=position_size,
-                    max_positions=max_positions,
-                    train_result=train_result,
-                )
-            )
-    sweep = pd.DataFrame(sweep_rows)
-    try:
-        selected = choose_train_selected_result(sweep, risk_limit_pct=float(args.safety_target_pct))
-        selected_target = float(args.safety_target_pct)
-    except ValueError:
-        selected = choose_train_selected_result(sweep, risk_limit_pct=float(args.risk_limit_pct))
-        selected_target = float(args.risk_limit_pct)
-
-    selected_config = PortfolioConfig(
-        initial_capital=float(args.initial_capital),
-        position_size_pct=float(selected["position_size_pct"]),
-        max_positions=int(selected["max_positions"]),
-        max_gross_exposure=1.0,
-        transaction_cost_bps_per_side=float(args.transaction_cost_bps_per_side),
-        slippage_bps_per_side=float(args.slippage_bps_per_side),
-        allow_fractional_shares=bool(args.allow_fractional_shares),
+    position_sizes = (
+        [float(args.locked_position_size_pct)]
+        if locked_only
+        else parse_float_grid(args.position_sizes)
     )
-    train_result = simulate_prepared_signal_portfolio(train_data, portfolio_config=selected_config)
-    validation_result = simulate_prepared_signal_portfolio(validation_data, portfolio_config=selected_config)
+    max_positions_grid = (
+        [int(args.locked_max_positions)]
+        if locked_only
+        else parse_int_grid(args.max_positions_grid)
+    )
+    sweep_rows: list[dict[str, Any]] = []
+    if locked_only:
+        selected = {
+            "position_size_pct": float(position_sizes[0]),
+            "max_positions": int(max_positions_grid[0]),
+        }
+        selected_target = float(args.safety_target_pct)
+        selected_config = PortfolioConfig(
+            initial_capital=float(args.initial_capital),
+            position_size_pct=float(selected["position_size_pct"]),
+            max_positions=int(selected["max_positions"]),
+            max_gross_exposure=1.0,
+            transaction_cost_bps_per_side=float(args.transaction_cost_bps_per_side),
+            slippage_bps_per_side=float(args.slippage_bps_per_side),
+            allow_fractional_shares=bool(args.allow_fractional_shares),
+        )
+        train_result = _empty_portfolio_result(selected_config)
+        validation_result = _empty_portfolio_result(selected_config)
+        sweep_rows.append(_train_sweep_row(
+            position_size=float(selected["position_size_pct"]),
+            max_positions=int(selected["max_positions"]),
+            train_result=train_result,
+        ))
+    else:
+        for max_positions in max_positions_grid:
+            for position_size in position_sizes:
+                portfolio_config = PortfolioConfig(
+                    initial_capital=float(args.initial_capital),
+                    position_size_pct=position_size,
+                    max_positions=max_positions,
+                    max_gross_exposure=1.0,
+                    transaction_cost_bps_per_side=float(args.transaction_cost_bps_per_side),
+                    slippage_bps_per_side=float(args.slippage_bps_per_side),
+                    allow_fractional_shares=bool(args.allow_fractional_shares),
+                )
+                train_result = simulate_prepared_signal_portfolio(train_data, portfolio_config=portfolio_config)
+                sweep_rows.append(
+                    _train_sweep_row(
+                        position_size=position_size,
+                        max_positions=max_positions,
+                        train_result=train_result,
+                    )
+                )
+    sweep = pd.DataFrame(sweep_rows)
+    if not locked_only:
+        try:
+            selected = choose_train_selected_result(sweep, risk_limit_pct=float(args.safety_target_pct))
+            selected_target = float(args.safety_target_pct)
+        except ValueError:
+            selected = choose_train_selected_result(sweep, risk_limit_pct=float(args.risk_limit_pct))
+            selected_target = float(args.risk_limit_pct)
+        selected_config = PortfolioConfig(
+            initial_capital=float(args.initial_capital),
+            position_size_pct=float(selected["position_size_pct"]),
+            max_positions=int(selected["max_positions"]),
+            max_gross_exposure=1.0,
+            transaction_cost_bps_per_side=float(args.transaction_cost_bps_per_side),
+            slippage_bps_per_side=float(args.slippage_bps_per_side),
+            allow_fractional_shares=bool(args.allow_fractional_shares),
+        )
+        train_result = simulate_prepared_signal_portfolio(train_data, portfolio_config=selected_config)
+        validation_result = simulate_prepared_signal_portfolio(validation_data, portfolio_config=selected_config)
     locked_result = (
         simulate_prepared_signal_portfolio(locked_data, portfolio_config=selected_config)
         if locked_data is not None
@@ -681,14 +746,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     if not skipped.empty:
         skipped["candidate_id"] = str(args.strategy_id)
-    validate_selected_result(
-        selected_evaluation,
-        annual,
-        daily,
-        locked_start=args.locked_start,
-        risk_limit_pct=float(args.risk_limit_pct),
-        allow_locked=include_locked,
-    )
+    if not locked_only:
+        validate_selected_result(
+            selected_evaluation,
+            annual,
+            daily,
+            locked_start=args.locked_start,
+            risk_limit_pct=float(args.risk_limit_pct),
+            allow_locked=include_locked,
+        )
     concentration = {
         "train": build_concentration_summary(train_result.ledger, initial_capital=float(args.initial_capital)),
         "validation": build_concentration_summary(validation_result.ledger, initial_capital=float(args.initial_capital)),
@@ -720,13 +786,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         and validation_concentration["top_symbol_positive_pnl_share"] <= 0.25
         and validation_concentration["return_without_top_10_trades_pct"] > 0.0
     )
-    validation_profitability_pass = bool(validation_result.summary["cagr_pct"] > 0.0)
+    validation_profitability_pass = bool(locked_only or validation_result.summary["cagr_pct"] > 0.0)
     summary = {
         **provenance_payload,
         "portfolio_run_hash": run_hash,
         "github_only_run": True,
         "requires_local_machine": False,
         "locked_opened": include_locked,
+        "locked_only": locked_only,
         "forward_end_resolved": str(forward_end.date()) if include_locked else None,
         "symbols_loaded": int(quality["symbol"].ne("SPY").sum()),
         "clean_segments": int(len(frames)),
@@ -787,6 +854,9 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--validation-end", default=CANONICAL_VALIDATION_END)
     value.add_argument("--locked-start", default=CANONICAL_LOCKED_START)
     value.add_argument("--include-locked", action="store_true")
+    value.add_argument("--locked-only", action="store_true")
+    value.add_argument("--locked-position-size-pct", type=float, default=0.03)
+    value.add_argument("--locked-max-positions", type=int, default=50)
     value.add_argument("--forward-end", default="max")
     value.add_argument("--position-sizes", default=DEFAULT_POSITION_SIZES)
     value.add_argument("--max-positions-grid", default=DEFAULT_MAX_POSITIONS)

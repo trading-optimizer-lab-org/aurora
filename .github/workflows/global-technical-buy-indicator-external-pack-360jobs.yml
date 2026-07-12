@@ -112,7 +112,7 @@ permissions:
 
 jobs:
   clean_portfolio_v7:
-    if: ${{ always() && (inputs.optimized_evaluation_mode == 'clean_portfolio_v7' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked') }}
+    if: ${{ always() && (inputs.optimized_evaluation_mode == 'clean_portfolio_v7' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked_only') }}
     needs: [build_external_pack]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -132,7 +132,8 @@ jobs:
       INPUT_VALIDATION_START: ${{ inputs.validation_start }}
       INPUT_VALIDATION_END: ${{ inputs.validation_end }}
       INPUT_LOCKED_START: ${{ inputs.locked_start }}
-      INPUT_INCLUDE_LOCKED: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+      INPUT_INCLUDE_LOCKED: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked_only' }}
+      INPUT_LOCKED_ONLY: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked_only' }}
       INPUT_FORWARD_END: "max"
     steps:
       - uses: actions/checkout@v4
@@ -152,7 +153,7 @@ jobs:
           path: data-pack
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download generated full-history GTBI data pack
-        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked_only' }}
         uses: actions/download-artifact@v4
         with:
           name: gtbi-external-pack-data
@@ -187,6 +188,10 @@ jobs:
           if [ "$INPUT_INCLUDE_LOCKED" = "true" ]; then
             locked_flag=(--include-locked)
           fi
+          locked_only_flag=()
+          if [ "$INPUT_LOCKED_ONLY" = "true" ]; then
+            locked_only_flag=(--locked-only --locked-position-size-pct 0.03 --locked-max-positions 50)
+          fi
           python -m scripts.run_gtbi_clean_portfolio \
             --data-pack-root "$DATA_PACK_ROOT" \
             --strategy-pack-root "$INPUT_STRATEGY_PACK_PATH" \
@@ -201,6 +206,7 @@ jobs:
             --locked-start "$INPUT_LOCKED_START" \
             --forward-end "$INPUT_FORWARD_END" \
             "${locked_flag[@]}" \
+            "${locked_only_flag[@]}" \
             --position-sizes "$position_sizes" \
             --max-positions-grid "$max_positions" \
             --risk-limit-pct 25 \
@@ -306,7 +312,7 @@ jobs:
           retention-days: 30
 
   build_external_pack:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked_only' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
@@ -510,7 +516,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked_only' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -597,7 +603,7 @@ jobs:
 
   run_block:
     name: run_block (${{ matrix.block_index }}, ${{ matrix.block_padded }}, ${{ matrix.job_indices_csv }}, ${{ matrix.logical_jobs }})
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked_only' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -738,7 +744,7 @@ jobs:
           retention-days: 14
 
   merge_final:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' && always() }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked_only' && always() }}
     needs:
       - plan_blocks
       - run_block
