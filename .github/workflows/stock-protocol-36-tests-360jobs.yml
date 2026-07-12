@@ -1,6 +1,6 @@
 name: Stock Protocol 36 Tests 360 Jobs
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       data_source_run_id:
