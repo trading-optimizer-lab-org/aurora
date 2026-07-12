@@ -156,8 +156,10 @@ jobs:
         if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked_only' }}
         uses: actions/download-artifact@v4
         with:
+          run-id: ${{ inputs.data_run_id }}
           name: gtbi-external-pack-data
           path: data-pack
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Locate immutable data pack
         id: data
         shell: bash
