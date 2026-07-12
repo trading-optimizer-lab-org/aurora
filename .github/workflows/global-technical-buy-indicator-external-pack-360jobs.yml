@@ -362,13 +362,38 @@ jobs:
             fi
           done
       - name: Download data lake artifact
-        if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
+        if: ${{ steps.reuse_pack.outputs.reused != 'true' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' }}
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.data_run_id }}
           name: ${{ inputs.data_artifact_name }}
           path: ${{ env.QF_DATA_DIR }}/prices/free_us_daily
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download full-history data shards for locked mode
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+        run: |
+          set -euo pipefail
+          incoming="$GITHUB_WORKSPACE/incoming-data"
+          mkdir -p "$incoming" "$QF_DATA_DIR/prices/free_us_daily"
+          gh run download "${{ inputs.data_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name free-global-yahoo-universe \
+            --dir "$incoming/universe"
+          for shard in $(seq 0 31); do
+            gh run download "${{ inputs.data_run_id }}" \
+              --repo "${{ github.repository }}" \
+              --name "free-global-yahoo-price-shard-$shard" \
+              --dir "$incoming/shard-$shard"
+          done
+          lake="$QF_DATA_DIR/prices/free_us_daily"
+          mkdir -p "$lake/normalized" "$lake/raw/yfinance" "$lake/universe" "$lake/metadata"
+          while IFS= read -r path; do cp "$path" "$lake/normalized/$(basename "$path")"; done < <(find "$incoming" -type f -path '*/normalized/*.parquet')
+          while IFS= read -r path; do cp "$path" "$lake/raw/yfinance/$(basename "$path")"; done < <(find "$incoming" -type f -path '*/raw/yfinance/*.parquet')
+          while IFS= read -r path; do cp "$path" "$lake/universe/$(basename "$path")"; done < <(find "$incoming" -type f -path '*/universe/*.parquet')
+          while IFS= read -r path; do cp "$path" "$lake/metadata/$(basename "$path")"; done < <(find "$incoming" -type f -path '*/metadata/*.parquet')
+          test -f "$lake/universe/us_stock_like_universe.parquet"
+          test -f "$lake/metadata/company_metadata.parquet"
+          test -f "$lake/normalized/SPY.parquet"
       - name: Normalize data lake layout and ensure SPY benchmark exists
         if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
         run: |
