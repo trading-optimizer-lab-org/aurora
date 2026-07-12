@@ -1,0 +1,761 @@
+name: Stock Protocol 36 Tests 360 Jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_source_run_id:
+        description: "Optional prior data run id; empty rebuilds bounded public data"
+        required: false
+        default: ""
+      data_artifact_name:
+        description: "Optional prior data artifact name"
+        required: false
+        default: ""
+      max_parallel_requested:
+        description: "Requested runner concurrency"
+        required: true
+        default: "360"
+      validation_only:
+        description: "Run GitHub validation jobs only"
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: stock-protocol-36-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  QF_DATA_DIR: ${{ github.workspace }}/qf-data
+  MANIFEST: config/stock_protocol_36_tests.yaml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Aurora
+        run: python -m pip install -e .
+      - name: Validate manifest and protocol contracts
+        run: >-
+          python -m pytest -q
+          tests/test_stock_protocol_manifest.py
+          tests/test_stock_protocol_dataset.py
+          tests/test_stock_protocol_engine.py
+          tests/test_stock_protocol_shards.py
+          tests/test_stock_protocol_workflow_contract.py
+      - name: Confirm locked policy
+        run: echo "locked_opened=false"
+
+  plan:
+    if: ${{ inputs.validation_only == false }}
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_a: ${{ steps.make.outputs.matrix_a }}
+      matrix_b: ${{ steps.make.outputs.matrix_b }}
+      data_a: ${{ steps.make.outputs.data_a }}
+      data_b: ${{ steps.make.outputs.data_b }}
+    steps:
+      - id: make
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print("matrix_a=" + json.dumps(list(range(180)), separators=(",", ":")))
+          print("matrix_b=" + json.dumps(list(range(180, 360)), separators=(",", ":")))
+          print("data_a=" + json.dumps(list(range(16)), separators=(",", ":")))
+          print("data_b=" + json.dumps(list(range(16, 32)), separators=(",", ":")))
+          PY
+
+  build_universe:
+    if: ${{ inputs.validation_only == false && inputs.data_source_run_id == '' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Build current public US universe
+        run: python -m aurora.cli.forge data free-us-daily build-universe --output json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-universe
+          path: |
+            qf-data/prices/free_us_daily/universe
+            qf-data/prices/free_us_daily/metadata
+            qf-data/prices/free_us_daily/reports
+            qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 7
+
+  download_data_a:
+    if: ${{ inputs.validation_only == false && inputs.data_source_run_id == '' }}
+    needs: [plan, build_universe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.data_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-universe
+          path: qf-data/prices/free_us_daily
+      - name: Download bounded daily prices
+        run: >-
+          python -m aurora.cli.forge data free-us-daily download-prices
+          --start max --end 2021-01-01 --workers 1 --batch-size 15
+          --sleep-between-batches 1.5 --retries 3 --retry-wait-seconds 2
+          --shard-count 32 --shard-index ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-price-shard-${{ matrix.shard }}
+          path: |
+            qf-data/prices/free_us_daily/raw
+            qf-data/prices/free_us_daily/normalized
+            qf-data/prices/free_us_daily/reports
+            qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 7
+
+  download_data_b:
+    if: ${{ inputs.validation_only == false && inputs.data_source_run_id == '' }}
+    needs: [plan, build_universe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.data_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-universe
+          path: qf-data/prices/free_us_daily
+      - name: Download bounded daily prices
+        run: >-
+          python -m aurora.cli.forge data free-us-daily download-prices
+          --start max --end 2021-01-01 --workers 1 --batch-size 15
+          --sleep-between-batches 1.5 --retries 3 --retry-wait-seconds 2
+          --shard-count 32 --shard-index ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-price-shard-${{ matrix.shard }}
+          path: |
+            qf-data/prices/free_us_daily/raw
+            qf-data/prices/free_us_daily/normalized
+            qf-data/prices/free_us_daily/reports
+            qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 7
+
+  merge_data:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, build_universe, download_data_a, download_data_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Download bounded data source artifact when supplied
+        if: ${{ inputs.data_source_run_id != '' && inputs.data_artifact_name != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "${{ inputs.data_source_run_id }}"
+          --repo "${{ github.repository }}"
+          --name "${{ inputs.data_artifact_name }}"
+          --dir downloaded-source
+      - name: Download freshly built universe
+        if: ${{ inputs.data_source_run_id == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-universe
+          path: final-qf-data/prices/free_us_daily
+      - name: Download fresh price shards
+        if: ${{ inputs.data_source_run_id == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-price-shard-*
+          path: downloaded-shards
+      - name: Merge fresh price shards
+        if: ${{ inputs.data_source_run_id == '' }}
+        run: >-
+          python scripts/merge_free_us_daily_shards.py
+          --root final-qf-data/prices/free_us_daily
+          --shards-dir downloaded-shards
+      - name: Locate supplied source
+        if: ${{ inputs.data_source_run_id != '' && inputs.data_artifact_name != '' }}
+        run: |
+          mkdir -p final-qf-data/prices/free_us_daily
+          cp -R downloaded-source/. final-qf-data/prices/free_us_daily/
+      - name: Build date-bounded research pack
+        run: >-
+          python scripts/prepare_stock_protocol_data.py
+          --source-root final-qf-data/prices/free_us_daily
+          --output-root final-qf-data/stock_protocol_pack
+          --manifest "$MANIFEST"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-pack
+          path: final-qf-data/stock_protocol_pack
+          retention-days: 7
+
+  phase_signal_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: signal, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-signal-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_signal_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: signal, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-signal-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_signal:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_signal_a, phase_signal_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-signal-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase signal --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/signal_results.csv --layer signal
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-signal, path: phase-results, retention-days: 7}
+
+  phase_weights_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_signal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: weights, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-weights-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_weights_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_signal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: weights, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-weights-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_weights:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_weights_a, phase_weights_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-weights-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase weights --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/weights_results.csv --layer weights
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-weights, path: phase-results, retention-days: 7}
+
+  phase_entries_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_weights]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: entries, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-entries-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_entries_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_weights]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: entries, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-entries-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_entries:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_entries_a, phase_entries_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-entries-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase entries --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/entries_results.csv --layer entries
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-entries, path: phase-results, retention-days: 7}
+
+  phase_exits_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_entries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: exits, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-exits-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_exits_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_entries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: exits, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-exits-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_exits:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_exits_a, phase_exits_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-exits-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase exits --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/exits_results.csv --layer exits
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-exits, path: phase-results, retention-days: 7}
+
+  phase_portfolio_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_exits]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: portfolio, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-portfolio-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_portfolio_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_exits]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: portfolio, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-portfolio-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_portfolio:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_portfolio_a, phase_portfolio_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-portfolio-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase portfolio --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/portfolio_results.csv --layer portfolio
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-portfolio, path: phase-results, retention-days: 7}
+
+  phase_costs_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_portfolio]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: costs, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-costs-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_costs_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_portfolio]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: costs, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-costs-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_costs:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_costs_a, phase_costs_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-costs-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase costs --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/costs_results.csv --layer costs
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-costs, path: phase-results, retention-days: 7}
+
+  phase_walk_forward_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_costs]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: walk_forward, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-walk-forward-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_walk_forward_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_costs]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: walk_forward, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-walk-forward-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  freeze_walk_forward:
+    if: ${{ inputs.validation_only == false }}
+    needs: [phase_walk_forward_a, phase_walk_forward_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-walk-forward-shard-*, path: phase-shards}
+      - run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root phase-shards --phase walk_forward --shard-count 360
+          --output-root phase-results --manifest "$MANIFEST"
+      - run: >-
+          python scripts/freeze_stock_protocol_layer.py
+          --results phase-results/walk_forward_results.csv --layer walk_forward
+          --manifest "$MANIFEST" --output-root phase-results
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-phase-results-walk-forward, path: phase-results, retention-days: 7}
+
+  phase_robustness_a:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_walk_forward]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_a) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: robustness, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-robustness-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  phase_robustness_b:
+    if: ${{ inputs.validation_only == false }}
+    needs: [plan, merge_data, freeze_walk_forward]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: {shard: ${{ fromJSON(needs.plan.outputs.matrix_b) }}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: pack}
+      - uses: ./.github/actions/stock-protocol-stage
+        with: {phase: robustness, shard: "${{ matrix.shard }}", pack_root: pack, output_root: stage-output}
+      - uses: actions/upload-artifact@v4
+        with: {name: stock-protocol-robustness-shard-${{ matrix.shard }}, path: stage-output, retention-days: 7}
+
+  finalize:
+    if: ${{ inputs.validation_only == false }}
+    needs: [freeze_signal, freeze_weights, freeze_entries, freeze_exits, freeze_portfolio, freeze_costs, freeze_walk_forward, phase_robustness_a, phase_robustness_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-pack, path: final-input/pack}
+      - uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-phase-results-*, path: final-input/phases}
+      - name: Download robustness shards
+        uses: actions/download-artifact@v4
+        with: {pattern: stock-protocol-robustness-shard-*, path: final-input/robustness}
+      - name: Merge robustness shards
+        run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root final-input/robustness --phase robustness --shard-count 360
+          --output-root final-input/phases/robustness --manifest "$MANIFEST"
+      - name: Finalize artifact
+        run: >-
+          python scripts/finalize_stock_protocol.py
+          --input-root final-input --output-root final
+          --manifest "$MANIFEST"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-36-tests-360jobs-results
+          path: final
+          retention-days: 30
