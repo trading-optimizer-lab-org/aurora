@@ -71,6 +71,7 @@ class PreparedSignalPortfolioData:
     market_maps: dict[str, pd.Series]
     next_dates: dict[str, dict[pd.Timestamp, pd.Timestamp]]
     exit_mas: dict[str, pd.Series]
+    signal_events: dict[pd.Timestamp, tuple[dict[str, Any], ...]]
     calendar: tuple[pd.Timestamp, ...]
     start: pd.Timestamp
     end: pd.Timestamp
@@ -158,6 +159,7 @@ def sanitize_symbol_prices(
     adjusted_rows = int((~np.isclose(factor, 1.0, rtol=1e-10, atol=1e-12)).sum())
     for column in ("open", "high", "low", "close"):
         source[column] = source[column].to_numpy(dtype=float) * factor.to_numpy(dtype=float)
+    source["volume"] = source["volume"].to_numpy(dtype=float) / factor.to_numpy(dtype=float)
     source["adj_close"] = source["close"]
 
     previous_close = source["close"].shift(1)
@@ -470,10 +472,30 @@ def prepare_signal_portfolio_data(
         }
     next_dates: dict[str, dict[pd.Timestamp, pd.Timestamp]] = {}
     exit_mas: dict[str, pd.Series] = {}
+    signal_events_mutable: dict[pd.Timestamp, list[dict[str, Any]]] = {}
     for symbol, frame in frames.items():
         dates = list(frame.index)
         next_dates[symbol] = {dates[index]: dates[index + 1] for index in range(len(dates) - 1)}
         exit_mas[symbol] = frame["close"].rolling(int(getattr(indicator_config, "exit_ma_days", 20)), min_periods=int(getattr(indicator_config, "exit_ma_days", 20))).mean()
+        original = str(frame["original_symbol"].iloc[0]) if "original_symbol" in frame.columns else symbol.split("::segment_", 1)[0]
+        signal = signal_maps[symbol]
+        for signal_date in signal.index[signal.to_numpy(dtype=bool)]:
+            signal_date = pd.Timestamp(signal_date)
+            next_date = next_dates[symbol].get(signal_date)
+            if next_date is None or signal_date < start_date or signal_date >= end_date or next_date > end_date:
+                continue
+            signal_events_mutable.setdefault(signal_date, []).append(
+                {
+                    "symbol": symbol,
+                    "original_symbol": original,
+                    "signal_date": signal_date,
+                    "entry_date": next_date,
+                }
+            )
+    signal_events = {
+        date: tuple(sorted(events, key=lambda item: (item["original_symbol"], item["symbol"])))
+        for date, events in signal_events_mutable.items()
+    }
 
     return PreparedSignalPortfolioData(
         frames=frames,
@@ -481,6 +503,7 @@ def prepare_signal_portfolio_data(
         market_maps=market_maps,
         next_dates=next_dates,
         exit_mas=exit_mas,
+        signal_events=signal_events,
         calendar=tuple(calendar),
         start=start_date,
         end=end_date,
@@ -527,6 +550,7 @@ def simulate_prepared_signal_portfolio(
     indicator_config = data.indicator_config
 
     pending_entries: dict[pd.Timestamp, list[dict[str, Any]]] = {}
+    pending_entry_symbols: set[str] = set()
     pending_exits: dict[pd.Timestamp, list[dict[str, Any]]] = {}
     active: dict[str, dict[str, Any]] = {}
     cash = portfolio_config.initial_capital
@@ -591,8 +615,10 @@ def simulate_prepared_signal_portfolio(
                 continue
             close_position(symbol, date, raw_open, order["reason"])
 
-        for order in sorted(pending_entries.pop(date, []), key=lambda item: (item["original_symbol"], item["symbol"])):
+        entry_orders = sorted(pending_entries.pop(date, []), key=lambda item: (item["original_symbol"], item["symbol"]))
+        for order in entry_orders:
             symbol = order["symbol"]
+            pending_entry_symbols.discard(symbol)
             raw_open = float(frames[symbol].at[date, "open"])
             if not math.isfinite(raw_open) or raw_open <= 0:
                 skipped_rows.append({**order, "entry_date": date, "reason": "missing_next_open"})
@@ -660,18 +686,15 @@ def simulate_prepared_signal_portfolio(
                     position["exit_pending"] = True
 
         if date < end_date:
-            for symbol in sorted(frames):
+            for event in data.signal_events.get(date, ()):
+                symbol = str(event["symbol"])
                 if symbol in active:
                     continue
-                if not bool(signal_maps[symbol].get(date, False)):
+                if symbol in pending_entry_symbols:
                     continue
-                next_date = next_dates[symbol].get(date)
-                if next_date is None or next_date > end_date:
-                    continue
-                already_pending = any(order["symbol"] == symbol for orders in pending_entries.values() for order in orders)
-                if not already_pending:
-                    original = str(frames[symbol]["original_symbol"].iloc[0]) if "original_symbol" in frames[symbol].columns else symbol.split("::segment_", 1)[0]
-                    pending_entries.setdefault(next_date, []).append({"symbol": symbol, "original_symbol": original, "signal_date": date})
+                next_date = pd.Timestamp(event["entry_date"])
+                pending_entries.setdefault(next_date, []).append(dict(event))
+                pending_entry_symbols.add(symbol)
 
         if date == end_date:
             for symbol in sorted(list(active)):

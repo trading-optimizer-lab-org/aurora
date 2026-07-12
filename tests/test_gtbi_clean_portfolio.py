@@ -41,6 +41,7 @@ def _prices(
 
 def test_sanitize_prices_repairs_split_with_adjusted_ohlc() -> None:
     raw = _prices([100.0, 50.0, 52.0], adjusted=[50.0, 50.0, 52.0])
+    raw["volume"] = [1_000_000.0, 2_000_000.0, 2_000_000.0]
     result = sanitize_symbol_prices(
         raw,
         symbol="SPLIT",
@@ -49,6 +50,7 @@ def test_sanitize_prices_repairs_split_with_adjusted_ohlc() -> None:
     )
     assert list(result.segments) == ["SPLIT::segment_000"]
     assert result.segments["SPLIT::segment_000"]["close"].tolist() == pytest.approx([50.0, 50.0, 52.0])
+    assert result.segments["SPLIT::segment_000"]["volume"].tolist() == pytest.approx([2_000_000.0] * 3)
     assert result.diagnostics["hard_breaks"] == 0
     assert result.diagnostics["adjusted_rows"] == 1
 

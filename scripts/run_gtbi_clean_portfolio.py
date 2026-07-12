@@ -32,6 +32,14 @@ DEFAULT_POSITION_SIZES = "0.001,0.0025,0.005,0.0075,0.01,0.0125,0.0135,0.015,0.0
 DEFAULT_MAX_POSITIONS = "10,20,30,50"
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def parse_float_grid(value: str) -> list[float]:
     values = sorted({float(part.strip()) for part in str(value).split(",") if part.strip()})
     if not values or any(not math.isfinite(item) or not 0 < item <= 1 for item in values):
@@ -265,8 +273,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         max_adjusted_gap_ratio=float(args.max_adjusted_gap_ratio),
         min_segment_rows=int(args.min_segment_rows),
     )
+    data_pack_root = Path(args.data_pack_root)
+    source_file_hashes = {
+        "prices.parquet": _sha256_file(data_pack_root / "prices.parquet"),
+        "benchmark.parquet": _sha256_file(data_pack_root / "benchmark.parquet"),
+    }
     frames, benchmark, quality, anomalies = _sanitize_pack(
-        data_pack_root=Path(args.data_pack_root),
+        data_pack_root=data_pack_root,
         locked_start=args.locked_start,
         policy=policy,
         max_symbols=int(args.max_symbols),
@@ -361,10 +374,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         [train_result.ledger.assign(split="train"), validation_result.ledger.assign(split="validation")],
         ignore_index=True,
     )
+    ledger["candidate_id"] = str(args.strategy_id)
+    annual["candidate_id"] = str(args.strategy_id)
+    daily["candidate_id"] = str(args.strategy_id)
     skipped = pd.concat(
         [train_result.skipped_entries.assign(split="train"), validation_result.skipped_entries.assign(split="validation")],
         ignore_index=True,
     )
+    if not skipped.empty:
+        skipped["candidate_id"] = str(args.strategy_id)
     validate_selected_result(
         selected,
         annual,
@@ -384,6 +402,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "code_sha": _git_sha(),
         "source_data_run_id": str(args.source_data_run_id),
         "source_artifact_name": str(args.source_artifact_name),
+        "source_file_hashes": source_file_hashes,
         "strategy_id": str(args.strategy_id),
         "strategy_payload": payload,
         "train_end": args.train_end,
@@ -395,6 +414,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "risk_limit_pct": float(args.risk_limit_pct),
     }
     run_hash = hashlib.sha256(json.dumps(provenance_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    validation_concentration = concentration["validation"]
+    data_quality_pass = bool(extreme_trades == 0)
+    robustness_pass = bool(
+        validation_concentration["top_trade_positive_pnl_share"] <= 0.25
+        and validation_concentration["top_symbol_positive_pnl_share"] <= 0.25
+        and validation_concentration["return_without_top_10_trades_pct"] > 0.0
+    )
+    validation_profitability_pass = bool(validation_result.summary["cagr_pct"] > 0.0)
     summary = {
         **provenance_payload,
         "portfolio_run_hash": run_hash,
@@ -414,6 +441,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "selected_max_positions": int(selected["max_positions"]),
         "hard_risk_limit_pct": float(args.risk_limit_pct),
         "strict_risk_pass": True,
+        "data_quality_pass": data_quality_pass,
+        "robustness_pass": robustness_pass,
+        "validation_profitability_pass": validation_profitability_pass,
+        "strategy_quality_pass": bool(data_quality_pass and robustness_pass and validation_profitability_pass),
         "train": train_result.summary,
         "validation": validation_result.summary,
         "concentration": concentration,
@@ -476,4 +507,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
