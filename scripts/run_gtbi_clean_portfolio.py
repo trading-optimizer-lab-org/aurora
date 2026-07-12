@@ -118,6 +118,7 @@ def build_provenance_payload(
     policy: DataQualityPolicy,
     universe_identity: str,
     code_sha: str,
+    forward_end_resolved: str | None = None,
 ) -> dict[str, Any]:
     return {
         "engine_version": ENGINE_VERSION,
@@ -132,6 +133,9 @@ def build_provenance_payload(
         "validation_start": str(args.validation_start),
         "validation_end": str(args.validation_end),
         "locked_start": str(args.locked_start),
+        "include_locked": bool(args.include_locked),
+        "forward_end": str(args.forward_end),
+        "forward_end_resolved": str(forward_end_resolved or args.forward_end),
         "position_sizes": list(position_sizes),
         "max_positions_grid": list(max_positions_grid),
         "initial_capital": float(args.initial_capital),
@@ -206,6 +210,7 @@ def validate_selected_result(
     *,
     locked_start: str,
     risk_limit_pct: float,
+    allow_locked: bool = False,
 ) -> None:
     limit = float(risk_limit_pct)
     risk_fields = (
@@ -217,11 +222,15 @@ def validate_selected_result(
     if any(float(selected[field]) <= -limit for field in risk_fields):
         raise ValueError("selected portfolio breaches risk limit")
     locked = pd.Timestamp(locked_start)
-    if not annual_returns.empty and int(pd.to_numeric(annual_returns["year"], errors="coerce").max()) >= locked.year:
+    if (
+        not allow_locked
+        and not annual_returns.empty
+        and int(pd.to_numeric(annual_returns["year"], errors="coerce").max()) >= locked.year
+    ):
         raise ValueError("annual results expose locked data")
     if not daily_equity.empty:
         dates = pd.to_datetime(daily_equity["date"], errors="coerce")
-        if bool((dates >= locked).fillna(False).any()):
+        if not allow_locked and bool((dates >= locked).fillna(False).any()):
             raise ValueError("daily equity exposes locked data")
         if bool((pd.to_numeric(daily_equity["cash"], errors="coerce") < -1e-6).fillna(True).any()):
             raise ValueError("portfolio uses negative cash")
@@ -311,14 +320,26 @@ def period_covering_segments(
     }
 
 
+def resolve_forward_end(data_pack_root: Path, requested: str) -> pd.Timestamp:
+    if str(requested).lower() != "max":
+        return pd.Timestamp(requested)
+    benchmark_path = Path(data_pack_root) / "benchmark.parquet"
+    raw = pd.read_parquet(benchmark_path, columns=["date"])
+    dates = pd.to_datetime(raw["date"], errors="coerce", utc=True).dropna()
+    if dates.empty:
+        raise ValueError("benchmark has no date for forward evaluation")
+    return pd.Timestamp(dates.max()).tz_convert(None).normalize()
+
+
 def _sanitize_pack(
     *,
     data_pack_root: Path,
-    locked_start: str,
+    locked_start: str | None,
     policy: DataQualityPolicy,
     max_symbols: int,
     benchmark_start: str,
     benchmark_end: str,
+    segment_end: str,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     prices_path = Path(data_pack_root) / "prices.parquet"
     benchmark_path = Path(data_pack_root) / "benchmark.parquet"
@@ -336,7 +357,7 @@ def _sanitize_pack(
     anomalies: list[pd.DataFrame] = []
     for symbol, group in prices.loc[prices["symbol"].astype(str).isin(symbol_set)].groupby("symbol", sort=True):
         result = sanitize_symbol_prices(group, symbol=str(symbol), locked_start=locked_start, policy=policy)
-        eligible_segments = period_covering_segments(result.segments, end=benchmark_end)
+        eligible_segments = period_covering_segments(result.segments, end=segment_end)
         frames.update(eligible_segments)
         diagnostic = dict(result.diagnostics)
         diagnostic["segments_rejected_no_period_end_coverage"] = int(
@@ -493,18 +514,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         max_calendar_gap_days=int(args.max_calendar_gap_days),
     )
     data_pack_root = Path(args.data_pack_root)
+    include_locked = bool(args.include_locked)
+    forward_end = (
+        resolve_forward_end(data_pack_root, args.forward_end)
+        if include_locked
+        else pd.Timestamp(args.validation_end)
+    )
+    if include_locked and forward_end < pd.Timestamp(args.locked_start):
+        raise ValueError("forward_end must be on or after locked_start")
     source_file_hashes = {
         "prices.parquet": _sha256_file(data_pack_root / "prices.parquet"),
         "benchmark.parquet": _sha256_file(data_pack_root / "benchmark.parquet"),
     }
     frames, benchmark, quality, anomalies = _sanitize_pack(
         data_pack_root=data_pack_root,
-        locked_start=args.locked_start,
+        locked_start=None if include_locked else args.locked_start,
         policy=policy,
         max_symbols=int(args.max_symbols),
         benchmark_start=args.train_start,
         benchmark_end=args.validation_end,
+        segment_end=str(forward_end.date()),
     )
+    if include_locked:
+        validate_benchmark_coverage(benchmark, start=args.locked_start, end=forward_end)
     payload = load_strategy_payload(Path(args.strategy_pack_root), args.strategy_id)
     candidate = gtbi.external_strategy_to_config(payload)
     if candidate.unsupported_rules:
@@ -540,6 +572,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         start=args.validation_start,
         end=args.validation_end,
         indicator_config=candidate.config,
+    )
+    locked_data = (
+        prepare_signal_portfolio_data(
+            signals,
+            frames,
+            market_exit_signals=market_exits,
+            priority_scores=priority_scores,
+            start=args.locked_start,
+            end=str(forward_end.date()),
+            indicator_config=candidate.config,
+        )
+        if include_locked
+        else None
     )
 
     position_sizes = parse_float_grid(args.position_sizes)
@@ -583,6 +628,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     train_result = simulate_prepared_signal_portfolio(train_data, portfolio_config=selected_config)
     validation_result = simulate_prepared_signal_portfolio(validation_data, portfolio_config=selected_config)
+    locked_result = (
+        simulate_prepared_signal_portfolio(locked_data, portfolio_config=selected_config)
+        if locked_data is not None
+        else None
+    )
     selected_evaluation = _sweep_row(
         position_size=float(selected["position_size_pct"]),
         max_positions=int(selected["max_positions"]),
@@ -595,22 +645,38 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         & sweep["max_positions"].eq(int(selected["max_positions"]))
     )
     annual = pd.concat(
-        [train_result.annual_returns.assign(split="train"), validation_result.annual_returns.assign(split="validation")],
+        [
+            train_result.annual_returns.assign(split="train"),
+            validation_result.annual_returns.assign(split="validation"),
+            *([locked_result.annual_returns.assign(split="locked")] if locked_result is not None else []),
+        ],
         ignore_index=True,
     )
     daily = pd.concat(
-        [train_result.daily_equity.assign(split="train"), validation_result.daily_equity.assign(split="validation")],
+        [
+            train_result.daily_equity.assign(split="train"),
+            validation_result.daily_equity.assign(split="validation"),
+            *([locked_result.daily_equity.assign(split="locked")] if locked_result is not None else []),
+        ],
         ignore_index=True,
     )
     ledger = pd.concat(
-        [train_result.ledger.assign(split="train"), validation_result.ledger.assign(split="validation")],
+        [
+            train_result.ledger.assign(split="train"),
+            validation_result.ledger.assign(split="validation"),
+            *([locked_result.ledger.assign(split="locked")] if locked_result is not None else []),
+        ],
         ignore_index=True,
     )
     ledger["candidate_id"] = str(args.strategy_id)
     annual["candidate_id"] = str(args.strategy_id)
     daily["candidate_id"] = str(args.strategy_id)
     skipped = pd.concat(
-        [train_result.skipped_entries.assign(split="train"), validation_result.skipped_entries.assign(split="validation")],
+        [
+            train_result.skipped_entries.assign(split="train"),
+            validation_result.skipped_entries.assign(split="validation"),
+            *([locked_result.skipped_entries.assign(split="locked")] if locked_result is not None else []),
+        ],
         ignore_index=True,
     )
     if not skipped.empty:
@@ -621,11 +687,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         daily,
         locked_start=args.locked_start,
         risk_limit_pct=float(args.risk_limit_pct),
+        allow_locked=include_locked,
     )
     concentration = {
         "train": build_concentration_summary(train_result.ledger, initial_capital=float(args.initial_capital)),
         "validation": build_concentration_summary(validation_result.ledger, initial_capital=float(args.initial_capital)),
     }
+    if locked_result is not None:
+        concentration["locked"] = build_concentration_summary(
+            locked_result.ledger,
+            initial_capital=float(args.initial_capital),
+        )
     extreme_trades = int(
         (pd.to_numeric(ledger.get("portfolio_trade_return_pct", pd.Series(dtype=float)), errors="coerce").abs() > 500).sum()
     )
@@ -638,6 +710,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         policy=policy,
         universe_identity=sanitized_universe_identity(frames),
         code_sha=code_sha,
+        forward_end_resolved=str(forward_end.date()),
     )
     run_hash = provenance_hash(provenance_payload)
     validation_concentration = concentration["validation"]
@@ -653,7 +726,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "portfolio_run_hash": run_hash,
         "github_only_run": True,
         "requires_local_machine": False,
-        "locked_opened": False,
+        "locked_opened": include_locked,
+        "forward_end_resolved": str(forward_end.date()) if include_locked else None,
         "symbols_loaded": int(quality["symbol"].ne("SPY").sum()),
         "clean_segments": int(len(frames)),
         "symbols_excluded": int(quality["excluded"].sum()),
@@ -673,6 +747,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "strategy_quality_pass": bool(data_quality_pass and robustness_pass and validation_profitability_pass),
         "train": train_result.summary,
         "validation": validation_result.summary,
+        "locked": locked_result.summary if locked_result is not None else None,
         "concentration": concentration,
         "extreme_portfolio_trades_gt_500pct": extreme_trades,
         "artifact_valid": True,
@@ -711,6 +786,8 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--validation-start", default=CANONICAL_VALIDATION_START)
     value.add_argument("--validation-end", default=CANONICAL_VALIDATION_END)
     value.add_argument("--locked-start", default=CANONICAL_LOCKED_START)
+    value.add_argument("--include-locked", action="store_true")
+    value.add_argument("--forward-end", default="max")
     value.add_argument("--position-sizes", default=DEFAULT_POSITION_SIZES)
     value.add_argument("--max-positions-grid", default=DEFAULT_MAX_POSITIONS)
     value.add_argument("--initial-capital", type=float, default=1_000_000.0)

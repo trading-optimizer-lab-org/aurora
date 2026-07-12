@@ -98,6 +98,19 @@ def test_sanitize_prices_excludes_locked_rows() -> None:
     assert result.diagnostics["locked_rows_removed"] == 1
 
 
+def test_sanitize_prices_can_keep_locked_rows_for_separate_forward_pass() -> None:
+    raw = _prices([10.0, 11.0, 12.0], start="2020-12-30")
+    result = sanitize_symbol_prices(
+        raw,
+        symbol="FORWARD",
+        locked_start=None,
+        policy=DataQualityPolicy(min_segment_rows=2),
+    )
+    cleaned = next(iter(result.segments.values()))
+    assert cleaned.index.max() == pd.Timestamp("2021-01-01")
+    assert result.diagnostics["locked_rows_removed"] == 0
+
+
 def test_sanitize_prices_does_not_adjust_volume_for_small_dividend_factor_change() -> None:
     raw = _prices([100.0, 101.0, 102.0], adjusted=[98.0, 101.0, 102.0])
     raw["volume"] = [1_000_000.0] * 3

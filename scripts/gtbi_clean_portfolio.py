@@ -128,7 +128,7 @@ def sanitize_symbol_prices(
     frame: pd.DataFrame,
     *,
     symbol: str,
-    locked_start: str,
+    locked_start: str | None,
     policy: DataQualityPolicy | None = None,
 ) -> SanitizedSymbol:
     """Adjust every OHLC field and split remaining unexplained discontinuities."""
@@ -136,7 +136,11 @@ def sanitize_symbol_prices(
     policy = policy or DataQualityPolicy()
     source = _prepared_price_frame(frame)
     original_rows = len(source)
-    locked_mask = source["date"] >= pd.Timestamp(locked_start)
+    locked_mask = (
+        source["date"] >= pd.Timestamp(locked_start)
+        if locked_start is not None
+        else pd.Series(False, index=source.index)
+    )
     locked_rows_removed = int(locked_mask.sum())
     source = source.loc[~locked_mask].copy()
     duplicate_dates_removed = int(source.duplicated("date", keep="last").sum())

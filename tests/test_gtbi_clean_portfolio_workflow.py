@@ -36,3 +36,14 @@ def test_clean_portfolio_shell_does_not_interpolate_dispatch_inputs() -> None:
     assert "${{ inputs." not in run_step["run"]
     assert job["env"]["INPUT_LOCKED_START"] == "${{ inputs.locked_start }}"
     assert job["env"]["INPUT_VALIDATION_END"] == "${{ inputs.validation_end }}"
+
+
+def test_workflow_exposes_separate_locked_forward_pass_inputs() -> None:
+    payload = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    on = payload.get("on", payload.get(True))
+    inputs = on["workflow_dispatch"]["inputs"]
+    assert inputs["include_locked"]["default"] == "false"
+    assert inputs["forward_end"]["default"] == "max"
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "--include-locked" in text
+    assert "INPUT_INCLUDE_LOCKED" in text

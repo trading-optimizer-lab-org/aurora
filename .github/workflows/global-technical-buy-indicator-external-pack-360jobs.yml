@@ -77,6 +77,14 @@ on:
         description: "Locked/OOS start date, excluded from all packs"
         required: true
         default: "2021-01-01"
+      include_locked:
+        description: "Run a separate forward/locked evaluation after training and validation"
+        required: true
+        default: "false"
+      forward_end:
+        description: "End date for the separate locked evaluation; max uses source benchmark end"
+        required: true
+        default: "max"
       fail_on_unsupported:
         description: "Fail job when an external rule cannot be mapped"
         required: true
@@ -131,6 +139,8 @@ jobs:
       INPUT_VALIDATION_START: ${{ inputs.validation_start }}
       INPUT_VALIDATION_END: ${{ inputs.validation_end }}
       INPUT_LOCKED_START: ${{ inputs.locked_start }}
+      INPUT_INCLUDE_LOCKED: ${{ inputs.include_locked }}
+      INPUT_FORWARD_END: ${{ inputs.forward_end }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -173,6 +183,10 @@ jobs:
             position_sizes="0.005,0.0135,0.025"
             max_positions="10,20"
           fi
+          locked_flag=()
+          if [ "$INPUT_INCLUDE_LOCKED" = "true" ]; then
+            locked_flag=(--include-locked)
+          fi
           python -m scripts.run_gtbi_clean_portfolio \
             --data-pack-root "$DATA_PACK_ROOT" \
             --strategy-pack-root "$INPUT_STRATEGY_PACK_PATH" \
@@ -185,6 +199,8 @@ jobs:
             --validation-start "$INPUT_VALIDATION_START" \
             --validation-end "$INPUT_VALIDATION_END" \
             --locked-start "$INPUT_LOCKED_START" \
+            --forward-end "$INPUT_FORWARD_END" \
+            "${locked_flag[@]}" \
             --position-sizes "$position_sizes" \
             --max-positions-grid "$max_positions" \
             --risk-limit-pct 25 \
@@ -200,6 +216,7 @@ jobs:
       - name: Validate clean portfolio artifact
         run: |
           python - <<'PY'
+          import os
           import json
           from pathlib import Path
           import pandas as pd
@@ -224,11 +241,24 @@ jobs:
           summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
           if not summary.get("artifact_valid") or not summary.get("strict_risk_pass"):
               raise SystemExit("clean portfolio artifact did not pass strict validation")
-          if summary.get("locked_opened") is not False or summary.get("locked_start") != "2021-01-01":
-              raise SystemExit("locked boundary changed or opened")
           annual = pd.read_csv(root / "portfolio_annual_returns.csv")
-          if not annual.empty and int(annual["year"].max()) > 2020:
-              raise SystemExit("annual output contains locked years")
+          include_locked = os.environ.get("INPUT_INCLUDE_LOCKED", "false") == "true"
+          if not include_locked:
+              if summary.get("locked_opened") is not False or summary.get("locked_start") != "2021-01-01":
+                  raise SystemExit("locked boundary changed or opened")
+              if not annual.empty and int(annual["year"].max()) > 2020:
+                  raise SystemExit("annual output contains locked years")
+          else:
+              if summary.get("locked_opened") is not True:
+                  raise SystemExit("locked forward evaluation was requested but not recorded")
+              if summary.get("locked_start") != "2021-01-01":
+                  raise SystemExit("locked start changed")
+              locked = annual.loc[annual["split"].astype(str).eq("locked")]
+              if not locked.empty and int(locked["year"].min()) < 2021:
+                  raise SystemExit("locked output contains pre-locked years")
+              resolved_end = summary.get("forward_end_resolved")
+              if resolved_end and not annual.empty and int(annual["year"].max()) > int(str(resolved_end)[:4]):
+                  raise SystemExit("annual output exceeds resolved forward end")
           PY
       - name: Upload clean portfolio results
         uses: actions/upload-artifact@v4

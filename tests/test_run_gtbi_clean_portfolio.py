@@ -82,6 +82,14 @@ def test_validate_selected_result_enforces_risk_locked_and_accounting() -> None:
     locked.loc[len(locked)] = ["validation", 2021]
     with pytest.raises(ValueError, match="locked"):
         validate_selected_result(selected, locked, equity, locked_start="2021-01-01", risk_limit_pct=25.0)
+    validate_selected_result(
+        selected,
+        locked,
+        equity,
+        locked_start="2021-01-01",
+        risk_limit_pct=25.0,
+        allow_locked=True,
+    )
 
 
 def test_train_selection_does_not_use_validation_results() -> None:
@@ -207,6 +215,8 @@ def test_parser_defaults_to_whole_shares_and_canonical_train_start() -> None:
     )
     assert args.allow_fractional_shares is False
     assert args.train_start == "1993-01-01"
+    assert args.include_locked is False
+    assert args.forward_end == "max"
 
 
 def test_relative_strength_priorities_do_not_use_future_prices() -> None:
