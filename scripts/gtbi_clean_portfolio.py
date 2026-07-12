@@ -11,18 +11,33 @@ import pandas as pd
 
 
 PRICE_COLUMNS = ("open", "high", "low", "close", "adj_close", "volume")
+KNOWN_SPLIT_RATIOS = np.asarray(
+    (1.1, 1.2, 1.25, 4.0 / 3.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0, 20.0, 50.0, 100.0),
+    dtype=float,
+)
+MAX_TERMINAL_MARK_DAYS = 7
+
+
+class UnresolvedPositionError(ValueError):
+    """Raised when a position has no honest executable exit price."""
 
 
 @dataclass(frozen=True)
 class DataQualityPolicy:
     max_adjusted_gap_ratio: float = 3.0
     min_segment_rows: int = 260
+    min_split_adjustment_ratio: float = 1.1
+    max_calendar_gap_days: int = 14
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.max_adjusted_gap_ratio) or self.max_adjusted_gap_ratio <= 1.0:
             raise ValueError("max_adjusted_gap_ratio must be greater than 1")
         if self.min_segment_rows < 2:
             raise ValueError("min_segment_rows must be at least 2")
+        if not math.isfinite(self.min_split_adjustment_ratio) or self.min_split_adjustment_ratio <= 1.0:
+            raise ValueError("min_split_adjustment_ratio must be greater than 1")
+        if self.max_calendar_gap_days < 1:
+            raise ValueError("max_calendar_gap_days must be positive")
 
 
 @dataclass(frozen=True)
@@ -40,7 +55,7 @@ class PortfolioConfig:
     max_gross_exposure: float = 1.0
     transaction_cost_bps_per_side: float = 0.0
     slippage_bps_per_side: float = 0.0
-    allow_fractional_shares: bool = True
+    allow_fractional_shares: bool = False
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.initial_capital) or self.initial_capital <= 0:
@@ -91,6 +106,7 @@ def _normalise_dates(frame: pd.DataFrame) -> pd.DataFrame:
         if isinstance(dates, pd.Series)
         else dates.tz_convert(None).normalize()
     )
+    out = out.reset_index(drop=True)
     return out.dropna(subset=["date"]).sort_values("date", kind="mergesort")
 
 
@@ -144,6 +160,8 @@ def sanitize_symbol_prices(
             "locked_rows_removed": locked_rows_removed,
             "duplicate_dates_removed": duplicate_dates_removed,
             "invalid_bars_removed": invalid_bars_removed,
+            "intraday_anomalies_removed": 0,
+            "calendar_breaks": 0,
             "hard_breaks": 0,
             "segments_kept": 0,
             "rows_below_min_segment_removed": 0,
@@ -159,20 +177,66 @@ def sanitize_symbol_prices(
     adjusted_rows = int((~np.isclose(factor, 1.0, rtol=1e-10, atol=1e-12)).sum())
     for column in ("open", "high", "low", "close"):
         source[column] = source[column].to_numpy(dtype=float) * factor.to_numpy(dtype=float)
-    source["volume"] = source["volume"].to_numpy(dtype=float) / factor.to_numpy(dtype=float)
+    factor_values = factor.to_numpy(dtype=float)
+    split_changes = np.ones(len(source), dtype=float)
+    if len(source) > 1:
+        factor_changes = factor_values[1:] / factor_values[:-1]
+        magnitudes = np.maximum(factor_changes, 1.0 / factor_changes)
+        resembles_known_split = np.isclose(
+            magnitudes[:, None],
+            KNOWN_SPLIT_RATIOS[None, :],
+            rtol=0.005,
+            atol=0.005,
+        ).any(axis=1)
+        detected = resembles_known_split & (magnitudes >= policy.min_split_adjustment_ratio)
+        split_changes[1:] = np.where(detected, factor_changes, 1.0)
+    reverse_products = np.cumprod(split_changes[::-1])[::-1]
+    volume_adjustment = reverse_products / split_changes
+    source["volume"] = source["volume"].to_numpy(dtype=float) * volume_adjustment
     source["adj_close"] = source["close"]
 
     previous_close = source["close"].shift(1)
     open_ratio = source["open"] / previous_close
     close_ratio = source["close"] / previous_close
+    high_ratio = source["high"] / previous_close
+    low_ratio = source["low"] / previous_close
     threshold = float(policy.max_adjusted_gap_ratio)
-    hard_break = (
+    open_and_close_normal = (
+        open_ratio.between(1 / threshold, threshold, inclusive="both")
+        & close_ratio.between(1 / threshold, threshold, inclusive="both")
+    )
+    intraday_bad = (
+        open_and_close_normal
+        & ((high_ratio > threshold) | (low_ratio < 1 / threshold))
+    ).fillna(False)
+    anomaly_rows: list[dict[str, Any]] = [
+        {
+            "symbol": symbol,
+            "date": pd.Timestamp(source.loc[index, "date"]).date().isoformat(),
+            "reason": "corrupt_intraday_range",
+            "adjusted_open_to_previous_close_ratio": float(open_ratio.iloc[index]),
+            "adjusted_close_to_previous_close_ratio": float(close_ratio.iloc[index]),
+            "adjusted_high_to_previous_close_ratio": float(high_ratio.iloc[index]),
+            "adjusted_low_to_previous_close_ratio": float(low_ratio.iloc[index]),
+        }
+        for index in np.flatnonzero(intraday_bad.to_numpy(dtype=bool))
+    ]
+    intraday_anomalies_removed = int(intraday_bad.sum())
+    source = source.loc[~intraday_bad].copy().reset_index(drop=True)
+
+    previous_close = source["close"].shift(1)
+    open_ratio = source["open"] / previous_close
+    close_ratio = source["close"] / previous_close
+    price_break = (
         (open_ratio > threshold)
         | (open_ratio < 1 / threshold)
         | (close_ratio > threshold)
         | (close_ratio < 1 / threshold)
     ).fillna(False)
-    anomalies = pd.DataFrame(
+    calendar_gap_days = source["date"].diff().dt.days
+    calendar_break = calendar_gap_days.gt(policy.max_calendar_gap_days).fillna(False)
+    hard_break = price_break | calendar_break
+    anomaly_rows.extend(
         [
             {
                 "symbol": symbol,
@@ -181,9 +245,21 @@ def sanitize_symbol_prices(
                 "adjusted_open_to_previous_close_ratio": float(open_ratio.iloc[index]),
                 "adjusted_close_to_previous_close_ratio": float(close_ratio.iloc[index]),
             }
-            for index in np.flatnonzero(hard_break.to_numpy(dtype=bool))
+            for index in np.flatnonzero(price_break.to_numpy(dtype=bool))
         ]
     )
+    anomaly_rows.extend(
+        [
+            {
+                "symbol": symbol,
+                "date": pd.Timestamp(source.loc[index, "date"]).date().isoformat(),
+                "reason": "missing_price_history_gap",
+                "calendar_gap_days": int(calendar_gap_days.iloc[index]),
+            }
+            for index in np.flatnonzero(calendar_break.to_numpy(dtype=bool))
+        ]
+    )
+    anomalies = pd.DataFrame(anomaly_rows)
 
     segments: dict[str, pd.DataFrame] = {}
     rows_below_min = 0
@@ -207,6 +283,8 @@ def sanitize_symbol_prices(
         "locked_rows_removed": locked_rows_removed,
         "duplicate_dates_removed": duplicate_dates_removed,
         "invalid_bars_removed": invalid_bars_removed + invalid_factor_rows,
+        "intraday_anomalies_removed": intraday_anomalies_removed,
+        "calendar_breaks": int(calendar_break.sum()),
         "hard_breaks": int(hard_break.sum()),
         "segments_kept": len(segments),
         "rows_below_min_segment_removed": int(rows_below_min),
@@ -216,6 +294,17 @@ def sanitize_symbol_prices(
 
 
 def _market_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if (
+        isinstance(frame.index, pd.DatetimeIndex)
+        and frame.index.tz is None
+        and frame.index.equals(frame.index.normalize())
+        and frame.index.is_monotonic_increasing
+        and frame.index.is_unique
+        and "date" in frame.columns
+        and all(column in frame.columns for column in PRICE_COLUMNS)
+        and pd.DatetimeIndex(pd.to_datetime(frame["date"], errors="coerce")).equals(frame.index)
+    ):
+        return frame
     out = _prepared_price_frame(frame).drop_duplicates("date", keep="last").set_index("date", drop=False)
     out.index = pd.DatetimeIndex(out.index).tz_localize(None)
     return out.sort_index()
@@ -224,6 +313,20 @@ def _market_frame(frame: pd.DataFrame) -> pd.DataFrame:
 def _close_series(frame: pd.DataFrame) -> pd.Series:
     out = _market_frame(frame)
     return pd.to_numeric(out["close"], errors="coerce").sort_index()
+
+
+def _normalise_series_index(series: pd.Series) -> pd.Series:
+    if series.empty:
+        return series.copy()
+    out = series.copy()
+    index = pd.to_datetime(out.index, errors="coerce", utc=True)
+    valid = ~pd.isna(index)
+    out = out.loc[valid]
+    normalized = pd.DatetimeIndex(index[valid]).tz_convert(None).normalize()
+    out.index = normalized
+    if out.index.has_duplicates:
+        out = out.groupby(level=0, sort=True).last()
+    return out.sort_index()
 
 
 def entry_priority_at_signal(
@@ -432,10 +535,11 @@ def prepare_signal_portfolio_data(
     price_frames: Mapping[str, pd.DataFrame],
     *,
     market_exit_signals: Mapping[str, pd.Series],
+    priority_scores: Mapping[str, pd.Series] | None = None,
     start: str,
     end: str,
     indicator_config: Any,
- ) -> PreparedSignalPortfolioData:
+) -> PreparedSignalPortfolioData:
     """Compile immutable market and signal state once for a position-size sweep."""
 
     start_date, end_date = pd.Timestamp(start), pd.Timestamp(end)
@@ -450,12 +554,12 @@ def prepare_signal_portfolio_data(
         | {start_date, end_date}
     )
     signal_maps = {
-        symbol: signal.reindex(frame.index).fillna(False).astype(bool)
+        symbol: _normalise_series_index(signal).reindex(frame.index).fillna(False).astype(bool)
         for symbol, frame in frames.items()
         for signal in [signals_by_symbol.get(symbol, pd.Series(False, index=frame.index))]
     }
     market_maps = {
-        symbol: signal.reindex(frame.index).fillna(False).astype(bool)
+        symbol: _normalise_series_index(signal).reindex(frame.index).fillna(False).astype(bool)
         for symbol, frame in frames.items()
         for signal in [market_exit_signals.get(symbol, pd.Series(False, index=frame.index))]
     }
@@ -473,12 +577,16 @@ def prepare_signal_portfolio_data(
     next_dates: dict[str, dict[pd.Timestamp, pd.Timestamp]] = {}
     exit_mas: dict[str, pd.Series] = {}
     signal_events_mutable: dict[pd.Timestamp, list[dict[str, Any]]] = {}
+    priority_scores = priority_scores or {}
     for symbol, frame in frames.items():
         dates = list(frame.index)
         next_dates[symbol] = {dates[index]: dates[index + 1] for index in range(len(dates) - 1)}
         exit_mas[symbol] = frame["close"].rolling(int(getattr(indicator_config, "exit_ma_days", 20)), min_periods=int(getattr(indicator_config, "exit_ma_days", 20))).mean()
         original = str(frame["original_symbol"].iloc[0]) if "original_symbol" in frame.columns else symbol.split("::segment_", 1)[0]
         signal = signal_maps[symbol]
+        priority = _normalise_series_index(
+            priority_scores.get(symbol, pd.Series(dtype=float))
+        ).reindex(frame.index)
         for signal_date in signal.index[signal.to_numpy(dtype=bool)]:
             signal_date = pd.Timestamp(signal_date)
             next_date = next_dates[symbol].get(signal_date)
@@ -490,10 +598,18 @@ def prepare_signal_portfolio_data(
                     "original_symbol": original,
                     "signal_date": signal_date,
                     "entry_date": next_date,
+                    "entry_priority": float(priority.get(signal_date, float("-inf")))
+                    if math.isfinite(float(priority.get(signal_date, float("nan"))))
+                    else float("-inf"),
                 }
             )
     signal_events = {
-        date: tuple(sorted(events, key=lambda item: (item["original_symbol"], item["symbol"])))
+        date: tuple(
+            sorted(
+                events,
+                key=lambda item: (-item["entry_priority"], item["original_symbol"], item["symbol"]),
+            )
+        )
         for date, events in signal_events_mutable.items()
     }
 
@@ -516,6 +632,7 @@ def simulate_signal_portfolio(
     price_frames: Mapping[str, pd.DataFrame],
     *,
     market_exit_signals: Mapping[str, pd.Series],
+    priority_scores: Mapping[str, pd.Series] | None = None,
     start: str,
     end: str,
     indicator_config: Any,
@@ -525,6 +642,7 @@ def simulate_signal_portfolio(
         signals_by_symbol,
         price_frames,
         market_exit_signals=market_exit_signals,
+        priority_scores=priority_scores,
         start=start,
         end=end,
         indicator_config=indicator_config,
@@ -562,12 +680,12 @@ def simulate_prepared_signal_portfolio(
     commission = portfolio_config.transaction_cost_bps_per_side / 10_000
     slippage = portfolio_config.slippage_bps_per_side / 10_000
 
-    def current_market_value(date: pd.Timestamp) -> float:
+    def current_market_value(date: pd.Timestamp, price_field: str) -> float:
         total = 0.0
         for symbol, position in active.items():
             frame = frames[symbol]
-            if date in frame.index and math.isfinite(float(frame.at[date, "close"])):
-                marks[symbol] = float(frame.at[date, "close"])
+            if date in frame.index and math.isfinite(float(frame.at[date, price_field])):
+                marks[symbol] = float(frame.at[date, price_field])
             total += position["shares"] * marks.get(symbol, position["entry_price"])
         return total
 
@@ -585,6 +703,7 @@ def simulate_prepared_signal_portfolio(
                 "symbol": symbol,
                 "original_symbol": position["original_symbol"],
                 "signal_date": position["signal_date"],
+                "entry_priority": position["entry_priority"],
                 "entry_date": position["entry_date"],
                 "exit_date": date,
                 "entry_price": position["entry_price"],
@@ -602,7 +721,7 @@ def simulate_prepared_signal_portfolio(
         )
 
     for date in calendar:
-        current_market_value(date)
+        current_market_value(date, "open")
         for order in sorted(pending_exits.pop(date, []), key=lambda item: item["symbol"]):
             symbol = order["symbol"]
             if symbol not in active:
@@ -615,7 +734,10 @@ def simulate_prepared_signal_portfolio(
                 continue
             close_position(symbol, date, raw_open, order["reason"])
 
-        entry_orders = sorted(pending_entries.pop(date, []), key=lambda item: (item["original_symbol"], item["symbol"]))
+        entry_orders = sorted(
+            pending_entries.pop(date, []),
+            key=lambda item: (-item.get("entry_priority", float("-inf")), item["original_symbol"], item["symbol"]),
+        )
         for order in entry_orders:
             symbol = order["symbol"]
             pending_entry_symbols.discard(symbol)
@@ -626,10 +748,13 @@ def simulate_prepared_signal_portfolio(
             if symbol in active:
                 skipped_rows.append({**order, "entry_date": date, "reason": "symbol_already_active"})
                 continue
+            if any(position["original_symbol"] == order["original_symbol"] for position in active.values()):
+                skipped_rows.append({**order, "entry_date": date, "reason": "original_symbol_already_active"})
+                continue
             if len(active) >= portfolio_config.max_positions:
                 skipped_rows.append({**order, "entry_date": date, "reason": "max_positions"})
                 continue
-            value = current_market_value(date)
+            value = current_market_value(date, "open")
             equity = cash + value
             entry_price = raw_open * (1 + slippage)
             shares, notional, fee = _fill_size(cash=cash, market_value=value, equity=equity, price=entry_price, config=portfolio_config)
@@ -639,7 +764,7 @@ def simulate_prepared_signal_portfolio(
             cash -= notional + fee
             frame = frames[symbol]
             original_symbol = str(frame["original_symbol"].iloc[0]) if "original_symbol" in frame.columns else symbol.split("::segment_", 1)[0]
-            marks[symbol] = float(frame.at[date, "close"])
+            marks[symbol] = raw_open
             active[symbol] = {
                 "symbol": symbol,
                 "original_symbol": original_symbol,
@@ -652,6 +777,7 @@ def simulate_prepared_signal_portfolio(
                 "high_water": float(frame.at[date, "high"]),
                 "holding_bars": 0,
                 "exit_pending": False,
+                "entry_priority": order.get("entry_priority", float("-inf")),
             }
 
         for symbol in sorted(active):
@@ -661,6 +787,14 @@ def simulate_prepared_signal_portfolio(
             position = active[symbol]
             position["holding_bars"] += 1
             position["high_water"] = max(position["high_water"], float(frame.at[date, "high"]))
+            if (
+                next_dates[symbol].get(date) is None
+                and date < end_date
+                and (end_date - date).days > MAX_TERMINAL_MARK_DAYS
+            ):
+                raise UnresolvedPositionError(
+                    f"{symbol} has no executable exit after {date.date()} before {end_date.date()}"
+                )
             soft_allowed = position["holding_bars"] >= int(getattr(indicator_config, "minimum_holding_days_before_soft_exit", 0))
             reason = ""
             if float(frame.at[date, "low"]) <= position["entry_price"] * (1 - float(getattr(indicator_config, "stop_loss_pct", 0))):
@@ -700,7 +834,7 @@ def simulate_prepared_signal_portfolio(
             for symbol in sorted(list(active)):
                 close_position(symbol, date, float(frames[symbol].at[date, "close"]) if date in frames[symbol].index else marks[symbol], "period_end")
 
-        value = current_market_value(date)
+        value = current_market_value(date, "close")
         equity = cash + value
         peak = max(peak, equity)
         daily_rows.append(
@@ -746,6 +880,39 @@ def choose_risk_compliant_result(sweep: pd.DataFrame, *, risk_limit_pct: float =
     ascending = [False]
     if "train_cagr_pct" in ranked.columns:
         columns.append("train_cagr_pct")
+        ascending.append(False)
+    columns.extend(["position_size_pct", "max_positions"])
+    ascending.extend([False, True])
+    return ranked.sort_values(columns, ascending=ascending, kind="mergesort").iloc[0]
+
+
+def choose_train_selected_result(sweep: pd.DataFrame, *, risk_limit_pct: float = 20.0) -> pd.Series:
+    """Choose sizing from train only; validation remains an untouched confirmation."""
+
+    required = {
+        "position_size_pct",
+        "max_positions",
+        "train_max_drawdown_pct",
+        "train_worst_year_pct",
+        "train_cagr_pct",
+    }
+    missing = required - set(sweep.columns)
+    if missing:
+        raise ValueError(f"sweep missing columns: {', '.join(sorted(missing))}")
+    if not math.isfinite(risk_limit_pct) or risk_limit_pct <= 0:
+        raise ValueError("risk_limit_pct must be positive")
+    ranked = sweep.copy()
+    ranked["train_risk_limit_pass"] = (
+        (pd.to_numeric(ranked["train_max_drawdown_pct"], errors="coerce") > -risk_limit_pct)
+        & (pd.to_numeric(ranked["train_worst_year_pct"], errors="coerce") > -risk_limit_pct)
+    )
+    ranked = ranked.loc[ranked["train_risk_limit_pass"]].copy()
+    if ranked.empty:
+        raise ValueError("no position size satisfies the train risk limit")
+    columns = ["train_cagr_pct"]
+    ascending = [False]
+    if "train_total_return_pct" in ranked.columns:
+        columns.append("train_total_return_pct")
         ascending.append(False)
     columns.extend(["position_size_pct", "max_positions"])
     ascending.extend([False, True])

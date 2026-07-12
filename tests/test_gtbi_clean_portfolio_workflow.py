@@ -13,6 +13,7 @@ def test_registered_workflow_has_clean_portfolio_v7_job() -> None:
     assert "clean_portfolio_v7" in jobs
     job = jobs["clean_portfolio_v7"]
     assert job["runs-on"] == "ubuntu-latest"
+    assert "github.workspace" in job["env"]["PYTHONPATH"]
     assert "optimized_evaluation_mode == 'clean_portfolio_v7'" in job["if"]
     assert "python -m scripts.run_gtbi_clean_portfolio" in text
     assert "gtbi-clean-portfolio-v7-results" in text
@@ -26,3 +27,12 @@ def test_clean_portfolio_v7_workflow_stays_github_only_and_locked() -> None:
     assert 'default: "2020-12-31"' in text
     assert "actions/download-artifact@v4" in text
     assert "run-id: ${{ inputs.data_run_id }}" in text
+
+
+def test_clean_portfolio_shell_does_not_interpolate_dispatch_inputs() -> None:
+    payload = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    job = payload["jobs"]["clean_portfolio_v7"]
+    run_step = next(step for step in job["steps"] if step.get("name") == "Run clean portfolio sizing V7")
+    assert "${{ inputs." not in run_step["run"]
+    assert job["env"]["INPUT_LOCKED_START"] == "${{ inputs.locked_start }}"
+    assert job["env"]["INPUT_VALIDATION_END"] == "${{ inputs.validation_end }}"

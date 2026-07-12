@@ -8,6 +8,7 @@ import pytest
 from scripts.gtbi_clean_portfolio import (
     DataQualityPolicy,
     PortfolioConfig,
+    UnresolvedPositionError,
     choose_risk_compliant_result,
     entry_priority_at_signal,
     prepare_signal_portfolio_data,
@@ -70,6 +71,20 @@ def test_sanitize_prices_splits_unexplained_currency_unit_jump() -> None:
     assert float(anomaly["adjusted_open_to_previous_close_ratio"]) == pytest.approx(100.0)
 
 
+def test_sanitize_prices_splits_long_missing_history_gap() -> None:
+    raw = _prices([10.0, 10.5, 10.6, 10.7])
+    raw["date"] = pd.to_datetime(["2020-01-01", "2020-01-02", "2020-02-01", "2020-02-02"])
+    result = sanitize_symbol_prices(
+        raw,
+        symbol="SUSPENDED",
+        locked_start="2021-01-01",
+        policy=DataQualityPolicy(min_segment_rows=2, max_calendar_gap_days=14),
+    )
+    assert list(result.segments) == ["SUSPENDED::segment_000", "SUSPENDED::segment_001"]
+    assert result.diagnostics["calendar_breaks"] == 1
+    assert "missing_price_history_gap" in result.anomalies["reason"].tolist()
+
+
 def test_sanitize_prices_excludes_locked_rows() -> None:
     raw = _prices([10.0, 11.0, 12.0], start="2020-12-30")
     result = sanitize_symbol_prices(
@@ -81,6 +96,63 @@ def test_sanitize_prices_excludes_locked_rows() -> None:
     cleaned = next(iter(result.segments.values()))
     assert cleaned.index.max() == pd.Timestamp("2020-12-31")
     assert result.diagnostics["locked_rows_removed"] == 1
+
+
+def test_sanitize_prices_does_not_adjust_volume_for_small_dividend_factor_change() -> None:
+    raw = _prices([100.0, 101.0, 102.0], adjusted=[98.0, 101.0, 102.0])
+    raw["volume"] = [1_000_000.0] * 3
+    result = sanitize_symbol_prices(
+        raw,
+        symbol="DIVIDEND",
+        locked_start="2021-01-01",
+        policy=DataQualityPolicy(min_segment_rows=2),
+    )
+    cleaned = next(iter(result.segments.values()))
+    assert cleaned["volume"].tolist() == pytest.approx([1_000_000.0] * 3)
+
+
+def test_sanitize_prices_adjusts_volume_for_five_for_four_split() -> None:
+    raw = _prices([100.0, 80.0, 82.0], adjusted=[80.0, 80.0, 82.0])
+    raw["volume"] = [1_000_000.0, 1_250_000.0, 1_250_000.0]
+    result = sanitize_symbol_prices(
+        raw,
+        symbol="SPLIT_5_4",
+        locked_start="2021-01-01",
+        policy=DataQualityPolicy(min_segment_rows=2),
+    )
+    cleaned = next(iter(result.segments.values()))
+    assert cleaned["volume"].tolist() == pytest.approx([1_250_000.0] * 3)
+
+
+def test_sanitize_prices_adjusts_multiple_split_boundaries() -> None:
+    raw = _prices(
+        [120.0, 60.0, 20.0, 21.0],
+        adjusted=[20.0, 20.0, 20.0, 21.0],
+    )
+    raw["volume"] = [1_000_000.0, 2_000_000.0, 6_000_000.0, 6_000_000.0]
+    result = sanitize_symbol_prices(
+        raw,
+        symbol="MULTI_SPLIT",
+        locked_start="2021-01-01",
+        policy=DataQualityPolicy(min_segment_rows=2),
+    )
+    cleaned = next(iter(result.segments.values()))
+    assert cleaned["volume"].tolist() == pytest.approx([6_000_000.0] * 4)
+
+
+def test_sanitize_prices_removes_corrupt_intraday_spike() -> None:
+    raw = _prices([10.0, 10.0, 10.0])
+    raw.loc[1, "high"] = 1_000.0
+    result = sanitize_symbol_prices(
+        raw,
+        symbol="SPIKE",
+        locked_start="2021-01-01",
+        policy=DataQualityPolicy(min_segment_rows=2, max_adjusted_gap_ratio=3.0),
+    )
+    cleaned = next(iter(result.segments.values()))
+    assert len(cleaned) == 2
+    assert float(cleaned["high"].max()) < 20.0
+    assert result.diagnostics["intraday_anomalies_removed"] == 1
 
 
 def test_entry_priority_uses_only_information_before_entry() -> None:
@@ -133,13 +205,22 @@ def test_portfolio_respects_cash_and_selects_highest_priority() -> None:
         frames,
         start="2020-01-02",
         end="2020-01-04",
-        config=PortfolioConfig(initial_capital=100.0, position_size_pct=0.5, max_positions=1),
+        config=PortfolioConfig(
+            initial_capital=100.0,
+            position_size_pct=0.5,
+            max_positions=1,
+            allow_fractional_shares=True,
+        ),
     )
     assert result.ledger["original_symbol"].tolist() == ["B"]
     assert result.skipped_entries.iloc[0]["reason"] == "max_positions"
     assert result.summary["ending_equity"] == pytest.approx(105.0)
     assert result.daily_equity.iloc[0]["gross_exposure"] == pytest.approx(0.5)
     assert result.daily_equity["gross_exposure"].max() <= 1.0 + 1e-12
+
+
+def test_portfolio_uses_whole_shares_by_default() -> None:
+    assert PortfolioConfig().allow_fractional_shares is False
 
 
 def test_portfolio_processes_exits_before_same_day_entries() -> None:
@@ -272,6 +353,83 @@ def test_signal_portfolio_rejects_entry_without_valid_next_open() -> None:
     )
     assert result.ledger.empty
     assert result.skipped_entries.iloc[0]["reason"] == "missing_next_open"
+
+
+def test_signal_portfolio_sizes_at_open_without_using_same_day_close() -> None:
+    a = _prices([100.0, 100.0, 200.0, 200.0])
+    a["open"] = [100.0, 100.0, 100.0, 200.0]
+    b = _prices([10.0, 10.0, 10.0, 10.0])
+    result = simulate_signal_portfolio(
+        {"A": _signal(a, ["2020-01-01"]), "B": _signal(b, ["2020-01-02"])},
+        {"A": a, "B": b},
+        market_exit_signals={},
+        start="2020-01-01",
+        end="2020-01-04",
+        indicator_config=_exit_config(max_holding_days=10),
+        portfolio_config=PortfolioConfig(
+            initial_capital=100.0,
+            position_size_pct=0.25,
+            max_positions=2,
+            allow_fractional_shares=True,
+        ),
+    )
+    b_trade = result.ledger[result.ledger["original_symbol"] == "B"].iloc[0]
+    assert b_trade["allocated_capital"] == pytest.approx(25.0)
+
+
+def test_signal_portfolio_rejects_unresolved_position_at_segment_end() -> None:
+    frame = _prices([10.0, 11.0, 12.0])
+    with pytest.raises(UnresolvedPositionError, match="no executable exit"):
+        simulate_signal_portfolio(
+            {"A::segment_000": _signal(frame, ["2020-01-01"])},
+            {"A::segment_000": frame.assign(original_symbol="A")},
+            market_exit_signals={},
+            start="2020-01-01",
+            end="2020-01-20",
+            indicator_config=_exit_config(max_holding_days=50),
+            portfolio_config=PortfolioConfig(initial_capital=100.0, position_size_pct=1.0, max_positions=1),
+        )
+
+
+def test_market_frame_normalizes_intraday_timestamps() -> None:
+    frame = _prices([10.0, 11.0, 12.0])
+    frame["date"] = pd.to_datetime(frame["date"]) + pd.Timedelta(hours=16)
+    frame = frame.set_index("date", drop=False)
+    result = simulate_signal_portfolio(
+        {"A": pd.Series([True, False, False], index=frame.index)},
+        {"A": frame},
+        market_exit_signals={},
+        start="2020-01-01",
+        end="2020-01-03",
+        indicator_config=_exit_config(max_holding_days=1),
+        portfolio_config=PortfolioConfig(initial_capital=100.0, position_size_pct=1.0, max_positions=1),
+    )
+    assert result.ledger.iloc[0]["entry_date"] == pd.Timestamp("2020-01-02")
+
+
+def test_signal_portfolio_prefers_precomputed_strength_not_ticker_name() -> None:
+    a = _prices([10.0, 10.0, 10.0])
+    z = _prices([10.0, 10.0, 10.0])
+    index = pd.DatetimeIndex(pd.to_datetime(a["date"]))
+    priorities = {
+        "A": pd.Series([1.0, 1.0, 1.0], index=index),
+        "Z": pd.Series([2.0, 2.0, 2.0], index=index),
+    }
+    prepared = prepare_signal_portfolio_data(
+        {"A": _signal(a, ["2020-01-01"]), "Z": _signal(z, ["2020-01-01"])},
+        {"A": a, "Z": z},
+        market_exit_signals={},
+        priority_scores=priorities,
+        start="2020-01-01",
+        end="2020-01-03",
+        indicator_config=_exit_config(max_holding_days=1),
+    )
+    result = simulate_prepared_signal_portfolio(
+        prepared,
+        portfolio_config=PortfolioConfig(initial_capital=100.0, position_size_pct=1.0, max_positions=1),
+    )
+    assert result.ledger.iloc[0]["original_symbol"] == "Z"
+    assert result.ledger.iloc[0]["entry_priority"] == pytest.approx(2.0)
 
 
 def test_prepared_signal_portfolio_matches_direct_path() -> None:

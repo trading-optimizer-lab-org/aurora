@@ -116,12 +116,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
       GTBI_SYMBOL_WORKERS: "4"
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
+      INPUT_TEST_MODE: ${{ inputs.test_mode }}
+      INPUT_STRATEGY_PACK_PATH: ${{ inputs.external_strategy_pack_path }}
+      INPUT_DATA_RUN_ID: ${{ inputs.data_run_id }}
+      INPUT_DATA_ARTIFACT_NAME: ${{ inputs.data_artifact_name }}
+      INPUT_TRAIN_END: ${{ inputs.train_end }}
+      INPUT_VALIDATION_START: ${{ inputs.validation_start }}
+      INPUT_VALIDATION_END: ${{ inputs.validation_end }}
+      INPUT_LOCKED_START: ${{ inputs.locked_start }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -152,27 +161,30 @@ jobs:
           echo "root=$data_root" >> "$GITHUB_OUTPUT"
       - name: Run clean portfolio sizing V7
         shell: bash
+        env:
+          DATA_PACK_ROOT: ${{ steps.data.outputs.root }}
         run: |
           set -euo pipefail
           max_symbols=0
           position_sizes="0.001,0.0025,0.005,0.0075,0.01,0.0125,0.0135,0.015,0.02,0.025,0.03,0.04,0.05"
           max_positions="10,20,30,50"
-          if [ "${{ inputs.test_mode }}" = "true" ]; then
+          if [ "$INPUT_TEST_MODE" = "true" ]; then
             max_symbols=250
             position_sizes="0.005,0.0135,0.025"
             max_positions="10,20"
           fi
           python -m scripts.run_gtbi_clean_portfolio \
-            --data-pack-root "${{ steps.data.outputs.root }}" \
-            --strategy-pack-root "${{ inputs.external_strategy_pack_path }}" \
+            --data-pack-root "$DATA_PACK_ROOT" \
+            --strategy-pack-root "$INPUT_STRATEGY_PACK_PATH" \
             --strategy-id "lhv1_2f6eb0c50f_fam_00_v1004" \
             --output-dir results \
-            --source-data-run-id "${{ inputs.data_run_id }}" \
-            --source-artifact-name "${{ inputs.data_artifact_name }}" \
-            --train-end "${{ inputs.train_end }}" \
-            --validation-start "${{ inputs.validation_start }}" \
-            --validation-end "${{ inputs.validation_end }}" \
-            --locked-start "${{ inputs.locked_start }}" \
+            --source-data-run-id "$INPUT_DATA_RUN_ID" \
+            --source-artifact-name "$INPUT_DATA_ARTIFACT_NAME" \
+            --train-start "1993-01-01" \
+            --train-end "$INPUT_TRAIN_END" \
+            --validation-start "$INPUT_VALIDATION_START" \
+            --validation-end "$INPUT_VALIDATION_END" \
+            --locked-start "$INPUT_LOCKED_START" \
             --position-sizes "$position_sizes" \
             --max-positions-grid "$max_positions" \
             --risk-limit-pct 25 \
@@ -180,7 +192,10 @@ jobs:
             --transaction-cost-bps-per-side 10 \
             --slippage-bps-per-side 5 \
             --max-adjusted-gap-ratio 3 \
+            --min-split-adjustment-ratio 1.1 \
+            --max-calendar-gap-days 14 \
             --min-segment-rows 260 \
+            --priority-lookback-days 63 \
             --max-symbols "$max_symbols"
       - name: Validate clean portfolio artifact
         run: |
