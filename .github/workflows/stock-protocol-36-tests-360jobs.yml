@@ -177,7 +177,7 @@ jobs:
           retention-days: 7
 
   merge_data:
-    if: ${{ inputs.validation_only != 'true' }}
+    if: ${{ always() && inputs.validation_only != 'true' }}
     needs: [plan, build_universe, download_data_a, download_data_b]
     runs-on: ubuntu-latest
     timeout-minutes: 240
@@ -217,9 +217,10 @@ jobs:
       - name: Locate supplied source
         if: ${{ inputs.data_source_run_id != '' && inputs.data_artifact_name != '' }}
         run: |
-          mkdir -p final-qf-data/prices/free_us_daily
-          cp -R downloaded-source/. final-qf-data/prices/free_us_daily/
+          mkdir -p final-qf-data/stock_protocol_pack
+          cp -R downloaded-source/. final-qf-data/stock_protocol_pack/
       - name: Build date-bounded research pack
+        if: ${{ inputs.data_source_run_id == '' }}
         run: >-
           python scripts/prepare_stock_protocol_data.py
           --source-root final-qf-data/prices/free_us_daily
