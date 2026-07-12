@@ -1,0 +1,48 @@
+research_start: "1995-01-01"
+research_end: "2015-12-31"
+final_holdout_start: "2016-01-01"
+final_holdout_end: "2020-12-31"
+locked_start: "2021-01-01"
+data_end: "2020-12-31"
+locked_opened: false
+max_parallel_requested: 360
+survivorship_free: false
+full_protocol_compliance: false
+candidate_status: research_candidate_survivorship_limited
+tests:
+  - {id: 1, name: momentum_12_1, status: executable, reason: "OHLCV disponible; universo activo actual", requires: [daily_ohlcv], variants: [{lookback: 252, skip: 21}]}
+  - {id: 2, name: momentum_6_1, status: executable, reason: "OHLCV disponible; universo activo actual", requires: [daily_ohlcv], variants: [{lookback: 126, skip: 21}]}
+  - {id: 3, name: momentum_volatility, status: executable, reason: "OHLCV disponible; universo activo actual", requires: [daily_ohlcv], variants: [{lookback: 252, skip: 21, sizing: raw}, {lookback: 252, skip: 21, sizing: inverse_vol}]}
+  - {id: 4, name: standardized_eps_surprise, status: unsupported_missing_data, reason: "Falta EPS point-in-time y hora de anuncio", requires: [pit_eps], variants: [{status: unsupported}]}
+  - {id: 5, name: eps_revisions, status: unsupported_missing_data, reason: "Faltan estimaciones históricas point-in-time", requires: [pit_analyst_estimates], variants: [{status: unsupported}]}
+  - {id: 6, name: sales_revisions_guidance, status: unsupported_missing_data, reason: "Faltan revisiones y guidance fechado", requires: [pit_sales_estimates, pit_guidance], variants: [{status: unsupported}]}
+  - {id: 7, name: price_earnings_momentum, status: unsupported_missing_data, reason: "Faltan SUE y revisiones point-in-time", requires: [pit_eps, pit_analyst_estimates], variants: [{status: unsupported}]}
+  - {id: 8, name: high_52_week, status: executable, reason: "OHLCV disponible; universo activo actual", requires: [daily_ohlcv], variants: [{lookback: 252, portfolio: top_10}, {lookback: 252, portfolio: top_20}]}
+  - {id: 9, name: information_discreteness, status: executable, reason: "Retornos diarios disponibles; clasificación no histórica", requires: [daily_ohlcv], variants: [{lookback: 252, skip: 21}]}
+  - {id: 10, name: cash_operating_profitability, status: unsupported_missing_data, reason: "Falta panel contable point-in-time completo", requires: [pit_accounting], variants: [{status: unsupported}]}
+  - {id: 11, name: assets_dilution_inventory_receivables, status: unsupported_missing_data, reason: "Faltan fundamentales point-in-time", requires: [pit_accounting], variants: [{status: unsupported}]}
+  - {id: 12, name: marginal_variable_contribution, status: unsupported_missing_data, reason: "No existe la matriz completa de variables 1-11", requires: [tests_1_to_11], variants: [{status: unsupported}]}
+  - {id: 13, name: equal_vs_learned_weights, status: executable, reason: "Aplicable a señales de precio disponibles", requires: [price_signals], variants: [{weights: equal}, {weights: ridge_nonnegative}]}
+  - {id: 14, name: global_country_sector_industry_ranking, status: unsupported_missing_data, reason: "Falta clasificación histórica point-in-time", requires: [pit_classification, global_universe], variants: [{status: unsupported}]}
+  - {id: 15, name: immediate_next_open_entry, status: executable, reason: "OHLC diario disponible; sin spread observado", requires: [daily_ohlcv], variants: [{entry: next_open}]}
+  - {id: 16, name: breakout_windows, status: executable, reason: "OHLC diario disponible; universo activo actual", requires: [daily_ohlcv], variants: [{window: 20}, {window: 50}, {window: 100}, {window: 150}, {window: 200}, {window: 252}]}
+  - {id: 17, name: consolidation, status: executable, reason: "OHLC diario disponible", requires: [daily_ohlcv], variants: [{window: 20}, {window: 40}, {window: 60}]}
+  - {id: 18, name: breakout_rvol, status: executable, reason: "OHLCV diario disponible", requires: [daily_ohlcv], variants: [{rvol_window: 50, threshold: 1.0}, {rvol_window: 50, threshold: 1.5}, {rvol_window: 50, threshold: 2.0}, {rvol_window: 50, threshold: 2.5}]}
+  - {id: 19, name: close_vs_next_open, status: executable, reason: "OHLC diario disponible; sin subasta observada", requires: [daily_ohlcv], variants: [{execution: next_open}]}
+  - {id: 20, name: sma_filter, status: executable, reason: "Cierres diarios disponibles", requires: [daily_ohlcv], variants: [{sma: 150}, {sma: 200}, {sma: 250}]}
+  - {id: 21, name: ranking_hysteresis, status: executable, reason: "Rankings de precio disponibles", requires: [price_signals], variants: [{entry_percentile: 5, keep_percentile: 20}, {entry_percentile: 10, keep_percentile: 30}, {entry_percentile: 20, keep_percentile: 40}]}
+  - {id: 22, name: breakout_failure, status: executable, reason: "OHLC diario disponible", requires: [daily_ohlcv], variants: [{failure_window: 1}, {failure_window: 3}, {failure_window: 5}, {failure_window: 10}]}
+  - {id: 23, name: trend_exits, status: executable, reason: "OHLC diario disponible", requires: [daily_ohlcv], variants: [{exit: min_10}, {exit: min_20}, {exit: sma_50}, {exit: trailing_atr, atr_k: 2.5}, {exit: trailing_atr, atr_k: 3.0}, {exit: trailing_atr, atr_k: 4.0}]}
+  - {id: 24, name: catastrophe_stops, status: executable, reason: "OHLC diario permite gaps; sin secuencia intradía", requires: [daily_ohlcv], variants: [{stop_atr: none}, {stop_atr: 2}, {stop_atr: 3}, {stop_atr: 4}, {stop_atr: 5}]}
+  - {id: 25, name: time_exits, status: executable, reason: "Fechas y precios diarios disponibles", requires: [daily_ohlcv], variants: [{holding_sessions: 20}, {holding_sessions: 40}, {holding_sessions: 63}, {holding_sessions: 126}, {holding_sessions: 252}]}
+  - {id: 26, name: take_profits, status: executable, reason: "High/low disponible; ambigüedad intradía conservadora", requires: [daily_ohlcv], variants: [{target_pct: 5}, {target_pct: 10}, {target_pct: 15}, {target_pct: 20}, {target_pct: 30}, {target_pct: 50}]}
+  - {id: 27, name: position_sizing, status: executable, reason: "Retornos diarios disponibles; capitalización no PIT", requires: [daily_ohlcv], variants: [{sizing: equal}, {sizing: inverse_vol}, {sizing: capped_inverse_vol}]}
+  - {id: 28, name: portfolio_limits, status: executable, reason: "Límites individuales y correlación calculables; sectores no PIT", requires: [daily_ohlcv, current_metadata], variants: [{asset_cap: none}, {asset_cap: 0.05}, {asset_cap: 0.10}, {sector_cap: 0.20}, {sector_cap: 0.30}, {corr_cap: 0.60}, {corr_cap: 0.75}]}
+  - {id: 29, name: regime_exposure, status: executable, reason: "SPY/GSPC disponibles; cartera subyacente limitada", requires: [daily_ohlcv], variants: [{regime: constant}, {regime: sma_200}, {regime: vol_cap}, {regime: conditional_panic}]}
+  - {id: 30, name: regional_transfer, status: unsupported_missing_data, reason: "Falta universo regional histórico materializado", requires: [global_universe], variants: [{status: unsupported}]}
+  - {id: 31, name: size_liquidity_sector_regime, status: unsupported_missing_data, reason: "Faltan tamaño, sector y spreads históricos PIT", requires: [pit_metadata], variants: [{status: unsupported}]}
+  - {id: 32, name: transaction_costs, status: executable, reason: "Bps fijos disponibles; spreads observados ausentes", requires: [daily_ohlcv], variants: [{cost_bps: 0}, {cost_bps: 5}, {cost_bps: 10}, {cost_bps: 25}, {cost_bps: 50}]}
+  - {id: 33, name: point_in_time_universe_delistings, status: unsupported_missing_data, reason: "Faltan identificadores permanentes, delistings y retornos de exclusión", requires: [pit_universe], variants: [{status: unsupported}]}
+  - {id: 34, name: walk_forward, status: executable, reason: "Ventanas temporales calculables sobre universo activo limitado", requires: [daily_ohlcv], variants: [{train_years: 10, validation_years: 3, test_years: 1}]}
+  - {id: 35, name: robustness_multiple_testing, status: executable, reason: "Robustez calculable; no corrige datos PIT ausentes", requires: [returns_matrix], variants: [{method: bootstrap_block}, {method: deflated_sharpe}, {method: cscv_pbo}, {method: fdr}]}
+  - {id: 36, name: metrics_pareto_selection, status: executable, reason: "Métricas calculables; resultados heredan limitaciones del universo", requires: [returns_matrix], variants: [{selection: pareto}]}
