@@ -68,6 +68,25 @@ def _merge_catalog(src_catalog: Path, dst_catalog: Path) -> int:
     if not rows:
         return 0
     with sqlite3.connect(dst_catalog) as dst:
+        dst.execute(
+            """
+            CREATE TABLE IF NOT EXISTS downloads (
+                symbol TEXT PRIMARY KEY,
+                provider_symbol TEXT,
+                yfinance_symbol TEXT,
+                status TEXT,
+                rows INTEGER,
+                first_date TEXT,
+                last_date TEXT,
+                years REAL,
+                error TEXT,
+                warnings_json TEXT,
+                raw_path TEXT,
+                normalized_path TEXT,
+                retrieved_at TEXT
+            )
+            """
+        )
         dst.executemany(
             """
             INSERT INTO downloads (
