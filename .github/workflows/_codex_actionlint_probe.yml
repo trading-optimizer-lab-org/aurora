@@ -1,0 +1,16 @@
+name: Codex Actionlint Probe
+
+"on":
+  workflow_dispatch:
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/pit-limited-36tests-360jobs
+      - name: Validate stock protocol workflow
+        run: |
+          docker run --rm -v "$PWD:/repo" rhysd/actionlint:1.7.7 \
+            -color /repo/.github/workflows/stock-protocol-36-tests-360jobs.yml
