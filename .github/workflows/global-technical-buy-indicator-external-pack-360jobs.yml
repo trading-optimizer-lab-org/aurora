@@ -401,7 +401,53 @@ jobs:
           while IFS= read -r path; do cp "$path" "$lake/metadata/$(basename "$path")"; done < <(find "$incoming" -type f -path '*/metadata/*.parquet')
           test -f "$lake/universe/us_stock_like_universe.parquet"
           test -f "$lake/metadata/company_metadata.parquet"
-          test -f "$lake/normalized/SPY.parquet"
+      - name: Add full-history SPY benchmark for locked mode
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+        run: |
+          set -euo pipefail
+          lake="$QF_DATA_DIR/prices/free_us_daily"
+          if [ ! -f "$lake/normalized/SPY.parquet" ] && [ ! -f "$lake/benchmarks/SPY.parquet" ]; then
+            python - <<'PY'
+            import json
+            from pathlib import Path
+            from urllib.request import Request, urlopen
+            import pandas as pd
+
+            out = Path("/tmp/aurora-data/prices/free_us_daily/benchmarks/SPY.parquet")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            period1 = int(pd.Timestamp("1990-01-01", tz="UTC").timestamp())
+            period2 = int(pd.Timestamp.now(tz="UTC").timestamp())
+            url = (
+                "https://query1.finance.yahoo.com/v8/finance/chart/SPY"
+                f"?period1={period1}&period2={period2}&interval=1d&events=div%2Csplits"
+            )
+            request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(request, timeout=60) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            result = (payload.get("chart", {}).get("result") or [None])[0]
+            if not result:
+                raise RuntimeError("Yahoo returned no SPY benchmark data")
+            timestamps = result.get("timestamp") or []
+            quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+            adj = (result.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose")
+            frame = pd.DataFrame(
+                {
+                    "date": pd.to_datetime(timestamps, unit="s", utc=True).tz_convert(None).normalize(),
+                    "open": quote.get("open", []),
+                    "high": quote.get("high", []),
+                    "low": quote.get("low", []),
+                    "close": quote.get("close", []),
+                    "adj_close": adj if adj is not None else quote.get("close", []),
+                    "volume": quote.get("volume", []),
+                    "symbol": "SPY",
+                }
+            )
+            frame = frame.dropna(subset=["date", "open", "high", "low", "close"])
+            frame.to_parquet(out, index=False)
+            print(f"SPY benchmark rows={len(frame)} last={frame['date'].max().date()}")
+            PY
+          fi
+          test -f "$lake/normalized/SPY.parquet" || test -f "$lake/benchmarks/SPY.parquet"
       - name: Normalize data lake layout and ensure SPY benchmark exists
         if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
         run: |
