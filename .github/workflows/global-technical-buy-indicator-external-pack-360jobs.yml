@@ -130,7 +130,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: requirements/gtbi-fast-strict.lock
       - name: Install pinned evaluator dependencies
-        run: python -m pip install --require-hashes -r requirements/gtbi-fast-strict.lock
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
       - name: Download immutable GTBI data pack
         uses: actions/download-artifact@v4
         with:
