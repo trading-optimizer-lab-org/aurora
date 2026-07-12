@@ -56,8 +56,8 @@ def execute_next_open(
                 if float(row["low"]) <= stop:
                     exit_idx, exit_price, exit_reason = idx, float(stop), stop_reason or "stop"
                     break
-            if str(exit_rule.get("kind")) == "take_profit" and float(row["high"]) >= float(exit_rule.get("target", entry * 1.1)):
-                target = entry * (1.0 + float(exit_rule.get("target_pct", 10)) / 100.0)
+            if str(exit_rule.get("kind")) == "take_profit" and stop is not None and float(row["high"]) >= stop:
+                target = stop
                 exit_idx, exit_price, exit_reason = idx, target, "take_profit"
                 break
         trades.append({
@@ -71,4 +71,3 @@ def execute_next_open(
             "gross_return": exit_price / entry - 1.0,
         })
     return pd.DataFrame(trades)
-

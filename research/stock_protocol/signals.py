@@ -25,10 +25,13 @@ def _features(panel: ResearchPanel) -> pd.DataFrame:
     neg = grouped["ret_1d"].transform(lambda x: (x < 0).shift(21).rolling(252, min_periods=126).sum())
     pos = grouped["ret_1d"].transform(lambda x: (x > 0).shift(21).rolling(252, min_periods=126).sum())
     frame["information_discreteness"] = np.sign(frame["mom_12_1"]) * (neg - pos) / (neg + pos).replace(0, np.nan)
+    # Rank only against symbols observed on the same date. A global rank would
+    # use the future cross-sectional distribution and leak information.
+    by_date = frame.groupby("date", group_keys=False)
     frame["price_score"] = (
-        frame["mom_12_1"].rank(pct=True) * 0.5
-        + frame["h52"].rank(pct=True) * 0.3
-        - frame["information_discreteness"].rank(pct=True) * 0.2
+        by_date["mom_12_1"].rank(pct=True) * 0.5
+        + by_date["h52"].rank(pct=True) * 0.3
+        - by_date["information_discreteness"].rank(pct=True) * 0.2
     )
     return frame
 
@@ -72,4 +75,3 @@ def compute_signal(panel: ResearchPanel, test_id: int, variant: dict[str, object
     frame["signal_date"] = frame["date"]
     frame["available_at"] = frame["date"]
     return frame.loc[frame["signal"], ["signal_date", "available_at", "symbol", "score", "close", "high", "low", "atr20"]].reset_index(drop=True)
-

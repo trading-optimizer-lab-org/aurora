@@ -19,7 +19,8 @@ def merge_phase(
     manifest_path: Path,
 ) -> Path:
     manifest = load_protocol_manifest(manifest_path)
-    paths = sorted((shards_root / f"phase={phase}").glob("shard=*/stage_results.jsonl"))
+    paths = sorted(shards_root.rglob("stage_results.jsonl"))
+    paths = [path for path in paths if f"phase={phase}" in path.parts]
     found = {int(path.parent.name.split("=", 1)[1]) for path in paths}
     expected = set(range(shard_count))
     missing = sorted(expected - found)
@@ -71,4 +72,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

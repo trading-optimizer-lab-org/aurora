@@ -1,0 +1,27 @@
+name: Run Stock Protocol Stage
+description: Execute one deterministic stock protocol shard in GitHub Actions
+inputs:
+  phase:
+    required: true
+  shard:
+    required: true
+  shard_count:
+    required: true
+    default: "360"
+  pack_root:
+    required: true
+  output_root:
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: >-
+        python scripts/run_stock_protocol_stage.py
+        --manifest config/stock_protocol_36_tests.yaml
+        --pack-root "${{ inputs.pack_root }}"
+        --phase "${{ inputs.phase }}"
+        --shard-id "${{ inputs.shard }}"
+        --shard-count "${{ inputs.shard_count }}"
+        --output-root "${{ inputs.output_root }}"
+

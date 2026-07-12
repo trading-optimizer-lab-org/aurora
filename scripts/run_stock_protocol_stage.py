@@ -19,6 +19,7 @@ from aurora.research.stock_protocol.signals import compute_signal
 
 PHASE_TEST_IDS = {
     "signal": (1, 2, 3, 8, 9, 13),
+    "weights": (13,),
     "entries": (15, 16, 17, 18, 19, 20),
     "exits": (21, 22, 23, 24, 25, 26),
     "portfolio": (27, 28, 29),
@@ -134,4 +135,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
