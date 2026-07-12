@@ -38,9 +38,7 @@ class ProtocolTest:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ProtocolTest":
-        variants = tuple(
-            _freeze(dict(item)) for item in value.get("variants", [])
-        )
+        variants = tuple(dict(item) for item in value.get("variants", []))
         return cls(
             test_id=int(value["id"]),
             name=str(value["name"]),
@@ -190,4 +188,3 @@ def load_protocol_manifest(path: Path) -> ProtocolManifest:
     if not isinstance(value, dict):
         raise ValueError("manifest root must be a mapping")
     return ProtocolManifest.from_dict(value)
-

@@ -98,7 +98,7 @@ def test_policy_hash_is_deterministic_and_excludes_no_contract_fields():
 
 def test_loader_rejects_missing_or_duplicate_ids(tmp_path: Path):
     source = MANIFEST_PATH.read_text(encoding="utf-8")
-    source = source.replace("- id: 36", "- id: 35", 1)
+    source = source.replace("- {id: 36", "- {id: 35", 1)
     path = tmp_path / "invalid.yaml"
     path.write_text(source, encoding="utf-8")
 

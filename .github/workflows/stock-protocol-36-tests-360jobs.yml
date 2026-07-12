@@ -32,6 +32,7 @@ env:
   PYTHONUNBUFFERED: "1"
   QF_DATA_DIR: ${{ github.workspace }}/qf-data
   MANIFEST: config/stock_protocol_36_tests.yaml
+  DATA_END: "2020-12-31"
 
 jobs:
   validate:
