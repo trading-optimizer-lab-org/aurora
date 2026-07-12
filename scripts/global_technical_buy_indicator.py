@@ -902,7 +902,7 @@ def _prepare_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _prepare_pack_prices_before_locked(frame: pd.DataFrame, *, symbol: str, locked_start: str) -> pd.DataFrame:
+def _prepare_pack_prices_before_locked(frame: pd.DataFrame, *, symbol: str, locked_start: str | None) -> pd.DataFrame:
     """Normalize one symbol for pack building without pandas boolean frame slicing."""
     if frame.empty:
         return pd.DataFrame(columns=PRICE_COLUMNS)
@@ -939,10 +939,12 @@ def _prepare_pack_prices_before_locked(frame: pd.DataFrame, *, symbol: str, lock
     adj_close_values = numeric_values("adj_close")
     volume_values = numeric_values("volume")
 
-    cutoff = np.datetime64(_dt(locked_start).to_datetime64(), "ns")
+    date_mask = ~np.isnat(date_values)
+    if locked_start is not None:
+        cutoff = np.datetime64(_dt(locked_start).to_datetime64(), "ns")
+        date_mask &= date_values < cutoff
     mask = (
-        ~np.isnat(date_values)
-        & (date_values < cutoff)
+        date_mask
         & np.isfinite(open_values)
         & np.isfinite(high_values)
         & np.isfinite(low_values)
@@ -6837,7 +6839,7 @@ def _filter_symbols_by_market_cap(lake_root: Path, symbols: list[str], min_marke
     return [symbol for symbol in symbols if symbol in eligible]
 
 
-def _load_benchmark(lake_root: Path, locked_start: str) -> pd.DataFrame:
+def _load_benchmark(lake_root: Path, locked_start: str | None) -> pd.DataFrame:
     candidates = [
         lake_root / "normalized" / "SPY.parquet",
         lake_root / "benchmarks" / "SPY.parquet",
@@ -6846,7 +6848,9 @@ def _load_benchmark(lake_root: Path, locked_start: str) -> pd.DataFrame:
     for path in candidates:
         if path.exists():
             frame = _prepare_ohlcv(pd.read_parquet(path))
-            return frame[frame.index < _dt(locked_start)].reset_index(drop=True)
+            if locked_start is not None:
+                frame = frame[frame.index < _dt(locked_start)]
+            return frame.reset_index(drop=True)
     raise FileNotFoundError("SPY benchmark not found; run free-us-daily build-benchmarks first")
 
 
@@ -6857,6 +6861,7 @@ def build_stage_packs(
     stage_count: int = 355,
     group_count: int = 1,
     locked_start: str = DEFAULT_LOCKED_START,
+    include_locked: bool = False,
     min_rows: int = 260,
     min_market_cap: float = 0.0,
 ) -> dict[str, Any]:
@@ -6866,7 +6871,8 @@ def build_stage_packs(
     _build_pack_log(
         "start "
         f"lake_root={lake_root} output_dir={output_dir} stage_count={stage_count} "
-        f"group_count={group_count} locked_start={locked_start} min_market_cap={min_market_cap}"
+        f"group_count={group_count} locked_start={locked_start} include_locked={include_locked} "
+        f"min_market_cap={min_market_cap}"
     )
     _build_pack_log("reading universe")
     all_symbols = _read_universe_symbols(lake_root)
@@ -6876,7 +6882,7 @@ def build_stage_packs(
     _build_pack_log(f"symbols_after_market_cap={len(symbols)}")
     normalized = lake_root / "normalized"
     _build_pack_log("loading benchmark")
-    benchmark = _load_benchmark(lake_root, locked_start)
+    benchmark = _load_benchmark(lake_root, None if include_locked else locked_start)
     _build_pack_log(f"benchmark_rows={len(benchmark)}")
     effective_group_count = max(int(group_count), 1)
     grouped: dict[int, list[str]] = {group: [] for group in range(effective_group_count)}
@@ -6900,7 +6906,7 @@ def build_stage_packs(
                 frame = _prepare_pack_prices_before_locked(
                     pd.read_parquet(path),
                     symbol=symbol,
-                    locked_start=locked_start,
+                    locked_start=None if include_locked else locked_start,
                 )
             except Exception:
                 _build_pack_log(f"group={group_index} skip_symbol={symbol}", verbose=True)
@@ -10550,6 +10556,7 @@ def build_pack_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage-count", type=int, default=355)
     parser.add_argument("--group-count", type=int, default=32)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
+    parser.add_argument("--include-locked", action="store_true")
     parser.add_argument("--min-rows", type=int, default=260)
     parser.add_argument("--min-market-cap", type=float, default=0.0)
     args = parser.parse_args(argv)
@@ -10559,6 +10566,7 @@ def build_pack_cli(argv: list[str] | None = None) -> int:
         stage_count=args.stage_count,
         group_count=args.group_count,
         locked_start=args.locked_start,
+        include_locked=args.include_locked,
         min_rows=args.min_rows,
         min_market_cap=args.min_market_cap,
     )

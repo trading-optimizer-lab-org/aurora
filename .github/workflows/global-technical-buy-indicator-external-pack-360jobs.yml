@@ -112,7 +112,8 @@ permissions:
 
 jobs:
   clean_portfolio_v7:
-    if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+    if: ${{ always() && (inputs.optimized_evaluation_mode == 'clean_portfolio_v7' || inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked') }}
+    needs: [build_external_pack]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
@@ -143,12 +144,19 @@ jobs:
       - name: Install pinned evaluator dependencies
         run: python -m pip install -r requirements/gtbi-fast-strict.lock
       - name: Download immutable GTBI data pack
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7' }}
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.data_run_id }}
           name: ${{ inputs.data_artifact_name }}
           path: data-pack
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download generated full-history GTBI data pack
+        if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7_locked' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: gtbi-external-pack-data
+          path: data-pack
       - name: Locate immutable data pack
         id: data
         shell: bash
@@ -318,6 +326,7 @@ jobs:
           python -m pip install -e ".[data-cloud,ml]"
       - name: Try reusable external pack data from previous GitHub run
         id: reuse_pack
+        if: ${{ inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' }}
         run: |
           set -euo pipefail
           echo "reused=false" >> "$GITHUB_OUTPUT"
@@ -438,13 +447,18 @@ jobs:
       - name: Build reusable external pack data
         if: ${{ steps.reuse_pack.outputs.reused != 'true' }}
         run: |
+          pack_locked_flag=()
+          if [ "${{ inputs.optimized_evaluation_mode }}" = "clean_portfolio_v7_locked" ]; then
+            pack_locked_flag=(--include-locked)
+          fi
           python scripts/build_global_technical_buy_indicator_pack.py \
             --data-lake-root "$QF_DATA_DIR/prices/free_us_daily" \
             --output-dir external-pack-data-root \
             --stage-count 1 \
             --group-count 1 \
             --locked-start "${{ inputs.locked_start }}" \
-            --min-market-cap "${{ inputs.min_market_cap }}"
+            --min-market-cap "${{ inputs.min_market_cap }}" \
+            "${pack_locked_flag[@]}"
           cp -R external-pack-data-root/stage-000 external-pack-data
       - name: Upload reusable pack artifact
         uses: actions/upload-artifact@v4
@@ -454,7 +468,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -541,7 +555,7 @@ jobs:
 
   run_block:
     name: run_block (${{ matrix.block_index }}, ${{ matrix.block_padded }}, ${{ matrix.job_indices_csv }}, ${{ matrix.logical_jobs }})
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -682,7 +696,7 @@ jobs:
           retention-days: 14
 
   merge_final:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && always() }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7_locked' && always() }}
     needs:
       - plan_blocks
       - run_block
