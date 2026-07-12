@@ -64,6 +64,19 @@ class PortfolioResult:
     summary: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class PreparedSignalPortfolioData:
+    frames: dict[str, pd.DataFrame]
+    signal_maps: dict[str, pd.Series]
+    market_maps: dict[str, pd.Series]
+    next_dates: dict[str, dict[pd.Timestamp, pd.Timestamp]]
+    exit_mas: dict[str, pd.Series]
+    calendar: tuple[pd.Timestamp, ...]
+    start: pd.Timestamp
+    end: pd.Timestamp
+    indicator_config: Any
+
+
 def _normalise_dates(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
     if "date" in out.columns:
@@ -412,7 +425,7 @@ def simulate_portfolio(
     return _result(daily_rows=daily_rows, ledger_rows=ledger_rows, skipped_rows=skipped_rows, config=config, start=start_date, end=end_date)
 
 
-def simulate_signal_portfolio(
+def prepare_signal_portfolio_data(
     signals_by_symbol: Mapping[str, pd.Series],
     price_frames: Mapping[str, pd.DataFrame],
     *,
@@ -420,9 +433,8 @@ def simulate_signal_portfolio(
     start: str,
     end: str,
     indicator_config: Any,
-    portfolio_config: PortfolioConfig,
-) -> PortfolioResult:
-    """Run one global portfolio directly from close-time signals."""
+ ) -> PreparedSignalPortfolioData:
+    """Compile immutable market and signal state once for a position-size sweep."""
 
     start_date, end_date = pd.Timestamp(start), pd.Timestamp(end)
     frames = {str(symbol): _market_frame(frame) for symbol, frame in price_frames.items()}
@@ -445,12 +457,74 @@ def simulate_signal_portfolio(
         for symbol, frame in frames.items()
         for signal in [market_exit_signals.get(symbol, pd.Series(False, index=frame.index))]
     }
+    confirmation_days = max(int(getattr(indicator_config, "market_exit_confirmation_days", 1)), 1)
+    if confirmation_days > 1:
+        market_maps = {
+            symbol: signal.astype(int)
+            .rolling(confirmation_days, min_periods=confirmation_days)
+            .sum()
+            .ge(confirmation_days)
+            .fillna(False)
+            .astype(bool)
+            for symbol, signal in market_maps.items()
+        }
     next_dates: dict[str, dict[pd.Timestamp, pd.Timestamp]] = {}
     exit_mas: dict[str, pd.Series] = {}
     for symbol, frame in frames.items():
         dates = list(frame.index)
         next_dates[symbol] = {dates[index]: dates[index + 1] for index in range(len(dates) - 1)}
         exit_mas[symbol] = frame["close"].rolling(int(getattr(indicator_config, "exit_ma_days", 20)), min_periods=int(getattr(indicator_config, "exit_ma_days", 20))).mean()
+
+    return PreparedSignalPortfolioData(
+        frames=frames,
+        signal_maps=signal_maps,
+        market_maps=market_maps,
+        next_dates=next_dates,
+        exit_mas=exit_mas,
+        calendar=tuple(calendar),
+        start=start_date,
+        end=end_date,
+        indicator_config=indicator_config,
+    )
+
+
+def simulate_signal_portfolio(
+    signals_by_symbol: Mapping[str, pd.Series],
+    price_frames: Mapping[str, pd.DataFrame],
+    *,
+    market_exit_signals: Mapping[str, pd.Series],
+    start: str,
+    end: str,
+    indicator_config: Any,
+    portfolio_config: PortfolioConfig,
+) -> PortfolioResult:
+    prepared = prepare_signal_portfolio_data(
+        signals_by_symbol,
+        price_frames,
+        market_exit_signals=market_exit_signals,
+        start=start,
+        end=end,
+        indicator_config=indicator_config,
+    )
+    return simulate_prepared_signal_portfolio(prepared, portfolio_config=portfolio_config)
+
+
+def simulate_prepared_signal_portfolio(
+    data: PreparedSignalPortfolioData,
+    *,
+    portfolio_config: PortfolioConfig,
+) -> PortfolioResult:
+    """Run one global portfolio using precompiled close-time signals."""
+
+    frames = data.frames
+    signal_maps = data.signal_maps
+    market_maps = data.market_maps
+    next_dates = data.next_dates
+    exit_mas = data.exit_mas
+    calendar = data.calendar
+    start_date = data.start
+    end_date = data.end
+    indicator_config = data.indicator_config
 
     pending_entries: dict[pd.Timestamp, list[dict[str, Any]]] = {}
     pending_exits: dict[pd.Timestamp, list[dict[str, Any]]] = {}
@@ -653,4 +727,3 @@ def choose_risk_compliant_result(sweep: pd.DataFrame, *, risk_limit_pct: float =
     columns.extend(["position_size_pct", "max_positions"])
     ascending.extend([False, True])
     return ranked.sort_values(columns, ascending=ascending, kind="mergesort").iloc[0]
-

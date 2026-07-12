@@ -111,6 +111,118 @@ permissions:
   actions: write
 
 jobs:
+  clean_portfolio_v7:
+    if: ${{ inputs.optimized_evaluation_mode == 'clean_portfolio_v7' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONFAULTHANDLER: "1"
+      GTBI_SYMBOL_WORKERS: "4"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned evaluator dependencies
+        run: python -m pip install --require-hashes -r requirements/gtbi-fast-strict.lock
+      - name: Download immutable GTBI data pack
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.data_run_id }}
+          name: ${{ inputs.data_artifact_name }}
+          path: data-pack
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Locate immutable data pack
+        id: data
+        shell: bash
+        run: |
+          set -euo pipefail
+          prices_path="$(find data-pack -type f -name prices.parquet -print -quit)"
+          benchmark_path="$(find data-pack -type f -name benchmark.parquet -print -quit)"
+          test -n "$prices_path"
+          test -n "$benchmark_path"
+          data_root="$(dirname "$prices_path")"
+          test "$data_root" = "$(dirname "$benchmark_path")"
+          echo "root=$data_root" >> "$GITHUB_OUTPUT"
+      - name: Run clean portfolio sizing V7
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_symbols=0
+          position_sizes="0.001,0.0025,0.005,0.0075,0.01,0.0125,0.0135,0.015,0.02,0.025,0.03,0.04,0.05"
+          max_positions="10,20,30,50"
+          if [ "${{ inputs.test_mode }}" = "true" ]; then
+            max_symbols=250
+            position_sizes="0.005,0.0135,0.025"
+            max_positions="10,20"
+          fi
+          python scripts/run_gtbi_clean_portfolio.py \
+            --data-pack-root "${{ steps.data.outputs.root }}" \
+            --strategy-pack-root "${{ inputs.external_strategy_pack_path }}" \
+            --strategy-id "lhv1_2f6eb0c50f_fam_00_v1004" \
+            --output-dir results \
+            --source-data-run-id "${{ inputs.data_run_id }}" \
+            --source-artifact-name "${{ inputs.data_artifact_name }}" \
+            --train-end "${{ inputs.train_end }}" \
+            --validation-start "${{ inputs.validation_start }}" \
+            --validation-end "${{ inputs.validation_end }}" \
+            --locked-start "${{ inputs.locked_start }}" \
+            --position-sizes "$position_sizes" \
+            --max-positions-grid "$max_positions" \
+            --risk-limit-pct 25 \
+            --safety-target-pct 20 \
+            --transaction-cost-bps-per-side 10 \
+            --slippage-bps-per-side 5 \
+            --max-adjusted-gap-ratio 3 \
+            --min-segment-rows 260 \
+            --max-symbols "$max_symbols"
+      - name: Validate clean portfolio artifact
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path("results")
+          required = {
+              "_SUCCESS",
+              "summary.json",
+              "provenance.json",
+              "data_quality_report.csv",
+              "price_anomalies.csv",
+              "position_sizing_sweep.csv",
+              "portfolio_daily_equity.csv",
+              "portfolio_annual_returns.csv",
+              "portfolio_trade_ledger.csv",
+              "skipped_entries.csv",
+              "strategy_rules.json",
+          }
+          missing = sorted(name for name in required if not (root / name).is_file())
+          if missing:
+              raise SystemExit(f"missing result files: {missing}")
+          summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+          if not summary.get("artifact_valid") or not summary.get("strict_risk_pass"):
+              raise SystemExit("clean portfolio artifact did not pass strict validation")
+          if summary.get("locked_opened") is not False or summary.get("locked_start") != "2021-01-01":
+              raise SystemExit("locked boundary changed or opened")
+          annual = pd.read_csv(root / "portfolio_annual_returns.csv")
+          if not annual.empty and int(annual["year"].max()) > 2020:
+              raise SystemExit("annual output contains locked years")
+          PY
+      - name: Upload clean portfolio results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtbi-clean-portfolio-v7-results
+          path: results
+          retention-days: 30
+          if-no-files-found: error
+
   orchestrate_longhold_72k:
     if: ${{ inputs.optimized_evaluation_mode == 'orchestrate_longhold_72k' }}
     runs-on: ubuntu-latest
@@ -149,7 +261,7 @@ jobs:
           retention-days: 30
 
   build_external_pack:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' }}
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: "1"
@@ -305,7 +417,7 @@ jobs:
           retention-days: 14
 
   plan_blocks:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -392,7 +504,7 @@ jobs:
 
   run_block:
     name: run_block (${{ matrix.block_index }}, ${{ matrix.block_padded }}, ${{ matrix.job_indices_csv }}, ${{ matrix.logical_jobs }})
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' }}
     needs:
       - build_external_pack
       - plan_blocks
@@ -533,7 +645,7 @@ jobs:
           retention-days: 14
 
   merge_final:
-    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && always() }}
+    if: ${{ inputs.optimized_evaluation_mode != 'merge_cross_run' && inputs.optimized_evaluation_mode != 'orchestrate_longhold_72k' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_fast_strict' && inputs.optimized_evaluation_mode != 'optimized_evaluation_v6_merge_existing' && inputs.optimized_evaluation_mode != 'clean_portfolio_v7' && always() }}
     needs:
       - plan_blocks
       - run_block

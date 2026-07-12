@@ -10,8 +10,10 @@ from scripts.gtbi_clean_portfolio import (
     PortfolioConfig,
     choose_risk_compliant_result,
     entry_priority_at_signal,
+    prepare_signal_portfolio_data,
     sanitize_symbol_prices,
     simulate_portfolio,
+    simulate_prepared_signal_portfolio,
     simulate_signal_portfolio,
 )
 
@@ -269,3 +271,29 @@ def test_signal_portfolio_rejects_entry_without_valid_next_open() -> None:
     assert result.ledger.empty
     assert result.skipped_entries.iloc[0]["reason"] == "missing_next_open"
 
+
+def test_prepared_signal_portfolio_matches_direct_path() -> None:
+    frame = _prices([10.0, 11.0, 12.0, 13.0])
+    signals = {"A": _signal(frame, ["2020-01-01"])}
+    frames = {"A": frame}
+    config = PortfolioConfig(initial_capital=100.0, position_size_pct=0.5, max_positions=1)
+    direct = simulate_signal_portfolio(
+        signals,
+        frames,
+        market_exit_signals={},
+        start="2020-01-01",
+        end="2020-01-04",
+        indicator_config=_exit_config(max_holding_days=2),
+        portfolio_config=config,
+    )
+    prepared = prepare_signal_portfolio_data(
+        signals,
+        frames,
+        market_exit_signals={},
+        start="2020-01-01",
+        end="2020-01-04",
+        indicator_config=_exit_config(max_holding_days=2),
+    )
+    cached = simulate_prepared_signal_portfolio(prepared, portfolio_config=config)
+    pd.testing.assert_frame_equal(direct.daily_equity, cached.daily_equity)
+    pd.testing.assert_frame_equal(direct.ledger, cached.ledger)
