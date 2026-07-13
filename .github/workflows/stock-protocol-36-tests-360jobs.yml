@@ -61,7 +61,7 @@ jobs:
         run: echo "locked_opened=false"
 
   plan:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: validate
     runs-on: ubuntu-latest
     outputs:
@@ -233,7 +233,7 @@ jobs:
           retention-days: 7
 
   phase_signal_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -255,7 +255,7 @@ jobs:
         with: {name: "stock-protocol-signal-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_signal_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -277,7 +277,7 @@ jobs:
         with: {name: "stock-protocol-signal-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_signal:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_signal_a, phase_signal_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -300,7 +300,7 @@ jobs:
         with: {name: stock-protocol-phase-results-signal, path: phase-results, retention-days: 7}
 
   phase_weights_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_signal]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -321,7 +321,7 @@ jobs:
         with: {name: "stock-protocol-weights-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_weights_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_signal]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -342,7 +342,7 @@ jobs:
         with: {name: "stock-protocol-weights-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_weights:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_weights_a, phase_weights_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -365,7 +365,7 @@ jobs:
         with: {name: stock-protocol-phase-results-weights, path: phase-results, retention-days: 7}
 
   phase_entries_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_weights]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -386,7 +386,7 @@ jobs:
         with: {name: "stock-protocol-entries-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_entries_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_weights]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -407,7 +407,7 @@ jobs:
         with: {name: "stock-protocol-entries-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_entries:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_entries_a, phase_entries_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -430,7 +430,7 @@ jobs:
         with: {name: stock-protocol-phase-results-entries, path: phase-results, retention-days: 7}
 
   phase_exits_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_entries]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -451,7 +451,7 @@ jobs:
         with: {name: "stock-protocol-exits-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_exits_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_entries]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -472,7 +472,7 @@ jobs:
         with: {name: "stock-protocol-exits-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_exits:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_exits_a, phase_exits_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -495,7 +495,7 @@ jobs:
         with: {name: stock-protocol-phase-results-exits, path: phase-results, retention-days: 7}
 
   phase_portfolio_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_exits]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -516,7 +516,7 @@ jobs:
         with: {name: "stock-protocol-portfolio-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_portfolio_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_exits]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -537,7 +537,7 @@ jobs:
         with: {name: "stock-protocol-portfolio-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_portfolio:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_portfolio_a, phase_portfolio_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -560,7 +560,7 @@ jobs:
         with: {name: stock-protocol-phase-results-portfolio, path: phase-results, retention-days: 7}
 
   phase_costs_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_portfolio]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -581,7 +581,7 @@ jobs:
         with: {name: "stock-protocol-costs-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_costs_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_portfolio]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -602,7 +602,7 @@ jobs:
         with: {name: "stock-protocol-costs-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_costs:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_costs_a, phase_costs_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -625,7 +625,7 @@ jobs:
         with: {name: stock-protocol-phase-results-costs, path: phase-results, retention-days: 7}
 
   phase_walk_forward_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_costs]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -646,7 +646,7 @@ jobs:
         with: {name: "stock-protocol-walk-forward-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_walk_forward_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_costs]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -667,7 +667,7 @@ jobs:
         with: {name: "stock-protocol-walk-forward-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   freeze_walk_forward:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [phase_walk_forward_a, phase_walk_forward_b]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -690,7 +690,7 @@ jobs:
         with: {name: stock-protocol-phase-results-walk-forward, path: phase-results, retention-days: 7}
 
   phase_robustness_a:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_walk_forward]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -711,7 +711,7 @@ jobs:
         with: {name: "stock-protocol-robustness-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   phase_robustness_b:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [plan, merge_data, freeze_walk_forward]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -732,7 +732,7 @@ jobs:
         with: {name: "stock-protocol-robustness-shard-${{ matrix.shard }}", path: stage-output, retention-days: 7}
 
   finalize:
-    if: ${{ always() && inputs.validation_only != 'true' }}
+    if: ${{ inputs.validation_only != 'true' }}
     needs: [freeze_signal, freeze_weights, freeze_entries, freeze_exits, freeze_portfolio, freeze_costs, freeze_walk_forward, phase_robustness_a, phase_robustness_b]
     runs-on: ubuntu-latest
     timeout-minutes: 120
