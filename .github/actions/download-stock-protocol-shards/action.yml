@@ -1,0 +1,62 @@
+name: Download stock protocol shards in bounded groups
+description: Download a 360-shard phase in ten small artifact groups
+inputs:
+  name_prefix:
+    description: Artifact name prefix before the numeric shard id
+    required: true
+  output_root:
+    description: Root directory for downloaded artifact groups
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Download shard names starting with 0
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}0*
+        path: ${{ inputs.output_root }}/prefix-0
+    - name: Download shard names starting with 1
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}1*
+        path: ${{ inputs.output_root }}/prefix-1
+    - name: Download shard names starting with 2
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}2*
+        path: ${{ inputs.output_root }}/prefix-2
+    - name: Download shard names starting with 3
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}3*
+        path: ${{ inputs.output_root }}/prefix-3
+    - name: Download shard names starting with 4
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}4*
+        path: ${{ inputs.output_root }}/prefix-4
+    - name: Download shard names starting with 5
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}5*
+        path: ${{ inputs.output_root }}/prefix-5
+    - name: Download shard names starting with 6
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}6*
+        path: ${{ inputs.output_root }}/prefix-6
+    - name: Download shard names starting with 7
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}7*
+        path: ${{ inputs.output_root }}/prefix-7
+    - name: Download shard names starting with 8
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}8*
+        path: ${{ inputs.output_root }}/prefix-8
+    - name: Download shard names starting with 9
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.name_prefix }}9*
+        path: ${{ inputs.output_root }}/prefix-9
