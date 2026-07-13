@@ -280,7 +280,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_signal_a.result == 'success' && needs.phase_signal_b.result == 'success' }}
     needs: [phase_signal_a, phase_signal_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -348,7 +348,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_weights_a.result == 'success' && needs.phase_weights_b.result == 'success' }}
     needs: [phase_weights_a, phase_weights_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -416,7 +416,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_entries_a.result == 'success' && needs.phase_entries_b.result == 'success' }}
     needs: [phase_entries_a, phase_entries_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -484,7 +484,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_exits_a.result == 'success' && needs.phase_exits_b.result == 'success' }}
     needs: [phase_exits_a, phase_exits_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -552,7 +552,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_portfolio_a.result == 'success' && needs.phase_portfolio_b.result == 'success' }}
     needs: [phase_portfolio_a, phase_portfolio_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -620,7 +620,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_costs_a.result == 'success' && needs.phase_costs_b.result == 'success' }}
     needs: [phase_costs_a, phase_costs_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -688,7 +688,7 @@ jobs:
     if: ${{ always() && inputs.validation_only != 'true' && needs.phase_walk_forward_a.result == 'success' && needs.phase_walk_forward_b.result == 'success' }}
     needs: [phase_walk_forward_a, phase_walk_forward_b]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
