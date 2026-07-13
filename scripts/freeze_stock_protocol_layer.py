@@ -59,7 +59,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", dest="results_path", type=Path, required=True)
     parser.add_argument("--layer", required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", dest="manifest_path", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()
     print(freeze_layer(**vars(args)))
