@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument("--phase", required=True)
     parser.add_argument("--shard-count", type=int, default=360)
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", dest="manifest_path", type=Path, required=True)
     args = parser.parse_args()
     print(merge_phase(**vars(args)))
     return 0
