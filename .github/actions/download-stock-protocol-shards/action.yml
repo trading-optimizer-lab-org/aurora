@@ -1,5 +1,5 @@
-name: Download stock protocol shards in bounded groups
-description: Download a 360-shard phase in ten small artifact groups
+name: Download stock protocol shards individually
+description: Download every shard artifact by name with retries and a completeness check
 inputs:
   name_prefix:
     description: Artifact name prefix before the numeric shard id
@@ -7,56 +7,50 @@ inputs:
   output_root:
     description: Root directory for downloaded artifact groups
     required: true
+  shard_count:
+    description: Expected number of numeric shard artifacts
+    required: false
+    default: "360"
 runs:
   using: composite
   steps:
-    - name: Download shard names starting with 0
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}0*
-        path: ${{ inputs.output_root }}/prefix-0
-    - name: Download shard names starting with 1
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}1*
-        path: ${{ inputs.output_root }}/prefix-1
-    - name: Download shard names starting with 2
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}2*
-        path: ${{ inputs.output_root }}/prefix-2
-    - name: Download shard names starting with 3
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}3*
-        path: ${{ inputs.output_root }}/prefix-3
-    - name: Download shard names starting with 4
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}4*
-        path: ${{ inputs.output_root }}/prefix-4
-    - name: Download shard names starting with 5
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}5*
-        path: ${{ inputs.output_root }}/prefix-5
-    - name: Download shard names starting with 6
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}6*
-        path: ${{ inputs.output_root }}/prefix-6
-    - name: Download shard names starting with 7
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}7*
-        path: ${{ inputs.output_root }}/prefix-7
-    - name: Download shard names starting with 8
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}8*
-        path: ${{ inputs.output_root }}/prefix-8
-    - name: Download shard names starting with 9
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.name_prefix }}9*
-        path: ${{ inputs.output_root }}/prefix-9
+    - name: Download every shard by name with retries
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RUN_ID: ${{ github.run_id }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        output_root="${{ inputs.output_root }}"
+        prefix="${{ inputs.name_prefix }}"
+        shard_count="${{ inputs.shard_count }}"
+        mkdir -p "$output_root"
+
+        for shard in $(seq 0 $((shard_count - 1))); do
+          artifact="${prefix}${shard}"
+          downloaded=false
+          for attempt in 1 2 3; do
+            temp_dir="${output_root}/.download-${shard}"
+            rm -rf "$temp_dir"
+            mkdir -p "$temp_dir"
+            if gh run download "$RUN_ID" --repo "$REPOSITORY" --name "$artifact" --dir "$temp_dir"; then
+              cp -a "$temp_dir"/. "$output_root"/
+              rm -rf "$temp_dir"
+              downloaded=true
+              break
+            fi
+            rm -rf "$temp_dir"
+            sleep $((attempt * 2))
+          done
+          if [ "$downloaded" != true ]; then
+            echo "Unable to download $artifact after 3 attempts" >&2
+            exit 1
+          fi
+        done
+
+        found=$(find "$output_root" -type f -name stage_results.jsonl | wc -l)
+        if [ "$found" -ne "$shard_count" ]; then
+          echo "Expected $shard_count stage_results.jsonl files, found $found" >&2
+          exit 1
+        fi
