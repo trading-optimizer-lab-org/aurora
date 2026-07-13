@@ -57,7 +57,7 @@ def freeze_layer(results_path: Path, layer: str, manifest_path: Path, output_roo
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--results", dest="results_path", type=Path, required=True)
     parser.add_argument("--layer", required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
@@ -68,4 +68,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
