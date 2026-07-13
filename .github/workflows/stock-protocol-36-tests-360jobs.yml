@@ -286,14 +286,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge signal shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download signal shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-signal-all
-          pattern: stock-protocol-signal-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-signal-all, path: phase-shards}
+          name_prefix: stock-protocol-signal-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase signal --shard-count 360
@@ -357,14 +354,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge weights shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download weights shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-weights-all
-          pattern: stock-protocol-weights-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-weights-all, path: phase-shards}
+          name_prefix: stock-protocol-weights-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase weights --shard-count 360
@@ -428,14 +422,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge entries shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download entries shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-entries-all
-          pattern: stock-protocol-entries-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-entries-all, path: phase-shards}
+          name_prefix: stock-protocol-entries-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase entries --shard-count 360
@@ -499,14 +490,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge exits shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download exits shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-exits-all
-          pattern: stock-protocol-exits-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-exits-all, path: phase-shards}
+          name_prefix: stock-protocol-exits-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase exits --shard-count 360
@@ -570,14 +558,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge portfolio shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download portfolio shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-portfolio-all
-          pattern: stock-protocol-portfolio-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-portfolio-all, path: phase-shards}
+          name_prefix: stock-protocol-portfolio-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase portfolio --shard-count 360
@@ -641,14 +626,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge costs shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download costs shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-costs-all
-          pattern: stock-protocol-costs-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-costs-all, path: phase-shards}
+          name_prefix: stock-protocol-costs-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase costs --shard-count 360
@@ -712,14 +694,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -e .
-      - name: Merge walk-forward shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download walk-forward shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-walk-forward-all
-          pattern: stock-protocol-walk-forward-shard-*
-          delete-merged: false
-      - uses: actions/download-artifact@v4
-        with: {name: stock-protocol-walk-forward-all, path: phase-shards}
+          name_prefix: stock-protocol-walk-forward-shard-
+          output_root: phase-shards
       - run: >-
           python scripts/merge_stock_protocol_phase.py
           --shards-root phase-shards --phase walk_forward --shard-count 360
@@ -787,15 +766,11 @@ jobs:
         with: {name: stock-protocol-pack, path: final-input/pack}
       - uses: actions/download-artifact@v4
         with: {pattern: stock-protocol-phase-results-*, path: final-input/phases}
-      - name: Merge robustness shard artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Download robustness shard artifacts in bounded groups
+        uses: ./.github/actions/download-stock-protocol-shards
         with:
-          name: stock-protocol-robustness-all
-          pattern: stock-protocol-robustness-shard-*
-          delete-merged: false
-      - name: Download merged robustness shards
-        uses: actions/download-artifact@v4
-        with: {name: stock-protocol-robustness-all, path: final-input/robustness}
+          name_prefix: stock-protocol-robustness-shard-
+          output_root: final-input/robustness
       - name: Merge robustness shards
         run: >-
           python scripts/merge_stock_protocol_phase.py
