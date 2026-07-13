@@ -16,7 +16,8 @@ def build_portfolio(trades: pd.DataFrame, portfolio_rule: dict[str, object]) -> 
     else:
         result["weight"] = result.groupby("entry_date")["symbol"].transform(lambda x: 1.0 / len(x))
     cap = portfolio_rule.get("asset_cap")
+    if isinstance(cap, str) and cap.strip().lower() in {"", "none", "null"}:
+        cap = None
     if cap is not None:
         result["weight"] = result["weight"].clip(upper=float(cap))
     return result
-
