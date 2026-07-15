@@ -1,0 +1,115 @@
+name: Stock Protocol 36 Tests Finalize Recovery
+
+"on":
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Completed protocol run whose artifacts will be finalized"
+        required: true
+        default: "29359827884"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}
+  QF_DATA_DIR: ${{ github.workspace }}/qf-data
+  MANIFEST: config/stock_protocol_36_tests.yaml
+  DATA_END: "2020-12-31"
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - name: Download source data pack
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-pack
+          path: final-input/pack
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download signal phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-signal
+          path: final-input/phases/signal
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download weights phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-weights
+          path: final-input/phases/weights
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download entries phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-entries
+          path: final-input/phases/entries
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download exits phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-exits
+          path: final-input/phases/exits
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download portfolio phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-portfolio
+          path: final-input/phases/portfolio
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download costs phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-costs
+          path: final-input/phases/costs
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download walk-forward phase
+        uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-phase-results-walk-forward
+          path: final-input/phases/walk-forward
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download robustness shards
+        uses: ./.github/actions/download-stock-protocol-shards
+        with:
+          name_prefix: stock-protocol-robustness-shard-
+          output_root: final-input/robustness
+          run_id: ${{ inputs.source_run_id }}
+      - name: Merge robustness shards
+        run: >-
+          python scripts/merge_stock_protocol_phase.py
+          --shards-root final-input/robustness --phase robustness --shard-count 360
+          --output-root final-input/phases/robustness --manifest "$MANIFEST"
+      - name: Finalize artifact
+        run: >-
+          python scripts/finalize_stock_protocol.py
+          --input-root final-input --output-root final
+          --manifest "$MANIFEST"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-36-tests-360jobs-results
+          path: final
+          retention-days: 30
