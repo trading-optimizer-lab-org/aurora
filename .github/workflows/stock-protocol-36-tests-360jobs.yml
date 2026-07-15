@@ -765,7 +765,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with: {name: stock-protocol-pack, path: final-input/pack}
       - uses: actions/download-artifact@v4
-        with: {pattern: stock-protocol-phase-results-*, path: final-input/phases}
+        with: {name: stock-protocol-phase-results-signal, path: final-input/phases/signal}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-phase-results-weights, path: final-input/phases/weights}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-phase-results-entries, path: final-input/phases/entries}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-phase-results-exits, path: final-input/phases/exits}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-phase-results-portfolio, path: final-input/phases/portfolio}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-phase-results-costs, path: final-input/phases/costs}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-phase-results-walk-forward, path: final-input/phases/walk-forward}
       - name: Download robustness shard artifacts in bounded groups
         uses: ./.github/actions/download-stock-protocol-shards
         with:

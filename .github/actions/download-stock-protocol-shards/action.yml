@@ -11,6 +11,10 @@ inputs:
     description: Expected number of numeric shard artifacts
     required: false
     default: "360"
+  run_id:
+    description: Workflow run id that owns the shard artifacts; empty means current run
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -18,13 +22,16 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        RUN_ID: ${{ github.run_id }}
         REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
         output_root="${{ inputs.output_root }}"
         prefix="${{ inputs.name_prefix }}"
         shard_count="${{ inputs.shard_count }}"
+        run_id="${{ inputs.run_id }}"
+        if [ -z "$run_id" ]; then
+          run_id="$GITHUB_RUN_ID"
+        fi
         mkdir -p "$output_root"
 
         for shard in $(seq 0 $((shard_count - 1))); do
@@ -34,7 +41,7 @@ runs:
             temp_dir="${output_root}/.download-${shard}"
             rm -rf "$temp_dir"
             mkdir -p "$temp_dir"
-            if gh run download "$RUN_ID" --repo "$REPOSITORY" --name "$artifact" --dir "$temp_dir"; then
+            if gh run download "$run_id" --repo "$REPOSITORY" --name "$artifact" --dir "$temp_dir"; then
               cp -a "$temp_dir"/. "$output_root"/
               rm -rf "$temp_dir"
               downloaded=true
