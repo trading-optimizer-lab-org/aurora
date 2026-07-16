@@ -228,3 +228,24 @@ def test_final_recommendation_covers_required_scientific_conclusions(tmp_path: P
         "datos pendientes",
     ):
         assert required in recommendation
+
+
+def test_finalizer_allows_metrics_missing_only_for_explicit_unsupported_rows(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _complete_input(source)
+    portfolio = _result_rows("portfolio")
+    unsupported = portfolio.iloc[[1]].copy()
+    unsupported["candidate_id"] = "sector_cap_without_pit_sectors"
+    unsupported["status"] = "unsupported_missing_data"
+    unsupported["failure_reason"] = "historical point-in-time sectors unavailable"
+    unsupported.loc[:, ["cagr", "sortino", "calmar"]] = float("nan")
+    portfolio["status"] = "evaluated"
+    pd.concat([portfolio, unsupported], ignore_index=True).to_csv(
+        source / "portfolio_results.csv", index=False
+    )
+
+    finalize_scientific_artifact(source, tmp_path / "final", MANIFEST)
+
+    output = pd.read_csv(tmp_path / "final" / "portfolio_layer_results.csv")
+    assert "sector_cap_without_pit_sectors" in set(output["candidate_id"])
