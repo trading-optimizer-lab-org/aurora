@@ -94,7 +94,7 @@ def _complete_input(root: Path) -> None:
     )
     for directory in ("daily_equity_curves", "trade_ledgers", "position_ledgers"):
         path = root / directory
-        path.mkdir()
+        path.mkdir(exist_ok=True)
         pd.DataFrame({"candidate_id": ["balanced"], "value": [1.0]}).to_csv(
             path / "balanced.csv", index=False
         )
@@ -168,4 +168,3 @@ def test_finalizer_rejects_locked_or_non_finite_results(tmp_path: Path):
     invalid.to_csv(source / "portfolio_results.csv", index=False)
     with pytest.raises(ValueError, match="non-finite"):
         finalize_scientific_artifact(source, tmp_path / "invalid-final", MANIFEST)
-
