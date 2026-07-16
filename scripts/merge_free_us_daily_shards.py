@@ -113,6 +113,14 @@ def _merge_catalog(src_catalog: Path, dst_catalog: Path) -> int:
     return len(rows)
 
 
+def qf_data_root_from_argument(root: Path) -> Path:
+    """Accept either QF_DATA_DIR or an already-expanded dataset directory."""
+
+    if root.name.lower() == "free_us_daily" and root.parent.name.lower() == "prices":
+        return root.parent.parent
+    return root
+
+
 def main() -> int:
     require_github_actions_or_explicit_local_permission("free_us_daily shard merge")
     parser = argparse.ArgumentParser()
@@ -120,7 +128,7 @@ def main() -> int:
     parser.add_argument("--shards-dir", required=True)
     args = parser.parse_args()
 
-    root = Path(args.root)
+    root = qf_data_root_from_argument(Path(args.root))
     shards_dir = Path(args.shards_dir)
     paths = ensure_layout(root)
     copied_raw = 0
