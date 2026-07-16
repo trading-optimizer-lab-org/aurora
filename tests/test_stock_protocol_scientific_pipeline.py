@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from scripts.run_stock_protocol_scientific_pipeline import (
     merge_layer_tasks,
     plan_layer,
@@ -65,7 +66,7 @@ def _task_row(candidate_id: str, cagr: float, drawdown: float) -> dict[str, obje
         "horizon_sessions": 20,
         "cost_bps": 10,
         "dataset_hash": "dataset-hash",
-        "policy_hash": "policy-hash-placeholder",
+        "policy_hash": load_protocol_manifest(MANIFEST).policy_hash,
         "locked_opened": False,
         "data_end": "2020-12-31",
         "evaluation_start": "1995-01-01",
@@ -132,4 +133,3 @@ def test_merge_fails_if_any_planned_task_is_missing(tmp_path: Path):
             tasks_root=tmp_path / "tasks",
             output_root=tmp_path / "merged",
         )
-
