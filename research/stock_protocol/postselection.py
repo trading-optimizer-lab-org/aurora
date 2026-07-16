@@ -95,13 +95,27 @@ def _normalise_inputs(
 
 
 def _input_hash(returns: pd.DataFrame, trades: pd.DataFrame) -> str:
+    canonical_returns = returns.copy()
+    canonical_trades = trades.copy()
+    for column in canonical_returns.columns:
+        if column != "date":
+            canonical_returns[column] = pd.to_numeric(
+                canonical_returns[column], errors="raise"
+            ).round(12)
+    canonical_trades["net_return"] = pd.to_numeric(
+        canonical_trades["net_return"], errors="raise"
+    ).round(12)
     digest = hashlib.sha256()
     digest.update(
-        returns.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
+        canonical_returns.to_csv(
+            index=False, date_format="%Y-%m-%d", float_format="%.12g"
+        ).encode("utf-8")
     )
     digest.update(b"\n--TRADES--\n")
     digest.update(
-        trades.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
+        canonical_trades.to_csv(
+            index=False, date_format="%Y-%m-%d", float_format="%.12g"
+        ).encode("utf-8")
     )
     return digest.hexdigest()
 
