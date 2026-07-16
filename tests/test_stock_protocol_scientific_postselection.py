@@ -194,6 +194,26 @@ def test_robustness_snapshot_is_frozen_before_holdout(tmp_path):
             for candidate_id in ("stock_alpha", "stock_beta")
         ],
     )
+    walk_forward_artifact = tmp_path / "walk_forward_results.csv"
+    pd.DataFrame({"candidate_id": ["stock_alpha", "stock_beta"]}).to_csv(
+        walk_forward_artifact, index=False
+    )
+    walk_forward_snapshot = freeze_snapshot(
+        layer="walk_forward",
+        input_artifact=walk_forward_artifact,
+        output_path=tmp_path / "walk_forward_snapshot.json",
+        policy_hash=manifest.policy_hash,
+        dataset_hash="dataset-hash",
+        date_start="1995-01-01",
+        date_end="2015-12-31",
+        universe="current_universe_backfill",
+        decisions=load_snapshot(
+            costs_snapshot,
+            expected_layer="costs",
+            expected_policy_hash=manifest.policy_hash,
+            expected_dataset_hash="dataset-hash",
+        )["decisions"],
+    )
     robustness_path = tmp_path / "robustness_results.csv"
     pd.DataFrame(
         {
@@ -207,7 +227,7 @@ def test_robustness_snapshot_is_frozen_before_holdout(tmp_path):
 
     frozen_path = freeze_robustness_snapshot(
         manifest_path=MANIFEST,
-        costs_snapshot_path=costs_snapshot,
+        walk_forward_snapshot_path=walk_forward_snapshot,
         robustness_results_path=robustness_path,
         output_path=tmp_path / "robustness_snapshot.json",
     )
