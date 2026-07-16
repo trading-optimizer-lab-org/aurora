@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import combinations
+import math
+from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
+
+
+EULER_GAMMA = 0.5772156649015329
 
 
 def _finite_returns(returns: pd.Series) -> np.ndarray:
@@ -114,3 +120,111 @@ def leave_one_group_out(
             }
         )
     return pd.DataFrame(rows)
+
+
+def deflated_sharpe_ratio(
+    returns: pd.Series,
+    *,
+    n_trials: int,
+) -> dict[str, float]:
+    """Return a multiple-testing and non-normality adjusted Sharpe probability."""
+
+    values = _finite_returns(returns)
+    if len(values) < 30:
+        raise ValueError("deflated Sharpe requires at least 30 observations")
+    if n_trials < 2:
+        raise ValueError("deflated Sharpe requires at least two trials")
+    standard_deviation = float(values.std(ddof=1))
+    if standard_deviation <= 0:
+        raise ValueError("deflated Sharpe requires non-zero volatility")
+    daily_sharpe = float(values.mean() / standard_deviation)
+    skewness = float(pd.Series(values).skew())
+    kurtosis = float(pd.Series(values).kurt() + 3.0)
+    variance_term = (
+        1.0
+        - skewness * daily_sharpe
+        + ((kurtosis - 1.0) / 4.0) * daily_sharpe**2
+    ) / (len(values) - 1)
+    standard_error = math.sqrt(max(variance_term, 1e-15))
+    normal = NormalDist()
+    first_quantile = normal.inv_cdf(1.0 - 1.0 / n_trials)
+    second_quantile = normal.inv_cdf(1.0 - 1.0 / (n_trials * math.e))
+    expected_max_daily = standard_error * (
+        (1.0 - EULER_GAMMA) * first_quantile
+        + EULER_GAMMA * second_quantile
+    )
+    probability = normal.cdf((daily_sharpe - expected_max_daily) / standard_error)
+    result = {
+        "observed_sharpe": daily_sharpe * math.sqrt(252.0),
+        "expected_max_sharpe": expected_max_daily * math.sqrt(252.0),
+        "probability": float(np.clip(probability, 0.0, 1.0)),
+        "n_trials": float(n_trials),
+        "n_observations": float(len(values)),
+        "skewness": skewness,
+        "kurtosis": kurtosis,
+    }
+    if not np.isfinite(np.fromiter(result.values(), dtype=float)).all():
+        raise ValueError("deflated Sharpe produced a non-finite result")
+    return result
+
+
+def _strategy_scores(values: np.ndarray) -> np.ndarray:
+    mean = values.mean(axis=0)
+    deviation = values.std(axis=0, ddof=1)
+    return np.divide(mean, deviation, out=np.full_like(mean, -np.inf), where=deviation > 0)
+
+
+def cscv_probability_of_backtest_overfitting(
+    returns_matrix: pd.DataFrame,
+    *,
+    partitions: int = 8,
+) -> dict[str, object]:
+    """Compute CSCV/PBO from complementary chronological block combinations."""
+
+    if partitions < 4 or partitions % 2:
+        raise ValueError("CSCV partitions must be an even integer of at least four")
+    numeric = returns_matrix.apply(pd.to_numeric, errors="coerce")
+    values = numeric.to_numpy(dtype=float)
+    if values.shape[0] < partitions * 2 or values.shape[1] < 2:
+        raise ValueError("CSCV requires enough observations and at least two strategies")
+    if not np.isfinite(values).all():
+        raise ValueError("CSCV return matrix must be finite")
+    blocks = [np.asarray(block, dtype=int) for block in np.array_split(np.arange(len(values)), partitions)]
+    logits: list[float] = []
+    selected_names: list[str] = []
+    half = partitions // 2
+    for train_blocks in combinations(range(partitions), half):
+        if 0 not in train_blocks:
+            continue
+        train_set = set(train_blocks)
+        test_blocks = [index for index in range(partitions) if index not in train_set]
+        train_index = np.concatenate([blocks[index] for index in train_blocks])
+        test_index = np.concatenate([blocks[index] for index in test_blocks])
+        train_scores = _strategy_scores(values[train_index])
+        selected = int(np.argmax(train_scores))
+        test_scores = _strategy_scores(values[test_index])
+        selected_score = float(test_scores[selected])
+        rank_fraction = (
+            float(np.sum(test_scores < selected_score)) + 0.5
+        ) / len(test_scores)
+        rank_fraction = float(np.clip(rank_fraction, 1e-12, 1.0 - 1e-12))
+        logits.append(math.log(rank_fraction / (1.0 - rank_fraction)))
+        selected_names.append(str(numeric.columns[selected]))
+    if not logits:
+        raise ValueError("CSCV generated no complementary combinations")
+    result: dict[str, object] = {
+        "pbo": float(np.mean(np.asarray(logits) <= 0.0)),
+        "combinations_evaluated": int(len(logits)),
+        "median_logit": float(np.median(logits)),
+        "partitions": int(partitions),
+        "selected_strategy_counts": {
+            name: selected_names.count(name) for name in sorted(set(selected_names))
+        },
+        "input_hash": hashlib.sha256(values.tobytes()).hexdigest(),
+    }
+    if not all(
+        np.isfinite(float(result[key]))
+        for key in ("pbo", "combinations_evaluated", "median_logit", "partitions")
+    ):
+        raise ValueError("CSCV produced a non-finite result")
+    return result
