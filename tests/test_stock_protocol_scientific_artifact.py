@@ -168,3 +168,63 @@ def test_finalizer_rejects_locked_or_non_finite_results(tmp_path: Path):
     invalid.to_csv(source / "portfolio_results.csv", index=False)
     with pytest.raises(ValueError, match="non-finite"):
         finalize_scientific_artifact(source, tmp_path / "invalid-final", MANIFEST)
+
+
+def test_finalizer_builds_pareto_from_net_cost_results(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _complete_input(source)
+    portfolio = _result_rows("portfolio")
+    portfolio.loc[0, "candidate_id"] = "gross_only_winner"
+    portfolio.loc[1, "candidate_id"] = "net_winner"
+    portfolio.to_csv(source / "portfolio_results.csv", index=False)
+    costs = _result_rows("cost")
+    costs.loc[0, "candidate_id"] = "net_winner"
+    costs.loc[1, "candidate_id"] = "gross_only_winner"
+    costs.to_csv(source / "cost_results.csv", index=False)
+
+    finalize_scientific_artifact(source, tmp_path / "final", MANIFEST)
+
+    assert set(pd.read_csv(tmp_path / "final" / "pareto_frontier.csv")["candidate_id"]) == {
+        "net_winner"
+    }
+
+
+def test_finalizer_accepts_preholdout_phase_with_earlier_actual_data_end(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _complete_input(source)
+    robustness = _result_rows("robustness")
+    robustness["data_end"] = "2015-12-31"
+    robustness["evaluation_end"] = "2015-12-31"
+    robustness.to_csv(source / "robustness_results.csv", index=False)
+
+    finalize_scientific_artifact(source, tmp_path / "final", MANIFEST)
+
+    assert (tmp_path / "final" / "final_summary.json").is_file()
+
+
+def test_final_recommendation_covers_required_scientific_conclusions(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _complete_input(source)
+    finalize_scientific_artifact(source, tmp_path / "final", MANIFEST)
+
+    recommendation = (tmp_path / "final" / "final_recommendation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    for required in (
+        "errores del run anterior",
+        "correcciones aplicadas",
+        "valor marginal",
+        "entradas",
+        "salidas",
+        "sizing",
+        "costes",
+        "walk-forward",
+        "holdout",
+        "pareto",
+        "survivorship",
+        "datos pendientes",
+    ):
+        assert required in recommendation
