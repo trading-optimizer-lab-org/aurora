@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LAYER_WORKFLOW = ROOT / ".github" / "workflows" / "_stock-protocol-scientific-layer.yml"
 CAMPAIGN_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-rebuild-360jobs.yml"
 RECOVERY_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-recovery-360jobs.yml"
+FINALIZE_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-finalize-existing-run.yml"
 
 
 def test_reusable_layer_workflow_has_real_dynamic_matrices_and_strict_merge():
@@ -94,3 +95,27 @@ def test_recovery_is_github_only_and_keeps_locked_closed():
     assert "locked_opened=false" in text
     assert "validation_used_for_selection=false" in text
     assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
+
+
+def test_finalizer_workflow_reuses_the_successful_frozen_run_without_research():
+    text = FINALIZE_WORKFLOW.read_text(encoding="utf-8")
+    assert "29518567992" in text
+    for artifact in (
+        "stock-protocol-signal-merged",
+        "stock-protocol-weights-merged",
+        "stock-protocol-entries-merged",
+        "stock-protocol-exits-merged",
+        "stock-protocol-portfolio-merged",
+        "stock-protocol-costs-merged",
+        "stock-protocol-scientific-postselection-inputs",
+        "stock-protocol-scientific-robustness-merged",
+        "stock-protocol-scientific-holdout",
+    ):
+        assert artifact in text
+    assert "finalize_stock_protocol_scientific.py" in text
+    assert "stock-protocol-scientific-rebuild-360jobs-results" in text
+    assert "locked_opened=false" in text
+    assert "validation_used_for_selection=false" in text
+    assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
+    assert "run_stock_protocol_scientific_pipeline.py evaluate" not in text
+    assert "run_stock_protocol_scientific_postselection.py evaluate-task" not in text

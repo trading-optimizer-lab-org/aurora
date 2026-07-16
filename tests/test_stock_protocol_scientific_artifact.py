@@ -78,6 +78,13 @@ def _complete_input(root: Path) -> None:
     )
     for phase in phases:
         _result_rows(phase).to_csv(root / f"{phase}_results.csv", index=False)
+    robustness = _result_rows("robustness")
+    robustness["robust_pass"] = False
+    robustness["robustness_complete"] = False
+    robustness["cscv_pbo_max"] = 0.63
+    robustness["leave_one_symbol_available"] = False
+    robustness["robustness_limitation"] = "single-symbol candidates"
+    robustness.to_csv(root / "robustness_results.csv", index=False)
     (root / "data_audit.json").write_text(
         json.dumps(
             {
@@ -104,9 +111,16 @@ def _complete_input(root: Path) -> None:
     pd.DataFrame({"candidate_id": ["balanced"], "parameter": ["window"], "stable": [True]}).to_csv(
         root / "parameter_stability.csv", index=False
     )
-    pd.DataFrame({"candidate_id": ["balanced"], "method": ["bootstrap"], "pvalue": [0.02]}).to_csv(
-        root / "statistical_tests.csv", index=False
-    )
+    pd.DataFrame(
+        {
+            "candidate_id": ["balanced"],
+            "method": ["bootstrap"],
+            "pvalue": [0.02],
+            "task_id": ["task-0"],
+            "locked_opened": [False],
+            "data_end": ["2020-12-31"],
+        }
+    ).to_csv(root / "statistical_tests.csv", index=False)
     pd.DataFrame(
         {
             "candidate_id": ["balanced"],
@@ -114,7 +128,12 @@ def _complete_input(root: Path) -> None:
             "period_end": ["2020-12-31"],
             "evaluation_count": [1],
             "selection_used": [False],
+            "validation_used_for_selection": [False],
             "locked_opened": [False],
+            "data_end": ["2020-12-31"],
+            "sharpe": [0.62],
+            "cagr": [0.10],
+            "max_drawdown": [-0.33],
         }
     ).to_csv(root / "holdout_2016_2020.csv", index=False)
 
@@ -137,11 +156,21 @@ def test_final_artifact_is_complete_and_counts_are_derived(tmp_path: Path):
     assert summary["locked_opened"] is False
     assert summary["survivorship_limited"] is True
     assert summary["counts_derived_from_files"] is True
+    assert summary["strategy_found"] is False
+    assert summary["accepted_strategy_count"] == 0
+    assert summary["robustness_candidates"] == 2
+    assert summary["robustness_complete_count"] == 0
+    assert summary["robust_pass_count"] == 0
+    assert summary["statistical_tasks_count"] == 1
+    assert summary["holdout_evaluated_count"] == 1
+    assert summary["validation_used_for_selection"] is False
     assert set(pd.read_csv(output / "pareto_frontier.csv")["candidate_id"]) == {"balanced"}
     recommendation = (output / "final_recommendation.md").read_text(encoding="utf-8")
     assert "survivorship" in recommendation.lower()
     assert "2021" in recommendation
-    assert "balanced" in recommendation
+    assert "no se ha encontrado ninguna estrategia cientificamente valida" in recommendation.lower()
+    assert "0 de 2" in recommendation
+    assert "0,620" in recommendation
 
 
 def test_finalizer_refuses_partial_inputs_instead_of_claiming_complete(tmp_path: Path):

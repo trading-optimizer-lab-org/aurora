@@ -1,0 +1,161 @@
+name: Stock Protocol Scientific Finalize Existing Run
+
+"on":
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful scientific campaign run to reassemble
+        required: true
+        default: "29518567992"
+  push:
+    branches:
+      - codex/stock-protocol-scientific-validity
+    paths:
+      - .github/workflows/stock-protocol-scientific-finalize-existing-run.yml
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_RUN_ID: ${{ inputs.source_run_id || '29518567992' }}
+  MANIFEST: config/stock_protocol_36_tests.yaml
+  DATA_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-signal-merged
+          path: source/signal
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-weights-merged
+          path: source/weights
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-entries-merged
+          path: source/entries
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-exits-merged
+          path: source/exits
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-portfolio-merged
+          path: source/portfolio
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-costs-merged
+          path: source/costs
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-postselection-inputs
+          path: source/postselection
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-robustness-merged
+          path: source/robustness
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-holdout
+          path: source/holdout
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Assemble frozen finalizer inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p finalizer-input/daily_equity_curves finalizer-input/trade_ledgers finalizer-input/position_ledgers
+          cp source/signal/signal_results.csv finalizer-input/signal_results.csv
+          cp source/weights/weights_results.csv finalizer-input/weight_results.csv
+          cp source/entries/entries_results.csv finalizer-input/entry_results.csv
+          cp source/exits/exits_results.csv finalizer-input/exit_results.csv
+          cp source/portfolio/portfolio_results.csv finalizer-input/portfolio_results.csv
+          cp source/costs/costs_results.csv finalizer-input/cost_results.csv
+          cp source/postselection/walk_forward_results.csv finalizer-input/walk_forward_results.csv
+          cp source/robustness/robustness_results.csv finalizer-input/robustness_results.csv
+          cp source/robustness/parameter_stability.csv finalizer-input/parameter_stability.csv
+          cp source/robustness/statistical_tests.csv finalizer-input/statistical_tests.csv
+          cp source/holdout/holdout_2016_2020.csv finalizer-input/holdout_2016_2020.csv
+          cp source/postselection/data_audit.json finalizer-input/data_audit.json
+          cp source/postselection/daily_equity_curves/* finalizer-input/daily_equity_curves/
+          cp source/postselection/trade_ledgers/* finalizer-input/trade_ledgers/
+          cp source/postselection/position_ledgers/* finalizer-input/position_ledgers/
+          if [ -d source/holdout/daily_equity_curves ]; then cp source/holdout/daily_equity_curves/* finalizer-input/daily_equity_curves/; fi
+          if [ -d source/holdout/trade_ledgers ]; then cp source/holdout/trade_ledgers/* finalizer-input/trade_ledgers/; fi
+          if [ -d source/holdout/position_ledgers ]; then cp source/holdout/position_ledgers/* finalizer-input/position_ledgers/; fi
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+
+          paths = [
+              "source/postselection/yearly_results.csv",
+              "source/holdout/holdout_yearly_results.csv",
+          ]
+          frames = [pd.read_csv(path) for path in paths if Path(path).is_file()]
+          if not frames:
+              raise SystemExit("no yearly results found")
+          pd.concat(frames, ignore_index=True).to_csv(
+              "finalizer-input/yearly_results.csv", index=False
+          )
+          PY
+      - name: Build corrected complete artifact
+        run: >-
+          python scripts/finalize_stock_protocol_scientific.py
+          --input-root finalizer-input
+          --output-root final-artifact
+          --manifest "$MANIFEST"
+      - name: Verify final scientific verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("final-artifact")
+          summary = json.loads((root / "final_summary.json").read_text())
+          recommendation = (root / "final_recommendation.md").read_text().lower()
+          assert summary["partial"] is False
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          assert summary["statistical_tasks_count"] == 360
+          assert summary["statistical_unique_tasks"] == 360
+          assert summary["accepted_strategy_count"] == 0
+          assert summary["strategy_found"] is False
+          assert "no se ha encontrado ninguna estrategia cientificamente valida" in recommendation
+          PY
+          echo "locked_opened=false"
+          echo "validation_used_for_selection=false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-rebuild-360jobs-results
+          path: final-artifact
+          retention-days: 90
