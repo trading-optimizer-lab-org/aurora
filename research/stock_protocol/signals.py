@@ -83,6 +83,19 @@ def compute_features(panel: ResearchPanel) -> pd.DataFrame:
             ).max()
         )
         frame[f"breakout_{window}"] = frame["adj_close"].gt(prior_high)
+        frame[f"breakout_level_{window}"] = prior_high
+
+    for window in (20, 40, 60):
+        prior_range_high = grouped["adj_high"].transform(
+            lambda values, w=window: values.shift(1).rolling(w, min_periods=w).max()
+        )
+        prior_range_low = grouped["adj_low"].transform(
+            lambda values, w=window: values.shift(1).rolling(w, min_periods=w).min()
+        )
+        prior_close = grouped["adj_close"].shift(1)
+        frame[f"consolidation_{window}"] = prior_range_high.sub(
+            prior_range_low
+        ).div(prior_close.replace(0, np.nan))
 
     high_52 = adjusted_high_group.transform(
         lambda values: values.shift(1).rolling(252, min_periods=126).max()
