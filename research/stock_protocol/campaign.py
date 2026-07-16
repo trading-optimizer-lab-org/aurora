@@ -213,6 +213,7 @@ def _causal_component_weights(
 def _ensemble_candidates(
     panel: ResearchPanel,
     spec: Mapping[str, Any],
+    features: pd.DataFrame,
 ) -> pd.DataFrame:
     components = [dict(item) for item in spec.get("component_signals", [])]
     if not components:
@@ -226,7 +227,12 @@ def _ensemble_candidates(
         variant = dict(component["signal_variant"])
         variant["selection"] = dict(component["selection"])
         variant.setdefault("rebalance", "monthly")
-        candidates = compute_signal(panel, int(component["signal_test_id"]), variant)
+        candidates = compute_signal(
+            panel,
+            int(component["signal_test_id"]),
+            variant,
+            features=features,
+        )
         candidates["component_id"] = component_id
         frames.append(candidates)
         returns.append(_forward_component_returns(panel, candidates, component_id))
@@ -266,13 +272,22 @@ def _ensemble_candidates(
     return selected
 
 
-def _candidates_for_spec(panel: ResearchPanel, spec: Mapping[str, Any]) -> pd.DataFrame:
+def _candidates_for_spec(
+    panel: ResearchPanel,
+    spec: Mapping[str, Any],
+    features: pd.DataFrame,
+) -> pd.DataFrame:
     if spec.get("component_signals"):
-        return _ensemble_candidates(panel, spec)
+        return _ensemble_candidates(panel, spec, features)
     signal_variant = dict(spec.get("signal_variant", {}))
     signal_variant["selection"] = dict(spec["selection"])
     signal_variant.setdefault("rebalance", "monthly")
-    return compute_signal(panel, int(spec["signal_test_id"]), signal_variant)
+    return compute_signal(
+        panel,
+        int(spec["signal_test_id"]),
+        signal_variant,
+        features=features,
+    )
 
 
 def _bounded_panel(
@@ -308,11 +323,11 @@ def evaluate_spec(
     end_date = pd.Timestamp(end).normalize()
     bounded = _bounded_panel(panel, start_date, end_date)
     materialized = json.loads(json.dumps(dict(spec), sort_keys=True, default=str))
-    candidates = _candidates_for_spec(bounded, materialized)
+    features = compute_features(bounded)
+    candidates = _candidates_for_spec(bounded, materialized, features)
     candidates = candidates.loc[
         pd.to_datetime(candidates["signal_date"]).between(start_date, end_date)
     ].copy()
-    features = compute_features(bounded)
     entry_rule = dict(
         materialized.get(
             "entry", {"kind": "immediate_next_open", "max_wait_sessions": 0}
@@ -327,7 +342,7 @@ def evaluate_spec(
             "kind": "top_percent",
             "value": float(exit_rule["keep_percentile"]),
         }
-        ranking_keep = _candidates_for_spec(bounded, keep_spec)
+        ranking_keep = _candidates_for_spec(bounded, keep_spec, features)
     trades = execute_next_open(events, bounded, exit_rule, ranking_keep=ranking_keep)
     candidate_id = canonical_candidate_id(materialized)
     if trades.empty:

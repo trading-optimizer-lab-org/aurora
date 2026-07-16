@@ -270,10 +270,12 @@ def compute_signal(
     panel: ResearchPanel,
     test_id: int,
     variant: dict[str, object],
+    *,
+    features: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute candidates, enforce rebalance dates and select real stocks."""
 
-    frame = compute_features(panel)
+    frame = compute_features(panel) if features is None else features
     binary = False
     if test_id == 1:
         score = frame["mom_12_1"]
