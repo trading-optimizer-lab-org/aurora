@@ -24,7 +24,7 @@ from scripts.find_sp500_only_outperforming_studies import (  # noqa: E402
     STRATEGY_RE,
 )
 
-csv.field_size_limit(sys.maxsize)
+csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
 MANUAL_PDF_URLS = {
     "W3121966254": "https://papers.ssrn.com/sol3/Delivery.cfm/SSRN_ID445920_code031001670.pdf?abstractid=445920&mirid=1",

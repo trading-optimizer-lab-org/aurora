@@ -26,18 +26,10 @@ _PATH = str(_WORKTREE)
 try:
     import __editable___aurora_1_5_0_finder as _finder
     _finder.MAPPING['aurora'] = _PATH
-    # Evict only modules that actually came from another checkout.  Removing
-    # the active ``aurora`` package (or this conftest itself) breaks pytest's
-    # import bookkeeping when the repository root is imported as a package.
-    for _name, _module in list(sys.modules.items()):
-        if _name == __name__ or not (_name == 'aurora' or _name.startswith('aurora.')):
-            continue
-        _file = getattr(_module, '__file__', None)
-        if _file is None:
-            continue
-        try:
-            Path(_file).resolve().relative_to(_WORKTREE)
-        except ValueError:
+    # Evict any aurora modules that were loaded with the old MAPPING so the
+    # next import re-resolves through the corrected path.
+    for _name in list(sys.modules):
+        if _name == 'aurora' or _name.startswith('aurora.'):
             del sys.modules[_name]
 except ImportError:
     # Editable finder not present (e.g. running from a wheel install). Fall

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-csv.field_size_limit(sys.maxsize)
+csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -907,6 +907,8 @@ def _classify(
     cleaned_assets = SP500_RE.sub(" ", _join(tradable_assets, rule_or_abstract))
     if OTHER_TRADED_ASSET_RE.search(cleaned_assets):
         reasons.append("mentions_other_traded_assets")
+    if "non_sp500_only_strategy_context" in reasons or "mentions_other_traded_assets" in reasons:
+        reasons.append("mentions_other_traded_assets_or_non_sp500_context")
     if GENERIC_RULE_RE.search(rule_or_abstract):
         reasons.append("generic_template_rule_not_paper_specific")
     if source.startswith("local_") and not _clean(title):
