@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,7 @@ from scripts.run_stock_protocol_scientific_postselection import (
     _filter_statistically_eligible_candidates,
     freeze_robustness_snapshot,
     holdout_result_row,
+    prepare_postselection_inputs,
 )
 
 from aurora.research.stock_protocol.layers import freeze_snapshot, load_snapshot
@@ -146,6 +148,103 @@ def test_prepare_excludes_short_histories_without_zero_fill():
         {"candidate_id": candidate, "parameters": {}}
         for candidate in ("stock_alpha", "stock_beta", "stock_short")
     ]
+
+
+def test_prepare_uses_full_frozen_development_history_for_robustness(
+    tmp_path, monkeypatch
+):
+    import scripts.run_stock_protocol_scientific_postselection as runner
+
+    manifest = SimpleNamespace(
+        locked_opened=False,
+        data_end="2020-12-31",
+        research_start="1995-01-01",
+        policy_hash="policy-hash",
+    )
+    audit = SimpleNamespace(
+        locked_opened=False,
+        locked_rows=0,
+        dataset_hash="dataset-hash",
+        to_json=lambda: {"dataset_hash": "dataset-hash"},
+    )
+    panel = SimpleNamespace(audit=audit)
+    decisions = [
+        {"candidate_id": candidate, "parameters": {"candidate": candidate}}
+        for candidate in ("stock_alpha", "stock_beta")
+    ]
+
+    def result(candidate, periods):
+        dates = pd.bdate_range("2014-01-01", periods=periods)
+        equity = pd.DataFrame(
+            {"date": dates, "equity": 100_000.0 * (1.0002 ** np.arange(periods))}
+        )
+        trades = pd.DataFrame(
+            {
+                "symbol": ["AAA"],
+                "entry_date": [dates[10]],
+                "net_return": [0.02],
+            }
+        )
+        yearly = pd.DataFrame(
+            {"candidate_id": [candidate], "year": [2014], "return": [0.05]}
+        )
+        return SimpleNamespace(
+            status="evaluated",
+            equity_curve=equity,
+            trade_ledger=trades,
+            position_ledger=pd.DataFrame(),
+            yearly=yearly,
+            metrics={"sharpe": 0.5},
+            result_row=lambda: {"candidate_id": candidate, "status": "evaluated"},
+        )
+
+    monkeypatch.setattr(runner, "load_protocol_manifest", lambda _: manifest)
+    monkeypatch.setattr(runner, "read_pack", lambda *_: panel)
+    monkeypatch.setattr(runner, "load_snapshot", lambda *_args, **_kwargs: {"decisions": decisions})
+    monkeypatch.setattr(
+        runner,
+        "evaluate_development_walk_forward",
+        lambda _panel, spec, **_kwargs: SimpleNamespace(
+            result=result(spec["candidate"], 212), folds=[object()]
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "evaluate_spec",
+        lambda _panel, spec, **_kwargs: result(spec["candidate"], 500),
+    )
+    captured = {}
+
+    def fake_plan(returns, trades, *, task_count):
+        captured["returns"] = returns.copy()
+        captured["trades"] = trades.copy()
+        return {
+            "matrix_a": list(range(task_count // 2)),
+            "matrix_b": list(range(task_count // 2, task_count)),
+        }
+
+    monkeypatch.setattr(runner, "build_robustness_plan", fake_plan)
+
+    def fake_freeze(*, output_path, **_kwargs):
+        output_path.write_text("{}", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(runner, "freeze_snapshot", fake_freeze)
+    outputs = prepare_postselection_inputs(
+        manifest_path=tmp_path / "manifest.yaml",
+        pack_root=tmp_path / "pack",
+        costs_snapshot_path=tmp_path / "costs.json",
+        output_root=tmp_path / "out",
+        task_count=12,
+    )
+
+    assert captured["returns"]["stock_alpha"].notna().sum() == 500
+    assert captured["returns"]["stock_beta"].notna().sum() == 500
+    walk_forward = pd.read_csv(outputs["walk_forward_results"])
+    assert walk_forward["walk_forward_folds"].eq(1).all()
+    data_audit = json.loads(outputs["data_audit"].read_text(encoding="utf-8"))
+    assert data_audit["robustness_input_mode"] == "full_development_frozen_spec"
+    assert data_audit["full_development_used_for_selection"] is False
 
     clean_returns, clean_trades, clean_decisions, excluded, counts = (
         _filter_statistically_eligible_candidates(returns, trades, decisions)

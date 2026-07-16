@@ -188,9 +188,9 @@ def prepare_postselection_inputs(
             start=manifest.research_start,
             end=DEVELOPMENT_END,
         )
-        result = cross_validated.result
+        walk_forward_result = cross_validated.result
         row = {
-            **result.result_row(),
+            **walk_forward_result.result_row(),
             "evaluation_start": manifest.research_start,
             "evaluation_end": DEVELOPMENT_END,
             "data_end": DEVELOPMENT_END,
@@ -201,27 +201,44 @@ def prepare_postselection_inputs(
             "locked_opened": False,
         }
         walk_forward_rows.append(row)
-        if result.status != "evaluated":
+        if walk_forward_result.status != "evaluated":
             continue
-        daily = _equity_returns(result.equity_curve).rename(
+        # The walk-forward result contains only its purged test folds. Keep
+        # those metrics as the out-of-sample diagnostic, but run robustness
+        # on the complete pre-holdout history of the already-frozen spec.
+        # No rule, parameter or rank is selected from this reconstruction.
+        development_result = evaluate_spec(
+            panel,
+            spec,
+            start=manifest.research_start,
+            end=DEVELOPMENT_END,
+        )
+        if development_result.status != "evaluated":
+            row["statistical_robustness_eligible"] = False
+            row["statistical_exclusion_reason"] = (
+                "full_development_reconstruction_not_evaluated"
+            )
+            continue
+        daily = _equity_returns(development_result.equity_curve).rename(
             columns={"daily_return": candidate_id}
         )
         return_parts.append(daily)
-        trades = result.trade_ledger.copy()
+        trades = development_result.trade_ledger.copy()
         if not trades.empty:
             trades.insert(0, "candidate_id", candidate_id)
             trades = trades.loc[pd.to_numeric(trades["net_return"], errors="coerce").notna()].copy()
             trade_parts.append(trades)
-        yearly = result.yearly.copy()
-        yearly["period"] = "development_walk_forward"
+        yearly = development_result.yearly.copy()
+        yearly["period"] = "development_full_frozen_spec"
         yearly_parts.append(yearly)
-        _copy_candidate_ledgers(output_root, candidate_id, result)
+        _copy_candidate_ledgers(output_root, candidate_id, development_result)
         frozen_decisions.append(
             {
                 "candidate_id": candidate_id,
                 "parameters": spec,
                 "validation_metrics": {
-                    key: _json_scalar(value) for key, value in result.metrics.items()
+                    key: _json_scalar(value)
+                    for key, value in walk_forward_result.metrics.items()
                 },
                 "decision": "advance_to_statistical_robustness",
             }
@@ -300,6 +317,9 @@ def prepare_postselection_inputs(
         "survivorship_limited": True,
         "statistical_candidates_eligible": len(frozen_decisions),
         "statistical_candidates_excluded": len(statistical_exclusions),
+        "robustness_input_mode": "full_development_frozen_spec",
+        "walk_forward_used_for_diagnostics": True,
+        "full_development_used_for_selection": False,
     }
     data_audit_path = output_root / "data_audit.json"
     data_audit_path.write_text(
