@@ -7,6 +7,11 @@ name: Stock Protocol Scientific Recovery 360 Jobs
         description: Successful source layers from the failed scientific run
         required: true
         default: "29505808241"
+  push:
+    branches:
+      - codex/stock-protocol-scientific-validity
+    paths:
+      - .github/workflows/stock-protocol-scientific-recovery-360jobs.yml
 
 permissions:
   contents: read
@@ -46,7 +51,7 @@ jobs:
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || '29505808241' }}
     steps:
       - name: Download only frozen source-layer artifacts
         shell: bash
