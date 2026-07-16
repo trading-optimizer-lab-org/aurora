@@ -318,6 +318,10 @@ def prepare_postselection_inputs(
         "statistical_candidates_eligible": len(frozen_decisions),
         "statistical_candidates_excluded": len(statistical_exclusions),
         "robustness_input_mode": "full_development_frozen_spec",
+        "robustness_required_methods": robustness_plan.get("required_methods", []),
+        "robustness_unavailable_methods": robustness_plan.get(
+            "unavailable_methods", {}
+        ),
         "walk_forward_used_for_diagnostics": True,
         "full_development_used_for_selection": False,
     }

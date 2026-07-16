@@ -173,6 +173,46 @@ def test_plan_replaces_impossible_leave_one_symbol_tasks_with_real_work():
     assert len({task["task_id"] for task in plan["tasks"]}) == 360
 
 
+def test_merge_marks_unavailable_symbol_stability_without_fake_metric(tmp_path):
+    trades = _trades().copy()
+    trades["symbol"] = trades["candidate_id"].map(
+        {"stock_alpha": "AAA", "stock_beta": "BBB"}
+    )
+    returns = _returns()
+    plan = build_robustness_plan(returns, trades, task_count=12)
+    plan_path = tmp_path / "plan.json"
+    returns_path = tmp_path / "returns.csv"
+    trades_path = tmp_path / "trades.csv"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    returns.to_csv(returns_path, index=False)
+    trades.to_csv(trades_path, index=False)
+    tasks_root = tmp_path / "tasks"
+    for index in range(12):
+        execute_robustness_task(
+            plan_path=plan_path,
+            returns_path=returns_path,
+            trades_path=trades_path,
+            task_index=index,
+            output_root=tasks_root,
+        )
+
+    outputs = merge_robustness_tasks(
+        plan_path=plan_path,
+        tasks_root=tasks_root,
+        output_root=tmp_path / "merged",
+    )
+
+    robustness = pd.read_csv(outputs["robustness_results"], keep_default_na=False)
+    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+    assert robustness["leave_one_symbol_available"].eq(False).all()
+    assert robustness["leave_one_symbol_min_mean_return"].eq(
+        "not_applicable"
+    ).all()
+    assert robustness["robustness_complete"].eq(False).all()
+    assert robustness["robust_pass"].eq(False).all()
+    assert "leave_one_symbol_out" in summary["unavailable_methods"]
+
+
 def test_prepare_excludes_short_histories_without_zero_fill():
     dates = pd.bdate_range("2014-01-01", periods=300)
     returns = pd.DataFrame(

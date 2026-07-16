@@ -370,6 +370,11 @@ def build_robustness_plan(
         "observation_counts": observation_counts,
         "required_methods": sorted(required_methods),
         "unavailable_methods": unavailable_methods,
+        "viable_leave_one_symbol_candidates": sorted(
+            candidate
+            for candidate, symbols in viable_symbols_by_candidate.items()
+            if symbols
+        ),
         "cscv_candidate_ids": cscv_candidates,
         "cscv_complete_observations": cscv_observations,
         "data_end": DEVELOPMENT_END.date().isoformat(),
@@ -582,6 +587,9 @@ def merge_robustness_tasks(
     global_pbo = pd.to_numeric(
         tests.loc[tests["method"].eq("cscv_pbo"), "pbo"], errors="coerce"
     )
+    viable_symbol_candidates = set(
+        plan.get("viable_leave_one_symbol_candidates", plan["candidate_ids"])
+    )
     candidate_rows = []
     for candidate_id in plan["candidate_ids"]:
         candidate = tests.loc[tests["candidate_id"].eq(candidate_id)]
@@ -589,14 +597,35 @@ def merge_robustness_tasks(
         dsr = candidate.loc[candidate["method"].eq("deflated_sharpe")]
         decades = candidate.loc[candidate["method"].eq("leave_one_decade_out")]
         symbols = candidate.loc[candidate["method"].eq("leave_one_symbol_out")]
+        symbol_available = candidate_id in viable_symbol_candidates
+        symbol_minimum = pd.to_numeric(
+            symbols.get("mean_return"), errors="coerce"
+        ).min()
         row = {
             "candidate_id": candidate_id,
-            "bootstrap_sharpe_p05": pd.to_numeric(bootstrap.get("ci_05"), errors="coerce").min(),
-            "bootstrap_fdr_pvalue_max": pd.to_numeric(bootstrap.get("fdr_pvalue"), errors="coerce").max(),
-            "deflated_sharpe_probability": pd.to_numeric(dsr.get("probability"), errors="coerce").max(),
+            "bootstrap_sharpe_p05": pd.to_numeric(
+                bootstrap.get("ci_05"), errors="coerce"
+            ).min(),
+            "bootstrap_fdr_pvalue_max": pd.to_numeric(
+                bootstrap.get("fdr_pvalue"), errors="coerce"
+            ).max(),
+            "deflated_sharpe_probability": pd.to_numeric(
+                dsr.get("probability"), errors="coerce"
+            ).max(),
             "cscv_pbo_max": global_pbo.max(),
-            "leave_one_decade_min_sharpe": pd.to_numeric(decades.get("estimate"), errors="coerce").min(),
-            "leave_one_symbol_min_mean_return": pd.to_numeric(symbols.get("mean_return"), errors="coerce").min(),
+            "leave_one_decade_min_sharpe": pd.to_numeric(
+                decades.get("estimate"), errors="coerce"
+            ).min(),
+            "leave_one_symbol_available": symbol_available,
+            "leave_one_symbol_min_mean_return": (
+                float(symbol_minimum) if symbol_available else "not_applicable"
+            ),
+            "robustness_complete": symbol_available,
+            "robustness_limitation": (
+                "" if symbol_available else plan["unavailable_methods"].get(
+                    "leave_one_symbol_out", "leave_one_symbol_out unavailable"
+                )
+            ),
             "locked_opened": False,
             "data_end": DEVELOPMENT_END.date().isoformat(),
         }
@@ -606,16 +635,18 @@ def merge_robustness_tasks(
             row["deflated_sharpe_probability"],
             row["cscv_pbo_max"],
             row["leave_one_decade_min_sharpe"],
-            row["leave_one_symbol_min_mean_return"],
         ]
+        if symbol_available:
+            required.append(symbol_minimum)
         row["robust_pass"] = bool(
-            all(pd.notna(value) for value in required)
+            row["robustness_complete"]
+            and all(pd.notna(value) for value in required)
             and row["bootstrap_sharpe_p05"] > 0
             and row["bootstrap_fdr_pvalue_max"] <= 0.05
             and row["deflated_sharpe_probability"] >= 0.95
             and row["cscv_pbo_max"] <= 0.50
             and row["leave_one_decade_min_sharpe"] > 0
-            and row["leave_one_symbol_min_mean_return"] > 0
+            and symbol_minimum > 0
         )
         candidate_rows.append(row)
     robustness = pd.DataFrame(candidate_rows)
@@ -624,6 +655,9 @@ def merge_robustness_tasks(
             "candidate_id",
             "leave_one_decade_min_sharpe",
             "leave_one_symbol_min_mean_return",
+            "leave_one_symbol_available",
+            "robustness_complete",
+            "robustness_limitation",
             "bootstrap_sharpe_p05",
             "robust_pass",
         ]
@@ -642,6 +676,8 @@ def merge_robustness_tasks(
             "tasks_found": len(found),
             "candidate_count": len(candidate_rows),
             "robust_pass_count": int(robustness["robust_pass"].sum()),
+            "required_methods": plan.get("required_methods", []),
+            "unavailable_methods": plan.get("unavailable_methods", {}),
             "input_hash": plan["input_hash"],
             "locked_opened": False,
             "data_end": DEVELOPMENT_END.date().isoformat(),
