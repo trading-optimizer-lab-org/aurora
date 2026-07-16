@@ -26,6 +26,7 @@ jobs:
         run: >-
           pytest
           tests/test_stock_protocol_scientific_signals.py
+          tests/test_stock_protocol_scientific_layers.py
           tests/test_stock_protocol_engine.py
           tests/test_stock_protocol_manifest.py
           tests/test_stock_protocol_dataset.py
