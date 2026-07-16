@@ -15,7 +15,7 @@ from aurora.research.stock_protocol.postselection import (
 
 
 def _returns() -> pd.DataFrame:
-    dates = pd.bdate_range("1995-01-03", periods=756)
+    dates = pd.bdate_range("1995-01-03", periods=3_024)
     phase = np.arange(len(dates), dtype=float)
     return pd.DataFrame(
         {
