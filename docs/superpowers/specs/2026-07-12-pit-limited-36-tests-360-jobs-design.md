@@ -188,4 +188,3 @@ Antes de ejecutar las fases pesadas, el propio workflow hará:
 - comprobación de que el artifact fuente no se sube al repositorio.
 
 No se ejecutarán backtests, smokes ni pruebas locales en el PC.
-

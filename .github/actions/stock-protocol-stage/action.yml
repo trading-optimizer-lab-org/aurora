@@ -24,4 +24,3 @@ runs:
         --shard-id "${{ inputs.shard }}"
         --shard-count "${{ inputs.shard_count }}"
         --output-root "${{ inputs.output_root }}"
-

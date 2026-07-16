@@ -166,4 +166,3 @@ def read_pack(root: Path, end_date: str = "2020-12-31") -> ResearchPanel:
             dataset_hash=_hash_frame(frame),
         )
     return ResearchPanel(frame.sort_values(["date", "symbol"]).reset_index(drop=True), audit)
-

@@ -39,4 +39,3 @@ def test_close_signal_enters_next_open():
 def test_metrics_returns_required_keys():
     result = compute_metrics(pd.Series([0.01, -0.005, 0.02]), pd.DataFrame({"gross_return": [0.01, -0.005, 0.02]}), costs_bps=5)
     assert {"cagr", "sharpe", "sortino", "max_drawdown", "calmar", "return_per_capital_day"} <= set(result)
-

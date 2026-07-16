@@ -138,4 +138,3 @@ def test_snapshot_cannot_include_locked_or_post_boundary_dates(tmp_path: Path):
             universe="current_universe_backfill",
             decisions=[_decision()],
         )
-

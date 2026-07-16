@@ -60,4 +60,3 @@ def test_build_pack_writes_audit_and_partition(tmp_path: Path):
     assert audit.locked_opened is False
     assert (output / "year=2020" / "data.parquet").exists()
     assert read_pack(output).audit.dataset_hash == audit.dataset_hash
-

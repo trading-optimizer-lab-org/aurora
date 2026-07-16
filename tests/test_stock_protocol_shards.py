@@ -30,4 +30,3 @@ def test_merge_rejects_missing_shard(tmp_path: Path):
     (phase_root / "stage_results.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="missing shard"):
         merge_phase(tmp_path, "signal", 2, tmp_path / "out", MANIFEST)
-

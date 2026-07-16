@@ -284,4 +284,3 @@ gh workflow run stock-protocol-36-tests-360jobs.yml --repo trading-optimizer-lab
 - [ ] **Step 6: Verify launch and final artifact**
 
 Inspect the run until completion. Confirm the final artifact contains all required files, `locked_opened=false`, `data_end=2020-12-31`, `tests_executed_with_limitations=25`, `tests_unsupported_missing_data=11`, and a complete shard audit.
-

@@ -38,4 +38,3 @@ def require_github_actions_or_explicit_local_permission(
     if running_in_github_actions(env) or has_explicit_local_run_permission(env):
         return
     raise LocalRunBlocked(f"{LOCAL_RUN_BLOCKED_MESSAGE} Tipo: {run_kind}.")
-

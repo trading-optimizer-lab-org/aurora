@@ -102,4 +102,3 @@ def test_historical_pit_interface_requires_as_of_membership():
 def test_features_fail_on_exact_locked_boundary():
     with pytest.raises(ValueError, match="locked"):
         compute_features(_locked_panel())
-
