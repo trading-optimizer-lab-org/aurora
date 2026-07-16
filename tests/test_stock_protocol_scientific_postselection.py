@@ -149,6 +149,28 @@ def test_prepare_excludes_short_histories_without_zero_fill():
         for candidate in ("stock_alpha", "stock_beta", "stock_short")
     ]
 
+    clean_returns, clean_trades, clean_decisions, excluded, counts = (
+        _filter_statistically_eligible_candidates(returns, trades, decisions)
+    )
+
+    assert list(clean_returns) == ["date", "stock_alpha", "stock_beta"]
+    assert set(clean_trades["candidate_id"]) == {"stock_alpha", "stock_beta"}
+    assert {item["candidate_id"] for item in clean_decisions} == {
+        "stock_alpha",
+        "stock_beta",
+    }
+    assert counts["stock_short"] == 212
+    assert excluded.to_dict("records") == [
+        {
+            "candidate_id": "stock_short",
+            "development_observations": 212,
+            "minimum_required_observations": 252,
+            "closed_trades": 1,
+            "reason": "insufficient_development_observations",
+            "locked_opened": False,
+        }
+    ]
+
 
 def test_prepare_uses_full_frozen_development_history_for_robustness(
     tmp_path, monkeypatch
@@ -245,29 +267,6 @@ def test_prepare_uses_full_frozen_development_history_for_robustness(
     data_audit = json.loads(outputs["data_audit"].read_text(encoding="utf-8"))
     assert data_audit["robustness_input_mode"] == "full_development_frozen_spec"
     assert data_audit["full_development_used_for_selection"] is False
-
-    clean_returns, clean_trades, clean_decisions, excluded, counts = (
-        _filter_statistically_eligible_candidates(returns, trades, decisions)
-    )
-
-    assert list(clean_returns) == ["date", "stock_alpha", "stock_beta"]
-    assert set(clean_trades["candidate_id"]) == {"stock_alpha", "stock_beta"}
-    assert {item["candidate_id"] for item in clean_decisions} == {
-        "stock_alpha",
-        "stock_beta",
-    }
-    assert counts["stock_short"] == 212
-    assert excluded.to_dict("records") == [
-        {
-            "candidate_id": "stock_short",
-            "development_observations": 212,
-            "minimum_required_observations": 252,
-            "closed_trades": 1,
-            "reason": "insufficient_development_observations",
-            "locked_opened": False,
-        }
-    ]
-
 
 def test_bootstrap_task_records_real_samples(tmp_path):
     returns = _returns()
