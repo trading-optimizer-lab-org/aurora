@@ -12,7 +12,6 @@ import pandas as pd
 from aurora.research.stock_protocol.campaign import (
     DEVELOPMENT_END,
     canonical_candidate_id,
-    evaluate_spec,
     expand_layer_specs,
     initial_signal_specs,
 )
@@ -25,6 +24,9 @@ from aurora.research.stock_protocol.layers import (
 from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from aurora.research.stock_protocol.pareto import pareto_frontier
 from aurora.research.stock_protocol.portfolio import UnsupportedPortfolioData
+from aurora.research.stock_protocol.scientific_evaluation import (
+    evaluate_development_walk_forward,
+)
 
 
 WORKFLOW_LAYERS = ("signal", "weights", "entries", "exits", "portfolio", "costs")
@@ -197,12 +199,13 @@ def evaluate_task(
     task_root = output_root / f"task={task_index:04d}"
     task_root.mkdir(parents=True, exist_ok=True)
     try:
-        result = evaluate_spec(
+        cross_validated = evaluate_development_walk_forward(
             panel,
             spec,
             start=manifest.research_start,
             end=DEVELOPMENT_END.date().isoformat(),
         )
+        result = cross_validated.result
     except UnsupportedPortfolioData as exc:
         row = {
             "candidate_id": planned["candidate_id"],
@@ -224,6 +227,7 @@ def evaluate_task(
         _write_json(task_root / "result.json", row)
         for name in ("daily_equity.csv", "trade_ledger.csv", "position_ledger.csv", "yearly.csv"):
             pd.DataFrame().to_csv(task_root / name, index=False)
+        pd.DataFrame().to_csv(task_root / "fold_results.csv", index=False)
         return task_root / "result.json"
     row = {
         **result.result_row(),
@@ -238,12 +242,15 @@ def evaluate_task(
         "data_end": manifest.data_end,
         "evaluation_start": manifest.research_start,
         "evaluation_end": DEVELOPMENT_END.date().isoformat(),
+        "walk_forward_mode": "expanding",
+        "walk_forward_folds": len(cross_validated.folds),
     }
     _write_json(task_root / "result.json", row)
     result.equity_curve.to_csv(task_root / "daily_equity.csv", index=False)
     result.trade_ledger.to_csv(task_root / "trade_ledger.csv", index=False)
     result.position_ledger.to_csv(task_root / "position_ledger.csv", index=False)
     result.yearly.to_csv(task_root / "yearly.csv", index=False)
+    cross_validated.fold_results.to_csv(task_root / "fold_results.csv", index=False)
     return task_root / "result.json"
 
 
