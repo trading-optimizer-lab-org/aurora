@@ -55,6 +55,15 @@ def _finite(value: float, name: str) -> float:
     return result
 
 
+def _numeric_column_sum(frame: pd.DataFrame, column: str) -> float:
+    if column not in frame.columns:
+        return 0.0
+    values = pd.to_numeric(frame[column], errors="coerce")
+    if values.isna().any() or not np.isfinite(values).all():
+        raise ValueError(f"column {column} contains non-finite values")
+    return float(values.sum())
+
+
 def compute_portfolio_metrics(
     equity_curve: pd.DataFrame,
     trades: pd.DataFrame,
@@ -107,10 +116,9 @@ def compute_portfolio_metrics(
     profit_concentration = float(gains.nlargest(min(5, len(gains))).sum() / gross_profit) if gross_profit > 0 else 0.0
     capital_days = float((curve["gross_exposure"] if "gross_exposure" in curve else 0.0).sum())
     return_per_capital_day = total_return / capital_days if capital_days > 0 else 0.0
-    gross_trade_profit_money = float(
-        pd.to_numeric(closed.get("exit_notional", 0.0), errors="coerce").sum()
-        - pd.to_numeric(closed.get("entry_notional", 0.0), errors="coerce").sum()
-    )
+    gross_trade_profit_money = _numeric_column_sum(
+        closed, "exit_notional"
+    ) - _numeric_column_sum(closed, "entry_notional")
     cost_pct_gross_profit = total_costs / gross_trade_profit_money if gross_trade_profit_money > 0 else 0.0
 
     values = {
