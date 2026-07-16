@@ -9,6 +9,7 @@ import pytest
 from aurora.research.stock_protocol.dataset import (
     PackAudit,
     build_research_pack,
+    discover_daily_sources,
     load_bounded_daily_panel,
     read_pack,
 )
@@ -31,10 +32,102 @@ def _write_source(root: Path, end: str = "2020-12-31") -> None:
     ).to_parquet(target / "TEST.parquet", index=False)
 
 
-def test_panel_rejects_rows_after_locked_boundary(tmp_path: Path):
+def test_panel_materialises_only_prelocked_rows(tmp_path: Path):
     _write_source(tmp_path, "2021-01-04")
-    with pytest.raises(ValueError, match="2020-12-31"):
-        load_bounded_daily_panel(tmp_path, "2020-12-31")
+    panel = load_bounded_daily_panel(tmp_path, "2020-12-31")
+    assert panel.frame["date"].max() == pd.Timestamp("2020-12-30")
+    assert panel.audit.locked_rows == 0
+    assert panel.audit.locked_opened is False
+
+
+def test_discovery_does_not_stop_after_two_visible_benchmarks(tmp_path: Path):
+    benchmark = tmp_path / "benchmarks"
+    nested = tmp_path / "prices" / "free_us_daily" / "normalized"
+    benchmark.mkdir(parents=True)
+    nested.mkdir(parents=True)
+    for symbol, target in (
+        ("SPY", benchmark),
+        ("GSPC", benchmark),
+        ("AAPL", nested),
+        ("MSFT", nested),
+        ("NVDA", nested),
+    ):
+        pd.DataFrame(
+            {
+                "date": ["2020-12-30"],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+                "adj_close": [100.5],
+                "volume": [1000],
+            }
+        ).to_parquet(target / f"{symbol}.parquet", index=False)
+
+    discovered = discover_daily_sources([tmp_path])
+    assert {item.path.name for item in discovered} == {
+        "SPY.parquet", "GSPC.parquet", "AAPL.parquet", "MSFT.parquet", "NVDA.parquet"
+    }
+    panel = load_bounded_daily_panel([tmp_path], "2020-12-31")
+    assert set(panel.frame["symbol"]) == {"SPY", "GSPC", "AAPL", "MSFT", "NVDA"}
+    assert panel.audit.source_files == 5
+
+
+def test_loader_combines_multiple_roots_and_supported_formats(tmp_path: Path):
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    root_a.mkdir()
+    root_b.mkdir()
+    pd.DataFrame(
+        {
+            "date": ["2020-12-30", "2020-12-30"],
+            "symbol": ["AAPL", "MSFT"],
+            "open": [100.0, 200.0],
+            "high": [101.0, 201.0],
+            "low": [99.0, 199.0],
+            "close": [100.5, 200.5],
+            "adj_close": [100.5, 200.5],
+            "volume": [1000, 2000],
+        }
+    ).to_parquet(root_a / "combined.parquet", index=False)
+    pd.DataFrame(
+        {
+            "date": ["2020-12-30"],
+            "symbol": ["NVDA"],
+            "open": [300.0],
+            "high": [301.0],
+            "low": [299.0],
+            "close": [300.5],
+            "adj_close": [300.5],
+            "volume": [3000],
+        }
+    ).to_csv(root_b / "daily.csv", index=False)
+
+    panel = load_bounded_daily_panel([root_a, root_b], "2020-12-31")
+    assert set(panel.frame["symbol"]) == {"AAPL", "MSFT", "NVDA"}
+    assert panel.audit.source_files == 2
+
+
+def test_loader_uses_first_root_as_deterministic_canonical_source(tmp_path: Path):
+    roots = [tmp_path / "preferred", tmp_path / "fallback"]
+    for root, close in zip(roots, (101.0, 999.0), strict=True):
+        root.mkdir()
+        pd.DataFrame(
+            {
+                "date": ["2020-12-30"],
+                "symbol": ["AAPL"],
+                "open": [100.0],
+                "high": [1000.0],
+                "low": [99.0],
+                "close": [close],
+                "adj_close": [close],
+                "volume": [1000],
+            }
+        ).to_parquet(root / "prices.parquet", index=False)
+
+    panel = load_bounded_daily_panel(roots, "2020-12-31")
+    assert panel.frame.iloc[0]["close"] == 101.0
+    assert panel.audit.duplicates_removed == 1
 
 
 def test_pack_audit_declares_active_universe_limitation():
