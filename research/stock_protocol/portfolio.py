@@ -10,6 +10,10 @@ import pandas as pd
 from .dataset import ResearchPanel
 
 
+class UnsupportedPortfolioData(ValueError):
+    """A requested portfolio constraint lacks honest point-in-time data."""
+
+
 def _normalise_cap(value: object) -> float | None:
     if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
         return None
@@ -21,8 +25,88 @@ def _normalise_cap(value: object) -> float | None:
     return cap
 
 
+def _correlation_filter(
+    trades: pd.DataFrame,
+    panel: ResearchPanel,
+    cap: float,
+    lookback: int,
+) -> pd.Series:
+    prices = panel.frame[["date", "symbol", "adj_close"]].copy()
+    prices["date"] = pd.to_datetime(prices["date"], errors="raise").dt.normalize()
+    accepted = pd.Series(True, index=trades.index, dtype=bool)
+    for entry_date, group in trades.groupby("entry_date", sort=True):
+        date = pd.Timestamp(entry_date).normalize()
+        history = prices.loc[prices["date"].lt(date)]
+        pivot = history.pivot(index="date", columns="symbol", values="adj_close").tail(
+            lookback + 1
+        )
+        returns = pivot.pct_change(fill_method=None).dropna(how="all")
+        chosen: list[str] = []
+        ordered = group.sort_values(
+            ["score", "symbol"] if "score" in group else ["symbol"],
+            ascending=[False, True] if "score" in group else [True],
+        )
+        for index, row in ordered.iterrows():
+            symbol = str(row["symbol"])
+            if symbol not in returns or returns[symbol].dropna().shape[0] < 3:
+                accepted.loc[index] = False
+                continue
+            redundant = False
+            for prior in chosen:
+                paired = returns[[symbol, prior]].dropna()
+                if len(paired) < 3 or abs(float(paired.corr().iloc[0, 1])) > cap:
+                    redundant = True
+                    break
+            if redundant:
+                accepted.loc[index] = False
+            else:
+                chosen.append(symbol)
+    return accepted
+
+
+def _regime_exposure(
+    panel: ResearchPanel,
+    entry_dates: pd.Series,
+    rule: dict[str, object],
+) -> pd.Series:
+    regime = str(rule.get("regime", "constant"))
+    if regime == "constant":
+        return pd.Series(1.0, index=entry_dates.index)
+    benchmark = panel.frame.loc[panel.frame["symbol"].eq("SPY"), ["date", "adj_close"]].copy()
+    if benchmark.empty:
+        raise UnsupportedPortfolioData("SPY benchmark is required for regime exposure")
+    benchmark["date"] = pd.to_datetime(benchmark["date"], errors="raise").dt.normalize()
+    benchmark = benchmark.sort_values("date")
+    window = int(rule.get("regime_sma_window", 200))
+    values: dict[pd.Timestamp, float] = {}
+    for date in pd.to_datetime(entry_dates.unique()):
+        history = benchmark.loc[benchmark["date"].lt(date)].tail(max(window, 64))
+        if len(history) < window:
+            raise UnsupportedPortfolioData("insufficient prior SPY history for regime exposure")
+        close = float(history["adj_close"].iloc[-1])
+        average = float(history["adj_close"].tail(window).mean())
+        volatility = float(
+            history["adj_close"].pct_change(fill_method=None).tail(63).std(ddof=1)
+            * np.sqrt(252.0)
+        )
+        if regime == "sma_200":
+            exposure = 1.0 if close > average else 0.5
+        elif regime == "vol_cap":
+            exposure = float(np.clip(0.15 / max(volatility, 1e-9), 0.25, 1.0))
+        elif regime == "conditional_panic":
+            exposure = 0.25 if close <= average and volatility >= 0.25 else 1.0
+        else:
+            raise NotImplementedError(f"portfolio regime {regime} is not implemented")
+        values[pd.Timestamp(date).normalize()] = exposure
+    normalized = pd.to_datetime(entry_dates).dt.normalize()
+    return normalized.map(values).astype(float)
+
+
 def build_portfolio(
-    trades: pd.DataFrame, portfolio_rule: dict[str, object]
+    trades: pd.DataFrame,
+    portfolio_rule: dict[str, object],
+    *,
+    panel: ResearchPanel | None = None,
 ) -> pd.DataFrame:
     """Assign implementable target weights; unallocated capital remains cash."""
 
@@ -36,26 +120,53 @@ def build_portfolio(
     if missing:
         raise ValueError(f"trades missing sizing columns: {sorted(missing)}")
     result = trades.copy()
+    result["portfolio_rejected_reason"] = ""
+    if "sector_cap" in portfolio_rule:
+        raise UnsupportedPortfolioData(
+            "sector cap requires historical point-in-time sector classification"
+        )
+    eligible = pd.Series(True, index=result.index, dtype=bool)
+    if "corr_cap" in portfolio_rule:
+        if panel is None:
+            raise UnsupportedPortfolioData("correlation cap requires a daily price panel")
+        eligible = _correlation_filter(
+            result,
+            panel,
+            float(portfolio_rule["corr_cap"]),
+            int(portfolio_rule.get("corr_lookback", 252)),
+        )
+        result.loc[~eligible, "portfolio_rejected_reason"] = "correlation_cap"
     sizing = str(portfolio_rule.get("sizing", "equal"))
     cap = _normalise_cap(portfolio_rule.get("asset_cap"))
     if sizing == "capped_inverse_vol" and cap is None:
         cap = 0.10
+    result["weight"] = 0.0
+    active = result.loc[eligible].copy()
     if sizing in {"inverse_vol", "capped_inverse_vol"}:
         if "volatility" not in result.columns:
             raise ValueError("inverse volatility sizing requires volatility")
-        volatility = pd.to_numeric(result["volatility"], errors="coerce")
+        volatility = pd.to_numeric(active["volatility"], errors="coerce")
         if volatility.isna().any() or volatility.le(0).any():
             raise ValueError("inverse volatility sizing requires positive finite volatility")
         inverse = 1.0 / volatility
-        result["weight"] = inverse / inverse.groupby(result["entry_date"]).transform("sum")
+        result.loc[active.index, "weight"] = inverse / inverse.groupby(active["entry_date"]).transform("sum")
     elif sizing == "equal":
-        result["weight"] = result.groupby("entry_date")["symbol"].transform(
+        result.loc[active.index, "weight"] = active.groupby("entry_date")["symbol"].transform(
             lambda symbols: 1.0 / len(symbols)
         )
     else:
         raise NotImplementedError(f"portfolio sizing {sizing} is not implemented")
     if cap is not None:
         result["weight"] = result["weight"].clip(upper=cap)
+    if panel is not None or str(portfolio_rule.get("regime", "constant")) != "constant":
+        if panel is None:
+            raise UnsupportedPortfolioData("regime exposure requires a daily price panel")
+        result["regime_exposure"] = _regime_exposure(
+            panel, result["entry_date"], portfolio_rule
+        )
+    else:
+        result["regime_exposure"] = 1.0
+    result["weight"] = result["weight"].mul(result["regime_exposure"])
     grouped_weight = result.groupby("entry_date")["weight"].transform("sum")
     if grouped_weight.gt(1.0 + 1e-12).any():
         result["weight"] = result["weight"].div(grouped_weight.clip(lower=1.0))
@@ -115,6 +226,7 @@ def simulate_daily_portfolio(
     ledger["entry_notional"] = 0.0
     ledger["exit_notional"] = 0.0
     ledger["capacity_reduced"] = False
+    ledger["split_adjustment_count"] = 0
     ledger["status"] = "pending"
 
     calendar = prices.loc[
@@ -135,6 +247,16 @@ def simulate_daily_portfolio(
         timestamp = pd.Timestamp(date)
         day_costs = 0.0
         day_traded = 0.0
+
+        for symbol, position in positions.items():
+            row = lookup.get((timestamp, symbol))
+            if row is None:
+                raise ValueError(f"missing split observation for {symbol} on {timestamp.date()}")
+            split_ratio = float(row.get("stock_splits", 0.0) or 0.0)
+            if split_ratio > 0 and not np.isclose(split_ratio, 1.0):
+                position["shares"] = float(position["shares"]) * split_ratio
+                trade_id = int(position["trade_id"])
+                ledger.loc[ledger["trade_id"].eq(trade_id), "split_adjustment_count"] += 1
 
         exiting = ledger.loc[(ledger["exit_date"] == timestamp) & ledger["status"].eq("open")]
         for index, trade in exiting.iterrows():

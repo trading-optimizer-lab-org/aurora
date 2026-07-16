@@ -64,6 +64,7 @@ def _validate_rule(rule: Mapping[str, object]) -> int:
         "sma_50",
         "trailing_atr",
         "breakout_failure",
+        "ranking_hysteresis",
     }
     kind = str(rule.get("kind", "none"))
     if kind not in supported:
@@ -114,6 +115,8 @@ def execute_next_open(
     signal_frame: pd.DataFrame,
     panel: ResearchPanel,
     exit_rule: dict[str, object],
+    *,
+    ranking_keep: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Execute distinct signal events at next open, one live trade per symbol."""
 
@@ -141,6 +144,18 @@ def execute_next_open(
     unavailable_until: dict[str, pd.Timestamp] = {}
     trades: list[dict[str, object]] = []
     kind = str(exit_rule.get("kind", "none"))
+    keep_by_date: dict[pd.Timestamp, set[str]] = {}
+    if kind == "ranking_hysteresis":
+        if ranking_keep is None or not {"signal_date", "symbol"} <= set(ranking_keep.columns):
+            raise ValueError("ranking hysteresis requires causal keep-set observations")
+        keep_frame = ranking_keep.copy()
+        keep_frame["signal_date"] = pd.to_datetime(
+            keep_frame["signal_date"], errors="raise"
+        ).dt.normalize()
+        keep_by_date = {
+            pd.Timestamp(date): set(group["symbol"].astype(str))
+            for date, group in keep_frame.groupby("signal_date", sort=True)
+        }
 
     for signal in signals.itertuples(index=False):
         signal_values = signal._asdict()
@@ -170,6 +185,18 @@ def execute_next_open(
 
         for index in range(entry_idx, end_idx + 1):
             row = group.iloc[index]
+            row_date = pd.Timestamp(row["date"]).normalize()
+            if (
+                kind == "ranking_hysteresis"
+                and row_date > signal_date
+                and row_date in keep_by_date
+                and symbol not in keep_by_date[row_date]
+                and index + 1 < len(group)
+            ):
+                exit_idx = index + 1
+                exit_price = float(group.iloc[exit_idx]["open"])
+                exit_reason = "ranking_hysteresis_next_open"
+                break
             if kind == "trailing_atr":
                 atr = float(signal_values.get("atr20", 0.0) or 0.0)
                 trailing_stop = trailing_high - float(exit_rule.get("k", 3.0)) * atr
@@ -177,7 +204,12 @@ def execute_next_open(
             elif kind in {"min_10", "min_20", "sma_50"}:
                 stop = _prior_level(group, index, kind)
             elif kind == "breakout_failure" and breakout_level is not None:
-                stop = float(breakout_level)
+                elapsed = index - entry_idx
+                stop = (
+                    float(breakout_level)
+                    if elapsed < int(exit_rule.get("failure_window", 1))
+                    else None
+                )
 
             outcome = _evaluate_bar(row=row, stop=stop, target=target)
             if outcome is not None:

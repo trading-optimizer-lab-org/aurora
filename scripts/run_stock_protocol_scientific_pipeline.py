@@ -24,6 +24,7 @@ from aurora.research.stock_protocol.layers import (
 )
 from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from aurora.research.stock_protocol.pareto import pareto_frontier
+from aurora.research.stock_protocol.portfolio import UnsupportedPortfolioData
 
 
 WORKFLOW_LAYERS = ("signal", "weights", "entries", "exits", "portfolio", "costs")
@@ -193,14 +194,37 @@ def evaluate_task(
     spec = dict(planned["spec"])
     if canonical_candidate_id(spec) != planned["candidate_id"]:
         raise ValueError("planned candidate ID is not canonical")
-    result = evaluate_spec(
-        panel,
-        spec,
-        start=manifest.research_start,
-        end=DEVELOPMENT_END.date().isoformat(),
-    )
     task_root = output_root / f"task={task_index:04d}"
     task_root.mkdir(parents=True, exist_ok=True)
+    try:
+        result = evaluate_spec(
+            panel,
+            spec,
+            start=manifest.research_start,
+            end=DEVELOPMENT_END.date().isoformat(),
+        )
+    except UnsupportedPortfolioData as exc:
+        row = {
+            "candidate_id": planned["candidate_id"],
+            "spec_json": json.dumps(spec, sort_keys=True, separators=(",", ":")),
+            "status": "unsupported_missing_data",
+            "failure_reason": str(exc),
+            "layer": layer,
+            "task_index": task_index,
+            "horizon_sessions": int(spec.get("horizon_sessions", 0)),
+            "cost_bps": int(spec.get("cost_bps", 0)),
+            "dataset_hash": panel.audit.dataset_hash,
+            "policy_hash": manifest.policy_hash,
+            "survivorship_limited": True,
+            "locked_opened": False,
+            "data_end": manifest.data_end,
+            "evaluation_start": manifest.research_start,
+            "evaluation_end": DEVELOPMENT_END.date().isoformat(),
+        }
+        _write_json(task_root / "result.json", row)
+        for name in ("daily_equity.csv", "trade_ledger.csv", "position_ledger.csv", "yearly.csv"):
+            pd.DataFrame().to_csv(task_root / name, index=False)
+        return task_root / "result.json"
     row = {
         **result.result_row(),
         "layer": layer,

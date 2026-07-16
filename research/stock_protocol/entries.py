@@ -33,6 +33,12 @@ def _emit(candidate: pd.Series, event: pd.Series, entry_rule: str) -> dict[str, 
         "adj_close",
         "adj_high",
         "adj_low",
+        "breakout_level_20",
+        "breakout_level_50",
+        "breakout_level_100",
+        "breakout_level_150",
+        "breakout_level_200",
+        "breakout_level_252",
     ):
         if column in event:
             result[column] = event[column]
@@ -116,5 +122,11 @@ def apply_entry_rule(
         else:
             raise NotImplementedError(f"entry rule {kind!r} is not implemented")
         if event is not None:
-            rows.append(_emit(candidate, event, label))
+            emitted = _emit(candidate, event, label)
+            if kind in {"breakout", "breakout_rvol"}:
+                level_column = f"breakout_level_{lookback}"
+                if level_column not in event:
+                    raise ValueError(f"entry features missing {level_column}")
+                emitted["breakout_level"] = float(event[level_column])
+            rows.append(emitted)
     return pd.DataFrame(rows)
