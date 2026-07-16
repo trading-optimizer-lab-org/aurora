@@ -54,6 +54,12 @@ def compute_features(panel: ResearchPanel) -> pd.DataFrame:
 
     frame = panel.frame.sort_values(["symbol", "date"]).copy()
     frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
+    if frame.empty:
+        raise ValueError("feature panel is empty")
+    if frame["date"].max() >= pd.Timestamp("2021-01-01"):
+        raise ValueError("feature panel crosses locked boundary 2021-01-01")
+    if panel.audit.locked_opened or panel.audit.locked_rows:
+        raise ValueError("feature panel audit reports locked data access")
     frame = _adjust_ohlc(frame)
     grouped = frame.groupby("symbol", group_keys=False, sort=False)
 
