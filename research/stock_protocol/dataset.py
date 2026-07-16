@@ -299,19 +299,11 @@ def _pack_paths(root: Path) -> list[Path]:
     return sorted(root.glob("shard_id=*/*.parquet")) + sorted(root.glob("shard-*.parquet"))
 
 
-def read_pack(root: Path, end_date: str = "2020-12-31") -> ResearchPanel:
-    frames = [pd.read_parquet(path, filters=[("date", "<=", pd.Timestamp(end_date).to_pydatetime())]) for path in _pack_paths(root)]
-    if not frames:
-        raise FileNotFoundError(f"no pack partitions found under {root}")
-    frame = pd.concat(frames, ignore_index=True)
-    end = pd.Timestamp(end_date).normalize()
-    frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
-    if frame["date"].gt(end).any():
-        raise ValueError(f"pack contains rows after {end.date().isoformat()}")
+def _read_pack_audit(root: Path, frame: pd.DataFrame, end: pd.Timestamp) -> PackAudit:
     audit_path = root / "pack_audit.json"
     if audit_path.exists():
         payload = json.loads(audit_path.read_text(encoding="utf-8"))
-        audit = PackAudit(
+        return PackAudit(
             source_root=str(payload.get("source_root", "artifact")),
             output_root=str(payload.get("output_root", root)),
             data_start=payload.get("data_start") or payload.get("first_date"),
@@ -326,16 +318,64 @@ def read_pack(root: Path, end_date: str = "2020-12-31") -> ResearchPanel:
             source_files=int(payload.get("source_files", 0)),
             duplicates_removed=int(payload.get("duplicates_removed", 0)),
             invalid_rows_removed=int(payload.get("invalid_rows_removed", 0)),
-            ignored_files=tuple(
-                str(item) for item in payload.get("ignored_files", ())
-            ),
+            ignored_files=tuple(str(item) for item in payload.get("ignored_files", ())),
         )
-    else:
-        audit = PackAudit(
-            source_root="pack", output_root=str(root),
-            data_start=str(frame["date"].min().date()), data_end=end.date().isoformat(),
-            rows=int(len(frame)), symbols=int(frame["symbol"].nunique()), locked_rows=0,
-            survivorship_free=False, metadata_is_bitemporal=False,
-            dataset_hash=_hash_frame(frame),
-        )
+    return PackAudit(
+        source_root="pack", output_root=str(root),
+        data_start=str(frame["date"].min().date()), data_end=end.date().isoformat(),
+        rows=int(len(frame)), symbols=int(frame["symbol"].nunique()), locked_rows=0,
+        survivorship_free=False, metadata_is_bitemporal=False,
+        dataset_hash=_hash_frame(frame),
+    )
+
+
+def _read_pack_partition_range(
+    path: Path,
+    start: pd.Timestamp | None,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    filters: list[tuple[str, str, object]] = [("date", "<=", end.to_pydatetime())]
+    if start is not None:
+        filters.insert(0, ("date", ">=", start.to_pydatetime()))
+    try:
+        return pd.read_parquet(path, filters=filters)
+    except Exception:
+        frame = pd.read_parquet(path)
+        dates = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
+        mask = dates.le(end)
+        if start is not None:
+            mask &= dates.ge(start)
+        return frame.loc[mask].copy()
+
+
+def read_pack_range(
+    root: Path,
+    *,
+    start_date: str | None = None,
+    end_date: str = "2020-12-31",
+) -> ResearchPanel:
+    """Read only a bounded interval while preserving the immutable pack identity."""
+
+    start = pd.Timestamp(start_date).normalize() if start_date is not None else None
+    end = pd.Timestamp(end_date).normalize()
+    if start is not None and start > end:
+        raise ValueError("pack range start must not exceed end")
+    frames = [
+        frame
+        for path in _pack_paths(root)
+        if not (frame := _read_pack_partition_range(path, start, end)).empty
+    ]
+    if not frames:
+        raise FileNotFoundError(f"no pack observations found under {root} in requested range")
+    frame = pd.concat(frames, ignore_index=True)
+    frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
+    if start is not None and frame["date"].lt(start).any():
+        raise ValueError(f"pack contains rows before {start.date().isoformat()}")
+    if frame["date"].gt(end).any():
+        raise ValueError(f"pack contains rows after {end.date().isoformat()}")
+    audit = _read_pack_audit(root, frame, end)
     return ResearchPanel(frame.sort_values(["date", "symbol"]).reset_index(drop=True), audit)
+
+
+def read_pack(root: Path, end_date: str = "2020-12-31") -> ResearchPanel:
+    return read_pack_range(root, end_date=end_date)
