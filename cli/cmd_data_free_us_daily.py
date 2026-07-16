@@ -371,6 +371,7 @@ def cmd_free_us_daily_build_benchmarks(args) -> int:
         payload = build_benchmarks(
             root=_root_from_args(args),
             symbols=symbols or ("SPY", "^GSPC"),
+            end=getattr(args, "end", None),
         )
     except Exception as exc:
         return _runtime_error(f"free-us-daily build-benchmarks: {exc}")
@@ -690,6 +691,11 @@ def register_free_us_daily(data_sub) -> None:
         "--symbols",
         default="SPY,^GSPC",
         help="Comma-separated yfinance benchmark symbols",
+    )
+    p_bench.add_argument(
+        "--end",
+        default=None,
+        help="Exclusive YYYY-MM-DD boundary; no benchmark row may reach it",
     )
     p_bench.add_argument("--output", default="table", choices=["table", "json"])
     p_bench.set_defaults(func=cmd_free_us_daily_build_benchmarks)

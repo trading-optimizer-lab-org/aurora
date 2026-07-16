@@ -2382,6 +2382,7 @@ def build_benchmarks(
     *,
     root: Optional[Path] = None,
     symbols: Iterable[str] = ("SPY", "^GSPC"),
+    end: Optional[str] = None,
 ) -> dict[str, Any]:
     """Download benchmark/index histories into a separate benchmark area."""
 
@@ -2391,8 +2392,13 @@ def build_benchmarks(
         sym = str(symbol).strip().upper()
         if not sym:
             continue
-        raw = fetch_yfinance_raw(sym, start=None)
+        raw = fetch_yfinance_raw(sym, start=None, end=end)
         normalised = normalise_yfinance_history(raw, symbol=sym)
+        if end is not None and len(normalised):
+            boundary = pd.Timestamp(end)
+            normalised = normalised[
+                pd.to_datetime(normalised["date"], errors="raise") < boundary
+            ].copy()
         validation = validate_price_frame(normalised, min_rows=MIN_ROWS_DEFAULT)
         out_path = paths["benchmarks_dir"] / f"{sym.replace('^', '')}.parquet"
         if len(normalised):
@@ -2413,6 +2419,7 @@ def build_benchmarks(
     payload = {
         "dataset": DATASET_NAME,
         "created_at": pd.Timestamp.utcnow().isoformat(),
+        "data_end_exclusive": end,
         "benchmarks": rows,
     }
     paths["benchmark_manifest"].write_text(
