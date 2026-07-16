@@ -95,6 +95,30 @@ def test_unknown_layer_cannot_reuse_a_generic_expansion():
         expand_layer_specs([{"signal_test_id": 1}], "invented", manifest)
 
 
+def test_weight_layer_builds_one_real_ensemble_per_weighting_method():
+    manifest = load_protocol_manifest(MANIFEST)
+    upstream = [
+        {
+            "signal_test_id": 1,
+            "signal_variant": {"lookback": 252, "skip": 21},
+            "selection": {"kind": "top_percent", "value": 10},
+        },
+        {
+            "signal_test_id": 8,
+            "signal_variant": {"lookback": 252},
+            "selection": {"kind": "top_percent", "value": 10},
+        },
+    ]
+    expanded = expand_layer_specs(upstream, "weight", manifest)
+    assert len(expanded) == 2
+    assert {spec["signal_weights"]["weights"] for spec in expanded} == {
+        "equal",
+        "ridge_nonnegative",
+    }
+    assert all(len(spec["component_signals"]) == 2 for spec in expanded)
+    assert all(len(spec["upstream_candidate_ids"]) == 2 for spec in expanded)
+
+
 def test_evaluation_produces_daily_equity_and_real_ledgers():
     spec = {
         "signal_test_id": 1,
@@ -126,4 +150,3 @@ def test_development_and_holdout_boundaries_are_disjoint_and_pre_locked():
     assert HOLDOUT_START == pd.Timestamp("2016-01-01")
     assert HOLDOUT_END == pd.Timestamp("2020-12-31")
     assert DEVELOPMENT_END < HOLDOUT_START <= HOLDOUT_END < pd.Timestamp("2021-01-01")
-

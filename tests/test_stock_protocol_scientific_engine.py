@@ -15,6 +15,7 @@ from aurora.research.stock_protocol.metrics import (
     yearly_returns,
 )
 from aurora.research.stock_protocol.portfolio import (
+    UnsupportedPortfolioData,
     build_portfolio,
     simulate_daily_portfolio,
 )
@@ -86,6 +87,27 @@ def test_duplicate_signal_does_not_open_overlapping_position():
     assert trades.iloc[0]["entry_date"] == "2020-01-03"
 
 
+def test_ranking_hysteresis_exits_next_open_after_falling_out_of_keep_set():
+    keep = pd.DataFrame(
+        {
+            "signal_date": [pd.Timestamp("2020-01-06")],
+            "symbol": ["BBB"],
+        }
+    )
+    trades = execute_next_open(
+        _signals(),
+        _panel(),
+        {
+            "kind": "ranking_hysteresis",
+            "holding_sessions": 6,
+            "keep_percentile": 30,
+        },
+        ranking_keep=keep,
+    )
+    assert trades.iloc[0]["exit_date"] == "2020-01-07"
+    assert trades.iloc[0]["exit_reason"] == "ranking_hysteresis_next_open"
+
+
 def test_stop_crossed_by_gap_executes_at_open():
     panel = _panel()
     frame = panel.frame.copy()
@@ -154,6 +176,74 @@ def test_inverse_volatility_weights_change_real_allocations():
     assert result["weight"].sum() == pytest.approx(1.0)
 
 
+def test_correlation_cap_rejects_redundant_simultaneous_position():
+    panel = _panel(("AAA", "BBB"))
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB"],
+            "entry_date": [str(panel.frame["date"].max().date())] * 2,
+            "volatility": [0.1, 0.1],
+            "score": [2.0, 1.0],
+        }
+    )
+    result = build_portfolio(
+        trades,
+        {"sizing": "equal", "corr_cap": 0.60, "corr_lookback": 5},
+        panel=panel,
+    )
+    assert result["weight"].gt(0).sum() == 1
+    assert result.loc[result["weight"].eq(0), "portfolio_rejected_reason"].eq(
+        "correlation_cap"
+    ).all()
+
+
+def test_sector_cap_without_historical_pit_classification_is_unsupported():
+    trades = pd.DataFrame(
+        {"symbol": ["AAA"], "entry_date": ["2020-01-03"], "volatility": [0.1]}
+    )
+    with pytest.raises(UnsupportedPortfolioData, match="sector"):
+        build_portfolio(trades, {"sizing": "equal", "sector_cap": 0.20})
+
+
+def test_spy_regime_reduces_exposure_using_only_prior_prices():
+    dates = pd.bdate_range("2019-01-02", periods=40)
+    rows = []
+    for symbol in ("AAA", "SPY"):
+        closes = np.linspace(100, 120, len(dates)) if symbol == "AAA" else np.linspace(120, 80, len(dates))
+        for date, close in zip(dates, closes):
+            rows.append(
+                {
+                    "date": date,
+                    "symbol": symbol,
+                    "open": close,
+                    "high": close + 1,
+                    "low": close - 1,
+                    "close": close,
+                    "adj_close": close,
+                    "volume": 1_000_000,
+                    "dividends": 0.0,
+                    "stock_splits": 0.0,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    audit = _panel().audit
+    panel = ResearchPanel(frame, audit)
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "entry_date": [str(dates[-1].date())],
+            "volatility": [0.1],
+        }
+    )
+    result = build_portfolio(
+        trades,
+        {"sizing": "equal", "regime": "sma_200", "regime_sma_window": 20},
+        panel=panel,
+    )
+    assert result["regime_exposure"].iloc[0] == pytest.approx(0.5)
+    assert result["weight"].sum() == pytest.approx(0.5)
+
+
 def test_daily_portfolio_equity_uses_weights_cash_and_two_sided_costs():
     panel = _panel(("AAA", "BBB"))
     trades = pd.DataFrame(
@@ -183,6 +273,31 @@ def test_daily_portfolio_equity_uses_weights_cash_and_two_sided_costs():
     assert ledger["entry_cost"].sum() > 0
     assert ledger["exit_cost"].sum() > 0
     assert ledger["net_return"].lt(ledger["gross_return"]).all()
+
+
+def test_stock_split_adjusts_live_shares_instead_of_creating_fake_loss():
+    panel = _panel()
+    frame = panel.frame.copy()
+    split_date = frame["date"].iloc[3]
+    frame.loc[frame["date"].ge(split_date), ["open", "high", "low", "close", "adj_close"]] /= 2.0
+    frame.loc[frame["date"].eq(split_date), "stock_splits"] = 2.0
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "signal_date": [str(frame["date"].iloc[0].date())],
+            "entry_date": [str(frame["date"].iloc[1].date())],
+            "entry_price": [float(frame["open"].iloc[1])],
+            "exit_date": [str(frame["date"].iloc[-1].date())],
+            "exit_price": [float(frame["close"].iloc[-1])],
+            "gross_return": [0.0],
+            "weight": [1.0],
+        }
+    )
+    curve, _, ledger = simulate_daily_portfolio(
+        trades, ResearchPanel(frame, panel.audit), initial_capital=100_000.0
+    )
+    assert curve["equity"].min() > 90_000.0
+    assert ledger["split_adjustment_count"].iloc[0] == 1
 
 
 def test_metrics_are_computed_from_daily_equity_and_known_drawdown():

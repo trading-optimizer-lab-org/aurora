@@ -44,6 +44,7 @@ def _features() -> pd.DataFrame:
             "date": dates,
             "symbol": ["AAA"] * len(dates),
             "breakout_20": [False, False, True, False, False, False],
+            "breakout_level_20": [101.0] * len(dates),
             "rvol50": [1.0, 1.1, 2.0, 1.0, 1.0, 1.0],
             "adj_close": [100, 101, 104, 103, 102, 101],
             "sma_150": [99] * len(dates),
@@ -76,6 +77,7 @@ def test_breakout_entry_waits_for_first_causal_breakout_close():
     assert result.iloc[0]["signal_date"] == pd.Timestamp("2020-01-06")
     assert result.iloc[0]["available_at"] == pd.Timestamp("2020-01-06")
     assert result.iloc[0]["entry_rule"] == "breakout_20"
+    assert result.iloc[0]["breakout_level"] == pytest.approx(101.0)
 
 
 def test_rvol_and_sma_entries_apply_real_filters():
@@ -137,4 +139,3 @@ def test_learned_weights_only_use_rows_available_before_training_cutoff():
     assert first == second
     assert sum(first.values()) == pytest.approx(1.0)
     assert all(value >= 0 for value in first.values())
-
