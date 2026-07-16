@@ -1,0 +1,480 @@
+name: Stock Protocol Scientific Rebuild 360 Jobs
+
+"on":
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/stock-protocol-scientific-validity
+    paths:
+      - .github/workflows/stock-protocol-scientific-rebuild-360jobs.yml
+
+concurrency:
+  group: stock-protocol-scientific-rebuild-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}
+  QF_DATA_DIR: ${{ github.workspace }}/qf-data
+  MANIFEST: config/stock_protocol_36_tests.yaml
+  DATA_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest duckdb
+      - name: Validate complete scientific contract
+        run: >-
+          pytest -q
+          tests/test_stock_protocol_scientific_signals.py
+          tests/test_stock_protocol_scientific_layers.py
+          tests/test_stock_protocol_scientific_engine.py
+          tests/test_stock_protocol_scientific_validation.py
+          tests/test_stock_protocol_scientific_governance.py
+          tests/test_stock_protocol_scientific_variants.py
+          tests/test_stock_protocol_scientific_artifact.py
+          tests/test_stock_protocol_scientific_campaign.py
+          tests/test_stock_protocol_scientific_pipeline.py
+          tests/test_stock_protocol_scientific_cross_validation.py
+          tests/test_stock_protocol_scientific_postselection.py
+          tests/test_stock_protocol_scientific_workflow.py
+          tests/test_free_us_daily.py
+      - name: Confirm selection and locked policy
+        run: |
+          echo "locked_opened=false"
+          echo "validation_used_for_selection=false"
+
+  data_plan:
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_a: ${{ steps.plan.outputs.matrix_a }}
+      matrix_b: ${{ steps.plan.outputs.matrix_b }}
+    steps:
+      - id: plan
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print("matrix_a=" + json.dumps(list(range(16)), separators=(",", ":")))
+          print("matrix_b=" + json.dumps(list(range(16, 32)), separators=(",", ":")))
+          PY
+
+  build_universe:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Build current-universe backfill source
+        run: python -m aurora.cli.forge data free-us-daily build-universe --output json
+      - name: Download bounded SPY and S&P benchmark histories
+        run: >-
+          python -m aurora.cli.forge data free-us-daily build-benchmarks
+          --symbols SPY,^GSPC --end 2021-01-01 --output json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-universe
+          path: qf-data/prices/free_us_daily
+          retention-days: 14
+
+  download_data_a:
+    needs: [data_plan, build_universe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        shard: ${{ fromJSON(needs.data_plan.outputs.matrix_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-universe
+          path: qf-data/prices/free_us_daily
+      - name: Download one bounded real price shard
+        run: >-
+          python -m aurora.cli.forge data free-us-daily download-prices
+          --start max --end 2021-01-01 --workers 1 --batch-size 15
+          --sleep-between-batches 1.5 --retries 3 --retry-wait-seconds 2
+          --shard-count 32 --shard-index "${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-price-shard-${{ matrix.shard }}
+          path: |
+            qf-data/prices/free_us_daily/raw
+            qf-data/prices/free_us_daily/normalized
+            qf-data/prices/free_us_daily/reports
+            qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 14
+
+  download_data_b:
+    needs: [data_plan, build_universe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        shard: ${{ fromJSON(needs.data_plan.outputs.matrix_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-universe
+          path: qf-data/prices/free_us_daily
+      - name: Download one bounded real price shard
+        run: >-
+          python -m aurora.cli.forge data free-us-daily download-prices
+          --start max --end 2021-01-01 --workers 1 --batch-size 15
+          --sleep-between-batches 1.5 --retries 3 --retry-wait-seconds 2
+          --shard-count 32 --shard-index "${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-price-shard-${{ matrix.shard }}
+          path: |
+            qf-data/prices/free_us_daily/raw
+            qf-data/prices/free_us_daily/normalized
+            qf-data/prices/free_us_daily/reports
+            qf-data/prices/free_us_daily/catalog.sqlite
+          retention-days: 14
+
+  merge_data:
+    needs: [build_universe, download_data_a, download_data_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-universe
+          path: final-qf-data/prices/free_us_daily
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-scientific-price-shard-*
+          path: downloaded-shards
+      - name: Merge all bounded price shards exactly once
+        run: >-
+          python scripts/merge_free_us_daily_shards.py
+          --root final-qf-data/prices/free_us_daily
+          --shards-dir downloaded-shards
+      - name: Build immutable bounded research pack
+        run: >-
+          python scripts/prepare_stock_protocol_data.py
+          --source-root final-qf-data/prices/free_us_daily
+          --output-root final-qf-data/stock_protocol_pack
+          --manifest "$MANIFEST"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: final-qf-data/stock_protocol_pack
+          retention-days: 30
+
+  signal:
+    needs: merge_data
+    uses: ./.github/workflows/_stock-protocol-scientific-layer.yml
+    with:
+      layer: signal
+
+  weights:
+    needs: signal
+    uses: ./.github/workflows/_stock-protocol-scientific-layer.yml
+    with:
+      layer: weights
+      previous_artifact: stock-protocol-signal-merged
+      previous_snapshot_file: signal_snapshot.json
+
+  entries:
+    needs: weights
+    uses: ./.github/workflows/_stock-protocol-scientific-layer.yml
+    with:
+      layer: entries
+      previous_artifact: stock-protocol-weights-merged
+      previous_snapshot_file: weights_snapshot.json
+
+  exits:
+    needs: entries
+    uses: ./.github/workflows/_stock-protocol-scientific-layer.yml
+    with:
+      layer: exits
+      previous_artifact: stock-protocol-entries-merged
+      previous_snapshot_file: entries_snapshot.json
+
+  portfolio:
+    needs: exits
+    uses: ./.github/workflows/_stock-protocol-scientific-layer.yml
+    with:
+      layer: portfolio
+      previous_artifact: stock-protocol-exits-merged
+      previous_snapshot_file: exits_snapshot.json
+
+  costs:
+    needs: portfolio
+    uses: ./.github/workflows/_stock-protocol-scientific-layer.yml
+    with:
+      layer: costs
+      previous_artifact: stock-protocol-portfolio-merged
+      previous_snapshot_file: portfolio_snapshot.json
+
+  prepare_robustness:
+    needs: costs
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-pack, path: pack}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-costs-merged, path: costs}
+      - name: Prepare frozen preholdout candidates and 360 real tasks
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py prepare
+          --manifest "$MANIFEST"
+          --pack-root pack
+          --costs-snapshot costs/costs_snapshot.json
+          --output-root postselection
+          --task-count 360
+      - id: matrix
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          plan = json.load(open("postselection/robustness_plan.json", encoding="utf-8"))
+          assert plan["task_count"] == 360
+          print("matrix_a=" + json.dumps(plan["matrix_a"], separators=(",", ":")))
+          print("matrix_b=" + json.dumps(plan["matrix_b"], separators=(",", ":")))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-postselection-inputs
+          path: postselection
+          retention-days: 30
+
+  robustness_a:
+    needs: prepare_robustness
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        task_index: ${{ fromJSON(needs.prepare_robustness.outputs.matrix_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs, path: postselection}
+      - run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py evaluate-task
+          --plan postselection/robustness_plan.json
+          --returns postselection/development_returns.csv
+          --trades postselection/development_trades.csv
+          --task-index "${{ matrix.task_index }}"
+          --output-root task-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-robustness-task-${{ matrix.task_index }}
+          path: task-output
+          retention-days: 30
+
+  robustness_b:
+    needs: prepare_robustness
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        task_index: ${{ fromJSON(needs.prepare_robustness.outputs.matrix_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs, path: postselection}
+      - run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py evaluate-task
+          --plan postselection/robustness_plan.json
+          --returns postselection/development_returns.csv
+          --trades postselection/development_trades.csv
+          --task-index "${{ matrix.task_index }}"
+          --output-root task-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-robustness-task-${{ matrix.task_index }}
+          path: task-output
+          retention-days: 30
+
+  robustness_merge:
+    needs: [prepare_robustness, robustness_a, robustness_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs, path: postselection}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-robustness-task-*
+          path: robustness-tasks
+          merge-multiple: true
+      - name: Merge exact 360-task statistical evidence
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py merge
+          --plan postselection/robustness_plan.json
+          --tasks-root robustness-tasks
+          --output-root robustness-merged
+      - name: Freeze evidence before holdout
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py freeze-robustness
+          --manifest "$MANIFEST"
+          --walk-forward-snapshot postselection/walk_forward_snapshot.json
+          --robustness-results robustness-merged/robustness_results.csv
+          --output robustness-merged/robustness_snapshot.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-robustness-merged
+          path: robustness-merged
+          retention-days: 30
+
+  holdout:
+    needs: robustness_merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-pack, path: pack}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-robustness-merged, path: robustness}
+      - name: Evaluate frozen set once on final prelocked holdout
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py holdout
+          --manifest "$MANIFEST"
+          --pack-root pack
+          --robustness-snapshot robustness/robustness_snapshot.json
+          --output-root holdout-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-holdout
+          path: holdout-output
+          retention-days: 30
+
+  assemble:
+    needs: holdout
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-signal-merged, path: source/signal}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-weights-merged, path: source/weights}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-entries-merged, path: source/entries}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-exits-merged, path: source/exits}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-portfolio-merged, path: source/portfolio}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-costs-merged, path: source/costs}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs, path: source/postselection}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-robustness-merged, path: source/robustness}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-holdout, path: source/holdout}
+      - name: Assemble strict finalizer inputs
+        shell: bash
+        run: |
+          mkdir -p finalizer-input/daily_equity_curves finalizer-input/trade_ledgers finalizer-input/position_ledgers
+          cp source/signal/signal_results.csv finalizer-input/signal_results.csv
+          cp source/weights/weights_results.csv finalizer-input/weight_results.csv
+          cp source/entries/entries_results.csv finalizer-input/entry_results.csv
+          cp source/exits/exits_results.csv finalizer-input/exit_results.csv
+          cp source/portfolio/portfolio_results.csv finalizer-input/portfolio_results.csv
+          cp source/costs/costs_results.csv finalizer-input/cost_results.csv
+          cp source/postselection/walk_forward_results.csv finalizer-input/walk_forward_results.csv
+          cp source/robustness/robustness_results.csv finalizer-input/robustness_results.csv
+          cp source/robustness/parameter_stability.csv finalizer-input/parameter_stability.csv
+          cp source/robustness/statistical_tests.csv finalizer-input/statistical_tests.csv
+          cp source/holdout/holdout_2016_2020.csv finalizer-input/holdout_2016_2020.csv
+          cp source/postselection/data_audit.json finalizer-input/data_audit.json
+          cp source/postselection/daily_equity_curves/* finalizer-input/daily_equity_curves/
+          cp source/postselection/trade_ledgers/* finalizer-input/trade_ledgers/
+          cp source/postselection/position_ledgers/* finalizer-input/position_ledgers/
+          if [ -d source/holdout/daily_equity_curves ]; then cp source/holdout/daily_equity_curves/* finalizer-input/daily_equity_curves/; fi
+          if [ -d source/holdout/trade_ledgers ]; then cp source/holdout/trade_ledgers/* finalizer-input/trade_ledgers/; fi
+          if [ -d source/holdout/position_ledgers ]; then cp source/holdout/position_ledgers/* finalizer-input/position_ledgers/; fi
+          python - <<'PY'
+          import pandas as pd
+          paths = ["source/postselection/yearly_results.csv", "source/holdout/holdout_yearly_results.csv"]
+          frames = [pd.read_csv(path) for path in paths if __import__('pathlib').Path(path).is_file()]
+          if not frames:
+              raise SystemExit("no yearly results found")
+          pd.concat(frames, ignore_index=True).to_csv("finalizer-input/yearly_results.csv", index=False)
+          PY
+      - name: Build complete non-partial artifact
+        run: >-
+          python scripts/finalize_stock_protocol_scientific.py
+          --input-root finalizer-input
+          --output-root final-artifact
+          --manifest "$MANIFEST"
+      - name: Confirm final policy
+        run: |
+          echo "locked_opened=false"
+          echo "validation_used_for_selection=false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-rebuild-360jobs-results
+          path: final-artifact
+          retention-days: 90

@@ -1,0 +1,199 @@
+name: Reusable Stock Protocol Scientific Layer
+
+"on":
+  workflow_call:
+    inputs:
+      layer:
+        required: true
+        type: string
+      previous_artifact:
+        required: false
+        type: string
+        default: ""
+      previous_snapshot_file:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}
+  MANIFEST: config/stock_protocol_36_tests.yaml
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: pack
+      - if: ${{ inputs.previous_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.previous_artifact }}
+          path: previous
+      - name: Plan initial signal layer
+        if: ${{ inputs.previous_artifact == '' }}
+        shell: bash
+        run: |
+          dataset_hash=$(python -c "import json; print(json.load(open('pack/pack_audit.json'))['dataset_hash'])")
+          python scripts/run_stock_protocol_scientific_pipeline.py plan \
+            --manifest "$MANIFEST" \
+            --layer "${{ inputs.layer }}" \
+            --output plan.json \
+            --dataset-hash "$dataset_hash"
+      - name: Plan chained layer from exact frozen predecessor
+        if: ${{ inputs.previous_artifact != '' }}
+        shell: bash
+        run: |
+          dataset_hash=$(python -c "import json; print(json.load(open('pack/pack_audit.json'))['dataset_hash'])")
+          python scripts/run_stock_protocol_scientific_pipeline.py plan \
+            --manifest "$MANIFEST" \
+            --layer "${{ inputs.layer }}" \
+            --output plan.json \
+            --dataset-hash "$dataset_hash" \
+            --previous-snapshot "previous/${{ inputs.previous_snapshot_file }}"
+      - id: matrix
+        name: Export genuine task matrices
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          plan = json.load(open("plan.json", encoding="utf-8"))
+          print("matrix_a=" + json.dumps(plan["matrix_a"], separators=(",", ":")))
+          print("matrix_b=" + json.dumps(plan["matrix_b"], separators=(",", ":")))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-plan
+          path: plan.json
+          retention-days: 14
+
+  evaluate_a:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        task_index: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: pack
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-plan
+          path: plan
+      - name: Evaluate one real layer configuration
+        run: >-
+          python scripts/run_stock_protocol_scientific_pipeline.py evaluate
+          --manifest "$MANIFEST"
+          --plan plan/plan.json
+          --pack-root pack
+          --layer "${{ inputs.layer }}"
+          --task-index "${{ matrix.task_index }}"
+          --output-root task-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-task-${{ matrix.task_index }}
+          path: task-output
+          retention-days: 14
+
+  evaluate_b:
+    if: ${{ needs.plan.outputs.matrix_b != '[]' }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        task_index: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: pack
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-plan
+          path: plan
+      - name: Evaluate one real layer configuration
+        run: >-
+          python scripts/run_stock_protocol_scientific_pipeline.py evaluate
+          --manifest "$MANIFEST"
+          --plan plan/plan.json
+          --pack-root pack
+          --layer "${{ inputs.layer }}"
+          --task-index "${{ matrix.task_index }}"
+          --output-root task-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-task-${{ matrix.task_index }}
+          path: task-output
+          retention-days: 14
+
+  merge:
+    if: ${{ always() && needs.plan.result == 'success' && needs.evaluate_a.result == 'success' && (needs.evaluate_b.result == 'success' || needs.evaluate_b.result == 'skipped') }}
+    needs: [plan, evaluate_a, evaluate_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-plan
+          path: plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-${{ inputs.layer }}-task-*
+          path: tasks
+          merge-multiple: true
+      - name: Strict complete merge and immutable freeze
+        run: >-
+          python scripts/run_stock_protocol_scientific_pipeline.py merge
+          --manifest "$MANIFEST"
+          --layer "${{ inputs.layer }}"
+          --plan plan/plan.json
+          --tasks-root tasks
+          --output-root merged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-${{ inputs.layer }}-merged
+          path: merged
+          retention-days: 30
