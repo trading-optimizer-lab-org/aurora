@@ -11,6 +11,9 @@ name: Stock Protocol Scientific Full Suite
 permissions:
   contents: read
 
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
 jobs:
   full-suite:
     strategy:
