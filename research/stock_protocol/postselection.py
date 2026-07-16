@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 from pathlib import Path
@@ -29,6 +30,8 @@ REQUIRED_METHODS = (
     "leave_one_decade_out",
     "leave_one_symbol_out",
 )
+MIN_CANDIDATE_OBSERVATIONS = 252
+MIN_CSCV_OBSERVATIONS = 30
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> Path:
@@ -60,9 +63,23 @@ def _normalise_inputs(
     candidate_columns = [column for column in clean_returns if column != "date"]
     if len(candidate_columns) < 2:
         raise ValueError("robustness requires at least two frozen candidates")
-    numeric = clean_returns[candidate_columns].apply(pd.to_numeric, errors="coerce")
-    if len(numeric) < 30 or not np.isfinite(numeric.to_numpy(dtype=float)).all():
-        raise ValueError("robustness returns must be finite and non-trivial")
+    raw_numeric = clean_returns[candidate_columns]
+    numeric = raw_numeric.apply(pd.to_numeric, errors="coerce")
+    invalid = raw_numeric.notna() & numeric.isna()
+    if invalid.any().any():
+        raise ValueError("robustness returns contain non-numeric observations")
+    finite_or_missing = np.isfinite(numeric.fillna(0.0).to_numpy(dtype=float)).all()
+    if not finite_or_missing:
+        raise ValueError("robustness returns contain non-finite observations")
+    observation_counts = numeric.notna().sum()
+    too_short = observation_counts.loc[
+        observation_counts.lt(MIN_CANDIDATE_OBSERVATIONS)
+    ]
+    if not too_short.empty:
+        raise ValueError(
+            "robustness candidates lack 252 real observations: "
+            + ", ".join(f"{name}={int(count)}" for name, count in too_short.items())
+        )
     if numeric.le(-1.0).any().any():
         raise ValueError("robustness returns cannot be <= -100%")
     clean_returns[candidate_columns] = numeric
@@ -92,6 +109,35 @@ def _normalise_inputs(
         ["candidate_id", "entry_date", "symbol"]
     ).reset_index(drop=True)
     return clean_returns, clean_trades
+
+
+def _cscv_subset(numeric: pd.DataFrame) -> tuple[list[str], int]:
+    """Choose the largest causally observed candidate set with enough overlap."""
+
+    columns = list(numeric.columns)
+    best_columns: list[str] = []
+    best_count = 0
+    for left, right in itertools.combinations(columns, 2):
+        count = int(numeric[[left, right]].notna().all(axis=1).sum())
+        if count > best_count:
+            best_columns = [left, right]
+            best_count = count
+    if best_count < MIN_CSCV_OBSERVATIONS:
+        raise ValueError("no candidate pair has enough common observations for CSCV")
+    remaining = [column for column in columns if column not in best_columns]
+    while remaining:
+        choices = []
+        for column in remaining:
+            proposed = [*best_columns, column]
+            count = int(numeric[proposed].notna().all(axis=1).sum())
+            choices.append((count, column))
+        count, column = max(choices, key=lambda item: (item[0], item[1]))
+        if count < MIN_CSCV_OBSERVATIONS:
+            break
+        best_columns.append(column)
+        best_count = count
+        remaining.remove(column)
+    return best_columns, best_count
 
 
 def _input_hash(returns: pd.DataFrame, trades: pd.DataFrame) -> str:
@@ -148,7 +194,22 @@ def build_robustness_plan(
     clean_returns, clean_trades = _normalise_inputs(returns, trades)
     input_hash = _input_hash(clean_returns, clean_trades)
     candidates = [column for column in clean_returns if column != "date"]
-    decades = sorted((clean_returns["date"].dt.year // 10 * 10).unique().tolist())
+    numeric_returns = clean_returns[candidates]
+    observation_counts = {
+        candidate: int(numeric_returns[candidate].notna().sum())
+        for candidate in candidates
+    }
+    cscv_candidates, cscv_observations = _cscv_subset(numeric_returns)
+    decades_by_candidate = {
+        candidate: sorted(
+            (
+                clean_returns.loc[numeric_returns[candidate].notna(), "date"].dt.year
+                // 10
+                * 10
+            ).unique().tolist()
+        )
+        for candidate in candidates
+    }
     symbols_by_candidate = {
         candidate: sorted(
             clean_trades.loc[
@@ -157,13 +218,13 @@ def build_robustness_plan(
         )
         for candidate in candidates
     }
-    if not decades or not any(symbols_by_candidate.values()):
+    if not all(decades_by_candidate.values()) or not any(symbols_by_candidate.values()):
         raise ValueError("robustness leave-out tasks require decades and traded symbols")
 
     viable_partitions = [
         value
         for value in (4, 6, 8, 10, 12, 14, 16)
-        if len(clean_returns) >= value * 2
+        if cscv_observations >= value * 2
     ]
     tasks = [
         _task(
@@ -178,12 +239,15 @@ def build_robustness_plan(
         ),
         _task(
             "cscv_pbo",
-            {"partitions": viable_partitions[0]},
+            {"partitions": viable_partitions[0], "candidate_ids": cscv_candidates},
             input_hash,
         ),
         _task(
             "leave_one_decade_out",
-            {"candidate_id": candidates[0], "decade": int(decades[0])},
+            {
+                "candidate_id": candidates[0],
+                "decade": int(decades_by_candidate[candidates[0]][0]),
+            },
             input_hash,
         ),
         _task(
@@ -201,7 +265,7 @@ def build_robustness_plan(
                 input_hash,
             )
         )
-        for decade in decades:
+        for decade in decades_by_candidate[candidate]:
             tasks.append(
                 _task(
                     "leave_one_decade_out",
@@ -218,14 +282,23 @@ def build_robustness_plan(
                 )
             )
     for partitions in viable_partitions:
-        tasks.append(_task("cscv_pbo", {"partitions": partitions}, input_hash))
+        tasks.append(
+            _task(
+                "cscv_pbo",
+                {"partitions": partitions, "candidate_ids": cscv_candidates},
+                input_hash,
+            )
+        )
 
     unique: dict[str, dict[str, Any]] = {task["task_id"]: task for task in tasks}
     block_sizes = (5, 10, 21, 42, 63)
     sequence = 0
     while len(unique) < task_count:
         candidate = candidates[sequence % len(candidates)]
-        block_size = min(block_sizes[(sequence // len(candidates)) % len(block_sizes)], len(clean_returns))
+        block_size = min(
+            block_sizes[(sequence // len(candidates)) % len(block_sizes)],
+            observation_counts[candidate],
+        )
         parameters = {
             "candidate_id": candidate,
             "seed": int(seed_base + sequence + 1),
@@ -249,6 +322,9 @@ def build_robustness_plan(
         "tasks": planned,
         "input_hash": input_hash,
         "candidate_ids": candidates,
+        "observation_counts": observation_counts,
+        "cscv_candidate_ids": cscv_candidates,
+        "cscv_complete_observations": cscv_observations,
         "data_end": DEVELOPMENT_END.date().isoformat(),
         "locked_opened": False,
         "partial": False,
@@ -309,9 +385,16 @@ def execute_robustness_task(
         "pvalue": None,
     }
     samples = pd.DataFrame()
+    candidate_returns = (
+        returns[candidate_id].dropna()
+        if candidate_id != "__all__"
+        else pd.Series(dtype=float)
+    )
+    if candidate_id != "__all__":
+        result["n_observations"] = int(len(candidate_returns))
     if method == "circular_block_bootstrap":
         samples = block_bootstrap_records(
-            returns[candidate_id],
+            candidate_returns,
             n_samples=int(parameters["n_samples"]),
             block_size=int(parameters["block_size"]),
             seed=int(parameters["seed"]),
@@ -331,7 +414,7 @@ def execute_robustness_task(
         )
     elif method == "deflated_sharpe":
         dsr = deflated_sharpe_ratio(
-            returns[candidate_id], n_trials=int(parameters["n_trials"])
+            candidate_returns, n_trials=int(parameters["n_trials"])
         )
         result.update(
             {
@@ -342,8 +425,11 @@ def execute_robustness_task(
             }
         )
     elif method == "cscv_pbo":
+        cscv_candidates = [str(value) for value in parameters["candidate_ids"]]
+        cscv_returns = returns[cscv_candidates].dropna()
+        result["n_observations"] = int(len(cscv_returns))
         cscv = cscv_probability_of_backtest_overfitting(
-            returns.drop(columns="date"), partitions=int(parameters["partitions"])
+            cscv_returns, partitions=int(parameters["partitions"])
         )
         result.update(
             {
@@ -357,7 +443,7 @@ def execute_robustness_task(
         decade = int(parameters["decade"])
         remaining = returns.loc[
             returns["date"].dt.year.floordiv(10).mul(10).ne(decade), candidate_id
-        ]
+        ].dropna()
         if len(remaining) < 2:
             raise ValueError("leave-one-decade task has insufficient observations")
         result.update(

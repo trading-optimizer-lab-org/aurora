@@ -154,9 +154,15 @@ def prepare_postselection_inputs(
         raise ValueError("at least two frozen evaluated candidates are required")
     returns = return_parts[0]
     for part in return_parts[1:]:
-        returns = returns.merge(part, on="date", how="inner", validate="one_to_one")
-    if len(returns) < 252:
-        raise ValueError("common development returns are too short for robustness")
+        returns = returns.merge(part, on="date", how="outer", validate="one_to_one")
+    returns = returns.sort_values("date").reset_index(drop=True)
+    observation_counts = returns.drop(columns="date").notna().sum()
+    too_short = observation_counts.loc[observation_counts.lt(252)]
+    if not too_short.empty:
+        raise ValueError(
+            "development candidates lack 252 real observations: "
+            + ", ".join(f"{name}={int(count)}" for name, count in too_short.items())
+        )
     if not trade_parts:
         raise ValueError("frozen candidates produced no closed trades")
     trades = pd.concat(trade_parts, ignore_index=True)

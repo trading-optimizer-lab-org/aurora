@@ -53,6 +53,15 @@ def _trades() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _staggered_returns() -> pd.DataFrame:
+    dates = pd.bdate_range("1995-01-03", periods=600)
+    phase = np.arange(len(dates), dtype=float)
+    frame = pd.DataFrame({"date": dates, "stock_alpha": np.nan, "stock_beta": np.nan})
+    frame.loc[:399, "stock_alpha"] = 0.0005 + np.sin(phase[:400] / 11.0) * 0.004
+    frame.loc[200:, "stock_beta"] = 0.0003 + np.cos(phase[200:] / 17.0) * 0.005
+    return frame
+
+
 def test_robustness_plan_contains_360_unique_real_tasks():
     plan = build_robustness_plan(_returns(), _trades(), task_count=360)
 
@@ -78,6 +87,39 @@ def test_robustness_plan_rejects_locked_dates():
 
     with pytest.raises(ValueError, match="locked"):
         build_robustness_plan(returns, _trades(), task_count=360)
+
+
+def test_robustness_accepts_staggered_candidate_histories_without_zero_fill(tmp_path):
+    returns = _staggered_returns()
+    trades = _trades()
+    plan = build_robustness_plan(returns, trades, task_count=360)
+
+    assert plan["observation_counts"] == {"stock_alpha": 400, "stock_beta": 400}
+    assert plan["cscv_complete_observations"] == 200
+    assert plan["cscv_candidate_ids"] == ["stock_alpha", "stock_beta"]
+
+    task_index = next(
+        index
+        for index, task in enumerate(plan["tasks"])
+        if task["method"] == "circular_block_bootstrap"
+        and task["parameters"]["candidate_id"] == "stock_beta"
+    )
+    plan_path = tmp_path / "plan.json"
+    returns_path = tmp_path / "returns.csv"
+    trades_path = tmp_path / "trades.csv"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    returns.to_csv(returns_path, index=False)
+    trades.to_csv(trades_path, index=False)
+
+    result_path = execute_robustness_task(
+        plan_path=plan_path,
+        returns_path=returns_path,
+        trades_path=trades_path,
+        task_index=task_index,
+        output_root=tmp_path / "task-output",
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["n_observations"] == 400
 
 
 def test_bootstrap_task_records_real_samples(tmp_path):
