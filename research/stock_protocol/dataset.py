@@ -1,13 +1,13 @@
-"""Date-bounded daily panel and compact research-pack builder."""
+"""Discovery, canonicalisation and bounded loading of daily price datasets."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import date
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable
+import sqlite3
+from typing import Iterable, Sequence
 
 import pandas as pd
 
@@ -18,6 +18,14 @@ DAILY_COLUMNS = (
     "date", "symbol", "open", "high", "low", "close", "adj_close",
     "volume", "dividends", "stock_splits",
 )
+SUPPORTED_SUFFIXES = {".parquet", ".csv", ".duckdb", ".sqlite", ".db"}
+
+
+@dataclass(frozen=True)
+class DailySource:
+    path: Path
+    format: str
+    root_priority: int
 
 
 @dataclass(frozen=True)
@@ -33,9 +41,15 @@ class PackAudit:
     metadata_is_bitemporal: bool
     dataset_hash: str
     locked_opened: bool = False
+    source_files: int = 0
+    duplicates_removed: int = 0
+    invalid_rows_removed: int = 0
+    ignored_files: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, object]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["ignored_files"] = list(self.ignored_files)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -44,35 +58,141 @@ class ResearchPanel:
     audit: PackAudit
 
 
+def _roots(value: Path | Sequence[Path]) -> list[Path]:
+    if isinstance(value, Path):
+        return [value]
+    roots = [Path(item) for item in value]
+    if not roots:
+        raise ValueError("at least one data root is required")
+    return roots
+
+
+def discover_daily_sources(roots: Path | Sequence[Path]) -> list[DailySource]:
+    """Find every supported candidate under every configured root.
+
+    Discovery deliberately never stops after finding files in a preferred folder.
+    Canonical precedence is root order followed by the absolute path.
+    """
+
+    found: dict[Path, DailySource] = {}
+    for priority, root in enumerate(_roots(roots)):
+        if root.is_file() and root.suffix.lower() in SUPPORTED_SUFFIXES:
+            resolved = root.resolve()
+            found.setdefault(resolved, DailySource(resolved, root.suffix.lower()[1:], priority))
+            continue
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES:
+                resolved = path.resolve()
+                current = found.get(resolved)
+                candidate = DailySource(resolved, path.suffix.lower()[1:], priority)
+                if current is None or candidate.root_priority < current.root_priority:
+                    found[resolved] = candidate
+    return sorted(found.values(), key=lambda item: (item.root_priority, str(item.path).lower()))
+
+
 def _normalise_columns(frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
     frame = frame.copy()
     frame.columns = [str(col).strip().lower().replace(" ", "_") for col in frame.columns]
-    aliases = {"adjclose": "adj_close", "stock_split": "stock_splits"}
+    aliases = {
+        "adjclose": "adj_close",
+        "adjusted_close": "adj_close",
+        "stock_split": "stock_splits",
+        "ticker": "symbol",
+    }
     frame = frame.rename(columns={key: value for key, value in aliases.items() if key in frame.columns})
     if "date" not in frame.columns:
         for candidate in ("datetime", "timestamp", "index"):
             if candidate in frame.columns:
                 frame = frame.rename(columns={candidate: "date"})
                 break
+    if "date" not in frame.columns:
+        raise ValueError("missing date column")
     if "symbol" not in frame.columns:
         frame["symbol"] = symbol
     for column in DAILY_COLUMNS:
         if column not in frame.columns:
             frame[column] = 0.0 if column in {"dividends", "stock_splits", "volume"} else pd.NA
+    frame["symbol"] = frame["symbol"].astype(str).str.strip().str.upper()
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce", utc=True).dt.tz_convert(None).dt.normalize()
     for column in DAILY_COLUMNS[2:]:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame[list(DAILY_COLUMNS)]
 
 
-def _parquet_paths(root: Path) -> list[Path]:
-    candidates = []
-    for base in (root / "normalized", root / "benchmarks"):
-        if base.exists():
-            candidates.extend(base.rglob("*.parquet"))
-    if not candidates:
-        candidates.extend(root.rglob("*.parquet"))
-    return sorted({path for path in candidates if path.is_file()})
+def _read_parquet_bounded(path: Path, end: pd.Timestamp) -> pd.DataFrame:
+    try:
+        return pd.read_parquet(path, filters=[("date", "<=", end.to_pydatetime())])
+    except (TypeError, ValueError):
+        frame = pd.read_parquet(path)
+        date_column = next(
+            (column for column in frame.columns if str(column).strip().lower() in {"date", "datetime", "timestamp", "index"}),
+            None,
+        )
+        if date_column is None:
+            return frame
+        return frame.loc[pd.to_datetime(frame[date_column], errors="coerce", utc=True).dt.tz_convert(None) <= end]
+
+
+def _read_csv_bounded(path: Path, end: pd.Timestamp) -> pd.DataFrame:
+    chunks: list[pd.DataFrame] = []
+    for chunk in pd.read_csv(path, chunksize=250_000):
+        date_column = next(
+            (column for column in chunk.columns if str(column).strip().lower() in {"date", "datetime", "timestamp", "index"}),
+            None,
+        )
+        if date_column is None:
+            return chunk
+        dates = pd.to_datetime(chunk[date_column], errors="coerce", utc=True).dt.tz_convert(None)
+        chunks.append(chunk.loc[dates <= end])
+    return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+
+
+def _database_tables(path: Path, engine: str) -> list[str]:
+    if engine == "duckdb":
+        import duckdb
+
+        with duckdb.connect(str(path), read_only=True) as connection:
+            return [str(row[0]) for row in connection.execute("SHOW TABLES").fetchall()]
+    with sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True) as connection:
+        return [
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        ]
+
+
+def _read_database_bounded(path: Path, engine: str, end: pd.Timestamp) -> list[pd.DataFrame]:
+    frames: list[pd.DataFrame] = []
+    for table in _database_tables(path, engine):
+        quoted = '"' + table.replace('"', '""') + '"'
+        if engine == "duckdb":
+            import duckdb
+
+            with duckdb.connect(str(path), read_only=True) as connection:
+                columns = {str(row[0]).lower() for row in connection.execute(f"DESCRIBE {quoted}").fetchall()}
+                if "date" not in columns or not {"open", "high", "low", "close"}.issubset(columns):
+                    continue
+                frames.append(connection.execute(f"SELECT * FROM {quoted} WHERE CAST(date AS DATE) <= ?", [end.date()]).fetch_df())
+        else:
+            with sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True) as connection:
+                columns = {str(row[1]).lower() for row in connection.execute(f"PRAGMA table_info({quoted})").fetchall()}
+                if "date" not in columns or not {"open", "high", "low", "close"}.issubset(columns):
+                    continue
+                frames.append(pd.read_sql_query(f"SELECT * FROM {quoted} WHERE date <= ?", connection, params=[end.date().isoformat()]))
+    return frames
+
+
+def _read_source_bounded(source: DailySource, end: pd.Timestamp) -> list[pd.DataFrame]:
+    if source.format == "parquet":
+        return [_read_parquet_bounded(source.path, end)]
+    if source.format == "csv":
+        return [_read_csv_bounded(source.path, end)]
+    if source.format == "duckdb":
+        return _read_database_bounded(source.path, "duckdb", end)
+    if source.format in {"sqlite", "db"}:
+        return _read_database_bounded(source.path, "sqlite", end)
+    return []
 
 
 def _hash_frame(frame: pd.DataFrame) -> str:
@@ -82,48 +202,76 @@ def _hash_frame(frame: pd.DataFrame) -> str:
     return digest.hexdigest()
 
 
-def load_bounded_daily_panel(root: Path, end_date: str) -> ResearchPanel:
-    """Load daily OHLCV and fail if source data crosses the requested boundary."""
+def load_bounded_daily_panel(root: Path | Sequence[Path], end_date: str) -> ResearchPanel:
+    """Load all configured sources while materialising no row after ``end_date``."""
 
+    roots = _roots(root)
     end = pd.Timestamp(end_date).normalize()
-    paths = _parquet_paths(root)
-    if not paths:
-        raise FileNotFoundError(f"no daily parquet files found under {root}")
+    sources = discover_daily_sources(roots)
+    if not sources:
+        raise FileNotFoundError(f"no supported daily files found under {roots}")
     frames: list[pd.DataFrame] = []
-    locked_rows = 0
-    for path in paths:
-        symbol = path.stem.upper()
-        frame = pd.read_parquet(path)
-        frame = _normalise_columns(frame, symbol)
-        invalid = int((frame["date"] > end).sum())
-        locked_rows += invalid
-        if invalid:
-            raise ValueError(
-                f"source contains {invalid} rows after {end.date().isoformat()} in {path}"
-            )
-        frames.append(frame.dropna(subset=["date", "open", "high", "low", "close"]))
-    combined = pd.concat(frames, ignore_index=True)
-    combined = combined.drop_duplicates(["date", "symbol"], keep="last")
-    combined = combined.sort_values(["date", "symbol"]).reset_index(drop=True)
-    if combined.empty:
+    ignored: list[str] = []
+    for source_order, source in enumerate(sources):
+        try:
+            source_frames = _read_source_bounded(source, end)
+        except Exception as exc:  # one unrelated database must not hide valid price files
+            ignored.append(f"{source.path}: {type(exc).__name__}: {exc}")
+            continue
+        if not source_frames:
+            ignored.append(f"{source.path}: no compatible daily OHLC table")
+            continue
+        for frame_order, raw in enumerate(source_frames):
+            if raw.empty:
+                continue
+            try:
+                frame = _normalise_columns(raw, source.path.stem.upper())
+            except ValueError as exc:
+                ignored.append(f"{source.path}: {exc}")
+                continue
+            frame = frame.loc[frame["date"].le(end)].copy()
+            frame["_source_order"] = source_order
+            frame["_frame_order"] = frame_order
+            frames.append(frame)
+    if not frames:
         raise ValueError("bounded daily panel is empty")
+    combined = pd.concat(frames, ignore_index=True)
+    valid = combined["date"].notna()
+    for column in ("open", "high", "low", "close"):
+        valid &= combined[column].notna() & combined[column].gt(0)
+    valid &= combined["high"].ge(combined[["open", "close", "low"]].max(axis=1))
+    valid &= combined["low"].le(combined[["open", "close", "high"]].min(axis=1))
+    invalid_rows = int((~valid).sum())
+    combined = combined.loc[valid].sort_values(
+        ["date", "symbol", "_source_order", "_frame_order"], kind="stable"
+    )
+    before_dedup = len(combined)
+    combined = combined.drop_duplicates(["date", "symbol"], keep="first")
+    duplicates_removed = int(before_dedup - len(combined))
+    combined = combined[list(DAILY_COLUMNS)].sort_values(["date", "symbol"]).reset_index(drop=True)
+    if combined.empty:
+        raise ValueError("bounded daily panel is empty after quality controls")
     audit = PackAudit(
-        source_root=str(root),
+        source_root=json.dumps([str(item) for item in roots]),
         output_root="",
         data_start=combined["date"].min().date().isoformat(),
         data_end=end.date().isoformat(),
         rows=int(len(combined)),
         symbols=int(combined["symbol"].nunique()),
-        locked_rows=locked_rows,
+        locked_rows=0,
         survivorship_free=False,
         metadata_is_bitemporal=False,
         dataset_hash=_hash_frame(combined),
+        source_files=len(sources),
+        duplicates_removed=duplicates_removed,
+        invalid_rows_removed=invalid_rows,
+        ignored_files=tuple(ignored),
     )
     return ResearchPanel(combined, audit)
 
 
 def build_research_pack(
-    source_root: Path,
+    source_root: Path | Sequence[Path],
     output_root: Path,
     manifest: ProtocolManifest,
 ) -> PackAudit:
@@ -133,9 +281,7 @@ def build_research_pack(
         year_dir = output_root / f"year={int(year)}"
         year_dir.mkdir(parents=True, exist_ok=True)
         year_frame.to_parquet(year_dir / "data.parquet", index=False)
-    audit = PackAudit(
-        **{**panel.audit.to_json(), "output_root": str(output_root)}
-    )
+    audit = PackAudit(**{**panel.audit.to_json(), "ignored_files": tuple(panel.audit.ignored_files), "output_root": str(output_root)})
     (output_root / "pack_audit.json").write_text(
         json.dumps(audit.to_json(), indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -143,20 +289,47 @@ def build_research_pack(
     return audit
 
 
+def _pack_paths(root: Path) -> list[Path]:
+    legacy = sorted(root.glob("year=*/data.parquet"))
+    if legacy:
+        return legacy
+    full_pack = root / "pre2021_full_daily_pack"
+    if full_pack.is_dir():
+        return sorted(full_pack.rglob("*.parquet"))
+    return sorted(root.glob("shard_id=*/*.parquet")) + sorted(root.glob("shard-*.parquet"))
+
+
 def read_pack(root: Path, end_date: str = "2020-12-31") -> ResearchPanel:
-    frames = []
-    for path in sorted(root.glob("year=*/data.parquet")):
-        frames.append(pd.read_parquet(path))
+    frames = [pd.read_parquet(path, filters=[("date", "<=", pd.Timestamp(end_date).to_pydatetime())]) for path in _pack_paths(root)]
     if not frames:
         raise FileNotFoundError(f"no pack partitions found under {root}")
     frame = pd.concat(frames, ignore_index=True)
     end = pd.Timestamp(end_date).normalize()
-    if (pd.to_datetime(frame["date"]) > end).any():
+    frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
+    if frame["date"].gt(end).any():
         raise ValueError(f"pack contains rows after {end.date().isoformat()}")
-    frame["date"] = pd.to_datetime(frame["date"]).dt.normalize()
     audit_path = root / "pack_audit.json"
     if audit_path.exists():
-        audit = PackAudit(**json.loads(audit_path.read_text(encoding="utf-8")))
+        payload = json.loads(audit_path.read_text(encoding="utf-8"))
+        audit = PackAudit(
+            source_root=str(payload.get("source_root", "artifact")),
+            output_root=str(payload.get("output_root", root)),
+            data_start=payload.get("data_start") or payload.get("first_date"),
+            data_end=str(payload.get("data_end", end.date().isoformat())),
+            rows=int(payload.get("rows", payload.get("pack_rows", len(frame)))),
+            symbols=int(payload.get("symbols", payload.get("pack_symbols", frame["symbol"].nunique()))),
+            locked_rows=int(payload.get("locked_rows", 0)),
+            survivorship_free=bool(payload.get("survivorship_free", False)),
+            metadata_is_bitemporal=bool(payload.get("metadata_is_bitemporal", False)),
+            dataset_hash=str(payload["dataset_hash"]),
+            locked_opened=bool(payload.get("locked_opened", False)),
+            source_files=int(payload.get("source_files", 0)),
+            duplicates_removed=int(payload.get("duplicates_removed", 0)),
+            invalid_rows_removed=int(payload.get("invalid_rows_removed", 0)),
+            ignored_files=tuple(
+                str(item) for item in payload.get("ignored_files", ())
+            ),
+        )
     else:
         audit = PackAudit(
             source_root="pack", output_root=str(root),

@@ -40,6 +40,7 @@ jobs:
           tests/test_stock_protocol_engine.py
           tests/test_stock_protocol_manifest.py
           tests/test_stock_protocol_dataset.py
+          tests/test_stock_protocol_full_dataset.py
           tests/test_stock_protocol_shards.py
           tests/test_stock_protocol_workflow_contract.py
           tests/test_free_us_daily.py
