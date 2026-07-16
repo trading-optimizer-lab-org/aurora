@@ -1,6 +1,8 @@
-"""Causal next-open trade execution for daily OHLC data."""
+"""Causal next-open execution and conservative daily-bar exits."""
 
 from __future__ import annotations
+
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -8,13 +10,104 @@ import pandas as pd
 from .dataset import ResearchPanel
 
 
-def _exit_level(row: pd.Series, entry: float, rule: dict[str, object]) -> tuple[float | None, str | None]:
+MAX_HOLDING_SESSIONS = 252
+
+
+def _empty_trades() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "symbol",
+            "signal_date",
+            "entry_date",
+            "entry_price",
+            "exit_date",
+            "exit_price",
+            "optimistic_exit_price",
+            "exit_reason",
+            "gross_return",
+            "volatility",
+            "score",
+        ]
+    )
+
+
+def _levels(
+    signal: Mapping[str, Any], entry: float, rule: Mapping[str, object]
+) -> tuple[float | None, float | None]:
     kind = str(rule.get("kind", "none"))
+    atr = float(signal.get("atr20", 0.0) or 0.0)
+    stop: float | None = None
+    target: float | None = None
+    if kind in {"catastrophe_atr", "stop_and_target"} and "k" in rule:
+        stop = entry - float(rule["k"]) * atr
     if kind == "catastrophe_atr":
-        return entry - float(rule.get("k", 3)) * float(row.get("atr20", 0.0) or 0.0), "catastrophe_stop"
-    if kind == "take_profit":
-        return entry * (1.0 + float(rule.get("target_pct", 10)) / 100.0), "take_profit"
-    return None, None
+        stop = entry - float(rule.get("k", 3.0)) * atr
+    if kind in {"initial_stop_pct", "stop_and_target"} and "stop_pct" in rule:
+        stop = entry * (1.0 - float(rule["stop_pct"]) / 100.0)
+    if kind in {"take_profit", "stop_and_target"}:
+        target = entry * (1.0 + float(rule.get("target_pct", 10.0)) / 100.0)
+    return stop, target
+
+
+def _validate_rule(rule: Mapping[str, object]) -> int:
+    holding = int(rule.get("holding_sessions", 63))
+    if holding < 1 or holding > MAX_HOLDING_SESSIONS:
+        raise ValueError("holding_sessions must be between 1 and 252")
+    supported = {
+        "none",
+        "catastrophe_atr",
+        "initial_stop_pct",
+        "take_profit",
+        "stop_and_target",
+        "min_10",
+        "min_20",
+        "sma_50",
+        "trailing_atr",
+        "breakout_failure",
+    }
+    kind = str(rule.get("kind", "none"))
+    if kind not in supported:
+        raise NotImplementedError(f"exit rule {kind} is not implemented")
+    return holding
+
+
+def _prior_level(group: pd.DataFrame, index: int, kind: str) -> float | None:
+    if kind in {"min_10", "min_20"}:
+        window = int(kind.split("_", 1)[1])
+        values = pd.to_numeric(group["low"], errors="coerce").iloc[:index]
+        if len(values) < window:
+            return None
+        return float(values.tail(window).min())
+    if kind == "sma_50":
+        values = pd.to_numeric(group["adj_close"], errors="coerce").iloc[:index]
+        if len(values) < 50:
+            return None
+        return float(values.tail(50).mean())
+    return None
+
+
+def _evaluate_bar(
+    *,
+    row: pd.Series,
+    stop: float | None,
+    target: float | None,
+) -> tuple[float, float | None, str] | None:
+    open_price = float(row["open"])
+    high = float(row["high"])
+    low = float(row["low"])
+    if stop is not None and open_price <= stop:
+        return open_price, target, "gap_through_stop"
+    if target is not None and open_price >= target:
+        return open_price, target, "gap_through_target"
+    stop_hit = stop is not None and low <= stop
+    target_hit = target is not None and high >= target
+    if stop_hit and target_hit:
+        return float(stop), float(target), "stop_target_conflict_conservative"
+    if stop_hit:
+        return float(stop), target, "stop"
+    if target_hit:
+        return float(target), target, "take_profit"
+    return None
 
 
 def execute_next_open(
@@ -22,52 +115,92 @@ def execute_next_open(
     panel: ResearchPanel,
     exit_rule: dict[str, object],
 ) -> pd.DataFrame:
-    """Execute a signal at the next available open and realize a causal trade."""
+    """Execute distinct signal events at next open, one live trade per symbol."""
 
+    holding = _validate_rule(exit_rule)
     if signal_frame.empty:
-        return pd.DataFrame(columns=["symbol", "signal_date", "entry_date", "entry_price", "exit_date", "exit_price", "exit_reason", "gross_return"])
+        return _empty_trades()
+    required = {"signal_date", "available_at", "symbol"}
+    missing = required - set(signal_frame.columns)
+    if missing:
+        raise ValueError(f"signal frame missing columns: {sorted(missing)}")
+    signals = signal_frame.copy()
+    signals["signal_date"] = pd.to_datetime(signals["signal_date"], errors="raise")
+    signals["available_at"] = pd.to_datetime(signals["available_at"], errors="raise")
+    if (signals["available_at"] > signals["signal_date"]).any():
+        raise ValueError("signal cannot be used before available_at")
+    signals = signals.sort_values(["signal_date", "symbol", "score"], ascending=[True, True, False])
     source = panel.frame.sort_values(["symbol", "date"]).reset_index(drop=True)
-    by_symbol = {symbol: group.reset_index(drop=True) for symbol, group in source.groupby("symbol")}
+    source["date"] = pd.to_datetime(source["date"], errors="raise").dt.normalize()
+    if source["date"].max() >= pd.Timestamp("2021-01-01"):
+        raise ValueError("execution source crosses locked boundary")
+    by_symbol = {
+        symbol: group.reset_index(drop=True)
+        for symbol, group in source.groupby("symbol", sort=False)
+    }
+    unavailable_until: dict[str, pd.Timestamp] = {}
     trades: list[dict[str, object]] = []
-    hold = int(exit_rule.get("holding_sessions", 63))
-    for signal in signal_frame.itertuples(index=False):
-        group = by_symbol.get(signal.symbol)
+    kind = str(exit_rule.get("kind", "none"))
+
+    for signal in signals.itertuples(index=False):
+        signal_values = signal._asdict()
+        symbol = str(signal_values["symbol"])
+        group = by_symbol.get(symbol)
         if group is None:
             continue
-        idxs = group.index[group["date"] > pd.Timestamp(signal.signal_date)]
-        if len(idxs) == 0:
+        signal_date = pd.Timestamp(signal_values["signal_date"]).normalize()
+        entry_candidates = group.index[group["date"] > signal_date]
+        if len(entry_candidates) == 0:
             continue
-        entry_idx = int(idxs[0])
-        entry_row = group.iloc[entry_idx]
-        entry = float(entry_row["open"])
-        if not np.isfinite(entry) or entry <= 0:
+        entry_idx = int(entry_candidates[0])
+        entry_date = pd.Timestamp(group.iloc[entry_idx]["date"])
+        if symbol in unavailable_until and entry_date <= unavailable_until[symbol]:
             continue
-        stop, stop_reason = _exit_level(signal._asdict(), entry, exit_rule)
-        end_idx = min(entry_idx + hold, len(group) - 1)
+        entry_price = float(group.iloc[entry_idx]["open"])
+        if not np.isfinite(entry_price) or entry_price <= 0:
+            continue
+        stop, target = _levels(signal_values, entry_price, exit_rule)
+        end_idx = min(entry_idx + holding, len(group) - 1)
         exit_idx = end_idx
         exit_price = float(group.iloc[end_idx]["close"])
+        optimistic_exit_price: float | None = None
         exit_reason = "time_exit"
-        for idx in range(entry_idx, end_idx + 1):
-            row = group.iloc[idx]
-            if stop is not None:
-                if float(row["open"]) <= stop:
-                    exit_idx, exit_price, exit_reason = idx, float(row["open"]), "gap_through_stop"
-                    break
-                if float(row["low"]) <= stop:
-                    exit_idx, exit_price, exit_reason = idx, float(stop), stop_reason or "stop"
-                    break
-            if str(exit_rule.get("kind")) == "take_profit" and stop is not None and float(row["high"]) >= stop:
-                target = stop
-                exit_idx, exit_price, exit_reason = idx, target, "take_profit"
+        trailing_high = entry_price
+        breakout_level = signal_values.get("breakout_level")
+
+        for index in range(entry_idx, end_idx + 1):
+            row = group.iloc[index]
+            if kind == "trailing_atr":
+                atr = float(signal_values.get("atr20", 0.0) or 0.0)
+                trailing_stop = trailing_high - float(exit_rule.get("k", 3.0)) * atr
+                stop = trailing_stop if stop is None else max(stop, trailing_stop)
+            elif kind in {"min_10", "min_20", "sma_50"}:
+                stop = _prior_level(group, index, kind)
+            elif kind == "breakout_failure" and breakout_level is not None:
+                stop = float(breakout_level)
+
+            outcome = _evaluate_bar(row=row, stop=stop, target=target)
+            if outcome is not None:
+                exit_price, optimistic_exit_price, exit_reason = outcome
+                exit_idx = index
                 break
-        trades.append({
-            "symbol": signal.symbol,
-            "signal_date": pd.Timestamp(signal.signal_date).date().isoformat(),
-            "entry_date": group.iloc[entry_idx]["date"].date().isoformat(),
-            "entry_price": entry,
-            "exit_date": group.iloc[exit_idx]["date"].date().isoformat(),
-            "exit_price": exit_price,
-            "exit_reason": exit_reason,
-            "gross_return": exit_price / entry - 1.0,
-        })
-    return pd.DataFrame(trades)
+            trailing_high = max(trailing_high, float(row["high"]))
+
+        exit_date = pd.Timestamp(group.iloc[exit_idx]["date"])
+        unavailable_until[symbol] = exit_date
+        trades.append(
+            {
+                "symbol": symbol,
+                "signal_date": signal_date.date().isoformat(),
+                "entry_date": entry_date.date().isoformat(),
+                "entry_price": entry_price,
+                "exit_date": exit_date.date().isoformat(),
+                "exit_price": exit_price,
+                "optimistic_exit_price": optimistic_exit_price,
+                "exit_reason": exit_reason,
+                "gross_return": exit_price / entry_price - 1.0,
+                "volatility": float(signal_values.get("vol_12_1", np.nan)),
+                "score": float(signal_values.get("score", np.nan)),
+            }
+        )
+    return pd.DataFrame(trades) if trades else _empty_trades()
