@@ -17,6 +17,7 @@ because a real wheel build is too slow.
 from __future__ import annotations
 
 import ast
+import subprocess
 import sys
 import tomllib
 import warnings
@@ -54,19 +55,27 @@ def test_aurora_version_matches_pyproject() -> None:
 
 
 def test_aurora_import_is_canonical_without_deprecation_warning() -> None:
-    """Importing the canonical ``aurora`` package must not warn."""
-    for mod_name in list(sys.modules):
-        if mod_name == "aurora" or mod_name.startswith("aurora."):
-            del sys.modules[mod_name]
+    """Importing canonical ``aurora`` must not warn or corrupt test state.
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        __import__("aurora")
-
-    deprecations = [
-        w for w in caught if issubclass(w.category, DeprecationWarning)
-    ]
-    assert not deprecations
+    Import isolation matters here: deleting every ``aurora.*`` entry from
+    ``sys.modules`` leaves already-collected test modules holding stale class
+    and function objects. Stateful singletons such as ``GLOBAL_SEED`` and the
+    per-thread ``OOSGuard`` stack would then exist twice in the same process.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error::DeprecationWarning",
+            "-c",
+            "import aurora",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_qf_env_var_emits_deprecation_warning(monkeypatch) -> None:

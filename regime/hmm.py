@@ -173,7 +173,10 @@ class GaussianHMM:
         X, idx = _as_obs(returns)
         raw = self._model.predict(X)
         sorted_states = self._map_states(raw)
-        out = pd.Series(sorted_states.astype(float), index=idx, name="state")
+        # Pandas' nullable integer dtype preserves the semantic state type
+        # when reindexing inserts missing rows for NaN observations. A plain
+        # int64 Series would be promoted to float64 by that reindex.
+        out = pd.Series(sorted_states, index=idx, name="state", dtype="Int64")
         # Reindex to the caller-supplied index so dropped NaNs surface as
         # NaN (state cannot be assigned for those bars), mirroring the
         # symmetry contract documented on ``predict_proba``.
