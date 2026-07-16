@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LAYER_WORKFLOW = ROOT / ".github" / "workflows" / "_stock-protocol-scientific-layer.yml"
 CAMPAIGN_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-rebuild-360jobs.yml"
+RECOVERY_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-recovery-360jobs.yml"
 
 
 def test_reusable_layer_workflow_has_real_dynamic_matrices_and_strict_merge():
@@ -64,3 +65,32 @@ def test_campaign_assembles_every_required_artifact_file():
         "holdout_2016_2020.csv",
     ):
         assert name in text
+
+
+def test_recovery_reuses_only_frozen_layers_and_repeats_real_robustness():
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    for artifact in (
+        "stock-protocol-scientific-pack",
+        "stock-protocol-signal-merged",
+        "stock-protocol-weights-merged",
+        "stock-protocol-entries-merged",
+        "stock-protocol-exits-merged",
+        "stock-protocol-portfolio-merged",
+        "stock-protocol-costs-merged",
+    ):
+        assert artifact in text
+    assert "--task-count 360" in text
+    assert text.count("max-parallel: 180") == 2
+    assert "freeze-robustness" in text
+    assert "needs: robustness_merge" in text
+    assert "stock-protocol-scientific-rebuild-360jobs-results" in text
+    assert "continue-on-error" not in text
+
+
+def test_recovery_is_github_only_and_keeps_locked_closed():
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    assert 'DATA_END: "2020-12-31"' in text
+    assert 'LOCKED_START: "2021-01-01"' in text
+    assert "locked_opened=false" in text
+    assert "validation_used_for_selection=false" in text
+    assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
