@@ -78,7 +78,31 @@ def _validate_phase(frame: pd.DataFrame, label: str, data_end: str) -> pd.DataFr
         raise ValueError(f"phase {label} crosses data boundary")
     numeric = [column for column in (*MAXIMIZE, "max_drawdown", "expected_shortfall_5", "turnover", "average_days_invested", "total_costs") if column in frame]
     if numeric:
-        values = frame[numeric].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+        if "status" in frame:
+            allowed_statuses = {
+                "evaluated",
+                "fully_implemented",
+                "implemented_with_documented_limitation",
+                "unsupported_missing_data",
+                "unsupported_not_implemented",
+                "no_observations",
+                "failed",
+            }
+            unknown = set(frame["status"].dropna().astype(str)) - allowed_statuses
+            if unknown:
+                raise ValueError(f"phase {label} contains unknown statuses: {sorted(unknown)}")
+            metric_rows = frame["status"].astype(str).isin(
+                {
+                    "evaluated",
+                    "fully_implemented",
+                    "implemented_with_documented_limitation",
+                }
+            )
+        else:
+            metric_rows = pd.Series(True, index=frame.index)
+        values = frame.loc[metric_rows, numeric].apply(
+            pd.to_numeric, errors="coerce"
+        ).to_numpy(dtype=float)
         if not np.isfinite(values).all():
             raise ValueError(f"phase {label} contains non-finite metrics")
     return frame
