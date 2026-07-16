@@ -29,7 +29,7 @@ try:
     # Evict any aurora modules that were loaded with the old MAPPING so the
     # next import re-resolves through the corrected path.
     for _name in list(sys.modules):
-        if _name == 'aurora' or _name.startswith('aurora.'):
+        if _name != __name__ and (_name == 'aurora' or _name.startswith('aurora.')):
             del sys.modules[_name]
 except ImportError:
     # Editable finder not present (e.g. running from a wheel install). Fall
