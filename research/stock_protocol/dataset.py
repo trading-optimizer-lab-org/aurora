@@ -124,7 +124,7 @@ def _normalise_columns(frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
 def _read_parquet_bounded(path: Path, end: pd.Timestamp) -> pd.DataFrame:
     try:
         return pd.read_parquet(path, filters=[("date", "<=", end.to_pydatetime())])
-    except (TypeError, ValueError):
+    except Exception:
         frame = pd.read_parquet(path)
         date_column = next(
             (column for column in frame.columns if str(column).strip().lower() in {"date", "datetime", "timestamp", "index"}),
