@@ -157,6 +157,22 @@ def test_robustness_hash_ignores_non_contract_trade_columns_after_csv_roundtrip(
     assert result["input_hash"] == plan["input_hash"]
 
 
+def test_plan_replaces_impossible_leave_one_symbol_tasks_with_real_work():
+    trades = _trades().copy()
+    trades["symbol"] = trades["candidate_id"].map(
+        {"stock_alpha": "AAA", "stock_beta": "BBB"}
+    )
+    plan = build_robustness_plan(_returns(), trades, task_count=360)
+
+    assert "leave_one_symbol_out" not in {task["method"] for task in plan["tasks"]}
+    assert "leave_one_symbol_out" not in plan["required_methods"]
+    assert "two traded symbols" in plan["unavailable_methods"][
+        "leave_one_symbol_out"
+    ]
+    assert len(plan["tasks"]) == 360
+    assert len({task["task_id"] for task in plan["tasks"]}) == 360
+
+
 def test_prepare_excludes_short_histories_without_zero_fill():
     dates = pd.bdate_range("2014-01-01", periods=300)
     returns = pd.DataFrame(

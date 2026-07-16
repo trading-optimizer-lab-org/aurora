@@ -224,8 +224,33 @@ def build_robustness_plan(
         )
         for candidate in candidates
     }
-    if not all(decades_by_candidate.values()) or not any(symbols_by_candidate.values()):
+    viable_symbols_by_candidate = {
+        candidate: [
+            symbol
+            for symbol in symbols
+            if int(
+                clean_trades.loc[
+                    clean_trades["candidate_id"].eq(candidate)
+                    & clean_trades["symbol"].ne(symbol)
+                ].shape[0]
+            )
+            >= 2
+        ]
+        for candidate, symbols in symbols_by_candidate.items()
+    }
+    if not all(decades_by_candidate.values()) or not any(
+        symbols_by_candidate.values()
+    ):
         raise ValueError("robustness leave-out tasks require decades and traded symbols")
+
+    required_methods = set(REQUIRED_METHODS)
+    unavailable_methods: dict[str, str] = {}
+    if not any(viable_symbols_by_candidate.values()):
+        required_methods.remove("leave_one_symbol_out")
+        unavailable_methods["leave_one_symbol_out"] = (
+            "requires at least one frozen candidate with two traded symbols and "
+            "two remaining trades after exclusion"
+        )
 
     viable_partitions = [
         value
@@ -256,12 +281,24 @@ def build_robustness_plan(
             },
             input_hash,
         ),
-        _task(
-            "leave_one_symbol_out",
-            {"candidate_id": candidates[0], "symbol": symbols_by_candidate[candidates[0]][0]},
-            input_hash,
-        ),
     ]
+    first_viable_symbol = next(
+        (
+            (candidate, symbols[0])
+            for candidate, symbols in viable_symbols_by_candidate.items()
+            if symbols
+        ),
+        None,
+    )
+    if first_viable_symbol is not None:
+        candidate, symbol = first_viable_symbol
+        tasks.append(
+            _task(
+                "leave_one_symbol_out",
+                {"candidate_id": candidate, "symbol": symbol},
+                input_hash,
+            )
+        )
 
     for candidate in candidates:
         tasks.append(
@@ -279,7 +316,7 @@ def build_robustness_plan(
                     input_hash,
                 )
             )
-        for symbol in symbols_by_candidate[candidate]:
+        for symbol in viable_symbols_by_candidate[candidate]:
             tasks.append(
                 _task(
                     "leave_one_symbol_out",
@@ -315,9 +352,11 @@ def build_robustness_plan(
         unique[candidate_task["task_id"]] = candidate_task
         sequence += 1
     planned = list(unique.values())[:task_count]
-    if len(planned) != task_count or len({task["task_id"] for task in planned}) != task_count:
+    if len(planned) != task_count or len(
+        {task["task_id"] for task in planned}
+    ) != task_count:
         raise ValueError("failed to create exact unique robustness task coverage")
-    if set(REQUIRED_METHODS) - {task["method"] for task in planned}:
+    if required_methods - {task["method"] for task in planned}:
         raise ValueError("robustness plan lost a required method")
     split = min(MAX_MATRIX_JOBS, (task_count + 1) // 2)
     return {
@@ -329,6 +368,8 @@ def build_robustness_plan(
         "input_hash": input_hash,
         "candidate_ids": candidates,
         "observation_counts": observation_counts,
+        "required_methods": sorted(required_methods),
+        "unavailable_methods": unavailable_methods,
         "cscv_candidate_ids": cscv_candidates,
         "cscv_complete_observations": cscv_observations,
         "data_end": DEVELOPMENT_END.date().isoformat(),
