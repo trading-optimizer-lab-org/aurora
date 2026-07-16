@@ -311,15 +311,28 @@ La frontera maximiza CAGR neto, Sortino, Calmar y retorno por capital-dia, y
 minimiza drawdown, expected shortfall, turnover, duracion y costes. No se elige
 una estrategia por Sharpe aislado.
 
-## Datos pendientes
+## Dataset completo utilizado
 
-Faltan fundamentales y estimaciones point-in-time, delistings, clasificacion
-sectorial historica y un universo completamente libre de survivorship bias.
-El run uso {data_audit.get('symbols', 'no disponible')} simbolos y un backfill
-del universo actual, por lo que no permite una conclusion representativa sobre
-acciones. Hasta disponer de un universo historico point-in-time y retornos de
-exclusiones de cotizacion, no puede afirmarse rentabilidad definitiva ni
-abrirse locked.
+- Series totales: {data_audit.get('symbols', 'no disponible')}
+- Acciones aproximadas: {max(int(data_audit.get('symbols', 0)) - 1, 0)} mas SPY como benchmark
+- Filas diarias: {data_audit.get('rows', 'no disponible')}
+- Cobertura: {data_audit.get('data_start', 'no disponible')} a {data_audit.get('data_end', 'no disponible')}
+- Hash del dataset: `{data_audit.get('dataset_hash', 'no disponible')}`
+
+El run anterior de dos simbolos queda invalidado como prueba de rentabilidad.
+Este run aumenta la cobertura de 2 a {data_audit.get('symbols', 'no disponible')}
+series y usa exclusivamente el pack cuyo hash figura arriba.
+
+## Datos pendientes y sesgo restante
+
+Faltan fundamentales y estimaciones point-in-time, delistings completos y
+clasificacion sectorial historica. La fuente reutilizada contiene un universo
+global de cotizaciones Yahoo vigentes o recuperables, no una reconstruccion
+historica puramente estadounidense. Por tanto, el artifact conserva el nombre
+de contrato `aurora-full-us-daily-pre2021`, pero la auditoria no lo presenta
+falsamente como universo US point-in-time. Sigue existiendo survivorship bias.
+Hasta disponer de membresia historica, delistings y retornos de exclusiones, no
+puede afirmarse rentabilidad definitiva ni abrirse locked.
 
 ## Regla de decision
 

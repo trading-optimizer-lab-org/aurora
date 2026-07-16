@@ -1,10 +1,19 @@
 """Static contract for the existing-data full-universe scientific campaign."""
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-full-universe-360jobs.yml"
 LAYER = ROOT / ".github" / "workflows" / "_stock-protocol-scientific-layer.yml"
+
+
+def test_full_universe_workflow_is_valid_yaml():
+    document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert document["name"] == "Stock Protocol Scientific Full Universe 360 Jobs"
+    assert "prepare_data" in document["jobs"]
+    assert "assemble" in document["jobs"]
 
 
 def test_full_universe_workflow_reuses_exact_existing_artifact():
