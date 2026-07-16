@@ -36,6 +36,7 @@ jobs:
           tests/test_stock_protocol_scientific_pipeline.py
           tests/test_stock_protocol_scientific_cross_validation.py
           tests/test_stock_protocol_scientific_postselection.py
+          tests/test_stock_protocol_scientific_workflow.py
           tests/test_stock_protocol_engine.py
           tests/test_stock_protocol_manifest.py
           tests/test_stock_protocol_dataset.py
