@@ -12,6 +12,8 @@ from aurora.research.stock_protocol.pareto import pareto_frontier, pareto_fronti
 from aurora.research.stock_protocol.robustness import (
     benjamini_hochberg,
     block_bootstrap_records,
+    cscv_probability_of_backtest_overfitting,
+    deflated_sharpe_ratio,
     leave_one_group_out,
 )
 from aurora.research.stock_protocol.validation import (
@@ -181,3 +183,29 @@ def test_leave_one_group_out_really_removes_each_group():
     assert set(result["remaining_observations"]) == {4}
     assert result["left_out_observations"].eq(2).all()
 
+
+def test_deflated_sharpe_penalizes_multiple_trials_and_is_finite():
+    rng = np.random.default_rng(42)
+    returns = pd.Series(rng.normal(0.001, 0.01, 500))
+    few = deflated_sharpe_ratio(returns, n_trials=5)
+    many = deflated_sharpe_ratio(returns, n_trials=500)
+    assert 0.0 <= many["probability"] <= few["probability"] <= 1.0
+    assert many["expected_max_sharpe"] > few["expected_max_sharpe"]
+    assert all(np.isfinite(float(value)) for value in many.values())
+
+
+def test_cscv_pbo_uses_real_complementary_train_test_partitions():
+    rng = np.random.default_rng(7)
+    observations = 240
+    matrix = pd.DataFrame(
+        {
+            "persistent": rng.normal(0.002, 0.01, observations),
+            "noise_a": rng.normal(0.0, 0.02, observations),
+            "noise_b": rng.normal(-0.0002, 0.02, observations),
+        }
+    )
+    result = cscv_probability_of_backtest_overfitting(matrix, partitions=8)
+    assert result["combinations_evaluated"] > 1
+    assert 0.0 <= result["pbo"] <= 1.0
+    assert result["input_hash"]
+    assert result == cscv_probability_of_backtest_overfitting(matrix, partitions=8)
