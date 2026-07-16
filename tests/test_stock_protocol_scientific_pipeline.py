@@ -80,6 +80,7 @@ def _write_plan(path: Path) -> None:
             {
                 "layer": "signal",
                 "dataset_hash": "dataset-hash",
+                "locked_opened": False,
                 "task_count": 2,
                 "specs": [
                     {"candidate_id": "good", "spec": json.loads(_task_row("good", 0.15, -0.15)["spec_json"])},
