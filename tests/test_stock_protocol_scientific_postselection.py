@@ -12,6 +12,16 @@ from aurora.research.stock_protocol.postselection import (
     execute_robustness_task,
     merge_robustness_tasks,
 )
+from scripts.run_stock_protocol_scientific_postselection import (
+    freeze_robustness_snapshot,
+    holdout_result_row,
+)
+
+from aurora.research.stock_protocol.layers import freeze_snapshot, load_snapshot
+from aurora.research.stock_protocol.manifest import load_protocol_manifest
+
+
+MANIFEST = Path(__file__).resolve().parents[1] / "config" / "stock_protocol_36_tests.yaml"
 
 
 def _returns() -> pd.DataFrame:
@@ -149,3 +159,86 @@ def test_robustness_merge_requires_all_tasks_and_applies_fdr(tmp_path):
             tasks_root=task_root,
             output_root=tmp_path / "broken",
         )
+
+
+def test_robustness_snapshot_is_frozen_before_holdout(tmp_path):
+    manifest = load_protocol_manifest(MANIFEST)
+    input_artifact = tmp_path / "cost_results.csv"
+    pd.DataFrame({"candidate_id": ["stock_alpha", "stock_beta"]}).to_csv(
+        input_artifact, index=False
+    )
+    costs_snapshot = freeze_snapshot(
+        layer="costs",
+        input_artifact=input_artifact,
+        output_path=tmp_path / "costs_snapshot.json",
+        policy_hash=manifest.policy_hash,
+        dataset_hash="dataset-hash",
+        date_start="1995-01-01",
+        date_end="2015-12-31",
+        universe="current_universe_backfill",
+        decisions=[
+            {
+                "candidate_id": candidate_id,
+                "parameters": {
+                    "signal_test_id": 1,
+                    "signal_variant": {"lookback": 252, "skip": 21},
+                    "selection": {"kind": "top_n", "value": 1},
+                    "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+                    "exit": {"kind": "none", "holding_sessions": 63},
+                    "portfolio": {"sizing": "equal"},
+                    "cost_bps": 10,
+                    "horizon_sessions": 63,
+                },
+                "validation_metrics": {"cagr": 0.1},
+            }
+            for candidate_id in ("stock_alpha", "stock_beta")
+        ],
+    )
+    robustness_path = tmp_path / "robustness_results.csv"
+    pd.DataFrame(
+        {
+            "candidate_id": ["stock_alpha", "stock_beta"],
+            "robust_pass": [True, False],
+            "bootstrap_sharpe_p05": [0.2, -0.1],
+            "deflated_sharpe_probability": [0.98, 0.70],
+            "cscv_pbo_max": [0.3, 0.3],
+        }
+    ).to_csv(robustness_path, index=False)
+
+    frozen_path = freeze_robustness_snapshot(
+        manifest_path=MANIFEST,
+        costs_snapshot_path=costs_snapshot,
+        robustness_results_path=robustness_path,
+        output_path=tmp_path / "robustness_snapshot.json",
+    )
+
+    frozen = load_snapshot(
+        frozen_path,
+        expected_layer="robustness",
+        expected_policy_hash=manifest.policy_hash,
+        expected_dataset_hash="dataset-hash",
+    )
+    assert {item["candidate_id"] for item in frozen["decisions"]} == {
+        "stock_alpha",
+        "stock_beta",
+    }
+    assert frozen["date_end"] == "2015-12-31"
+    assert frozen["locked_opened"] is False
+    assert [
+        item["validation_metrics"]["robust_pass"]
+        for item in frozen["decisions"]
+    ] == [True, False]
+
+
+def test_holdout_row_cannot_claim_selection_or_repeat_evaluation():
+    row = holdout_result_row(
+        candidate_id="stock_alpha",
+        status="evaluated",
+        metrics={"cagr": 0.1, "sharpe": 0.8},
+    )
+
+    assert row["period_start"] == "2016-01-01"
+    assert row["period_end"] == "2020-12-31"
+    assert row["evaluation_count"] == 1
+    assert row["selection_used"] is False
+    assert row["locked_opened"] is False
