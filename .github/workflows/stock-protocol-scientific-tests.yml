@@ -22,7 +22,7 @@ jobs:
       - run: python -m pip install -e . pytest
       - name: Run stock protocol scientific tests
         run: >-
-          python -m pytest
+          pytest
           tests/test_stock_protocol_scientific_signals.py
           tests/test_stock_protocol_engine.py
           tests/test_stock_protocol_manifest.py
