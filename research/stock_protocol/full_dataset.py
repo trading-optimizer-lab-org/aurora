@@ -281,6 +281,14 @@ def build_full_pre2021_pack(
                 "sha256": _sha256(shard_path),
             }
         )
+    calendar_path = output_root / "trading_calendar.parquet"
+    connection.execute(
+        f"COPY (SELECT DISTINCT date FROM canonical ORDER BY date) "
+        f"TO {_quote(calendar_path.as_posix())} (FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
+    calendar_rows, calendar_start, calendar_end = connection.execute(
+        f"SELECT COUNT(*), MIN(date), MAX(date) FROM read_parquet({_quote(calendar_path.as_posix())})"
+    ).fetchone()
     first_date, last_date = connection.execute("SELECT MIN(date), MAX(date) FROM canonical").fetchone()
     connection.close()
     (output_root / "build.duckdb").unlink(missing_ok=True)
@@ -289,6 +297,14 @@ def build_full_pre2021_pack(
         "shards_expected": shard_count,
         "shards_found": len(shard_entries),
         "shards": shard_entries,
+        "calendar": {
+            "path": calendar_path.relative_to(output_root).as_posix(),
+            "rows": int(calendar_rows),
+            "first_date": str(calendar_start),
+            "last_date": str(calendar_end),
+            "bytes": calendar_path.stat().st_size,
+            "sha256": _sha256(calendar_path),
+        },
     }
     dataset_hash = hashlib.sha256(
         json.dumps(manifest_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
