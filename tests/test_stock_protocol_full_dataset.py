@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from aurora.research.stock_protocol.full_dataset import build_full_pre2021_pack
-from aurora.research.stock_protocol.dataset import read_pack
+from aurora.research.stock_protocol.dataset import read_pack, read_pack_range
 
 
 def _write_combined(path: Path, symbols: list[str], include_locked: bool = False) -> None:
@@ -85,3 +85,27 @@ def test_full_pack_fails_below_minimum_symbol_control(tmp_path: Path):
         assert "minimum symbol control" in str(exc)
     else:
         raise AssertionError("minimum symbol control did not fail")
+
+
+def test_full_pack_can_be_read_by_bounded_date_range_without_changing_identity(
+    tmp_path: Path,
+):
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    source.mkdir()
+    _write_combined(source / "prices.parquet", ["AAA", "BBB", "CCC"])
+    audit = build_full_pre2021_pack(
+        source_roots=[source],
+        output_root=output,
+        end_date="2020-12-31",
+        shard_count=4,
+        minimum_symbols=3,
+    )
+
+    panel = read_pack_range(output, start_date="2019-06-03", end_date="2019-06-28")
+
+    assert panel.audit.dataset_hash == audit["dataset_hash"]
+    assert panel.frame["date"].min() >= pd.Timestamp("2019-06-03")
+    assert panel.frame["date"].max() <= pd.Timestamp("2019-06-28")
+    assert panel.frame["symbol"].nunique() == 3
+    assert len(panel.frame) < audit["pack_rows"]

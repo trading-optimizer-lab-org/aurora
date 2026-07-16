@@ -8,6 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import aurora.research.stock_protocol.campaign as campaign_module
+import aurora.research.stock_protocol.signals as signals_module
+
 from aurora.research.stock_protocol.campaign import (
     DEVELOPMENT_END,
     HOLDOUT_END,
@@ -143,6 +146,38 @@ def test_evaluation_produces_daily_equity_and_real_ledgers():
     assert result.metrics["trades"] > 0
     assert result.locked_opened is False
     assert result.candidate_id == canonical_candidate_id(spec)
+
+
+def test_evaluation_computes_the_feature_panel_only_once(monkeypatch):
+    original = signals_module.compute_features
+    calls = 0
+
+    def counted(panel):
+        nonlocal calls
+        calls += 1
+        return original(panel)
+
+    monkeypatch.setattr(campaign_module, "compute_features", counted)
+    monkeypatch.setattr(signals_module, "compute_features", counted)
+    spec = {
+        "signal_test_id": 1,
+        "signal_variant": {"lookback": 252, "skip": 21},
+        "selection": {"kind": "top_n", "value": 1},
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"kind": "none", "holding_sessions": 20},
+        "portfolio": {"sizing": "equal", "asset_cap": 1.0},
+        "cost_bps": 10,
+    }
+
+    result = evaluate_spec(
+        _panel(),
+        spec,
+        start="2000-01-03",
+        end=str(_panel().frame["date"].max().date()),
+    )
+
+    assert result.status == "evaluated"
+    assert calls == 1
 
 
 def test_development_and_holdout_boundaries_are_disjoint_and_pre_locked():
