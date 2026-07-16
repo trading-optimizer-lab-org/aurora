@@ -13,6 +13,7 @@ from aurora.research.stock_protocol.postselection import (
     merge_robustness_tasks,
 )
 from scripts.run_stock_protocol_scientific_postselection import (
+    _filter_statistically_eligible_candidates,
     freeze_robustness_snapshot,
     holdout_result_row,
 )
@@ -120,6 +121,53 @@ def test_robustness_accepts_staggered_candidate_histories_without_zero_fill(tmp_
     )
     result = json.loads(result_path.read_text(encoding="utf-8"))
     assert result["n_observations"] == 400
+
+
+def test_prepare_excludes_short_histories_without_zero_fill():
+    dates = pd.bdate_range("2014-01-01", periods=300)
+    returns = pd.DataFrame(
+        {
+            "date": dates,
+            "stock_alpha": 0.001,
+            "stock_beta": 0.002,
+            "stock_short": np.nan,
+        }
+    )
+    returns.loc[:211, "stock_short"] = 0.003
+    trades = pd.DataFrame(
+        {
+            "candidate_id": ["stock_alpha", "stock_beta", "stock_short"],
+            "symbol": ["AAA", "BBB", "CCC"],
+            "entry_date": [dates[10], dates[20], dates[30]],
+            "net_return": [0.05, 0.04, 0.03],
+        }
+    )
+    decisions = [
+        {"candidate_id": candidate, "parameters": {}}
+        for candidate in ("stock_alpha", "stock_beta", "stock_short")
+    ]
+
+    clean_returns, clean_trades, clean_decisions, excluded, counts = (
+        _filter_statistically_eligible_candidates(returns, trades, decisions)
+    )
+
+    assert list(clean_returns) == ["date", "stock_alpha", "stock_beta"]
+    assert set(clean_trades["candidate_id"]) == {"stock_alpha", "stock_beta"}
+    assert {item["candidate_id"] for item in clean_decisions} == {
+        "stock_alpha",
+        "stock_beta",
+    }
+    assert counts["stock_short"] == 212
+    assert excluded.to_dict("records") == [
+        {
+            "candidate_id": "stock_short",
+            "development_observations": 212,
+            "minimum_required_observations": 252,
+            "closed_trades": 1,
+            "reason": "insufficient_development_observations",
+            "locked_opened": False,
+        }
+    ]
 
 
 def test_bootstrap_task_records_real_samples(tmp_path):

@@ -162,7 +162,11 @@ class WitnessRecorder:
 
     def __exit__(self, *exc) -> None:
         self._finished_at = datetime.utcnow().isoformat()
-        elapsed = (time.monotonic() - (self._t0 or time.monotonic()))
+        # ``0.0`` is a valid monotonic-clock reading on a freshly started
+        # Windows process. Truthiness would replace it with a second clock
+        # read and incorrectly record zero elapsed time.
+        started = self._t0 if self._t0 is not None else time.monotonic()
+        elapsed = time.monotonic() - started
         self.witness = Witness(
             run_id=self._run_id,
             kind=self._kind,

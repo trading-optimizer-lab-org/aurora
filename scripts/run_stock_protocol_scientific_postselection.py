@@ -20,6 +20,7 @@ from aurora.research.stock_protocol.layers import freeze_snapshot, load_snapshot
 from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from aurora.research.stock_protocol.portfolio import UnsupportedPortfolioData
 from aurora.research.stock_protocol.postselection import (
+    MIN_CANDIDATE_OBSERVATIONS,
     build_robustness_plan,
     execute_robustness_task,
     merge_robustness_tasks,
@@ -73,6 +74,81 @@ def _copy_candidate_ledgers(
         target = output_root / directory
         target.mkdir(parents=True, exist_ok=True)
         frame.to_csv(target / f"{candidate_id}.csv", index=False)
+
+
+def _filter_statistically_eligible_candidates(
+    returns: pd.DataFrame,
+    trades: pd.DataFrame,
+    decisions: list[dict[str, Any]],
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    list[dict[str, Any]],
+    pd.DataFrame,
+    dict[str, int],
+]:
+    """Exclude histories that cannot support the declared robustness tests."""
+
+    candidate_columns = [column for column in returns if column != "date"]
+    observation_counts = {
+        candidate: int(returns[candidate].notna().sum())
+        for candidate in candidate_columns
+    }
+    trade_counts = trades.groupby("candidate_id").size().to_dict()
+    exclusions: list[dict[str, Any]] = []
+    eligible: list[str] = []
+    for candidate in candidate_columns:
+        observations = observation_counts[candidate]
+        closed_trades = int(trade_counts.get(candidate, 0))
+        reason = ""
+        if observations < MIN_CANDIDATE_OBSERVATIONS:
+            reason = "insufficient_development_observations"
+        elif closed_trades == 0:
+            reason = "no_closed_trades"
+        if reason:
+            exclusions.append(
+                {
+                    "candidate_id": candidate,
+                    "development_observations": observations,
+                    "minimum_required_observations": MIN_CANDIDATE_OBSERVATIONS,
+                    "closed_trades": closed_trades,
+                    "reason": reason,
+                    "locked_opened": False,
+                }
+            )
+        else:
+            eligible.append(candidate)
+    if len(eligible) < 2:
+        raise ValueError(
+            "fewer than two candidates have enough real history and closed trades"
+        )
+    eligible_set = set(eligible)
+    filtered_returns = returns[["date", *eligible]].copy()
+    filtered_trades = trades.loc[
+        trades["candidate_id"].astype(str).isin(eligible_set)
+    ].copy()
+    filtered_decisions = [
+        decision
+        for decision in decisions
+        if str(decision["candidate_id"]) in eligible_set
+    ]
+    if len(filtered_decisions) != len(eligible):
+        raise ValueError("eligible robustness candidates lack frozen decisions")
+    exclusion_columns = [
+        "candidate_id",
+        "development_observations",
+        "minimum_required_observations",
+        "closed_trades",
+        "reason",
+        "locked_opened",
+    ]
+    return (
+        filtered_returns,
+        filtered_trades,
+        filtered_decisions,
+        pd.DataFrame(exclusions, columns=exclusion_columns),
+        observation_counts,
+    )
 
 
 def prepare_postselection_inputs(
@@ -156,23 +232,44 @@ def prepare_postselection_inputs(
     for part in return_parts[1:]:
         returns = returns.merge(part, on="date", how="outer", validate="one_to_one")
     returns = returns.sort_values("date").reset_index(drop=True)
-    observation_counts = returns.drop(columns="date").notna().sum()
-    too_short = observation_counts.loc[observation_counts.lt(252)]
-    if not too_short.empty:
-        raise ValueError(
-            "development candidates lack 252 real observations: "
-            + ", ".join(f"{name}={int(count)}" for name, count in too_short.items())
-        )
     if not trade_parts:
         raise ValueError("frozen candidates produced no closed trades")
     trades = pd.concat(trade_parts, ignore_index=True)
+    (
+        returns,
+        trades,
+        frozen_decisions,
+        statistical_exclusions,
+        observation_counts,
+    ) = _filter_statistically_eligible_candidates(
+        returns,
+        trades,
+        frozen_decisions,
+    )
     returns_path = output_root / "development_returns.csv"
     trades_path = output_root / "development_trades.csv"
     walk_forward_path = output_root / "walk_forward_results.csv"
     yearly_path = output_root / "yearly_results.csv"
+    exclusions_path = output_root / "statistical_exclusions.csv"
     returns.to_csv(returns_path, index=False)
     trades.to_csv(trades_path, index=False)
-    pd.DataFrame(walk_forward_rows).to_csv(walk_forward_path, index=False)
+    exclusion_reasons = (
+        statistical_exclusions.set_index("candidate_id")["reason"].to_dict()
+        if not statistical_exclusions.empty
+        else {}
+    )
+    walk_forward = pd.DataFrame(walk_forward_rows)
+    walk_forward["development_observations"] = (
+        walk_forward["candidate_id"].map(observation_counts).fillna(0).astype(int)
+    )
+    walk_forward["statistical_robustness_eligible"] = walk_forward[
+        "candidate_id"
+    ].isin({str(item["candidate_id"]) for item in frozen_decisions})
+    walk_forward["statistical_exclusion_reason"] = (
+        walk_forward["candidate_id"].map(exclusion_reasons).fillna("")
+    )
+    walk_forward.to_csv(walk_forward_path, index=False)
+    statistical_exclusions.to_csv(exclusions_path, index=False)
     pd.concat(yearly_parts, ignore_index=True).to_csv(yearly_path, index=False)
     walk_forward_snapshot = freeze_snapshot(
         layer="walk_forward",
@@ -201,6 +298,8 @@ def prepare_postselection_inputs(
         "locked_opened": False,
         "universe_mode": "current_universe_backfill",
         "survivorship_limited": True,
+        "statistical_candidates_eligible": len(frozen_decisions),
+        "statistical_candidates_excluded": len(statistical_exclusions),
     }
     data_audit_path = output_root / "data_audit.json"
     data_audit_path.write_text(
@@ -212,6 +311,7 @@ def prepare_postselection_inputs(
         "walk_forward_results": walk_forward_path,
         "walk_forward_snapshot": walk_forward_snapshot,
         "yearly_results": yearly_path,
+        "statistical_exclusions": exclusions_path,
         "robustness_plan": plan_path,
         "data_audit": data_audit_path,
     }

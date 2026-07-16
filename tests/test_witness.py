@@ -23,6 +23,17 @@ def test_recorder_captures_kind_and_compute_seconds():
     assert w.compute_seconds >= 0.005
 
 
+def test_recorder_accepts_zero_as_valid_monotonic_start(monkeypatch):
+    readings = iter([0.0, 0.01])
+    monkeypatch.setattr("aurora.core.witness.time.monotonic", lambda: next(readings))
+
+    with WitnessRecorder(kind="backtest") as rec:
+        pass
+
+    assert rec.witness is not None
+    assert rec.witness.compute_seconds == 0.01
+
+
 def test_recorder_hashes_input_and_output():
     with WitnessRecorder(
         kind="validation",
