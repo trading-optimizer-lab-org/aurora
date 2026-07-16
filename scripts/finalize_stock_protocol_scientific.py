@@ -72,7 +72,9 @@ def _validate_phase(frame: pd.DataFrame, label: str, data_end: str) -> pd.DataFr
     if "locked_opened" not in frame or "data_end" not in frame:
         raise ValueError(f"phase {label} lacks locked audit columns")
     _strict_bool_false(frame["locked_opened"], label)
-    if frame["data_end"].astype(str).ne(data_end).any():
+    phase_ends = pd.to_datetime(frame["data_end"], errors="raise").dt.normalize()
+    maximum_end = pd.Timestamp(data_end).normalize()
+    if phase_ends.gt(maximum_end).any() or phase_ends.ge(pd.Timestamp("2021-01-01")).any():
         raise ValueError(f"phase {label} crosses data boundary")
     numeric = [column for column in (*MAXIMIZE, "max_drawdown", "expected_shortfall_5", "turnover", "average_days_invested", "total_costs") if column in frame]
     if numeric:
@@ -128,32 +130,76 @@ def _write_recommendation(
             "implemented_with_documented_limitation"
         ).sum()
     )
-    text = f"""# Final Recommendation
+    text = f"""# Recomendacion final
 
-## Result
+## Resultado
 
 {top}
 
-This is a preliminary research result, not a definitive profitability estimate.
-The current universe is a retrospective current-universe backfill and therefore
-has survivorship bias. No candidate may be promoted to a definitive strategy
-until a historical point-in-time universe and delisting returns are available.
+El resultado es investigacion preliminar, no una estimacion definitiva de
+rentabilidad. El universo es un backfill del universo actual y tiene
+survivorship bias. Ninguna candidata puede promoverse a estrategia definitiva
+sin universo historico point-in-time y retornos de exclusiones de cotizacion.
 
-## Implementation
+## Implementacion
 
-- Fully implemented tests: {fully}
-- Implemented with documented limitations: {limited}
-- Unsupported because required data are missing: {len(unsupported)}
-- Locked period from 2021-01-01: not opened
-- Final pre-locked holdout 2016-2020: evaluated once, after freezing
+- Pruebas totalmente implementadas: {fully}
+- Pruebas con limitaciones documentadas: {limited}
+- Pruebas no soportadas por datos ausentes: {len(unsupported)}
+- Locked desde 2021-01-01: cerrado
+- Holdout 2016-2020: evaluado una sola vez despues de congelar decisiones
 
-## Decision rule
+## Errores del run anterior
 
-Do not select a strategy only by Sharpe. Prefer candidates that remain
-non-dominated after net costs, purged walk-forward, statistical robustness,
-drawdown, Sortino, Calmar, return per capital-day, duration and capacity checks.
-If the holdout or robustness evidence does not survive, the correct conclusion
-is that no valid strategy was found.
+El run anterior trataba scores finitos como compras, desacoplaba capas,
+componia operaciones como si fueran una cartera y presentaba variantes
+nominales que no cambiaban la simulacion. Su Pareto era un ranking disfrazado.
+
+## Correcciones aplicadas
+
+Se implementaron rankings transversales reales, señales binarias estrictas,
+entrada causal en la siguiente apertura, cartera diaria con efectivo y
+posiciones solapadas, pesos efectivos, costes netos, frozen layers con hashes,
+walk-forward purgado, robustez distribuida y Pareto no dominada real.
+
+## Valor marginal, entradas y salidas
+
+Los CSV por capa permiten medir el valor marginal de cada familia. Las entradas
+comparan compra inmediata, breakout, consolidacion, RVOL y filtros SMA. Las
+salidas comparan histeresis, fallo de breakout, minimos, SMA50, ATR, tiempo y
+take profit. Una mejora solo cuenta si sobrevive neta, fuera de muestra y sin
+empeorar de forma material riesgo, duracion o capacidad.
+
+## Sizing y costes
+
+El sizing se aplica a la cartera, incluyendo igual ponderacion, volatilidad
+inversa y limites soportados. La Pareto final se construye desde escenarios de
+costes netos de 5, 10, 25 y 50 bps por lado, no desde resultados brutos.
+
+## Walk-forward, robustez y holdout
+
+La seleccion usa exclusivamente datos anteriores a 2016 mediante walk-forward
+expansivo 10/3/1 con purga. La robustez incluye bootstrap por bloques, Sharpe
+deflactado, CSCV/PBO, FDR y exclusiones de grupos disponibles. El holdout
+2016-2020 se mira una sola vez y no se usa para reajustar parametros.
+
+## Pareto
+
+La frontera maximiza CAGR neto, Sortino, Calmar y retorno por capital-dia, y
+minimiza drawdown, expected shortfall, turnover, duracion y costes. No se elige
+una estrategia por Sharpe aislado.
+
+## Datos pendientes
+
+Faltan fundamentales y estimaciones point-in-time, delistings, clasificacion
+sectorial historica y un universo completamente libre de survivorship bias.
+Hasta tenerlos, no puede afirmarse rentabilidad definitiva ni abrirse locked.
+
+## Regla de decision
+
+Si robustez u holdout no sobreviven, la conclusion correcta es que no se ha
+encontrado una estrategia valida. La arquitectura recomendada solo se acepta si
+la evidencia sostiene las tres capas: seleccion, entrada y salida/riesgo.
 """
     (output_root / "final_recommendation.md").write_text(text, encoding="utf-8")
 
@@ -209,7 +255,7 @@ def finalize_scientific_artifact(
         encoding="utf-8",
     )
 
-    source = _pareto_source(phase_frames["portfolio_results.csv"])
+    source = _pareto_source(phase_frames["cost_results.csv"])
     frontier = pareto_frontier(source, maximize=MAXIMIZE, minimize=MINIMIZE)
     by_cost = pareto_frontiers_by(
         source,
