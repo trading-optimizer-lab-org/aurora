@@ -980,6 +980,46 @@ def test_quality_report_and_benchmarks(tmp_path, monkeypatch):
     assert all(b["status"] == "ok" for b in payload["benchmarks"])
 
 
+def test_build_benchmarks_propagates_strict_end_boundary(tmp_path, monkeypatch):
+    import aurora.core.free_us_daily as mod
+
+    calls = []
+
+    def _bounded_fetch(symbol, start=None, end=None, client=None):
+        calls.append({"symbol": symbol, "start": start, "end": end})
+        return _yf_frame(40)
+
+    monkeypatch.setattr(mod, "fetch_yfinance_raw", _bounded_fetch)
+    payload = build_benchmarks(
+        root=tmp_path,
+        symbols=("SPY", "^GSPC"),
+        end="2021-01-01",
+    )
+
+    assert [call["end"] for call in calls] == ["2021-01-01", "2021-01-01"]
+    assert payload["data_end_exclusive"] == "2021-01-01"
+
+
+def test_cli_build_benchmarks_exposes_end_boundary():
+    res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aurora.cli.forge",
+            "data",
+            "free-us-daily",
+            "build-benchmarks",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert res.returncode == 0, res.stderr
+    assert "--end" in res.stdout
+
+
 def test_cli_free_us_daily_help_smoke():
     res = subprocess.run(
         [
