@@ -125,6 +125,38 @@ def test_robustness_accepts_staggered_candidate_histories_without_zero_fill(tmp_
     assert result["n_observations"] == 400
 
 
+def test_robustness_hash_ignores_non_contract_trade_columns_after_csv_roundtrip(
+    tmp_path,
+):
+    returns = _returns()
+    trades = _trades().assign(
+        exit_date=lambda frame: frame["entry_date"] + pd.offsets.BDay(5),
+        strategy_label="frozen auxiliary metadata",
+    )
+    plan = build_robustness_plan(
+        returns,
+        trades[["candidate_id", "symbol", "entry_date", "net_return"]],
+        task_count=12,
+    )
+    plan_path = tmp_path / "plan.json"
+    returns_path = tmp_path / "returns.csv"
+    trades_path = tmp_path / "trades.csv"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    returns.to_csv(returns_path, index=False)
+    trades.to_csv(trades_path, index=False)
+
+    result_path = execute_robustness_task(
+        plan_path=plan_path,
+        returns_path=returns_path,
+        trades_path=trades_path,
+        task_index=0,
+        output_root=tmp_path / "task-output",
+    )
+
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["input_hash"] == plan["input_hash"]
+
+
 def test_prepare_excludes_short_histories_without_zero_fill():
     dates = pd.bdate_range("2014-01-01", periods=300)
     returns = pd.DataFrame(

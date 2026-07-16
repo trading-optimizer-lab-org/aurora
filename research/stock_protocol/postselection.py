@@ -32,6 +32,12 @@ REQUIRED_METHODS = (
 )
 MIN_CANDIDATE_OBSERVATIONS = 252
 MIN_CSCV_OBSERVATIONS = 30
+ROBUSTNESS_TRADE_COLUMNS = (
+    "candidate_id",
+    "symbol",
+    "entry_date",
+    "net_return",
+)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> Path:
@@ -142,7 +148,7 @@ def _cscv_subset(numeric: pd.DataFrame) -> tuple[list[str], int]:
 
 def _input_hash(returns: pd.DataFrame, trades: pd.DataFrame) -> str:
     canonical_returns = returns.copy()
-    canonical_trades = trades.copy()
+    canonical_trades = trades.loc[:, ROBUSTNESS_TRADE_COLUMNS].copy()
     for column in canonical_returns.columns:
         if column != "date":
             canonical_returns[column] = pd.to_numeric(
