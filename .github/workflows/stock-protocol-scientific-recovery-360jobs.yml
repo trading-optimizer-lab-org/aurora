@@ -7,6 +7,11 @@ name: Stock Protocol Scientific Recovery 360 Jobs
         description: Successful source layers from the failed scientific run
         required: true
         default: "29505808241"
+      resume_from_exits:
+        description: Resume portfolio and every downstream layer from frozen exits
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - codex/stock-protocol-scientific-validity
@@ -26,7 +31,17 @@ env:
   LOCKED_START: "2021-01-01"
 
 jobs:
+  resume_from_exits:
+    if: ${{ inputs.resume_from_exits }}
+    uses: ./.github/workflows/stock-protocol-scientific-resume-from-exits-360jobs.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+    permissions:
+      contents: read
+      actions: read
+
   validate:
+    if: ${{ !inputs.resume_from_exits }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
