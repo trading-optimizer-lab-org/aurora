@@ -146,8 +146,15 @@ def build_portfolio(
         if "volatility" not in result.columns:
             raise ValueError("inverse volatility sizing requires volatility")
         volatility = pd.to_numeric(active["volatility"], errors="coerce")
-        if volatility.isna().any() or volatility.le(0).any():
-            raise ValueError("inverse volatility sizing requires positive finite volatility")
+        usable_volatility = volatility.gt(0) & np.isfinite(volatility)
+        rejected_index = volatility.index[~usable_volatility]
+        result.loc[rejected_index, "portfolio_rejected_reason"] = "invalid_volatility"
+        active = active.loc[usable_volatility].copy()
+        volatility = volatility.loc[usable_volatility]
+        if active.empty:
+            raise UnsupportedPortfolioData(
+                "inverse volatility sizing requires positive finite volatility"
+            )
         inverse = 1.0 / volatility
         result.loc[active.index, "weight"] = inverse / inverse.groupby(active["entry_date"]).transform("sum")
     elif sizing == "equal":
