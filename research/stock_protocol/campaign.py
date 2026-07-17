@@ -299,11 +299,15 @@ def _bounded_panel(
         raise ValueError("campaign evaluation crosses locked boundary")
     if start > end:
         raise ValueError("campaign start must not exceed end")
-    frame = panel.frame.copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
-    if frame["date"].max() >= LOCKED_START:
+    frame = panel.frame
+    dates = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
+    if dates.max() >= LOCKED_START:
         raise ValueError("campaign panel contains locked data")
-    bounded = frame.loc[frame["date"].le(end)].copy()
+    if dates.max() <= end and dates.equals(frame["date"]):
+        bounded = frame
+    else:
+        bounded = frame.loc[dates.le(end)].copy()
+        bounded["date"] = dates.loc[dates.le(end)]
     if bounded.empty:
         raise ValueError("campaign panel has no bounded observations")
     return ResearchPanel(bounded, panel.audit)
@@ -316,6 +320,7 @@ def evaluate_spec(
     start: str,
     end: str,
     initial_capital: float = 100_000.0,
+    features: pd.DataFrame | None = None,
 ) -> EvaluationResult:
     """Evaluate one fully specified configuration into daily accounting ledgers."""
 
@@ -323,8 +328,8 @@ def evaluate_spec(
     end_date = pd.Timestamp(end).normalize()
     bounded = _bounded_panel(panel, start_date, end_date)
     materialized = json.loads(json.dumps(dict(spec), sort_keys=True, default=str))
-    features = compute_features(bounded)
-    candidates = _candidates_for_spec(bounded, materialized, features)
+    feature_frame = features if features is not None else compute_features(bounded)
+    candidates = _candidates_for_spec(bounded, materialized, feature_frame)
     candidates = candidates.loc[
         pd.to_datetime(candidates["signal_date"]).between(start_date, end_date)
     ].copy()
@@ -333,7 +338,7 @@ def evaluate_spec(
             "entry", {"kind": "immediate_next_open", "max_wait_sessions": 0}
         )
     )
-    events = apply_entry_rule(candidates, features, entry_rule)
+    events = apply_entry_rule(candidates, feature_frame, entry_rule)
     exit_rule = dict(materialized.get("exit", {"kind": "none", "holding_sessions": 63}))
     ranking_keep = None
     if exit_rule.get("kind") == "ranking_hysteresis":
@@ -342,7 +347,7 @@ def evaluate_spec(
             "kind": "top_percent",
             "value": float(exit_rule["keep_percentile"]),
         }
-        ranking_keep = _candidates_for_spec(bounded, keep_spec, features)
+        ranking_keep = _candidates_for_spec(bounded, keep_spec, feature_frame)
     trades = execute_next_open(events, bounded, exit_rule, ranking_keep=ranking_keep)
     candidate_id = canonical_candidate_id(materialized)
     if trades.empty:

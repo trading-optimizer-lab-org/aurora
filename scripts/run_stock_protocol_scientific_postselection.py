@@ -15,7 +15,7 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.research.stock_protocol.campaign import evaluate_spec
-from aurora.research.stock_protocol.dataset import read_pack
+from aurora.research.stock_protocol.dataset import read_pack_audit, read_pack_range
 from aurora.research.stock_protocol.layers import freeze_snapshot, load_snapshot
 from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from aurora.research.stock_protocol.portfolio import UnsupportedPortfolioData
@@ -26,8 +26,9 @@ from aurora.research.stock_protocol.postselection import (
     merge_robustness_tasks,
 )
 from aurora.research.stock_protocol.scientific_evaluation import (
-    evaluate_development_walk_forward,
+    evaluate_development_walk_forward_from_pack,
 )
+from aurora.research.stock_protocol.signals import compute_features
 
 
 DEVELOPMENT_END = "2015-12-31"
@@ -164,14 +165,14 @@ def prepare_postselection_inputs(
     manifest = load_protocol_manifest(manifest_path)
     if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
         raise ValueError("manifest violates the locked-period policy")
-    panel = read_pack(pack_root, manifest.data_end)
-    if panel.audit.locked_opened or panel.audit.locked_rows:
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
         raise ValueError("research pack contains locked data")
     snapshot = load_snapshot(
         costs_snapshot_path,
         expected_layer="costs",
         expected_policy_hash=manifest.policy_hash,
-        expected_dataset_hash=panel.audit.dataset_hash,
+        expected_dataset_hash=pack_audit.dataset_hash,
     )
     output_root.mkdir(parents=True, exist_ok=True)
     return_parts: list[pd.DataFrame] = []
@@ -182,8 +183,8 @@ def prepare_postselection_inputs(
     for decision in snapshot["decisions"]:
         candidate_id = str(decision["candidate_id"])
         spec = dict(decision["parameters"])
-        cross_validated = evaluate_development_walk_forward(
-            panel,
+        cross_validated = evaluate_development_walk_forward_from_pack(
+            pack_root,
             spec,
             start=manifest.research_start,
             end=DEVELOPMENT_END,
@@ -203,35 +204,19 @@ def prepare_postselection_inputs(
         walk_forward_rows.append(row)
         if walk_forward_result.status != "evaluated":
             continue
-        # The walk-forward result contains only its purged test folds. Keep
-        # those metrics as the out-of-sample diagnostic, but run robustness
-        # on the complete pre-holdout history of the already-frozen spec.
-        # No rule, parameter or rank is selected from this reconstruction.
-        development_result = evaluate_spec(
-            panel,
-            spec,
-            start=manifest.research_start,
-            end=DEVELOPMENT_END,
-        )
-        if development_result.status != "evaluated":
-            row["statistical_robustness_eligible"] = False
-            row["statistical_exclusion_reason"] = (
-                "full_development_reconstruction_not_evaluated"
-            )
-            continue
-        daily = _equity_returns(development_result.equity_curve).rename(
+        daily = _equity_returns(walk_forward_result.equity_curve).rename(
             columns={"daily_return": candidate_id}
         )
         return_parts.append(daily)
-        trades = development_result.trade_ledger.copy()
+        trades = walk_forward_result.trade_ledger.copy()
         if not trades.empty:
             trades.insert(0, "candidate_id", candidate_id)
             trades = trades.loc[pd.to_numeric(trades["net_return"], errors="coerce").notna()].copy()
             trade_parts.append(trades)
-        yearly = development_result.yearly.copy()
-        yearly["period"] = "development_full_frozen_spec"
+        yearly = walk_forward_result.yearly.copy()
+        yearly["period"] = "development_purged_walk_forward"
         yearly_parts.append(yearly)
-        _copy_candidate_ledgers(output_root, candidate_id, development_result)
+        _copy_candidate_ledgers(output_root, candidate_id, walk_forward_result)
         frozen_decisions.append(
             {
                 "candidate_id": candidate_id,
@@ -293,7 +278,7 @@ def prepare_postselection_inputs(
         input_artifact=walk_forward_path,
         output_path=output_root / "walk_forward_snapshot.json",
         policy_hash=manifest.policy_hash,
-        dataset_hash=panel.audit.dataset_hash,
+        dataset_hash=pack_audit.dataset_hash,
         date_start=manifest.research_start,
         date_end=DEVELOPMENT_END,
         universe="current_universe_backfill",
@@ -303,13 +288,13 @@ def prepare_postselection_inputs(
         returns, trades[["candidate_id", "symbol", "entry_date", "net_return"]], task_count=task_count
     )
     robustness_plan["policy_hash"] = manifest.policy_hash
-    robustness_plan["dataset_hash"] = panel.audit.dataset_hash
+    robustness_plan["dataset_hash"] = pack_audit.dataset_hash
     plan_path = output_root / "robustness_plan.json"
     plan_path.write_text(
         json.dumps(robustness_plan, indent=2, sort_keys=True), encoding="utf-8"
     )
     data_audit = {
-        **panel.audit.to_json(),
+        **pack_audit.to_json(),
         "data_end": manifest.data_end,
         "locked_rows": 0,
         "locked_opened": False,
@@ -317,13 +302,13 @@ def prepare_postselection_inputs(
         "survivorship_limited": True,
         "statistical_candidates_eligible": len(frozen_decisions),
         "statistical_candidates_excluded": len(statistical_exclusions),
-        "robustness_input_mode": "full_development_frozen_spec",
+        "robustness_input_mode": "purged_walk_forward_test_folds",
         "robustness_required_methods": robustness_plan.get("required_methods", []),
         "robustness_unavailable_methods": robustness_plan.get(
             "unavailable_methods", {}
         ),
         "walk_forward_used_for_diagnostics": True,
-        "full_development_used_for_selection": False,
+        "walk_forward_used_for_selection": False,
     }
     data_audit_path = output_root / "data_audit.json"
     data_audit_path.write_text(
@@ -429,13 +414,21 @@ def evaluate_frozen_holdout(
     """Evaluate the frozen Pareto set once on 2016-2020 without selecting again."""
 
     manifest = load_protocol_manifest(manifest_path)
-    panel = read_pack(pack_root, manifest.data_end)
+    pack_audit = read_pack_audit(pack_root)
+    panel = read_pack_range(
+        pack_root,
+        start_date="2014-01-01",
+        end_date=manifest.data_end,
+    )
+    if panel.audit.dataset_hash != pack_audit.dataset_hash:
+        raise ValueError("bounded holdout pack hash mismatch")
+    holdout_features = compute_features(panel)
     raw = json.loads(robustness_snapshot_path.read_text(encoding="utf-8"))
     snapshot = load_snapshot(
         robustness_snapshot_path,
         expected_layer="robustness",
         expected_policy_hash=manifest.policy_hash,
-        expected_dataset_hash=panel.audit.dataset_hash,
+        expected_dataset_hash=pack_audit.dataset_hash,
     )
     if raw.get("date_end") != DEVELOPMENT_END:
         raise ValueError("robustness was not frozen before final holdout")
@@ -450,6 +443,7 @@ def evaluate_frozen_holdout(
                 dict(decision["parameters"]),
                 start=HOLDOUT_START,
                 end=HOLDOUT_END,
+                features=holdout_features,
             )
             rows.append(
                 holdout_result_row(
