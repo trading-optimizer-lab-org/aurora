@@ -103,6 +103,16 @@ def test_recovery_is_github_only_and_keeps_locked_closed():
     assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
 
 
+def test_registered_recovery_can_dispatch_resume_from_exits_without_touching_main():
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    assert "resume_from_exits" in text
+    assert (
+        "uses: ./.github/workflows/stock-protocol-scientific-resume-from-exits-360jobs.yml"
+        in text
+    )
+    assert "source_run_id: ${{ inputs.source_run_id }}" in text
+
+
 def test_portfolio_recovery_resumes_from_frozen_exits_and_finishes_campaign():
     text = PORTFOLIO_RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     assert "source_run_id" in text
