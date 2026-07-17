@@ -260,7 +260,7 @@ def test_prepare_excludes_short_histories_without_zero_fill():
     ]
 
 
-def test_prepare_uses_full_frozen_development_history_for_robustness(
+def test_prepare_uses_purged_walk_forward_history_for_robustness(
     tmp_path, monkeypatch
 ):
     import scripts.run_stock_protocol_scientific_postselection as runner
@@ -277,7 +277,6 @@ def test_prepare_uses_full_frozen_development_history_for_robustness(
         dataset_hash="dataset-hash",
         to_json=lambda: {"dataset_hash": "dataset-hash"},
     )
-    panel = SimpleNamespace(audit=audit)
     decisions = [
         {"candidate_id": candidate, "parameters": {"candidate": candidate}}
         for candidate in ("stock_alpha", "stock_beta")
@@ -309,19 +308,14 @@ def test_prepare_uses_full_frozen_development_history_for_robustness(
         )
 
     monkeypatch.setattr(runner, "load_protocol_manifest", lambda _: manifest)
-    monkeypatch.setattr(runner, "read_pack", lambda *_: panel)
+    monkeypatch.setattr(runner, "read_pack_audit", lambda *_: audit)
     monkeypatch.setattr(runner, "load_snapshot", lambda *_args, **_kwargs: {"decisions": decisions})
     monkeypatch.setattr(
         runner,
-        "evaluate_development_walk_forward",
-        lambda _panel, spec, **_kwargs: SimpleNamespace(
-            result=result(spec["candidate"], 212), folds=[object()]
+        "evaluate_development_walk_forward_from_pack",
+        lambda _pack_root, spec, **_kwargs: SimpleNamespace(
+            result=result(spec["candidate"], 500), folds=[object()]
         ),
-    )
-    monkeypatch.setattr(
-        runner,
-        "evaluate_spec",
-        lambda _panel, spec, **_kwargs: result(spec["candidate"], 500),
     )
     captured = {}
 
@@ -353,8 +347,18 @@ def test_prepare_uses_full_frozen_development_history_for_robustness(
     walk_forward = pd.read_csv(outputs["walk_forward_results"])
     assert walk_forward["walk_forward_folds"].eq(1).all()
     data_audit = json.loads(outputs["data_audit"].read_text(encoding="utf-8"))
-    assert data_audit["robustness_input_mode"] == "full_development_frozen_spec"
-    assert data_audit["full_development_used_for_selection"] is False
+    assert data_audit["robustness_input_mode"] == "purged_walk_forward_test_folds"
+    assert data_audit["walk_forward_used_for_selection"] is False
+
+
+def test_postselection_runner_never_materialises_the_complete_pack():
+    source = Path(
+        "scripts/run_stock_protocol_scientific_postselection.py"
+    ).read_text(encoding="utf-8")
+
+    assert "read_pack(" not in source
+    assert "evaluate_development_walk_forward_from_pack" in source
+    assert "read_pack_range(" in source
 
 def test_bootstrap_task_records_real_samples(tmp_path):
     returns = _returns()
