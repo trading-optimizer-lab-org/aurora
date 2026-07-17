@@ -176,6 +176,37 @@ def test_inverse_volatility_weights_change_real_allocations():
     assert result["weight"].sum() == pytest.approx(1.0)
 
 
+def test_inverse_volatility_rejects_only_rows_without_positive_finite_volatility():
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB", "CCC", "DDD"],
+            "entry_date": ["2020-01-03"] * 4,
+            "volatility": [0.1, 0.0, np.nan, np.inf],
+        }
+    )
+
+    result = build_portfolio(trades, {"sizing": "inverse_vol"})
+
+    assert result.loc[result.symbol == "AAA", "weight"].iloc[0] == pytest.approx(1.0)
+    rejected = result.loc[result.symbol.isin(["BBB", "CCC", "DDD"])]
+    assert rejected["weight"].eq(0.0).all()
+    assert rejected["portfolio_rejected_reason"].eq("invalid_volatility").all()
+    assert np.isfinite(result["weight"]).all()
+
+
+def test_inverse_volatility_is_unsupported_when_no_row_has_usable_volatility():
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB"],
+            "entry_date": ["2020-01-03"] * 2,
+            "volatility": [0.0, np.nan],
+        }
+    )
+
+    with pytest.raises(UnsupportedPortfolioData, match="positive finite volatility"):
+        build_portfolio(trades, {"sizing": "inverse_vol"})
+
+
 def test_correlation_cap_rejects_redundant_simultaneous_position():
     panel = _panel(("AAA", "BBB"))
     trades = pd.DataFrame(
