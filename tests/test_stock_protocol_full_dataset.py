@@ -67,9 +67,10 @@ def test_full_pack_is_sharded_hashed_and_strictly_pre2021(tmp_path: Path):
     assert len(panel.frame) == audit["pack_rows"]
     assert panel.frame["date"].max() <= pd.Timestamp("2020-12-31")
     calendar = pd.read_parquet(output / "trading_calendar.parquet")
-    assert calendar["date"].is_monotonic_increasing
-    assert calendar["date"].is_unique
-    assert calendar["date"].max() <= pd.Timestamp("2020-12-31")
+    calendar_dates = pd.to_datetime(calendar["date"], errors="raise")
+    assert calendar_dates.is_monotonic_increasing
+    assert calendar_dates.is_unique
+    assert calendar_dates.max() <= pd.Timestamp("2020-12-31")
 
 
 def test_full_pack_fails_below_minimum_symbol_control(tmp_path: Path):
