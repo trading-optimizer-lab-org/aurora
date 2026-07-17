@@ -9,6 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 LAYER_WORKFLOW = ROOT / ".github" / "workflows" / "_stock-protocol-scientific-layer.yml"
 CAMPAIGN_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-rebuild-360jobs.yml"
 RECOVERY_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-recovery-360jobs.yml"
+PORTFOLIO_RECOVERY_WORKFLOW = (
+    ROOT
+    / ".github"
+    / "workflows"
+    / "stock-protocol-scientific-resume-from-exits-360jobs.yml"
+)
 FINALIZE_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-finalize-existing-run.yml"
 
 
@@ -95,6 +101,34 @@ def test_recovery_is_github_only_and_keeps_locked_closed():
     assert "locked_opened=false" in text
     assert "validation_used_for_selection=false" in text
     assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
+
+
+def test_portfolio_recovery_resumes_from_frozen_exits_and_finishes_campaign():
+    text = PORTFOLIO_RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    assert "source_run_id" in text
+    for artifact in (
+        "stock-protocol-scientific-pack",
+        "stock-protocol-signal-merged",
+        "stock-protocol-weights-merged",
+        "stock-protocol-entries-merged",
+        "stock-protocol-exits-merged",
+    ):
+        assert artifact in text
+    assert "layer: portfolio" in text
+    assert "previous_artifact: stock-protocol-exits-merged" in text
+    assert "layer: costs" in text
+    assert "previous_artifact: stock-protocol-portfolio-merged" in text
+    assert "--task-count 360" in text
+    assert text.count("max-parallel: 180") == 2
+    assert "freeze-robustness" in text
+    assert "needs: robustness_merge" in text
+    assert "finalize_stock_protocol_scientific.py" in text
+    assert "stock-protocol-scientific-full-universe-results" in text
+    assert 'DATA_END: "2020-12-31"' in text
+    assert 'LOCKED_START: "2021-01-01"' in text
+    assert "locked_opened=false" in text
+    assert "validation_used_for_selection=false" in text
+    assert "continue-on-error" not in text
 
 
 def test_finalizer_workflow_reuses_the_successful_frozen_run_without_research():
