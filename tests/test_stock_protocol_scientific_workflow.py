@@ -107,7 +107,7 @@ def test_portfolio_recovery_resumes_from_frozen_exits_and_finishes_campaign():
     text = PORTFOLIO_RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     assert "source_run_id" in text
     for artifact in (
-        "stock-protocol-scientific-pack",
+        "aurora-full-us-daily-pre2021",
         "stock-protocol-signal-merged",
         "stock-protocol-weights-merged",
         "stock-protocol-entries-merged",
@@ -123,7 +123,7 @@ def test_portfolio_recovery_resumes_from_frozen_exits_and_finishes_campaign():
     assert "freeze-robustness" in text
     assert "needs: robustness_merge" in text
     assert "finalize_stock_protocol_scientific.py" in text
-    assert "stock-protocol-scientific-full-universe-results" in text
+    assert "stock-protocol-scientific-full-universe-360jobs-results" in text
     assert 'DATA_END: "2020-12-31"' in text
     assert 'LOCKED_START: "2021-01-01"' in text
     assert "locked_opened=false" in text
