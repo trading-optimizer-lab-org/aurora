@@ -300,6 +300,42 @@ def test_stock_split_adjusts_live_shares_instead_of_creating_fake_loss():
     assert ledger["split_adjustment_count"].iloc[0] == 1
 
 
+def test_daily_portfolio_carries_last_close_across_symbol_market_holidays():
+    panel = _panel(("AAA", "BBB"))
+    missing_date = pd.Timestamp(panel.frame["date"].sort_values().unique()[3])
+    frame = panel.frame.loc[
+        ~(
+            panel.frame["symbol"].eq("AAA")
+            & panel.frame["date"].eq(missing_date)
+        )
+    ].copy()
+    aaa = frame.loc[frame["symbol"].eq("AAA")].sort_values("date")
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "signal_date": [aaa["date"].iloc[0]],
+            "entry_date": [aaa["date"].iloc[1]],
+            "entry_price": [aaa["open"].iloc[1]],
+            "exit_date": [aaa["date"].iloc[-1]],
+            "exit_price": [aaa["close"].iloc[-1]],
+            "gross_return": [aaa["close"].iloc[-1] / aaa["open"].iloc[1] - 1.0],
+            "weight": [1.0],
+        }
+    )
+
+    curve, positions, ledger = simulate_daily_portfolio(
+        trades,
+        ResearchPanel(frame, panel.audit),
+        initial_capital=100_000.0,
+    )
+
+    holiday_position = positions.loc[positions["date"].eq(missing_date)].iloc[0]
+    previous_close = aaa.loc[aaa["date"].lt(missing_date), "close"].iloc[-1]
+    assert holiday_position["close"] == pytest.approx(previous_close)
+    assert curve["equity"].gt(0).all()
+    assert ledger["status"].iloc[0] == "closed"
+
+
 def test_metrics_are_computed_from_daily_equity_and_known_drawdown():
     curve = pd.DataFrame(
         {
