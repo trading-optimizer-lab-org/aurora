@@ -251,7 +251,7 @@ def simulate_daily_portfolio(
         for symbol, position in positions.items():
             row = lookup.get((timestamp, symbol))
             if row is None:
-                raise ValueError(f"missing split observation for {symbol} on {timestamp.date()}")
+                continue
             split_ratio = float(row.get("stock_splits", 0.0) or 0.0)
             if split_ratio > 0 and not np.isclose(split_ratio, 1.0):
                 position["shares"] = float(position["shares"]) * split_ratio
@@ -278,9 +278,12 @@ def simulate_daily_portfolio(
         open_value = cash
         for symbol, position in positions.items():
             row = lookup.get((timestamp, symbol))
-            if row is None:
-                raise ValueError(f"missing daily valuation for {symbol} on {timestamp.date()}")
-            open_value += float(position["shares"]) * float(row["open"])
+            mark = (
+                float(row["open"])
+                if row is not None
+                else float(position["last_close"])
+            )
+            open_value += float(position["shares"]) * mark
 
         entering = ledger.loc[(ledger["entry_date"] == timestamp) & ledger["status"].eq("pending")]
         for index, trade in entering.sort_values(["weight", "symbol"], ascending=[False, True]).iterrows():
@@ -303,7 +306,11 @@ def simulate_daily_portfolio(
             shares = notional / entry_price
             entry_cost = notional * cost_rate
             cash -= notional + entry_cost
-            positions[symbol] = {"shares": shares, "trade_id": int(trade["trade_id"])}
+            positions[symbol] = {
+                "shares": shares,
+                "trade_id": int(trade["trade_id"]),
+                "last_close": entry_price,
+            }
             day_costs += entry_cost
             day_traded += notional
             ledger.loc[index, ["shares", "entry_notional", "entry_cost", "capacity_reduced", "status"]] = [
@@ -330,12 +337,14 @@ def simulate_daily_portfolio(
         market_value = 0.0
         for symbol, position in positions.items():
             row = lookup.get((timestamp, symbol))
-            if row is None:
-                raise ValueError(f"missing daily valuation for {symbol} on {timestamp.date()}")
-            dividend = float(row.get("dividends", 0.0) or 0.0)
-            if dividend:
-                cash += float(position["shares"]) * dividend
-            value = float(position["shares"]) * float(row["close"])
+            carried_forward = row is None
+            if row is not None:
+                dividend = float(row.get("dividends", 0.0) or 0.0)
+                if dividend:
+                    cash += float(position["shares"]) * dividend
+                position["last_close"] = float(row["close"])
+            close = float(position["last_close"])
+            value = float(position["shares"]) * close
             market_value += value
             position_rows.append(
                 {
@@ -343,8 +352,9 @@ def simulate_daily_portfolio(
                     "symbol": symbol,
                     "trade_id": int(position["trade_id"]),
                     "shares": float(position["shares"]),
-                    "close": float(row["close"]),
+                    "close": close,
                     "market_value": value,
+                    "price_carried_forward": carried_forward,
                 }
             )
         equity = cash + market_value
