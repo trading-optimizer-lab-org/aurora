@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 
 import pytest
+
+import scripts.run_stock_protocol_scientific_pipeline as pipeline_module
 
 from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from scripts.run_stock_protocol_scientific_pipeline import (
@@ -15,6 +18,12 @@ from scripts.run_stock_protocol_scientific_pipeline import (
 
 
 MANIFEST = Path(__file__).resolve().parents[1] / "config" / "stock_protocol_36_tests.yaml"
+
+
+def test_task_evaluation_uses_memory_bounded_pack_walk_forward():
+    source = inspect.getsource(pipeline_module.evaluate_task)
+    assert "evaluate_development_walk_forward_from_pack" in source
+    assert "read_pack(" not in source
 
 
 def test_signal_plan_contains_only_real_unique_tasks(tmp_path: Path):
