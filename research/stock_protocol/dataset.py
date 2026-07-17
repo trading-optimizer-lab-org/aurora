@@ -302,30 +302,47 @@ def _pack_paths(root: Path) -> list[Path]:
 def _read_pack_audit(root: Path, frame: pd.DataFrame, end: pd.Timestamp) -> PackAudit:
     audit_path = root / "pack_audit.json"
     if audit_path.exists():
-        payload = json.loads(audit_path.read_text(encoding="utf-8"))
-        return PackAudit(
-            source_root=str(payload.get("source_root", "artifact")),
-            output_root=str(payload.get("output_root", root)),
-            data_start=payload.get("data_start") or payload.get("first_date"),
-            data_end=str(payload.get("data_end", end.date().isoformat())),
-            rows=int(payload.get("rows", payload.get("pack_rows", len(frame)))),
-            symbols=int(payload.get("symbols", payload.get("pack_symbols", frame["symbol"].nunique()))),
-            locked_rows=int(payload.get("locked_rows", 0)),
-            survivorship_free=bool(payload.get("survivorship_free", False)),
-            metadata_is_bitemporal=bool(payload.get("metadata_is_bitemporal", False)),
-            dataset_hash=str(payload["dataset_hash"]),
-            locked_opened=bool(payload.get("locked_opened", False)),
-            source_files=int(payload.get("source_files", 0)),
-            duplicates_removed=int(payload.get("duplicates_removed", 0)),
-            invalid_rows_removed=int(payload.get("invalid_rows_removed", 0)),
-            ignored_files=tuple(str(item) for item in payload.get("ignored_files", ())),
-        )
+        return read_pack_audit(root)
     return PackAudit(
         source_root="pack", output_root=str(root),
         data_start=str(frame["date"].min().date()), data_end=end.date().isoformat(),
         rows=int(len(frame)), symbols=int(frame["symbol"].nunique()), locked_rows=0,
         survivorship_free=False, metadata_is_bitemporal=False,
         dataset_hash=_hash_frame(frame),
+    )
+
+
+def read_pack_audit(root: Path) -> PackAudit:
+    """Load the immutable pack identity without materialising price rows."""
+
+    audit_path = root / "pack_audit.json"
+    if not audit_path.is_file():
+        raise FileNotFoundError(f"pack audit is missing: {audit_path}")
+    payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    required = {"dataset_hash", "data_end"}
+    missing = required - set(payload)
+    if missing:
+        raise ValueError(f"pack audit missing fields: {sorted(missing)}")
+    rows = int(payload.get("rows", payload.get("pack_rows", 0)))
+    symbols = int(payload.get("symbols", payload.get("pack_symbols", 0)))
+    if rows <= 0 or symbols <= 0:
+        raise ValueError("pack audit has non-positive row or symbol count")
+    return PackAudit(
+        source_root=str(payload.get("source_root", "artifact")),
+        output_root=str(payload.get("output_root", root)),
+        data_start=payload.get("data_start") or payload.get("first_date"),
+        data_end=str(payload["data_end"]),
+        rows=rows,
+        symbols=symbols,
+        locked_rows=int(payload.get("locked_rows", 0)),
+        survivorship_free=bool(payload.get("survivorship_free", False)),
+        metadata_is_bitemporal=bool(payload.get("metadata_is_bitemporal", False)),
+        dataset_hash=str(payload["dataset_hash"]),
+        locked_opened=bool(payload.get("locked_opened", False)),
+        source_files=int(payload.get("source_files", 0)),
+        duplicates_removed=int(payload.get("duplicates_removed", 0)),
+        invalid_rows_removed=int(payload.get("invalid_rows_removed", 0)),
+        ignored_files=tuple(str(item) for item in payload.get("ignored_files", ())),
     )
 
 

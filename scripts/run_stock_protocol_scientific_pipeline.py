@@ -15,7 +15,7 @@ from aurora.research.stock_protocol.campaign import (
     expand_layer_specs,
     initial_signal_specs,
 )
-from aurora.research.stock_protocol.dataset import read_pack
+from aurora.research.stock_protocol.dataset import read_pack_audit
 from aurora.research.stock_protocol.layers import (
     freeze_snapshot,
     load_snapshot,
@@ -25,7 +25,7 @@ from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from aurora.research.stock_protocol.pareto import pareto_frontier
 from aurora.research.stock_protocol.portfolio import UnsupportedPortfolioData
 from aurora.research.stock_protocol.scientific_evaluation import (
-    evaluate_development_walk_forward,
+    evaluate_development_walk_forward_from_pack,
 )
 
 
@@ -189,8 +189,12 @@ def evaluate_task(
         raise ValueError("task_index is outside the dynamic plan")
     if plan.get("policy_hash") != manifest.policy_hash:
         raise ValueError("plan policy hash mismatch")
-    panel = read_pack(pack_root, manifest.data_end)
-    if panel.audit.dataset_hash != plan.get("dataset_hash"):
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack audit reports locked data access")
+    if pack_audit.data_end != manifest.data_end:
+        raise ValueError("research pack audit has an unexpected data boundary")
+    if pack_audit.dataset_hash != plan.get("dataset_hash"):
         raise ValueError("plan dataset hash mismatch")
     planned = plan["specs"][task_index]
     spec = dict(planned["spec"])
@@ -199,8 +203,8 @@ def evaluate_task(
     task_root = output_root / f"task={task_index:04d}"
     task_root.mkdir(parents=True, exist_ok=True)
     try:
-        cross_validated = evaluate_development_walk_forward(
-            panel,
+        cross_validated = evaluate_development_walk_forward_from_pack(
+            pack_root,
             spec,
             start=manifest.research_start,
             end=DEVELOPMENT_END.date().isoformat(),
@@ -216,7 +220,7 @@ def evaluate_task(
             "task_index": task_index,
             "horizon_sessions": int(spec.get("horizon_sessions", 0)),
             "cost_bps": int(spec.get("cost_bps", 0)),
-            "dataset_hash": panel.audit.dataset_hash,
+            "dataset_hash": pack_audit.dataset_hash,
             "policy_hash": manifest.policy_hash,
             "survivorship_limited": True,
             "locked_opened": False,
@@ -235,7 +239,7 @@ def evaluate_task(
         "task_index": task_index,
         "horizon_sessions": int(spec.get("horizon_sessions", 0)),
         "cost_bps": int(spec.get("cost_bps", 0)),
-        "dataset_hash": panel.audit.dataset_hash,
+        "dataset_hash": pack_audit.dataset_hash,
         "policy_hash": manifest.policy_hash,
         "survivorship_limited": True,
         "locked_opened": False,
