@@ -16,6 +16,12 @@ PORTFOLIO_RECOVERY_WORKFLOW = (
     / "stock-protocol-scientific-resume-from-exits-360jobs.yml"
 )
 FINALIZE_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-finalize-existing-run.yml"
+HOLDOUT_FINALIZE_WORKFLOW = (
+    ROOT
+    / ".github"
+    / "workflows"
+    / "_stock-protocol-scientific-holdout-finalize.yml"
+)
 
 
 def test_reusable_layer_workflow_has_real_dynamic_matrices_and_strict_merge():
@@ -137,7 +143,7 @@ def test_registered_recovery_can_dispatch_resume_from_exits_without_touching_mai
     text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     assert "resume_from_exits" in text
     assert (
-        "uses: ./.github/workflows/stock-protocol-scientific-resume-from-exits-360jobs.yml"
+        "uses: ./.github/workflows/_stock-protocol-scientific-holdout-finalize.yml"
         in text
     )
     assert "source_run_id: ${{ inputs.source_run_id }}" in text
@@ -172,7 +178,10 @@ def test_portfolio_recovery_resumes_from_frozen_exits_and_finishes_campaign():
 
 
 def test_finalizer_workflow_resumes_at_holdout_from_frozen_robustness():
-    text = FINALIZE_WORKFLOW.read_text(encoding="utf-8")
+    wrapper = FINALIZE_WORKFLOW.read_text(encoding="utf-8")
+    text = HOLDOUT_FINALIZE_WORKFLOW.read_text(encoding="utf-8")
+    assert "uses: ./.github/workflows/_stock-protocol-scientific-holdout-finalize.yml" in wrapper
+    assert "workflow_call:" in text
     for artifact in (
         "stock-protocol-scientific-pack",
         "stock-protocol-signal-merged",
