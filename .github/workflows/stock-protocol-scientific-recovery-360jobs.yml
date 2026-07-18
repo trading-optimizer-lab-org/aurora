@@ -64,16 +64,39 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    outputs:
+      full_universe: ${{ steps.pack.outputs.full_universe }}
     env:
       GH_TOKEN: ${{ github.token }}
       SOURCE_RUN_ID: ${{ inputs.source_run_id || '29505808241' }}
     steps:
-      - name: Download only frozen source-layer artifacts
+      - id: pack
+        name: Detect and download the frozen research pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_names="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts" \
+            --paginate --jq '.artifacts[].name')"
+          if grep -qx 'aurora-full-us-daily-pre2021' <<< "$artifact_names"; then
+            source_pack='aurora-full-us-daily-pre2021'
+            echo 'full_universe=true' >> "$GITHUB_OUTPUT"
+          elif grep -qx 'stock-protocol-scientific-pack' <<< "$artifact_names"; then
+            source_pack='stock-protocol-scientific-pack'
+            echo 'full_universe=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "source run has no supported frozen research pack" >&2
+            exit 1
+          fi
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$source_pack" \
+            --dir recovered/stock-protocol-scientific-pack
+      - name: Download only frozen source-layer results
         shell: bash
         run: |
           set -euo pipefail
           for name in \
-            stock-protocol-scientific-pack \
             stock-protocol-signal-merged \
             stock-protocol-weights-merged \
             stock-protocol-entries-merged \
@@ -104,7 +127,7 @@ jobs:
   prepare_robustness:
     needs: recover_source
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 360
     outputs:
       matrix_a: ${{ steps.matrix.outputs.matrix_a }}
       matrix_b: ${{ steps.matrix.outputs.matrix_b }}
@@ -260,7 +283,7 @@ jobs:
           retention-days: 30
 
   assemble:
-    needs: holdout
+    needs: [holdout, recover_source]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -268,6 +291,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-pack, path: source/data}
       - uses: actions/download-artifact@v4
         with: {name: stock-protocol-signal-merged, path: source/signal}
       - uses: actions/download-artifact@v4
@@ -324,12 +349,72 @@ jobs:
           --input-root finalizer-input
           --output-root final-artifact
           --manifest "$MANIFEST"
+      - name: Attach full-universe dataset provenance and required audits
+        if: ${{ needs.recover_source.outputs.full_universe == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in full_dataset_inventory.csv full_dataset_audit.json two_symbol_root_cause.md pre2021_pack_audit.json pre2021_symbol_coverage.csv data_shard_manifest.json dataset_exclusions.csv; do
+            cp "source/data/$name" "final-artifact/$name"
+          done
+      - name: Verify complete final contract
+        shell: bash
+        env:
+          FULL_UNIVERSE: ${{ needs.recover_source.outputs.full_universe }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import pandas as pd
+
+          root = Path("final-artifact")
+          summary = json.loads((root / "final_summary.json").read_text())
+          if summary["partial"] is not False or summary["locked_opened"] is not False:
+              raise SystemExit("final scientific summary is partial or unlocked")
+          if os.environ["FULL_UNIVERSE"] == "true":
+              required = {
+                  "full_dataset_inventory.csv", "full_dataset_audit.json",
+                  "two_symbol_root_cause.md", "pre2021_pack_audit.json",
+                  "pre2021_symbol_coverage.csv", "data_shard_manifest.json",
+                  "dataset_exclusions.csv", "implementation_matrix.csv",
+                  "signal_layer_results.csv", "entry_layer_results.csv",
+                  "exit_layer_results.csv", "portfolio_layer_results.csv",
+                  "cost_scenarios.csv", "walk_forward_results.csv",
+                  "robustness_results.csv", "holdout_2016_2020.csv",
+                  "pareto_frontier.csv", "final_recommendation.md",
+              }
+              missing = sorted(name for name in required if not (root / name).is_file())
+              if missing:
+                  raise SystemExit(f"missing full-universe outputs: {missing}")
+              audit = json.loads((root / "pre2021_pack_audit.json").read_text())
+              matrix = pd.read_csv(root / "implementation_matrix.csv")
+              if audit["pack_symbols"] != 4828 or audit["pack_rows"] != 20327106:
+                  raise SystemExit("final artifact dataset counts changed")
+              if audit["locked_opened"] is not False or audit["locked_rows"] != 0:
+                  raise SystemExit("locked data detected")
+              if len(matrix) != 36:
+                  raise SystemExit(f"implementation matrix must contain 36 tests, got {len(matrix)}")
+              for name in (
+                  "signal_layer_results.csv", "entry_layer_results.csv",
+                  "exit_layer_results.csv", "portfolio_layer_results.csv",
+                  "cost_scenarios.csv", "walk_forward_results.csv",
+                  "robustness_results.csv", "holdout_2016_2020.csv",
+                  "pareto_frontier.csv",
+              ):
+                  if pd.read_csv(root / name).empty:
+                      raise SystemExit(f"empty final evidence: {name}")
+          print("locked_opened=false")
+          print("validation_used_for_selection=false")
+          print("partial=false")
+          PY
       - name: Confirm final policy
         run: |
           echo "locked_opened=false"
           echo "validation_used_for_selection=false"
       - uses: actions/upload-artifact@v4
         with:
-          name: stock-protocol-scientific-rebuild-360jobs-results
+          name: ${{ needs.recover_source.outputs.full_universe == 'true' && 'stock-protocol-scientific-full-universe-360jobs-results' || 'stock-protocol-scientific-rebuild-360jobs-results' }}
           path: final-artifact
           retention-days: 90
