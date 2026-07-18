@@ -12,6 +12,7 @@ from aurora.research.stock_protocol.campaign import EvaluationResult
 from aurora.research.stock_protocol.dataset import PackAudit, ResearchPanel
 from aurora.research.stock_protocol.scientific_evaluation import (
     evaluate_development_walk_forward_from_pack,
+    evaluate_development_walk_forward_many_from_pack,
     stitch_fold_curves,
 )
 
@@ -123,3 +124,76 @@ def test_pack_walk_forward_reads_only_bounded_fold_windows(
     assert windows
     assert all((end - start).days <= 1_100 for start, end in windows)
     assert all(end <= pd.Timestamp("2015-12-31") for _, end in windows)
+
+
+def test_pack_walk_forward_many_reuses_each_fold_panel_and_feature_frame(
+    tmp_path: Path,
+    monkeypatch,
+):
+    dates = pd.bdate_range("1995-01-02", "2015-12-31")
+    pd.DataFrame({"date": dates}).to_parquet(
+        tmp_path / "trading_calendar.parquet", index=False
+    )
+    audit = PackAudit(
+        "source", str(tmp_path), "1995-01-02", "2020-12-31",
+        1_000_000, 4_828, 0, False, False, "full-dataset-hash",
+    )
+    windows: list[tuple[str, str]] = []
+    feature_frames: list[pd.DataFrame] = []
+
+    def bounded_loader(root, *, start_date, end_date):
+        windows.append((start_date, end_date))
+        frame = pd.DataFrame(
+            {
+                "date": pd.to_datetime([start_date, end_date]),
+                "symbol": ["AAA", "AAA"],
+                "open": [100.0, 101.0],
+                "high": [101.0, 102.0],
+                "low": [99.0, 100.0],
+                "close": [100.0, 101.0],
+                "adj_close": [100.0, 101.0],
+                "volume": [1_000.0, 1_000.0],
+                "dividends": [0.0, 0.0],
+                "stock_splits": [0.0, 0.0],
+            }
+        )
+        return ResearchPanel(frame, audit)
+
+    def features(frame):
+        feature_frame = frame[["date", "symbol"]].copy()
+        feature_frames.append(feature_frame)
+        return feature_frame
+
+    def no_observations(panel, spec, *, start, end, initial_capital, features):
+        assert features is feature_frames[-1]
+        return EvaluationResult(
+            candidate_id=spec["candidate"],
+            spec=dict(spec),
+            status="no_observations",
+            metrics={},
+            equity_curve=pd.DataFrame(),
+            trade_ledger=pd.DataFrame(),
+            position_ledger=pd.DataFrame(),
+            yearly=pd.DataFrame(),
+            locked_opened=False,
+            data_end=end,
+        )
+
+    monkeypatch.setattr(evaluation_module, "read_pack_range", bounded_loader)
+    monkeypatch.setattr(evaluation_module, "compute_features", features)
+    monkeypatch.setattr(evaluation_module, "evaluate_spec", no_observations)
+
+    results = evaluate_development_walk_forward_many_from_pack(
+        tmp_path,
+        [
+            {"candidate": "stock_alpha", "horizon_sessions": 63},
+            {"candidate": "stock_beta", "horizon_sessions": 63},
+        ],
+        start="1995-01-01",
+        end="2015-12-31",
+    )
+
+    assert len(results) == 2
+    assert all(result.result.status == "no_observations" for result in results)
+    assert len(windows) == len(results[0].folds)
+    assert len(feature_frames) == len(windows)
