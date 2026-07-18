@@ -311,16 +311,15 @@ def test_price_map_materializes_only_requested_symbols_and_dates():
     panel = _panel(("AAA", "BBB"))
     dates = pd.to_datetime(panel.frame["date"].sort_values().unique())
 
-    prices, lookup = _price_map(
+    calendar, lookup = _price_map(
         panel,
         symbols={"AAA"},
         start_date=dates[1],
         end_date=dates[-2],
     )
 
-    assert set(prices["symbol"]) == {"AAA"}
-    assert prices["date"].min() == dates[1]
-    assert prices["date"].max() == dates[-2]
+    assert calendar["date"].min() == dates[1]
+    assert calendar["date"].max() == dates[-2]
     assert lookup
     assert all(symbol == "AAA" for _, symbol in lookup)
     assert all(not isinstance(point, pd.Series) for point in lookup.values())

@@ -199,13 +199,17 @@ def _price_map(
 ) -> tuple[pd.DataFrame, dict[tuple[pd.Timestamp, str], _PricePoint]]:
     source = panel.frame
     dates = pd.to_datetime(source["date"], errors="raise").dt.normalize()
-    mask = pd.Series(True, index=source.index)
+    date_mask = pd.Series(True, index=source.index)
+    if start_date is not None:
+        date_mask &= dates.ge(pd.Timestamp(start_date).normalize())
+    if end_date is not None:
+        date_mask &= dates.le(pd.Timestamp(end_date).normalize())
+    calendar = pd.DataFrame(
+        {"date": dates.loc[date_mask].drop_duplicates().sort_values().to_numpy()}
+    )
+    mask = date_mask.copy()
     if symbols is not None:
         mask &= source["symbol"].astype(str).isin(symbols)
-    if start_date is not None:
-        mask &= dates.ge(pd.Timestamp(start_date).normalize())
-    if end_date is not None:
-        mask &= dates.le(pd.Timestamp(end_date).normalize())
     required = ["date", "symbol", "open", "close", "volume"]
     optional = ["dividends", "stock_splits"]
     missing = set(required) - set(source.columns)
@@ -216,7 +220,7 @@ def _price_map(
     for column in optional:
         if column not in prices:
             prices[column] = 0.0
-    if prices["date"].max() >= pd.Timestamp("2021-01-01"):
+    if calendar["date"].max() >= pd.Timestamp("2021-01-01"):
         raise ValueError("portfolio source crosses locked boundary")
     prices = prices.sort_values(["date", "symbol"]).drop_duplicates(["date", "symbol"], keep="last")
     lookup = {
@@ -238,7 +242,7 @@ def _price_map(
             "stock_splits",
         ]].itertuples(index=False, name=None)
     }
-    return prices, lookup
+    return calendar, lookup
 
 
 def simulate_daily_portfolio(
