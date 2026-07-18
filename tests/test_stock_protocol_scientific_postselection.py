@@ -312,9 +312,10 @@ def test_prepare_uses_purged_walk_forward_history_for_robustness(
     monkeypatch.setattr(runner, "load_snapshot", lambda *_args, **_kwargs: {"decisions": decisions})
     monkeypatch.setattr(
         runner,
-        "evaluate_development_walk_forward_from_pack",
-        lambda _pack_root, spec, **_kwargs: SimpleNamespace(
-            result=result(spec["candidate"], 500), folds=[object()]
+        "evaluate_development_walk_forward_many_from_pack",
+        lambda _pack_root, specs, **_kwargs: tuple(
+            SimpleNamespace(result=result(spec["candidate"], 500), folds=[object()])
+            for spec in specs
         ),
     )
     captured = {}
@@ -357,7 +358,7 @@ def test_postselection_runner_never_materialises_the_complete_pack():
     ).read_text(encoding="utf-8")
 
     assert "read_pack(" not in source
-    assert "evaluate_development_walk_forward_from_pack" in source
+    assert "evaluate_development_walk_forward_many_from_pack" in source
     assert "read_pack_range(" in source
 
 def test_bootstrap_task_records_real_samples(tmp_path):

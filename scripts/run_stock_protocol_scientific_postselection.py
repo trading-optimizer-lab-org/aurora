@@ -26,7 +26,7 @@ from aurora.research.stock_protocol.postselection import (
     merge_robustness_tasks,
 )
 from aurora.research.stock_protocol.scientific_evaluation import (
-    evaluate_development_walk_forward_from_pack,
+    evaluate_development_walk_forward_many_from_pack,
 )
 from aurora.research.stock_protocol.signals import compute_features
 
@@ -180,15 +180,20 @@ def prepare_postselection_inputs(
     walk_forward_rows: list[dict[str, Any]] = []
     yearly_parts: list[pd.DataFrame] = []
     frozen_decisions: list[dict[str, Any]] = []
-    for decision in snapshot["decisions"]:
+    source_decisions = list(snapshot["decisions"])
+    cross_validated_results = evaluate_development_walk_forward_many_from_pack(
+        pack_root,
+        [dict(decision["parameters"]) for decision in source_decisions],
+        start=manifest.research_start,
+        end=DEVELOPMENT_END,
+    )
+    if len(cross_validated_results) != len(source_decisions):
+        raise ValueError("walk-forward batch did not return every frozen candidate")
+    for decision, cross_validated in zip(
+        source_decisions, cross_validated_results, strict=True
+    ):
         candidate_id = str(decision["candidate_id"])
         spec = dict(decision["parameters"])
-        cross_validated = evaluate_development_walk_forward_from_pack(
-            pack_root,
-            spec,
-            start=manifest.research_start,
-            end=DEVELOPMENT_END,
-        )
         walk_forward_result = cross_validated.result
         row = {
             **walk_forward_result.result_row(),

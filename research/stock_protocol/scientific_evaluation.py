@@ -9,10 +9,16 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from .campaign import DEVELOPMENT_END, EvaluationResult, evaluate_spec
+from .campaign import (
+    DEVELOPMENT_END,
+    EvaluationResult,
+    canonical_candidate_id,
+    evaluate_spec,
+)
 from .dataset import ResearchPanel, read_pack_range
 from .metrics import compute_portfolio_metrics, yearly_returns
 from .portfolio import simulate_daily_portfolio
+from .signals import compute_features
 from .validation import PurgedFold, generate_purged_walk_forward
 
 
@@ -288,3 +294,154 @@ def evaluate_development_walk_forward_from_pack(
         data_end=end_date.date().isoformat(),
     )
     return CrossValidatedEvaluation(result, fold_frame, folds)
+
+
+def evaluate_development_walk_forward_many_from_pack(
+    pack_root: Path,
+    specs: Sequence[dict[str, object]],
+    *,
+    start: str,
+    end: str = "2015-12-31",
+    initial_capital: float = 100_000.0,
+    mode: str = "expanding",
+) -> tuple[CrossValidatedEvaluation, ...]:
+    """Evaluate fixed specs while sharing each bounded fold panel and feature frame."""
+
+    materialized_specs = tuple(dict(spec) for spec in specs)
+    if not materialized_specs:
+        raise ValueError("at least one spec is required")
+    end_date = pd.Timestamp(end).normalize()
+    if end_date != DEVELOPMENT_END:
+        raise ValueError("development evaluation must end at 2015-12-31")
+    calendar_path = pack_root / "trading_calendar.parquet"
+    if not calendar_path.is_file():
+        raise FileNotFoundError(f"pack trading calendar is missing: {calendar_path}")
+    calendar = pd.read_parquet(calendar_path, columns=["date"])
+    dates = pd.DatetimeIndex(
+        pd.to_datetime(calendar["date"], errors="raise").dt.normalize().unique()
+    ).sort_values()
+    dates = dates[(dates >= pd.Timestamp(start).normalize()) & (dates <= end_date)]
+
+    states: list[dict[str, object]] = []
+    work_by_window: dict[
+        tuple[pd.Timestamp, pd.Timestamp], list[tuple[int, PurgedFold]]
+    ] = {}
+    for index, spec in enumerate(materialized_specs):
+        horizon = int(spec.get("horizon_sessions", 63))
+        folds = tuple(
+            generate_purged_walk_forward(
+                dates,
+                train_years=10 if mode == "expanding" else 15,
+                validation_years=3,
+                test_years=1,
+                horizon_sessions=horizon,
+                mode=mode,
+            )
+        )
+        states.append(
+            {
+                "candidate_id": canonical_candidate_id(spec),
+                "spec": spec,
+                "folds": folds,
+                "fold_rows": [],
+                "curves": [],
+                "positions": [],
+                "ledgers": [],
+            }
+        )
+        for fold in folds:
+            warmup_start = fold.test_start - pd.DateOffset(years=2)
+            work_by_window.setdefault((warmup_start, fold.test_end), []).append(
+                (index, fold)
+            )
+
+    for (warmup_start, test_end), assignments in sorted(work_by_window.items()):
+        panel = read_pack_range(
+            pack_root,
+            start_date=warmup_start.date().isoformat(),
+            end_date=test_end.date().isoformat(),
+        )
+        feature_frame = compute_features(panel.frame)
+        for state_index, fold in assignments:
+            state = states[state_index]
+            spec = state["spec"]
+            if not isinstance(spec, dict):
+                raise TypeError("walk-forward state spec must be a dictionary")
+            result = evaluate_spec(
+                panel,
+                spec,
+                start=fold.test_start.date().isoformat(),
+                end=fold.test_end.date().isoformat(),
+                initial_capital=initial_capital,
+                features=feature_frame,
+            )
+            state["candidate_id"] = result.candidate_id
+            row = {
+                **fold.to_dict(),
+                "candidate_id": result.candidate_id,
+                "selection_used_holdout": False,
+                "locked_opened": False,
+            }
+            fold_rows = state["fold_rows"]
+            if not isinstance(fold_rows, list):
+                raise TypeError("walk-forward fold rows must be a list")
+            if result.status != "evaluated" or result.equity_curve.empty:
+                fold_rows.append({**row, "status": result.status})
+                continue
+            fold_rows.append({**row, "status": "evaluated", **result.metrics})
+            curves = state["curves"]
+            positions = state["positions"]
+            ledgers = state["ledgers"]
+            if not all(isinstance(parts, list) for parts in (curves, positions, ledgers)):
+                raise TypeError("walk-forward result accumulators must be lists")
+            curves.append(
+                result.equity_curve.assign(fold_id=fold.fold_id, walk_forward_mode=mode)
+            )
+            positions.append(result.position_ledger.assign(fold_id=fold.fold_id))
+            ledgers.append(result.trade_ledger.assign(fold_id=fold.fold_id))
+
+    evaluations: list[CrossValidatedEvaluation] = []
+    for state in states:
+        candidate_id = str(state["candidate_id"])
+        spec = dict(state["spec"])
+        folds = tuple(state["folds"])
+        fold_rows = list(state["fold_rows"])
+        curves = list(state["curves"])
+        positions = list(state["positions"])
+        ledgers = list(state["ledgers"])
+        fold_frame = pd.DataFrame(fold_rows)
+        if not curves:
+            empty = EvaluationResult(
+                candidate_id=candidate_id,
+                spec=spec,
+                status="no_observations",
+                metrics={},
+                equity_curve=pd.DataFrame(),
+                trade_ledger=pd.DataFrame(),
+                position_ledger=pd.DataFrame(),
+                yearly=pd.DataFrame(),
+                locked_opened=False,
+                data_end=end_date.date().isoformat(),
+            )
+            evaluations.append(CrossValidatedEvaluation(empty, fold_frame, folds))
+            continue
+        stitched = stitch_fold_curves(curves, initial_capital=initial_capital)
+        combined_ledger = pd.concat(ledgers, ignore_index=True)
+        combined_positions = pd.concat(positions, ignore_index=True)
+        metrics = compute_portfolio_metrics(stitched, combined_ledger)
+        annual = yearly_returns(stitched)
+        annual.insert(0, "candidate_id", candidate_id)
+        result = EvaluationResult(
+            candidate_id=candidate_id,
+            spec=spec,
+            status="evaluated",
+            metrics=metrics,
+            equity_curve=stitched,
+            trade_ledger=combined_ledger,
+            position_ledger=combined_positions,
+            yearly=annual,
+            locked_opened=False,
+            data_end=end_date.date().isoformat(),
+        )
+        evaluations.append(CrossValidatedEvaluation(result, fold_frame, folds))
+    return tuple(evaluations)
