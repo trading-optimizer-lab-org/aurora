@@ -1,6 +1,12 @@
 name: Stock Protocol Scientific Finalize Existing Run
 
 "on":
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Run containing frozen layers, postselection and robustness
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       source_run_id:

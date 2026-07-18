@@ -33,7 +33,7 @@ env:
 jobs:
   resume_from_exits:
     if: ${{ inputs.resume_from_exits }}
-    uses: ./.github/workflows/stock-protocol-scientific-resume-from-exits-360jobs.yml
+    uses: ./.github/workflows/stock-protocol-scientific-finalize-existing-run.yml
     with:
       source_run_id: ${{ inputs.source_run_id }}
     permissions:
