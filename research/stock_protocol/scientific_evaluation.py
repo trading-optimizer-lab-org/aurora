@@ -361,7 +361,7 @@ def evaluate_development_walk_forward_many_from_pack(
             start_date=warmup_start.date().isoformat(),
             end_date=test_end.date().isoformat(),
         )
-        feature_frame = compute_features(panel.frame)
+        feature_frame = compute_features(panel)
         for state_index, fold in assignments:
             state = states[state_index]
             spec = state["spec"]

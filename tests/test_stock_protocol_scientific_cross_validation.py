@@ -159,8 +159,9 @@ def test_pack_walk_forward_many_reuses_each_fold_panel_and_feature_frame(
         )
         return ResearchPanel(frame, audit)
 
-    def features(frame):
-        feature_frame = frame[["date", "symbol"]].copy()
+    def features(panel):
+        assert isinstance(panel, ResearchPanel)
+        feature_frame = panel.frame[["date", "symbol"]].copy()
         feature_frames.append(feature_frame)
         return feature_frame
 
