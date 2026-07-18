@@ -17,6 +17,8 @@ from scripts.run_stock_protocol_scientific_postselection import (
     _filter_statistically_eligible_candidates,
     freeze_robustness_snapshot,
     holdout_result_row,
+    merge_postselection_candidate_shards,
+    prepare_postselection_candidate,
     prepare_postselection_inputs,
 )
 
@@ -350,6 +352,177 @@ def test_prepare_uses_purged_walk_forward_history_for_robustness(
     data_audit = json.loads(outputs["data_audit"].read_text(encoding="utf-8"))
     assert data_audit["robustness_input_mode"] == "purged_walk_forward_test_folds"
     assert data_audit["walk_forward_used_for_selection"] is False
+
+
+def test_prepare_candidate_writes_one_frozen_decision_shard(tmp_path, monkeypatch):
+    import scripts.run_stock_protocol_scientific_postselection as runner
+
+    manifest = SimpleNamespace(
+        locked_opened=False,
+        data_end="2020-12-31",
+        research_start="1995-01-01",
+        policy_hash="policy-hash",
+    )
+    audit = SimpleNamespace(
+        locked_opened=False,
+        locked_rows=0,
+        dataset_hash="dataset-hash",
+        to_json=lambda: {"dataset_hash": "dataset-hash"},
+    )
+    decisions = [
+        {"candidate_id": candidate, "parameters": {"candidate": candidate}}
+        for candidate in ("stock_alpha", "stock_beta")
+    ]
+    dates = pd.bdate_range("2014-01-01", periods=500)
+    evaluation = SimpleNamespace(
+        status="evaluated",
+        equity_curve=pd.DataFrame(
+            {"date": dates, "equity": 100_000.0 * (1.0002 ** np.arange(500))}
+        ),
+        trade_ledger=pd.DataFrame(
+            {"symbol": ["AAA"], "entry_date": [dates[10]], "net_return": [0.02]}
+        ),
+        position_ledger=pd.DataFrame(),
+        yearly=pd.DataFrame(
+            {"candidate_id": ["stock_beta"], "year": [2014], "return": [0.05]}
+        ),
+        metrics={"sharpe": 0.5},
+        result_row=lambda: {"candidate_id": "stock_beta", "status": "evaluated"},
+    )
+    monkeypatch.setattr(runner, "load_protocol_manifest", lambda _: manifest)
+    monkeypatch.setattr(runner, "read_pack_audit", lambda *_: audit)
+    monkeypatch.setattr(
+        runner,
+        "load_snapshot",
+        lambda *_args, **_kwargs: {"decisions": decisions},
+    )
+    monkeypatch.setattr(
+        runner,
+        "evaluate_development_walk_forward_from_pack",
+        lambda *_args, **_kwargs: SimpleNamespace(result=evaluation, folds=[object()]),
+    )
+
+    outputs = prepare_postselection_candidate(
+        manifest_path=tmp_path / "manifest.yaml",
+        pack_root=tmp_path / "pack",
+        costs_snapshot_path=tmp_path / "costs.json",
+        candidate_index=1,
+        output_root=tmp_path / "candidate",
+    )
+
+    shard = json.loads(outputs["candidate_shard"].read_text(encoding="utf-8"))
+    assert shard["candidate_index"] == 1
+    assert shard["candidate_count"] == 2
+    assert shard["candidate_id"] == "stock_beta"
+    assert shard["locked_opened"] is False
+    assert list(pd.read_csv(outputs["returns"])) == ["date", "stock_beta"]
+
+
+def test_merge_candidate_shards_requires_and_combines_every_frozen_decision(
+    tmp_path, monkeypatch
+):
+    import scripts.run_stock_protocol_scientific_postselection as runner
+
+    manifest = SimpleNamespace(
+        locked_opened=False,
+        data_end="2020-12-31",
+        research_start="1995-01-01",
+        policy_hash="policy-hash",
+    )
+    audit = SimpleNamespace(
+        locked_opened=False,
+        locked_rows=0,
+        dataset_hash="dataset-hash",
+        to_json=lambda: {"dataset_hash": "dataset-hash"},
+    )
+    decisions = [
+        {"candidate_id": candidate, "parameters": {"candidate": candidate}}
+        for candidate in ("stock_alpha", "stock_beta")
+    ]
+    dates = pd.bdate_range("2014-01-01", periods=500)
+    shards_root = tmp_path / "shards"
+    for index, candidate in enumerate(("stock_alpha", "stock_beta")):
+        shard_root = shards_root / f"candidate-{index}"
+        shard_root.mkdir(parents=True)
+        (shard_root / "candidate_shard.json").write_text(
+            json.dumps(
+                {
+                    "candidate_index": index,
+                    "candidate_count": 2,
+                    "candidate_id": candidate,
+                    "policy_hash": "policy-hash",
+                    "dataset_hash": "dataset-hash",
+                    "locked_opened": False,
+                    "evaluated": True,
+                    "frozen_decision": {
+                        "candidate_id": candidate,
+                        "parameters": {"candidate": candidate},
+                        "validation_metrics": {"sharpe": 0.5},
+                        "decision": "advance_to_statistical_robustness",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        pd.DataFrame(
+            {"date": dates, candidate: np.full(len(dates), 0.0002)}
+        ).to_csv(shard_root / "development_returns.csv", index=False)
+        pd.DataFrame(
+            {
+                "candidate_id": [candidate],
+                "symbol": ["AAA"],
+                "entry_date": [dates[10]],
+                "net_return": [0.02],
+            }
+        ).to_csv(shard_root / "development_trades.csv", index=False)
+        pd.DataFrame(
+            {
+                "candidate_id": [candidate],
+                "status": ["evaluated"],
+                "walk_forward_folds": [1],
+            }
+        ).to_csv(shard_root / "walk_forward_result.csv", index=False)
+        pd.DataFrame(
+            {"candidate_id": [candidate], "year": [2014], "return": [0.05]}
+        ).to_csv(shard_root / "yearly_results.csv", index=False)
+
+    monkeypatch.setattr(runner, "load_protocol_manifest", lambda _: manifest)
+    monkeypatch.setattr(runner, "read_pack_audit", lambda *_: audit)
+    monkeypatch.setattr(
+        runner,
+        "load_snapshot",
+        lambda *_args, **_kwargs: {"decisions": decisions},
+    )
+    monkeypatch.setattr(
+        runner,
+        "build_robustness_plan",
+        lambda _returns, _trades, *, task_count: {
+            "matrix_a": list(range(task_count // 2)),
+            "matrix_b": list(range(task_count // 2, task_count)),
+            "required_methods": [],
+            "unavailable_methods": {},
+        },
+    )
+
+    def fake_freeze(*, output_path, **_kwargs):
+        output_path.write_text("{}", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(runner, "freeze_snapshot", fake_freeze)
+    outputs = merge_postselection_candidate_shards(
+        manifest_path=tmp_path / "manifest.yaml",
+        pack_root=tmp_path / "pack",
+        costs_snapshot_path=tmp_path / "costs.json",
+        shards_root=shards_root,
+        output_root=tmp_path / "merged",
+        task_count=12,
+    )
+
+    returns = pd.read_csv(outputs["returns"])
+    assert list(returns) == ["date", "stock_alpha", "stock_beta"]
+    assert len(pd.read_csv(outputs["walk_forward_results"])) == 2
+    plan = json.loads(outputs["robustness_plan"].read_text(encoding="utf-8"))
+    assert len(plan["matrix_a"]) + len(plan["matrix_b"]) == 12
 
 
 def test_postselection_runner_never_materialises_the_complete_pack():

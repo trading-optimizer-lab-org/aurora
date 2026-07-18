@@ -121,6 +121,18 @@ def test_recovery_detects_and_preserves_the_full_universe_pack():
     assert "stock-protocol-scientific-full-universe-360jobs-results" in text
 
 
+def test_recovery_prepares_ten_frozen_candidates_in_parallel_before_robustness():
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "prepare_candidates:" in text
+    assert "candidate_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]" in text
+    assert "max-parallel: 10" in text
+    assert "prepare-candidate" in text
+    assert "merge-candidates" in text
+    assert "needs: [recover_source, prepare_candidates]" in text
+    assert "run_stock_protocol_scientific_postselection.py prepare\n" not in text
+
+
 def test_registered_recovery_can_dispatch_resume_from_exits_without_touching_main():
     text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     assert "resume_from_exits" in text
