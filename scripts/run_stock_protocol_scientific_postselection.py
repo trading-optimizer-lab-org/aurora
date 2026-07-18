@@ -26,6 +26,7 @@ from aurora.research.stock_protocol.postselection import (
     merge_robustness_tasks,
 )
 from aurora.research.stock_protocol.scientific_evaluation import (
+    evaluate_development_walk_forward_from_pack,
     evaluate_development_walk_forward_many_from_pack,
 )
 from aurora.research.stock_protocol.signals import compute_features
@@ -331,6 +332,326 @@ def prepare_postselection_inputs(
     }
 
 
+def prepare_postselection_candidate(
+    *,
+    manifest_path: Path,
+    pack_root: Path,
+    costs_snapshot_path: Path,
+    candidate_index: int,
+    output_root: Path,
+) -> dict[str, Path]:
+    """Evaluate one frozen cost decision without touching the final holdout."""
+
+    manifest = load_protocol_manifest(manifest_path)
+    if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
+        raise ValueError("manifest violates the locked-period policy")
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack contains locked data")
+    snapshot = load_snapshot(
+        costs_snapshot_path,
+        expected_layer="costs",
+        expected_policy_hash=manifest.policy_hash,
+        expected_dataset_hash=pack_audit.dataset_hash,
+    )
+    source_decisions = list(snapshot["decisions"])
+    if candidate_index < 0 or candidate_index >= len(source_decisions):
+        raise IndexError(
+            f"candidate index {candidate_index} outside 0..{len(source_decisions) - 1}"
+        )
+    decision = source_decisions[candidate_index]
+    candidate_id = str(decision["candidate_id"])
+    spec = dict(decision["parameters"])
+    cross_validated = evaluate_development_walk_forward_from_pack(
+        pack_root,
+        spec,
+        start=manifest.research_start,
+        end=DEVELOPMENT_END,
+    )
+    result = cross_validated.result
+    result_candidate_id = str(result.result_row().get("candidate_id", ""))
+    if result_candidate_id and result_candidate_id != candidate_id:
+        raise ValueError(
+            f"candidate identity changed: {candidate_id} != {result_candidate_id}"
+        )
+    output_root.mkdir(parents=True, exist_ok=True)
+    row = {
+        **result.result_row(),
+        "candidate_id": candidate_id,
+        "evaluation_start": manifest.research_start,
+        "evaluation_end": DEVELOPMENT_END,
+        "data_end": DEVELOPMENT_END,
+        "walk_forward_mode": "expanding_10y_3y_1y_purged",
+        "walk_forward_folds": len(cross_validated.folds),
+        "selection_used_holdout": False,
+        "survivorship_limited": True,
+        "locked_opened": False,
+    }
+    walk_forward_path = output_root / "walk_forward_result.csv"
+    pd.DataFrame([row]).to_csv(walk_forward_path, index=False)
+    returns_path = output_root / "development_returns.csv"
+    trades_path = output_root / "development_trades.csv"
+    yearly_path = output_root / "yearly_results.csv"
+    evaluated = result.status == "evaluated"
+    frozen_decision: dict[str, Any] | None = None
+    if evaluated:
+        _equity_returns(result.equity_curve).rename(
+            columns={"daily_return": candidate_id}
+        ).to_csv(returns_path, index=False)
+        trades = result.trade_ledger.copy()
+        if not trades.empty:
+            trades.insert(0, "candidate_id", candidate_id)
+            trades = trades.loc[
+                pd.to_numeric(trades["net_return"], errors="coerce").notna()
+            ].copy()
+        trades.to_csv(trades_path, index=False)
+        yearly = result.yearly.copy()
+        yearly["period"] = "development_purged_walk_forward"
+        yearly.to_csv(yearly_path, index=False)
+        _copy_candidate_ledgers(output_root, candidate_id, result)
+        frozen_decision = {
+            "candidate_id": candidate_id,
+            "parameters": spec,
+            "validation_metrics": {
+                key: _json_scalar(value) for key, value in result.metrics.items()
+            },
+            "decision": "advance_to_statistical_robustness",
+        }
+    candidate_shard_path = output_root / "candidate_shard.json"
+    candidate_shard_path.write_text(
+        json.dumps(
+            {
+                "candidate_index": candidate_index,
+                "candidate_count": len(source_decisions),
+                "candidate_id": candidate_id,
+                "policy_hash": manifest.policy_hash,
+                "dataset_hash": pack_audit.dataset_hash,
+                "evaluated": evaluated,
+                "frozen_decision": frozen_decision,
+                "locked_opened": False,
+                "data_end": DEVELOPMENT_END,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    outputs = {
+        "candidate_shard": candidate_shard_path,
+        "walk_forward_result": walk_forward_path,
+    }
+    for name, path in (
+        ("returns", returns_path),
+        ("trades", trades_path),
+        ("yearly_results", yearly_path),
+    ):
+        if path.is_file():
+            outputs[name] = path
+    return outputs
+
+
+def _copy_shard_ledgers(shard_root: Path, output_root: Path) -> None:
+    for directory in ("daily_equity_curves", "trade_ledgers", "position_ledgers"):
+        source = shard_root / directory
+        if not source.is_dir():
+            continue
+        target = output_root / directory
+        target.mkdir(parents=True, exist_ok=True)
+        for path in source.glob("*.csv"):
+            destination = target / path.name
+            if destination.exists():
+                raise ValueError(f"duplicate candidate ledger: {path.name}")
+            shutil.copy2(path, destination)
+
+
+def merge_postselection_candidate_shards(
+    *,
+    manifest_path: Path,
+    pack_root: Path,
+    costs_snapshot_path: Path,
+    shards_root: Path,
+    output_root: Path,
+    task_count: int = 360,
+) -> dict[str, Path]:
+    """Merge every independently evaluated candidate into robustness inputs."""
+
+    manifest = load_protocol_manifest(manifest_path)
+    if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
+        raise ValueError("manifest violates the locked-period policy")
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack contains locked data")
+    snapshot = load_snapshot(
+        costs_snapshot_path,
+        expected_layer="costs",
+        expected_policy_hash=manifest.policy_hash,
+        expected_dataset_hash=pack_audit.dataset_hash,
+    )
+    source_decisions = list(snapshot["decisions"])
+    shard_paths = sorted(shards_root.rglob("candidate_shard.json"))
+    if len(shard_paths) != len(source_decisions):
+        raise ValueError(
+            f"expected {len(source_decisions)} candidate shards, found {len(shard_paths)}"
+        )
+    indexed: dict[int, tuple[Path, dict[str, Any]]] = {}
+    for path in shard_paths:
+        shard = json.loads(path.read_text(encoding="utf-8"))
+        index = int(shard["candidate_index"])
+        if index in indexed:
+            raise ValueError(f"duplicate candidate shard index: {index}")
+        if shard.get("locked_opened") is not False:
+            raise ValueError(f"candidate shard {index} opened locked data")
+        if shard.get("candidate_count") != len(source_decisions):
+            raise ValueError(f"candidate shard {index} has the wrong decision count")
+        if shard.get("policy_hash") != manifest.policy_hash:
+            raise ValueError(f"candidate shard {index} policy hash mismatch")
+        if shard.get("dataset_hash") != pack_audit.dataset_hash:
+            raise ValueError(f"candidate shard {index} dataset hash mismatch")
+        indexed[index] = (path.parent, shard)
+    expected_indices = set(range(len(source_decisions)))
+    if set(indexed) != expected_indices:
+        raise ValueError("candidate shard indices are incomplete")
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    return_parts: list[pd.DataFrame] = []
+    trade_parts: list[pd.DataFrame] = []
+    walk_forward_parts: list[pd.DataFrame] = []
+    yearly_parts: list[pd.DataFrame] = []
+    frozen_decisions: list[dict[str, Any]] = []
+    for index, source_decision in enumerate(source_decisions):
+        shard_root, shard = indexed[index]
+        candidate_id = str(source_decision["candidate_id"])
+        if shard.get("candidate_id") != candidate_id:
+            raise ValueError(f"candidate shard {index} identity mismatch")
+        walk_forward_parts.append(pd.read_csv(shard_root / "walk_forward_result.csv"))
+        if not bool(shard.get("evaluated")):
+            continue
+        frozen = shard.get("frozen_decision")
+        if not isinstance(frozen, dict) or frozen.get("candidate_id") != candidate_id:
+            raise ValueError(f"candidate shard {index} lacks its frozen decision")
+        return_parts.append(pd.read_csv(shard_root / "development_returns.csv"))
+        trades_path = shard_root / "development_trades.csv"
+        if trades_path.is_file() and trades_path.stat().st_size:
+            trades = pd.read_csv(trades_path)
+            if not trades.empty:
+                trade_parts.append(trades)
+        yearly_path = shard_root / "yearly_results.csv"
+        if yearly_path.is_file() and yearly_path.stat().st_size:
+            yearly = pd.read_csv(yearly_path)
+            if not yearly.empty:
+                yearly_parts.append(yearly)
+        _copy_shard_ledgers(shard_root, output_root)
+        frozen_decisions.append(frozen)
+    if len(return_parts) < 2 or len(frozen_decisions) < 2:
+        raise ValueError("at least two frozen evaluated candidates are required")
+    if not trade_parts:
+        raise ValueError("frozen candidates produced no closed trades")
+
+    returns = return_parts[0]
+    for part in return_parts[1:]:
+        returns = returns.merge(part, on="date", how="outer", validate="one_to_one")
+    returns = returns.sort_values("date").reset_index(drop=True)
+    trades = pd.concat(trade_parts, ignore_index=True)
+    (
+        returns,
+        trades,
+        frozen_decisions,
+        statistical_exclusions,
+        observation_counts,
+    ) = _filter_statistically_eligible_candidates(
+        returns, trades, frozen_decisions
+    )
+    returns_path = output_root / "development_returns.csv"
+    trades_path = output_root / "development_trades.csv"
+    walk_forward_path = output_root / "walk_forward_results.csv"
+    yearly_path = output_root / "yearly_results.csv"
+    exclusions_path = output_root / "statistical_exclusions.csv"
+    returns.to_csv(returns_path, index=False)
+    trades.to_csv(trades_path, index=False)
+    statistical_exclusions.to_csv(exclusions_path, index=False)
+    walk_forward = pd.concat(walk_forward_parts, ignore_index=True)
+    eligible_ids = {str(item["candidate_id"]) for item in frozen_decisions}
+    exclusion_reasons = (
+        statistical_exclusions.set_index("candidate_id")["reason"].to_dict()
+        if not statistical_exclusions.empty
+        else {}
+    )
+    walk_forward["development_observations"] = (
+        walk_forward["candidate_id"].map(observation_counts).fillna(0).astype(int)
+    )
+    walk_forward["statistical_robustness_eligible"] = walk_forward[
+        "candidate_id"
+    ].isin(eligible_ids)
+    walk_forward["statistical_exclusion_reason"] = (
+        walk_forward["candidate_id"].map(exclusion_reasons).fillna("")
+    )
+    walk_forward.to_csv(walk_forward_path, index=False)
+    if not yearly_parts:
+        raise ValueError("frozen candidates produced no yearly evidence")
+    pd.concat(yearly_parts, ignore_index=True).to_csv(yearly_path, index=False)
+    walk_forward_snapshot = freeze_snapshot(
+        layer="walk_forward",
+        input_artifact=walk_forward_path,
+        output_path=output_root / "walk_forward_snapshot.json",
+        policy_hash=manifest.policy_hash,
+        dataset_hash=pack_audit.dataset_hash,
+        date_start=manifest.research_start,
+        date_end=DEVELOPMENT_END,
+        universe="current_universe_backfill",
+        decisions=frozen_decisions,
+    )
+    robustness_plan = build_robustness_plan(
+        returns,
+        trades[["candidate_id", "symbol", "entry_date", "net_return"]],
+        task_count=task_count,
+    )
+    robustness_plan["policy_hash"] = manifest.policy_hash
+    robustness_plan["dataset_hash"] = pack_audit.dataset_hash
+    plan_path = output_root / "robustness_plan.json"
+    plan_path.write_text(
+        json.dumps(robustness_plan, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    data_audit_path = output_root / "data_audit.json"
+    data_audit_path.write_text(
+        json.dumps(
+            {
+                **pack_audit.to_json(),
+                "data_end": manifest.data_end,
+                "locked_rows": 0,
+                "locked_opened": False,
+                "universe_mode": "current_universe_backfill",
+                "survivorship_limited": True,
+                "statistical_candidates_eligible": len(frozen_decisions),
+                "statistical_candidates_excluded": len(statistical_exclusions),
+                "robustness_input_mode": "purged_walk_forward_test_folds",
+                "robustness_required_methods": robustness_plan.get(
+                    "required_methods", []
+                ),
+                "robustness_unavailable_methods": robustness_plan.get(
+                    "unavailable_methods", {}
+                ),
+                "walk_forward_used_for_diagnostics": True,
+                "walk_forward_used_for_selection": False,
+                "candidate_shards_expected": len(source_decisions),
+                "candidate_shards_found": len(shard_paths),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "returns": returns_path,
+        "trades": trades_path,
+        "walk_forward_results": walk_forward_path,
+        "walk_forward_snapshot": walk_forward_snapshot,
+        "yearly_results": yearly_path,
+        "statistical_exclusions": exclusions_path,
+        "robustness_plan": plan_path,
+        "data_audit": data_audit_path,
+    }
+
+
 def freeze_robustness_snapshot(
     *,
     manifest_path: Path,
@@ -507,6 +828,25 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--costs-snapshot", dest="costs_snapshot_path", type=Path, required=True)
     prepare.add_argument("--output-root", type=Path, required=True)
     prepare.add_argument("--task-count", type=int, default=360)
+    candidate = commands.add_parser("prepare-candidate")
+    candidate.add_argument("--manifest", dest="manifest_path", type=Path, required=True)
+    candidate.add_argument("--pack-root", type=Path, required=True)
+    candidate.add_argument(
+        "--costs-snapshot", dest="costs_snapshot_path", type=Path, required=True
+    )
+    candidate.add_argument("--candidate-index", type=int, required=True)
+    candidate.add_argument("--output-root", type=Path, required=True)
+    merge_candidates = commands.add_parser("merge-candidates")
+    merge_candidates.add_argument(
+        "--manifest", dest="manifest_path", type=Path, required=True
+    )
+    merge_candidates.add_argument("--pack-root", type=Path, required=True)
+    merge_candidates.add_argument(
+        "--costs-snapshot", dest="costs_snapshot_path", type=Path, required=True
+    )
+    merge_candidates.add_argument("--shards-root", type=Path, required=True)
+    merge_candidates.add_argument("--output-root", type=Path, required=True)
+    merge_candidates.add_argument("--task-count", type=int, default=360)
     task = commands.add_parser("evaluate-task")
     task.add_argument("--plan", dest="plan_path", type=Path, required=True)
     task.add_argument("--returns", dest="returns_path", type=Path, required=True)
@@ -538,6 +878,10 @@ def main() -> int:
     command = args.pop("command")
     if command == "prepare":
         result: Any = prepare_postselection_inputs(**args)
+    elif command == "prepare-candidate":
+        result = prepare_postselection_candidate(**args)
+    elif command == "merge-candidates":
+        result = merge_postselection_candidate_shards(**args)
     elif command == "evaluate-task":
         result = execute_robustness_task(**args)
     elif command == "merge":
