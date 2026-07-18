@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -182,15 +182,61 @@ def build_portfolio(
     return result
 
 
-def _price_map(panel: ResearchPanel) -> tuple[pd.DataFrame, dict[tuple[pd.Timestamp, str], pd.Series]]:
-    prices = panel.frame.copy()
-    prices["date"] = pd.to_datetime(prices["date"], errors="raise").dt.normalize()
+class _PricePoint(NamedTuple):
+    open: float
+    close: float
+    volume: float
+    dividends: float
+    stock_splits: float
+
+
+def _price_map(
+    panel: ResearchPanel,
+    *,
+    symbols: set[str] | None = None,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
+) -> tuple[pd.DataFrame, dict[tuple[pd.Timestamp, str], _PricePoint]]:
+    source = panel.frame
+    dates = pd.to_datetime(source["date"], errors="raise").dt.normalize()
+    mask = pd.Series(True, index=source.index)
+    if symbols is not None:
+        mask &= source["symbol"].astype(str).isin(symbols)
+    if start_date is not None:
+        mask &= dates.ge(pd.Timestamp(start_date).normalize())
+    if end_date is not None:
+        mask &= dates.le(pd.Timestamp(end_date).normalize())
+    required = ["date", "symbol", "open", "close", "volume"]
+    optional = ["dividends", "stock_splits"]
+    missing = set(required) - set(source.columns)
+    if missing:
+        raise ValueError(f"portfolio source missing columns: {sorted(missing)}")
+    prices = source.loc[mask, required + [c for c in optional if c in source]].copy()
+    prices["date"] = dates.loc[mask].to_numpy()
+    for column in optional:
+        if column not in prices:
+            prices[column] = 0.0
     if prices["date"].max() >= pd.Timestamp("2021-01-01"):
         raise ValueError("portfolio source crosses locked boundary")
     prices = prices.sort_values(["date", "symbol"]).drop_duplicates(["date", "symbol"], keep="last")
     lookup = {
-        (pd.Timestamp(row.date), str(row.symbol)): pd.Series(row._asdict())
-        for row in prices.itertuples(index=False)
+        (pd.Timestamp(date), str(symbol)): _PricePoint(
+            float(open_price),
+            float(close_price),
+            float(volume),
+            float(dividends),
+            float(stock_splits),
+        )
+        for date, symbol, open_price, close_price, volume, dividends, stock_splits
+        in prices[[
+            "date",
+            "symbol",
+            "open",
+            "close",
+            "volume",
+            "dividends",
+            "stock_splits",
+        ]].itertuples(index=False, name=None)
     }
     return prices, lookup
 
@@ -218,7 +264,6 @@ def simulate_daily_portfolio(
     if missing:
         raise ValueError(f"trade ledger missing columns: {sorted(missing)}")
 
-    prices, lookup = _price_map(panel)
     ledger = trades.copy().reset_index(drop=True)
     ledger["trade_id"] = np.arange(len(ledger), dtype=int)
     for column in ("entry_date", "exit_date"):
@@ -227,6 +272,12 @@ def simulate_daily_portfolio(
         raise ValueError("exit_date cannot precede entry_date")
     if ledger["exit_date"].max() >= pd.Timestamp("2021-01-01"):
         raise ValueError("trade ledger crosses locked boundary")
+    prices, lookup = _price_map(
+        panel,
+        symbols=set(ledger["symbol"].astype(str)),
+        start_date=ledger["entry_date"].min(),
+        end_date=ledger["exit_date"].max(),
+    )
     ledger["entry_cost"] = 0.0
     ledger["exit_cost"] = 0.0
     ledger["shares"] = 0.0
@@ -259,7 +310,7 @@ def simulate_daily_portfolio(
             row = lookup.get((timestamp, symbol))
             if row is None:
                 continue
-            split_ratio = float(row.get("stock_splits", 0.0) or 0.0)
+            split_ratio = float(row.stock_splits or 0.0)
             if split_ratio > 0 and not np.isclose(split_ratio, 1.0):
                 position["shares"] = float(position["shares"]) * split_ratio
                 trade_id = int(position["trade_id"])
@@ -286,7 +337,7 @@ def simulate_daily_portfolio(
         for symbol, position in positions.items():
             row = lookup.get((timestamp, symbol))
             mark = (
-                float(row["open"])
+                float(row.open)
                 if row is not None
                 else float(position["last_close"])
             )
@@ -304,7 +355,7 @@ def simulate_daily_portfolio(
                 continue
             entry_price = float(trade["entry_price"])
             desired = max(0.0, float(trade["weight"])) * open_value
-            volume_capacity = float(row["volume"]) * entry_price * max_volume_participation
+            volume_capacity = float(row.volume) * entry_price * max_volume_participation
             affordable = cash / (1.0 + cost_rate)
             notional = min(desired, volume_capacity, affordable)
             if notional <= 0:
@@ -346,10 +397,10 @@ def simulate_daily_portfolio(
             row = lookup.get((timestamp, symbol))
             carried_forward = row is None
             if row is not None:
-                dividend = float(row.get("dividends", 0.0) or 0.0)
+                dividend = float(row.dividends or 0.0)
                 if dividend:
                     cash += float(position["shares"]) * dividend
-                position["last_close"] = float(row["close"])
+                position["last_close"] = float(row.close)
             close = float(position["last_close"])
             value = float(position["shares"]) * close
             market_value += value

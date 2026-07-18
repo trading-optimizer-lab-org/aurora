@@ -16,6 +16,7 @@ from aurora.research.stock_protocol.metrics import (
 )
 from aurora.research.stock_protocol.portfolio import (
     UnsupportedPortfolioData,
+    _price_map,
     build_portfolio,
     simulate_daily_portfolio,
 )
@@ -304,6 +305,26 @@ def test_daily_portfolio_equity_uses_weights_cash_and_two_sided_costs():
     assert ledger["entry_cost"].sum() > 0
     assert ledger["exit_cost"].sum() > 0
     assert ledger["net_return"].lt(ledger["gross_return"]).all()
+
+
+def test_price_map_materializes_only_requested_symbols_and_dates():
+    panel = _panel(("AAA", "BBB"))
+    dates = pd.to_datetime(panel.frame["date"].sort_values().unique())
+
+    prices, lookup = _price_map(
+        panel,
+        symbols={"AAA"},
+        start_date=dates[1],
+        end_date=dates[-2],
+    )
+
+    assert set(prices["symbol"]) == {"AAA"}
+    assert prices["date"].min() == dates[1]
+    assert prices["date"].max() == dates[-2]
+    assert lookup
+    assert all(symbol == "AAA" for _, symbol in lookup)
+    assert all(not isinstance(point, pd.Series) for point in lookup.values())
+    assert all(np.isfinite(point.close) for point in lookup.values())
 
 
 def test_stock_split_adjusts_live_shares_instead_of_creating_fake_loss():
