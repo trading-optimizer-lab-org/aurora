@@ -15,7 +15,11 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.research.stock_protocol.campaign import evaluate_spec
-from aurora.research.stock_protocol.dataset import read_pack_audit, read_pack_range
+from aurora.research.stock_protocol.dataset import (
+    ResearchPanel,
+    read_pack_audit,
+    read_pack_range,
+)
 from aurora.research.stock_protocol.layers import freeze_snapshot, load_snapshot
 from aurora.research.stock_protocol.manifest import load_protocol_manifest
 from aurora.research.stock_protocol.portfolio import UnsupportedPortfolioData
@@ -35,6 +39,24 @@ from aurora.research.stock_protocol.signals import compute_features
 DEVELOPMENT_END = "2015-12-31"
 HOLDOUT_START = "2016-01-01"
 HOLDOUT_END = "2020-12-31"
+HOLDOUT_FEATURE_COLUMNS = (
+    "date",
+    "symbol",
+    "adj_close",
+    "adj_high",
+    "adj_low",
+    "mom_12_1",
+    "mom_6_1",
+    "vol_12_1",
+    "h52",
+    "information_discreteness",
+    "price_score",
+    "breakout_20",
+    "breakout_level_20",
+    "consolidation_60",
+    "rvol50",
+    "atr20",
+)
 
 
 def _json_scalar(value: Any) -> Any:
@@ -730,6 +752,186 @@ def holdout_result_row(
     }
 
 
+def prepare_holdout_feature_shard(
+    *,
+    manifest_path: Path,
+    pack_root: Path,
+    shard_index: int,
+    shard_count: int,
+    output_root: Path,
+) -> Path:
+    """Compute causal holdout features for one deterministic symbol shard."""
+
+    manifest = load_protocol_manifest(manifest_path)
+    if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
+        raise ValueError("manifest violates the locked-period policy")
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack contains locked data")
+    if shard_count < 1 or shard_index < 0 or shard_index >= shard_count:
+        raise ValueError("invalid holdout feature shard coordinates")
+    panel = read_pack_range(
+        pack_root,
+        start_date="2014-01-01",
+        end_date=HOLDOUT_END,
+    )
+    if panel.audit.dataset_hash != pack_audit.dataset_hash:
+        raise ValueError("bounded holdout pack hash mismatch")
+    source_symbols = sorted(panel.frame["symbol"].astype(str).unique())
+    selected_symbols = source_symbols[shard_index::shard_count]
+    if not selected_symbols:
+        raise ValueError(f"holdout feature shard {shard_index} has no symbols")
+    selected = panel.frame.loc[
+        panel.frame["symbol"].astype(str).isin(selected_symbols)
+    ].copy()
+    features = compute_features(ResearchPanel(selected, panel.audit))
+    columns = [column for column in HOLDOUT_FEATURE_COLUMNS if column in features]
+    required = {
+        "date",
+        "symbol",
+        "mom_12_1",
+        "mom_6_1",
+        "vol_12_1",
+        "h52",
+    }
+    if required - set(columns):
+        raise ValueError(f"holdout feature shard lacks {sorted(required - set(columns))}")
+    features = features.loc[:, columns].sort_values(["date", "symbol"])
+    output_root.mkdir(parents=True, exist_ok=True)
+    feature_path = output_root / "holdout_features.parquet"
+    features.to_parquet(feature_path, index=False, compression="zstd")
+    (output_root / "holdout_feature_shard.json").write_text(
+        json.dumps(
+            {
+                "feature_shard_index": shard_index,
+                "feature_shard_count": shard_count,
+                "source_symbol_count": len(source_symbols),
+                "symbols": len(selected_symbols),
+                "rows": len(features),
+                "policy_hash": manifest.policy_hash,
+                "dataset_hash": pack_audit.dataset_hash,
+                "data_start": (
+                    pd.to_datetime(features["date"]).min().date().isoformat()
+                ),
+                "data_end": (
+                    pd.to_datetime(features["date"]).max().date().isoformat()
+                ),
+                "locked_opened": False,
+                "locked_rows": 0,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return feature_path
+
+
+def merge_holdout_feature_shards(
+    *,
+    manifest_path: Path,
+    pack_root: Path,
+    shards_root: Path,
+    output_root: Path,
+) -> Path:
+    """Merge symbol shards and restore the global cross-sectional rank."""
+
+    manifest = load_protocol_manifest(manifest_path)
+    if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
+        raise ValueError("manifest violates the locked-period policy")
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack contains locked data")
+    audit_paths = sorted(shards_root.rglob("holdout_feature_shard.json"))
+    if not audit_paths:
+        raise ValueError("no holdout feature shards found")
+    indexed: dict[int, tuple[Path, dict[str, Any]]] = {}
+    expected_count: int | None = None
+    source_symbol_count: int | None = None
+    for path in audit_paths:
+        audit = json.loads(path.read_text(encoding="utf-8"))
+        index = int(audit["feature_shard_index"])
+        count = int(audit["feature_shard_count"])
+        if expected_count is None:
+            expected_count = count
+        if source_symbol_count is None:
+            source_symbol_count = int(audit["source_symbol_count"])
+        expected = {
+            "feature_shard_count": expected_count,
+            "source_symbol_count": source_symbol_count,
+            "policy_hash": manifest.policy_hash,
+            "dataset_hash": pack_audit.dataset_hash,
+            "locked_opened": False,
+            "locked_rows": 0,
+        }
+        for key, value in expected.items():
+            if audit.get(key) != value:
+                raise ValueError(f"holdout feature shard {index} has invalid {key}")
+        if pd.Timestamp(audit["data_end"]) > pd.Timestamp(HOLDOUT_END):
+            raise ValueError(f"holdout feature shard {index} crossed locked start")
+        if index in indexed:
+            raise ValueError(f"duplicate holdout feature shard index: {index}")
+        indexed[index] = (path.parent, audit)
+    if expected_count is None or set(indexed) != set(range(expected_count)):
+        raise ValueError("holdout feature shard indices are incomplete")
+
+    parts: list[pd.DataFrame] = []
+    expected_rows = 0
+    expected_symbols = 0
+    for index in range(expected_count):
+        shard_root, audit = indexed[index]
+        part = pd.read_parquet(shard_root / "holdout_features.parquet")
+        if len(part) != int(audit["rows"]):
+            raise ValueError(f"holdout feature shard {index} row count mismatch")
+        if part["symbol"].astype(str).nunique() != int(audit["symbols"]):
+            raise ValueError(f"holdout feature shard {index} symbol count mismatch")
+        expected_rows += int(audit["rows"])
+        expected_symbols += int(audit["symbols"])
+        parts.append(part)
+    features = pd.concat(parts, ignore_index=True)
+    features["date"] = pd.to_datetime(features["date"], errors="raise").dt.normalize()
+    if features.duplicated(["date", "symbol"]).any():
+        raise ValueError("merged holdout features contain duplicate symbol-dates")
+    if len(features) != expected_rows:
+        raise ValueError("merged holdout feature row count mismatch")
+    symbols = int(features["symbol"].astype(str).nunique())
+    if symbols != expected_symbols or symbols != source_symbol_count:
+        raise ValueError("merged holdout feature symbol coverage is incomplete")
+    if features["date"].max() >= pd.Timestamp("2021-01-01"):
+        raise ValueError("merged holdout features cross locked boundary")
+    by_date = features.groupby("date", group_keys=False, sort=False)
+    features["price_score"] = (
+        by_date["mom_12_1"].rank(pct=True) * 0.5
+        + by_date["h52"].rank(pct=True) * 0.3
+        - by_date["information_discreteness"].rank(pct=True) * 0.2
+    )
+    features = features.sort_values(["date", "symbol"]).reset_index(drop=True)
+    output_root.mkdir(parents=True, exist_ok=True)
+    feature_path = output_root / "holdout_features.parquet"
+    features.to_parquet(feature_path, index=False, compression="zstd")
+    (output_root / "holdout_features_audit.json").write_text(
+        json.dumps(
+            {
+                "feature_shards_expected": expected_count,
+                "feature_shards_found": len(audit_paths),
+                "symbols": symbols,
+                "rows": len(features),
+                "policy_hash": manifest.policy_hash,
+                "dataset_hash": pack_audit.dataset_hash,
+                "data_start": features["date"].min().date().isoformat(),
+                "data_end": features["date"].max().date().isoformat(),
+                "locked_opened": False,
+                "locked_rows": 0,
+                "global_cross_section_recomputed": True,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return feature_path
+
+
 def evaluate_frozen_holdout(
     *,
     manifest_path: Path,
@@ -826,6 +1028,8 @@ def evaluate_frozen_holdout_candidate(
     robustness_snapshot_path: Path,
     candidate_index: int,
     output_root: Path,
+    features_path: Path | None = None,
+    features_audit_path: Path | None = None,
 ) -> Path:
     """Evaluate one frozen candidate once on the untouched 2016-2020 holdout."""
 
@@ -858,7 +1062,36 @@ def evaluate_frozen_holdout_candidate(
     )
     if panel.audit.dataset_hash != pack_audit.dataset_hash:
         raise ValueError("bounded holdout pack hash mismatch")
-    holdout_features = compute_features(panel)
+    if (features_path is None) != (features_audit_path is None):
+        raise ValueError("holdout features and their audit must be supplied together")
+    if features_path is None:
+        holdout_features = compute_features(panel)
+        features_precomputed = False
+    else:
+        feature_audit = json.loads(features_audit_path.read_text(encoding="utf-8"))
+        expected_feature_audit = {
+            "policy_hash": manifest.policy_hash,
+            "dataset_hash": pack_audit.dataset_hash,
+            "locked_opened": False,
+            "locked_rows": 0,
+            "global_cross_section_recomputed": True,
+        }
+        for key, expected in expected_feature_audit.items():
+            if feature_audit.get(key) != expected:
+                raise ValueError(f"holdout feature audit has invalid {key}")
+        holdout_features = pd.read_parquet(features_path)
+        holdout_features["date"] = pd.to_datetime(
+            holdout_features["date"], errors="raise"
+        ).dt.normalize()
+        if len(holdout_features) != int(feature_audit["rows"]):
+            raise ValueError("holdout feature row count mismatch")
+        if holdout_features["symbol"].astype(str).nunique() != int(
+            feature_audit["symbols"]
+        ):
+            raise ValueError("holdout feature symbol count mismatch")
+        if holdout_features["date"].max() >= pd.Timestamp("2021-01-01"):
+            raise ValueError("holdout features cross locked boundary")
+        features_precomputed = True
     output_root.mkdir(parents=True, exist_ok=True)
     yearly_path = output_root / "holdout_yearly_result.csv"
     try:
@@ -906,6 +1139,7 @@ def evaluate_frozen_holdout_candidate(
                 "period_start": HOLDOUT_START,
                 "period_end": HOLDOUT_END,
                 "data_end": HOLDOUT_END,
+                "features_precomputed": features_precomputed,
             },
             indent=2,
             sort_keys=True,
@@ -1091,6 +1325,21 @@ def _parser() -> argparse.ArgumentParser:
     holdout.add_argument("--pack-root", type=Path, required=True)
     holdout.add_argument("--robustness-snapshot", dest="robustness_snapshot_path", type=Path, required=True)
     holdout.add_argument("--output-root", type=Path, required=True)
+    feature_shard = commands.add_parser("prepare-holdout-features")
+    feature_shard.add_argument(
+        "--manifest", dest="manifest_path", type=Path, required=True
+    )
+    feature_shard.add_argument("--pack-root", type=Path, required=True)
+    feature_shard.add_argument("--shard-index", type=int, required=True)
+    feature_shard.add_argument("--shard-count", type=int, required=True)
+    feature_shard.add_argument("--output-root", type=Path, required=True)
+    merge_features = commands.add_parser("merge-holdout-features")
+    merge_features.add_argument(
+        "--manifest", dest="manifest_path", type=Path, required=True
+    )
+    merge_features.add_argument("--pack-root", type=Path, required=True)
+    merge_features.add_argument("--shards-root", type=Path, required=True)
+    merge_features.add_argument("--output-root", type=Path, required=True)
     holdout_candidate = commands.add_parser("holdout-candidate")
     holdout_candidate.add_argument(
         "--manifest", dest="manifest_path", type=Path, required=True
@@ -1104,6 +1353,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     holdout_candidate.add_argument("--candidate-index", type=int, required=True)
     holdout_candidate.add_argument("--output-root", type=Path, required=True)
+    holdout_candidate.add_argument("--features", dest="features_path", type=Path)
+    holdout_candidate.add_argument(
+        "--features-audit", dest="features_audit_path", type=Path
+    )
     merge_holdout = commands.add_parser("merge-holdout")
     merge_holdout.add_argument(
         "--manifest", dest="manifest_path", type=Path, required=True
@@ -1138,6 +1391,10 @@ def main() -> int:
         result = merge_robustness_tasks(**args)
     elif command == "freeze-robustness":
         result = freeze_robustness_snapshot(**args)
+    elif command == "prepare-holdout-features":
+        result = prepare_holdout_feature_shard(**args)
+    elif command == "merge-holdout-features":
+        result = merge_holdout_feature_shards(**args)
     elif command == "holdout":
         result = evaluate_frozen_holdout(**args)
     elif command == "holdout-candidate":

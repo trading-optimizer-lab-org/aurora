@@ -33,7 +33,88 @@ env:
   QF_DATA_DIR: ${{ github.workspace }}/qf-data
 
 jobs:
+  holdout_feature_shards:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        feature_shard_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: pack
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Compute one causal symbol shard
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py prepare-holdout-features
+          --manifest "$MANIFEST"
+          --pack-root pack
+          --shard-index "${{ matrix.feature_shard_index }}"
+          --shard-count 16
+          --output-root "holdout-feature-${{ matrix.feature_shard_index }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-holdout-feature-${{ matrix.feature_shard_index }}
+          path: holdout-feature-${{ matrix.feature_shard_index }}
+          retention-days: 30
+
+  merge_holdout_features:
+    needs: holdout_feature_shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: pack
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-holdout-feature-*
+          path: feature-shards
+      - name: Restore global cross-sectional features
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py merge-holdout-features
+          --manifest "$MANIFEST"
+          --pack-root pack
+          --shards-root feature-shards
+          --output-root holdout-features
+      - name: Verify frozen feature coverage
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+
+          audit = json.load(open("holdout-features/holdout_features_audit.json", encoding="utf-8"))
+          assert audit["feature_shards_expected"] == 16
+          assert audit["feature_shards_found"] == 16
+          assert audit["symbols"] >= 1000
+          assert audit["rows"] > 0
+          assert audit["global_cross_section_recomputed"] is True
+          assert audit["locked_opened"] is False
+          assert audit["locked_rows"] == 0
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-holdout-features
+          path: holdout-features
+          retention-days: 30
+
   holdout_candidates:
+    needs: merge_holdout_features
     strategy:
       fail-fast: false
       max-parallel: 10
@@ -58,6 +139,10 @@ jobs:
           path: robustness
           github-token: ${{ github.token }}
           run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-holdout-features
+          path: features
       - name: Evaluate one frozen candidate once on final prelocked holdout
         run: >-
           python scripts/run_stock_protocol_scientific_postselection.py holdout-candidate
@@ -65,6 +150,8 @@ jobs:
           --pack-root pack
           --robustness-snapshot robustness/robustness_snapshot.json
           --candidate-index "${{ matrix.candidate_index }}"
+          --features features/holdout_features.parquet
+          --features-audit features/holdout_features_audit.json
           --output-root "holdout-candidate-${{ matrix.candidate_index }}"
       - name: Verify candidate holdout policy
         shell: bash
@@ -82,6 +169,7 @@ jobs:
           assert audit["locked_opened"] is False
           assert audit["validation_used_for_selection"] is False
           assert audit["selection_used"] is False
+          assert audit["features_precomputed"] is True
           assert audit["period_start"] == "2016-01-01"
           assert audit["period_end"] == "2020-12-31"
           assert results["locked_opened"].eq(False).all()
