@@ -187,8 +187,12 @@ def test_finalizer_workflow_resumes_at_holdout_from_frozen_robustness():
         "stock-protocol-scientific-holdout",
     ):
         assert artifact in text
-    assert "run_stock_protocol_scientific_postselection.py holdout" in text
-    assert "needs: holdout" in text
+    assert "holdout_candidates:" in text
+    assert "candidate_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]" in text
+    assert "max-parallel: 10" in text
+    assert "run_stock_protocol_scientific_postselection.py holdout-candidate" in text
+    assert "run_stock_protocol_scientific_postselection.py merge-holdout" in text
+    assert "needs: merge_holdout" in text
     assert "finalize_stock_protocol_scientific.py" in text
     assert "stock-protocol-scientific-full-universe-360jobs-results" in text
     assert "pre2021_pack_audit.json" in text

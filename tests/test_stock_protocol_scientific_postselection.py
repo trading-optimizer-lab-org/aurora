@@ -17,7 +17,9 @@ from scripts.run_stock_protocol_scientific_postselection import (
     _filter_statistically_eligible_candidates,
     freeze_robustness_snapshot,
     holdout_result_row,
+    merge_frozen_holdout_candidate_shards,
     merge_postselection_candidate_shards,
+    evaluate_frozen_holdout_candidate,
     prepare_postselection_candidate,
     prepare_postselection_inputs,
 )
@@ -523,6 +525,95 @@ def test_merge_candidate_shards_requires_and_combines_every_frozen_decision(
     assert len(pd.read_csv(outputs["walk_forward_results"])) == 2
     plan = json.loads(outputs["robustness_plan"].read_text(encoding="utf-8"))
     assert len(plan["matrix_a"]) + len(plan["matrix_b"]) == 12
+
+
+def test_holdout_candidate_and_merge_preserve_one_evaluation_per_candidate(
+    tmp_path, monkeypatch
+):
+    import scripts.run_stock_protocol_scientific_postselection as runner
+
+    manifest = SimpleNamespace(
+        locked_opened=False,
+        data_end="2020-12-31",
+        policy_hash="policy-hash",
+    )
+    audit = SimpleNamespace(
+        locked_opened=False,
+        locked_rows=0,
+        dataset_hash="dataset-hash",
+    )
+    decisions = [
+        {"candidate_id": candidate, "parameters": {"candidate": candidate}}
+        for candidate in ("stock_alpha", "stock_beta")
+    ]
+    raw_snapshot = {
+        "dataset_hash": "dataset-hash",
+        "date_end": "2015-12-31",
+    }
+    robustness_snapshot = tmp_path / "robustness_snapshot.json"
+    robustness_snapshot.write_text(json.dumps(raw_snapshot), encoding="utf-8")
+    panel = SimpleNamespace(audit=SimpleNamespace(dataset_hash="dataset-hash"))
+    dates = pd.bdate_range("2016-01-01", periods=100)
+
+    def evaluation(spec):
+        candidate = spec["candidate"]
+        return SimpleNamespace(
+            candidate_id=candidate,
+            status="evaluated",
+            metrics={"sharpe": 0.8},
+            equity_curve=pd.DataFrame(
+                {"date": dates, "equity": 100_000.0 * (1.0002 ** np.arange(100))}
+            ),
+            trade_ledger=pd.DataFrame(
+                {"symbol": ["AAA"], "entry_date": [dates[10]], "net_return": [0.02]}
+            ),
+            position_ledger=pd.DataFrame(),
+            yearly=pd.DataFrame(
+                {"candidate_id": [candidate], "year": [2016], "return": [0.05]}
+            ),
+        )
+
+    monkeypatch.setattr(runner, "load_protocol_manifest", lambda _: manifest)
+    monkeypatch.setattr(runner, "read_pack_audit", lambda *_: audit)
+    monkeypatch.setattr(
+        runner,
+        "load_snapshot",
+        lambda *_args, **_kwargs: {"decisions": decisions},
+    )
+    monkeypatch.setattr(runner, "read_pack_range", lambda *_args, **_kwargs: panel)
+    monkeypatch.setattr(runner, "compute_features", lambda _: pd.DataFrame())
+    monkeypatch.setattr(
+        runner,
+        "evaluate_spec",
+        lambda _panel, spec, **_kwargs: evaluation(spec),
+    )
+
+    shards_root = tmp_path / "holdout-shards"
+    for index in range(2):
+        evaluate_frozen_holdout_candidate(
+            manifest_path=tmp_path / "manifest.yaml",
+            pack_root=tmp_path / "pack",
+            robustness_snapshot_path=robustness_snapshot,
+            candidate_index=index,
+            output_root=shards_root / f"candidate-{index}",
+        )
+    holdout_path = merge_frozen_holdout_candidate_shards(
+        manifest_path=tmp_path / "manifest.yaml",
+        pack_root=tmp_path / "pack",
+        robustness_snapshot_path=robustness_snapshot,
+        shards_root=shards_root,
+        output_root=tmp_path / "holdout-merged",
+    )
+
+    results = pd.read_csv(holdout_path)
+    assert set(results["candidate_id"]) == {"stock_alpha", "stock_beta"}
+    assert results["evaluation_count"].eq(1).all()
+    assert results["selection_used"].eq(False).all()
+    audit_payload = json.loads(
+        (tmp_path / "holdout-merged" / "holdout_audit.json").read_text()
+    )
+    assert audit_payload["candidate_shards_found"] == 2
+    assert audit_payload["locked_opened"] is False
 
 
 def test_postselection_runner_never_materialises_the_complete_pack():
