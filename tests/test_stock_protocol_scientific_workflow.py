@@ -188,6 +188,12 @@ def test_finalizer_workflow_resumes_at_holdout_from_frozen_robustness():
     ):
         assert artifact in text
     assert "holdout_candidates:" in text
+    assert "holdout_feature_shards:" in text
+    assert "merge_holdout_features:" in text
+    assert "feature_shard_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]" in text
+    assert "run_stock_protocol_scientific_postselection.py prepare-holdout-features" in text
+    assert "run_stock_protocol_scientific_postselection.py merge-holdout-features" in text
+    assert "needs: merge_holdout_features" in text
     assert "candidate_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]" in text
     assert "max-parallel: 10" in text
     assert "run_stock_protocol_scientific_postselection.py holdout-candidate" in text

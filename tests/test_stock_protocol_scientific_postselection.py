@@ -18,8 +18,10 @@ from scripts.run_stock_protocol_scientific_postselection import (
     freeze_robustness_snapshot,
     holdout_result_row,
     merge_frozen_holdout_candidate_shards,
+    merge_holdout_feature_shards,
     merge_postselection_candidate_shards,
     evaluate_frozen_holdout_candidate,
+    prepare_holdout_feature_shard,
     prepare_postselection_candidate,
     prepare_postselection_inputs,
 )
@@ -614,6 +616,73 @@ def test_holdout_candidate_and_merge_preserve_one_evaluation_per_candidate(
     )
     assert audit_payload["candidate_shards_found"] == 2
     assert audit_payload["locked_opened"] is False
+
+
+def test_holdout_feature_shards_rebuild_global_cross_section(tmp_path, monkeypatch):
+    import scripts.run_stock_protocol_scientific_postselection as runner
+
+    manifest = SimpleNamespace(
+        locked_opened=False,
+        data_end="2020-12-31",
+        policy_hash="policy-hash",
+    )
+    audit = SimpleNamespace(
+        locked_opened=False,
+        locked_rows=0,
+        dataset_hash="dataset-hash",
+    )
+    dates = pd.to_datetime(["2020-01-02", "2020-01-03"])
+    symbols = ["AAA", "BBB", "CCC", "DDD"]
+    frame = pd.DataFrame(
+        [
+            {"date": date, "symbol": symbol, "close": rank + 10.0}
+            for date in dates
+            for rank, symbol in enumerate(symbols, start=1)
+        ]
+    )
+    panel = SimpleNamespace(frame=frame, audit=audit)
+
+    def fake_features(bounded):
+        result = bounded.frame.copy()
+        rank = result["symbol"].map({symbol: index for index, symbol in enumerate(symbols, 1)})
+        result["mom_12_1"] = rank.astype(float)
+        result["h52"] = rank.astype(float)
+        result["information_discreteness"] = 0.0
+        result["price_score"] = 999.0
+        return result
+
+    monkeypatch.setattr(runner, "load_protocol_manifest", lambda _: manifest)
+    monkeypatch.setattr(runner, "read_pack_audit", lambda *_: audit)
+    monkeypatch.setattr(runner, "read_pack_range", lambda *_args, **_kwargs: panel)
+    monkeypatch.setattr(runner, "compute_features", fake_features)
+
+    shards_root = tmp_path / "feature-shards"
+    for index in range(2):
+        prepare_holdout_feature_shard(
+            manifest_path=tmp_path / "manifest.yaml",
+            pack_root=tmp_path / "pack",
+            shard_index=index,
+            shard_count=2,
+            output_root=shards_root / f"shard-{index}",
+        )
+    features_path = merge_holdout_feature_shards(
+        manifest_path=tmp_path / "manifest.yaml",
+        pack_root=tmp_path / "pack",
+        shards_root=shards_root,
+        output_root=tmp_path / "feature-merged",
+    )
+
+    features = pd.read_parquet(features_path)
+    assert set(features["symbol"]) == set(symbols)
+    assert len(features) == len(frame)
+    assert features["price_score"].max() < 1.0
+    assert features.groupby("date")["price_score"].nunique().eq(4).all()
+    merged_audit = json.loads(
+        (tmp_path / "feature-merged" / "holdout_features_audit.json").read_text()
+    )
+    assert merged_audit["feature_shards_found"] == 2
+    assert merged_audit["symbols"] == 4
+    assert merged_audit["locked_opened"] is False
 
 
 def test_postselection_runner_never_materialises_the_complete_pack():
