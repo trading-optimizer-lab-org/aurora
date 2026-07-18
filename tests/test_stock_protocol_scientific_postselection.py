@@ -646,6 +646,8 @@ def test_holdout_feature_shards_rebuild_global_cross_section(tmp_path, monkeypat
         result = bounded.frame.copy()
         rank = result["symbol"].map({symbol: index for index, symbol in enumerate(symbols, 1)})
         result["mom_12_1"] = rank.astype(float)
+        result["mom_6_1"] = rank.astype(float) / 2.0
+        result["vol_12_1"] = 0.2
         result["h52"] = rank.astype(float)
         result["information_discreteness"] = 0.0
         result["price_score"] = 999.0
