@@ -241,7 +241,7 @@ def test_finalizer_accepts_preholdout_phase_with_earlier_actual_data_end(tmp_pat
     source = tmp_path / "source"
     source.mkdir()
     _complete_input(source)
-    robustness = _result_rows("robustness")
+    robustness = pd.read_csv(source / "robustness_results.csv")
     robustness["data_end"] = "2015-12-31"
     robustness["evaluation_end"] = "2015-12-31"
     robustness.to_csv(source / "robustness_results.csv", index=False)
