@@ -819,6 +819,230 @@ def evaluate_frozen_holdout(
     return holdout_path
 
 
+def evaluate_frozen_holdout_candidate(
+    *,
+    manifest_path: Path,
+    pack_root: Path,
+    robustness_snapshot_path: Path,
+    candidate_index: int,
+    output_root: Path,
+) -> Path:
+    """Evaluate one frozen candidate once on the untouched 2016-2020 holdout."""
+
+    manifest = load_protocol_manifest(manifest_path)
+    if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
+        raise ValueError("manifest violates the locked-period policy")
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack contains locked data")
+    raw = json.loads(robustness_snapshot_path.read_text(encoding="utf-8"))
+    snapshot = load_snapshot(
+        robustness_snapshot_path,
+        expected_layer="robustness",
+        expected_policy_hash=manifest.policy_hash,
+        expected_dataset_hash=pack_audit.dataset_hash,
+    )
+    if raw.get("date_end") != DEVELOPMENT_END:
+        raise ValueError("robustness was not frozen before final holdout")
+    decisions = list(snapshot["decisions"])
+    if candidate_index < 0 or candidate_index >= len(decisions):
+        raise IndexError(
+            f"candidate index {candidate_index} outside 0..{len(decisions) - 1}"
+        )
+    decision = decisions[candidate_index]
+    candidate_id = str(decision["candidate_id"])
+    panel = read_pack_range(
+        pack_root,
+        start_date="2014-01-01",
+        end_date=HOLDOUT_END,
+    )
+    if panel.audit.dataset_hash != pack_audit.dataset_hash:
+        raise ValueError("bounded holdout pack hash mismatch")
+    holdout_features = compute_features(panel)
+    output_root.mkdir(parents=True, exist_ok=True)
+    yearly_path = output_root / "holdout_yearly_result.csv"
+    try:
+        result = evaluate_spec(
+            panel,
+            dict(decision["parameters"]),
+            start=HOLDOUT_START,
+            end=HOLDOUT_END,
+            features=holdout_features,
+        )
+        row = holdout_result_row(
+            candidate_id=candidate_id,
+            status=result.status,
+            metrics=result.metrics,
+        )
+        if result.status == "evaluated":
+            _copy_candidate_ledgers(output_root, f"{candidate_id}_holdout", result)
+            yearly = result.yearly.copy()
+            yearly["candidate_id"] = candidate_id
+            yearly["period"] = "holdout_2016_2020"
+            yearly.to_csv(yearly_path, index=False)
+    except UnsupportedPortfolioData as exc:
+        row = {
+            **holdout_result_row(
+                candidate_id=candidate_id,
+                status="unsupported_missing_data",
+                metrics={},
+            ),
+            "failure_reason": str(exc),
+        }
+    result_path = output_root / "holdout_candidate.csv"
+    pd.DataFrame([row]).to_csv(result_path, index=False)
+    (output_root / "holdout_candidate_shard.json").write_text(
+        json.dumps(
+            {
+                "candidate_index": candidate_index,
+                "candidate_count": len(decisions),
+                "candidate_id": candidate_id,
+                "policy_hash": manifest.policy_hash,
+                "dataset_hash": pack_audit.dataset_hash,
+                "evaluation_count": 1,
+                "selection_used": False,
+                "validation_used_for_selection": False,
+                "locked_opened": False,
+                "period_start": HOLDOUT_START,
+                "period_end": HOLDOUT_END,
+                "data_end": HOLDOUT_END,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return result_path
+
+
+def merge_frozen_holdout_candidate_shards(
+    *,
+    manifest_path: Path,
+    pack_root: Path,
+    robustness_snapshot_path: Path,
+    shards_root: Path,
+    output_root: Path,
+) -> Path:
+    """Require and merge exactly one final-holdout evaluation per candidate."""
+
+    manifest = load_protocol_manifest(manifest_path)
+    if manifest.locked_opened or manifest.data_end != HOLDOUT_END:
+        raise ValueError("manifest violates the locked-period policy")
+    pack_audit = read_pack_audit(pack_root)
+    if pack_audit.locked_opened or pack_audit.locked_rows:
+        raise ValueError("research pack contains locked data")
+    raw = json.loads(robustness_snapshot_path.read_text(encoding="utf-8"))
+    snapshot = load_snapshot(
+        robustness_snapshot_path,
+        expected_layer="robustness",
+        expected_policy_hash=manifest.policy_hash,
+        expected_dataset_hash=pack_audit.dataset_hash,
+    )
+    if raw.get("date_end") != DEVELOPMENT_END:
+        raise ValueError("robustness was not frozen before final holdout")
+    decisions = list(snapshot["decisions"])
+    shard_paths = sorted(shards_root.rglob("holdout_candidate_shard.json"))
+    if len(shard_paths) != len(decisions):
+        raise ValueError(
+            f"expected {len(decisions)} holdout candidate shards, "
+            f"found {len(shard_paths)}"
+        )
+    indexed: dict[int, tuple[Path, dict[str, Any]]] = {}
+    for path in shard_paths:
+        shard = json.loads(path.read_text(encoding="utf-8"))
+        index = int(shard["candidate_index"])
+        if index in indexed:
+            raise ValueError(f"duplicate holdout candidate shard index: {index}")
+        expected_policy = {
+            "candidate_count": len(decisions),
+            "policy_hash": manifest.policy_hash,
+            "dataset_hash": pack_audit.dataset_hash,
+            "evaluation_count": 1,
+            "selection_used": False,
+            "validation_used_for_selection": False,
+            "locked_opened": False,
+            "period_start": HOLDOUT_START,
+            "period_end": HOLDOUT_END,
+            "data_end": HOLDOUT_END,
+        }
+        for key, expected in expected_policy.items():
+            if shard.get(key) != expected:
+                raise ValueError(
+                    f"holdout candidate shard {index} has invalid {key}: "
+                    f"{shard.get(key)!r}"
+                )
+        indexed[index] = (path.parent, shard)
+    if set(indexed) != set(range(len(decisions))):
+        raise ValueError("holdout candidate shard indices are incomplete")
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    rows: list[pd.DataFrame] = []
+    yearly_parts: list[pd.DataFrame] = []
+    seen_candidates: set[str] = set()
+    for index, decision in enumerate(decisions):
+        shard_root, shard = indexed[index]
+        candidate_id = str(decision["candidate_id"])
+        if shard.get("candidate_id") != candidate_id:
+            raise ValueError(f"holdout candidate shard {index} identity mismatch")
+        if candidate_id in seen_candidates:
+            raise ValueError(f"duplicate frozen holdout candidate: {candidate_id}")
+        seen_candidates.add(candidate_id)
+        result = pd.read_csv(shard_root / "holdout_candidate.csv")
+        if len(result) != 1 or str(result.iloc[0]["candidate_id"]) != candidate_id:
+            raise ValueError(f"holdout candidate shard {index} result mismatch")
+        if int(result.iloc[0]["evaluation_count"]) != 1:
+            raise ValueError(f"holdout candidate shard {index} was evaluated repeatedly")
+        for column in (
+            "selection_used",
+            "validation_used_for_selection",
+            "locked_opened",
+        ):
+            if bool(result.iloc[0][column]):
+                raise ValueError(f"holdout candidate shard {index} violates {column}")
+        if str(result.iloc[0]["data_end"]) != HOLDOUT_END:
+            raise ValueError(f"holdout candidate shard {index} crossed locked start")
+        rows.append(result)
+        yearly_path = shard_root / "holdout_yearly_result.csv"
+        if yearly_path.is_file() and yearly_path.stat().st_size:
+            yearly = pd.read_csv(yearly_path)
+            if not yearly.empty:
+                yearly_parts.append(yearly)
+        _copy_shard_ledgers(shard_root, output_root)
+
+    holdout = pd.concat(rows, ignore_index=True)
+    if holdout["candidate_id"].duplicated().any() or len(holdout) != len(decisions):
+        raise ValueError("merged holdout does not contain every frozen candidate once")
+    holdout_path = output_root / "holdout_2016_2020.csv"
+    holdout.to_csv(holdout_path, index=False)
+    yearly_output = output_root / "holdout_yearly_results.csv"
+    if yearly_parts:
+        pd.concat(yearly_parts, ignore_index=True).to_csv(yearly_output, index=False)
+    else:
+        pd.DataFrame(columns=["candidate_id", "year", "return", "period"]).to_csv(
+            yearly_output, index=False
+        )
+    (output_root / "holdout_audit.json").write_text(
+        json.dumps(
+            {
+                "candidate_count": len(holdout),
+                "candidate_shards_expected": len(decisions),
+                "candidate_shards_found": len(shard_paths),
+                "evaluation_count_per_candidate": 1,
+                "selection_used": False,
+                "validation_used_for_selection": False,
+                "locked_opened": False,
+                "period_start": HOLDOUT_START,
+                "period_end": HOLDOUT_END,
+                "dataset_hash": pack_audit.dataset_hash,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return holdout_path
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -867,6 +1091,32 @@ def _parser() -> argparse.ArgumentParser:
     holdout.add_argument("--pack-root", type=Path, required=True)
     holdout.add_argument("--robustness-snapshot", dest="robustness_snapshot_path", type=Path, required=True)
     holdout.add_argument("--output-root", type=Path, required=True)
+    holdout_candidate = commands.add_parser("holdout-candidate")
+    holdout_candidate.add_argument(
+        "--manifest", dest="manifest_path", type=Path, required=True
+    )
+    holdout_candidate.add_argument("--pack-root", type=Path, required=True)
+    holdout_candidate.add_argument(
+        "--robustness-snapshot",
+        dest="robustness_snapshot_path",
+        type=Path,
+        required=True,
+    )
+    holdout_candidate.add_argument("--candidate-index", type=int, required=True)
+    holdout_candidate.add_argument("--output-root", type=Path, required=True)
+    merge_holdout = commands.add_parser("merge-holdout")
+    merge_holdout.add_argument(
+        "--manifest", dest="manifest_path", type=Path, required=True
+    )
+    merge_holdout.add_argument("--pack-root", type=Path, required=True)
+    merge_holdout.add_argument(
+        "--robustness-snapshot",
+        dest="robustness_snapshot_path",
+        type=Path,
+        required=True,
+    )
+    merge_holdout.add_argument("--shards-root", type=Path, required=True)
+    merge_holdout.add_argument("--output-root", type=Path, required=True)
     return parser
 
 
@@ -888,8 +1138,12 @@ def main() -> int:
         result = merge_robustness_tasks(**args)
     elif command == "freeze-robustness":
         result = freeze_robustness_snapshot(**args)
-    else:
+    elif command == "holdout":
         result = evaluate_frozen_holdout(**args)
+    elif command == "holdout-candidate":
+        result = evaluate_frozen_holdout_candidate(**args)
+    else:
+        result = merge_frozen_holdout_candidate_shards(**args)
     print(json.dumps(result, sort_keys=True, default=str))
     return 0
 

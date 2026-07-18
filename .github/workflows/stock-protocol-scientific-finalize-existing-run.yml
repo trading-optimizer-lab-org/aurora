@@ -33,9 +33,14 @@ env:
   QF_DATA_DIR: ${{ github.workspace }}/qf-data
 
 jobs:
-  holdout:
+  holdout_candidates:
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        candidate_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,23 +58,27 @@ jobs:
           path: robustness
           github-token: ${{ github.token }}
           run-id: ${{ env.SOURCE_RUN_ID }}
-      - name: Evaluate frozen set once on final prelocked holdout
+      - name: Evaluate one frozen candidate once on final prelocked holdout
         run: >-
-          python scripts/run_stock_protocol_scientific_postselection.py holdout
+          python scripts/run_stock_protocol_scientific_postselection.py holdout-candidate
           --manifest "$MANIFEST"
           --pack-root pack
           --robustness-snapshot robustness/robustness_snapshot.json
-          --output-root holdout-output
-      - name: Verify holdout policy
+          --candidate-index "${{ matrix.candidate_index }}"
+          --output-root "holdout-candidate-${{ matrix.candidate_index }}"
+      - name: Verify candidate holdout policy
         shell: bash
         run: |
           python - <<'PY'
           import json
           import pandas as pd
 
-          audit = json.load(open("holdout-output/holdout_audit.json", encoding="utf-8"))
-          results = pd.read_csv("holdout-output/holdout_2016_2020.csv")
-          assert not results.empty
+          root = "holdout-candidate-${{ matrix.candidate_index }}"
+          audit = json.load(open(f"{root}/holdout_candidate_shard.json", encoding="utf-8"))
+          results = pd.read_csv(f"{root}/holdout_candidate.csv")
+          assert len(results) == 1
+          assert audit["candidate_index"] == ${{ matrix.candidate_index }}
+          assert audit["evaluation_count"] == 1
           assert audit["locked_opened"] is False
           assert audit["validation_used_for_selection"] is False
           assert audit["selection_used"] is False
@@ -80,12 +89,72 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
+          name: stock-protocol-holdout-candidate-${{ matrix.candidate_index }}
+          path: holdout-candidate-${{ matrix.candidate_index }}
+          retention-days: 30
+
+  merge_holdout:
+    needs: holdout_candidates
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-pack
+          path: pack
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-scientific-robustness-merged
+          path: robustness
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-holdout-candidate-*
+          path: holdout-shards
+      - name: Merge every frozen holdout candidate
+        run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py merge-holdout
+          --manifest "$MANIFEST"
+          --pack-root pack
+          --robustness-snapshot robustness/robustness_snapshot.json
+          --shards-root holdout-shards
+          --output-root holdout-output
+      - name: Verify complete holdout policy
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+
+          audit = json.load(open("holdout-output/holdout_audit.json", encoding="utf-8"))
+          results = pd.read_csv("holdout-output/holdout_2016_2020.csv")
+          assert len(results) == 10
+          assert audit["candidate_shards_expected"] == 10
+          assert audit["candidate_shards_found"] == 10
+          assert audit["locked_opened"] is False
+          assert audit["validation_used_for_selection"] is False
+          assert audit["selection_used"] is False
+          assert audit["period_start"] == "2016-01-01"
+          assert audit["period_end"] == "2020-12-31"
+          assert results["evaluation_count"].eq(1).all()
+          assert results["locked_opened"].eq(False).all()
+          assert results["data_end"].eq("2020-12-31").all()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
           name: stock-protocol-scientific-holdout
           path: holdout-output
           retention-days: 30
 
   assemble:
-    needs: holdout
+    needs: merge_holdout
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
