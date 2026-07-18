@@ -199,6 +199,24 @@ def test_finalizer_rejects_locked_or_non_finite_results(tmp_path: Path):
         finalize_scientific_artifact(source, tmp_path / "invalid-final", MANIFEST)
 
 
+def test_finalizer_rejects_complete_robustness_with_missing_metrics(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _complete_input(source)
+    robustness = pd.read_csv(source / "robustness_results.csv")
+    robustness.loc[0, "robustness_complete"] = True
+    robustness.loc[0, "leave_one_symbol_available"] = True
+    robustness.loc[0, "bootstrap_sharpe_p05"] = float("nan")
+    robustness.loc[0, "bootstrap_fdr_pvalue_max"] = 0.04
+    robustness.loc[0, "deflated_sharpe_probability"] = 0.96
+    robustness.loc[0, "leave_one_decade_min_sharpe"] = 0.1
+    robustness.loc[0, "leave_one_symbol_min_mean_return"] = 0.001
+    robustness.to_csv(source / "robustness_results.csv", index=False)
+
+    with pytest.raises(ValueError, match="complete robustness.*non-finite"):
+        finalize_scientific_artifact(source, tmp_path / "invalid-robustness", MANIFEST)
+
+
 def test_finalizer_builds_pareto_from_net_cost_results(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()

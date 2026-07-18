@@ -16,6 +16,12 @@ PORTFOLIO_RECOVERY_WORKFLOW = (
     / "stock-protocol-scientific-resume-from-exits-360jobs.yml"
 )
 FINALIZE_WORKFLOW = ROOT / ".github" / "workflows" / "stock-protocol-scientific-finalize-existing-run.yml"
+ROBUSTNESS_REPAIR_WORKFLOW = (
+    ROOT
+    / ".github"
+    / "workflows"
+    / "stock-protocol-scientific-repair-robustness-reuse-holdout.yml"
+)
 
 
 def test_reusable_layer_workflow_has_real_dynamic_matrices_and_strict_merge():
@@ -143,6 +149,16 @@ def test_registered_recovery_can_dispatch_resume_from_exits_without_touching_mai
     assert "source_run_id: ${{ inputs.source_run_id }}" in text
 
 
+def test_registered_recovery_can_dispatch_balanced_robustness_repair():
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    assert "repair_robustness_reuse_holdout" in text
+    assert "holdout_run_id" in text
+    assert (
+        "uses: ./.github/workflows/stock-protocol-scientific-repair-robustness-reuse-holdout.yml"
+        in text
+    )
+
+
 def test_portfolio_recovery_resumes_from_frozen_exits_and_finishes_campaign():
     text = PORTFOLIO_RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     assert "source_run_id" in text
@@ -210,3 +226,22 @@ def test_finalizer_workflow_resumes_at_holdout_from_frozen_robustness():
     assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
     assert "run_stock_protocol_scientific_pipeline.py evaluate" not in text
     assert "run_stock_protocol_scientific_postselection.py evaluate-task" not in text
+
+
+def test_robustness_repair_balances_360_jobs_and_reuses_holdout_without_running_it():
+    text = ROBUSTNESS_REPAIR_WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'default: "29645606473"' in text
+    assert 'default: "29657235124"' in text
+    assert text.count("max-parallel: 180") == 2
+    assert "task_count=360" in text
+    assert "candidate_core_then_round_robin" not in text
+    assert "stock-protocol-scientific-holdout" in text
+    assert "holdout_recomputed\": False" in text
+    assert "holdout-candidate" not in text
+    assert "prepare-holdout-features" not in text
+    assert "merge-holdout" not in text
+    assert "locked_opened" in text
+    assert "validation_used_for_selection" in text
+    assert "stock-protocol-scientific-full-universe-360jobs-corrected-results" in text
+    assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text

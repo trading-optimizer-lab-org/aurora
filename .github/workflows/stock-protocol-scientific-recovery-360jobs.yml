@@ -12,6 +12,15 @@ name: Stock Protocol Scientific Recovery 360 Jobs
         required: true
         type: boolean
         default: false
+      repair_robustness_reuse_holdout:
+        description: Re-run balanced robustness and reuse the existing frozen holdout
+        required: true
+        type: boolean
+        default: false
+      holdout_run_id:
+        description: Successful run containing the single frozen holdout evaluation
+        required: true
+        default: "29657235124"
   push:
     branches:
       - codex/stock-protocol-scientific-validity
@@ -32,7 +41,7 @@ env:
 
 jobs:
   resume_from_exits:
-    if: ${{ inputs.resume_from_exits }}
+    if: ${{ inputs.resume_from_exits && !inputs.repair_robustness_reuse_holdout }}
     uses: ./.github/workflows/stock-protocol-scientific-finalize-existing-run.yml
     with:
       source_run_id: ${{ inputs.source_run_id }}
@@ -40,8 +49,18 @@ jobs:
       contents: read
       actions: read
 
+  repair_robustness:
+    if: ${{ inputs.repair_robustness_reuse_holdout }}
+    uses: ./.github/workflows/stock-protocol-scientific-repair-robustness-reuse-holdout.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+      holdout_run_id: ${{ inputs.holdout_run_id }}
+    permissions:
+      contents: read
+      actions: read
+
   validate:
-    if: ${{ !inputs.resume_from_exits }}
+    if: ${{ !inputs.resume_from_exits && !inputs.repair_robustness_reuse_holdout }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

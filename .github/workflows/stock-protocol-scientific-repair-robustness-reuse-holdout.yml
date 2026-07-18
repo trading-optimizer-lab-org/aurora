@@ -1,0 +1,443 @@
+name: Stock Protocol Scientific Repair Robustness Reuse Holdout
+
+"on":
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Run containing the frozen pack, layers and postselection inputs
+        required: true
+        type: string
+      holdout_run_id:
+        description: Successful run containing the single frozen holdout evaluation
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Run containing the frozen pack, layers and postselection inputs
+        required: true
+        default: "29645606473"
+      holdout_run_id:
+        description: Successful run containing the single frozen holdout evaluation
+        required: true
+        default: "29657235124"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: ${{ github.workspace }}
+  QF_DATA_DIR: ${{ github.workspace }}/qf-data
+  MANIFEST: config/stock_protocol_36_tests.yaml
+  DATA_END: "2020-12-31"
+  LOCKED_START: "2021-01-01"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e . pytest
+      - name: Validate repaired robustness and final-artifact contracts
+        run: >-
+          pytest -q
+          tests/test_stock_protocol_scientific_postselection.py
+          tests/test_stock_protocol_scientific_artifact.py
+          tests/test_stock_protocol_scientific_workflow.py
+
+  prepare_robustness:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      matrix_a: ${{ steps.matrix.outputs.matrix_a }}
+      matrix_b: ${{ steps.matrix.outputs.matrix_b }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - name: Download frozen pre-holdout inputs only
+        shell: bash
+        run: >-
+          gh run download "$SOURCE_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name stock-protocol-scientific-postselection-inputs
+          --dir postselection
+      - name: Replace the flawed plan with balanced candidate-complete work
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          import pandas as pd
+
+          from aurora.research.stock_protocol.postselection import build_robustness_plan
+
+          root = Path("postselection")
+          old_path = root / "robustness_plan.json"
+          old_bytes = old_path.read_bytes()
+          old = json.loads(old_bytes)
+          plan = build_robustness_plan(
+              pd.read_csv(root / "development_returns.csv"),
+              pd.read_csv(root / "development_trades.csv"),
+              task_count=360,
+          )
+          for key in ("policy_hash", "dataset_hash"):
+              if key in old:
+                  plan[key] = old[key]
+          plan["replaces_plan_sha256"] = hashlib.sha256(old_bytes).hexdigest()
+          old_path.write_text(
+              json.dumps(plan, indent=2, sort_keys=True), encoding="utf-8"
+          )
+
+          required = {
+              "circular_block_bootstrap",
+              "deflated_sharpe",
+              "leave_one_decade_out",
+              "leave_one_symbol_out",
+          }
+          for candidate in plan["candidate_ids"]:
+              methods = {
+                  task["method"]
+                  for task in plan["tasks"]
+                  if task["parameters"].get("candidate_id") == candidate
+              }
+              if not required <= methods:
+                  raise SystemExit(
+                      f"candidate {candidate} lacks core robustness: {required - methods}"
+                  )
+          if plan["task_count"] != 360 or len(set(plan["matrix_a"])) != 180 or len(set(plan["matrix_b"])) != 180:
+              raise SystemExit("repaired robustness matrix is not exactly 180+180")
+          if plan["locked_opened"] is not False or plan["data_end"] != "2015-12-31":
+              raise SystemExit("repaired robustness plan crossed the holdout boundary")
+          PY
+      - id: matrix
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          plan = json.load(open("postselection/robustness_plan.json", encoding="utf-8"))
+          print("matrix_a=" + json.dumps(plan["matrix_a"], separators=(",", ":")))
+          print("matrix_b=" + json.dumps(plan["matrix_b"], separators=(",", ":")))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-postselection-inputs-repaired
+          path: postselection
+          retention-days: 30
+
+  robustness_a:
+    needs: prepare_robustness
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        task_index: ${{ fromJSON(needs.prepare_robustness.outputs.matrix_a) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs-repaired, path: postselection}
+      - run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py evaluate-task
+          --plan postselection/robustness_plan.json
+          --returns postselection/development_returns.csv
+          --trades postselection/development_trades.csv
+          --task-index "${{ matrix.task_index }}"
+          --output-root task-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-robustness-repaired-task-${{ matrix.task_index }}
+          path: task-output
+          retention-days: 30
+
+  robustness_b:
+    needs: prepare_robustness
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix:
+        task_index: ${{ fromJSON(needs.prepare_robustness.outputs.matrix_b) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs-repaired, path: postselection}
+      - run: >-
+          python scripts/run_stock_protocol_scientific_postselection.py evaluate-task
+          --plan postselection/robustness_plan.json
+          --returns postselection/development_returns.csv
+          --trades postselection/development_trades.csv
+          --task-index "${{ matrix.task_index }}"
+          --output-root task-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-robustness-repaired-task-${{ matrix.task_index }}
+          path: task-output
+          retention-days: 30
+
+  robustness_merge:
+    needs: [prepare_robustness, robustness_a, robustness_b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs-repaired, path: postselection}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-robustness-repaired-task-*
+          path: robustness-tasks
+          merge-multiple: true
+      - name: Merge and freeze exact balanced statistical evidence
+        run: |
+          python scripts/run_stock_protocol_scientific_postselection.py merge \
+            --plan postselection/robustness_plan.json \
+            --tasks-root robustness-tasks \
+            --output-root robustness-merged
+          python scripts/run_stock_protocol_scientific_postselection.py freeze-robustness \
+            --manifest "$MANIFEST" \
+            --walk-forward-snapshot postselection/walk_forward_snapshot.json \
+            --robustness-results robustness-merged/robustness_results.csv \
+            --output robustness-merged/robustness_snapshot.json
+      - name: Audit all ten candidates and all 360 tasks
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import numpy as np
+          import pandas as pd
+
+          tests = pd.read_csv("robustness-merged/statistical_tests.csv")
+          results = pd.read_csv("robustness-merged/robustness_results.csv")
+          if len(tests) != 360 or tests["task_id"].nunique() != 360:
+              raise SystemExit("robustness evidence is not 360 unique tasks")
+          if len(results) != 10 or not results["robustness_complete"].eq(True).all():
+              raise SystemExit("all ten candidates must have complete robustness")
+          required_methods = {
+              "circular_block_bootstrap",
+              "deflated_sharpe",
+              "leave_one_decade_out",
+              "leave_one_symbol_out",
+          }
+          for candidate in results["candidate_id"]:
+              methods = set(tests.loc[tests["candidate_id"].eq(candidate), "method"])
+              if not required_methods <= methods:
+                  raise SystemExit(f"candidate {candidate} lacks {required_methods - methods}")
+          metrics = [
+              "bootstrap_sharpe_p05", "bootstrap_fdr_pvalue_max",
+              "deflated_sharpe_probability", "cscv_pbo_max",
+              "leave_one_decade_min_sharpe", "leave_one_symbol_min_mean_return",
+          ]
+          if not np.isfinite(results[metrics].to_numpy(dtype=float)).all():
+              raise SystemExit("complete robustness metrics are not finite")
+          if tests["locked_opened"].astype(str).str.lower().ne("false").any():
+              raise SystemExit("locked data detected in robustness")
+          summary = json.load(open("robustness-merged/robustness_summary.json"))
+          if summary["partial"] is not False or summary["robustness_complete_count"] != 10:
+              raise SystemExit("robustness merge is partial or incomplete")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-robustness-repaired
+          path: robustness-merged
+          retention-days: 30
+
+  assemble:
+    needs: robustness_merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      HOLDOUT_RUN_ID: ${{ inputs.holdout_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -e .
+      - name: Download frozen source layers and the existing holdout
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            stock-protocol-scientific-pack \
+            stock-protocol-signal-merged \
+            stock-protocol-weights-merged \
+            stock-protocol-entries-merged \
+            stock-protocol-exits-merged \
+            stock-protocol-portfolio-merged \
+            stock-protocol-costs-merged
+          do
+            gh run download "$SOURCE_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "$name" \
+              --dir "source/$name"
+          done
+          gh run download "$HOLDOUT_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name stock-protocol-scientific-holdout \
+            --dir source/holdout
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-postselection-inputs-repaired, path: source/postselection}
+      - uses: actions/download-artifact@v4
+        with: {name: stock-protocol-scientific-robustness-repaired, path: source/robustness}
+      - name: Prove holdout reuse without a second evaluation
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          root = Path("source/holdout")
+          holdout = pd.read_csv(root / "holdout_2016_2020.csv")
+          if len(holdout) != 10 or not holdout["evaluation_count"].eq(1).all():
+              raise SystemExit("frozen holdout does not contain ten single evaluations")
+          for column in ("selection_used", "validation_used_for_selection", "locked_opened"):
+              if holdout[column].astype(str).str.lower().isin({"true", "1", "yes"}).any():
+                  raise SystemExit(f"invalid holdout policy: {column}")
+          audit = json.loads((root / "holdout_audit.json").read_text(encoding="utf-8"))
+          if audit.get("locked_opened") is not False:
+              raise SystemExit("existing holdout opened locked data")
+          Path("holdout_reuse_audit.json").write_text(
+              json.dumps(
+                  {
+                      "source_holdout_run_id": "${{ inputs.holdout_run_id }}",
+                      "holdout_recomputed": False,
+                      "candidate_count": len(holdout),
+                      "evaluation_count_per_candidate": 1,
+                      "validation_used_for_selection": False,
+                      "locked_opened": False,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ),
+              encoding="utf-8",
+          )
+          PY
+      - name: Assemble strict finalizer inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p finalizer-input/daily_equity_curves finalizer-input/trade_ledgers finalizer-input/position_ledgers
+          cp source/stock-protocol-signal-merged/signal_results.csv finalizer-input/signal_results.csv
+          cp source/stock-protocol-weights-merged/weights_results.csv finalizer-input/weight_results.csv
+          cp source/stock-protocol-entries-merged/entries_results.csv finalizer-input/entry_results.csv
+          cp source/stock-protocol-exits-merged/exits_results.csv finalizer-input/exit_results.csv
+          cp source/stock-protocol-portfolio-merged/portfolio_results.csv finalizer-input/portfolio_results.csv
+          cp source/stock-protocol-costs-merged/costs_results.csv finalizer-input/cost_results.csv
+          cp source/postselection/walk_forward_results.csv finalizer-input/walk_forward_results.csv
+          cp source/robustness/robustness_results.csv finalizer-input/robustness_results.csv
+          cp source/robustness/parameter_stability.csv finalizer-input/parameter_stability.csv
+          cp source/robustness/statistical_tests.csv finalizer-input/statistical_tests.csv
+          cp source/holdout/holdout_2016_2020.csv finalizer-input/holdout_2016_2020.csv
+          cp source/postselection/data_audit.json finalizer-input/data_audit.json
+          cp source/postselection/daily_equity_curves/* finalizer-input/daily_equity_curves/
+          cp source/postselection/trade_ledgers/* finalizer-input/trade_ledgers/
+          cp source/postselection/position_ledgers/* finalizer-input/position_ledgers/
+          if [ -d source/holdout/daily_equity_curves ]; then cp source/holdout/daily_equity_curves/* finalizer-input/daily_equity_curves/; fi
+          if [ -d source/holdout/trade_ledgers ]; then cp source/holdout/trade_ledgers/* finalizer-input/trade_ledgers/; fi
+          if [ -d source/holdout/position_ledgers ]; then cp source/holdout/position_ledgers/* finalizer-input/position_ledgers/; fi
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+          paths = ["source/postselection/yearly_results.csv", "source/holdout/holdout_yearly_results.csv"]
+          frames = [pd.read_csv(path) for path in paths if Path(path).is_file()]
+          if not frames:
+              raise SystemExit("no yearly results found")
+          pd.concat(frames, ignore_index=True).to_csv("finalizer-input/yearly_results.csv", index=False)
+          PY
+      - name: Build corrected complete artifact
+        run: >-
+          python scripts/finalize_stock_protocol_scientific.py
+          --input-root finalizer-input
+          --output-root final-artifact
+          --manifest "$MANIFEST"
+      - name: Attach provenance and audit the final contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in full_dataset_inventory.csv full_dataset_audit.json two_symbol_root_cause.md pre2021_pack_audit.json pre2021_symbol_coverage.csv data_shard_manifest.json dataset_exclusions.csv; do
+            cp "source/stock-protocol-scientific-pack/$name" "final-artifact/$name"
+          done
+          cp holdout_reuse_audit.json final-artifact/holdout_reuse_audit.json
+          python - <<'PY'
+          import json
+          import numpy as np
+          import pandas as pd
+          from pathlib import Path
+
+          root = Path("final-artifact")
+          summary = json.loads((root / "final_summary.json").read_text())
+          pack = json.loads((root / "pre2021_pack_audit.json").read_text())
+          tests = pd.read_csv(root / "statistical_tests.csv")
+          robust = pd.read_csv(root / "robustness_results.csv")
+          holdout = pd.read_csv(root / "holdout_2016_2020.csv")
+          matrix = pd.read_csv(root / "implementation_matrix.csv")
+          if summary["partial"] is not False or summary["locked_opened"] is not False:
+              raise SystemExit("final summary is partial or unlocked")
+          if summary["validation_used_for_selection"] is not False:
+              raise SystemExit("validation influenced selection")
+          if pack["pack_symbols"] != 4828 or pack["pack_rows"] != 20327106:
+              raise SystemExit("frozen dataset counts changed")
+          if pack["dataset_hash"] != "cc90a87a7bece9411508aefd3c4f8e26bd156b001e8e03dec33545927509e964":
+              raise SystemExit("frozen dataset hash changed")
+          if pack["locked_opened"] is not False or pack["locked_rows"] != 0:
+              raise SystemExit("locked data detected")
+          if len(matrix) != 36 or len(tests) != 360 or tests["task_id"].nunique() != 360:
+              raise SystemExit("scientific matrix or robustness task counts changed")
+          if len(robust) != 10 or not robust["robustness_complete"].eq(True).all():
+              raise SystemExit("corrected robustness is incomplete")
+          metrics = [
+              "bootstrap_sharpe_p05", "bootstrap_fdr_pvalue_max",
+              "deflated_sharpe_probability", "cscv_pbo_max",
+              "leave_one_decade_min_sharpe", "leave_one_symbol_min_mean_return",
+          ]
+          if not np.isfinite(robust[metrics].to_numpy(dtype=float)).all():
+              raise SystemExit("corrected robustness contains non-finite metrics")
+          if len(holdout) != 10 or not holdout["evaluation_count"].eq(1).all():
+              raise SystemExit("holdout was not reused exactly once")
+          required = {
+              "full_dataset_inventory.csv", "full_dataset_audit.json",
+              "two_symbol_root_cause.md", "pre2021_pack_audit.json",
+              "pre2021_symbol_coverage.csv", "data_shard_manifest.json",
+              "dataset_exclusions.csv", "implementation_matrix.csv",
+              "signal_layer_results.csv", "entry_layer_results.csv",
+              "exit_layer_results.csv", "portfolio_layer_results.csv",
+              "cost_scenarios.csv", "walk_forward_results.csv",
+              "robustness_results.csv", "holdout_2016_2020.csv",
+              "pareto_frontier.csv", "final_recommendation.md",
+              "holdout_reuse_audit.json",
+          }
+          missing = sorted(name for name in required if not (root / name).is_file())
+          if missing:
+              raise SystemExit(f"missing corrected final outputs: {missing}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-scientific-full-universe-360jobs-corrected-results
+          path: final-artifact
+          retention-days: 90

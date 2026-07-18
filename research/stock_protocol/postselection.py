@@ -257,86 +257,84 @@ def build_robustness_plan(
         for value in (4, 6, 8, 10, 12, 14, 16)
         if cscv_observations >= value * 2
     ]
-    tasks = [
-        _task(
-            "circular_block_bootstrap",
-            {"candidate_id": candidates[0], "seed": seed_base, "block_size": 5, "n_samples": 100},
-            input_hash,
-        ),
-        _task(
-            "deflated_sharpe",
-            {"candidate_id": candidates[0], "n_trials": len(candidates)},
-            input_hash,
-        ),
-        _task(
-            "cscv_pbo",
-            {"partitions": viable_partitions[0], "candidate_ids": cscv_candidates},
-            input_hash,
-        ),
-        _task(
-            "leave_one_decade_out",
-            {
-                "candidate_id": candidates[0],
-                "decade": int(decades_by_candidate[candidates[0]][0]),
-            },
-            input_hash,
-        ),
-    ]
-    first_viable_symbol = next(
-        (
-            (candidate, symbols[0])
-            for candidate, symbols in viable_symbols_by_candidate.items()
-            if symbols
-        ),
-        None,
-    )
-    if first_viable_symbol is not None:
-        candidate, symbol = first_viable_symbol
-        tasks.append(
-            _task(
-                "leave_one_symbol_out",
-                {"candidate_id": candidate, "symbol": symbol},
-                input_hash,
-            )
-        )
+    tasks: list[dict[str, Any]] = []
+    task_ids: set[str] = set()
 
-    for candidate in candidates:
-        tasks.append(
-            _task(
-                "deflated_sharpe",
-                {"candidate_id": candidate, "n_trials": len(candidates)},
-                input_hash,
-            )
+    def append_task(method: str, parameters: dict[str, Any]) -> None:
+        candidate_task = _task(method, parameters, input_hash)
+        if candidate_task["task_id"] not in task_ids:
+            task_ids.add(candidate_task["task_id"])
+            tasks.append(candidate_task)
+
+    # Reserve complete core evidence for every candidate before spending the
+    # remaining budget. This prevents a large first portfolio from consuming
+    # the whole matrix with leave-one-symbol tasks.
+    append_task(
+        "cscv_pbo",
+        {"partitions": viable_partitions[0], "candidate_ids": cscv_candidates},
+    )
+    for candidate_index, candidate in enumerate(candidates):
+        append_task(
+            "circular_block_bootstrap",
+            {
+                "candidate_id": candidate,
+                "seed": int(seed_base + candidate_index),
+                "block_size": 5,
+                "n_samples": 100,
+            },
+        )
+        append_task(
+            "deflated_sharpe",
+            {"candidate_id": candidate, "n_trials": len(candidates)},
         )
         for decade in decades_by_candidate[candidate]:
-            tasks.append(
-                _task(
-                    "leave_one_decade_out",
-                    {"candidate_id": candidate, "decade": int(decade)},
-                    input_hash,
-                )
+            append_task(
+                "leave_one_decade_out",
+                {"candidate_id": candidate, "decade": int(decade)},
             )
-        for symbol in viable_symbols_by_candidate[candidate]:
-            tasks.append(
-                _task(
-                    "leave_one_symbol_out",
-                    {"candidate_id": candidate, "symbol": symbol},
-                    input_hash,
-                )
+        viable_symbols = viable_symbols_by_candidate[candidate]
+        if viable_symbols:
+            append_task(
+                "leave_one_symbol_out",
+                {"candidate_id": candidate, "symbol": viable_symbols[0]},
             )
-    for partitions in viable_partitions:
-        tasks.append(
-            _task(
-                "cscv_pbo",
-                {"partitions": partitions, "candidate_ids": cscv_candidates},
-                input_hash,
-            )
+
+    minimum_complete_task_count = len(tasks)
+    if minimum_complete_task_count > task_count:
+        raise ValueError(
+            "robustness task_count cannot cover complete candidate evidence: "
+            f"requires at least {minimum_complete_task_count}, got {task_count}"
         )
 
-    unique: dict[str, dict[str, Any]] = {task["task_id"]: task for task in tasks}
+    # Use each viable CSCV partition once, then distribute symbol exclusions
+    # round-robin so no candidate monopolises the finite task budget.
+    for partitions in viable_partitions[1:]:
+        if len(tasks) >= task_count:
+            break
+        append_task(
+            "cscv_pbo",
+            {"partitions": partitions, "candidate_ids": cscv_candidates},
+        )
+    maximum_symbols = max(
+        (len(symbols) for symbols in viable_symbols_by_candidate.values()),
+        default=0,
+    )
+    for symbol_index in range(maximum_symbols):
+        for candidate in candidates:
+            if len(tasks) >= task_count:
+                break
+            symbols = viable_symbols_by_candidate[candidate]
+            if symbol_index < len(symbols):
+                append_task(
+                    "leave_one_symbol_out",
+                    {"candidate_id": candidate, "symbol": symbols[symbol_index]},
+                )
+        if len(tasks) >= task_count:
+            break
+
     block_sizes = (5, 10, 21, 42, 63)
     sequence = 0
-    while len(unique) < task_count:
+    while len(tasks) < task_count:
         candidate = candidates[sequence % len(candidates)]
         block_size = min(
             block_sizes[(sequence // len(candidates)) % len(block_sizes)],
@@ -348,10 +346,9 @@ def build_robustness_plan(
             "block_size": int(block_size),
             "n_samples": 100,
         }
-        candidate_task = _task("circular_block_bootstrap", parameters, input_hash)
-        unique[candidate_task["task_id"]] = candidate_task
+        append_task("circular_block_bootstrap", parameters)
         sequence += 1
-    planned = list(unique.values())[:task_count]
+    planned = tasks
     if len(planned) != task_count or len(
         {task["task_id"] for task in planned}
     ) != task_count:
@@ -370,6 +367,8 @@ def build_robustness_plan(
         "observation_counts": observation_counts,
         "required_methods": sorted(required_methods),
         "unavailable_methods": unavailable_methods,
+        "minimum_complete_task_count": minimum_complete_task_count,
+        "task_distribution_policy": "candidate_core_then_round_robin",
         "viable_leave_one_symbol_candidates": sorted(
             candidate
             for candidate, symbols in viable_symbols_by_candidate.items()
@@ -597,12 +596,13 @@ def merge_robustness_tasks(
         dsr = candidate.loc[candidate["method"].eq("deflated_sharpe")]
         decades = candidate.loc[candidate["method"].eq("leave_one_decade_out")]
         symbols = candidate.loc[candidate["method"].eq("leave_one_symbol_out")]
-        symbol_available = candidate_id in viable_symbol_candidates
+        symbol_viable = candidate_id in viable_symbol_candidates
+        symbol_tested = not symbols.empty
+        symbol_available = symbol_viable and symbol_tested
         symbol_minimum = pd.to_numeric(
             symbols.get("mean_return"), errors="coerce"
         ).min()
-        row = {
-            "candidate_id": candidate_id,
+        metric_values = {
             "bootstrap_sharpe_p05": pd.to_numeric(
                 bootstrap.get("ci_05"), errors="coerce"
             ).min(),
@@ -616,16 +616,41 @@ def merge_robustness_tasks(
             "leave_one_decade_min_sharpe": pd.to_numeric(
                 decades.get("estimate"), errors="coerce"
             ).min(),
+        }
+        missing_metrics = [
+            name
+            for name, value in metric_values.items()
+            if pd.isna(value) or not np.isfinite(float(value))
+        ]
+        if symbol_viable and (
+            not symbol_tested
+            or pd.isna(symbol_minimum)
+            or not np.isfinite(float(symbol_minimum))
+        ):
+            missing_metrics.append("leave_one_symbol_min_mean_return")
+        robustness_complete = bool(symbol_available and not missing_metrics)
+        if not symbol_viable:
+            limitation = plan["unavailable_methods"].get(
+                "leave_one_symbol_out",
+                "leave_one_symbol_out unavailable for candidate",
+            )
+        elif missing_metrics:
+            limitation = "missing executed robustness metrics: " + ", ".join(
+                missing_metrics
+            )
+        else:
+            limitation = ""
+        row = {
+            "candidate_id": candidate_id,
+            **metric_values,
             "leave_one_symbol_available": symbol_available,
             "leave_one_symbol_min_mean_return": (
-                float(symbol_minimum) if symbol_available else "not_applicable"
+                float(symbol_minimum)
+                if symbol_available
+                else ("not_executed" if symbol_viable else "not_applicable")
             ),
-            "robustness_complete": symbol_available,
-            "robustness_limitation": (
-                "" if symbol_available else plan["unavailable_methods"].get(
-                    "leave_one_symbol_out", "leave_one_symbol_out unavailable"
-                )
-            ),
+            "robustness_complete": robustness_complete,
+            "robustness_limitation": limitation,
             "locked_opened": False,
             "data_end": DEVELOPMENT_END.date().isoformat(),
         }
@@ -675,6 +700,9 @@ def merge_robustness_tasks(
             "tasks_expected": len(expected),
             "tasks_found": len(found),
             "candidate_count": len(candidate_rows),
+            "robustness_complete_count": int(
+                robustness["robustness_complete"].sum()
+            ),
             "robust_pass_count": int(robustness["robust_pass"].sum()),
             "required_methods": plan.get("required_methods", []),
             "unavailable_methods": plan.get("unavailable_methods", {}),

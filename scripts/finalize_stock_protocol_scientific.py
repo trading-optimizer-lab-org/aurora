@@ -108,6 +108,37 @@ def _validate_phase(frame: pd.DataFrame, label: str, data_end: str) -> pd.DataFr
     return frame
 
 
+def _validate_complete_robustness(frame: pd.DataFrame) -> None:
+    if "robustness_complete" not in frame or "robust_pass" not in frame:
+        raise ValueError("robustness results lack completion audit columns")
+    complete = _truthy(frame["robustness_complete"])
+    passed = _truthy(frame["robust_pass"])
+    if (passed & ~complete).any():
+        raise ValueError("incomplete robustness candidate cannot pass")
+    if not complete.any():
+        return
+    required = (
+        "bootstrap_sharpe_p05",
+        "bootstrap_fdr_pvalue_max",
+        "deflated_sharpe_probability",
+        "cscv_pbo_max",
+        "leave_one_decade_min_sharpe",
+        "leave_one_symbol_min_mean_return",
+    )
+    missing = [column for column in required if column not in frame]
+    if missing:
+        raise ValueError(
+            f"complete robustness results lack metrics: {sorted(missing)}"
+        )
+    values = frame.loc[complete, required].apply(pd.to_numeric, errors="coerce")
+    if not np.isfinite(values.to_numpy(dtype=float)).all():
+        raise ValueError("complete robustness results contain non-finite metrics")
+    if "leave_one_symbol_available" not in frame or not _truthy(
+        frame.loc[complete, "leave_one_symbol_available"]
+    ).all():
+        raise ValueError("complete robustness results lack leave-one-symbol evidence")
+
+
 def _pareto_source(frame: pd.DataFrame) -> pd.DataFrame:
     required = {
         "candidate_id",
@@ -212,6 +243,21 @@ def _write_recommendation(
         }
     )
     limitation_text = "; ".join(limitations) if limitations else "ninguna registrada"
+    robustness_complete = _truthy(
+        robustness.get(
+            "robustness_complete", pd.Series(False, index=robustness.index)
+        )
+    )
+    if len(robustness) and robustness_complete.all():
+        leave_one_symbol_text = (
+            "La prueba leave-one-symbol se ejecuto para todas las candidatas y "
+            "sus metricas requeridas quedaron completas y finitas."
+        )
+    else:
+        leave_one_symbol_text = (
+            "La prueba leave-one-symbol quedo incompleta para alguna candidata: "
+            f"{limitation_text}. Esas candidatas no pueden aprobar robustez."
+        )
     method_counts = statistical_tests["method"].astype(str).value_counts().sort_index()
     method_text = ", ".join(
         f"{method}: {int(count)}" for method, count in method_counts.items()
@@ -299,10 +345,9 @@ mejor diagnostico bajo a Sharpe {_decimal(holdout_best.get('sharpe'))}, CAGR
 las cifras de desarrollo como evidencia estable.
 
 El peor CSCV/PBO agregado fue {_decimal(pbo_max)}; el umbral de pase era 0,500.
-La prueba leave-one-symbol no era viable: {limitation_text}. Al faltar esa
-prueba, la robustez es incompleta y ninguna candidata puede aprobar. El resto
-de la evidencia distribuida incluye bootstrap por bloques, Sharpe deflactado,
-CSCV/PBO, FDR y leave-one-decade. El holdout se miro una sola vez y no se uso
+{leave_one_symbol_text} La evidencia distribuida incluye bootstrap por bloques,
+Sharpe deflactado, CSCV/PBO, FDR, leave-one-decade y leave-one-symbol. El
+holdout se miro una sola vez y no se uso
 para reajustar parametros. Reparto real de tareas: {method_text}.
 
 ## Pareto
@@ -367,6 +412,7 @@ def finalize_scientific_artifact(
         phase_frames[source_name] = _validate_phase(
             pd.read_csv(input_root / source_name), source_name, manifest.data_end
         )
+    _validate_complete_robustness(phase_frames["robustness_results.csv"])
 
     holdout = pd.read_csv(input_root / "holdout_2016_2020.csv")
     if holdout.empty or holdout["evaluation_count"].ne(1).any():

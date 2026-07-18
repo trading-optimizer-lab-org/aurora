@@ -86,6 +86,31 @@ def test_robustness_plan_contains_360_unique_real_tasks():
         "leave_one_symbol_out",
     } <= {task["method"] for task in plan["tasks"]}
     assert all(task["input_hash"] == plan["input_hash"] for task in plan["tasks"])
+    candidate_methods = {
+        candidate: {
+            task["method"]
+            for task in plan["tasks"]
+            if task["parameters"].get("candidate_id") == candidate
+        }
+        for candidate in ("stock_alpha", "stock_beta")
+    }
+    for methods in candidate_methods.values():
+        assert {
+            "circular_block_bootstrap",
+            "deflated_sharpe",
+            "leave_one_decade_out",
+            "leave_one_symbol_out",
+        } <= methods
+    symbol_counts = {
+        candidate: sum(
+            task["method"] == "leave_one_symbol_out"
+            and task["parameters"].get("candidate_id") == candidate
+            for task in plan["tasks"]
+        )
+        for candidate in ("stock_alpha", "stock_beta")
+    }
+    assert max(symbol_counts.values()) - min(symbol_counts.values()) <= 1
+    assert plan["task_distribution_policy"] == "candidate_core_then_round_robin"
     assert plan["locked_opened"] is False
     assert plan["data_end"] == "2015-12-31"
 
@@ -767,6 +792,19 @@ def test_robustness_merge_requires_all_tasks_and_applies_fdr(tmp_path):
     assert summary["tasks_found"] == 12
     assert summary["partial"] is False
     assert summary["locked_opened"] is False
+    robustness = pd.read_csv(outputs["robustness_results"])
+    assert robustness["robustness_complete"].eq(True).all()
+    required_metrics = [
+        "bootstrap_sharpe_p05",
+        "bootstrap_fdr_pvalue_max",
+        "deflated_sharpe_probability",
+        "cscv_pbo_max",
+        "leave_one_decade_min_sharpe",
+        "leave_one_symbol_min_mean_return",
+    ]
+    assert np.isfinite(
+        robustness[required_metrics].to_numpy(dtype=float)
+    ).all()
 
     next((task_root / "task=0000").glob("result.json")).unlink()
     with pytest.raises(ValueError, match="missing robustness task"):
