@@ -136,6 +136,8 @@ def yearly_comparison(
     rows: list[dict[str, Any]] = []
     closed = trades.copy()
     if not closed.empty:
+        if "status" in closed.columns:
+            closed = closed.loc[closed["status"].astype(str).eq("closed")].copy()
         closed["exit_date"] = pd.to_datetime(closed["exit_date"], errors="raise").dt.normalize()
     for year, year_curve in strategy.groupby(strategy["date"].dt.year, sort=True):
         spy_year = spy.loc[spy["date"].dt.year.eq(year)]

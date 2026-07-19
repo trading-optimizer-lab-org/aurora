@@ -24,6 +24,7 @@ from aurora.research.stock_protocol.exact_oos import (
 from aurora.research.stock_protocol.exact_oos_reporting import (
     classify_verdict,
     spy_benchmark,
+    yearly_comparison,
 )
 from aurora.research.stock_protocol.campaign import EvaluationResult
 
@@ -279,6 +280,48 @@ def test_spy_benchmark_carries_prior_close_into_non_spy_calendar_date():
     assert benchmark["date"].tolist() == strategy_dates.tolist()
     assert benchmark.loc[1, "equity"] == benchmark.loc[0, "equity"]
     assert np.isfinite(list(metrics.values())).all()
+
+
+def test_yearly_comparison_counts_only_capitalized_closed_operations():
+    dates = pd.bdate_range("2022-01-03", periods=40)
+    strategy_curve = pd.DataFrame(
+        {
+            "date": dates,
+            "equity": np.linspace(100_000.0, 110_000.0, len(dates)),
+            "gross_exposure": 1.0,
+        }
+    )
+    spy_curve = pd.DataFrame(
+        {"date": dates, "equity": np.linspace(100_000.0, 105_000.0, len(dates))}
+    )
+    trades = pd.DataFrame(
+        [
+            {
+                "exit_date": "2022-02-01",
+                "exit_reason": "take_profit",
+                "status": "closed",
+                "net_return": 0.5,
+            },
+            {
+                "exit_date": "2022-02-02",
+                "exit_reason": "time_exit",
+                "status": "rejected_insufficient_capital",
+                "net_return": np.nan,
+            },
+        ]
+    )
+
+    result = yearly_comparison(
+        strategy_curve,
+        spy_curve,
+        trades,
+        period="true_locked_oos",
+    )
+
+    assert result.loc[0, "operations"] == 1
+    assert result.loc[0, "take_profits"] == 1
+    assert result.loc[0, "time_exits"] == 0
+    assert result.loc[0, "win_rate"] == 1.0
 
 
 def test_exact_oos_workflow_is_manifest_gated_and_single_strategy():

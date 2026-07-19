@@ -14,6 +14,7 @@ on:
         options:
           - standard
           - technical_recovery
+          - artifact_finalization
 
 permissions:
   contents: read
@@ -246,7 +247,7 @@ jobs:
     needs: [phase, scientific-tests]
     if: >-
       needs.phase.outputs.frozen_manifest_exists == 'true' &&
-      (github.event_name != 'workflow_dispatch' || inputs.execution_mode != 'technical_recovery')
+      (github.event_name != 'workflow_dispatch' || inputs.execution_mode == 'standard')
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -445,3 +446,80 @@ jobs:
       inputs.execution_mode == 'technical_recovery'
     uses: ./.github/workflows/stock-protocol-exact-oos-technical-recovery.yml
     secrets: inherit
+
+  artifact-finalization:
+    needs: [phase, scientific-tests]
+    if: >-
+      needs.phase.outputs.frozen_manifest_exists == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.execution_mode == 'artifact_finalization'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SOURCE_RUN_ID: "29687200399"
+      SOURCE_ARTIFACT_NAME: stock-protocol-exact-irrevocable-oos-results
+      SOURCE_ARTIFACT_DIGEST: sha256:0b67cd21b82aeb3f76b0103edf336fddf7da6a9d0d7811c6b387bef1c3a9cefc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pandas
+      - name: Verify reporting-only finalization scope
+        shell: bash
+        run: |
+          changed=$(git diff --name-only abd2aea7265be311fd42284a4533192b2013cf9a HEAD)
+          while IFS= read -r path; do
+            case "$path" in
+              config/frozen_stock_protocol_exact_oos/*|research/stock_protocol/exact_oos_reporting.py|scripts/run_stock_protocol_exact_oos.py|scripts/finalize_stock_protocol_exact_oos_artifact.py|tests/test_stock_protocol_exact_oos.py|.github/workflows/stock-protocol-exact-oos-technical-recovery.yml|.github/workflows/stock-protocol-scientific-tests.yml) ;;
+              "") ;;
+              *) echo "unauthorized post-freeze path: $path"; exit 1 ;;
+            esac
+          done <<< "$changed"
+      - name: Verify and download evaluated artifact
+        shell: bash
+        run: |
+          actual=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$SOURCE_ARTIFACT_NAME\") | .digest")
+          test "$actual" = "$SOURCE_ARTIFACT_DIGEST"
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SOURCE_ARTIFACT_NAME" --dir exact-oos-results
+      - name: Finalize closed-operation reporting without rerunning backtest
+        run: >-
+          python scripts/finalize_stock_protocol_exact_oos_artifact.py
+          --root exact-oos-results
+          --source-run-id "$SOURCE_RUN_ID"
+          --source-artifact-digest "$SOURCE_ARTIFACT_DIGEST"
+      - name: Verify corrected reporting contract and hashes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          import pandas as pd
+          root = Path("exact-oos-results")
+          summary = json.loads((root / "exact_oos_summary.json").read_text())
+          correction = json.loads((root / "reporting_correction_audit.json").read_text())
+          manifest = json.loads((root / "final_artifact_manifest.json").read_text())
+          yearly = pd.read_csv(root / "exact_strategy_yearly_comparison.csv")
+          assert summary["classification"] == "promising_but_inconclusive"
+          assert correction["true_oos_closed_operations"] == 238
+          assert correction["true_oos_take_profits"] == 121
+          assert correction["true_oos_time_exits"] == 117
+          assert int(yearly.loc[yearly["period"].eq("true_locked_oos"), "operations"].sum()) == 238
+          for name, expected in manifest["files"].items():
+              path = root / name
+              assert path.stat().st_size == expected["bytes"]
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == expected["sha256"]
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-irrevocable-oos-results-final
+          path: exact-oos-results
+          if-no-files-found: error
+          retention-days: 90

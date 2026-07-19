@@ -560,7 +560,10 @@ def evaluate_frozen_oos(
 
     verdict = classify_verdict(true_oos.metrics, spy_metrics, statistics)
     cost_frame = pd.DataFrame(cost_rows).set_index("cost_bps_per_side")
-    reasons = true_oos.trade_ledger["exit_reason"].astype(str)
+    closed_trades = true_oos.trade_ledger.loc[
+        true_oos.trade_ledger["status"].astype(str).eq("closed")
+    ].copy()
+    reasons = closed_trades["exit_reason"].astype(str)
     stats_index = statistics.set_index("test")
     markdown = f"""# Final exact strategy verdict
 
