@@ -1,0 +1,289 @@
+{
+  "benchmark": {
+    "asset": "SPY",
+    "leverage": 1.0,
+    "method": "buy_and_hold_adjusted_close_total_return",
+    "risk_free_rate": 0.0,
+    "same_dates_as_strategy": true
+  },
+  "candidate_id": "stock_3b897081e03c8d934f1d",
+  "costs": {
+    "primary_bps_per_side": 0,
+    "sensitivity_bps_per_side": [
+      5,
+      10,
+      25,
+      50
+    ],
+    "sensitivity_used_for_selection": false
+  },
+  "data": {
+    "benchmark_file_sha256": "eec0c4d26038af392d089396dd1493a724550c46b9707ceb9a540a2d67b86c97",
+    "dataset_hash": "cc90a87a7bece9411508aefd3c4f8e26bd156b001e8e03dec33545927509e964",
+    "delisting_returns_may_not_be_invented": true,
+    "metadata_is_bitemporal": false,
+    "policy_hash": "0ac27343d4a435edb19ce48887a8723e47a569b4f4942bfaa258d1cf82fce5cc",
+    "prices_file_sha256": "0e226f53adeed4117cb95c50b831e640a7831dbc860323fe88c8dd50316b4e0e",
+    "source_artifact_digest": "sha256:f2704de81fabc9ffaa90684b936555a737b70f9d5a3204dfa7a13c40bd3c3ca6",
+    "source_artifact_name": "gtbi-external-pack-data",
+    "source_run_id": "29148013009",
+    "survivorship_limited": true,
+    "universe": "current_universe_backfill",
+    "universe_symbols": 4828
+  },
+  "endpoint_accounting": {
+    "open_positions_marked_to_market": true,
+    "portfolio_liquidated_at_measurement_endpoint": true,
+    "same_engine_as_in_sample": true
+  },
+  "freeze": {
+    "frozen_at_utc": "2026-07-19T11:08:24Z",
+    "locked_data_had_been_read": false,
+    "manifest_committed_before_locked_access": true
+  },
+  "governance": {
+    "financial_logic_changes_after_freeze": false,
+    "locked_opened": false,
+    "locked_used_for_selection": false,
+    "optimization_allowed": false,
+    "parameter_search_allowed": false,
+    "strategy_count": 1,
+    "validation_used_for_selection": false
+  },
+  "implementation_commit": "abd2aea7265be311fd42284a4533192b2013cf9a",
+  "in_sample_reproduction": {
+    "artifact_digest": "sha256:83c07b840680006536343e4407c2cc16f9b73ae33258513088246929628717db",
+    "artifact_id": "8441625517",
+    "artifact_name": "stock-protocol-exact-is-reproduction",
+    "cagr_difference": 0.0,
+    "closed_operations_expected": 92,
+    "closed_operations_observed": 92,
+    "exact_reproduction": true,
+    "ledger_rows_expected": 2947,
+    "ledger_rows_observed": 2947,
+    "max_drawdown_difference": 0.0,
+    "run_id": "29683985989",
+    "sharpe_difference": 0.0
+  },
+  "metric_formulas": {
+    "annualization_days": 252,
+    "cagr_calendar_year_basis": 365.2425,
+    "drawdown": "equity/cumulative_max_equity-1",
+    "sharpe": "mean_daily_return/std_daily_return*sqrt(252)",
+    "sortino": "mean_daily_return*252/annualized_downside_deviation"
+  },
+  "original_metrics": {
+    "average_exposure": 0.9897044183276853,
+    "cagr": 0.3723646104412519,
+    "calmar": 0.9737934185333296,
+    "closed_operations": 92,
+    "max_drawdown": -0.38238563062182696,
+    "sharpe": 1.4168958719655276,
+    "sortino": 1.313404471940912,
+    "total_return": 11.238679030810566
+  },
+  "periods": {
+    "development_end": "2015-12-31",
+    "development_start": "1995-01-01",
+    "diagnostic_end": "2020-12-31",
+    "diagnostic_role": "diagnostic_reused_holdout",
+    "diagnostic_start": "2016-01-01",
+    "locked_end": "2026-07-17",
+    "locked_end_rule": "last_complete_us_trading_session_available_at_freeze",
+    "locked_start": "2021-01-01"
+  },
+  "prompt_difference": {
+    "artifact_is_source_of_truth": true,
+    "description": "The source artifact contains ten equal-weight component signals. The simplified prompt said not to add another signal, but the artifact-defined ensemble is the immutable strategy and therefore prevails."
+  },
+  "purpose": "single_irreversible_exact_oos_validation",
+  "schema_version": 1,
+  "source": {
+    "artifact_digest": "sha256:3936159b63e4dab5e7299fafb6996c6eb963cb4d88aea388fe6e62444a059116",
+    "artifact_name": "stock-protocol-scientific-full-universe-360jobs-corrected-results",
+    "run_id": "29658603488",
+    "task_artifact_digest": "sha256:e324fcf5fe6bc1148ae95e6f08922683ceeb290a97f8c6e415d6f297535d5e20",
+    "task_artifact_name": "stock-protocol-exits-task-144",
+    "task_run_id": "29558183535",
+    "task_index": 144
+  },
+  "statistical_plan": {
+    "bootstrap_block_size_sessions": 20,
+    "bootstrap_samples": 5000,
+    "deflated_sharpe_trials": 290,
+    "not_applicable_for_single_strategy": [
+      "white_reality_check",
+      "spa",
+      "cscv_pbo"
+    ],
+    "tests": [
+      "block_bootstrap_sharpe",
+      "bootstrap_cagr",
+      "bootstrap_mean_daily_return",
+      "probabilistic_sharpe_vs_zero",
+      "probabilistic_sharpe_vs_spy",
+      "bootstrap_sharpe_difference_vs_spy",
+      "paired_daily_return_ttest",
+      "regression_against_spy",
+      "deflated_sharpe_290_trials"
+    ]
+  },
+  "strategy_spec": {
+    "component_signals": [
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_percent", "value": 5.0},
+        "signal_test_id": 2,
+        "signal_variant": {"lookback": 126, "skip": 21},
+        "signal_variant_index": 0
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_percent", "value": 10.0},
+        "signal_test_id": 2,
+        "signal_variant": {"lookback": 126, "skip": 21},
+        "signal_variant_index": 0
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "decile", "value": 1},
+        "signal_test_id": 2,
+        "signal_variant": {"lookback": 126, "skip": 21},
+        "signal_variant_index": 0
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_n", "value": 20},
+        "signal_test_id": 8,
+        "signal_variant": {"lookback": 252, "portfolio": "top_10"},
+        "signal_variant_index": 0
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_n", "value": 20},
+        "signal_test_id": 8,
+        "signal_variant": {"lookback": 252, "portfolio": "top_20"},
+        "signal_variant_index": 1
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_percent", "value": 5.0},
+        "signal_test_id": 8,
+        "signal_variant": {"lookback": 252, "portfolio": "top_20"},
+        "signal_variant_index": 1
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_percent", "value": 5.0},
+        "signal_test_id": 8,
+        "signal_variant": {"lookback": 252, "portfolio": "top_10"},
+        "signal_variant_index": 0
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_percent", "value": 30.0},
+        "signal_test_id": 3,
+        "signal_variant": {"lookback": 252, "sizing": "inverse_vol", "skip": 21},
+        "signal_variant_index": 1
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "top_percent", "value": 30.0},
+        "signal_test_id": 3,
+        "signal_variant": {"lookback": 252, "sizing": "raw", "skip": 21},
+        "signal_variant_index": 0
+      },
+      {
+        "cost_bps": 0,
+        "entry": {"kind": "immediate_next_open", "max_wait_sessions": 0},
+        "exit": {"holding_sessions": 63, "kind": "none"},
+        "horizon_sessions": 63,
+        "portfolio": {"sizing": "equal"},
+        "selection": {"kind": "quintile", "value": 1},
+        "signal_test_id": 2,
+        "signal_variant": {"lookback": 126, "skip": 21},
+        "signal_variant_index": 0
+      }
+    ],
+    "cost_bps": 0,
+    "entry": {
+      "kind": "breakout_rvol",
+      "max_wait_sessions": 21,
+      "threshold": 2.5,
+      "window": 20
+    },
+    "entry_test_id": 18,
+    "entry_variant_index": 3,
+    "exit": {
+      "holding_sessions": 252,
+      "kind": "take_profit",
+      "target_pct": 50.0
+    },
+    "exit_test_id": 26,
+    "exit_variant_index": 5,
+    "horizon_sessions": 252,
+    "portfolio": {"sizing": "equal"},
+    "selection": {"kind": "top_percent", "value": 20.0},
+    "signal_test_id": 2,
+    "signal_variant": {"lookback": 126, "skip": 21},
+    "signal_variant_index": 0,
+    "signal_weights": {"weights": "equal"},
+    "upstream_candidate_id": "stock_1bd7e9b629da67074fea",
+    "upstream_candidate_ids": [
+      "stock_caf4098a86b69c4f11da",
+      "stock_bd1c8222441c7f12dfa5",
+      "stock_f02ef45ca858fa84d6b5",
+      "stock_d236469e524c2d34e70f",
+      "stock_f973dae27c67dd57beea",
+      "stock_a876ce65a3070313c249",
+      "stock_e95149f21d98197dd139",
+      "stock_4a3f198ba057ab2e08d3",
+      "stock_d55d4d78efad32a17cf7",
+      "stock_894e846146ccf8588b9b"
+    ],
+    "weight_test_id": 13,
+    "weight_variant_index": 0
+  },
+  "verdict_rules": {
+    "failed_out_of_sample": "otherwise",
+    "invalid_due_to_data_or_execution": "critical source, SPY, finite-metric, curve, trade, cash, date, or manifest reconciliation failure",
+    "promising_but_inconclusive": "locked total return > 0 and locked Sharpe > 0, without every strict validation condition",
+    "validated_out_of_sample": "locked total return > 0, CAGR > SPY, Sharpe > SPY, block-bootstrap Sharpe lower 95% > 0, paired mean excess return > 0, and paired p-value <= 0.05"
+  }
+}
