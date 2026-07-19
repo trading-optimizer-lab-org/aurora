@@ -95,8 +95,9 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import json, os
+          import hashlib, json, os
           from pathlib import Path
+          root = Path("exact-oos-results")
           payload = {
               "recovery_kind": "reporting_calendar_alignment_only",
               "original_locked_run_id": int(os.environ["ORIGINAL_LOCKED_RUN_ID"]),
@@ -109,8 +110,20 @@ jobs:
               "strategy_parameters_changed": False,
               "locked_period_changed": False,
           }
-          Path("exact-oos-results/technical_recovery_audit.json").write_text(
+          audit_path = root / "technical_recovery_audit.json"
+          audit_path.write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          manifest_path = root / "final_artifact_manifest.json"
+          artifact_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          artifact_manifest["technical_recovery"] = payload
+          artifact_manifest["files"][audit_path.name] = {
+              "bytes": audit_path.stat().st_size,
+              "sha256": hashlib.sha256(audit_path.read_bytes()).hexdigest(),
+          }
+          manifest_path.write_text(
+              json.dumps(artifact_manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
           )
           PY
       - name: Verify irreversible final contract
@@ -143,13 +156,18 @@ jobs:
           if missing:
               raise SystemExit(f"missing final outputs: {missing}")
           summary = json.loads((root / "exact_oos_summary.json").read_text())
+          artifact_manifest = json.loads(
+              (root / "final_artifact_manifest.json").read_text()
+          )
           assert summary["locked_opened"] is True
           assert summary["locked_strategy_count"] == 1
           assert summary["validation_used_for_selection"] is False
-          assert summary["optimization_performed"] is False
-          assert summary["parameter_search_performed"] is False
+          assert artifact_manifest["optimization_allowed"] is False
+          assert artifact_manifest["parameter_search_allowed"] is False
+          assert artifact_manifest["technical_recovery"]["financial_logic_changed"] is False
           PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: stock-protocol-exact-irrevocable-oos-results
           path: exact-oos-results
