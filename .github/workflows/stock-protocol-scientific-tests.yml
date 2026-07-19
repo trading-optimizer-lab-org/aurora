@@ -72,12 +72,15 @@ jobs:
     timeout-minutes: 240
     env:
       DATA_RUN_ID: "29148013009"
+      DATA_ARTIFACT_ID: "8247340714"
       DATA_ARTIFACT_NAME: gtbi-external-pack-data
       DATA_ARTIFACT_DIGEST: sha256:f2704de81fabc9ffaa90684b936555a737b70f9d5a3204dfa7a13c40bd3c3ca6
       SOURCE_RUN_ID: "29658603488"
+      SOURCE_ARTIFACT_ID: "8433666535"
       SOURCE_ARTIFACT_NAME: stock-protocol-scientific-full-universe-360jobs-corrected-results
       SOURCE_ARTIFACT_DIGEST: sha256:3936159b63e4dab5e7299fafb6996c6eb963cb4d88aea388fe6e62444a059116
       TASK_RUN_ID: "29558183535"
+      TASK_ARTIFACT_ID: "8405433810"
       TASK_ARTIFACT_NAME: stock-protocol-exits-task-144
       TASK_ARTIFACT_DIGEST: sha256:e324fcf5fe6bc1148ae95e6f08922683ceeb290a97f8c6e415d6f297535d5e20
       EXPECTED_PRICES_SHA256: 0e226f53adeed4117cb95c50b831e640a7831dbc860323fe88c8dd50316b4e0e
@@ -102,22 +105,22 @@ jobs:
           import subprocess
 
           checks = (
-              ("DATA_RUN_ID", "DATA_ARTIFACT_NAME", "DATA_ARTIFACT_DIGEST"),
-              ("SOURCE_RUN_ID", "SOURCE_ARTIFACT_NAME", "SOURCE_ARTIFACT_DIGEST"),
-              ("TASK_RUN_ID", "TASK_ARTIFACT_NAME", "TASK_ARTIFACT_DIGEST"),
+              ("DATA_RUN_ID", "DATA_ARTIFACT_ID", "DATA_ARTIFACT_NAME", "DATA_ARTIFACT_DIGEST"),
+              ("SOURCE_RUN_ID", "SOURCE_ARTIFACT_ID", "SOURCE_ARTIFACT_NAME", "SOURCE_ARTIFACT_DIGEST"),
+              ("TASK_RUN_ID", "TASK_ARTIFACT_ID", "TASK_ARTIFACT_NAME", "TASK_ARTIFACT_DIGEST"),
           )
-          for run_key, name_key, digest_key in checks:
+          for run_key, id_key, name_key, digest_key in checks:
               raw = subprocess.check_output(
-                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ[run_key]}/artifacts"],
+                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{os.environ[id_key]}"],
                   text=True,
               )
-              matches = [
-                  item for item in json.loads(raw)["artifacts"]
-                  if item["name"] == os.environ[name_key]
-              ]
-              if len(matches) != 1:
-                  raise SystemExit(f"expected one {os.environ[name_key]}, found {len(matches)}")
-              artifact = matches[0]
+              artifact = json.loads(raw)
+              if str(artifact["id"]) != os.environ[id_key]:
+                  raise SystemExit(f"artifact id mismatch: {artifact['id']}")
+              if artifact["name"] != os.environ[name_key]:
+                  raise SystemExit(f"artifact name mismatch: {artifact['name']}")
+              if str(artifact["workflow_run"]["id"]) != os.environ[run_key]:
+                  raise SystemExit(f"artifact run mismatch: {artifact['name']}")
               if artifact.get("expired"):
                   raise SystemExit(f"artifact expired: {artifact['name']}")
               if artifact.get("digest", "").lower() != os.environ[digest_key].lower():
