@@ -10,6 +10,9 @@ permissions:
   contents: read
   actions: read
 
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
 jobs:
   phase:
     runs-on: ubuntu-latest
