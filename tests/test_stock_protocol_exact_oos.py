@@ -210,7 +210,12 @@ def _reproduction_result(ledger: pd.DataFrame) -> EvaluationResult:
         candidate_id=EXACT_CANDIDATE_ID,
         spec=exact_strategy_spec(),
         status="evaluated",
-        metrics={"cagr": 0.37236, "sharpe": 1.41689, "max_drawdown": -0.38238},
+        metrics={
+            "cagr": 0.37236,
+            "sharpe": 1.41689,
+            "max_drawdown": -0.38238,
+            "trades": 1.0,
+        },
         equity_curve=pd.DataFrame(),
         trade_ledger=ledger,
         position_ledger=pd.DataFrame(),

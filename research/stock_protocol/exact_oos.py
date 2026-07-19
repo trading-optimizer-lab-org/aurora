@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .campaign import canonical_candidate_id
+import numpy as np
+import pandas as pd
+
+from .campaign import EvaluationResult, canonical_candidate_id
 from .locked_access import LockedDataAuthorization, issue_locked_data_authorization
 
 
@@ -26,6 +29,10 @@ EXACT_SOURCE_TASK_ARTIFACT_DIGEST = (
 )
 EXACT_DATASET_HASH = "cc90a87a7bece9411508aefd3c4f8e26bd156b001e8e03dec33545927509e964"
 EXACT_POLICY_HASH = "0ac27343d4a435edb19ce48887a8723e47a569b4f4942bfaa258d1cf82fce5cc"
+
+
+class ExactReproductionError(ValueError):
+    """The implementation does not reproduce the frozen source result."""
 
 
 def _component(
@@ -103,6 +110,126 @@ def exact_strategy_spec() -> dict[str, Any]:
         ],
         "weight_test_id": 13,
         "weight_variant_index": 0,
+    }
+
+
+def _ordered_ledger(frame: pd.DataFrame) -> pd.DataFrame:
+    required = {
+        "symbol",
+        "signal_date",
+        "entry_date",
+        "entry_price",
+        "exit_date",
+        "exit_price",
+        "exit_reason",
+        "status",
+        "fold_id",
+        "trade_id",
+        "net_return",
+    }
+    missing = required - set(frame.columns)
+    if missing:
+        raise ExactReproductionError(
+            f"trade ledger missing frozen columns: {sorted(missing)}"
+        )
+    result = frame[list(required)].copy()
+    for column in ("signal_date", "entry_date", "exit_date"):
+        result[column] = pd.to_datetime(result[column], errors="raise").dt.strftime(
+            "%Y-%m-%d"
+        )
+    return result.sort_values(
+        ["fold_id", "signal_date", "symbol", "trade_id"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
+def assert_exact_is_reproduction(
+    actual: EvaluationResult,
+    *,
+    source_result: dict[str, object],
+    source_trade_ledger: pd.DataFrame,
+) -> dict[str, object]:
+    """Require frozen metrics and every source trade identity to reproduce."""
+
+    if actual.status != "evaluated":
+        raise ExactReproductionError(f"IS status is {actual.status!r}")
+    if actual.locked_opened:
+        raise ExactReproductionError("IS reproduction opened locked")
+    if actual.candidate_id != EXACT_CANDIDATE_ID:
+        raise ExactReproductionError("IS candidate identity mismatch")
+    if source_result.get("candidate_id") != EXACT_CANDIDATE_ID:
+        raise ExactReproductionError("source candidate identity mismatch")
+    tolerances = {
+        "cagr": 0.0002,
+        "sharpe": 0.005,
+        "max_drawdown": 0.0002,
+    }
+    metric_rows: dict[str, dict[str, float | bool]] = {}
+    for name, tolerance in tolerances.items():
+        expected = float(source_result[name])
+        observed = float(actual.metrics[name])
+        difference = observed - expected
+        passed = bool(abs(difference) <= tolerance)
+        metric_rows[name] = {
+            "expected": expected,
+            "observed": observed,
+            "difference": difference,
+            "tolerance": tolerance,
+            "passed": passed,
+        }
+        if not passed:
+            raise ExactReproductionError(
+                f"IS metric {name} differs by {difference}, tolerance {tolerance}"
+            )
+    expected_trades = int(float(source_result["trades"]))
+    observed_trades = int(float(actual.metrics["trades"]))
+    if observed_trades != expected_trades:
+        raise ExactReproductionError(
+            f"closed operation count differs: {observed_trades} != {expected_trades}"
+        )
+    expected_ledger = _ordered_ledger(source_trade_ledger)
+    observed_ledger = _ordered_ledger(actual.trade_ledger)
+    if len(observed_ledger) != len(expected_ledger):
+        raise ExactReproductionError(
+            f"trade ledger row count differs: {len(observed_ledger)} != {len(expected_ledger)}"
+        )
+    text_columns = (
+        "symbol",
+        "signal_date",
+        "entry_date",
+        "exit_date",
+        "exit_reason",
+        "status",
+    )
+    for column in text_columns:
+        if not observed_ledger[column].astype(str).equals(
+            expected_ledger[column].astype(str)
+        ):
+            raise ExactReproductionError(f"trade ledger {column} differs")
+    integer_columns = ("fold_id", "trade_id")
+    for column in integer_columns:
+        if not np.array_equal(
+            pd.to_numeric(observed_ledger[column], errors="raise").to_numpy(),
+            pd.to_numeric(expected_ledger[column], errors="raise").to_numpy(),
+        ):
+            raise ExactReproductionError(f"trade ledger {column} differs")
+    numeric_columns = ("entry_price", "exit_price", "net_return")
+    for column in numeric_columns:
+        if not np.allclose(
+            pd.to_numeric(observed_ledger[column], errors="coerce").to_numpy(),
+            pd.to_numeric(expected_ledger[column], errors="coerce").to_numpy(),
+            rtol=0.0,
+            atol=1e-12,
+            equal_nan=True,
+        ):
+            raise ExactReproductionError(f"trade ledger {column} differs")
+    return {
+        "exact_reproduction": True,
+        "candidate_id": actual.candidate_id,
+        "ledger_rows": int(len(observed_ledger)),
+        "closed_operations": observed_trades,
+        "metric_comparison": metric_rows,
+        "locked_opened": False,
     }
 
 

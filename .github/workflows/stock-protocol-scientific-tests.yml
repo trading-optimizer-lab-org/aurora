@@ -8,8 +8,24 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  phase:
+    runs-on: ubuntu-latest
+    outputs:
+      frozen_manifest_exists: ${{ steps.detect.outputs.frozen_manifest_exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        shell: bash
+        run: |
+          if [[ -f config/frozen_stock_protocol_exact_oos/frozen_manifest.json ]]; then
+            echo "frozen_manifest_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frozen_manifest_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
   scientific-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -48,3 +64,135 @@ jobs:
           tests/test_stock_protocol_workflow_contract.py
           tests/test_free_us_daily.py
           -q
+
+  exact-is-reproduction:
+    needs: [phase, scientific-tests]
+    if: needs.phase.outputs.frozen_manifest_exists == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      DATA_RUN_ID: "29148013009"
+      DATA_ARTIFACT_NAME: gtbi-external-pack-data
+      DATA_ARTIFACT_DIGEST: sha256:f2704de81fabc9ffaa90684b936555a737b70f9d5a3204dfa7a13c40bd3c3ca6
+      SOURCE_RUN_ID: "29658603488"
+      SOURCE_ARTIFACT_NAME: stock-protocol-scientific-full-universe-360jobs-corrected-results
+      SOURCE_ARTIFACT_DIGEST: sha256:3936159b63e4dab5e7299fafb6996c6eb963cb4d88aea388fe6e62444a059116
+      TASK_RUN_ID: "29558183535"
+      TASK_ARTIFACT_NAME: stock-protocol-exits-task-144
+      TASK_ARTIFACT_DIGEST: sha256:e324fcf5fe6bc1148ae95e6f08922683ceeb290a97f8c6e415d6f297535d5e20
+      EXPECTED_PRICES_SHA256: 0e226f53adeed4117cb95c50b831e640a7831dbc860323fe88c8dd50316b4e0e
+      EXPECTED_BENCHMARK_SHA256: eec0c4d26038af392d089396dd1493a724550c46b9707ceb9a540a2d67b86c97
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest duckdb pyarrow
+      - name: Verify immutable GitHub source artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          checks = (
+              ("DATA_RUN_ID", "DATA_ARTIFACT_NAME", "DATA_ARTIFACT_DIGEST"),
+              ("SOURCE_RUN_ID", "SOURCE_ARTIFACT_NAME", "SOURCE_ARTIFACT_DIGEST"),
+              ("TASK_RUN_ID", "TASK_ARTIFACT_NAME", "TASK_ARTIFACT_DIGEST"),
+          )
+          for run_key, name_key, digest_key in checks:
+              raw = subprocess.check_output(
+                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ[run_key]}/artifacts"],
+                  text=True,
+              )
+              matches = [
+                  item for item in json.loads(raw)["artifacts"]
+                  if item["name"] == os.environ[name_key]
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(f"expected one {os.environ[name_key]}, found {len(matches)}")
+              artifact = matches[0]
+              if artifact.get("expired"):
+                  raise SystemExit(f"artifact expired: {artifact['name']}")
+              if artifact.get("digest", "").lower() != os.environ[digest_key].lower():
+                  raise SystemExit(f"artifact digest mismatch: {artifact['name']}")
+              print(artifact["name"], artifact["digest"])
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.DATA_RUN_ID }}
+          name: ${{ env.DATA_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-data
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          name: ${{ env.SOURCE_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-selection
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.TASK_RUN_ID }}
+          name: ${{ env.TASK_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-task
+      - name: Verify price files and build identical pre-2021 pack
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          for name, expected in (
+              ("prices.parquet", os.environ["EXPECTED_PRICES_SHA256"]),
+              ("benchmark.parquet", os.environ["EXPECTED_BENCHMARK_SHA256"]),
+          ):
+              matches = list(Path("source-data").rglob(name))
+              if len(matches) != 1:
+                  raise SystemExit(f"expected one {name}, found {len(matches)}")
+              actual = hashlib.sha256(matches[0].read_bytes()).hexdigest()
+              if actual != expected:
+                  raise SystemExit(f"{name} hash mismatch: {actual}")
+          PY
+          python scripts/prepare_stock_protocol_full_dataset.py \
+            --source-root source-data \
+            --output-root exact-pack \
+            --end-date 2020-12-31 \
+            --shard-count 32 \
+            --minimum-symbols 1000 \
+            --source-run-id "$DATA_RUN_ID" \
+            --source-artifact-name "$DATA_ARTIFACT_NAME" \
+            --source-artifact-digest "$DATA_ARTIFACT_DIGEST" \
+            --expected-source-symbols 4828 \
+            --expected-source-rows 20364502 \
+            --expected-pack-symbols 4828 \
+            --expected-pack-rows 20327106
+      - name: Reproduce exact 1995-2015 result and every source trade
+        shell: bash
+        run: |
+          RESULT_PATH=$(find source-task -name result.json -type f -print -quit)
+          LEDGER_PATH=$(find source-task -name trade_ledger.csv -type f -print -quit)
+          SELECTION_PATH=$(find source-selection -name exit_layer_results.csv -type f -print -quit)
+          test -n "$RESULT_PATH" && test -n "$LEDGER_PATH" && test -n "$SELECTION_PATH"
+          python scripts/run_stock_protocol_exact_oos.py reproduce-is \
+            --pack-root exact-pack \
+            --source-result "$RESULT_PATH" \
+            --source-trade-ledger "$LEDGER_PATH" \
+            --source-selection "$SELECTION_PATH" \
+            --output-root exact-is-results \
+            --implementation-commit "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-is-reproduction
+          path: exact-is-results
+          retention-days: 90
