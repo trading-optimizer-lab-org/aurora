@@ -15,9 +15,12 @@ from aurora.research.stock_protocol.exact_oos import (
     EXACT_CANDIDATE_ID,
     EXACT_SOURCE_ARTIFACT_DIGEST,
     EXACT_SOURCE_RUN_ID,
+    ExactReproductionError,
+    assert_exact_is_reproduction,
     exact_strategy_spec,
     load_frozen_manifest_authorization,
 )
+from aurora.research.stock_protocol.campaign import EvaluationResult
 
 
 def _locked_panel() -> ResearchPanel:
@@ -199,4 +202,60 @@ def test_authorization_cannot_be_reused_for_a_different_strategy(tmp_path):
             start="2021-01-01",
             end="2022-12-30",
             locked_authorization=authorization,
+        )
+
+
+def _reproduction_result(ledger: pd.DataFrame) -> EvaluationResult:
+    return EvaluationResult(
+        candidate_id=EXACT_CANDIDATE_ID,
+        spec=exact_strategy_spec(),
+        status="evaluated",
+        metrics={"cagr": 0.37236, "sharpe": 1.41689, "max_drawdown": -0.38238},
+        equity_curve=pd.DataFrame(),
+        trade_ledger=ledger,
+        position_ledger=pd.DataFrame(),
+        yearly=pd.DataFrame(),
+        locked_opened=False,
+        data_end="2015-12-31",
+    )
+
+
+def test_is_reproduction_requires_exact_trade_dates_symbols_and_prices():
+    reference = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "signal_date": ["2008-01-31"],
+            "entry_date": ["2008-02-01"],
+            "entry_price": [10.0],
+            "exit_date": ["2008-05-01"],
+            "exit_price": [15.0],
+            "exit_reason": ["take_profit"],
+            "status": ["closed"],
+            "fold_id": [0],
+            "trade_id": [0],
+            "net_return": [0.5],
+        }
+    )
+    source_result = {
+        "candidate_id": EXACT_CANDIDATE_ID,
+        "cagr": 0.3723646104412519,
+        "sharpe": 1.4168958719655276,
+        "max_drawdown": -0.38238563062182696,
+        "trades": 1,
+    }
+
+    report = assert_exact_is_reproduction(
+        _reproduction_result(reference.copy()),
+        source_result=source_result,
+        source_trade_ledger=reference,
+    )
+    assert report["exact_reproduction"] is True
+
+    changed = reference.copy()
+    changed.loc[0, "entry_price"] = 10.01
+    with pytest.raises(ExactReproductionError, match="trade ledger"):
+        assert_exact_is_reproduction(
+            _reproduction_result(changed),
+            source_result=source_result,
+            source_trade_ledger=reference,
         )
