@@ -13,6 +13,11 @@ from .dataset import ResearchPanel
 from .entries import apply_entry_rule
 from .execution import execute_next_open
 from .learning import learn_nonnegative_weights
+from .locked_access import (
+    LockedDataAuthorization,
+    assert_locked_access,
+    consume_locked_evaluation,
+)
 from .manifest import ProtocolManifest
 from .metrics import compute_portfolio_metrics, yearly_returns
 from .portfolio import build_portfolio, simulate_daily_portfolio
@@ -294,15 +299,18 @@ def _bounded_panel(
     panel: ResearchPanel,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    *,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> ResearchPanel:
-    if end >= LOCKED_START:
-        raise ValueError("campaign evaluation crosses locked boundary")
     if start > end:
         raise ValueError("campaign start must not exceed end")
     frame = panel.frame
     dates = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
-    if dates.max() >= LOCKED_START:
-        raise ValueError("campaign panel contains locked data")
+    if end >= LOCKED_START or dates.max() >= LOCKED_START:
+        assert_locked_access(
+            locked_authorization,
+            latest_date=min(end, dates.max()),
+        )
     if dates.max() <= end and dates.equals(frame["date"]):
         bounded = frame
     else:
@@ -321,14 +329,36 @@ def evaluate_spec(
     end: str,
     initial_capital: float = 100_000.0,
     features: pd.DataFrame | None = None,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> EvaluationResult:
     """Evaluate one fully specified configuration into daily accounting ledgers."""
 
     start_date = pd.Timestamp(start).normalize()
     end_date = pd.Timestamp(end).normalize()
-    bounded = _bounded_panel(panel, start_date, end_date)
     materialized = json.loads(json.dumps(dict(spec), sort_keys=True, default=str))
-    feature_frame = features if features is not None else compute_features(bounded)
+    candidate_id = canonical_candidate_id(materialized)
+    locked_opened = end_date >= LOCKED_START
+    if locked_opened:
+        consume_locked_evaluation(
+            locked_authorization,
+            candidate_id=candidate_id,
+            end=end_date,
+        )
+    bounded = _bounded_panel(
+        panel,
+        start_date,
+        end_date,
+        locked_authorization=locked_authorization,
+    )
+    if features is not None:
+        feature_frame = features
+    elif locked_authorization is None:
+        feature_frame = compute_features(bounded)
+    else:
+        feature_frame = compute_features(
+            bounded,
+            locked_authorization=locked_authorization,
+        )
     candidates = _candidates_for_spec(bounded, materialized, feature_frame)
     candidates = candidates.loc[
         pd.to_datetime(candidates["signal_date"]).between(start_date, end_date)
@@ -338,7 +368,15 @@ def evaluate_spec(
             "entry", {"kind": "immediate_next_open", "max_wait_sessions": 0}
         )
     )
-    events = apply_entry_rule(candidates, feature_frame, entry_rule)
+    if locked_authorization is None:
+        events = apply_entry_rule(candidates, feature_frame, entry_rule)
+    else:
+        events = apply_entry_rule(
+            candidates,
+            feature_frame,
+            entry_rule,
+            locked_authorization=locked_authorization,
+        )
     exit_rule = dict(materialized.get("exit", {"kind": "none", "holding_sessions": 63}))
     ranking_keep = None
     if exit_rule.get("kind") == "ranking_hysteresis":
@@ -348,8 +386,21 @@ def evaluate_spec(
             "value": float(exit_rule["keep_percentile"]),
         }
         ranking_keep = _candidates_for_spec(bounded, keep_spec, feature_frame)
-    trades = execute_next_open(events, bounded, exit_rule, ranking_keep=ranking_keep)
-    candidate_id = canonical_candidate_id(materialized)
+    if locked_authorization is None:
+        trades = execute_next_open(
+            events,
+            bounded,
+            exit_rule,
+            ranking_keep=ranking_keep,
+        )
+    else:
+        trades = execute_next_open(
+            events,
+            bounded,
+            exit_rule,
+            ranking_keep=ranking_keep,
+            locked_authorization=locked_authorization,
+        )
     if trades.empty:
         return EvaluationResult(
             candidate_id=candidate_id,
@@ -360,7 +411,7 @@ def evaluate_spec(
             trade_ledger=trades,
             position_ledger=pd.DataFrame(),
             yearly=pd.DataFrame(),
-            locked_opened=False,
+            locked_opened=locked_opened,
             data_end=end_date.date().isoformat(),
         )
     weighted = build_portfolio(
@@ -368,14 +419,30 @@ def evaluate_spec(
         dict(materialized.get("portfolio", {"sizing": "equal"})),
         panel=bounded,
     )
+    simulation_kwargs = {
+        "initial_capital": initial_capital,
+        "cost_bps_per_side": float(materialized.get("cost_bps", 0.0)),
+    }
+    if locked_authorization is not None:
+        simulation_kwargs["locked_authorization"] = locked_authorization
     curve, positions, ledger = simulate_daily_portfolio(
         weighted,
         bounded,
-        initial_capital=initial_capital,
-        cost_bps_per_side=float(materialized.get("cost_bps", 0.0)),
+        **simulation_kwargs,
     )
-    metrics = compute_portfolio_metrics(curve, ledger)
-    annual = yearly_returns(curve)
+    if locked_authorization is None:
+        metrics = compute_portfolio_metrics(curve, ledger)
+        annual = yearly_returns(curve)
+    else:
+        metrics = compute_portfolio_metrics(
+            curve,
+            ledger,
+            locked_authorization=locked_authorization,
+        )
+        annual = yearly_returns(
+            curve,
+            locked_authorization=locked_authorization,
+        )
     annual.insert(0, "candidate_id", candidate_id)
     return EvaluationResult(
         candidate_id=candidate_id,
@@ -386,6 +453,6 @@ def evaluate_spec(
         trade_ledger=ledger,
         position_ledger=positions,
         yearly=annual,
-        locked_opened=False,
+        locked_opened=locked_opened,
         data_end=end_date.date().isoformat(),
     )

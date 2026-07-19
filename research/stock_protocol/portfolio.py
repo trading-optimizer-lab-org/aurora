@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .dataset import ResearchPanel
+from .locked_access import LockedDataAuthorization, assert_locked_access
 
 
 class UnsupportedPortfolioData(ValueError):
@@ -196,6 +197,7 @@ def _price_map(
     symbols: set[str] | None = None,
     start_date: pd.Timestamp | None = None,
     end_date: pd.Timestamp | None = None,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> tuple[pd.DataFrame, dict[tuple[pd.Timestamp, str], _PricePoint]]:
     source = panel.frame
     dates = pd.to_datetime(source["date"], errors="raise").dt.normalize()
@@ -221,7 +223,10 @@ def _price_map(
         if column not in prices:
             prices[column] = 0.0
     if calendar["date"].max() >= pd.Timestamp("2021-01-01"):
-        raise ValueError("portfolio source crosses locked boundary")
+        assert_locked_access(
+            locked_authorization,
+            latest_date=calendar["date"].max(),
+        )
     prices = prices.sort_values(["date", "symbol"]).drop_duplicates(["date", "symbol"], keep="last")
     lookup = {
         (pd.Timestamp(date), str(symbol)): _PricePoint(
@@ -252,6 +257,7 @@ def simulate_daily_portfolio(
     initial_capital: float = 100_000.0,
     cost_bps_per_side: float = 0.0,
     max_volume_participation: float = 0.10,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Convert weighted trades into cash, positions and one daily equity curve."""
 
@@ -275,12 +281,16 @@ def simulate_daily_portfolio(
     if (ledger["exit_date"] < ledger["entry_date"]).any():
         raise ValueError("exit_date cannot precede entry_date")
     if ledger["exit_date"].max() >= pd.Timestamp("2021-01-01"):
-        raise ValueError("trade ledger crosses locked boundary")
+        assert_locked_access(
+            locked_authorization,
+            latest_date=ledger["exit_date"].max(),
+        )
     prices, lookup = _price_map(
         panel,
         symbols=set(ledger["symbol"].astype(str)),
         start_date=ledger["entry_date"].min(),
         end_date=ledger["exit_date"].max(),
+        locked_authorization=locked_authorization,
     )
     ledger["entry_cost"] = 0.0
     ledger["exit_cost"] = 0.0

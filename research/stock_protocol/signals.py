@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .dataset import ResearchPanel
+from .locked_access import LockedDataAuthorization, assert_locked_access
 
 
 def compute_true_range(frame: pd.DataFrame) -> pd.Series:
@@ -49,17 +50,26 @@ def _adjust_ohlc(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def compute_features(panel: ResearchPanel) -> pd.DataFrame:
+def compute_features(
+    panel: ResearchPanel,
+    *,
+    locked_authorization: LockedDataAuthorization | None = None,
+) -> pd.DataFrame:
     """Build price features using only information known by each row's close."""
 
     frame = panel.frame.sort_values(["symbol", "date"]).copy()
     frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
     if frame.empty:
         raise ValueError("feature panel is empty")
-    if frame["date"].max() >= pd.Timestamp("2021-01-01"):
-        raise ValueError("feature panel crosses locked boundary 2021-01-01")
-    if panel.audit.locked_opened or panel.audit.locked_rows:
-        raise ValueError("feature panel audit reports locked data access")
+    if (
+        frame["date"].max() >= pd.Timestamp("2021-01-01")
+        or panel.audit.locked_opened
+        or panel.audit.locked_rows
+    ):
+        assert_locked_access(
+            locked_authorization,
+            latest_date=frame["date"].max(),
+        )
     frame = _adjust_ohlc(frame)
     grouped = frame.groupby("symbol", group_keys=False, sort=False)
 

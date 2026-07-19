@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .dataset import ResearchPanel
+from .locked_access import LockedDataAuthorization, assert_locked_access
 
 
 MAX_HOLDING_SESSIONS = 252
@@ -117,6 +118,7 @@ def execute_next_open(
     exit_rule: dict[str, object],
     *,
     ranking_keep: pd.DataFrame | None = None,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> pd.DataFrame:
     """Execute distinct signal events at next open, one live trade per symbol."""
 
@@ -136,7 +138,10 @@ def execute_next_open(
     source = panel.frame.sort_values(["symbol", "date"]).reset_index(drop=True)
     source["date"] = pd.to_datetime(source["date"], errors="raise").dt.normalize()
     if source["date"].max() >= pd.Timestamp("2021-01-01"):
-        raise ValueError("execution source crosses locked boundary")
+        assert_locked_access(
+            locked_authorization,
+            latest_date=source["date"].max(),
+        )
     by_symbol = {
         symbol: group.reset_index(drop=True)
         for symbol, group in source.groupby("symbol", sort=False)

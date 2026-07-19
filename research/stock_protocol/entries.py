@@ -6,6 +6,8 @@ from collections.abc import Mapping
 
 import pandas as pd
 
+from .locked_access import LockedDataAuthorization, assert_locked_access
+
 
 def _feature_slice(
     features: pd.DataFrame,
@@ -49,6 +51,8 @@ def apply_entry_rule(
     candidates: pd.DataFrame,
     features: pd.DataFrame,
     rule: Mapping[str, object],
+    *,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> pd.DataFrame:
     """Turn selected candidates into distinct events known at a daily close."""
 
@@ -63,7 +67,10 @@ def apply_entry_rule(
     source = features.copy()
     source["date"] = pd.to_datetime(source["date"], errors="raise").dt.normalize()
     if source["date"].max() >= pd.Timestamp("2021-01-01"):
-        raise ValueError("entry features cross locked boundary")
+        assert_locked_access(
+            locked_authorization,
+            latest_date=source["date"].max(),
+        )
     selected = candidates.copy()
     selected["signal_date"] = pd.to_datetime(selected["signal_date"], errors="raise").dt.normalize()
     kind = str(rule.get("kind", ""))

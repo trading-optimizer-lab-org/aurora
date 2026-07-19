@@ -7,11 +7,17 @@ import math
 import numpy as np
 import pandas as pd
 
+from .locked_access import LockedDataAuthorization, assert_locked_access
+
 
 TRADING_DAYS = 252.0
 
 
-def _validated_curve(equity_curve: pd.DataFrame) -> pd.DataFrame:
+def _validated_curve(
+    equity_curve: pd.DataFrame,
+    *,
+    locked_authorization: LockedDataAuthorization | None = None,
+) -> pd.DataFrame:
     required = {"date", "equity"}
     missing = required - set(equity_curve.columns)
     if missing:
@@ -25,7 +31,10 @@ def _validated_curve(equity_curve: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("equity must be finite and strictly positive")
     curve["equity"] = equity.astype(float)
     if curve["date"].max() >= pd.Timestamp("2021-01-01"):
-        raise ValueError("equity curve crosses locked boundary")
+        assert_locked_access(
+            locked_authorization,
+            latest_date=curve["date"].max(),
+        )
     returns = curve["equity"].pct_change(fill_method=None)
     if returns.dropna().le(-1.0).any() or not np.isfinite(returns.dropna()).all():
         raise ValueError("equity returns are invalid")
@@ -33,10 +42,17 @@ def _validated_curve(equity_curve: pd.DataFrame) -> pd.DataFrame:
     return curve
 
 
-def yearly_returns(equity_curve: pd.DataFrame) -> pd.DataFrame:
+def yearly_returns(
+    equity_curve: pd.DataFrame,
+    *,
+    locked_authorization: LockedDataAuthorization | None = None,
+) -> pd.DataFrame:
     """Return within-year first-to-last equity changes."""
 
-    curve = _validated_curve(equity_curve)
+    curve = _validated_curve(
+        equity_curve,
+        locked_authorization=locked_authorization,
+    )
     rows = []
     for year, group in curve.groupby(curve["date"].dt.year):
         rows.append(
@@ -67,10 +83,15 @@ def _numeric_column_sum(frame: pd.DataFrame, column: str) -> float:
 def compute_portfolio_metrics(
     equity_curve: pd.DataFrame,
     trades: pd.DataFrame,
+    *,
+    locked_authorization: LockedDataAuthorization | None = None,
 ) -> dict[str, float]:
     """Compute portfolio and trade metrics without silently coercing failures."""
 
-    curve = _validated_curve(equity_curve)
+    curve = _validated_curve(
+        equity_curve,
+        locked_authorization=locked_authorization,
+    )
     returns = curve["return"].iloc[1:]
     total_return = float(curve["equity"].iloc[-1] / curve["equity"].iloc[0] - 1.0)
     elapsed_days = max(int((curve["date"].iloc[-1] - curve["date"].iloc[0]).days), 1)
