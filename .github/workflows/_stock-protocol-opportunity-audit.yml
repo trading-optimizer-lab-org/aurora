@@ -1,0 +1,177 @@
+name: Stock Protocol Opportunity Audit
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  FINAL_RUN_ID: "29688666475"
+  FINAL_ARTIFACT_ID: "8442888783"
+  FINAL_ARTIFACT_NAME: stock-protocol-exact-irrevocable-oos-results-final
+  FINAL_ARTIFACT_DIGEST: sha256:2e878f9cba45ac27d18939b498e54bf4c193b1ce65641231b1914363c1bf4704
+  IS_RUN_ID: "29683985989"
+  IS_ARTIFACT_ID: "8441625517"
+  IS_ARTIFACT_NAME: stock-protocol-exact-is-reproduction
+  IS_ARTIFACT_DIGEST: sha256:83c07b840680006536343e4407c2cc16f9b73ae33258513088246929628717db
+  LOCKED_RUN_ID: "29684671183"
+  PACK_ARTIFACT_ID: "8441708061"
+  PACK_ARTIFACT_NAME: stock-protocol-exact-prelocked-pack
+  PACK_ARTIFACT_DIGEST: sha256:0e904662d4ea453869370300d1eb6e1ed43992e1d4db36d0949516291f9f3576
+  MANIFEST: config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json
+  MANIFEST_SHA256: 45457b0358b54c63daafec1c1bc2ef362ffba8c811ec2ab59b78a37ac7b871c2
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest scipy statsmodels pyarrow
+      - name: Compile opportunity audit implementation
+        run: >-
+          python -m py_compile
+          research/stock_protocol/opportunity_audit.py
+          scripts/run_stock_protocol_opportunity_audit.py
+      - name: Run opportunity audit contract tests
+        run: pytest tests/test_stock_protocol_opportunity_audit.py -q
+      - name: Verify frozen manifest remains byte-identical
+        shell: bash
+        run: test "$(sha256sum "$MANIFEST" | cut -d' ' -f1)" = "$MANIFEST_SHA256"
+
+  audit:
+    needs: contract-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow duckdb yfinance
+      - name: Verify every immutable source artifact before download
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          checks = (
+              ("FINAL_RUN_ID", "FINAL_ARTIFACT_ID", "FINAL_ARTIFACT_NAME", "FINAL_ARTIFACT_DIGEST"),
+              ("IS_RUN_ID", "IS_ARTIFACT_ID", "IS_ARTIFACT_NAME", "IS_ARTIFACT_DIGEST"),
+              ("LOCKED_RUN_ID", "PACK_ARTIFACT_ID", "PACK_ARTIFACT_NAME", "PACK_ARTIFACT_DIGEST"),
+          )
+          for run_key, id_key, name_key, digest_key in checks:
+              artifact = json.loads(subprocess.check_output(
+                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{os.environ[id_key]}"],
+                  text=True,
+              ))
+              assert str(artifact["workflow_run"]["id"]) == os.environ[run_key]
+              assert str(artifact["id"]) == os.environ[id_key]
+              assert artifact["name"] == os.environ[name_key]
+              assert artifact["digest"].lower() == os.environ[digest_key].lower()
+              assert artifact["expired"] is False
+          locked = json.loads(subprocess.check_output(
+              ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['LOCKED_RUN_ID']}/artifacts?per_page=100"],
+              text=True,
+          ))["artifacts"]
+          shards = [item for item in locked if item["name"].startswith("stock-protocol-exact-locked-data-")]
+          assert len(shards) == 32
+          assert all(not item["expired"] and item.get("digest") for item in shards)
+          print("verified immutable artifacts:", 3 + len(shards))
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.FINAL_RUN_ID }}
+          name: ${{ env.FINAL_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: final-source
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.IS_RUN_ID }}
+          name: ${{ env.IS_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: is-source
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.LOCKED_RUN_ID }}
+          name: ${{ env.PACK_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-pack
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.LOCKED_RUN_ID }}
+          pattern: stock-protocol-exact-locked-data-*
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: locked-shards
+      - name: Run the full immutable diagnostic audit
+        run: >-
+          python scripts/run_stock_protocol_opportunity_audit.py
+          --is-root is-source
+          --final-root final-source
+          --pack-root exact-pack
+          --locked-shards-root locked-shards
+          --manifest "$MANIFEST"
+          --output-root audit-results
+      - name: Verify final contract and reconciliation
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          import pandas as pd
+          root = Path("audit-results")
+          summary = json.loads((root / "audit_summary.json").read_text())
+          manifest = json.loads((root / "final_artifact_manifest.json").read_text())
+          opportunities = pd.read_csv(root / "all_individual_opportunities.csv")
+          reconciliation = pd.read_csv(root / "opportunity_reconciliation.csv")
+          assert summary["opportunities"] == 7176
+          assert summary["financed"] + summary["not_financed"] == 7176
+          assert reconciliation["reconciled"].all()
+          assert int(reconciliation["opportunities"].sum()) == 7176
+          assert summary["opened_locked_analysis_role"] == "diagnostic_reanalysis_of_opened_locked_period"
+          assert summary["new_oos_claimed"] is False
+          assert summary["optimization_performed"] is False
+          assert pd.to_datetime(opportunities["exit_date"]).max() <= pd.Timestamp("2026-07-17")
+          assert len(pd.read_csv(root / "sequence_permutation_distribution.csv")) == 3000
+          assert set(pd.read_csv(root / "fixed_position_portfolio_results.csv")["variant"]) == {"Original", "P10", "P20", "P30", "P50", "P100"}
+          required = {
+              "all_individual_opportunities.csv", "individual_opportunities_yearly.csv",
+              "sequence_dependence_results.csv", "sequence_permutation_distribution.csv",
+              "fixed_position_portfolio_results.csv", "fixed_position_portfolio_yearly.csv",
+              "symbol_exchange_currency_map.csv", "historical_fx_audit.csv",
+              "fx_adjusted_opportunities.csv", "fx_adjusted_portfolio_results.csv",
+              "calendar_frequency_metrics.csv", "benchmark_comparison_by_frequency.csv",
+              "benchmark_regressions.csv", "cost_liquidity_capacity_results.csv",
+              "capacity_violations.csv", "return_concentration_analysis.csv",
+              "leave_one_group_out_results.csv", "survivorship_bias_audit.md",
+              "final_opportunity_and_portfolio_audit.md", "final_artifact_manifest.json",
+          }
+          assert required <= {path.name for path in root.iterdir()}
+          for name, metadata in manifest["files"].items():
+              path = root / name
+              assert path.stat().st_size == metadata["bytes"]
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == metadata["sha256"]
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stock-protocol-all-opportunities-and-realistic-portfolio-audit
+          path: audit-results
+          if-no-files-found: error
+          retention-days: 90
+

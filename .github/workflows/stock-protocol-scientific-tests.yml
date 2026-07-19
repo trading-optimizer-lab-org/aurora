@@ -15,6 +15,7 @@ on:
           - standard
           - technical_recovery
           - artifact_finalization
+          - opportunity_audit
 
 permissions:
   contents: read
@@ -523,3 +524,12 @@ jobs:
           path: exact-oos-results
           if-no-files-found: error
           retention-days: 90
+
+  opportunity-audit:
+    needs: [phase, scientific-tests]
+    if: >-
+      needs.phase.outputs.frozen_manifest_exists == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.execution_mode == 'opportunity_audit'
+    uses: ./.github/workflows/_stock-protocol-opportunity-audit.yml
+    secrets: inherit
