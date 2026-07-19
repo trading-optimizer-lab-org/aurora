@@ -271,7 +271,7 @@ def _download_yahoo(symbols: list[str], start: str, end: str) -> dict[str, pd.Se
         column = "Adj Close" if "Adj Close" in data else "Close"
         series = pd.to_numeric(data[column], errors="coerce").dropna()
         series.index = pd.to_datetime(series.index).tz_localize(None).normalize()
-        output[symbol] = series.loc[series.index.le(CUTOFF)]
+        output[symbol] = series.loc[series.index <= CUTOFF]
     return output
 
 
