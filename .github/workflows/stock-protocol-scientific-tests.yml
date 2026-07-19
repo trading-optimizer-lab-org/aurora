@@ -5,6 +5,15 @@ on:
     branches:
       - codex/stock-protocol-scientific-validity
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: Exact scientific pipeline phase
+        required: true
+        default: standard
+        type: choice
+        options:
+          - standard
+          - technical_recovery
 
 permissions:
   contents: read
@@ -235,7 +244,9 @@ jobs:
 
   prepare-locked-campaign:
     needs: [phase, scientific-tests]
-    if: needs.phase.outputs.frozen_manifest_exists == 'true'
+    if: >-
+      needs.phase.outputs.frozen_manifest_exists == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.execution_mode != 'technical_recovery')
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -425,3 +436,12 @@ jobs:
           name: stock-protocol-exact-irrevocable-oos-results
           path: exact-oos-results
           retention-days: 90
+
+  technical-recovery:
+    needs: [phase, scientific-tests]
+    if: >-
+      needs.phase.outputs.frozen_manifest_exists == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.execution_mode == 'technical_recovery'
+    uses: ./.github/workflows/stock-protocol-exact-oos-technical-recovery.yml
+    secrets: inherit

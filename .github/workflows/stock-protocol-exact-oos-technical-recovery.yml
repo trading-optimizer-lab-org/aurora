@@ -2,6 +2,7 @@ name: Stock Protocol Exact OOS Technical Recovery
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -46,7 +47,7 @@ jobs:
           changed=$(git diff --name-only "$IMPLEMENTATION_COMMIT" HEAD)
           while IFS= read -r path; do
             case "$path" in
-              config/frozen_stock_protocol_exact_oos/*|research/stock_protocol/exact_oos_reporting.py|tests/test_stock_protocol_exact_oos.py|.github/workflows/stock-protocol-exact-oos-technical-recovery.yml) ;;
+              config/frozen_stock_protocol_exact_oos/*|research/stock_protocol/exact_oos_reporting.py|tests/test_stock_protocol_exact_oos.py|.github/workflows/stock-protocol-exact-oos-technical-recovery.yml|.github/workflows/stock-protocol-scientific-tests.yml) ;;
               "") ;;
               *) echo "unauthorized post-freeze path: $path"; exit 1 ;;
             esac
