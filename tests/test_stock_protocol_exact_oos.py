@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from aurora.research.stock_protocol.exact_oos import (
     exact_strategy_spec,
     load_frozen_manifest_authorization,
 )
+from aurora.research.stock_protocol.exact_oos_reporting import classify_verdict
 from aurora.research.stock_protocol.campaign import EvaluationResult
 
 
@@ -83,10 +85,21 @@ def _manifest_payload(implementation_commit: str) -> dict[str, object]:
         },
         "governance": {
             "strategy_count": 1,
+            "optimization_allowed": False,
+            "parameter_search_allowed": False,
             "locked_opened": False,
             "validation_used_for_selection": False,
             "locked_used_for_selection": False,
             "financial_logic_changes_after_freeze": False,
+        },
+        "data": {
+            "dataset_hash": "cc90a87a7bece9411508aefd3c4f8e26bd156b001e8e03dec33545927509e964",
+            "policy_hash": "0ac27343d4a435edb19ce48887a8723e47a569b4f4942bfaa258d1cf82fce5cc",
+            "survivorship_limited": True,
+        },
+        "costs": {
+            "primary_bps_per_side": 0,
+            "sensitivity_bps_per_side": [5, 10, 25, 50],
         },
     }
 
@@ -203,6 +216,50 @@ def test_authorization_cannot_be_reused_for_a_different_strategy(tmp_path):
             end="2022-12-30",
             locked_authorization=authorization,
         )
+
+
+def test_manifest_cannot_enable_optimization_or_parameter_search(tmp_path):
+    payload = _manifest_payload("a" * 40)
+    payload["governance"]["optimization_allowed"] = True
+    path = tmp_path / "frozen_manifest.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with pytest.raises(ValueError, match="optimization"):
+        load_frozen_manifest_authorization(
+            path,
+            expected_manifest_sha256=digest,
+            expected_implementation_commit="a" * 40,
+        )
+
+
+def test_strict_verdict_is_fixed_before_locked_results():
+    statistics = pd.DataFrame(
+        [
+            {"test": "block_bootstrap_sharpe", "lower_95": 0.2, "p_value": 0.01, "estimate": 1.0},
+            {"test": "paired_daily_return_ttest", "lower_95": np.nan, "p_value": 0.01, "estimate": 0.0002},
+        ]
+    )
+    strategy = {"total_return": 1.0, "cagr": 0.20, "sharpe": 1.5}
+    spy = {"total_return": 0.5, "cagr": 0.10, "sharpe": 0.8}
+
+    assert classify_verdict(strategy, spy, statistics) == "validated_out_of_sample"
+    statistics.loc[statistics["test"].eq("paired_daily_return_ttest"), "p_value"] = 0.20
+    assert classify_verdict(strategy, spy, statistics) == "promising_but_inconclusive"
+
+
+def test_exact_oos_workflow_is_manifest_gated_and_single_strategy():
+    workflow = Path(".github/workflows/stock-protocol-scientific-tests.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "frozen_oos_strategy_manifest.json" in workflow
+    assert "shard_index: [0, 1, 2, 3" in workflow
+    assert "--shard-count 32" in workflow
+    assert "max-parallel: 16" in workflow
+    assert "evaluate-frozen-oos" in workflow
+    assert "stock-protocol-exact-irrevocable-oos-results" in workflow
+    assert "locked_strategy_count\"] == 1" in workflow
 
 
 def _reproduction_result(ledger: pd.DataFrame) -> EvaluationResult:

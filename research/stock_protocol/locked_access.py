@@ -22,6 +22,7 @@ class LockedDataAuthorization:
     locked_end: pd.Timestamp
     _issuer_secret: str = field(repr=False)
     _consumed: bool = field(default=False, init=False, repr=False)
+    _data_access_active: bool = field(default=False, init=False, repr=False)
 
     @property
     def consumed(self) -> bool:
@@ -74,6 +75,22 @@ def consume_locked_evaluation(
     if normalized_end < LOCKED_START or normalized_end > capability.locked_end:
         raise ValueError("locked evaluation end is outside frozen manifest")
     capability._consumed = True
+    capability._data_access_active = True
+    return capability
+
+
+def activate_locked_data_access(
+    authorization: LockedDataAuthorization | None,
+    *,
+    end: pd.Timestamp,
+) -> LockedDataAuthorization:
+    """Authorize preprocessing inside the same frozen locked campaign."""
+
+    capability = _validate_capability(authorization)
+    normalized_end = pd.Timestamp(end).normalize()
+    if normalized_end < LOCKED_START or normalized_end > capability.locked_end:
+        raise ValueError("locked data preparation end is outside frozen manifest")
+    capability._data_access_active = True
     return capability
 
 
@@ -83,7 +100,7 @@ def assert_locked_access(
     latest_date: pd.Timestamp,
 ) -> None:
     capability = _validate_capability(authorization)
-    if not capability._consumed:
-        raise ValueError("locked authorization has not been consumed")
+    if not capability._data_access_active:
+        raise ValueError("locked data authorization has not been activated")
     if pd.Timestamp(latest_date).normalize() > capability.locked_end:
         raise ValueError("locked data exceeds frozen manifest end")

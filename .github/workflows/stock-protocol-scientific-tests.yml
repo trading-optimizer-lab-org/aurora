@@ -18,13 +18,35 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frozen_manifest_exists: ${{ steps.detect.outputs.frozen_manifest_exists }}
+      manifest_sha256: ${{ steps.detect.outputs.manifest_sha256 }}
+      implementation_commit: ${{ steps.detect.outputs.implementation_commit }}
+      locked_end: ${{ steps.detect.outputs.locked_end }}
+      is_run_id: ${{ steps.detect.outputs.is_run_id }}
+      is_artifact_name: ${{ steps.detect.outputs.is_artifact_name }}
+      is_artifact_digest: ${{ steps.detect.outputs.is_artifact_digest }}
     steps:
       - uses: actions/checkout@v4
       - id: detect
         shell: bash
         run: |
-          if [[ -f config/frozen_stock_protocol_exact_oos/frozen_manifest.json ]]; then
+          MANIFEST=config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json
+          HASH_FILE=config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.sha256
+          if [[ -f "$MANIFEST" ]]; then
+            test -f "$HASH_FILE"
+            ACTUAL=$(sha256sum "$MANIFEST" | cut -d' ' -f1)
+            EXPECTED=$(tr -d '[:space:]' < "$HASH_FILE")
+            test "$ACTUAL" = "$EXPECTED"
             echo "frozen_manifest_exists=true" >> "$GITHUB_OUTPUT"
+            echo "manifest_sha256=$ACTUAL" >> "$GITHUB_OUTPUT"
+            python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          payload = json.load(open("config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json", encoding="utf-8"))
+          print(f"implementation_commit={payload['implementation_commit']}")
+          print(f"locked_end={payload['periods']['locked_end']}")
+          print(f"is_run_id={payload['in_sample_reproduction']['run_id']}")
+          print(f"is_artifact_name={payload['in_sample_reproduction']['artifact_name']}")
+          print(f"is_artifact_digest={payload['in_sample_reproduction']['artifact_digest']}")
+          PY
           else
             echo "frozen_manifest_exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -39,6 +61,14 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install -e . pytest duckdb
+      - name: Compile exact OOS implementation
+        run: >-
+          python -m py_compile
+          research/stock_protocol/exact_oos.py
+          research/stock_protocol/exact_oos_reporting.py
+          research/stock_protocol/locked_access.py
+          scripts/run_stock_protocol_exact_oos.py
+          scripts/download_stock_protocol_exact_locked_shard.py
       - name: Run stock protocol scientific tests
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -201,4 +231,197 @@ jobs:
         with:
           name: stock-protocol-exact-is-reproduction
           path: exact-is-results
+          retention-days: 90
+
+  prepare-locked-campaign:
+    needs: [phase, scientific-tests]
+    if: needs.phase.outputs.frozen_manifest_exists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      DATA_RUN_ID: "29148013009"
+      DATA_ARTIFACT_NAME: gtbi-external-pack-data
+      DATA_ARTIFACT_DIGEST: sha256:f2704de81fabc9ffaa90684b936555a737b70f9d5a3204dfa7a13c40bd3c3ca6
+      EXPECTED_PRICES_SHA256: 0e226f53adeed4117cb95c50b831e640a7831dbc860323fe88c8dd50316b4e0e
+      EXPECTED_BENCHMARK_SHA256: eec0c4d26038af392d089396dd1493a724550c46b9707ceb9a540a2d67b86c97
+      MANIFEST: config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json
+      MANIFEST_SHA256: ${{ needs.phase.outputs.manifest_sha256 }}
+      IMPLEMENTATION_COMMIT: ${{ needs.phase.outputs.implementation_commit }}
+      IS_RUN_ID: ${{ needs.phase.outputs.is_run_id }}
+      IS_ARTIFACT_NAME: ${{ needs.phase.outputs.is_artifact_name }}
+      IS_ARTIFACT_DIGEST: ${{ needs.phase.outputs.is_artifact_digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . duckdb pyarrow
+      - name: Verify frozen commit and exact IS artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$IMPLEMENTATION_COMMIT" HEAD
+          python - <<'PY'
+          import json, os, subprocess
+          raw = subprocess.check_output(
+              ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['IS_RUN_ID']}/artifacts"],
+              text=True,
+          )
+          matches = [item for item in json.loads(raw)["artifacts"] if item["name"] == os.environ["IS_ARTIFACT_NAME"]]
+          if len(matches) != 1:
+              raise SystemExit(f"expected one immutable IS artifact, found {len(matches)}")
+          artifact = matches[0]
+          if artifact.get("expired") or artifact.get("digest", "").lower() != os.environ["IS_ARTIFACT_DIGEST"].lower():
+              raise SystemExit("immutable IS artifact digest mismatch or expired")
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.DATA_RUN_ID }}
+          name: ${{ env.DATA_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: source-data
+      - name: Rebuild exact immutable pre-2021 pack
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          for name, expected in (("prices.parquet", os.environ["EXPECTED_PRICES_SHA256"]), ("benchmark.parquet", os.environ["EXPECTED_BENCHMARK_SHA256"])):
+              matches = list(Path("source-data").rglob(name))
+              if len(matches) != 1 or hashlib.sha256(matches[0].read_bytes()).hexdigest() != expected:
+                  raise SystemExit(f"immutable source hash mismatch: {name}")
+          PY
+          python scripts/prepare_stock_protocol_full_dataset.py \
+            --source-root source-data --output-root exact-pack --end-date 2020-12-31 \
+            --shard-count 32 --minimum-symbols 1000 --source-run-id "$DATA_RUN_ID" \
+            --source-artifact-name "$DATA_ARTIFACT_NAME" --source-artifact-digest "$DATA_ARTIFACT_DIGEST" \
+            --expected-source-symbols 4828 --expected-source-rows 20364502 \
+            --expected-pack-symbols 4828 --expected-pack-rows 20327106
+      - name: Freeze exact symbol shards before locked access
+        run: >-
+          python scripts/run_stock_protocol_exact_oos.py prepare-locked-symbols
+          --pack-root exact-pack/pre2021_full_daily_pack
+          --manifest "$MANIFEST"
+          --manifest-sha256 "$MANIFEST_SHA256"
+          --implementation-commit "$IMPLEMENTATION_COMMIT"
+          --output-root locked-symbols
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-prelocked-pack
+          path: exact-pack
+          retention-days: 30
+          compression-level: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-locked-symbols
+          path: locked-symbols
+          retention-days: 30
+
+  locked-data-shards:
+    needs: [phase, prepare-locked-campaign]
+    if: needs.phase.outputs.frozen_manifest_exists == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        shard_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      MANIFEST: config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json
+      MANIFEST_SHA256: ${{ needs.phase.outputs.manifest_sha256 }}
+      IMPLEMENTATION_COMMIT: ${{ needs.phase.outputs.implementation_commit }}
+      LOCKED_END: ${{ needs.phase.outputs.locked_end }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . yfinance pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-exact-locked-symbols
+          path: locked-symbols
+      - name: Download one manifest-bound locked data shard
+        run: >-
+          python scripts/download_stock_protocol_exact_locked_shard.py
+          --symbols locked-symbols/locked_symbol_shards.json
+          --manifest "$MANIFEST"
+          --manifest-sha256 "$MANIFEST_SHA256"
+          --implementation-commit "$IMPLEMENTATION_COMMIT"
+          --shard-index ${{ matrix.shard_index }}
+          --shard-count 32
+          --locked-end "$LOCKED_END"
+          --output-root locked-data-${{ matrix.shard_index }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-locked-data-${{ matrix.shard_index }}
+          path: locked-data-${{ matrix.shard_index }}
+          retention-days: 30
+
+  exact-oos-evaluation:
+    needs: [phase, prepare-locked-campaign, locked-data-shards]
+    if: needs.phase.outputs.frozen_manifest_exists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MANIFEST: config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json
+      MANIFEST_SHA256: ${{ needs.phase.outputs.manifest_sha256 }}
+      IMPLEMENTATION_COMMIT: ${{ needs.phase.outputs.implementation_commit }}
+      IS_RUN_ID: ${{ needs.phase.outputs.is_run_id }}
+      IS_ARTIFACT_NAME: ${{ needs.phase.outputs.is_artifact_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy duckdb pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-exact-prelocked-pack
+          path: exact-pack
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-exact-locked-data-*
+          path: locked-shards
+      - name: Download immutable exact IS reproduction
+        run: gh run download "$IS_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$IS_ARTIFACT_NAME" --dir exact-is-source
+      - name: Evaluate diagnostic and exactly one true locked strategy
+        run: >-
+          python scripts/run_stock_protocol_exact_oos.py evaluate-frozen-oos
+          --pack-root exact-pack/pre2021_full_daily_pack
+          --locked-shards-root locked-shards
+          --is-root exact-is-source
+          --manifest "$MANIFEST"
+          --manifest-sha256 "$MANIFEST_SHA256"
+          --implementation-commit "$IMPLEMENTATION_COMMIT"
+          --output-root exact-oos-results
+      - name: Verify irreversible final contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          summary = json.load(open("exact-oos-results/exact_oos_summary.json", encoding="utf-8"))
+          audit = json.load(open("exact-oos-results/locked_data_audit.json", encoding="utf-8"))
+          assert summary["locked_opened"] is True
+          assert summary["locked_strategy_count"] == 1
+          assert summary["validation_used_for_selection"] is False
+          assert audit["delisting_returns_invented"] is False
+          assert audit["partial_session_included"] is False
+          assert summary["classification"] in {"validated_out_of_sample", "promising_but_inconclusive", "failed_out_of_sample", "invalid_due_to_data_or_execution"}
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-irrevocable-oos-results
+          path: exact-oos-results
           retention-days: 90

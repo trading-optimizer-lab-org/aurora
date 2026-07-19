@@ -276,6 +276,10 @@ def load_frozen_manifest_authorization(
     governance = payload.get("governance", {})
     if governance.get("strategy_count") != 1:
         raise ValueError("frozen manifest must contain exactly one strategy")
+    if governance.get("optimization_allowed") is not False:
+        raise ValueError("frozen manifest cannot allow optimization")
+    if governance.get("parameter_search_allowed") is not False:
+        raise ValueError("frozen manifest cannot allow parameter search")
     for key in (
         "locked_opened",
         "validation_used_for_selection",
@@ -284,6 +288,18 @@ def load_frozen_manifest_authorization(
     ):
         if governance.get(key) is not False:
             raise ValueError(f"frozen manifest governance violation: {key}")
+    data = payload.get("data", {})
+    if data.get("dataset_hash") != EXACT_DATASET_HASH:
+        raise ValueError("frozen manifest dataset hash mismatch")
+    if data.get("policy_hash") != EXACT_POLICY_HASH:
+        raise ValueError("frozen manifest policy hash mismatch")
+    if data.get("survivorship_limited") is not True:
+        raise ValueError("frozen manifest must preserve survivorship limitation")
+    costs = payload.get("costs", {})
+    if costs.get("primary_bps_per_side") != 0:
+        raise ValueError("frozen manifest primary costs mismatch")
+    if costs.get("sensitivity_bps_per_side") != [5, 10, 25, 50]:
+        raise ValueError("frozen manifest cost sensitivity mismatch")
     return issue_locked_data_authorization(
         candidate_id=EXACT_CANDIDATE_ID,
         manifest_sha256=actual_sha256,
