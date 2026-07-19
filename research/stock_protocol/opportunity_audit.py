@@ -519,7 +519,9 @@ def fx_adjust_opportunities(opportunities: pd.DataFrame, fx: pd.DataFrame) -> pd
     entry = causal_fx_merge(base, fx, date_column="entry_date").rename(
         columns={"fx_date": "fx_entry_date", "fx_usd_per_local": "fx_entry"}
     )
-    exit_input = entry.drop(columns=["fx_entry_date"]).copy()
+    # Keep both provenance dates.  The exit merge only adds a second causal
+    # rate and must not erase which rate was available at entry.
+    exit_input = entry.copy()
     adjusted = causal_fx_merge(exit_input, fx, date_column="exit_date").rename(
         columns={"fx_date": "fx_exit_date", "fx_usd_per_local": "fx_exit"}
     )
@@ -617,7 +619,7 @@ def benchmark_comparison(
     dates = pd.DatetimeIndex(strategy["date"])
     values = (
         benchmark_frame.set_index("date")["adj_close"]
-        .reindex(benchmark_frame["date"].union(dates))
+        .reindex(pd.DatetimeIndex(benchmark_frame["date"]).union(dates))
         .sort_index()
         .ffill()
         .reindex(dates)
