@@ -21,7 +21,10 @@ from aurora.research.stock_protocol.exact_oos import (
     exact_strategy_spec,
     load_frozen_manifest_authorization,
 )
-from aurora.research.stock_protocol.exact_oos_reporting import classify_verdict
+from aurora.research.stock_protocol.exact_oos_reporting import (
+    classify_verdict,
+    spy_benchmark,
+)
 from aurora.research.stock_protocol.campaign import EvaluationResult
 
 
@@ -246,6 +249,36 @@ def test_strict_verdict_is_fixed_before_locked_results():
     assert classify_verdict(strategy, spy, statistics) == "validated_out_of_sample"
     statistics.loc[statistics["test"].eq("paired_daily_return_ttest"), "p_value"] = 0.20
     assert classify_verdict(strategy, spy, statistics) == "promising_but_inconclusive"
+
+
+def test_spy_benchmark_carries_prior_close_into_non_spy_calendar_date():
+    strategy_dates = pd.DatetimeIndex(
+        ["2015-12-31", "2016-01-01", *pd.bdate_range("2016-01-04", periods=40)]
+    )
+    strategy_curve = pd.DataFrame(
+        {
+            "date": strategy_dates,
+            "equity": np.linspace(100_000.0, 104_100.0, len(strategy_dates)),
+        }
+    )
+    spy_dates = strategy_dates[strategy_dates != pd.Timestamp("2016-01-01")]
+    panel = pd.DataFrame(
+        {
+            "date": spy_dates,
+            "symbol": "SPY",
+            "adj_close": np.linspace(200.0, 210.0, len(spy_dates)),
+        }
+    )
+
+    benchmark, metrics = spy_benchmark(
+        strategy_curve,
+        panel,
+        authorization=None,
+    )
+
+    assert benchmark["date"].tolist() == strategy_dates.tolist()
+    assert benchmark.loc[1, "equity"] == benchmark.loc[0, "equity"]
+    assert np.isfinite(list(metrics.values())).all()
 
 
 def test_exact_oos_workflow_is_manifest_gated_and_single_strategy():

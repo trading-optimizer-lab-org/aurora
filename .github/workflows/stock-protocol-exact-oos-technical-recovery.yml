@@ -1,0 +1,156 @@
+name: Stock Protocol Exact OOS Technical Recovery
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  MANIFEST: config/frozen_stock_protocol_exact_oos/frozen_oos_strategy_manifest.json
+  MANIFEST_SHA256: 45457b0358b54c63daafec1c1bc2ef362ffba8c811ec2ab59b78a37ac7b871c2
+  IMPLEMENTATION_COMMIT: abd2aea7265be311fd42284a4533192b2013cf9a
+  ORIGINAL_LOCKED_RUN_ID: "29684671183"
+  ORIGINAL_FAILED_JOB_ID: "88187216796"
+  IS_RUN_ID: "29683985989"
+  IS_ARTIFACT_NAME: stock-protocol-exact-is-reproduction
+
+jobs:
+  recover-exact-oos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest scipy duckdb pyarrow
+      - name: Verify frozen financial implementation and recovery scope
+        shell: bash
+        run: |
+          test "$(sha256sum "$MANIFEST" | cut -d' ' -f1)" = "$MANIFEST_SHA256"
+          python - <<'PY'
+          import json, os
+          payload = json.load(open(os.environ["MANIFEST"], encoding="utf-8"))
+          assert payload["implementation_commit"] == os.environ["IMPLEMENTATION_COMMIT"]
+          assert payload["governance"]["strategy_count"] == 1
+          assert payload["governance"]["optimization_allowed"] is False
+          assert payload["governance"]["parameter_search_allowed"] is False
+          PY
+          changed=$(git diff --name-only "$IMPLEMENTATION_COMMIT" HEAD)
+          while IFS= read -r path; do
+            case "$path" in
+              config/frozen_stock_protocol_exact_oos/*|research/stock_protocol/exact_oos_reporting.py|tests/test_stock_protocol_exact_oos.py|.github/workflows/stock-protocol-exact-oos-technical-recovery.yml) ;;
+              "") ;;
+              *) echo "unauthorized post-freeze path: $path"; exit 1 ;;
+            esac
+          done <<< "$changed"
+      - name: Compile and test reporting-only recovery
+        run: |
+          python -m py_compile research/stock_protocol/exact_oos_reporting.py scripts/run_stock_protocol_exact_oos.py
+          pytest tests/test_stock_protocol_exact_oos.py -q
+      - name: Download exact prelocked pack from original run
+        uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.ORIGINAL_LOCKED_RUN_ID }}
+          name: stock-protocol-exact-prelocked-pack
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-pack
+      - name: Download the same 32 locked data artifacts
+        uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.ORIGINAL_LOCKED_RUN_ID }}
+          pattern: stock-protocol-exact-locked-data-*
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: locked-shards
+      - name: Download immutable exact IS reproduction
+        uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.IS_RUN_ID }}
+          name: ${{ env.IS_ARTIFACT_NAME }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-is-source
+      - name: Evaluate the same frozen strategy on the same locked data
+        run: >-
+          python scripts/run_stock_protocol_exact_oos.py evaluate-frozen-oos
+          --pack-root exact-pack/pre2021_full_daily_pack
+          --locked-shards-root locked-shards
+          --is-root exact-is-source
+          --manifest "$MANIFEST"
+          --manifest-sha256 "$MANIFEST_SHA256"
+          --implementation-commit "$IMPLEMENTATION_COMMIT"
+          --output-root exact-oos-results
+      - name: Record technical recovery audit
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              "recovery_kind": "reporting_calendar_alignment_only",
+              "original_locked_run_id": int(os.environ["ORIGINAL_LOCKED_RUN_ID"]),
+              "original_failed_job_id": int(os.environ["ORIGINAL_FAILED_JOB_ID"]),
+              "original_failure": "SPY benchmark could not carry the prior close into a non-SPY calendar date",
+              "strategy_financial_implementation_commit": os.environ["IMPLEMENTATION_COMMIT"],
+              "manifest_sha256": os.environ["MANIFEST_SHA256"],
+              "locked_data_reused_from_original_run": True,
+              "financial_logic_changed": False,
+              "strategy_parameters_changed": False,
+              "locked_period_changed": False,
+          }
+          Path("exact-oos-results/technical_recovery_audit.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+      - name: Verify irreversible final contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("exact-oos-results")
+          required = [
+              "exact_strategy_source_row.csv",
+              "exact_strategy_parameters.json",
+              "frozen_oos_strategy_manifest.json",
+              "in_sample_replication.csv",
+              "diagnostic_oos_2016_2020_metrics.json",
+              "diagnostic_oos_2016_2020_equity.csv",
+              "diagnostic_oos_2016_2020_trades.csv",
+              "true_oos_2021_latest_metrics.json",
+              "true_oos_2021_latest_equity.csv",
+              "true_oos_2021_latest_trades.csv",
+              "spy_benchmark_metrics.json",
+              "exact_strategy_yearly_comparison.csv",
+              "cost_sensitivity.csv",
+              "statistical_validation.csv",
+              "locked_data_audit.json",
+              "final_exact_strategy_verdict.md",
+              "technical_recovery_audit.json",
+          ]
+          missing = [name for name in required if not (root / name).is_file()]
+          if missing:
+              raise SystemExit(f"missing final outputs: {missing}")
+          summary = json.loads((root / "exact_oos_summary.json").read_text())
+          assert summary["locked_opened"] is True
+          assert summary["locked_strategy_count"] == 1
+          assert summary["validation_used_for_selection"] is False
+          assert summary["optimization_performed"] is False
+          assert summary["parameter_search_performed"] is False
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-exact-irrevocable-oos-results
+          path: exact-oos-results
+          if-no-files-found: error
+          retention-days: 90

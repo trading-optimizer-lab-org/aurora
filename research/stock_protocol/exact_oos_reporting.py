@@ -43,7 +43,13 @@ def spy_benchmark(
     spy = spy.dropna().drop_duplicates("date", keep="last").sort_values("date")
     if spy.empty or spy["date"].max() < dates.max():
         raise ValueError("SPY total-return benchmark does not reach locked end")
-    indexed = spy.set_index("date")["adj_close"].reindex(dates).ffill()
+    spy_series = spy.set_index("date")["adj_close"]
+    indexed = (
+        spy_series.reindex(spy_series.index.union(pd.DatetimeIndex(dates)))
+        .sort_index()
+        .ffill()
+        .reindex(dates)
+    )
     if indexed.isna().any() or indexed.le(0).any():
         raise ValueError("SPY benchmark cannot align to exact strategy dates")
     equity = 100_000.0 * indexed.to_numpy(dtype=float) / float(indexed.iloc[0])
