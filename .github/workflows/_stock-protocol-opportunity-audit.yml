@@ -151,6 +151,7 @@ jobs:
           assert set(pd.read_csv(root / "fixed_position_portfolio_results.csv")["variant"]) == {"Original", "P10", "P20", "P30", "P50", "P100"}
           required = {
               "all_individual_opportunities.csv", "individual_opportunities_yearly.csv",
+              "opportunity_provenance_gaps.csv",
               "sequence_dependence_results.csv", "sequence_permutation_distribution.csv",
               "fixed_position_portfolio_results.csv", "fixed_position_portfolio_yearly.csv",
               "symbol_exchange_currency_map.csv", "historical_fx_audit.csv",
@@ -174,4 +175,3 @@ jobs:
           path: audit-results
           if-no-files-found: error
           retention-days: 90
-

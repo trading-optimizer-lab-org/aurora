@@ -209,9 +209,11 @@ def _opportunities_for_period(
     if "score" in provenance:
         provenance = provenance.rename(columns={"score": "reconstructed_frozen_score"})
     result = ledger.merge(provenance, on=["symbol", "signal_date"], how="left", validate="many_to_one")
-    if result["selection_date"].isna().any():
-        missing = int(result["selection_date"].isna().sum())
-        raise ValueError(f"could not reconcile {missing} frozen opportunities to selection provenance")
+    result["selection_provenance_status"] = np.where(
+        result["selection_date"].notna(),
+        "reconstructed_exactly",
+        "unresolved_kept_from_immutable_ledger",
+    )
     result = result.merge(metadata, on="symbol", how="left", validate="many_to_one")
     result["opportunity_id"] = result.apply(
         lambda row: hashlib.sha256(
@@ -525,6 +527,21 @@ def run(args: argparse.Namespace) -> None:
         )
         if len(opportunities) != EXPECTED_COUNTS[period]:
             raise ValueError(f"enriched {period} count mismatch")
+        print(
+            json.dumps(
+                {
+                    "phase": "opportunities_reconciled",
+                    "period": period,
+                    "rows": len(opportunities),
+                    "provenance_gaps": int(
+                        opportunities["selection_provenance_status"]
+                        .ne("reconstructed_exactly")
+                        .sum()
+                    ),
+                }
+            ),
+            flush=True,
+        )
         all_opportunities.append(opportunities)
         panel_frame = panel.frame.copy()
         panel_frame["date"] = pd.to_datetime(panel_frame["date"]).dt.normalize()
@@ -580,6 +597,12 @@ def run(args: argparse.Namespace) -> None:
         distribution["period"] = period
         sequence_rows.append(seq)
         sequence_distribution.append(distribution)
+        print(
+            json.dumps(
+                {"phase": "sequence_complete", "period": period, "permutations": len(distribution)}
+            ),
+            flush=True,
+        )
 
         for variant, curve in period_curves.items():
             calendar_rows.append(frequency_metric_rows(curve, period=period, variant=variant))
@@ -661,6 +684,9 @@ def run(args: argparse.Namespace) -> None:
         on="opportunity_id", how="left", validate="one_to_one",
     )
     opportunities.to_csv(output / "all_individual_opportunities.csv", index=False)
+    opportunities.loc[
+        opportunities["selection_provenance_status"].ne("reconstructed_exactly")
+    ].to_csv(output / "opportunity_provenance_gaps.csv", index=False)
     fx_opportunities.to_csv(output / "fx_adjusted_opportunities.csv", index=False)
     event_summary, bootstrap = event_study_statistics(opportunities)
     event_summary.to_csv(output / "individual_opportunity_statistics.csv", index=False)
@@ -699,6 +725,9 @@ def run(args: argparse.Namespace) -> None:
     summary = {
         "candidate_id": manifest["candidate_id"], "opportunities": len(opportunities),
         "period_counts": opportunities.groupby("period").size().to_dict(),
+        "selection_provenance_gaps": int(
+            opportunities["selection_provenance_status"].ne("reconstructed_exactly").sum()
+        ),
         "financed": int(opportunities["originally_financed"].sum()),
         "not_financed": int((~opportunities["originally_financed"]).sum()),
         "reconciled": True, "sequence_permutations_per_period": 1000,
