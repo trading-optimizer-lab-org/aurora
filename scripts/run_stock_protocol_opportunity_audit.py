@@ -28,6 +28,7 @@ from aurora.research.stock_protocol.opportunity_audit import (
     AUDIT_ROLE,
     CUTOFF,
     PERIODS,
+    attach_entry_adv_notional,
     benchmark_comparison,
     component_audit_frames,
     enrich_opportunity_paths,
@@ -35,6 +36,7 @@ from aurora.research.stock_protocol.opportunity_audit import (
     frequency_metric_rows,
     fx_adjust_opportunities,
     fx_adjust_price_panel,
+    label_analysis_role,
     portfolio_metrics,
     portfolio_yearly_rows,
     sequence_dependence,
@@ -333,6 +335,7 @@ def _result_row(period: str, variant: str, curve: pd.DataFrame, ledger: pd.DataF
     total_profit = max(float(profits.clip(lower=0).sum()), 1e-12)
     return {
         "period": period,
+        "analysis_role": AUDIT_ROLE if period == "opened_locked_diagnostic" else period,
         "variant": variant,
         "cost_bps_per_side": cost,
         **metrics,
@@ -486,6 +489,7 @@ def run(args: argparse.Namespace) -> None:
     pack_root = _resolve_pack(args.pack_root)
 
     all_opportunities: list[pd.DataFrame] = []
+    all_fx_opportunities: list[pd.DataFrame] = []
     fixed_rows: list[dict[str, object]] = []
     fixed_yearly: list[pd.DataFrame] = []
     cost_rows: list[dict[str, object]] = []
@@ -503,6 +507,7 @@ def run(args: argparse.Namespace) -> None:
 
     (output / "fixed_position_trade_ledgers").mkdir(exist_ok=True)
     (output / "fixed_position_equity_curves").mkdir(exist_ok=True)
+    (output / "fx_adjusted_trade_ledgers").mkdir(exist_ok=True)
     period_load = {
         "walk_forward_is": ("2006-01-01", "2015-12-31", False),
         "diagnostic_reused_holdout": ("2014-01-01", "2020-12-31", False),
@@ -563,8 +568,12 @@ def run(args: argparse.Namespace) -> None:
         fixed_rows.append(_result_row(period, "Original", original_curve, original_ledger, 0))
         fixed_yearly.append(portfolio_yearly_rows(original_curve, original_ledger, period=period, variant="Original", cost_bps=0))
         period_curves["Original"] = original_curve
-        original_curve.to_csv(output / "fixed_position_equity_curves" / f"{period}_Original.csv", index=False)
-        original_ledger.to_csv(output / "fixed_position_trade_ledgers" / f"{period}_Original.csv", index=False)
+        label_analysis_role(original_curve.assign(period=period)).to_csv(
+            output / "fixed_position_equity_curves" / f"{period}_Original.csv", index=False
+        )
+        label_analysis_role(original_ledger).to_csv(
+            output / "fixed_position_trade_ledgers" / f"{period}_Original.csv", index=False
+        )
 
         for variant, (positions, weight) in PORTFOLIOS.items():
             curve, ledger = simulate_opportunity_portfolio(
@@ -574,13 +583,12 @@ def run(args: argparse.Namespace) -> None:
             fixed_rows.append(_result_row(period, variant, curve, ledger, 0))
             fixed_yearly.append(portfolio_yearly_rows(curve, ledger, period=period, variant=variant, cost_bps=0))
             period_curves[variant] = curve
-            curve.to_csv(output / "fixed_position_equity_curves" / f"{period}_{variant}.csv", index=False)
-            ledger.to_csv(output / "fixed_position_trade_ledgers" / f"{period}_{variant}.csv", index=False)
-            capacity = ledger.loc[ledger["simulation_capacity_reduced"].astype(bool)].copy()
-            if not capacity.empty:
-                capacity["period"] = period
-                capacity["variant"] = variant
-                capacity_rows.append(capacity)
+            label_analysis_role(curve.assign(period=period)).to_csv(
+                output / "fixed_position_equity_curves" / f"{period}_{variant}.csv", index=False
+            )
+            label_analysis_role(ledger).to_csv(
+                output / "fixed_position_trade_ledgers" / f"{period}_{variant}.csv", index=False
+            )
             for cost in COSTS:
                 if cost == 0:
                     cost_curve, cost_ledger = curve, ledger
@@ -623,11 +631,15 @@ def run(args: argparse.Namespace) -> None:
                 regression_rows.append(regressions)
         curves_by_period[period] = period_curves
 
-        fx_opportunities = fx_adjust_opportunities(opportunities, fx)
+        fx_opportunities = fx_adjust_opportunities(
+            opportunities, fx, price_panel=panel_frame
+        )
+        all_fx_opportunities.append(fx_opportunities)
         known = fx_opportunities.loc[fx_opportunities["return_usd"].notna()].copy()
         known["entry_price"] = known["entry_value_usd_per_share"]
-        known["exit_price"] = known["exit_value_usd_per_share"] + known["dividend_value_usd_per_share"].fillna(0)
+        known["exit_price"] = known["exit_value_usd_per_share"]
         usd_panel = fx_adjust_price_panel(panel_frame, metadata, fx)
+        known = attach_entry_adv_notional(known, usd_panel)
         for variant, (positions, weight) in PORTFOLIOS.items():
             curve, ledger = simulate_opportunity_portfolio(
                 known, usd_panel, max_positions=positions, max_initial_weight=weight,
@@ -640,6 +652,16 @@ def run(args: argparse.Namespace) -> None:
                     "known_currency_pct": len(known) / len(opportunities),
                 }
             )
+            label_analysis_role(ledger).to_csv(
+                output / "fx_adjusted_trade_ledgers" / f"{period}_{variant}.csv",
+                index=False,
+            )
+            capacity = ledger.loc[ledger["simulation_capacity_reduced"].astype(bool)].copy()
+            if not capacity.empty:
+                capacity["period"] = period
+                capacity["variant"] = variant
+                capacity["capacity_currency"] = "USD"
+                capacity_rows.append(label_analysis_role(capacity))
 
         # Concentration and leave-group-out use P20, declared in advance as a
         # neutral middle portfolio. They are diagnostics, never selection.
@@ -683,7 +705,10 @@ def run(args: argparse.Namespace) -> None:
     opportunities["analysis_role"] = np.where(
         opportunities["period"].eq("opened_locked_diagnostic"), AUDIT_ROLE, opportunities["period"]
     )
-    fx_opportunities = fx_adjust_opportunities(opportunities, fx)
+    fx_opportunities = pd.concat(all_fx_opportunities, ignore_index=True)
+    if len(fx_opportunities) != len(opportunities):
+        raise ValueError("FX opportunity ledger is incomplete")
+    fx_opportunities = label_analysis_role(fx_opportunities)
     opportunities = opportunities.merge(
         fx_opportunities[["opportunity_id", "return_usd", "fx_return_contribution"]],
         on="opportunity_id", how="left", validate="one_to_one",
@@ -698,28 +723,48 @@ def run(args: argparse.Namespace) -> None:
     bootstrap.to_parquet(output / "individual_opportunity_bootstrap.parquet", index=False)
     yearly = yearly_opportunity_results(opportunities)
     yearly = yearly.merge(opportunities.assign(year=pd.to_datetime(opportunities["entry_date"]).dt.year)[["year", "period"]].drop_duplicates(), on="year", how="left")
+    yearly = label_analysis_role(yearly)
     yearly.to_csv(output / "individual_opportunities_yearly.csv", index=False)
     reconciliation = _assert_reconciliation(opportunities, yearly)
+    reconciliation = label_analysis_role(reconciliation)
     reconciliation.to_csv(output / "opportunity_reconciliation.csv", index=False)
 
     fixed = pd.DataFrame(fixed_rows)
+    fixed = label_analysis_role(fixed)
     fixed.to_csv(output / "fixed_position_portfolio_results.csv", index=False)
-    pd.concat(fixed_yearly, ignore_index=True).to_csv(output / "fixed_position_portfolio_yearly.csv", index=False)
+    label_analysis_role(pd.concat(fixed_yearly, ignore_index=True)).to_csv(
+        output / "fixed_position_portfolio_yearly.csv", index=False
+    )
     costs = pd.DataFrame(cost_rows)
+    costs = label_analysis_role(costs)
     costs.to_csv(output / "cost_liquidity_capacity_results.csv", index=False)
     (pd.concat(capacity_rows, ignore_index=True) if capacity_rows else pd.DataFrame()).to_csv(output / "capacity_violations.csv", index=False)
     sequence = pd.concat(sequence_rows, ignore_index=True)
+    sequence = label_analysis_role(sequence)
     sequence.to_csv(output / "sequence_dependence_results.csv", index=False)
-    pd.concat(sequence_distribution, ignore_index=True).to_csv(output / "sequence_permutation_distribution.csv", index=False)
-    pd.concat(calendar_rows, ignore_index=True).to_csv(output / "calendar_frequency_metrics.csv", index=False)
+    label_analysis_role(pd.concat(sequence_distribution, ignore_index=True)).to_csv(
+        output / "sequence_permutation_distribution.csv", index=False
+    )
+    label_analysis_role(pd.concat(calendar_rows, ignore_index=True)).to_csv(
+        output / "calendar_frequency_metrics.csv", index=False
+    )
     benchmark_frame = pd.concat(benchmark_rows, ignore_index=True)
+    benchmark_frame = label_analysis_role(benchmark_frame)
     benchmark_frame.to_csv(output / "benchmark_comparison_by_frequency.csv", index=False)
-    pd.concat(regression_rows, ignore_index=True).to_csv(output / "benchmark_regressions.csv", index=False)
-    pd.DataFrame(fx_portfolio_rows).to_csv(output / "fx_adjusted_portfolio_results.csv", index=False)
+    label_analysis_role(pd.concat(regression_rows, ignore_index=True)).to_csv(
+        output / "benchmark_regressions.csv", index=False
+    )
+    label_analysis_role(pd.DataFrame(fx_portfolio_rows)).to_csv(
+        output / "fx_adjusted_portfolio_results.csv", index=False
+    )
     concentration = pd.DataFrame(concentration_rows)
+    concentration = label_analysis_role(concentration)
     concentration.to_csv(output / "return_concentration_analysis.csv", index=False)
-    pd.DataFrame(leave_rows).to_csv(output / "leave_one_group_out_results.csv", index=False)
+    label_analysis_role(pd.DataFrame(leave_rows)).to_csv(
+        output / "leave_one_group_out_results.csv", index=False
+    )
     coverage = pd.DataFrame(coverage_rows)
+    coverage = label_analysis_role(coverage)
     coverage.to_csv(output / "survivorship_coverage.csv", index=False)
     (output / "survivorship_bias_audit.md").write_text(_survivorship_report(coverage), encoding="utf-8")
 

@@ -36,6 +36,20 @@ PERIODS = {
 }
 
 
+def label_analysis_role(frame: pd.DataFrame) -> pd.DataFrame:
+    """Label every period row without presenting opened locked data as fresh OOS."""
+
+    if "period" not in frame.columns:
+        raise ValueError("analysis-role labelling requires a period column")
+    labelled = frame.copy()
+    labelled["analysis_role"] = np.where(
+        labelled["period"].astype(str).eq("opened_locked_diagnostic"),
+        AUDIT_ROLE,
+        labelled["period"].astype(str),
+    )
+    return labelled
+
+
 @dataclass(frozen=True)
 class MarketMetadata:
     country: str
@@ -523,7 +537,12 @@ def causal_fx_merge(
     return pd.concat(parts, ignore_index=True).sort_index()
 
 
-def fx_adjust_opportunities(opportunities: pd.DataFrame, fx: pd.DataFrame) -> pd.DataFrame:
+def fx_adjust_opportunities(
+    opportunities: pd.DataFrame,
+    fx: pd.DataFrame,
+    *,
+    price_panel: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     base = opportunities.copy().reset_index(drop=True)
     base["_row_id"] = np.arange(len(base))
     entry = causal_fx_merge(base, fx, date_column="entry_date").rename(
@@ -538,10 +557,59 @@ def fx_adjust_opportunities(opportunities: pd.DataFrame, fx: pd.DataFrame) -> pd
     scale = pd.to_numeric(adjusted["price_scale_to_currency_unit"], errors="coerce")
     entry_usd = pd.to_numeric(adjusted["entry_price"], errors="coerce") * scale * adjusted["fx_entry"]
     exit_usd = pd.to_numeric(adjusted["exit_price"], errors="coerce") * scale * adjusted["fx_exit"]
-    dividend_usd = pd.to_numeric(adjusted["dividends_local"], errors="coerce").fillna(0) * scale * adjusted["fx_exit"]
+    local_dividends = pd.to_numeric(adjusted["dividends_local"], errors="coerce").fillna(0)
+    if price_panel is None and local_dividends.abs().gt(1e-12).any():
+        raise ValueError("price_panel is required to convert dividends with causal FX")
+    dividend_usd = pd.Series(0.0, index=adjusted.index, dtype=float)
+    dividend_dates = pd.Series("", index=adjusted.index, dtype=str)
+    dividend_fx_missing = pd.Series(False, index=adjusted.index, dtype=bool)
+    if price_panel is not None:
+        required = {"date", "symbol", "dividends"}
+        if required - set(price_panel.columns):
+            raise ValueError("price panel lacks date, symbol, or dividends for FX conversion")
+        payments = price_panel[["date", "symbol", "dividends"]].copy()
+        payments["date"] = pd.to_datetime(payments["date"], errors="raise").dt.normalize()
+        payments["dividends"] = pd.to_numeric(payments["dividends"], errors="coerce").fillna(0)
+        payments = payments.loc[payments["dividends"].abs().gt(1e-12)]
+        if not payments.empty:
+            symbol_meta = adjusted[
+                ["symbol", "currency", "price_scale_to_currency_unit"]
+            ].drop_duplicates()
+            if symbol_meta["symbol"].duplicated().any():
+                raise ValueError("inconsistent currency metadata for a dividend symbol")
+            payments = payments.merge(symbol_meta, on="symbol", how="left", validate="many_to_one")
+            payments = causal_fx_merge(payments, fx, date_column="date")
+            payments["dividend_usd"] = (
+                payments["dividends"]
+                * pd.to_numeric(payments["price_scale_to_currency_unit"], errors="coerce")
+                * pd.to_numeric(payments["fx_usd_per_local"], errors="coerce")
+            )
+            links = adjusted[["_row_id", "symbol", "entry_date", "exit_date"]].merge(
+                payments[["symbol", "date", "dividend_usd", "fx_usd_per_local"]],
+                on="symbol",
+                how="left",
+            )
+            in_trade = links["date"].notna() & links["date"].between(
+                links["entry_date"], links["exit_date"]
+            )
+            links = links.loc[in_trade]
+            if not links.empty:
+                grouped = links.groupby("_row_id", sort=False)
+                values = grouped["dividend_usd"].sum(min_count=1)
+                dates = grouped["date"].agg(
+                    lambda items: ",".join(
+                        timestamp.date().isoformat()
+                        for timestamp in sorted(pd.to_datetime(items).drop_duplicates())
+                    )
+                )
+                missing = grouped["fx_usd_per_local"].apply(lambda values: values.isna().any())
+                dividend_usd = adjusted["_row_id"].map(values).fillna(0.0)
+                dividend_dates = adjusted["_row_id"].map(dates).fillna("")
+                dividend_fx_missing = adjusted["_row_id"].map(missing).fillna(False).astype(bool)
     adjusted["entry_value_usd_per_share"] = entry_usd
     adjusted["exit_value_usd_per_share"] = exit_usd
     adjusted["dividend_value_usd_per_share"] = dividend_usd
+    adjusted["fx_dividend_dates_used"] = dividend_dates
     adjusted["return_usd"] = (exit_usd + dividend_usd).div(entry_usd).sub(1.0)
     adjusted["local_total_return_with_dividends"] = (
         pd.to_numeric(adjusted["exit_price"], errors="coerce")
@@ -550,7 +618,12 @@ def fx_adjust_opportunities(opportunities: pd.DataFrame, fx: pd.DataFrame) -> pd
         .sub(1.0)
     )
     adjusted["fx_return_contribution"] = adjusted["return_usd"] - adjusted["local_total_return_with_dividends"]
-    adjusted["currency_unknown"] = adjusted["currency_unknown"].astype(bool) | adjusted["fx_entry"].isna() | adjusted["fx_exit"].isna()
+    adjusted["currency_unknown"] = (
+        adjusted["currency_unknown"].astype(bool)
+        | adjusted["fx_entry"].isna()
+        | adjusted["fx_exit"].isna()
+        | dividend_fx_missing
+    )
     return adjusted.sort_values("_row_id").drop(columns=["_row_id"]).reset_index(drop=True)
 
 
@@ -671,6 +744,17 @@ def benchmark_comparison(
         b_sortino = float(paired["benchmark"].mean() * factor / (b_down.pow(2).mean() ** 0.5 * math.sqrt(factor))) if len(b_down) else 0.0
         s_equity = (1 + paired["strategy"]).cumprod()
         b_equity = (1 + paired["benchmark"]).cumprod()
+        strategy_total = float(np.prod(1.0 + paired["strategy"]))
+        benchmark_total = float(np.prod(1.0 + paired["benchmark"]))
+        elapsed_years = max(
+            (pd.Timestamp(paired.index.max()) - pd.Timestamp(paired.index.min())).days
+            / 365.2425,
+            1.0 / 365.2425,
+        )
+        strategy_cagr = strategy_total ** (1.0 / elapsed_years) - 1.0
+        benchmark_cagr = benchmark_total ** (1.0 / elapsed_years) - 1.0
+        monthly_paired = (1.0 + paired).resample("ME").prod().sub(1.0)
+        yearly_paired = (1.0 + paired).resample("YE").prod().sub(1.0)
         rows.append(
             {
                 "period": period,
@@ -681,9 +765,9 @@ def benchmark_comparison(
                 "comparison_start": paired.index.min(),
                 "comparison_end": paired.index.max(),
                 "observations": len(paired),
-                "strategy_cagr_proxy": float((1 + paired["strategy"].mean()) ** factor - 1),
-                "benchmark_cagr_proxy": float((1 + paired["benchmark"].mean()) ** factor - 1),
-                "cagr_difference": float((1 + paired["strategy"].mean()) ** factor - (1 + paired["benchmark"].mean()) ** factor),
+                "strategy_cagr": strategy_cagr,
+                "benchmark_cagr": benchmark_cagr,
+                "cagr_difference": strategy_cagr - benchmark_cagr,
                 "strategy_sharpe": s_sharpe,
                 "benchmark_sharpe": b_sharpe,
                 "sharpe_difference": s_sharpe - b_sharpe,
@@ -699,6 +783,12 @@ def benchmark_comparison(
                 "tracking_error": tracking,
                 "information_ratio": information,
                 "periods_outperformed_pct": float((excess > 0).mean()),
+                "months_outperformed_pct": float(
+                    (monthly_paired["strategy"] > monthly_paired["benchmark"]).mean()
+                ),
+                "years_outperformed_pct": float(
+                    (yearly_paired["strategy"] > yearly_paired["benchmark"]).mean()
+                ),
             }
         )
         # HAC/Newey-West regression is added lazily to keep statsmodels optional
@@ -761,6 +851,42 @@ def fx_adjust_price_panel(
     for column in ("open", "high", "low", "close", "adj_close", "dividends"):
         adjusted[column] = pd.to_numeric(adjusted[column], errors="coerce") * multiplier
     return adjusted.dropna(subset=["open", "high", "low", "close", "fx_usd_per_local"])
+
+
+def attach_entry_adv_notional(
+    opportunities: pd.DataFrame,
+    price_panel: pd.DataFrame,
+    *,
+    output_column: str = "entry_adv20_notional",
+) -> pd.DataFrame:
+    """Attach causal trailing 20-session average dollar volume at entry."""
+
+    required = {"date", "symbol", "close", "volume"}
+    if required - set(price_panel.columns):
+        raise ValueError("price panel lacks fields required for ADV")
+    panel = price_panel[["date", "symbol", "close", "volume"]].copy()
+    panel["date"] = pd.to_datetime(panel["date"], errors="raise").dt.normalize()
+    panel = panel.sort_values(["symbol", "date"])
+    panel["dollar_volume"] = (
+        pd.to_numeric(panel["close"], errors="coerce")
+        * pd.to_numeric(panel["volume"], errors="coerce")
+    )
+    panel[output_column] = panel.groupby("symbol", sort=False)["dollar_volume"].transform(
+        lambda values: values.shift(1).rolling(20, min_periods=1).mean()
+    )
+    lookup = panel[["date", "symbol", output_column]].drop_duplicates(
+        ["date", "symbol"], keep="last"
+    )
+    result = opportunities.copy()
+    result["entry_date"] = pd.to_datetime(result["entry_date"], errors="raise").dt.normalize()
+    result = result.merge(
+        lookup,
+        left_on=["entry_date", "symbol"],
+        right_on=["date", "symbol"],
+        how="left",
+        validate="many_to_one",
+    ).drop(columns=["date"])
+    return result
 
 
 def _price_lookup(
@@ -835,6 +961,12 @@ def simulate_opportunity_portfolio(
     ledger["simulation_exit_cost"] = 0.0
     ledger["simulation_shares"] = 0.0
     ledger["simulation_capacity_reduced"] = False
+    ledger["simulation_adv_notional"] = np.nan
+    ledger["simulation_capacity_notional"] = np.nan
+    ledger["simulation_desired_notional"] = 0.0
+    ledger["simulation_capacity_reduction_notional"] = 0.0
+    ledger["simulation_volume_participation_pct"] = np.nan
+    ledger["simulation_capacity_basis"] = ""
     ledger["simulation_max_weight"] = max_initial_weight if max_initial_weight is not None else np.nan
     ledger["simulation_order_mode"] = order_mode
     rng = np.random.default_rng(seed)
@@ -923,9 +1055,33 @@ def simulate_opportunity_portfolio(
             if max_initial_weight is not None and weight > max_initial_weight + 1e-12:
                 raise ValueError("opportunity weight exceeds predeclared maximum")
             desired = max(0.0, weight) * open_value
-            volume_capacity = quote[2] * float(trade["entry_price"]) * max_volume_participation
+            adv_column = next(
+                (
+                    column
+                    for column in ("entry_adv20_notional", "entry_adv20_usd", "entry_adv20_local")
+                    if column in trade.index and pd.notna(trade[column]) and float(trade[column]) > 0
+                ),
+                None,
+            )
+            if adv_column is None:
+                adv_notional = quote[2] * float(trade["entry_price"])
+                capacity_basis = "entry_day_dollar_volume_fallback"
+            else:
+                adv_notional = float(trade[adv_column])
+                capacity_basis = adv_column
+            volume_capacity = adv_notional * max_volume_participation
             affordable = cash / (1.0 + cost_rate)
             notional = min(desired, volume_capacity, affordable)
+            ledger.at[index, "simulation_adv_notional"] = adv_notional
+            ledger.at[index, "simulation_capacity_notional"] = volume_capacity
+            ledger.at[index, "simulation_desired_notional"] = desired
+            ledger.at[index, "simulation_capacity_reduction_notional"] = max(
+                0.0, desired - notional
+            )
+            ledger.at[index, "simulation_volume_participation_pct"] = (
+                notional / adv_notional if adv_notional > 0 else np.nan
+            )
+            ledger.at[index, "simulation_capacity_basis"] = capacity_basis
             if notional <= 0:
                 ledger.at[index, "simulation_status"] = "rejected"
                 ledger.at[index, "simulation_rejection_reason"] = "insufficient_capital"
