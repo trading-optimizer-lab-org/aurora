@@ -41,16 +41,26 @@ jobs:
           python -m py_compile
           research/stock_protocol/opportunity_audit.py
           scripts/run_stock_protocol_opportunity_audit.py
+          scripts/merge_stock_protocol_opportunity_audit_shards.py
+          scripts/verify_stock_protocol_opportunity_sources.py
+          scripts/verify_stock_protocol_opportunity_audit.py
       - name: Run opportunity audit contract tests
         run: pytest tests/test_stock_protocol_opportunity_audit.py -q
       - name: Verify frozen manifest remains byte-identical
         shell: bash
         run: test "$(sha256sum "$MANIFEST" | cut -d' ' -f1)" = "$MANIFEST_SHA256"
 
-  audit:
+  period-audit:
     needs: contract-tests
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        period:
+          - walk_forward_is
+          - diagnostic_reused_holdout
+          - opened_locked_diagnostic
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,56 +71,7 @@ jobs:
           cache: pip
       - run: python -m pip install -e . scipy statsmodels pyarrow duckdb yfinance
       - name: Verify every immutable source artifact before download
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-          verified = []
-          checks = (
-              ("FINAL_RUN_ID", "FINAL_ARTIFACT_ID", "FINAL_ARTIFACT_NAME", "FINAL_ARTIFACT_DIGEST"),
-              ("IS_RUN_ID", "IS_ARTIFACT_ID", "IS_ARTIFACT_NAME", "IS_ARTIFACT_DIGEST"),
-              ("LOCKED_RUN_ID", "PACK_ARTIFACT_ID", "PACK_ARTIFACT_NAME", "PACK_ARTIFACT_DIGEST"),
-          )
-          for run_key, id_key, name_key, digest_key in checks:
-              artifact = json.loads(subprocess.check_output(
-                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{os.environ[id_key]}"],
-                  text=True,
-              ))
-              assert str(artifact["workflow_run"]["id"]) == os.environ[run_key]
-              assert str(artifact["id"]) == os.environ[id_key]
-              assert artifact["name"] == os.environ[name_key]
-              assert artifact["digest"].lower() == os.environ[digest_key].lower()
-              assert artifact["expired"] is False
-              verified.append({
-                  "role": id_key.removesuffix("_ARTIFACT_ID").lower(),
-                  "run_id": int(os.environ[run_key]),
-                  "artifact_id": int(os.environ[id_key]),
-                  "artifact_name": artifact["name"],
-                  "digest": artifact["digest"].lower(),
-                  "expired": False,
-              })
-          locked = json.loads(subprocess.check_output(
-              ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['LOCKED_RUN_ID']}/artifacts?per_page=100"],
-              text=True,
-          ))["artifacts"]
-          shards = [item for item in locked if item["name"].startswith("stock-protocol-exact-locked-data-")]
-          assert len(shards) == 32
-          assert all(not item["expired"] and item.get("digest") for item in shards)
-          verified.extend({
-              "role": "locked_data_shard",
-              "run_id": int(os.environ["LOCKED_RUN_ID"]),
-              "artifact_id": int(item["id"]),
-              "artifact_name": item["name"],
-              "digest": item["digest"].lower(),
-              "expired": False,
-          } for item in sorted(shards, key=lambda value: value["name"]))
-          Path("source-artifact-audit.json").write_text(
-              json.dumps({"verified_artifacts": verified}, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          print("verified immutable artifacts:", 3 + len(shards))
-          PY
+        run: python scripts/verify_stock_protocol_opportunity_sources.py
       - uses: actions/download-artifact@v4
         with:
           repository: trading-optimizer-lab-org/aurora
@@ -140,7 +101,7 @@ jobs:
           merge-multiple: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: locked-shards
-      - name: Run the full immutable diagnostic audit
+      - name: Run immutable period audit
         run: >-
           python scripts/run_stock_protocol_opportunity_audit.py
           --is-root is-source
@@ -150,93 +111,39 @@ jobs:
           --source-artifact-audit source-artifact-audit.json
           --manifest "$MANIFEST"
           --sequence-workers 2
+          --period "${{ matrix.period }}"
+          --output-root "audit-${{ matrix.period }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stock-protocol-opportunity-audit-shard-${{ matrix.period }}
+          path: audit-${{ matrix.period }}
+          if-no-files-found: error
+          retention-days: 90
+
+  merge-audit:
+    needs: period-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-opportunity-audit-shard-*
+          merge-multiple: false
+          path: audit-shards
+      - name: Merge the three immutable period audits
+        run: >-
+          python scripts/merge_stock_protocol_opportunity_audit_shards.py
+          --shards-root audit-shards
           --output-root audit-results
       - name: Verify final contract and reconciliation
-        shell: bash
-        run: |
-          python - <<'PY'
-          import hashlib, json
-          from pathlib import Path
-          import pandas as pd
-          root = Path("audit-results")
-          summary = json.loads((root / "audit_summary.json").read_text())
-          manifest = json.loads((root / "final_artifact_manifest.json").read_text())
-          opportunities = pd.read_csv(root / "all_individual_opportunities.csv")
-          reconciliation = pd.read_csv(root / "opportunity_reconciliation.csv")
-          expected_counts = {
-              "walk_forward_is": 2947,
-              "diagnostic_reused_holdout": 2043,
-              "opened_locked_diagnostic": 2186,
-          }
-          assert summary["opportunities"] == 7176
-          assert summary["period_counts"] == expected_counts
-          assert opportunities.groupby("period").size().to_dict() == expected_counts
-          assert opportunities["opportunity_id"].nunique() == 7176
-          assert summary["financed"] + summary["not_financed"] == 7176
-          assert reconciliation["reconciled"].all()
-          assert (reconciliation["opportunities"] == reconciliation["funded"] + reconciliation["unfunded"]).all()
-          assert int(reconciliation["opportunities"].sum()) == 7176
-          assert summary["opened_locked_analysis_role"] == "diagnostic_reanalysis_of_opened_locked_period"
-          assert summary["new_oos_claimed"] is False
-          assert summary["optimization_performed"] is False
-          source_audit = json.loads((root / "input_artifact_audit.json").read_text())
-          assert len(source_audit["verified_artifacts"]) == 35
-          assert len([row for row in source_audit["verified_artifacts"] if row["role"] == "locked_data_shard"]) == 32
-          assert all(not row["expired"] and row["digest"].startswith("sha256:") for row in source_audit["verified_artifacts"])
-          assert pd.to_datetime(opportunities["exit_date"]).max() <= pd.Timestamp("2026-07-17")
-          distribution = pd.read_csv(root / "sequence_permutation_distribution.csv")
-          assert distribution.groupby("period").size().to_dict() == {period: 1000 for period in expected_counts}
-          fixed = pd.read_csv(root / "fixed_position_portfolio_results.csv")
-          assert set(fixed["variant"]) == {"Original", "P10", "P20", "P30", "P50", "P100"}
-          assert fixed.groupby("period")["variant"].nunique().to_dict() == {period: 6 for period in expected_counts}
-          fx_fixed = pd.read_csv(root / "fx_adjusted_portfolio_results.csv")
-          assert set(fx_fixed["currency_basis"]) == {"USD"}
-          assert fx_fixed.groupby("period")["variant"].nunique().to_dict() == {period: 5 for period in expected_counts}
-          costs = pd.read_csv(root / "cost_liquidity_capacity_results.csv")
-          assert set(costs["currency_basis"]) == {"USD"}
-          assert set(costs["cost_bps_per_side"]) == {0, 5, 10, 25, 50, 100, 200}
-          assert costs.groupby(["period", "variant"])["cost_bps_per_side"].nunique().eq(7).all()
-          benchmarks = pd.read_csv(root / "benchmark_comparison_by_frequency.csv")
-          assert {"SPY", "VT", "ACWI"} <= set(benchmarks["benchmark"])
-          assert {"weekly", "monthly"} <= set(benchmarks.loc[benchmarks["status"].eq("evaluated"), "frequency"])
-          diagnostic_role = "diagnostic_reanalysis_of_opened_locked_period"
-          for path in root.rglob("*.csv"):
-              frame = pd.read_csv(path)
-              if {"period", "analysis_role"} <= set(frame.columns):
-                  opened = frame["period"].astype(str).eq("opened_locked_diagnostic")
-                  if opened.any():
-                      assert frame.loc[opened, "analysis_role"].astype(str).eq(diagnostic_role).all(), path
-              for date_column in ("date", "entry_date", "exit_date", "comparison_end", "fx_date", "fx_entry_date", "fx_exit_date"):
-                  if date_column in frame.columns:
-                      dates = pd.to_datetime(frame[date_column], errors="coerce").dropna()
-                      assert dates.empty or dates.max() <= pd.Timestamp("2026-07-17"), (path, date_column)
-          report = (root / "final_opportunity_and_portfolio_audit.md").read_text(encoding="utf-8")
-          assert all(f"{number}." in report for number in range(1, 21))
-          required = {
-              "audit_summary.json", "frozen_oos_strategy_manifest.json",
-              "frozen_strategy_exact.json", "frozen_component_signals.csv",
-              "frozen_effective_unique_signals.csv",
-              "individual_opportunity_statistics.csv", "individual_opportunity_bootstrap.parquet",
-              "all_individual_opportunities.csv", "individual_opportunities_yearly.csv",
-              "opportunity_reconciliation.csv",
-              "opportunity_provenance_gaps.csv",
-              "sequence_dependence_results.csv", "sequence_permutation_distribution.csv",
-              "fixed_position_portfolio_results.csv", "fixed_position_portfolio_yearly.csv",
-              "symbol_exchange_currency_map.csv", "historical_fx_audit.csv",
-              "fx_adjusted_opportunities.csv", "fx_adjusted_portfolio_results.csv",
-              "calendar_frequency_metrics.csv", "benchmark_comparison_by_frequency.csv",
-              "benchmark_regressions.csv", "cost_liquidity_capacity_results.csv",
-              "capacity_violations.csv", "return_concentration_analysis.csv",
-              "leave_one_group_out_results.csv", "survivorship_bias_audit.md",
-              "final_opportunity_and_portfolio_audit.md", "final_artifact_manifest.json",
-              "input_artifact_audit.json", "separate_verdicts.json", "survivorship_coverage.csv",
-          }
-          assert required <= {path.name for path in root.iterdir()}
-          for name, metadata in manifest["files"].items():
-              path = root / name
-              assert path.stat().st_size == metadata["bytes"]
-              assert hashlib.sha256(path.read_bytes()).hexdigest() == metadata["sha256"]
-          PY
+        run: python scripts/verify_stock_protocol_opportunity_audit.py audit-results
       - uses: actions/upload-artifact@v4
         if: always()
         with:

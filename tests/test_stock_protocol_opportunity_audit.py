@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 import aurora.research.stock_protocol.opportunity_audit as audit_module
+from scripts.run_stock_protocol_opportunity_audit import _assert_reconciliation
 from aurora.research.stock_protocol.exact_oos import exact_strategy_spec
 from aurora.research.stock_protocol.opportunity_audit import (
     AUDIT_ROLE,
@@ -337,3 +338,24 @@ def test_every_locked_output_row_receives_the_exact_diagnostic_role() -> None:
 
 def test_opened_locked_role_is_explicitly_diagnostic() -> None:
     assert AUDIT_ROLE == "diagnostic_reanalysis_of_opened_locked_period"
+
+
+def test_reconciliation_supports_an_independent_period_shard() -> None:
+    opportunities = pd.DataFrame(
+        {
+            "period": ["walk_forward_is", "walk_forward_is"],
+            "entry_date": ["2006-01-03", "2007-01-03"],
+            "originally_financed": [True, False],
+        }
+    )
+    yearly = pd.DataFrame(
+        {
+            "year": [2006, 2007],
+            "opportunities": [1, 1],
+        }
+    )
+
+    result = _assert_reconciliation(opportunities, yearly, expected_total=2)
+
+    assert result["reconciled"].all()
+    assert result["opportunities"].sum() == 2

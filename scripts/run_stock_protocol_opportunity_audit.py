@@ -397,7 +397,12 @@ def _result_row(
     }
 
 
-def _assert_reconciliation(opportunities: pd.DataFrame, yearly: pd.DataFrame) -> pd.DataFrame:
+def _assert_reconciliation(
+    opportunities: pd.DataFrame,
+    yearly: pd.DataFrame,
+    *,
+    expected_total: int = 7176,
+) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     source = opportunities.copy()
     source["year"] = pd.to_datetime(source["entry_date"]).dt.year
@@ -412,9 +417,9 @@ def _assert_reconciliation(opportunities: pd.DataFrame, yearly: pd.DataFrame) ->
             }
         )
     audit = pd.DataFrame(rows)
-    if not audit["reconciled"].all() or int(audit["opportunities"].sum()) != 7176:
+    if not audit["reconciled"].all() or int(audit["opportunities"].sum()) != expected_total:
         raise ValueError("opportunity reconciliation failed")
-    if int(yearly["opportunities"].sum()) != 7176:
+    if int(yearly["opportunities"].sum()) != expected_total:
         raise ValueError("yearly opportunity reconciliation failed")
     return audit
 
@@ -658,7 +663,9 @@ def run(args: argparse.Namespace) -> None:
         "diagnostic_reused_holdout": ("2014-01-01", "2020-12-31", False),
         "opened_locked_diagnostic": ("2020-01-01", "2026-07-17", True),
     }
-    for period, (load_start, end, include_locked) in period_load.items():
+    selected_periods = [args.period] if args.period else list(period_load)
+    for period in selected_periods:
+        load_start, end, include_locked = period_load[period]
         authorization = None
         if include_locked:
             authorization = _manifest_authorization(
@@ -876,7 +883,8 @@ def run(args: argparse.Namespace) -> None:
         gc.collect()
 
     opportunities = pd.concat(all_opportunities, ignore_index=True)
-    if len(opportunities) != 7176 or opportunities["opportunity_id"].duplicated().any():
+    expected_total = sum(EXPECTED_COUNTS[period] for period in selected_periods)
+    if len(opportunities) != expected_total or opportunities["opportunity_id"].duplicated().any():
         raise ValueError("final opportunity ledger is incomplete or duplicated")
     if pd.to_datetime(opportunities["exit_date"]).max() > CUTOFF:
         raise ValueError("opportunity ledger exceeds the frozen cutoff")
@@ -923,7 +931,11 @@ def run(args: argparse.Namespace) -> None:
     yearly = yearly.merge(opportunities.assign(year=pd.to_datetime(opportunities["entry_date"]).dt.year)[["year", "period"]].drop_duplicates(), on="year", how="left")
     yearly = label_analysis_role(yearly)
     yearly.to_csv(output / "individual_opportunities_yearly.csv", index=False)
-    reconciliation = _assert_reconciliation(opportunities, yearly)
+    reconciliation = _assert_reconciliation(
+        opportunities,
+        yearly,
+        expected_total=expected_total,
+    )
     reconciliation = label_analysis_role(reconciliation)
     reconciliation.to_csv(output / "opportunity_reconciliation.csv", index=False)
 
@@ -997,6 +1009,7 @@ def run(args: argparse.Namespace) -> None:
         "not_financed": int((~opportunities["originally_financed"]).sum()),
         "reconciled": True, "sequence_permutations_per_period": 1000,
         "sequence_workers_per_period": args.sequence_workers,
+        "shard_period": args.period,
         "locked_opened": True, "opened_locked_analysis_role": AUDIT_ROLE,
         "new_oos_claimed": False, "optimization_performed": False,
         "validation_used_for_selection": False, "survivorship_limited": True,
@@ -1037,6 +1050,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--sequence-workers", type=int, default=2)
+    parser.add_argument("--period", choices=tuple(EXPECTED_COUNTS))
     return parser.parse_args()
 
 
