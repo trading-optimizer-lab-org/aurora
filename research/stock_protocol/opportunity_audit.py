@@ -790,6 +790,11 @@ def simulate_opportunity_portfolio(
     initial_capital: float = 100_000.0,
     max_volume_participation: float = 0.10,
     seed: int = 20260717,
+    _price_context: tuple[
+        pd.DatetimeIndex,
+        dict[tuple[pd.Timestamp, str], tuple[float, float, float, float, float]],
+    ]
+    | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Simulate predeclared portfolio construction over immutable opportunities."""
 
@@ -824,12 +829,15 @@ def simulate_opportunity_portfolio(
     rng = np.random.default_rng(seed)
     ledger["_random_order"] = rng.random(len(ledger))
     symbols = set(ledger["symbol"].astype(str))
-    calendar, lookup = _price_lookup(
-        panel,
-        symbols,
-        ledger["entry_date"].min(),
-        ledger["exit_date"].max(),
-    )
+    if _price_context is None:
+        calendar, lookup = _price_lookup(
+            panel,
+            symbols,
+            ledger["entry_date"].min(),
+            ledger["exit_date"].max(),
+        )
+    else:
+        calendar, lookup = _price_context
     if len(calendar) == 0:
         raise ValueError("no price calendar for portfolio")
     entry_groups = {date: group.index.to_list() for date, group in ledger.groupby("entry_date", sort=False)}
@@ -1027,6 +1035,14 @@ def sequence_dependence(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if simulations < 1000:
         raise ValueError("at least 1000 sequence permutations are required")
+    entry_dates = pd.to_datetime(opportunities["entry_date"], errors="raise").dt.normalize()
+    exit_dates = pd.to_datetime(opportunities["exit_date"], errors="raise").dt.normalize()
+    price_context = _price_lookup(
+        panel,
+        set(opportunities["symbol"].astype(str)),
+        entry_dates.min(),
+        exit_dates.max(),
+    )
     deterministic: list[dict[str, object]] = []
     curves: dict[str, pd.DataFrame] = {}
     ledgers: dict[str, pd.DataFrame] = {}
@@ -1038,6 +1054,7 @@ def sequence_dependence(
             max_initial_weight=None,
             order_mode=mode,
             seed=seed,
+            _price_context=price_context,
         )
         metrics = portfolio_metrics(curve, ledger)
         funded = int(ledger["status"].eq("closed").sum())
@@ -1060,6 +1077,7 @@ def sequence_dependence(
             max_initial_weight=None,
             order_mode="permuted",
             seed=seed + simulation + 1,
+            _price_context=price_context,
         )
         metrics = portfolio_metrics(curve, ledger)
         funded = int(ledger["status"].eq("closed").sum())
