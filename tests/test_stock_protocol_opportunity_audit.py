@@ -128,6 +128,17 @@ def test_sequence_reuses_one_static_price_context_for_all_permutations(
     assert calls == 1
 
 
+def test_parallel_sequence_matches_single_worker_exactly() -> None:
+    single_summary, single_distribution = sequence_dependence(
+        _opportunities(), _panel(), simulations=1000, workers=1
+    )
+    parallel_summary, parallel_distribution = sequence_dependence(
+        _opportunities(), _panel(), simulations=1000, workers=2
+    )
+    pd.testing.assert_frame_equal(single_summary, parallel_summary)
+    pd.testing.assert_frame_equal(single_distribution, parallel_distribution)
+
+
 def test_fx_merge_is_causal_and_does_not_use_future_rate() -> None:
     rows = pd.DataFrame(
         {"currency": ["EUR", "EUR"], "entry_date": ["2020-01-02", "2020-01-06"]}
@@ -177,6 +188,8 @@ def test_fx_adjustment_uses_entry_and_exit_dates_separately() -> None:
     adjusted = fx_adjust_opportunities(opportunities, fx)
     assert adjusted.iloc[0]["fx_entry_date"] == pd.Timestamp("2020-01-02")
     assert adjusted.iloc[0]["fx_exit_date"] == pd.Timestamp("2020-01-06")
+    assert "dividend_value_usd_per_share" in adjusted.columns
+    assert math.isclose(float(adjusted.iloc[0]["dividend_value_usd_per_share"]), 0.0)
     assert math.isclose(float(adjusted.iloc[0]["return_usd"]), 1.2)
 
 
