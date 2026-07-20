@@ -400,6 +400,12 @@ def event_study_statistics(
     sem = float(values.std(ddof=1) / math.sqrt(len(values)))
     t_stat = float(values.mean() / sem) if sem > 0 else 0.0
     wilcoxon = stats.wilcoxon(array, alternative="greater", zero_method="wilcox")
+    mae = pd.to_numeric(
+        opportunities["maximum_adverse_excursion"], errors="coerce"
+    ).dropna()
+    mfe = pd.to_numeric(
+        opportunities["maximum_favourable_excursion"], errors="coerce"
+    ).dropna()
     summary = pd.DataFrame(
         [
             {
@@ -417,6 +423,18 @@ def event_study_statistics(
                 **{f"return_p{percentile:02d}": float(np.percentile(array, percentile)) for percentile in (5, 10, 25, 50, 75, 90, 95)},
                 "mae_median": float(pd.to_numeric(opportunities["maximum_adverse_excursion"], errors="coerce").median()),
                 "mfe_median": float(pd.to_numeric(opportunities["maximum_favourable_excursion"], errors="coerce").median()),
+                **{
+                    f"mae_p{percentile:02d}": (
+                        float(np.percentile(mae, percentile)) if len(mae) else np.nan
+                    )
+                    for percentile in (5, 10, 25, 50, 75, 90, 95)
+                },
+                **{
+                    f"mfe_p{percentile:02d}": (
+                        float(np.percentile(mfe, percentile)) if len(mfe) else np.nan
+                    )
+                    for percentile in (5, 10, 25, 50, 75, 90, 95)
+                },
                 "mean_bootstrap_low95": float(np.quantile(ordinary_means, 0.025)),
                 "mean_bootstrap_high95": float(np.quantile(ordinary_means, 0.975)),
                 "median_bootstrap_low95": float(np.quantile(ordinary_medians, 0.025)),
@@ -887,6 +905,27 @@ def attach_entry_adv_notional(
         validate="many_to_one",
     ).drop(columns=["date"])
     return result
+
+
+def prepare_fx_portfolio_opportunities(
+    adjusted_opportunities: pd.DataFrame,
+    usd_price_panel: pd.DataFrame,
+) -> pd.DataFrame:
+    """Prepare USD trades without embedding dividends into exit prices."""
+
+    known = adjusted_opportunities.loc[
+        adjusted_opportunities["return_usd"].notna()
+        & ~adjusted_opportunities["currency_unknown"].astype(bool)
+    ].copy()
+    known["entry_price"] = pd.to_numeric(
+        known["entry_value_usd_per_share"], errors="raise"
+    )
+    known["exit_price"] = pd.to_numeric(
+        known["exit_value_usd_per_share"], errors="raise"
+    )
+    known = attach_entry_adv_notional(known, usd_price_panel)
+    known["capacity_currency"] = "USD"
+    return known
 
 
 def _price_lookup(

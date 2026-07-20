@@ -277,6 +277,23 @@ def test_fx_adjustment_converts_dividends_on_each_payment_date() -> None:
     assert adjusted.iloc[0]["fx_dividend_dates_used"] == "2020-01-03"
 
 
+def test_fx_portfolio_receives_dividends_only_through_daily_cashflows() -> None:
+    adjusted = _opportunities().iloc[[0]].copy()
+    adjusted["currency_unknown"] = False
+    adjusted["return_usd"] = 1.35
+    adjusted["entry_value_usd_per_share"] = 100.0
+    adjusted["exit_value_usd_per_share"] = 220.0
+    adjusted["dividend_value_usd_per_share"] = 15.0
+    usd_panel = _panel().loc[lambda frame: frame["symbol"].eq("AAA")].copy()
+
+    prepared = audit_module.prepare_fx_portfolio_opportunities(adjusted, usd_panel)
+
+    assert math.isclose(float(prepared.iloc[0]["entry_price"]), 100.0)
+    assert math.isclose(float(prepared.iloc[0]["exit_price"]), 220.0)
+    assert not math.isclose(float(prepared.iloc[0]["exit_price"]), 235.0)
+    assert prepared.iloc[0]["capacity_currency"] == "USD"
+
+
 def test_calendar_metrics_include_original_weekly_monthly_and_quarterly() -> None:
     curve = pd.DataFrame(
         {"date": pd.date_range("2019-01-01", periods=500, freq="D"), "equity": np.linspace(100, 150, 500)}

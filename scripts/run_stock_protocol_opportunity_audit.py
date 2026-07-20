@@ -28,7 +28,6 @@ from aurora.research.stock_protocol.opportunity_audit import (
     AUDIT_ROLE,
     CUTOFF,
     PERIODS,
-    attach_entry_adv_notional,
     benchmark_comparison,
     component_audit_frames,
     enrich_opportunity_paths,
@@ -39,6 +38,7 @@ from aurora.research.stock_protocol.opportunity_audit import (
     label_analysis_role,
     portfolio_metrics,
     portfolio_yearly_rows,
+    prepare_fx_portfolio_opportunities,
     sequence_dependence,
     sha256_file,
     simulate_opportunity_portfolio,
@@ -57,6 +57,7 @@ from scripts.run_stock_protocol_exact_oos import (
 EXPECTED_MANIFEST_SHA256 = "45457b0358b54c63daafec1c1bc2ef362ffba8c811ec2ab59b78a37ac7b871c2"
 EXPECTED_FINAL_DIGEST = "sha256:2e878f9cba45ac27d18939b498e54bf4c193b1ce65641231b1914363c1bf4704"
 EXPECTED_IS_DIGEST = "sha256:83c07b840680006536343e4407c2cc16f9b73ae33258513088246929628717db"
+EXPECTED_PACK_DIGEST = "sha256:0e904662d4ea453869370300d1eb6e1ed43992e1d4db36d0949516291f9f3576"
 EXPECTED_COUNTS = {
     "walk_forward_is": 2947,
     "diagnostic_reused_holdout": 2043,
@@ -328,7 +329,15 @@ def _market_data(metadata: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd
     return fx, benchmarks, pd.DataFrame(fx_audit)
 
 
-def _result_row(period: str, variant: str, curve: pd.DataFrame, ledger: pd.DataFrame, cost: int) -> dict[str, object]:
+def _result_row(
+    period: str,
+    variant: str,
+    curve: pd.DataFrame,
+    ledger: pd.DataFrame,
+    cost: int,
+    *,
+    currency_basis: str = "artifact_local_reproduction",
+) -> dict[str, object]:
     funded = ledger["status"].astype(str).eq("closed")
     metrics = portfolio_metrics(curve, ledger)
     profits = pd.to_numeric(ledger.loc[funded, "net_return"], errors="coerce").dropna().sort_values(ascending=False)
@@ -338,6 +347,7 @@ def _result_row(period: str, variant: str, curve: pd.DataFrame, ledger: pd.DataF
         "analysis_role": AUDIT_ROLE if period == "opened_locked_diagnostic" else period,
         "variant": variant,
         "cost_bps_per_side": cost,
+        "currency_basis": currency_basis,
         **metrics,
         "funded_opportunities": int(funded.sum()),
         "unfunded_opportunities": int((~funded).sum()),
@@ -346,6 +356,44 @@ def _result_row(period: str, variant: str, curve: pd.DataFrame, ledger: pd.DataF
         "top5_profit_concentration": float(profits.head(5).clip(lower=0).sum() / total_profit),
         "top10_profit_concentration": float(profits.head(10).clip(lower=0).sum() / total_profit),
         "top20_profit_concentration": float(profits.head(20).clip(lower=0).sum() / total_profit),
+        "capacity_reduced_trades": int(
+            ledger.get("simulation_capacity_reduced", pd.Series(False, index=ledger.index))
+            .astype(bool)
+            .sum()
+        ),
+        "capacity_reduced_pct": float(
+            ledger.get("simulation_capacity_reduced", pd.Series(False, index=ledger.index))
+            .astype(bool)
+            .mean()
+        ),
+        "average_volume_participation_pct": float(
+            pd.to_numeric(
+                ledger.get("simulation_volume_participation_pct", pd.Series(dtype=float)),
+                errors="coerce",
+            ).mean()
+        ),
+        "max_volume_participation_pct": float(
+            pd.to_numeric(
+                ledger.get("simulation_volume_participation_pct", pd.Series(dtype=float)),
+                errors="coerce",
+            ).max()
+        ),
+        "capacity_reduction_notional": float(
+            pd.to_numeric(
+                ledger.get("simulation_capacity_reduction_notional", pd.Series(dtype=float)),
+                errors="coerce",
+            ).sum()
+        ),
+        "total_entry_cost": float(
+            pd.to_numeric(
+                ledger.get("simulation_entry_cost", pd.Series(dtype=float)), errors="coerce"
+            ).sum()
+        ),
+        "total_exit_cost": float(
+            pd.to_numeric(
+                ledger.get("simulation_exit_cost", pd.Series(dtype=float)), errors="coerce"
+            ).sum()
+        ),
     }
 
 
@@ -387,24 +435,34 @@ loss was invented. Coverage by year and market is retained in `survivorship_cove
 
 
 def _verdicts(event_summary: pd.DataFrame, sequence: pd.DataFrame, fixed: pd.DataFrame) -> dict[str, str]:
-    event = event_summary.iloc[0]
+    event = event_summary.loc[
+        event_summary["analysis_scope"].astype(str).eq("all_periods_combined")
+    ].iloc[0]
     individual = (
         "individual_signal_supported"
         if float(event["symbol_cluster_mean_low95"]) > 0 and float(event["year_cluster_mean_low95"]) > 0
         else "individual_signal_weak" if float(event["mean_return"]) > 0 else "individual_signal_not_supported"
     )
-    original_row = sequence.loc[sequence["order"].eq("original")]
-    original = (
-        "original_portfolio_promising"
-        if not original_row.empty and float(original_row.iloc[0]["sharpe"]) > 1
-        else "original_portfolio_unstable"
-    )
+    original_rows = sequence.loc[sequence["order"].eq("original")]
+    if original_rows.empty:
+        original = "original_portfolio_invalid"
+    elif pd.to_numeric(original_rows["sharpe"], errors="coerce").gt(1).all():
+        original = "original_portfolio_promising"
+    elif float(pd.to_numeric(original_rows["sharpe"], errors="coerce").median()) > 0:
+        original = "original_portfolio_unstable"
+    else:
+        original = "original_portfolio_not_operable"
     diversified = fixed.loc[fixed["variant"].isin(PORTFOLIOS) & fixed["cost_bps_per_side"].eq(0)]
-    construction = (
-        "diversified_implementation_promising"
-        if not diversified.empty and float(diversified["sharpe"].median()) > 1
-        else "diversified_implementation_weak" if not diversified.empty else "diversified_implementation_invalid"
-    )
+    if diversified.empty:
+        construction = "diversified_implementation_invalid"
+    else:
+        period_medians = diversified.groupby("period")["sharpe"].median()
+        if float(period_medians.min()) > 1:
+            construction = "diversified_implementation_promising"
+        elif float(period_medians.median()) > 0:
+            construction = "diversified_implementation_weak"
+        else:
+            construction = "diversified_implementation_failed"
     return {"individual_signal": individual, "original_portfolio": original, "diversified_implementation": construction}
 
 
@@ -416,33 +474,91 @@ def _final_report(
     benchmark: pd.DataFrame,
     costs: pd.DataFrame,
     concentration: pd.DataFrame,
+    fx_portfolios: pd.DataFrame,
+    leave_out: pd.DataFrame,
+    capacity: pd.DataFrame,
     verdicts: dict[str, str],
 ) -> str:
-    row = event.iloc[0]
+    row = event.loc[event["analysis_scope"].eq("all_periods_combined")].iloc[0]
     funded = int(counts["funded"].sum())
     opportunities = int(counts["opportunities"].sum())
     best_cost = costs.loc[costs["cagr"].gt(0), "cost_bps_per_side"].max() if not costs.empty else np.nan
-    weekly_spy = benchmark.loc[(benchmark["benchmark"] == "SPY") & (benchmark["frequency"] == "weekly")]
-    monthly_spy = benchmark.loc[(benchmark["benchmark"] == "SPY") & (benchmark["frequency"] == "monthly")]
+    if {"benchmark", "frequency", "status"} <= set(benchmark.columns):
+        weekly_spy = benchmark.loc[
+            benchmark["benchmark"].eq("SPY")
+            & benchmark["frequency"].eq("weekly")
+            & benchmark["status"].eq("evaluated")
+        ]
+        monthly_spy = benchmark.loc[
+            benchmark["benchmark"].eq("SPY")
+            & benchmark["frequency"].eq("monthly")
+            & benchmark["status"].eq("evaluated")
+        ]
+    else:
+        weekly_spy = pd.DataFrame()
+        monthly_spy = pd.DataFrame()
+    period_counts = counts.groupby("period")["opportunities"].sum().to_dict()
+    sequence_original = sequence.loc[sequence["order"].eq("original")]
+    sequence_percentiles = pd.to_numeric(
+        sequence_original.get("original_percentile_sharpe", pd.Series(dtype=float)),
+        errors="coerce",
+    )
+    fx_zero = fx_portfolios.loc[fx_portfolios["cost_bps_per_side"].eq(0)]
+    portfolio_summary = (
+        fx_zero.groupby("variant")[["cagr", "sharpe", "max_drawdown"]].median()
+        if not fx_zero.empty
+        else pd.DataFrame()
+    )
+    portfolio_text = "; ".join(
+        f"{variant}: CAGR {values['cagr']:.2%}, Sharpe {values['sharpe']:.2f}, DD {values['max_drawdown']:.2%}"
+        for variant, values in portfolio_summary.iterrows()
+    )
+    least_concentrated = (
+        fx_zero.sort_values("top5_profit_concentration").iloc[0]
+        if not fx_zero.empty
+        else None
+    )
+    benchmark_answers: dict[str, str] = {}
+    for benchmark_name in ("SPY", "VT", "ACWI"):
+        relevant = (
+            benchmark.loc[
+                benchmark["benchmark"].eq(benchmark_name)
+                & benchmark["frequency"].isin(["weekly", "monthly"])
+                & benchmark["status"].eq("evaluated")
+            ]
+            if {"benchmark", "frequency", "status"} <= set(benchmark.columns)
+            else pd.DataFrame()
+        )
+        benchmark_answers[benchmark_name] = (
+            f"Sharpe difference weekly/monthly mean {relevant.groupby('frequency')['sharpe_difference'].mean().to_dict()}"
+            if not relevant.empty
+            else "insufficient comparable history"
+        )
+    leave_2025 = leave_out.loc[
+        leave_out["exclusion_type"].eq("year")
+        & leave_out["excluded"].astype(str).isin(["2025", "2025.0"])
+    ]
+    leave_top5 = leave_out.loc[leave_out["exclusion_type"].eq("top_5_trades")]
+    country_leave = leave_out.loc[leave_out["exclusion_type"].eq("country")]
     answers = [
-        f"1. Yearly counts are fully listed; total opportunities: **{opportunities:,}**.",
+        f"1. Opportunities by period: {period_counts}; yearly detail is complete. Total **{opportunities:,}**.",
         f"2. Mean return {row['mean_return']:.4%}; median {row['median_return']:.4%}.",
         f"3. Reached +50%: {row['target_50_pct']:.2%}.",
         f"4. Average opportunity positive: **{float(row['mean_return']) > 0}**; classification `{verdicts['individual_signal']}`.",
         f"5. Symbol/year clustered lower bounds: {row['symbol_cluster_mean_low95']:.4%} / {row['year_cluster_mean_low95']:.4%}.",
-        f"6. Arrival-order distribution and original percentiles are in `sequence_dependence_results.csv` ({len(sequence)} deterministic rows).",
+        f"6. Original Sharpe percentile across the 1,000 arrival-order permutations ranges from {sequence_percentiles.min():.2%} to {sequence_percentiles.max():.2%}; {len(sequence_original)} periods evaluated.",
         f"7. Original portfolio funded {funded:,} of {opportunities:,} opportunities ({funded/opportunities:.2%}).",
-        "8. P10/P20/P30/P50/P100 are reported without selecting a winner.",
-        f"9. Profit concentration by variant is in the fixed portfolio and concentration files; diagnostic only.",
-        "10. FX-adjusted results are separate and exclude unknown currencies rather than inventing rates.",
+        f"8. USD P10/P20/P30/P50/P100 medians by period: {portfolio_text}. No variant is selected or validated.",
+        f"9. Lowest observed top-five profit concentration is {float(least_concentrated['top5_profit_concentration']):.2%} in {least_concentrated['period']} {least_concentrated['variant']}." if least_concentrated is not None else "9. Diversified concentration could not be calculated.",
+        f"10. FX adjustment retains {int(fx_zero['known_currency_opportunities'].max()) if not fx_zero.empty else 0:,} known-currency opportunities in its widest period; unknown currencies are excluded and dividends use payment-date FX.",
         "11. VT is the broadest available global benchmark; ACWI is also reported where history overlaps.",
-        f"12. SPY weekly/monthly Sharpe differences are {weekly_spy['sharpe_difference'].mean() if len(weekly_spy) else np.nan:.4f} / {monthly_spy['sharpe_difference'].mean() if len(monthly_spy) else np.nan:.4f}.",
-        "13. VT and ACWI comparisons are in `benchmark_comparison_by_frequency.csv`.",
-        "14. Dependence on 2025 is quantified by the explicit 2025 exclusion row.",
-        f"15. Dependence on top trades is quantified in {len(concentration)} concentration/leave-out rows.",
-        "16. Every represented country and market is excluded once in `leave_one_group_out_results.csv`.",
+        f"12. SPY weekly/monthly Sharpe differences are {weekly_spy['sharpe_difference'].mean() if len(weekly_spy) else np.nan:.4f} / {monthly_spy['sharpe_difference'].mean() if len(monthly_spy) else np.nan:.4f}; positive means the strategy leads.",
+        f"13. VT: {benchmark_answers['VT']}; ACWI: {benchmark_answers['ACWI']}.",
+        f"14. Excluding 2025 produces CAGR range {leave_2025['cagr'].min():.2%} to {leave_2025['cagr'].max():.2%} across applicable periods." if not leave_2025.empty else "14. 2025 is outside the earlier periods; its explicit exclusion produced no applicable row.",
+        f"15. Excluding the top five trades produces Sharpe range {leave_top5['sharpe'].min():.2f} to {leave_top5['sharpe'].max():.2f}; {len(concentration)} concentration diagnostics are reported." if not leave_top5.empty else "15. Top-five exclusion could not be calculated.",
+        f"16. Every represented country and market is excluded once; worst country-exclusion CAGR is {country_leave['cagr'].min():.2%}." if not country_leave.empty else "16. Country leave-out could not be calculated.",
         f"17. Highest tested cost with positive CAGR: {best_cost} bps per side (diagnostic, not selection).",
-        "18. Operability is judged from capacity, cash, concentration and diversified portfolios, not event-study CAGR.",
+        f"18. Operability verdict is `{verdicts['diversified_implementation']}`; {len(capacity):,} USD capacity-reduced entries are itemised.",
         "19. Point-in-time membership, delistings, asynchronous markets and opened locked data prevent a fresh validation claim.",
         "20. A genuinely future test requires an untouched, predeclared post-2026-07-17 period with the strategy and portfolio fixed now.",
     ]
@@ -463,6 +579,35 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("manifest strategy differs from exact frozen source")
     if str(manifest["periods"]["locked_end"]) != CUTOFF.date().isoformat():
         raise ValueError("frozen cutoff mismatch")
+    source_artifact_audit = json.loads(args.source_artifact_audit.read_text(encoding="utf-8"))
+    verified_artifacts = source_artifact_audit.get("verified_artifacts", [])
+    if len(verified_artifacts) != 35:
+        raise ValueError("source artifact audit must contain 3 roots and 32 locked shards")
+    digest_by_name = {
+        str(row["artifact_name"]): str(row["digest"]).lower()
+        for row in verified_artifacts
+    }
+    for name, digest in (
+        ("stock-protocol-exact-irrevocable-oos-results-final", EXPECTED_FINAL_DIGEST),
+        ("stock-protocol-exact-is-reproduction", EXPECTED_IS_DIGEST),
+        ("stock-protocol-exact-prelocked-pack", EXPECTED_PACK_DIGEST),
+    ):
+        if digest_by_name.get(name) != digest:
+            raise ValueError(f"verified source artifact digest mismatch: {name}")
+    locked_artifacts = [
+        row for row in verified_artifacts if row.get("role") == "locked_data_shard"
+    ]
+    if len(locked_artifacts) != 32 or any(
+        row.get("expired") or not str(row.get("digest", "")).startswith("sha256:")
+        for row in locked_artifacts
+    ):
+        raise ValueError("locked shard artifact audit is incomplete")
+    source_artifact_audit["manifest_declared_upstream"] = {
+        "selection": manifest["source"],
+        "data": manifest["data"],
+        "in_sample_reproduction": manifest["in_sample_reproduction"],
+    }
+    _json(output / "input_artifact_audit.json", source_artifact_audit)
     shutil.copy2(manifest_path, output / "frozen_oos_strategy_manifest.json")
     _json(
         output / "frozen_strategy_exact.json",
@@ -589,16 +734,6 @@ def run(args: argparse.Namespace) -> None:
             label_analysis_role(ledger).to_csv(
                 output / "fixed_position_trade_ledgers" / f"{period}_{variant}.csv", index=False
             )
-            for cost in COSTS:
-                if cost == 0:
-                    cost_curve, cost_ledger = curve, ledger
-                else:
-                    cost_curve, cost_ledger = simulate_opportunity_portfolio(
-                        opportunities, panel_frame, max_positions=positions,
-                        max_initial_weight=weight, order_mode="score", cost_bps_per_side=cost,
-                    )
-                cost_rows.append(_result_row(period, variant, cost_curve, cost_ledger, cost))
-
         # Sequence dependence is deliberately evaluated on the original cash rule.
         seq, distribution = sequence_dependence(
             opportunities,
@@ -635,11 +770,9 @@ def run(args: argparse.Namespace) -> None:
             opportunities, fx, price_panel=panel_frame
         )
         all_fx_opportunities.append(fx_opportunities)
-        known = fx_opportunities.loc[fx_opportunities["return_usd"].notna()].copy()
-        known["entry_price"] = known["entry_value_usd_per_share"]
-        known["exit_price"] = known["exit_value_usd_per_share"]
         usd_panel = fx_adjust_price_panel(panel_frame, metadata, fx)
-        known = attach_entry_adv_notional(known, usd_panel)
+        known = prepare_fx_portfolio_opportunities(fx_opportunities, usd_panel)
+        usd_ledgers: dict[str, pd.DataFrame] = {}
         for variant, (positions, weight) in PORTFOLIOS.items():
             curve, ledger = simulate_opportunity_portfolio(
                 known, usd_panel, max_positions=positions, max_initial_weight=weight,
@@ -647,11 +780,14 @@ def run(args: argparse.Namespace) -> None:
             )
             fx_portfolio_rows.append(
                 {
-                    **_result_row(period, variant, curve, ledger, 0),
+                    **_result_row(
+                        period, variant, curve, ledger, 0, currency_basis="USD"
+                    ),
                     "known_currency_opportunities": len(known),
                     "known_currency_pct": len(known) / len(opportunities),
                 }
             )
+            usd_ledgers[variant] = ledger
             label_analysis_role(ledger).to_csv(
                 output / "fx_adjusted_trade_ledgers" / f"{period}_{variant}.csv",
                 index=False,
@@ -662,37 +798,79 @@ def run(args: argparse.Namespace) -> None:
                 capacity["variant"] = variant
                 capacity["capacity_currency"] = "USD"
                 capacity_rows.append(label_analysis_role(capacity))
+            for cost in COSTS:
+                if cost == 0:
+                    cost_curve, cost_ledger = curve, ledger
+                else:
+                    cost_curve, cost_ledger = simulate_opportunity_portfolio(
+                        known,
+                        usd_panel,
+                        max_positions=positions,
+                        max_initial_weight=weight,
+                        order_mode="score",
+                        cost_bps_per_side=cost,
+                    )
+                cost_rows.append(
+                    _result_row(
+                        period,
+                        variant,
+                        cost_curve,
+                        cost_ledger,
+                        cost,
+                        currency_basis="USD",
+                    )
+                )
 
         # Concentration and leave-group-out use P20, declared in advance as a
         # neutral middle portfolio. They are diagnostics, never selection.
-        p20_ledger = pd.read_csv(output / "fixed_position_trade_ledgers" / f"{period}_P20.csv")
+        p20_ledger = usd_ledgers["P20"].copy()
         closed = p20_ledger.loc[p20_ledger["status"].astype(str).eq("closed")].copy()
         closed["profit"] = pd.to_numeric(closed["simulation_exit_notional"], errors="coerce") - pd.to_numeric(closed["simulation_entry_notional"], errors="coerce")
         positive_profit = max(float(closed["profit"].clip(lower=0).sum()), 1e-12)
         for n in (5, 10, 20):
-            concentration_rows.append({"period": period, "measure": f"top_{n}_trades", "value": float(closed.nlargest(n, "profit")["profit"].clip(lower=0).sum() / positive_profit)})
+            concentration_rows.append({"period": period, "currency_basis": "USD", "measure": f"top_{n}_trades", "group": "", "value": float(closed.nlargest(n, "profit")["profit"].clip(lower=0).sum() / positive_profit)})
         concentration_rows.extend(
-            {"period": period, "measure": key, "value": value}
+            {"period": period, "currency_basis": "USD", "measure": key, "group": "", "value": value}
             for key, value in {
                 "target_50_pct": float(closed["reached_50pct"].astype(bool).mean()) if len(closed) else 0,
                 "over_200_sessions_pct": float(pd.to_numeric(closed["holding_sessions"], errors="coerce").gt(200).mean()) if len(closed) else 0,
                 "profit_2025_pct": float(closed.loc[pd.to_datetime(closed["exit_date"]).dt.year.eq(2025), "profit"].sum() / positive_profit),
             }.items()
         )
-        for column in ("country", "market", "currency"):
+        closed["exit_year"] = pd.to_datetime(closed["exit_date"], errors="raise").dt.year
+        for column in ("exit_year", "country", "market", "currency", "sector"):
+            if column not in closed.columns:
+                continue
+            grouped_profit = closed.assign(
+                positive_profit=closed["profit"].clip(lower=0)
+            ).groupby(column, dropna=False)["positive_profit"].sum()
+            if not grouped_profit.empty:
+                best_group = grouped_profit.idxmax()
+                concentration_rows.append(
+                    {
+                        "period": period,
+                        "currency_basis": "USD",
+                        "measure": f"best_{column}_profit_pct",
+                        "group": str(best_group),
+                        "value": float(grouped_profit.max() / positive_profit),
+                    }
+                )
+        for column in ("country", "market", "currency", "sector"):
+            if column not in closed.columns:
+                continue
             for value in sorted(closed[column].dropna().astype(str).unique()):
-                filtered = opportunities.loc[~opportunities[column].astype(str).eq(value)]
-                curve, ledger = simulate_opportunity_portfolio(filtered, panel_frame, max_positions=20, max_initial_weight=0.05, order_mode="score")
-                leave_rows.append({"period": period, "exclusion_type": column, "excluded": value, **portfolio_metrics(curve, ledger)})
+                filtered = known.loc[~known[column].astype(str).eq(value)]
+                curve, ledger = simulate_opportunity_portfolio(filtered, usd_panel, max_positions=20, max_initial_weight=0.05, order_mode="score")
+                leave_rows.append({"period": period, "currency_basis": "USD", "exclusion_type": column, "excluded": value, **portfolio_metrics(curve, ledger)})
         for year in sorted(pd.to_datetime(closed["entry_date"]).dt.year.unique()):
-            filtered = opportunities.loc[pd.to_datetime(opportunities["entry_date"]).dt.year.ne(year)]
-            curve, ledger = simulate_opportunity_portfolio(filtered, panel_frame, max_positions=20, max_initial_weight=0.05, order_mode="score")
-            leave_rows.append({"period": period, "exclusion_type": "year", "excluded": int(year), **portfolio_metrics(curve, ledger)})
+            filtered = known.loc[pd.to_datetime(known["entry_date"]).dt.year.ne(year)]
+            curve, ledger = simulate_opportunity_portfolio(filtered, usd_panel, max_positions=20, max_initial_weight=0.05, order_mode="score")
+            leave_rows.append({"period": period, "currency_basis": "USD", "exclusion_type": "year", "excluded": int(year), **portfolio_metrics(curve, ledger)})
         for n, label in ((1, "top_trade"), (5, "top_5_trades")):
             excluded_ids = set(closed.nlargest(n, "profit")["opportunity_id"].astype(str))
-            filtered = opportunities.loc[~opportunities["opportunity_id"].astype(str).isin(excluded_ids)]
-            curve, ledger = simulate_opportunity_portfolio(filtered, panel_frame, max_positions=20, max_initial_weight=0.05, order_mode="score")
-            leave_rows.append({"period": period, "exclusion_type": label, "excluded": ",".join(sorted(excluded_ids)), **portfolio_metrics(curve, ledger)})
+            filtered = known.loc[~known["opportunity_id"].astype(str).isin(excluded_ids)]
+            curve, ledger = simulate_opportunity_portfolio(filtered, usd_panel, max_positions=20, max_initial_weight=0.05, order_mode="score")
+            leave_rows.append({"period": period, "currency_basis": "USD", "exclusion_type": label, "excluded": ",".join(sorted(excluded_ids)), **portfolio_metrics(curve, ledger)})
 
         del features, events, panel, panel_frame, usd_panel
         gc.collect()
@@ -718,7 +896,27 @@ def run(args: argparse.Namespace) -> None:
         opportunities["selection_provenance_status"].ne("reconstructed_exactly")
     ].to_csv(output / "opportunity_provenance_gaps.csv", index=False)
     fx_opportunities.to_csv(output / "fx_adjusted_opportunities.csv", index=False)
+    event_frames: list[pd.DataFrame] = []
+    bootstrap_frames: list[pd.DataFrame] = []
     event_summary, bootstrap = event_study_statistics(opportunities)
+    event_summary["analysis_scope"] = "all_periods_combined"
+    event_summary["period"] = "all_periods_combined"
+    event_summary["analysis_role"] = "combined_walk_forward_and_diagnostics"
+    bootstrap["analysis_scope"] = "all_periods_combined"
+    bootstrap["period"] = "all_periods_combined"
+    bootstrap["analysis_role"] = "combined_walk_forward_and_diagnostics"
+    event_frames.append(event_summary)
+    bootstrap_frames.append(bootstrap)
+    for period, group in opportunities.groupby("period", sort=False):
+        period_event, period_bootstrap = event_study_statistics(group)
+        period_event["analysis_scope"] = str(period)
+        period_event["period"] = str(period)
+        period_bootstrap["analysis_scope"] = str(period)
+        period_bootstrap["period"] = str(period)
+        event_frames.append(label_analysis_role(period_event))
+        bootstrap_frames.append(label_analysis_role(period_bootstrap))
+    event_summary = pd.concat(event_frames, ignore_index=True)
+    bootstrap = pd.concat(bootstrap_frames, ignore_index=True)
     event_summary.to_csv(output / "individual_opportunity_statistics.csv", index=False)
     bootstrap.to_parquet(output / "individual_opportunity_bootstrap.parquet", index=False)
     yearly = yearly_opportunity_results(opportunities)
@@ -738,7 +936,10 @@ def run(args: argparse.Namespace) -> None:
     costs = pd.DataFrame(cost_rows)
     costs = label_analysis_role(costs)
     costs.to_csv(output / "cost_liquidity_capacity_results.csv", index=False)
-    (pd.concat(capacity_rows, ignore_index=True) if capacity_rows else pd.DataFrame()).to_csv(output / "capacity_violations.csv", index=False)
+    capacity_frame = (
+        pd.concat(capacity_rows, ignore_index=True) if capacity_rows else pd.DataFrame()
+    )
+    capacity_frame.to_csv(output / "capacity_violations.csv", index=False)
     sequence = pd.concat(sequence_rows, ignore_index=True)
     sequence = label_analysis_role(sequence)
     sequence.to_csv(output / "sequence_dependence_results.csv", index=False)
@@ -754,13 +955,15 @@ def run(args: argparse.Namespace) -> None:
     label_analysis_role(pd.concat(regression_rows, ignore_index=True)).to_csv(
         output / "benchmark_regressions.csv", index=False
     )
-    label_analysis_role(pd.DataFrame(fx_portfolio_rows)).to_csv(
+    fx_portfolio_frame = label_analysis_role(pd.DataFrame(fx_portfolio_rows))
+    fx_portfolio_frame.to_csv(
         output / "fx_adjusted_portfolio_results.csv", index=False
     )
     concentration = pd.DataFrame(concentration_rows)
     concentration = label_analysis_role(concentration)
     concentration.to_csv(output / "return_concentration_analysis.csv", index=False)
-    label_analysis_role(pd.DataFrame(leave_rows)).to_csv(
+    leave_frame = label_analysis_role(pd.DataFrame(leave_rows))
+    leave_frame.to_csv(
         output / "leave_one_group_out_results.csv", index=False
     )
     coverage = pd.DataFrame(coverage_rows)
@@ -768,9 +971,21 @@ def run(args: argparse.Namespace) -> None:
     coverage.to_csv(output / "survivorship_coverage.csv", index=False)
     (output / "survivorship_bias_audit.md").write_text(_survivorship_report(coverage), encoding="utf-8")
 
-    verdicts = _verdicts(event_summary, sequence, fixed)
+    verdicts = _verdicts(event_summary, sequence, fx_portfolio_frame)
     _json(output / "separate_verdicts.json", {**verdicts, "new_oos_claimed": False, "role": AUDIT_ROLE})
-    report = _final_report(reconciliation, event_summary, sequence, fixed, benchmark_frame, costs, concentration, verdicts)
+    report = _final_report(
+        reconciliation,
+        event_summary,
+        sequence,
+        fixed,
+        benchmark_frame,
+        costs,
+        concentration,
+        fx_portfolio_frame,
+        leave_frame,
+        capacity_frame,
+        verdicts,
+    )
     (output / "final_opportunity_and_portfolio_audit.md").write_text(report, encoding="utf-8")
     summary = {
         "candidate_id": manifest["candidate_id"], "opportunities": len(opportunities),
@@ -792,7 +1007,21 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("frozen manifest was modified")
     write_artifact_manifest(
         output,
-        input_artifacts={"final": EXPECTED_FINAL_DIGEST, "is": EXPECTED_IS_DIGEST, "manifest": EXPECTED_MANIFEST_SHA256},
+        input_artifacts={
+            "final": EXPECTED_FINAL_DIGEST,
+            "is": EXPECTED_IS_DIGEST,
+            "pack": EXPECTED_PACK_DIGEST,
+            "manifest": EXPECTED_MANIFEST_SHA256,
+            "original_protocol": str(manifest["source"]["artifact_digest"]),
+            "source_data": str(manifest["data"]["source_artifact_digest"]),
+            "source_task": str(manifest["source"]["task_artifact_digest"]),
+            "locked_shards_digest_set": hashlib.sha256(
+                json.dumps(
+                    sorted(str(row["digest"]).lower() for row in locked_artifacts),
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        },
         commit=os.environ.get("GITHUB_SHA", "unknown"),
     )
     print(json.dumps(summary, sort_keys=True))
@@ -804,6 +1033,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-root", type=Path, required=True)
     parser.add_argument("--pack-root", type=Path, required=True)
     parser.add_argument("--locked-shards-root", type=Path, required=True)
+    parser.add_argument("--source-artifact-audit", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--sequence-workers", type=int, default=2)

@@ -65,6 +65,8 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, subprocess
+          from pathlib import Path
+          verified = []
           checks = (
               ("FINAL_RUN_ID", "FINAL_ARTIFACT_ID", "FINAL_ARTIFACT_NAME", "FINAL_ARTIFACT_DIGEST"),
               ("IS_RUN_ID", "IS_ARTIFACT_ID", "IS_ARTIFACT_NAME", "IS_ARTIFACT_DIGEST"),
@@ -80,6 +82,14 @@ jobs:
               assert artifact["name"] == os.environ[name_key]
               assert artifact["digest"].lower() == os.environ[digest_key].lower()
               assert artifact["expired"] is False
+              verified.append({
+                  "role": id_key.removesuffix("_ARTIFACT_ID").lower(),
+                  "run_id": int(os.environ[run_key]),
+                  "artifact_id": int(os.environ[id_key]),
+                  "artifact_name": artifact["name"],
+                  "digest": artifact["digest"].lower(),
+                  "expired": False,
+              })
           locked = json.loads(subprocess.check_output(
               ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['LOCKED_RUN_ID']}/artifacts?per_page=100"],
               text=True,
@@ -87,6 +97,18 @@ jobs:
           shards = [item for item in locked if item["name"].startswith("stock-protocol-exact-locked-data-")]
           assert len(shards) == 32
           assert all(not item["expired"] and item.get("digest") for item in shards)
+          verified.extend({
+              "role": "locked_data_shard",
+              "run_id": int(os.environ["LOCKED_RUN_ID"]),
+              "artifact_id": int(item["id"]),
+              "artifact_name": item["name"],
+              "digest": item["digest"].lower(),
+              "expired": False,
+          } for item in sorted(shards, key=lambda value: value["name"]))
+          Path("source-artifact-audit.json").write_text(
+              json.dumps({"verified_artifacts": verified}, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
           print("verified immutable artifacts:", 3 + len(shards))
           PY
       - uses: actions/download-artifact@v4
@@ -125,6 +147,7 @@ jobs:
           --final-root final-source
           --pack-root exact-pack
           --locked-shards-root locked-shards
+          --source-artifact-audit source-artifact-audit.json
           --manifest "$MANIFEST"
           --sequence-workers 2
           --output-root audit-results
@@ -140,18 +163,62 @@ jobs:
           manifest = json.loads((root / "final_artifact_manifest.json").read_text())
           opportunities = pd.read_csv(root / "all_individual_opportunities.csv")
           reconciliation = pd.read_csv(root / "opportunity_reconciliation.csv")
+          expected_counts = {
+              "walk_forward_is": 2947,
+              "diagnostic_reused_holdout": 2043,
+              "opened_locked_diagnostic": 2186,
+          }
           assert summary["opportunities"] == 7176
+          assert summary["period_counts"] == expected_counts
+          assert opportunities.groupby("period").size().to_dict() == expected_counts
+          assert opportunities["opportunity_id"].nunique() == 7176
           assert summary["financed"] + summary["not_financed"] == 7176
           assert reconciliation["reconciled"].all()
+          assert (reconciliation["opportunities"] == reconciliation["funded"] + reconciliation["unfunded"]).all()
           assert int(reconciliation["opportunities"].sum()) == 7176
           assert summary["opened_locked_analysis_role"] == "diagnostic_reanalysis_of_opened_locked_period"
           assert summary["new_oos_claimed"] is False
           assert summary["optimization_performed"] is False
+          source_audit = json.loads((root / "input_artifact_audit.json").read_text())
+          assert len(source_audit["verified_artifacts"]) == 35
+          assert len([row for row in source_audit["verified_artifacts"] if row["role"] == "locked_data_shard"]) == 32
+          assert all(not row["expired"] and row["digest"].startswith("sha256:") for row in source_audit["verified_artifacts"])
           assert pd.to_datetime(opportunities["exit_date"]).max() <= pd.Timestamp("2026-07-17")
-          assert len(pd.read_csv(root / "sequence_permutation_distribution.csv")) == 3000
-          assert set(pd.read_csv(root / "fixed_position_portfolio_results.csv")["variant"]) == {"Original", "P10", "P20", "P30", "P50", "P100"}
+          distribution = pd.read_csv(root / "sequence_permutation_distribution.csv")
+          assert distribution.groupby("period").size().to_dict() == {period: 1000 for period in expected_counts}
+          fixed = pd.read_csv(root / "fixed_position_portfolio_results.csv")
+          assert set(fixed["variant"]) == {"Original", "P10", "P20", "P30", "P50", "P100"}
+          assert fixed.groupby("period")["variant"].nunique().to_dict() == {period: 6 for period in expected_counts}
+          fx_fixed = pd.read_csv(root / "fx_adjusted_portfolio_results.csv")
+          assert set(fx_fixed["currency_basis"]) == {"USD"}
+          assert fx_fixed.groupby("period")["variant"].nunique().to_dict() == {period: 5 for period in expected_counts}
+          costs = pd.read_csv(root / "cost_liquidity_capacity_results.csv")
+          assert set(costs["currency_basis"]) == {"USD"}
+          assert set(costs["cost_bps_per_side"]) == {0, 5, 10, 25, 50, 100, 200}
+          assert costs.groupby(["period", "variant"])["cost_bps_per_side"].nunique().eq(7).all()
+          benchmarks = pd.read_csv(root / "benchmark_comparison_by_frequency.csv")
+          assert {"SPY", "VT", "ACWI"} <= set(benchmarks["benchmark"])
+          assert {"weekly", "monthly"} <= set(benchmarks.loc[benchmarks["status"].eq("evaluated"), "frequency"])
+          diagnostic_role = "diagnostic_reanalysis_of_opened_locked_period"
+          for path in root.rglob("*.csv"):
+              frame = pd.read_csv(path)
+              if {"period", "analysis_role"} <= set(frame.columns):
+                  opened = frame["period"].astype(str).eq("opened_locked_diagnostic")
+                  if opened.any():
+                      assert frame.loc[opened, "analysis_role"].astype(str).eq(diagnostic_role).all(), path
+              for date_column in ("date", "entry_date", "exit_date", "comparison_end", "fx_date", "fx_entry_date", "fx_exit_date"):
+                  if date_column in frame.columns:
+                      dates = pd.to_datetime(frame[date_column], errors="coerce").dropna()
+                      assert dates.empty or dates.max() <= pd.Timestamp("2026-07-17"), (path, date_column)
+          report = (root / "final_opportunity_and_portfolio_audit.md").read_text(encoding="utf-8")
+          assert all(f"{number}." in report for number in range(1, 21))
           required = {
+              "audit_summary.json", "frozen_oos_strategy_manifest.json",
+              "frozen_strategy_exact.json", "frozen_component_signals.csv",
+              "frozen_effective_unique_signals.csv",
+              "individual_opportunity_statistics.csv", "individual_opportunity_bootstrap.parquet",
               "all_individual_opportunities.csv", "individual_opportunities_yearly.csv",
+              "opportunity_reconciliation.csv",
               "opportunity_provenance_gaps.csv",
               "sequence_dependence_results.csv", "sequence_permutation_distribution.csv",
               "fixed_position_portfolio_results.csv", "fixed_position_portfolio_yearly.csv",
@@ -162,6 +229,7 @@ jobs:
               "capacity_violations.csv", "return_concentration_analysis.csv",
               "leave_one_group_out_results.csv", "survivorship_bias_audit.md",
               "final_opportunity_and_portfolio_audit.md", "final_artifact_manifest.json",
+              "input_artifact_audit.json", "separate_verdicts.json", "survivorship_coverage.csv",
           }
           assert required <= {path.name for path in root.iterdir()}
           for name, metadata in manifest["files"].items():
