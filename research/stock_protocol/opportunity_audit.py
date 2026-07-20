@@ -479,9 +479,17 @@ def causal_fx_merge(
     """Attach last known USD-per-local FX without looking into the future."""
 
     source = rows.copy()
-    source[date_column] = pd.to_datetime(source[date_column], errors="raise").dt.normalize()
+    source[date_column] = (
+        pd.to_datetime(source[date_column], errors="raise")
+        .dt.normalize()
+        .astype("datetime64[ns]")
+    )
     rates = fx.copy()
-    rates["date"] = pd.to_datetime(rates["date"], errors="raise").dt.normalize()
+    rates["date"] = (
+        pd.to_datetime(rates["date"], errors="raise")
+        .dt.normalize()
+        .astype("datetime64[ns]")
+    )
     if (rates["date"] > CUTOFF).any():
         raise ValueError("FX source contains a date after the frozen cutoff")
     parts: list[pd.DataFrame] = []
