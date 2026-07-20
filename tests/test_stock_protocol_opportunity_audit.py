@@ -107,6 +107,25 @@ def test_fixed_portfolio_obeys_position_weight_cash_and_symbol_constraints() -> 
     assert len(ledger) == len(_opportunities())
 
 
+def test_capacity_uses_trailing_adv_and_reports_coherent_participation() -> None:
+    opportunities = _opportunities().iloc[[0]].copy()
+    opportunities["entry_adv20_local"] = 5_000.0
+    curve, ledger = simulate_opportunity_portfolio(
+        opportunities,
+        _panel(),
+        max_positions=1,
+        max_initial_weight=0.5,
+        order_mode="score",
+        max_volume_participation=0.10,
+    )
+    trade = ledger.iloc[0]
+    assert not curve.empty
+    assert math.isclose(float(trade["simulation_adv_notional"]), 5_000.0)
+    assert float(trade["simulation_entry_notional"]) <= 500.0 + 1e-9
+    assert float(trade["simulation_volume_participation_pct"]) <= 0.10 + 1e-12
+    assert float(trade["simulation_capacity_reduction_notional"]) > 0
+
+
 def test_sequence_requires_at_least_one_thousand_permutations() -> None:
     with pytest.raises(ValueError, match="at least 1000"):
         sequence_dependence(_opportunities(), _panel(), simulations=999)
@@ -221,6 +240,43 @@ def test_fx_adjustment_uses_entry_and_exit_dates_separately() -> None:
     assert math.isclose(float(adjusted.iloc[0]["return_usd"]), 1.2)
 
 
+def test_fx_adjustment_converts_dividends_on_each_payment_date() -> None:
+    opportunities = pd.DataFrame(
+        {
+            "opportunity_id": ["x"],
+            "symbol": ["AAA"],
+            "currency": ["EUR"],
+            "currency_unknown": [False],
+            "price_scale_to_currency_unit": [1.0],
+            "entry_date": ["2020-01-02"],
+            "exit_date": ["2020-01-06"],
+            "entry_price": [100.0],
+            "exit_price": [110.0],
+            "dividends_local": [10.0],
+        }
+    )
+    fx = pd.DataFrame(
+        {
+            "date": ["2020-01-02", "2020-01-03", "2020-01-06"],
+            "currency": ["EUR", "EUR", "EUR"],
+            "usd_per_local": [1.0, 1.5, 2.0],
+        }
+    )
+    panel = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-01-02", "2020-01-03", "2020-01-06"]),
+            "symbol": ["AAA", "AAA", "AAA"],
+            "dividends": [0.0, 10.0, 0.0],
+        }
+    )
+
+    adjusted = fx_adjust_opportunities(opportunities, fx, price_panel=panel)
+
+    assert math.isclose(float(adjusted.iloc[0]["dividend_value_usd_per_share"]), 15.0)
+    assert math.isclose(float(adjusted.iloc[0]["return_usd"]), 1.35)
+    assert adjusted.iloc[0]["fx_dividend_dates_used"] == "2020-01-03"
+
+
 def test_calendar_metrics_include_original_weekly_monthly_and_quarterly() -> None:
     curve = pd.DataFrame(
         {"date": pd.date_range("2019-01-01", periods=500, freq="D"), "equity": np.linspace(100, 150, 500)}
@@ -244,6 +300,22 @@ def test_benchmark_comparison_uses_only_common_dates() -> None:
     assert not evaluated.empty
     assert (pd.to_datetime(evaluated["comparison_start"]) >= dates[20]).all()
     assert set(regressions["frequency"]) == set(evaluated["frequency"])
+    assert {"strategy_cagr", "benchmark_cagr", "months_outperformed_pct", "years_outperformed_pct"} <= set(evaluated.columns)
+    assert "strategy_cagr_proxy" not in evaluated.columns
+
+
+def test_every_locked_output_row_receives_the_exact_diagnostic_role() -> None:
+    frame = pd.DataFrame(
+        {
+            "period": ["walk_forward_is", "opened_locked_diagnostic"],
+            "value": [1, 2],
+        }
+    )
+
+    labelled = audit_module.label_analysis_role(frame)
+
+    assert labelled.loc[0, "analysis_role"] == "walk_forward_is"
+    assert labelled.loc[1, "analysis_role"] == AUDIT_ROLE
 
 
 def test_opened_locked_role_is_explicitly_diagnostic() -> None:
