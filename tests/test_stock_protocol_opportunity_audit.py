@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import aurora.research.stock_protocol.opportunity_audit as audit_module
 from aurora.research.stock_protocol.exact_oos import exact_strategy_spec
 from aurora.research.stock_protocol.opportunity_audit import (
     AUDIT_ROLE,
@@ -111,6 +112,22 @@ def test_sequence_requires_at_least_one_thousand_permutations() -> None:
         sequence_dependence(_opportunities(), _panel(), simulations=999)
 
 
+def test_sequence_reuses_one_static_price_context_for_all_permutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original = audit_module._price_lookup
+
+    def counted_price_lookup(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(audit_module, "_price_lookup", counted_price_lookup)
+    sequence_dependence(_opportunities(), _panel(), simulations=1000)
+    assert calls == 1
+
+
 def test_fx_merge_is_causal_and_does_not_use_future_rate() -> None:
     rows = pd.DataFrame(
         {"currency": ["EUR", "EUR"], "entry_date": ["2020-01-02", "2020-01-06"]}
@@ -190,4 +207,3 @@ def test_benchmark_comparison_uses_only_common_dates() -> None:
 
 def test_opened_locked_role_is_explicitly_diagnostic() -> None:
     assert AUDIT_ROLE == "diagnostic_reanalysis_of_opened_locked_period"
-
