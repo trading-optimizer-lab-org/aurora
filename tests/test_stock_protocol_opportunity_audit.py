@@ -164,6 +164,34 @@ def test_fx_source_after_cutoff_is_rejected() -> None:
         causal_fx_merge(rows, fx, date_column="entry_date")
 
 
+def test_causal_fx_merge_normalizes_mixed_datetime_resolutions() -> None:
+    rows = pd.DataFrame(
+        {
+            "currency": ["EUR", "EUR"],
+            "entry_date": np.array(
+                ["2020-01-02", "2020-01-06"], dtype="datetime64[s]"
+            ),
+        }
+    )
+    fx = pd.DataFrame(
+        {
+            "date": np.array(
+                ["2020-01-01", "2020-01-03"], dtype="datetime64[us]"
+            ),
+            "currency": ["EUR", "EUR"],
+            "usd_per_local": [1.10, 1.12],
+        }
+    )
+
+    merged = causal_fx_merge(rows, fx, date_column="entry_date")
+
+    assert merged["fx_date"].tolist() == [
+        pd.Timestamp("2020-01-01"),
+        pd.Timestamp("2020-01-03"),
+    ]
+    assert (merged["fx_date"] <= merged["entry_date"]).all()
+
+
 def test_fx_adjustment_uses_entry_and_exit_dates_separately() -> None:
     opportunities = pd.DataFrame(
         {
