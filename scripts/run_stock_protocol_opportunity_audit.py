@@ -592,7 +592,12 @@ def run(args: argparse.Namespace) -> None:
                 cost_rows.append(_result_row(period, variant, cost_curve, cost_ledger, cost))
 
         # Sequence dependence is deliberately evaluated on the original cash rule.
-        seq, distribution = sequence_dependence(opportunities, panel_frame, simulations=1000)
+        seq, distribution = sequence_dependence(
+            opportunities,
+            panel_frame,
+            simulations=1000,
+            workers=args.sequence_workers,
+        )
         seq["period"] = period
         distribution["period"] = period
         sequence_rows.append(seq)
@@ -731,6 +736,7 @@ def run(args: argparse.Namespace) -> None:
         "financed": int(opportunities["originally_financed"].sum()),
         "not_financed": int((~opportunities["originally_financed"]).sum()),
         "reconciled": True, "sequence_permutations_per_period": 1000,
+        "sequence_workers_per_period": args.sequence_workers,
         "locked_opened": True, "opened_locked_analysis_role": AUDIT_ROLE,
         "new_oos_claimed": False, "optimization_performed": False,
         "validation_used_for_selection": False, "survivorship_limited": True,
@@ -755,6 +761,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--locked-shards-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--sequence-workers", type=int, default=2)
     return parser.parse_args()
 
 

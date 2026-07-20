@@ -126,6 +126,7 @@ jobs:
           --pack-root exact-pack
           --locked-shards-root locked-shards
           --manifest "$MANIFEST"
+          --sequence-workers 2
           --output-root audit-results
       - name: Verify final contract and reconciliation
         shell: bash

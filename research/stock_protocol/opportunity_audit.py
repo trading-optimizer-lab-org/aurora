@@ -7,10 +7,12 @@ currency, calendar, benchmark and concentration diagnostics.
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import json
 import math
+import multiprocessing
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -531,6 +533,7 @@ def fx_adjust_opportunities(opportunities: pd.DataFrame, fx: pd.DataFrame) -> pd
     dividend_usd = pd.to_numeric(adjusted["dividends_local"], errors="coerce").fillna(0) * scale * adjusted["fx_exit"]
     adjusted["entry_value_usd_per_share"] = entry_usd
     adjusted["exit_value_usd_per_share"] = exit_usd
+    adjusted["dividend_value_usd_per_share"] = dividend_usd
     adjusted["return_usd"] = (exit_usd + dividend_usd).div(entry_usd).sub(1.0)
     adjusted["local_total_return_with_dividends"] = (
         pd.to_numeric(adjusted["exit_price"], errors="coerce")
@@ -1026,23 +1029,110 @@ def portfolio_yearly_rows(
     return pd.DataFrame(rows)
 
 
+_SEQUENCE_WORKER_OPPORTUNITIES: pd.DataFrame | None = None
+_SEQUENCE_WORKER_PANEL: pd.DataFrame | None = None
+_SEQUENCE_WORKER_PRICE_CONTEXT: tuple[
+    pd.DatetimeIndex,
+    dict[tuple[pd.Timestamp, str], tuple[float, float, float, float, float]],
+] | None = None
+
+
+def _build_sequence_price_context(
+    opportunities: pd.DataFrame,
+    panel: pd.DataFrame,
+) -> tuple[
+    pd.DatetimeIndex,
+    dict[tuple[pd.Timestamp, str], tuple[float, float, float, float, float]],
+]:
+    entry_dates = pd.to_datetime(opportunities["entry_date"], errors="raise").dt.normalize()
+    exit_dates = pd.to_datetime(opportunities["exit_date"], errors="raise").dt.normalize()
+    return _price_lookup(
+        panel,
+        set(opportunities["symbol"].astype(str)),
+        entry_dates.min(),
+        exit_dates.max(),
+    )
+
+
+def _sequence_rows_for_range(
+    opportunities: pd.DataFrame,
+    panel: pd.DataFrame,
+    price_context: tuple[
+        pd.DatetimeIndex,
+        dict[tuple[pd.Timestamp, str], tuple[float, float, float, float, float]],
+    ],
+    *,
+    start: int,
+    stop: int,
+    seed: int,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for simulation in range(start, stop):
+        curve, ledger = simulate_opportunity_portfolio(
+            opportunities,
+            panel,
+            max_positions=None,
+            max_initial_weight=None,
+            order_mode="permuted",
+            seed=seed + simulation + 1,
+            _price_context=price_context,
+        )
+        metrics = portfolio_metrics(curve, ledger)
+        funded = int(ledger["status"].eq("closed").sum())
+        rows.append(
+            {
+                "simulation": simulation,
+                **metrics,
+                "funded_opportunities": funded,
+                "funded_pct": funded / len(ledger),
+            }
+        )
+    return rows
+
+
+def _initialize_sequence_worker(
+    opportunities: pd.DataFrame,
+    panel: pd.DataFrame,
+) -> None:
+    global _SEQUENCE_WORKER_OPPORTUNITIES
+    global _SEQUENCE_WORKER_PANEL
+    global _SEQUENCE_WORKER_PRICE_CONTEXT
+    _SEQUENCE_WORKER_OPPORTUNITIES = opportunities
+    _SEQUENCE_WORKER_PANEL = panel
+    _SEQUENCE_WORKER_PRICE_CONTEXT = _build_sequence_price_context(opportunities, panel)
+
+
+def _sequence_worker_range(start: int, stop: int, seed: int) -> list[dict[str, object]]:
+    if (
+        _SEQUENCE_WORKER_OPPORTUNITIES is None
+        or _SEQUENCE_WORKER_PANEL is None
+        or _SEQUENCE_WORKER_PRICE_CONTEXT is None
+    ):
+        raise RuntimeError("sequence worker was not initialized")
+    return _sequence_rows_for_range(
+        _SEQUENCE_WORKER_OPPORTUNITIES,
+        _SEQUENCE_WORKER_PANEL,
+        _SEQUENCE_WORKER_PRICE_CONTEXT,
+        start=start,
+        stop=stop,
+        seed=seed,
+    )
+
+
 def sequence_dependence(
     opportunities: pd.DataFrame,
     panel: pd.DataFrame,
     *,
     simulations: int = 1000,
     seed: int = 20260717,
+    workers: int = 1,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if simulations < 1000:
         raise ValueError("at least 1000 sequence permutations are required")
-    entry_dates = pd.to_datetime(opportunities["entry_date"], errors="raise").dt.normalize()
-    exit_dates = pd.to_datetime(opportunities["exit_date"], errors="raise").dt.normalize()
-    price_context = _price_lookup(
-        panel,
-        set(opportunities["symbol"].astype(str)),
-        entry_dates.min(),
-        exit_dates.max(),
-    )
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    workers = min(int(workers), simulations)
+    price_context = _build_sequence_price_context(opportunities, panel)
     deterministic: list[dict[str, object]] = []
     curves: dict[str, pd.DataFrame] = {}
     ledgers: dict[str, pd.DataFrame] = {}
@@ -1068,28 +1158,38 @@ def sequence_dependence(
         )
         curves[mode] = curve
         ledgers[mode] = ledger
-    random_rows: list[dict[str, object]] = []
-    for simulation in range(simulations):
-        curve, ledger = simulate_opportunity_portfolio(
+    if workers == 1:
+        random_rows = _sequence_rows_for_range(
             opportunities,
             panel,
-            max_positions=None,
-            max_initial_weight=None,
-            order_mode="permuted",
-            seed=seed + simulation + 1,
-            _price_context=price_context,
+            price_context,
+            start=0,
+            stop=simulations,
+            seed=seed,
         )
-        metrics = portfolio_metrics(curve, ledger)
-        funded = int(ledger["status"].eq("closed").sum())
-        random_rows.append(
-            {
-                "simulation": simulation,
-                **metrics,
-                "funded_opportunities": funded,
-                "funded_pct": funded / len(ledger),
-            }
-        )
-    distribution = pd.DataFrame(random_rows)
+    else:
+        bounds = np.linspace(0, simulations, workers + 1, dtype=int)
+        start_method = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+        context = multiprocessing.get_context(start_method)
+        random_rows = []
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=context,
+            initializer=_initialize_sequence_worker,
+            initargs=(opportunities, panel),
+        ) as executor:
+            futures = [
+                executor.submit(
+                    _sequence_worker_range,
+                    int(bounds[index]),
+                    int(bounds[index + 1]),
+                    seed,
+                )
+                for index in range(workers)
+            ]
+            for future in futures:
+                random_rows.extend(future.result())
+    distribution = pd.DataFrame(random_rows).sort_values("simulation").reset_index(drop=True)
     result = pd.DataFrame(deterministic)
     original = result.loc[result["order"].eq("original")].iloc[0]
     for metric in ("cagr", "sharpe", "max_drawdown", "total_return", "trades", "funded_pct"):
