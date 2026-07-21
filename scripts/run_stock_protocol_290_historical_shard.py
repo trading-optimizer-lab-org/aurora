@@ -56,11 +56,10 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
 
 def _resolve_pack_root(root: Path) -> Path:
     candidates = [Path(root), Path(root) / "pre2021_full_daily_pack"]
-    candidates.extend(path.parent for path in Path(root).rglob("trading_calendar.parquet"))
+    candidates.extend(path.parent for path in Path(root).rglob("shard-000.parquet"))
     for candidate in candidates:
         if (
-            (candidate / "trading_calendar.parquet").is_file()
-            and (candidate / "shard-000.parquet").is_file()
+            (candidate / "shard-000.parquet").is_file()
             and (candidate / "shard-031.parquet").is_file()
         ):
             return candidate

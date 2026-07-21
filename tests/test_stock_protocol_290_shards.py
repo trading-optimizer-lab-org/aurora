@@ -27,6 +27,7 @@ from scripts.run_stock_protocol_290_historical_shard import (
     DEVELOPMENT_END,
     DEVELOPMENT_START,
     METRIC_TOLERANCES,
+    _resolve_pack_root as resolve_historical_pack_root,
     load_entry_manifest_rows,
     reconcile_historical_rows,
 )
@@ -83,6 +84,17 @@ def _manifest_rows() -> list[dict[str, str]]:
                 }
             )
     return rows
+
+
+def test_historical_pack_resolver_accepts_the_frozen_32_shard_artifact(
+    tmp_path: Path,
+) -> None:
+    nested = tmp_path / "downloaded-artifact" / "pre2021_full_daily_pack"
+    nested.mkdir(parents=True)
+    (nested / "shard-000.parquet").touch()
+    (nested / "shard-031.parquet").touch()
+
+    assert resolve_historical_pack_root(tmp_path) == nested
 
 
 def _write_manifest(root: Path) -> pd.DataFrame:
