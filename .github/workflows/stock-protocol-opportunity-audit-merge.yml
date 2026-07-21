@@ -1,6 +1,12 @@
 name: Stock Protocol Opportunity Audit Merge
 
 on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Run containing the three completed period shards
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       source_run_id:

@@ -16,6 +16,7 @@ on:
           - technical_recovery
           - artifact_finalization
           - opportunity_audit
+          - opportunity_audit_merge
 
 permissions:
   contents: read
@@ -532,4 +533,15 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.execution_mode == 'opportunity_audit'
     uses: ./.github/workflows/_stock-protocol-opportunity-audit.yml
+    secrets: inherit
+
+  opportunity-audit-merge:
+    needs: [phase, scientific-tests]
+    if: >-
+      needs.phase.outputs.frozen_manifest_exists == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.execution_mode == 'opportunity_audit_merge'
+    uses: ./.github/workflows/stock-protocol-opportunity-audit-merge.yml
+    with:
+      source_run_id: "29767985778"
     secrets: inherit
