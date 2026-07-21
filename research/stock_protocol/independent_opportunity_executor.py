@@ -657,7 +657,10 @@ def execute_independent_opportunities(
         row_combination = str(raw_combination)
         triggered = values.get("entry_triggered", True)
         if pd.isna(triggered):
-            triggered = False
+            # A sparse cohort may only materialise ``entry_triggered`` for the
+            # rows that explicitly did not trigger.  Missing therefore keeps
+            # the historical default (an input row is an entry signal).
+            triggered = True
         input_applicable = values.get("applicable", True)
         if pd.isna(input_applicable):
             input_applicable = False

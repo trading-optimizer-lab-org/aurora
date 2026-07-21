@@ -810,7 +810,16 @@ def enrich_fx_causally(
     audit = _fx_audit_frame(audit_rows)
     for column in FX_COLUMNS:
         if column not in result:
-            result[column] = np.nan
+            if column in {"fx_entry_date", "fx_exit_date"}:
+                result[column] = pd.Series(
+                    pd.NaT, index=result.index, dtype="datetime64[ns]"
+                )
+            elif column == "fx_dividend_dates_used":
+                result[column] = pd.Series("", index=result.index, dtype=object)
+            else:
+                result[column] = np.nan
+    for column in ("fx_entry_date", "fx_exit_date"):
+        result[column] = pd.to_datetime(result[column], errors="coerce")
     if "fx_merge_status" not in result:
         result["fx_merge_status"] = "not_available"
     if "fx_values_invented" not in result:

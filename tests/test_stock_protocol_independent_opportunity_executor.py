@@ -219,21 +219,21 @@ def test_prepared_context_reuses_adjusted_groups_across_exit_rules(
 
 
 def test_international_coverage_uses_observed_market_sessions_not_nyse() -> None:
-    vod = _prices(periods=3, start="2024-07-01", symbol="VOD-L")
-    vod["date"] = pd.to_datetime(["2024-07-01", "2024-07-02", "2024-07-03"])
-    peer = _prices(periods=4, start="2024-07-01", symbol="BARC-L")
+    vod = _prices(periods=3, start="2020-07-01", symbol="VOD-L")
+    vod["date"] = pd.to_datetime(["2020-07-01", "2020-07-02", "2020-07-03"])
+    peer = _prices(periods=4, start="2020-07-01", symbol="BARC-L")
     peer["date"] = pd.to_datetime(
-        ["2024-07-01", "2024-07-02", "2024-07-03", "2024-07-04"]
+        ["2020-07-01", "2020-07-02", "2020-07-03", "2020-07-06"]
     )
     panel = _panel(pd.concat([vod, peer], ignore_index=True))
-    context = prepare_opportunity_execution_context(panel, cutoff="2024-07-04")
+    context = prepare_opportunity_execution_context(panel, cutoff="2020-07-06")
 
     result = execute_independent_opportunities(
-        _signals("2024-07-02", symbol="VOD-L"),
+        _signals("2020-07-02", symbol="VOD-L"),
         panel,
         {"kind": "none", "holding_sessions": 10},
         combination_id="london-coverage",
-        cutoff="2024-07-04",
+        cutoff="2020-07-06",
         prepared_context=context,
     ).iloc[0]
 
@@ -247,19 +247,19 @@ def test_international_coverage_uses_observed_market_sessions_not_nyse() -> None
 
 
 def test_explicit_market_metadata_overrides_unsuffixed_us_convention() -> None:
-    target = _prices(periods=3, start="2024-07-01", symbol="AAA")
-    peer = _prices(periods=4, start="2024-07-01", symbol="BBB")
+    target = _prices(periods=3, start="2020-07-01", symbol="AAA")
+    peer = _prices(periods=4, start="2020-07-01", symbol="BBB")
     source = pd.concat([target, peer], ignore_index=True)
     source["market"] = "Japan"
     source["exchange"] = "Tokyo"
     panel = _panel(source)
 
     result = execute_independent_opportunities(
-        _signals("2024-07-02", symbol="AAA"),
+        _signals("2020-07-02", symbol="AAA"),
         panel,
         {"kind": "none", "holding_sessions": 10},
         combination_id="explicit-tokyo-metadata",
-        cutoff="2024-07-04",
+        cutoff="2020-07-06",
     ).iloc[0]
 
     assert result["status"] == "failed_due_to_data"
@@ -271,11 +271,11 @@ def test_explicit_market_metadata_overrides_unsuffixed_us_convention() -> None:
 
 
 def test_unknown_market_fallback_does_not_invent_peer_sessions() -> None:
-    prices = _prices(periods=3, start="2024-07-01", symbol="MYSTERY-ZZ")
+    prices = _prices(periods=3, start="2020-07-01", symbol="MYSTERY-ZZ")
     panel = _panel(prices)
 
     result = execute_independent_opportunities(
-        _signals("2024-07-01", symbol="MYSTERY-ZZ"),
+        _signals("2020-07-01", symbol="MYSTERY-ZZ"),
         panel,
         {"kind": "none", "holding_sessions": 10},
         combination_id="unknown-market",

@@ -326,7 +326,7 @@ def _attach_signal_features(
     ]
     missing = [column for column in component_columns if column not in events]
     if missing:
-        lookup = features[["date", "symbol", *missing]].rename(
+        lookup = features.reindex(columns=["date", "symbol", *missing]).rename(
             columns={"date": "signal_date"}
         )
         events = events.merge(
@@ -1041,7 +1041,7 @@ def run_corrected_shard(
     ledgers: list[pd.DataFrame] = []
     prepared_context = (
         independent_opportunity_executor.prepare_opportunity_execution_context(
-            panel,
+            panel=panel,
             cutoff=DATASET_CUTOFF,
             locked_authorization=authorization,
         )
