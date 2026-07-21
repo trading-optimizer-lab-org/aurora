@@ -653,7 +653,19 @@ def resampled_returns(curve: pd.DataFrame, frequency: str) -> pd.Series:
     if frequency not in rules:
         raise ValueError(f"unsupported frequency: {frequency}")
     if rules[frequency] is not None:
-        equity = equity.resample(rules[frequency]).last().dropna()
+        # Keep the final *observed* date in each bucket.  Pandas otherwise
+        # labels incomplete weeks/months/quarters with a future period end,
+        # which would make a frozen-cutoff audit appear to use future data.
+        sampled = equity.rename("equity").to_frame()
+        sampled["observed_date"] = sampled.index
+        sampled = sampled.resample(rules[frequency]).agg(
+            {"equity": "last", "observed_date": "last"}
+        ).dropna(subset=["equity", "observed_date"])
+        equity = pd.Series(
+            sampled["equity"].to_numpy(),
+            index=pd.DatetimeIndex(sampled["observed_date"]),
+            name="equity",
+        )
     return pd.to_numeric(equity, errors="raise").pct_change(fill_method=None).dropna()
 
 

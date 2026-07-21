@@ -305,6 +305,19 @@ def test_calendar_metrics_include_original_weekly_monthly_and_quarterly() -> Non
     assert rows.loc[rows["frequency"].eq("daily"), "daily_asynchrony_warning"].all()
 
 
+def test_resampling_never_labels_an_incomplete_period_after_last_observation() -> None:
+    curve = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-06-01", "2026-07-17", freq="B"),
+            "equity": np.linspace(100, 110, 35),
+        }
+    )
+
+    for frequency in ("weekly", "monthly", "quarterly"):
+        returns = audit_module.resampled_returns(curve, frequency)
+        assert returns.index.max() <= pd.Timestamp("2026-07-17")
+
+
 def test_benchmark_comparison_uses_only_common_dates() -> None:
     dates = pd.date_range("2018-01-01", periods=500, freq="B")
     curve = pd.DataFrame({"date": dates, "equity": np.linspace(100, 180, len(dates))})

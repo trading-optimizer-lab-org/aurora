@@ -82,6 +82,59 @@ def _concat(shards: dict[str, Path], name: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def _observed_bucket_date(
+    label: object,
+    frequency: str,
+    curve_dates: pd.DatetimeIndex,
+) -> pd.Timestamp:
+    timestamp = pd.Timestamp(label).normalize()
+    aliases = {"weekly": "W-FRI", "monthly": "M", "quarterly": "Q"}
+    if frequency == "daily":
+        candidates = curve_dates[curve_dates <= timestamp]
+    else:
+        alias = aliases[frequency]
+        candidates = curve_dates[curve_dates.to_period(alias) == timestamp.to_period(alias)]
+    if len(candidates) == 0:
+        raise ValueError(f"no observed date for {frequency} bucket {timestamp.date()}")
+    return pd.Timestamp(candidates.max()).normalize()
+
+
+def _repair_benchmark_observation_dates(
+    frame: pd.DataFrame,
+    output: Path,
+) -> pd.DataFrame:
+    """Replace period-end labels with real dates and preserve total returns."""
+
+    repaired = frame.copy()
+    evaluated = repaired["status"].astype(str).eq("evaluated")
+    for index, row in repaired.loc[evaluated].iterrows():
+        curve_path = (
+            output
+            / "fixed_position_equity_curves"
+            / f"{row['period']}_{row['variant']}.csv"
+        )
+        curve_dates = pd.DatetimeIndex(
+            pd.to_datetime(pd.read_csv(curve_path, usecols=["date"])["date"], errors="raise")
+        ).normalize()
+        old_start = pd.Timestamp(row["comparison_start"])
+        old_end = pd.Timestamp(row["comparison_end"])
+        new_start = _observed_bucket_date(old_start, str(row["frequency"]), curve_dates)
+        new_end = _observed_bucket_date(old_end, str(row["frequency"]), curve_dates)
+        old_years = max((old_end - old_start).days / 365.2425, 1.0 / 365.2425)
+        new_years = max((new_end - new_start).days / 365.2425, 1.0 / 365.2425)
+        for column in ("strategy_cagr", "benchmark_cagr"):
+            old_cagr = float(row[column])
+            total = 0.0 if old_cagr <= -1.0 else (1.0 + old_cagr) ** old_years
+            repaired.at[index, column] = -1.0 if total <= 0 else total ** (1.0 / new_years) - 1.0
+        repaired.at[index, "cagr_difference"] = (
+            float(repaired.at[index, "strategy_cagr"])
+            - float(repaired.at[index, "benchmark_cagr"])
+        )
+        repaired.at[index, "comparison_start"] = new_start
+        repaired.at[index, "comparison_end"] = new_end
+    return repaired
+
+
 def run(args: argparse.Namespace) -> None:
     require_github_actions_or_explicit_local_permission("stock protocol opportunity audit merge")
     shards = _shard_roots(args.shards_root)
@@ -152,6 +205,8 @@ def run(args: argparse.Namespace) -> None:
     merged: dict[str, pd.DataFrame] = {}
     for name in TABLES:
         frame = _concat(shards, name)
+        if name == "benchmark_comparison_by_frequency.csv":
+            frame = _repair_benchmark_observation_dates(frame, output)
         merged[name] = frame
         if name == "capacity_violations.csv" and frame.empty:
             frame = pd.DataFrame(
