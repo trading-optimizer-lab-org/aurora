@@ -1,0 +1,20 @@
+name: Stock Protocol Original 290 Opportunity Event Study
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Branch or commit containing the implementation
+        required: true
+        default: codex/stock-protocol-290-event-study
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  run:
+    uses: ./.github/workflows/_stock-protocol-original-290-event-study.yml
+    with:
+      target_ref: ${{ inputs.target_ref }}
+    secrets: inherit
