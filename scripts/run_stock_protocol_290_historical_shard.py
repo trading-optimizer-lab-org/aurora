@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -62,6 +63,22 @@ def _resolve_pack_root(root: Path) -> Path:
             (candidate / "shard-000.parquet").is_file()
             and (candidate / "shard-031.parquet").is_file()
         ):
+            calendar_path = candidate / "trading_calendar.parquet"
+            if not calendar_path.is_file():
+                calendar_sources = {
+                    path.resolve()
+                    for path in (
+                        Path(root) / "trading_calendar.parquet",
+                        candidate.parent / "trading_calendar.parquet",
+                        *Path(root).rglob("trading_calendar.parquet"),
+                    )
+                    if path.is_file() and path.resolve() != calendar_path.resolve()
+                }
+                if len(calendar_sources) != 1:
+                    raise FileNotFoundError(
+                        "frozen pack requires exactly one trading calendar"
+                    )
+                shutil.copy2(next(iter(calendar_sources)), calendar_path)
             return candidate
     raise FileNotFoundError("could not resolve the immutable 32-shard price pack")
 

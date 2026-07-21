@@ -93,8 +93,11 @@ def test_historical_pack_resolver_accepts_the_frozen_32_shard_artifact(
     nested.mkdir(parents=True)
     (nested / "shard-000.parquet").touch()
     (nested / "shard-031.parquet").touch()
+    frozen_calendar = tmp_path / "downloaded-artifact" / "trading_calendar.parquet"
+    frozen_calendar.write_bytes(b"frozen-calendar")
 
     assert resolve_historical_pack_root(tmp_path) == nested
+    assert (nested / "trading_calendar.parquet").read_bytes() == b"frozen-calendar"
 
 
 def _write_manifest(root: Path) -> pd.DataFrame:
