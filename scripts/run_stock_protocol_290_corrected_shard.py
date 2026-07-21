@@ -957,8 +957,10 @@ def reconciliation_by_combination(
     result = pd.DataFrame(rows)
     if len(result) and not result["reconciled"].all():
         raise ValueError("corrected opportunity reconciliation failed")
-    if manifest_rows is not None and len(result) != EXPECTED_EXIT_SPEC_COUNT:
-        raise ValueError("corrected shard reconciliation does not contain 29 combinations")
+    if manifest_rows is not None and len(result) != len(manifest_rows):
+        raise ValueError(
+            "corrected shard reconciliation does not contain every requested combination"
+        )
     return result
 
 
@@ -973,15 +975,21 @@ def run_corrected_shard(
     frozen_manifest_path: Path | None = None,
     frozen_manifest_sha256: str | None = None,
     implementation_commit: str | None = None,
+    exit_start: int = 0,
+    exit_end: int = EXPECTED_EXIT_SPEC_COUNT,
 ) -> dict[str, object]:
     require_github_actions_or_explicit_local_permission(
         "stock protocol 290 corrected independent-opportunity shard"
     )
     if period not in PERIODS:
         raise ValueError("period must be A, B or C")
-    manifest_path, manifest_rows, entry_spec = load_corrected_entry_rows(
+    manifest_path, full_manifest_rows, entry_spec = load_corrected_entry_rows(
         manifest_root, entry_index
     )
+    if not 0 <= exit_start < exit_end <= EXPECTED_EXIT_SPEC_COUNT:
+        raise ValueError("exit slice must satisfy 0 <= start < end <= 29")
+    manifest_rows = full_manifest_rows.iloc[exit_start:exit_end].copy()
+    requested_exit_count = len(manifest_rows)
     config = PERIODS[period]
     include_locked = bool(config["include_locked"])
     authorization = None
@@ -1133,8 +1141,8 @@ def run_corrected_shard(
         opportunities, manifest_rows, period=period
     )
     reconciliation.insert(0, "entry_index", entry_index)
-    if len(entry_events) and len(opportunities) != len(entry_events) * EXPECTED_EXIT_SPEC_COUNT:
-        raise ValueError("the 29 exits were not applied to the same entry cohort")
+    if len(entry_events) and len(opportunities) != len(entry_events) * requested_exit_count:
+        raise ValueError("the requested exits were not applied to the same entry cohort")
 
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1156,7 +1164,10 @@ def run_corrected_shard(
         "load_end": config["load_end"],
         "warmup_loaded": True,
         "maximum_follow_up_sessions": MAX_HOLDING_SESSIONS,
-        "combination_count": EXPECTED_EXIT_SPEC_COUNT,
+        "combination_count": requested_exit_count,
+        "full_combination_count": EXPECTED_EXIT_SPEC_COUNT,
+        "exit_start": exit_start,
+        "exit_end": exit_end,
         "entry_count": len(entry_events),
         "opportunity_count": len(opportunities),
         "coverage_selected": int(coverage.get("selected", pd.Series(dtype=bool)).sum()),
@@ -1211,6 +1222,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--implementation-commit")
     parser.add_argument("--entry-index", type=int, choices=range(10), required=True)
     parser.add_argument("--period", choices=tuple(PERIODS), required=True)
+    parser.add_argument("--exit-start", type=int, default=0)
+    parser.add_argument("--exit-end", type=int, default=EXPECTED_EXIT_SPEC_COUNT)
     parser.add_argument("--output-root", type=Path, required=True)
     return parser
 

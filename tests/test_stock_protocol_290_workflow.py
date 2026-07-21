@@ -8,6 +8,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / ".github/workflows/_stock-protocol-original-290-event-study.yml"
 DISPATCH = ROOT / ".github/workflows/stock-protocol-original-290-event-study.yml"
+RECOVERY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-recovery.yml"
 FX_ARTIFACT = "stock-protocol-290-frozen-fx"
 FX_RATES = "stock-protocol-290-fx-rates.csv"
 
@@ -15,8 +16,31 @@ FX_RATES = "stock-protocol-290-fx-rates.csv"
 def test_workflows_are_valid_yaml() -> None:
     core = yaml.safe_load(CORE.read_text(encoding="utf-8"))
     dispatch = yaml.safe_load(DISPATCH.read_text(encoding="utf-8"))
+    recovery = yaml.safe_load(RECOVERY.read_text(encoding="utf-8"))
     assert core["name"] == "Stock Protocol Original 290 Event Study Core"
     assert dispatch["name"] == "Stock Protocol Original 290 Opportunity Event Study"
+    assert recovery["name"] == (
+        "Stock Protocol Original 290 Opportunity Event Study Recovery"
+    )
+
+
+def test_recovery_splits_only_the_missing_shard_and_reuses_completed_artifacts() -> None:
+    document = yaml.safe_load(RECOVERY.read_text(encoding="utf-8"))
+    matrix = document["jobs"]["missing-slice"]["strategy"]["matrix"]["include"]
+    assert [(row["exit_start"], row["exit_end"]) for row in matrix] == [
+        (0, 5),
+        (5, 10),
+        (10, 15),
+        (15, 20),
+        (20, 25),
+        (25, 29),
+    ]
+    text = RECOVERY.read_text(encoding="utf-8")
+    assert "--entry-index 7" in text
+    assert "--period A" in text
+    assert "${{ inputs.source_run_id }}" in text
+    assert "stock-protocol-290-historical-*" in text
+    assert "verify_stock_protocol_290_event_study.py final" in text
 
 
 def test_workflow_pins_all_required_sources() -> None:

@@ -1,0 +1,245 @@
+name: Stock Protocol Original 290 Opportunity Event Study Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Branch containing the audited implementation
+        required: true
+        default: codex/stock-protocol-290-event-study
+      source_run_id:
+        description: Run containing the 39 completed shard artifacts
+        required: true
+        default: "29837829828"
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  PACK_RUN_ID: "29684671183"
+  PACK_ARTIFACT: stock-protocol-exact-prelocked-pack
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest scipy statsmodels pyarrow
+      - name: Compile recovery implementation
+        run: >-
+          python -m py_compile
+          scripts/run_stock_protocol_290_corrected_shard.py
+          scripts/combine_stock_protocol_290_corrected_slices.py
+          scripts/merge_stock_protocol_290_event_study.py
+          scripts/verify_stock_protocol_290_event_study.py
+      - name: Run focused contracts in GitHub
+        run: >-
+          pytest -q
+          tests/test_stock_protocol_independent_opportunity_executor.py
+          tests/test_stock_protocol_290_manifest.py
+          tests/test_stock_protocol_290_statistics.py
+          tests/test_stock_protocol_290_shards.py
+          tests/test_stock_protocol_290_merge.py
+          tests/test_stock_protocol_290_workflow.py
+
+  missing-slice:
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - slice: 0
+            exit_start: 0
+            exit_end: 5
+          - slice: 1
+            exit_start: 5
+            exit_end: 10
+          - slice: 2
+            exit_start: 10
+            exit_end: 15
+          - slice: 3
+            exit_start: 15
+            exit_end: 20
+          - slice: 4
+            exit_start: 20
+            exit_end: 25
+          - slice: 5
+            exit_start: 25
+            exit_end: 29
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-original-290-contract
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: contract
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.PACK_RUN_ID }}
+          name: ${{ env.PACK_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-pack
+      - name: Evaluate bounded exit slice for missing entry 7 period A
+        run: >-
+          python scripts/run_stock_protocol_290_corrected_shard.py
+          --contract-root contract
+          --pack-root exact-pack
+          --entry-index 7
+          --period A
+          --exit-start ${{ matrix.exit_start }}
+          --exit-end ${{ matrix.exit_end }}
+          --output-root corrected-slice-${{ matrix.slice }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-290-corrected-7-A-slice-${{ matrix.slice }}
+          path: corrected-slice-${{ matrix.slice }}
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90
+
+  assemble-missing:
+    needs: missing-slice
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-original-290-contract
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: contract
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-290-corrected-7-A-slice-*
+          merge-multiple: false
+          path: corrected-slices
+      - name: Reconcile all 29 exits into the missing shard
+        run: >-
+          python scripts/combine_stock_protocol_290_corrected_slices.py
+          --slices-root corrected-slices
+          --manifest-root contract
+          --entry-index 7
+          --period A
+          --output-root corrected-7-A
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-290-corrected-7-A
+          path: corrected-7-A
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90
+
+  merge-and-verify:
+    needs: assemble-missing
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-original-290-contract
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: contract
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-290-frozen-fx
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: fx-rates
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          pattern: stock-protocol-290-historical-*
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: historical-shards
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          pattern: stock-protocol-290-corrected-*
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corrected-shards
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-protocol-290-corrected-7-A
+          path: corrected-shards/stock-protocol-290-corrected-7-A
+      - name: Verify frozen FX artifact
+        run: python scripts/prepare_stock_protocol_290_fx.py --verify-root fx-rates
+      - name: Merge statistics, audits and report
+        run: >-
+          python scripts/merge_stock_protocol_290_event_study.py
+          --contract-root contract
+          --historical-shards-root historical-shards
+          --corrected-shards-root corrected-shards
+          --fx-rates fx-rates/stock-protocol-290-fx-rates.csv
+          --output-root final
+      - name: Preserve frozen source evidence in final artifact
+        shell: bash
+        run: |
+          cp contract/stock-protocol-290-source-lock.json final/
+          cp -R contract/source-evidence final/
+          cp fx-rates/stock-protocol-290-fx-rates.csv final/
+          cp fx-rates/stock-protocol-290-fx-source-lock.json final/
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.merge_stock_protocol_290_event_study import FINAL_MANIFEST_NAME, _artifact_manifest
+          root = Path("final")
+          (root / FINAL_MANIFEST_NAME).write_text(
+              json.dumps(_artifact_manifest(root), indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Fail hard unless the final contract is complete
+        run: python scripts/verify_stock_protocol_290_event_study.py final
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-original-290-opportunity-event-study
+          path: final
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90

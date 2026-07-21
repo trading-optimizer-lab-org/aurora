@@ -449,6 +449,17 @@ def test_empty_entry_cohort_still_reconciles_all_29_combinations() -> None:
     assert result["reconciled"].all()
 
 
+def test_exit_slice_reconciles_only_its_requested_combinations() -> None:
+    manifest = pd.DataFrame(_manifest_rows()).iloc[:5]
+    empty = pd.DataFrame(columns=["combination_id", "status"])
+
+    result = reconciliation_by_combination(empty, manifest, period="A")
+
+    assert len(result) == 5
+    assert result["combination_id"].tolist() == manifest["combination_id"].tolist()
+    assert result["reconciled"].all()
+
+
 def test_entry_coverage_retains_non_triggered_outside_ledger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
