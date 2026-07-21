@@ -130,8 +130,8 @@ def _repair_benchmark_observation_dates(
             float(repaired.at[index, "strategy_cagr"])
             - float(repaired.at[index, "benchmark_cagr"])
         )
-        repaired.at[index, "comparison_start"] = new_start
-        repaired.at[index, "comparison_end"] = new_end
+        repaired.at[index, "comparison_start"] = new_start.date().isoformat()
+        repaired.at[index, "comparison_end"] = new_end.date().isoformat()
     return repaired
 
 
