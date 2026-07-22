@@ -439,8 +439,56 @@ def reconcile_prior_financing(
     matched = exact_input.merge(
         lookup, on=keys, how="left", validate="many_to_one"
     )
-    if matched["prior_audit_opportunity_id"].isna().any():
-        raise ValueError("exact strategy opportunities do not fully reconcile to prior audit")
+    matched["reconciliation_match_basis"] = np.where(
+        matched["prior_audit_opportunity_id"].notna(),
+        "symbol_selection_entry_date",
+        "",
+    )
+    missing_exact = matched["prior_audit_opportunity_id"].isna()
+    if missing_exact.any():
+        fallback_keys = ["symbol", "selection_date"]
+        if prior.duplicated(fallback_keys).any():
+            raise ValueError("prior audit fallback financing keys are not unique")
+        fallback_lookup = prior[
+            [
+                *fallback_keys,
+                "entry_date",
+                "opportunity_id",
+                "originally_financed",
+                "not_financed_reason",
+            ]
+        ].rename(
+            columns={
+                "entry_date": "prior_audit_entry_date",
+                "opportunity_id": "prior_audit_opportunity_id",
+                "originally_financed": "_prior_financed",
+                "not_financed_reason": "prior_not_financed_reason",
+            }
+        )
+        fallback = matched.loc[
+            missing_exact, [*fallback_keys, "_result_index"]
+        ].merge(fallback_lookup, on=fallback_keys, how="left", validate="many_to_one")
+        fallback = fallback.set_index("_result_index")
+        matched = matched.set_index("_result_index", drop=False)
+        fallback_matched = fallback["prior_audit_opportunity_id"].notna()
+        fallback = fallback.loc[fallback_matched]
+        for column in (
+            "prior_audit_opportunity_id",
+            "_prior_financed",
+            "prior_not_financed_reason",
+        ):
+            matched.loc[fallback.index, column] = fallback[column]
+        matched.loc[fallback.index, "reconciliation_match_basis"] = (
+            "symbol_selection_date_entry_date_corrected"
+        )
+        matched = matched.reset_index(drop=True)
+    still_missing = matched["prior_audit_opportunity_id"].isna()
+    if still_missing.any():
+        samples = matched.loc[still_missing, keys].head(10).astype(str).to_dict("records")
+        raise ValueError(
+            "exact strategy opportunities do not fully reconcile to prior audit: "
+            f"missing={int(still_missing.sum())}, samples={samples}"
+        )
     result["financed_in_old_portfolio"] = False
     result["financing_information_only"] = True
     result["financing_reconciliation_status"] = "not_applicable_different_entry_spec"
@@ -463,6 +511,7 @@ def reconcile_prior_financing(
             "prior_audit_opportunity_id",
             "_prior_financed",
             "prior_not_financed_reason",
+            "reconciliation_match_basis",
         ]
     ].drop_duplicates(keys, keep="first")
     reconciliation = reconciliation.rename(
