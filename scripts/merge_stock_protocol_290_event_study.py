@@ -557,8 +557,6 @@ def merge_historical_shards(
     coordinates: set[int] = set()
     frames: list[pd.DataFrame] = []
     audits: list[dict[str, Any]] = []
-    base_column_order: list[str] = []
-    base_column_types: dict[str, pa.DataType] = {}
     manifest_hashes: set[str] = set()
     for root, audit in shards:
         index = int(audit.get("entry_index", -1))
@@ -790,6 +788,8 @@ def stream_corrected_shards(
     )
     contract_ids = set(manifest["combination_id"].astype(str))
     coordinates: dict[tuple[int, str], dict[str, Any]] = {}
+    base_column_order: list[str] = []
+    base_column_types: dict[str, pa.DataType] = {}
     entry_indexes: dict[str, int] = {}
     coverage_frames: list[pd.DataFrame] = []
     reconciliation_frames: list[pd.DataFrame] = []
