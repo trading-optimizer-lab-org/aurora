@@ -1192,8 +1192,19 @@ def enrich_fx_causally(
                 result[column] = np.nan
     for column in ("fx_entry_date", "fx_exit_date"):
         result[column] = pd.to_datetime(result[column], errors="coerce")
+    result["fx_dividend_dates_used"] = (
+        result["fx_dividend_dates_used"].fillna("").astype(object)
+    )
+    for column in set(FX_COLUMNS) - {
+        "fx_entry_date",
+        "fx_exit_date",
+        "fx_dividend_dates_used",
+    }:
+        result[column] = pd.to_numeric(result[column], errors="coerce").astype(float)
     if "fx_merge_status" not in result:
         result["fx_merge_status"] = "not_available"
+    else:
+        result["fx_merge_status"] = result["fx_merge_status"].fillna("not_available").astype(object)
     if "fx_values_invented" not in result:
         result["fx_values_invented"] = False
     work = result.loc[needs_fx].copy()
