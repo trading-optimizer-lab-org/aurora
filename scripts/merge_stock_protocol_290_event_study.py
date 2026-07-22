@@ -683,6 +683,12 @@ def reconcile_prior_financing(
             ignore_index=True,
             copy=False,
         )
+    for column in ("selection_date", "signal_date", "entry_signal_date", "entry_date"):
+        if column in result:
+            result[column] = result[column].map(_daily_iso_or_none)
+    for column in ("selection_date", "entry_date"):
+        if column in reconciliation:
+            reconciliation[column] = reconciliation[column].map(_daily_iso_or_none)
     return result, reconciliation.reset_index(drop=True)
 
 
@@ -695,6 +701,17 @@ def _as_bool(value: object) -> bool:
     if normalized in {"false", "0", "no"}:
         return False
     raise ValueError(f"not a boolean value: {value!r}")
+
+
+def _daily_iso_or_none(value: object) -> str | None:
+    """Return one nullable daily value in the canonical artifact format."""
+
+    if pd.isna(value):
+        return None
+    timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp):
+        return None
+    return timestamp.date().isoformat()
 
 
 def _assert_sha256(path: Path, expected: object, label: str) -> None:

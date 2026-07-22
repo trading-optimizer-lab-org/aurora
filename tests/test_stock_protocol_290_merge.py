@@ -597,6 +597,8 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
     assert gap["entry_date"] == "2009-02-03"
     assert " " not in gap["signal_date"]
     assert " " not in gap["entry_date"]
+    assert result["entry_date"].dropna().map(type).eq(str).all()
+    assert reconciliation["entry_date"].dropna().map(type).eq(str).all()
     pd.to_datetime(result["selection_date"], errors="raise")
     pd.to_datetime(result["entry_date"], errors="raise")
     assert reconciliation["reconciled"].all()
