@@ -207,6 +207,30 @@ def _read_parquet_compact(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path, dtype_backend="pyarrow")
 
 
+def _unify_arrow_types(left: pa.DataType, right: pa.DataType) -> pa.DataType:
+    if left == right:
+        return left
+    if pa.types.is_null(left):
+        return right
+    if pa.types.is_null(right):
+        return left
+    if (pa.types.is_string(left) or pa.types.is_large_string(left)) and (
+        pa.types.is_string(right) or pa.types.is_large_string(right)
+    ):
+        return pa.large_string()
+    try:
+        unified = pa.unify_schemas(
+            [
+                pa.schema([pa.field("value", left)]),
+                pa.schema([pa.field("value", right)]),
+            ],
+            promote_options="permissive",
+        )
+    except pa.ArrowInvalid as exc:
+        raise ValueError(f"incompatible Arrow types: {left} versus {right}") from exc
+    return unified.field("value").type
+
+
 def _append_parquet_frame(
     writer: pq.ParquetWriter | None,
     schema: pa.Schema | None,
@@ -855,14 +879,9 @@ def stream_corrected_shards(
                 base_column_order.append(field.name)
                 base_column_types[field.name] = field.type
                 continue
-            existing = base_column_types[field.name]
-            if pa.types.is_null(existing) and not pa.types.is_null(field.type):
-                base_column_types[field.name] = field.type
-            elif not pa.types.is_null(field.type) and existing != field.type:
-                raise ValueError(
-                    f"corrected shards disagree on type for {field.name}: "
-                    f"{existing} versus {field.type}"
-                )
+            base_column_types[field.name] = _unify_arrow_types(
+                base_column_types[field.name], field.type
+            )
         coverage_frames.append(coverage)
         reconciliation_frames.append(shard_reconciliation)
         audits.append(audit)
@@ -965,6 +984,16 @@ def stream_corrected_shards(
                 if column not in combined:
                     combined[column] = pd.Series(
                         pa.nulls(len(combined), type=base_column_types[column]),
+                        dtype=pd.ArrowDtype(base_column_types[column]),
+                    )
+                else:
+                    combined[column] = pd.Series(
+                        pa.array(
+                            combined[column],
+                            type=base_column_types[column],
+                            from_pandas=True,
+                            safe=False,
+                        ),
                         dtype=pd.ArrowDtype(base_column_types[column]),
                     )
             base_columns = set(base_column_order)
