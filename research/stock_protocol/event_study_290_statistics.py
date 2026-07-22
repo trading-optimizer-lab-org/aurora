@@ -659,6 +659,7 @@ def metrics_by_combination(
     costs_bps_per_side: Sequence[int | float] = COSTS_BPS_PER_SIDE,
     combination_column: str = "combination_id",
     extra_group_columns: Sequence[str] = (),
+    common_horizon: float | None = None,
 ) -> pd.DataFrame:
     """Compute event metrics for every combination and requested cost level."""
 
@@ -673,15 +674,21 @@ def metrics_by_combination(
             combination_column=combination_column,
         )
         _require_columns(enriched, grouping, "ledger groups")
-        maximum_follow_up = enriched.groupby(combination_column)["event_duration"].max()
-        common_horizon = float(maximum_follow_up.min())
+        horizon = common_horizon
+        if horizon is None:
+            maximum_follow_up = enriched.groupby(combination_column)[
+                "event_duration"
+            ].max()
+            horizon = float(maximum_follow_up.min())
+        if not np.isfinite(horizon) or horizon < 0:
+            raise ValueError("common_horizon must be finite and non-negative")
         rows: list[dict[str, Any]] = []
         grouper: str | list[str] = grouping[0] if len(grouping) == 1 else grouping
         for keys, group in enriched.groupby(grouper, sort=True, dropna=False):
             key_values = (keys,) if len(grouping) == 1 else tuple(keys)
             row = dict(zip(grouping, key_values, strict=True))
             row["cost_bps_per_side"] = float(cost)
-            row.update(_event_summary(group, common_horizon=common_horizon))
+            row.update(_event_summary(group, common_horizon=float(horizon)))
             rows.append(row)
         frames.append(pd.DataFrame(rows))
     result = pd.concat(frames, ignore_index=True)
@@ -701,6 +708,7 @@ def metric_cuts(
     combination_column: str = "combination_id",
     cost_bps_per_side: int | float = 0,
     cuts: Sequence[str] = _MANDATORY_CUTS,
+    common_horizon: float | None = None,
 ) -> pd.DataFrame:
     """Return independent period/year/decade/geography/currency summaries."""
 
@@ -736,6 +744,7 @@ def metric_cuts(
             costs_bps_per_side=(cost_bps_per_side,),
             combination_column=combination_column,
             extra_group_columns=(cut,),
+            common_horizon=common_horizon,
         )
         summary.insert(1, "cut", cut)
         summary = summary.rename(columns={cut: "cut_value"})

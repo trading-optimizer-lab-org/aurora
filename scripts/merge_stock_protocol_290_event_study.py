@@ -2247,8 +2247,8 @@ def _family_return_matrix(
     combination_ids: Sequence[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     complete = development.loc[
-        development["status"].astype(str).eq("completed")
-        & development["combination_id"].astype(str).isin(combination_ids)
+        development["status"].eq("completed")
+        & development["combination_id"].isin(combination_ids)
     ].copy()
     causal_keys = ["symbol", "signal_date"]
     _assert_columns(complete, (*causal_keys, "gross_return"), "family return matrix")
@@ -2393,7 +2393,7 @@ def _multiple_testing(
     declared["cluster_method"] = "not_supported"
     declared["westfall_young_method"] = "not_supported"
 
-    complete = development.loc[development["status"].astype(str).eq("completed")]
+    complete = development.loc[development["status"].eq("completed")]
     counts = complete.groupby("combination_id").size()
     semantically_eligible = declared.loc[
         declared["corrected_track_applicability"].ne("not_applicable"),
@@ -2404,17 +2404,41 @@ def _multiple_testing(
     ]
     if not individually_supported:
         raise ValueError("no semantically eligible rule has enough completed events")
-    cluster_ledger = development.loc[
-        development["combination_id"].astype(str).isin(individually_supported)
-    ]
-    cluster_tests = cluster_mean_significance_tests(
-        cluster_ledger,
-        bootstrap_samples=bootstrap_samples,
-        seed=20260721,
+    cluster_test_frames: list[pd.DataFrame] = []
+    for entry_spec_id in manifest["entry_spec_id"].drop_duplicates().tolist():
+        family_ids = declared.loc[
+            declared["entry_spec_id"].eq(entry_spec_id)
+            & declared["combination_id"].isin(individually_supported),
+            "combination_id",
+        ].tolist()
+        if not family_ids:
+            continue
+        family_ledger = development.loc[
+            development["entry_spec_id"].eq(entry_spec_id)
+            & development["combination_id"].isin(family_ids)
+        ]
+        cluster_test_frames.append(
+            cluster_mean_significance_tests(
+                family_ledger,
+                bootstrap_samples=bootstrap_samples,
+                seed=20260721,
+            )
+        )
+    cluster_tests = pd.concat(
+        cluster_test_frames, ignore_index=True, copy=False
     ).set_index("combination_id")
     raw_pvalues = cluster_tests.loc[individually_supported, "pvalue_one_sided"].to_numpy(dtype=float)
-    for position, combination in enumerate(individually_supported):
-        group = complete.loc[complete["combination_id"].astype(str).eq(combination)]
+    supported_positions = {
+        combination: position
+        for position, combination in enumerate(individually_supported)
+    }
+    for combination_value, group in complete.groupby(
+        "combination_id", sort=False, dropna=False
+    ):
+        combination = str(combination_value)
+        if combination not in supported_positions:
+            continue
+        position = supported_positions[combination]
         values = pd.to_numeric(group["gross_return"], errors="coerce").to_numpy(dtype=float)
         deflated = deflated_event_statistic(values, trials=EXPECTED_COMBINATION_COUNT)
         mask = declared["combination_id"].eq(combination)
@@ -2638,6 +2662,156 @@ def _replace_nonfinite_with_status(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _common_event_horizon(ledger: pd.DataFrame) -> float:
+    """Return the contract-wide follow-up horizon without enriching the ledger."""
+
+    durations = pd.to_numeric(ledger["holding_sessions"], errors="raise")
+    maximums = durations.groupby(ledger["combination_id"], sort=False).max()
+    horizon = float(maximums.min())
+    if not np.isfinite(horizon) or horizon < 0:
+        raise ValueError("event ledger has no finite common follow-up horizon")
+    return horizon
+
+
+def _bounded_metrics(
+    ledger: pd.DataFrame,
+    *,
+    costs_bps_per_side: Sequence[int | float] = COSTS_BPS_PER_SIDE,
+    include_cuts: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Calculate combination-local metrics while preserving one global horizon."""
+
+    horizon = _common_event_horizon(ledger)
+    metric_frames: list[pd.DataFrame] = []
+    cut_frames: list[pd.DataFrame] = []
+    seen = 0
+    for combination_id, group in ledger.groupby(
+        "combination_id", sort=True, dropna=False
+    ):
+        metric_frames.append(
+            metrics_by_combination(
+                group,
+                costs_bps_per_side=costs_bps_per_side,
+                common_horizon=horizon,
+            )
+        )
+        if include_cuts:
+            cut_frames.append(metric_cuts(group, common_horizon=horizon))
+        seen += 1
+        if seen % 25 == 0 or seen == EXPECTED_COMBINATION_COUNT:
+            _merge_progress(
+                "bounded_metrics_progress",
+                combinations=seen,
+                last_combination_id=str(combination_id),
+                include_cuts=include_cuts,
+            )
+    if seen != EXPECTED_COMBINATION_COUNT:
+        raise ValueError(
+            f"bounded metrics expected 290 combinations; found {seen}"
+        )
+    metrics = pd.concat(metric_frames, ignore_index=True, copy=False)
+    cuts = (
+        pd.concat(cut_frames, ignore_index=True, copy=False)
+        if include_cuts
+        else None
+    )
+    return metrics, cuts
+
+
+def _bounded_cluster_bootstrap(
+    development: pd.DataFrame,
+    *,
+    bootstrap_samples: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Bootstrap one combination at a time to cap the estimate cube in memory."""
+
+    summaries: list[pd.DataFrame] = []
+    samples: list[pd.DataFrame] = []
+    seen = 0
+    for combination_id, group in development.groupby(
+        "combination_id", sort=True, dropna=False
+    ):
+        summary, records = cluster_bootstrap_confidence_intervals(
+            group,
+            bootstrap_samples=bootstrap_samples,
+            seed=20260721,
+        )
+        summaries.append(summary)
+        samples.append(records)
+        seen += 1
+        if seen % 25 == 0 or seen == EXPECTED_COMBINATION_COUNT:
+            _merge_progress(
+                "bounded_bootstrap_progress",
+                combinations=seen,
+                last_combination_id=str(combination_id),
+            )
+    if seen != EXPECTED_COMBINATION_COUNT:
+        raise ValueError(
+            f"bounded bootstrap expected 290 combinations; found {seen}"
+        )
+    return (
+        pd.concat(summaries, ignore_index=True, copy=False),
+        pd.concat(samples, ignore_index=True, copy=False),
+    )
+
+
+def _bounded_paired_exits(
+    ledger: pd.DataFrame,
+    *,
+    entry_ids: Sequence[str],
+    exit_ids: Sequence[str],
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for entry_spec_id in entry_ids:
+        family = ledger.loc[ledger["entry_spec_id"].eq(entry_spec_id)]
+        frames.append(
+            _paired_exit_rows(
+                family,
+                entry_ids=(entry_spec_id,),
+                exit_ids=exit_ids,
+            )
+        )
+    return pd.concat(frames, ignore_index=True, copy=False)
+
+
+def _bounded_paired_entries(
+    ledger: pd.DataFrame,
+    coverage: pd.DataFrame,
+    manifest: pd.DataFrame,
+    *,
+    entry_ids: Sequence[str],
+    exit_ids: Sequence[str],
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for exit_spec_id in exit_ids:
+        family = ledger.loc[ledger["exit_spec_id"].eq(exit_spec_id)]
+        frames.append(
+            _paired_entry_rows(
+                family,
+                coverage,
+                manifest,
+                entry_ids=entry_ids,
+                exit_ids=(exit_spec_id,),
+            )
+        )
+    return pd.concat(frames, ignore_index=True, copy=False)
+
+
+def _bounded_combination_audit(
+    ledger: pd.DataFrame,
+    function: Any,
+) -> pd.DataFrame:
+    frames = [
+        function(group)
+        for _, group in ledger.groupby(
+            "combination_id", sort=True, dropna=False
+        )
+    ]
+    if len(frames) != EXPECTED_COMBINATION_COUNT:
+        raise ValueError("bounded audit did not cover every combination")
+    return pd.concat(frames, ignore_index=True, copy=False)
+
+
 def build_statistical_outputs(
     opportunities: pd.DataFrame,
     coverage: pd.DataFrame,
@@ -2646,18 +2820,23 @@ def build_statistical_outputs(
     bootstrap_samples: int,
 ) -> dict[str, pd.DataFrame | dict[str, Any]]:
     ledger = _event_ledger(opportunities)
+    _merge_progress("event_ledger_ready", rows=len(ledger))
     development = _selection_ledger(ledger)
-    summary = metrics_by_combination(ledger)
-    cuts = metric_cuts(ledger)
+    _merge_progress("development_ledger_ready", rows=len(development))
+    summary, cuts_value = _bounded_metrics(ledger, include_cuts=True)
+    assert cuts_value is not None
+    cuts = cuts_value
     summary["evidence_role"] = "all_periods_diagnostic"
     cuts["evidence_role"] = "all_periods_diagnostic"
-    development_zero = metrics_by_combination(
-        development, costs_bps_per_side=(0,)
+    _merge_progress("all_period_metrics_complete")
+    development_zero, _ = _bounded_metrics(
+        development,
+        costs_bps_per_side=(0,),
     )
-    cluster_summary, cluster_samples = cluster_bootstrap_confidence_intervals(
+    _merge_progress("development_metrics_complete")
+    cluster_summary, cluster_samples = _bounded_cluster_bootstrap(
         development,
         bootstrap_samples=bootstrap_samples,
-        seed=20260721,
     )
     cluster_numeric = cluster_samples.select_dtypes(include=[np.number])
     cluster_samples = cluster_samples.loc[
@@ -2667,18 +2846,21 @@ def build_statistical_outputs(
         raise ValueError("cluster bootstrap produced no wholly finite samples")
     entry_ids = manifest["entry_spec_id"].drop_duplicates().astype(str).tolist()
     exit_ids = manifest["exit_spec_id"].drop_duplicates().astype(str).tolist()
-    paired_exit = _paired_exit_rows(
+    _merge_progress("cluster_bootstrap_complete", samples=len(cluster_samples))
+    paired_exit = _bounded_paired_exits(
         ledger,
         entry_ids=entry_ids,
         exit_ids=exit_ids,
     )
-    paired_entry = _paired_entry_rows(
+    _merge_progress("paired_exit_complete", rows=len(paired_exit))
+    paired_entry = _bounded_paired_entries(
         ledger,
         coverage,
         manifest,
         entry_ids=entry_ids,
         exit_ids=exit_ids,
     )
+    _merge_progress("paired_entry_complete", rows=len(paired_entry))
     duplicate_trade_columns = [
         column
         for column in (
@@ -2707,6 +2889,7 @@ def build_statistical_outputs(
         trade_columns=duplicate_trade_columns,
         result_columns=duplicate_result_columns,
     )
+    _merge_progress("functional_duplicate_audit_complete", rows=len(functional))
     global_mapping = _global_functional_mapping(
         functional, manifest["combination_id"].astype(str).tolist()
     )
@@ -2761,6 +2944,7 @@ def build_statistical_outputs(
         functional,
         bootstrap_samples=bootstrap_samples,
     )
+    _merge_progress("multiple_testing_complete", rows=len(multiple))
     multiple["evidence_role"] = "period_A_development_selection"
     pbo["evidence_role"] = "period_A_development_selection"
     paired_entry["evidence_role"] = "all_periods_diagnostic"
@@ -2778,10 +2962,14 @@ def build_statistical_outputs(
         "country": cuts.loc[cuts["cut"].eq("country")].reset_index(drop=True),
         "market": cuts.loc[cuts["cut"].eq("market")].reset_index(drop=True),
         "currency": cuts.loc[cuts["cut"].eq("currency")].reset_index(drop=True),
-        "leave_out": leave_one_out_audit(ledger).assign(
+        "leave_out": _bounded_combination_audit(
+            ledger, leave_one_out_audit
+        ).assign(
             evidence_role="all_periods_diagnostic"
         ),
-        "censoring": censoring_audit(ledger).assign(
+        "censoring": _bounded_combination_audit(
+            ledger, censoring_audit
+        ).assign(
             evidence_role="all_periods_diagnostic"
         ),
     }
@@ -2804,7 +2992,9 @@ def build_statistical_outputs(
         "pbo": pbo,
         "pbo_payload": pbo_payload,
         "leave_out": serializable["leave_out"],
-        "concentration": concentration_statistics(ledger).assign(
+        "concentration": _bounded_combination_audit(
+            ledger, concentration_statistics
+        ).assign(
             evidence_role="all_periods_diagnostic"
         ),
         "pareto": eligible_ranked.loc[eligible_ranked["pareto_rank"].eq(1)].reset_index(drop=True),
@@ -2817,7 +3007,9 @@ def build_statistical_outputs(
         "top_objectives": winners,
         "classifications": _replace_nonfinite_with_status(ranked),
         "censoring": serializable["censoring"],
-        "survival": survival_incidence_table(ledger).assign(
+        "survival": _bounded_combination_audit(
+            ledger, survival_incidence_table
+        ).assign(
             evidence_role="all_periods_diagnostic"
         ),
         "functional_duplicates": functional,
