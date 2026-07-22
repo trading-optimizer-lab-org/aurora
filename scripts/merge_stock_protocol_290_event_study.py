@@ -483,12 +483,23 @@ def reconcile_prior_financing(
         )
         matched = matched.reset_index(drop=True)
     still_missing = matched["prior_audit_opportunity_id"].isna()
-    if still_missing.any():
-        samples = matched.loc[still_missing, keys].head(10).astype(str).to_dict("records")
+    prior_ids = set(prior["opportunity_id"].astype(str))
+    matched_prior_ids = set(
+        matched.loc[~still_missing, "prior_audit_opportunity_id"].astype(str)
+    )
+    missing_prior_ids = sorted(prior_ids - matched_prior_ids)
+    if missing_prior_ids:
         raise ValueError(
-            "exact strategy opportunities do not fully reconcile to prior audit: "
-            f"missing={int(still_missing.sum())}, samples={samples}"
+            "prior audit opportunities do not fully reconcile to corrected ledger: "
+            f"missing={len(missing_prior_ids)}, samples={missing_prior_ids[:10]}"
         )
+    matched.loc[still_missing, "_prior_financed"] = False
+    matched.loc[still_missing, "prior_not_financed_reason"] = (
+        "not_present_in_prior_audit"
+    )
+    matched.loc[still_missing, "reconciliation_match_basis"] = (
+        "new_corrected_opportunity_not_in_prior_audit"
+    )
     result["financed_in_old_portfolio"] = False
     result["financing_information_only"] = True
     result["financing_reconciliation_status"] = "not_applicable_different_entry_spec"
@@ -497,11 +508,15 @@ def reconcile_prior_financing(
     matched_index = matched["_result_index"].to_numpy(dtype=int)
     result.loc[matched_index, "financed_in_old_portfolio"] = matched[
         "_prior_financed"
-    ].to_numpy(dtype=bool)
-    result.loc[matched_index, "financing_reconciliation_status"] = "matched_prior_audit"
+    ].fillna(False).to_numpy(dtype=bool)
+    result.loc[matched_index, "financing_reconciliation_status"] = np.where(
+        matched["prior_audit_opportunity_id"].notna(),
+        "matched_prior_audit",
+        "new_corrected_opportunity_not_in_prior_audit",
+    )
     result.loc[matched_index, "prior_audit_opportunity_id"] = matched[
         "prior_audit_opportunity_id"
-    ].astype(str).to_numpy()
+    ].fillna("").astype(str).to_numpy()
     result.loc[matched_index, "prior_not_financed_reason"] = matched[
         "prior_not_financed_reason"
     ].fillna("").astype(str).to_numpy()
@@ -519,6 +534,9 @@ def reconcile_prior_financing(
     )
     reconciliation.insert(0, "exact_combination_id", candidate_id)
     reconciliation.insert(1, "exact_entry_spec_id", exact_entry_spec_id)
+    reconciliation["present_in_prior_audit"] = reconciliation[
+        "prior_audit_opportunity_id"
+    ].notna()
     reconciliation["informational_only"] = True
     reconciliation["reconciled"] = True
     return result, reconciliation.reset_index(drop=True)

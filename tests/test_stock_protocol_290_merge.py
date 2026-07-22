@@ -509,6 +509,44 @@ def test_prior_financing_reconciles_a_corrected_entry_date_by_selection() -> Non
     )
 
 
+def test_prior_financing_keeps_new_corrected_opportunities_as_unfinanced() -> None:
+    manifest = pd.DataFrame(
+        {"combination_id": ["exact"], "entry_spec_id": ["entry-exact"]}
+    )
+    opportunities = pd.DataFrame(
+        {
+            "combination_id": ["exact", "exact"],
+            "entry_spec_id": ["entry-exact", "entry-exact"],
+            "symbol": ["AAA", "NEW"],
+            "selection_date": ["2020-01-02", "2020-02-03"],
+            "entry_date": ["2020-01-03", "2020-02-04"],
+        }
+    )
+    prior = pd.DataFrame(
+        {
+            "opportunity_id": ["old-a"],
+            "symbol": ["AAA"],
+            "selection_date": ["2020-01-02"],
+            "entry_date": ["2020-01-03"],
+            "originally_financed": [True],
+            "not_financed_reason": [""],
+        }
+    )
+
+    result, reconciliation = reconcile_prior_financing(
+        opportunities, manifest, {"candidate_id": "exact"}, prior
+    )
+
+    assert len(result) == 2
+    assert not result.loc[1, "financed_in_old_portfolio"]
+    assert (
+        result.loc[1, "financing_reconciliation_status"]
+        == "new_corrected_opportunity_not_in_prior_audit"
+    )
+    assert reconciliation["reconciled"].all()
+    assert reconciliation["present_in_prior_audit"].tolist() == [True, False]
+
+
 def test_summary_verifier_rejects_wrong_contract_and_selection_claim(tmp_path: Path) -> None:
     summary = _summary()
     (tmp_path / AUDIT_SUMMARY_NAME).write_text(json.dumps(summary), encoding="utf-8")
