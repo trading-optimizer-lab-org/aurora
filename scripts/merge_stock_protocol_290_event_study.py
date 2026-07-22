@@ -209,6 +209,19 @@ def _resident_memory_kib() -> int | None:
     return None
 
 
+def _merge_progress(stage: str, **values: object) -> None:
+    """Emit unbuffered merge progress with memory diagnostics for Actions."""
+
+    print(
+        json.dumps(
+            {"stage": stage, "rss_kib": _resident_memory_kib(), **values},
+            sort_keys=True,
+            default=_json_default,
+        ),
+        flush=True,
+    )
+
+
 def _read_parquet_compact(path: Path) -> pd.DataFrame:
     """Keep large shard strings and timestamps Arrow-backed during the merge."""
 
@@ -785,8 +798,14 @@ def _assert_dates_at_cutoff(frame: pd.DataFrame, label: str) -> None:
     ):
         if column not in frame:
             continue
-        values = pd.to_datetime(frame[column], errors="coerce").dropna()
-        if not values.empty and values.max().normalize() > CUTOFF:
+        values = frame[column].dropna()
+        if values.empty:
+            continue
+        # Checkpoint dates are canonical ISO strings or Arrow timestamps. Taking
+        # the scalar maximum avoids materializing another multi-million-row
+        # datetime Series merely to enforce the cutoff.
+        maximum = pd.Timestamp(values.max()).normalize()
+        if maximum > CUTOFF:
             raise ValueError(f"{label}.{column} exceeds cutoff {CUTOFF.date()}")
 
 
@@ -1460,6 +1479,11 @@ def load_prepared_corrected_parts(
         raise ValueError("prepared full and statistical ledgers have different rows")
     opportunities = pd.read_parquet(statistical_combined, dtype_backend="pyarrow")
     statistical_combined.unlink()
+    _merge_progress(
+        "prepared_ledgers_loaded",
+        rows=len(opportunities),
+        columns=len(opportunities.columns),
+    )
 
     def frames(name: str) -> list[pd.DataFrame]:
         return [
@@ -1560,7 +1584,7 @@ def reconcile_all_combinations(
     rows: list[dict[str, object]] = []
     for period in (*PERIOD_NAMES, "ALL"):
         source = opportunities if period == "ALL" else opportunities.loc[
-            opportunities["period"].astype(str).eq(period)
+            opportunities["period"].eq(period)
         ]
         grouped = {
             str(key): group for key, group in source.groupby("combination_id", sort=False)
@@ -1568,7 +1592,7 @@ def reconcile_all_combinations(
         for spec in expected.to_dict(orient="records"):
             combination_id = str(spec["combination_id"])
             group = grouped.get(combination_id, source.iloc[0:0])
-            statuses = group["status"].astype(str)
+            statuses = group["status"]
             unsupported = sorted(set(statuses) - LEDGER_STATUSES)
             completed = int(statuses.eq("completed").sum())
             censored = int(statuses.eq("right_censored").sum())
@@ -1882,7 +1906,7 @@ def enrich_fx_causally(
 
 def _event_ledger(opportunities: pd.DataFrame) -> pd.DataFrame:
     ledger = opportunities.loc[
-        opportunities["status"].astype(str).isin({"completed", "right_censored"})
+        opportunities["status"].isin({"completed", "right_censored"})
     ].copy()
     if ledger.empty:
         raise ValueError("no completed or right-censored opportunities are available")
@@ -1899,7 +1923,7 @@ def _event_ledger(opportunities: pd.DataFrame) -> pd.DataFrame:
 
 
 def _selection_ledger(ledger: pd.DataFrame) -> pd.DataFrame:
-    development = ledger.loc[ledger["period"].astype(str).eq("A")].copy()
+    development = ledger.loc[ledger["period"].eq("A")].copy()
     if development.empty:
         raise ValueError("period A has no development opportunities")
     development["period"] = "development"
@@ -3088,6 +3112,11 @@ def merge_event_study(
         technical_input_rows,
         technical_duplicates_removed,
     ) = corrected_payload
+    _merge_progress(
+        "corrected_payload_ready",
+        opportunity_rows=len(opportunities),
+        coverage_rows=len(coverage),
+    )
     corrected_manifest_hashes = {
         str(audit.get("manifest_sha256", "")) for audit in corrected_audits
     }
@@ -3109,6 +3138,7 @@ def merge_event_study(
             raise ValueError(f"historical and corrected shards use different {field}")
         provenance[field] = value
     _assert_dates_at_cutoff(opportunities, "merged opportunities")
+    _merge_progress("cutoff_audit_complete")
     for column in (
         "capital_rejected",
         "portfolio_simulated",
@@ -3117,16 +3147,28 @@ def merge_event_study(
         "new_oos_claimed",
         "optimization_performed_on_opened_data",
     ):
-        if column in opportunities and opportunities[column].map(_as_bool).any():
-            raise ValueError(f"merged opportunities violate invariant {column}=false")
+        if column in opportunities:
+            values = opportunities[column]
+            violation = (
+                bool(values.fillna(False).any())
+                if pd.api.types.is_bool_dtype(values.dtype)
+                else bool(values.map(_as_bool).any())
+            )
+            if violation:
+                raise ValueError(
+                    f"merged opportunities violate invariant {column}=false"
+                )
     reconciliation = reconcile_all_combinations(opportunities, manifest)
+    _merge_progress("combination_reconciliation_complete", rows=len(reconciliation))
     semantic = _semantic_audit(manifest, reconciliation)
+    _merge_progress("statistical_outputs_start")
     statistics = build_statistical_outputs(
         opportunities,
         coverage,
         manifest,
         bootstrap_samples=bootstrap_samples,
     )
+    _merge_progress("statistical_outputs_complete")
     _assert_event_outputs_finite(statistics)
 
     historical.to_csv(output / HISTORICAL_RESULTS_NAME, index=False)
