@@ -750,8 +750,15 @@ def metric_cuts(
         summary = summary.rename(columns={cut: "cut_value"})
         if set(summary[combination_column].unique()) != expected_combinations:
             raise ValueError(f"mandatory cut {cut} does not cover every combination")
-        covered_counts = summary.groupby(combination_column)["opportunities"].sum().sort_index()
-        if not covered_counts.equals(expected_counts):
+        covered_counts = (
+            summary.groupby(combination_column)["opportunities"]
+            .sum()
+            .reindex(expected_counts.index)
+        )
+        if covered_counts.isna().any() or not np.array_equal(
+            covered_counts.to_numpy(dtype=np.int64),
+            expected_counts.to_numpy(dtype=np.int64),
+        ):
             raise ValueError(f"mandatory cut {cut} does not cover every opportunity")
         rows.append(summary)
     return pd.concat(rows, ignore_index=True)
