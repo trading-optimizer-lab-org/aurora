@@ -588,6 +588,12 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
     assert gap["period"] == "A"
     assert not gap["capital_rejected"]
     assert gap["prior_audit_opportunity_id"] == "old-gap"
+    assert gap["selection_date"] == "2009-02-02"
+    assert gap["entry_date"] == "2009-02-03"
+    assert " " not in gap["selection_date"]
+    assert " " not in gap["entry_date"]
+    pd.to_datetime(result["selection_date"], errors="raise")
+    pd.to_datetime(result["entry_date"], errors="raise")
     assert reconciliation["reconciled"].all()
 
 

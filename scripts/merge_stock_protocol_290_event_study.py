@@ -566,7 +566,10 @@ def reconcile_prior_financing(
         supplement_rows: list[dict[str, object]] = []
         supplement_reconciliation: list[dict[str, object]] = []
         for _, prior_row in prior_only.iterrows():
+            selection_date = pd.Timestamp(prior_row["selection_date"]).normalize()
             entry_date = pd.Timestamp(prior_row["entry_date"]).normalize()
+            selection_date_iso = selection_date.date().isoformat()
+            entry_date_iso = entry_date.date().isoformat()
             period = next(
                 (
                     name
@@ -586,8 +589,6 @@ def reconcile_prior_financing(
                     payload[column] = value
             for column in (
                 "symbol",
-                "selection_date",
-                "entry_date",
                 "entry_price",
                 "country",
                 "market",
@@ -598,6 +599,8 @@ def reconcile_prior_financing(
             ):
                 if column in payload and column in prior_row.index:
                     payload[column] = prior_row[column]
+            payload["selection_date"] = selection_date_iso
+            payload["entry_date"] = entry_date_iso
             for column in ("dataset_hash", "policy_hash", "source_snapshot_sha256"):
                 if column in payload:
                     values = result[column].dropna()
@@ -637,8 +640,8 @@ def reconcile_prior_financing(
                     "exact_combination_id": candidate_id,
                     "exact_entry_spec_id": exact_entry_spec_id,
                     "symbol": prior_row["symbol"],
-                    "selection_date": prior_row["selection_date"],
-                    "entry_date": prior_row["entry_date"],
+                    "selection_date": selection_date_iso,
+                    "entry_date": entry_date_iso,
                     "prior_audit_opportunity_id": prior_id,
                     "financed_in_old_portfolio": bool(
                         prior_row["originally_financed"]
