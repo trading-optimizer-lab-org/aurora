@@ -1,0 +1,257 @@
+name: Stock Protocol Original 290 Event Study Checkpointed
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Branch containing the audited implementation
+        required: true
+        default: codex/stock-protocol-290-event-study
+      source_run_id:
+        description: Run containing the 39 completed shards
+        required: true
+        default: "29837829828"
+      recovery_run_id:
+        description: Run containing reconstructed corrected 7-A
+        required: true
+        default: "29864708267"
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  MALLOC_ARENA_MAX: "2"
+  AUDIT_RUN_ID: "29804082610"
+  AUDIT_ARTIFACT: stock-protocol-all-opportunities-and-realistic-portfolio-audit
+  EXACT_RUN_ID: "29688666475"
+  EXACT_ARTIFACT: stock-protocol-exact-irrevocable-oos-results-final
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest scipy statsmodels pyarrow
+      - name: Compile checkpointed implementation
+        run: >-
+          python -m py_compile
+          scripts/prepare_stock_protocol_290_merge_part.py
+          scripts/merge_stock_protocol_290_event_study.py
+          scripts/verify_stock_protocol_290_event_study.py
+      - name: Run focused contracts in GitHub
+        run: >-
+          pytest -q
+          tests/test_stock_protocol_290_merge.py
+          tests/test_stock_protocol_290_workflow.py
+
+  prepare-entry:
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        entry_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-original-290-contract
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: contract
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-290-frozen-fx
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: fx-rates
+      - uses: actions/download-artifact@v4
+        if: matrix.entry_index != 7
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          pattern: stock-protocol-290-corrected-${{ matrix.entry_index }}-*
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corrected-shards
+      - uses: actions/download-artifact@v4
+        if: matrix.entry_index == 7
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-290-corrected-7-B
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corrected-shards/stock-protocol-290-corrected-7-B
+      - uses: actions/download-artifact@v4
+        if: matrix.entry_index == 7
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-290-corrected-7-C
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corrected-shards/stock-protocol-290-corrected-7-C
+      - uses: actions/download-artifact@v4
+        if: matrix.entry_index == 7
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.recovery_run_id }}
+          name: stock-protocol-290-corrected-7-A
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: corrected-shards/stock-protocol-290-corrected-7-A
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.AUDIT_RUN_ID }}
+          name: ${{ env.AUDIT_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: audit-source
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.EXACT_RUN_ID }}
+          name: ${{ env.EXACT_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-source
+      - name: Verify frozen FX artifact
+        run: python scripts/prepare_stock_protocol_290_fx.py --verify-root fx-rates
+      - name: Prepare entry checkpoint
+        run: >-
+          python scripts/prepare_stock_protocol_290_merge_part.py
+          --entry-index ${{ matrix.entry_index }}
+          --contract-root contract
+          --corrected-shards-root corrected-shards
+          --prior-audit-root audit-source
+          --exact-strategy-root exact-source
+          --source-lock contract/stock-protocol-290-source-lock.json
+          --fx-rates fx-rates/stock-protocol-290-fx-rates.csv
+          --output-root prepared
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-290-prepared-entry-${{ matrix.entry_index }}
+          path: prepared
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  merge-and-verify:
+    needs: prepare-entry
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stock-protocol-290-prepared-entry-*
+          merge-multiple: false
+          path: prepared-parts
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-original-290-contract
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: contract
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          pattern: stock-protocol-290-historical-*
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: historical-shards
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.source_run_id }}
+          name: stock-protocol-290-frozen-fx
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: fx-rates
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.AUDIT_RUN_ID }}
+          name: ${{ env.AUDIT_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: audit-source
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.EXACT_RUN_ID }}
+          name: ${{ env.EXACT_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-source
+      - name: Verify frozen FX artifact
+        run: python scripts/prepare_stock_protocol_290_fx.py --verify-root fx-rates
+      - name: Merge checkpoints, statistics, audits and report
+        run: >-
+          python scripts/merge_stock_protocol_290_event_study.py
+          --contract-root contract
+          --historical-shards-root historical-shards
+          --prepared-parts-root prepared-parts
+          --fx-rates fx-rates/stock-protocol-290-fx-rates.csv
+          --prior-audit-root audit-source
+          --exact-strategy-root exact-source
+          --source-lock contract/stock-protocol-290-source-lock.json
+          --output-root final
+      - name: Preserve frozen source evidence in final artifact
+        shell: bash
+        run: |
+          cp contract/stock-protocol-290-source-lock.json final/
+          cp -R contract/source-evidence final/
+          cp fx-rates/stock-protocol-290-fx-rates.csv final/
+          cp fx-rates/stock-protocol-290-fx-source-lock.json final/
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.merge_stock_protocol_290_event_study import FINAL_MANIFEST_NAME, _artifact_manifest
+
+          root = Path("final")
+          (root / FINAL_MANIFEST_NAME).write_text(
+              json.dumps(_artifact_manifest(root), indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Fail hard unless final contract is complete
+        run: python scripts/verify_stock_protocol_290_event_study.py final
+      - name: Print final audited summary
+        shell: bash
+        run: |
+          cat final/audit_summary.json
+          echo "FINAL_FILE_COUNT=$(find final -type f | wc -l)"
+          echo "FINAL_BYTES=$(du -sb final | cut -f1)"
+          sha256sum final/final_artifact_manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-original-290-opportunity-event-study
+          path: final
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90
+
