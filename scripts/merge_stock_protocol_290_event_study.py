@@ -218,6 +218,15 @@ def _append_parquet_frame(
         schema = table.schema
         writer = pq.ParquetWriter(path, schema, compression="zstd")
     assert schema is not None
+    extras = set(table.column_names) - set(schema.names)
+    if extras:
+        raise ValueError(f"streamed parquet introduced columns: {sorted(extras)}")
+    for field in schema:
+        if field.name not in table.column_names:
+            table = table.append_column(
+                field.name, pa.nulls(len(table), type=field.type)
+            )
+    table = table.select(schema.names)
     if table.schema != schema:
         table = table.cast(schema, safe=False)
     writer.write_table(table)
@@ -548,6 +557,8 @@ def merge_historical_shards(
     coordinates: set[int] = set()
     frames: list[pd.DataFrame] = []
     audits: list[dict[str, Any]] = []
+    base_column_order: list[str] = []
+    base_column_types: dict[str, pa.DataType] = {}
     manifest_hashes: set[str] = set()
     for root, audit in shards:
         index = int(audit.get("entry_index", -1))
@@ -839,6 +850,19 @@ def stream_corrected_shards(
             "expected_rows": int(audit.get("opportunity_count", -1)),
             "loaded_rows": 0,
         }
+        for field in pq.ParquetFile(paths["opportunities"]).schema_arrow:
+            if field.name not in base_column_types:
+                base_column_order.append(field.name)
+                base_column_types[field.name] = field.type
+                continue
+            existing = base_column_types[field.name]
+            if pa.types.is_null(existing) and not pa.types.is_null(field.type):
+                base_column_types[field.name] = field.type
+            elif not pa.types.is_null(field.type) and existing != field.type:
+                raise ValueError(
+                    f"corrected shards disagree on type for {field.name}: "
+                    f"{existing} versus {field.type}"
+                )
         coverage_frames.append(coverage)
         reconciliation_frames.append(shard_reconciliation)
         audits.append(audit)
@@ -936,6 +960,19 @@ def stream_corrected_shards(
                 combined["prior_audit_opportunity_id"] = ""
                 combined["prior_not_financed_reason"] = ""
             fx_audit_frames.append(fx_audit)
+
+            for column in base_column_order:
+                if column not in combined:
+                    combined[column] = pd.Series(
+                        pa.nulls(len(combined), type=base_column_types[column]),
+                        dtype=pd.ArrowDtype(base_column_types[column]),
+                    )
+            base_columns = set(base_column_order)
+            output_columns = [
+                *base_column_order,
+                *(column for column in combined.columns if column not in base_columns),
+            ]
+            combined = combined.loc[:, output_columns]
 
             full_writer, full_schema = _append_parquet_frame(
                 full_writer, full_schema, full_path, combined
