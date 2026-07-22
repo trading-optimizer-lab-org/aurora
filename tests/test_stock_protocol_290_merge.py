@@ -111,16 +111,21 @@ def test_concatenate_parquet_files_unions_columns_without_losing_rows(
     first = tmp_path / "first.parquet"
     second = tmp_path / "second.parquet"
     output = tmp_path / "combined.parquet"
-    pd.DataFrame({"id": [1, 2], "left_only": ["a", "b"]}).to_parquet(
+    pd.DataFrame(
+        {"id": [1, 2], "value": [None, None], "left_only": ["a", "b"]}
+    ).to_parquet(
         first, index=False
     )
-    pd.DataFrame({"id": [3], "right_only": [4.5]}).to_parquet(second, index=False)
+    pd.DataFrame({"id": [3], "value": [4.5], "right_only": [4.5]}).to_parquet(
+        second, index=False
+    )
 
     rows = _concatenate_parquet_files([first, second], output)
     combined = pd.read_parquet(output)
 
     assert rows == 3
     assert combined["id"].tolist() == [1, 2, 3]
+    assert combined.loc[2, "value"] == pytest.approx(4.5)
     assert combined["left_only"].tolist()[:2] == ["a", "b"]
     assert pd.isna(combined.loc[2, "left_only"])
     assert combined.loc[2, "right_only"] == pytest.approx(4.5)

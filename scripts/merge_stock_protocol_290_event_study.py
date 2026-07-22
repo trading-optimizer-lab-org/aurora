@@ -1183,10 +1183,12 @@ def stream_corrected_shards(
 
     full_path = output_root / OPPORTUNITIES_PARQUET
     statistical_path = output_root / "_statistical_ledger.parquet"
-    full_writer: pq.ParquetWriter | None = None
-    full_schema: pa.Schema | None = None
-    statistical_writer: pq.ParquetWriter | None = None
-    statistical_schema: pa.Schema | None = None
+    full_pieces_root = output_root / "_full_pieces"
+    statistical_pieces_root = output_root / "_statistical_pieces"
+    full_pieces_root.mkdir()
+    statistical_pieces_root.mkdir()
+    full_piece_paths: list[Path] = []
+    statistical_piece_paths: list[Path] = []
     financing_frames: list[pd.DataFrame] = []
     fx_audit_frames: list[pd.DataFrame] = []
     technical_input_rows = 0
@@ -1198,13 +1200,12 @@ def stream_corrected_shards(
         ].iloc[0]
     )
 
-    try:
-        selected_manifest = manifest.loc[
-            manifest["entry_spec_id"].astype(str).isin(entry_indexes)
-        ]
-        if len(selected_manifest) != len(selected_indices) * EXPECTED_EXIT_SPEC_COUNT:
-            raise ValueError("requested entry shards do not map to exactly 29 exits each")
-        for row in selected_manifest.to_dict(orient="records"):
+    selected_manifest = manifest.loc[
+        manifest["entry_spec_id"].astype(str).isin(entry_indexes)
+    ]
+    if len(selected_manifest) != len(selected_indices) * EXPECTED_EXIT_SPEC_COUNT:
+        raise ValueError("requested entry shards do not map to exactly 29 exits each")
+    for piece_index, row in enumerate(selected_manifest.to_dict(orient="records")):
             combination_id = str(row["combination_id"])
             entry_spec_id = str(row["entry_spec_id"])
             index = entry_indexes[entry_spec_id]
@@ -1299,20 +1300,30 @@ def stream_corrected_shards(
             ]
             combined = combined.loc[:, output_columns]
 
-            full_writer, full_schema = _append_parquet_frame(
-                full_writer, full_schema, full_path, combined
+            full_piece_path = full_pieces_root / f"part-{piece_index:03d}.parquet"
+            statistical_piece_path = (
+                statistical_pieces_root / f"part-{piece_index:03d}.parquet"
             )
+            pq.write_table(
+                pa.Table.from_pandas(combined, preserve_index=False),
+                full_piece_path,
+                compression="zstd",
+            )
+            full_piece_paths.append(full_piece_path)
             missing_statistics = set(STATISTICAL_LEDGER_COLUMNS) - set(combined.columns)
             if missing_statistics:
                 raise ValueError(
                     f"statistical ledger missing columns: {sorted(missing_statistics)}"
                 )
-            statistical_writer, statistical_schema = _append_parquet_frame(
-                statistical_writer,
-                statistical_schema,
-                statistical_path,
-                combined.loc[:, STATISTICAL_LEDGER_COLUMNS],
+            pq.write_table(
+                pa.Table.from_pandas(
+                    combined.loc[:, STATISTICAL_LEDGER_COLUMNS],
+                    preserve_index=False,
+                ),
+                statistical_piece_path,
+                compression="zstd",
             )
+            statistical_piece_paths.append(statistical_piece_path)
             print(
                 json.dumps(
                     {
@@ -1325,19 +1336,22 @@ def stream_corrected_shards(
                 ),
                 flush=True,
             )
-    finally:
-        if full_writer is not None:
-            full_writer.close()
-        if statistical_writer is not None:
-            statistical_writer.close()
-
     for coordinate, metadata in coordinates.items():
         if metadata["loaded_rows"] != metadata["expected_rows"]:
             raise ValueError(
                 f"corrected shard {coordinate} row count differs from audit"
             )
-    if full_writer is None or statistical_writer is None:
+    if not full_piece_paths or not statistical_piece_paths:
         raise ValueError("corrected shards produced no opportunities")
+
+    full_rows = _concatenate_parquet_files(full_piece_paths, full_path)
+    statistical_rows = _concatenate_parquet_files(
+        statistical_piece_paths, statistical_path
+    )
+    if full_rows != statistical_rows or full_rows != technical_input_rows - technical_duplicates_removed:
+        raise ValueError("piece concatenation changed the corrected opportunity count")
+    shutil.rmtree(full_pieces_root)
+    shutil.rmtree(statistical_pieces_root)
 
     opportunities = pd.read_parquet(statistical_path, dtype_backend="pyarrow")
     statistical_path.unlink()
