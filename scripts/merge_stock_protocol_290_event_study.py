@@ -145,6 +145,24 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _resident_memory_kib() -> int | None:
+    """Return current RSS on Linux without adding a runtime dependency."""
+
+    status = Path("/proc/self/status")
+    if not status.is_file():
+        return None
+    for line in status.read_text(encoding="utf-8").splitlines():
+        if line.startswith("VmRSS:"):
+            return int(line.split()[1])
+    return None
+
+
+def _read_parquet_compact(path: Path) -> pd.DataFrame:
+    """Keep large shard strings and timestamps Arrow-backed during the merge."""
+
+    return pd.read_parquet(path, dtype_backend="pyarrow")
+
+
 def _json(path: Path, payload: Mapping[str, object]) -> None:
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True, default=_json_default)
@@ -590,9 +608,9 @@ def merge_corrected_shards(
                 raise ValueError(f"corrected shard {coordinate} has no {key} metadata")
             paths[key] = _audit_output_path(root, metadata, stem, "parquet")
             _audit_output_path(root, metadata, stem, "csv_gzip")
-        opportunities = pd.read_parquet(paths["opportunities"])
-        coverage = pd.read_parquet(paths["coverage"])
-        reconciliation = pd.read_parquet(paths["reconciliation"])
+        opportunities = _read_parquet_compact(paths["opportunities"])
+        coverage = _read_parquet_compact(paths["coverage"])
+        reconciliation = _read_parquet_compact(paths["reconciliation"])
         _assert_columns(
             opportunities,
             ("opportunity_id", "combination_id", "entry_spec_id", "exit_spec_id", "period", "status"),
@@ -613,6 +631,18 @@ def merge_corrected_shards(
         coverage_frames.append(coverage)
         reconciliation_frames.append(reconciliation)
         audits.append(audit)
+        print(
+            json.dumps(
+                {
+                    "stage": "loaded_corrected_shard",
+                    "coordinate": [index, period],
+                    "opportunity_rows": len(opportunities),
+                    "rss_kib": _resident_memory_kib(),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
     expected_coordinates = {
         (index, period)
         for index in range(EXPECTED_ENTRY_SPEC_COUNT)
@@ -620,9 +650,22 @@ def merge_corrected_shards(
     }
     if coordinates != expected_coordinates:
         raise ValueError("corrected shards do not cover the exact 10 by 3 coordinates")
-    opportunities = pd.concat(opportunity_frames, ignore_index=True)
-    coverage = pd.concat(coverage_frames, ignore_index=True)
-    shard_reconciliation = pd.concat(reconciliation_frames, ignore_index=True)
+    print(
+        json.dumps(
+            {
+                "stage": "concatenating_corrected_shards",
+                "shards": len(opportunity_frames),
+                "rss_kib": _resident_memory_kib(),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    opportunities = pd.concat(opportunity_frames, ignore_index=True, copy=False)
+    coverage = pd.concat(coverage_frames, ignore_index=True, copy=False)
+    shard_reconciliation = pd.concat(
+        reconciliation_frames, ignore_index=True, copy=False
+    )
     opportunities = _remove_technical_duplicates(opportunities)
     return opportunities, coverage, shard_reconciliation, audits
 
@@ -2116,6 +2159,7 @@ def merge_event_study(
         )
     if bootstrap_samples < 1:
         raise ValueError("bootstrap_samples must be positive")
+    pd.options.mode.copy_on_write = True
     if fx_rates is None:
         raise ValueError("--fx-rates is required; live FX download is prohibited")
     output = Path(output_root)

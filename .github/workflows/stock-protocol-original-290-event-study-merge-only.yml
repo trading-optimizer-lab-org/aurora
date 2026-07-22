@@ -22,6 +22,7 @@ permissions:
 
 env:
   PYTHONPATH: ${{ github.workspace }}
+  MALLOC_ARENA_MAX: "2"
   AUDIT_RUN_ID: "29804082610"
   AUDIT_ARTIFACT: stock-protocol-all-opportunities-and-realistic-portfolio-audit
   EXACT_RUN_ID: "29688666475"
