@@ -536,6 +536,19 @@ def reconcile_prior_financing(
     reconciliation["reconciled"] = True
 
     if missing_prior_ids:
+        required_supplement_columns: dict[str, object] = {
+            "applicability": "applicable",
+            "censor_reason": "",
+            "capital_rejected": False,
+            "portfolio_simulated": False,
+            "sizing_applied": False,
+            "overlap_discarded": False,
+            "new_oos_claimed": False,
+            "optimization_performed_on_opened_data": False,
+        }
+        for column, default in required_supplement_columns.items():
+            if column not in result:
+                result[column] = default
         current_ids = result["combination_id"].astype(str).unique().tolist()
         exit_ids = result["exit_spec_id"].astype(str).unique().tolist()
         if len(current_ids) != 1 or len(exit_ids) != 1:
