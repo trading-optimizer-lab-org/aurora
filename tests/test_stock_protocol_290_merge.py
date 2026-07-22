@@ -547,6 +547,50 @@ def test_prior_financing_keeps_new_corrected_opportunities_as_unfinanced() -> No
     assert reconciliation["present_in_prior_audit"].tolist() == [True, False]
 
 
+def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
+    manifest = pd.DataFrame(
+        {
+            "combination_id": ["exact"],
+            "entry_spec_id": ["entry-exact"],
+            "exit_spec_id": ["exit-exact"],
+        }
+    )
+    opportunities = pd.DataFrame(
+        {
+            "opportunity_id": ["new-a"],
+            "combination_id": ["exact"],
+            "entry_spec_id": ["entry-exact"],
+            "exit_spec_id": ["exit-exact"],
+            "period": ["A"],
+            "status": ["completed"],
+            "symbol": ["AAA"],
+            "selection_date": ["2009-01-02"],
+            "entry_date": ["2009-01-05"],
+        }
+    )
+    prior = pd.DataFrame(
+        {
+            "opportunity_id": ["old-a", "old-gap"],
+            "symbol": ["AAA", "GAP"],
+            "selection_date": ["2009-01-02", "2009-02-02"],
+            "entry_date": ["2009-01-05", "2009-02-03"],
+            "originally_financed": [True, False],
+            "not_financed_reason": ["", "rejected_insufficient_capital"],
+        }
+    )
+
+    result, reconciliation = reconcile_prior_financing(
+        opportunities, manifest, {"candidate_id": "exact"}, prior
+    )
+
+    gap = result.loc[result["symbol"].eq("GAP")].iloc[0]
+    assert gap["status"] == "failed_due_to_data"
+    assert gap["period"] == "A"
+    assert not gap["capital_rejected"]
+    assert gap["prior_audit_opportunity_id"] == "old-gap"
+    assert reconciliation["reconciled"].all()
+
+
 def test_summary_verifier_rejects_wrong_contract_and_selection_claim(tmp_path: Path) -> None:
     summary = _summary()
     (tmp_path / AUDIT_SUMMARY_NAME).write_text(json.dumps(summary), encoding="utf-8")

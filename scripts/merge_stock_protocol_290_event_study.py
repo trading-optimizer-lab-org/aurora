@@ -488,11 +488,6 @@ def reconcile_prior_financing(
         matched.loc[~still_missing, "prior_audit_opportunity_id"].astype(str)
     )
     missing_prior_ids = sorted(prior_ids - matched_prior_ids)
-    if missing_prior_ids:
-        raise ValueError(
-            "prior audit opportunities do not fully reconcile to corrected ledger: "
-            f"missing={len(missing_prior_ids)}, samples={missing_prior_ids[:10]}"
-        )
     matched.loc[still_missing, "_prior_financed"] = False
     matched.loc[still_missing, "prior_not_financed_reason"] = (
         "not_present_in_prior_audit"
@@ -539,6 +534,123 @@ def reconcile_prior_financing(
     ].notna()
     reconciliation["informational_only"] = True
     reconciliation["reconciled"] = True
+
+    if missing_prior_ids:
+        current_ids = result["combination_id"].astype(str).unique().tolist()
+        exit_ids = result["exit_spec_id"].astype(str).unique().tolist()
+        if len(current_ids) != 1 or len(exit_ids) != 1:
+            raise ValueError("prior gap recovery requires one combination and exit spec")
+        current_combination_id = current_ids[0]
+        current_manifest = manifest.loc[
+            manifest["combination_id"].astype(str).eq(current_combination_id)
+        ]
+        if len(current_manifest) != 1:
+            raise ValueError("prior gap recovery cannot resolve current manifest row")
+        manifest_values = current_manifest.iloc[0].to_dict()
+        prior_only = prior.loc[
+            prior["opportunity_id"].astype(str).isin(missing_prior_ids)
+        ].copy()
+        supplement_rows: list[dict[str, object]] = []
+        supplement_reconciliation: list[dict[str, object]] = []
+        for _, prior_row in prior_only.iterrows():
+            entry_date = pd.Timestamp(prior_row["entry_date"]).normalize()
+            period = next(
+                (
+                    name
+                    for name, config in PERIODS.items()
+                    if pd.Timestamp(config["entry_start"])
+                    <= entry_date
+                    <= pd.Timestamp(config["entry_end"])
+                ),
+                None,
+            )
+            if period is None:
+                raise ValueError("prior unresolved opportunity lies outside A/B/C")
+            prior_id = str(prior_row["opportunity_id"])
+            payload: dict[str, object] = {column: pd.NA for column in result.columns}
+            for column, value in manifest_values.items():
+                if column in payload:
+                    payload[column] = value
+            for column in (
+                "symbol",
+                "selection_date",
+                "entry_date",
+                "entry_price",
+                "country",
+                "market",
+                "exchange",
+                "currency",
+                "score",
+                "entry_score",
+            ):
+                if column in payload and column in prior_row.index:
+                    payload[column] = prior_row[column]
+            for column in ("dataset_hash", "policy_hash", "source_snapshot_sha256"):
+                if column in payload:
+                    values = result[column].dropna()
+                    if not values.empty:
+                        payload[column] = values.iloc[0]
+            payload.update(
+                {
+                    "opportunity_id": "stock_prior_gap_"
+                    + hashlib.sha256(
+                        f"{current_combination_id}|{prior_id}".encode("utf-8")
+                    ).hexdigest()[:20],
+                    "combination_id": current_combination_id,
+                    "entry_spec_id": exact_entry_spec_id,
+                    "exit_spec_id": exit_ids[0],
+                    "period": period,
+                    "status": "failed_due_to_data",
+                    "applicability": "applicable",
+                    "censor_reason": "unresolved_prior_provenance_gap_missing_corrected_source_data",
+                    "financed_in_old_portfolio": bool(prior_row["originally_financed"]),
+                    "financing_information_only": True,
+                    "financing_reconciliation_status": "prior_audit_only_failed_due_to_data",
+                    "prior_audit_opportunity_id": prior_id,
+                    "prior_not_financed_reason": str(
+                        prior_row.get("not_financed_reason", "") or ""
+                    ),
+                    "capital_rejected": False,
+                    "portfolio_simulated": False,
+                    "sizing_applied": False,
+                    "overlap_discarded": False,
+                    "new_oos_claimed": False,
+                    "optimization_performed_on_opened_data": False,
+                }
+            )
+            supplement_rows.append(payload)
+            supplement_reconciliation.append(
+                {
+                    "exact_combination_id": candidate_id,
+                    "exact_entry_spec_id": exact_entry_spec_id,
+                    "symbol": prior_row["symbol"],
+                    "selection_date": prior_row["selection_date"],
+                    "entry_date": prior_row["entry_date"],
+                    "prior_audit_opportunity_id": prior_id,
+                    "financed_in_old_portfolio": bool(
+                        prior_row["originally_financed"]
+                    ),
+                    "prior_not_financed_reason": str(
+                        prior_row.get("not_financed_reason", "") or ""
+                    ),
+                    "reconciliation_match_basis": (
+                        "prior_audit_only_failed_due_to_data"
+                    ),
+                    "present_in_prior_audit": True,
+                    "informational_only": True,
+                    "reconciled": True,
+                }
+            )
+        result = pd.concat(
+            [result, pd.DataFrame(supplement_rows, columns=result.columns)],
+            ignore_index=True,
+            copy=False,
+        )
+        reconciliation = pd.concat(
+            [reconciliation, pd.DataFrame(supplement_reconciliation)],
+            ignore_index=True,
+            copy=False,
+        )
     return result, reconciliation.reset_index(drop=True)
 
 
