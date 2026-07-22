@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import math
 import os
@@ -14,6 +16,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
@@ -136,6 +140,46 @@ REQUIRED_TOP_LEVEL_FILES = {
     *STATISTIC_FILES.values(),
 }
 
+STATISTICAL_LEDGER_COLUMNS = (
+    "opportunity_id",
+    "combination_id",
+    "entry_spec_id",
+    "exit_spec_id",
+    "symbol",
+    "period",
+    "status",
+    "censor_reason",
+    "selection_date",
+    "signal_date",
+    "entry_signal_date",
+    "entry_date",
+    "entry_price",
+    "exit_date",
+    "exit_reason",
+    "gross_return",
+    "maximum_adverse_excursion",
+    "holding_sessions",
+    "stop_hit",
+    "target_hit",
+    "time_exit",
+    "max_holding_reached",
+    "country",
+    "market",
+    "currency",
+    "semantic_applicability",
+    "ranking_eligible",
+)
+
+STATISTICAL_COVERAGE_COLUMNS = (
+    "entry_spec_id",
+    "symbol",
+    "selection_date",
+    "period",
+    "triggered",
+    "entry_in_period",
+    "wait_sessions",
+)
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -161,6 +205,46 @@ def _read_parquet_compact(path: Path) -> pd.DataFrame:
     """Keep large shard strings and timestamps Arrow-backed during the merge."""
 
     return pd.read_parquet(path, dtype_backend="pyarrow")
+
+
+def _append_parquet_frame(
+    writer: pq.ParquetWriter | None,
+    schema: pa.Schema | None,
+    path: Path,
+    frame: pd.DataFrame,
+) -> tuple[pq.ParquetWriter, pa.Schema]:
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    if writer is None:
+        schema = table.schema
+        writer = pq.ParquetWriter(path, schema, compression="zstd")
+    assert schema is not None
+    if table.schema != schema:
+        table = table.cast(schema, safe=False)
+    writer.write_table(table)
+    return writer, schema
+
+
+def _parquet_to_gzip_csv(
+    parquet_path: Path,
+    csv_path: Path,
+    *,
+    period: str | None = None,
+) -> int:
+    rows = 0
+    header = True
+    with csv_path.open("wb") as raw:
+        with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed:
+            with io.TextIOWrapper(compressed, encoding="utf-8", newline="") as text:
+                for batch in pq.ParquetFile(parquet_path).iter_batches(batch_size=50_000):
+                    frame = batch.to_pandas(types_mapper=pd.ArrowDtype)
+                    if period is not None:
+                        frame = frame.loc[frame["period"].astype(str).eq(period)]
+                    if frame.empty:
+                        continue
+                    frame.to_csv(text, index=False, header=header)
+                    header = False
+                    rows += len(frame)
+    return rows
 
 
 def _json(path: Path, payload: Mapping[str, object]) -> None:
@@ -668,6 +752,251 @@ def merge_corrected_shards(
     )
     opportunities = _remove_technical_duplicates(opportunities)
     return opportunities, coverage, shard_reconciliation, audits
+
+
+def stream_corrected_shards(
+    shards_root: Path,
+    manifest: pd.DataFrame,
+    *,
+    fx_rates: pd.DataFrame,
+    exact_strategy: Mapping[str, Any],
+    prior_opportunities: pd.DataFrame,
+    output_root: Path,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    list[dict[str, Any]],
+    pd.DataFrame,
+    pd.DataFrame,
+    int,
+    int,
+]:
+    """Merge the large ledgers out of core, retaining only statistics columns."""
+
+    shards = _discover_shards(
+        shards_root, CORRECTED_AUDIT_NAME, EXPECTED_CORRECTED_SHARDS
+    )
+    contract_ids = set(manifest["combination_id"].astype(str))
+    coordinates: dict[tuple[int, str], dict[str, Any]] = {}
+    entry_indexes: dict[str, int] = {}
+    coverage_frames: list[pd.DataFrame] = []
+    reconciliation_frames: list[pd.DataFrame] = []
+    audits: list[dict[str, Any]] = []
+
+    for root, audit in shards:
+        index = int(audit.get("entry_index", -1))
+        period = str(audit.get("period", ""))
+        coordinate = (index, period)
+        if index not in range(EXPECTED_ENTRY_SPEC_COUNT) or period not in PERIOD_NAMES:
+            raise ValueError(f"invalid corrected shard coordinate {coordinate}")
+        if coordinate in coordinates:
+            raise ValueError(f"duplicate corrected shard coordinate {coordinate}")
+        if int(audit.get("combination_count", -1)) != EXPECTED_EXIT_SPEC_COUNT:
+            raise ValueError(f"corrected shard {coordinate} is not a 29-exit shard")
+        if str(audit.get("cutoff")) != CUTOFF.date().isoformat():
+            raise ValueError(f"corrected shard {coordinate} changed the cutoff")
+        for field in (
+            "new_oos_claimed",
+            "optimization_performed_on_opened_data",
+            "capital_rejection_applied",
+            "portfolio_or_sizing_applied",
+            "overlaps_discarded",
+        ):
+            if _as_bool(audit.get(field, True)):
+                raise ValueError(f"corrected shard {coordinate} violates {field}=false")
+        outputs = audit.get("outputs")
+        if not isinstance(outputs, dict):
+            raise ValueError(f"corrected shard {coordinate} has no output audit")
+        paths: dict[str, Path] = {}
+        for key, stem in (
+            ("opportunities", OPPORTUNITIES_STEM),
+            ("coverage", COVERAGE_STEM),
+            ("reconciliation", RECONCILIATION_STEM),
+        ):
+            metadata = outputs.get(key)
+            if not isinstance(metadata, dict):
+                raise ValueError(f"corrected shard {coordinate} has no {key} metadata")
+            paths[key] = _audit_output_path(root, metadata, stem, "parquet")
+            redundant_csv = _audit_output_path(root, metadata, stem, "csv_gzip")
+            redundant_csv.unlink()
+
+        coverage = _read_parquet_compact(paths["coverage"])
+        _assert_columns(
+            coverage,
+            STATISTICAL_COVERAGE_COLUMNS,
+            "corrected entry coverage",
+        )
+        shard_reconciliation = _read_parquet_compact(paths["reconciliation"])
+        if not shard_reconciliation["reconciled"].map(_as_bool).all():
+            raise ValueError(f"corrected shard {coordinate} does not reconcile")
+        entry_spec_id = str(audit.get("entry_spec_id", ""))
+        if entry_spec_id in entry_indexes and entry_indexes[entry_spec_id] != index:
+            raise ValueError("one corrected entry spec maps to multiple indexes")
+        entry_indexes[entry_spec_id] = index
+        coordinates[coordinate] = {
+            "opportunities_path": paths["opportunities"],
+            "expected_rows": int(audit.get("opportunity_count", -1)),
+            "loaded_rows": 0,
+        }
+        coverage_frames.append(coverage)
+        reconciliation_frames.append(shard_reconciliation)
+        audits.append(audit)
+
+    expected_coordinates = {
+        (index, period)
+        for index in range(EXPECTED_ENTRY_SPEC_COUNT)
+        for period in PERIOD_NAMES
+    }
+    if set(coordinates) != expected_coordinates:
+        raise ValueError("corrected shards do not cover the exact 10 by 3 coordinates")
+    if set(entry_indexes) != set(manifest["entry_spec_id"].astype(str)):
+        raise ValueError("corrected shards do not cover the exact entry specs")
+
+    full_path = output_root / OPPORTUNITIES_PARQUET
+    statistical_path = output_root / "_statistical_ledger.parquet"
+    full_writer: pq.ParquetWriter | None = None
+    full_schema: pa.Schema | None = None
+    statistical_writer: pq.ParquetWriter | None = None
+    statistical_schema: pa.Schema | None = None
+    financing_frames: list[pd.DataFrame] = []
+    fx_audit_frames: list[pd.DataFrame] = []
+    technical_input_rows = 0
+    technical_duplicates_removed = 0
+    exact_entry_spec_id = str(
+        manifest.loc[
+            manifest["combination_id"].astype(str).eq(str(exact_strategy["candidate_id"])),
+            "entry_spec_id",
+        ].iloc[0]
+    )
+
+    try:
+        for row in manifest.to_dict(orient="records"):
+            combination_id = str(row["combination_id"])
+            entry_spec_id = str(row["entry_spec_id"])
+            index = entry_indexes[entry_spec_id]
+            pieces: list[pd.DataFrame] = []
+            for period in PERIOD_NAMES:
+                metadata = coordinates[(index, period)]
+                piece = pd.read_parquet(
+                    metadata["opportunities_path"],
+                    filters=[("combination_id", "==", combination_id)],
+                    dtype_backend="pyarrow",
+                )
+                if not piece.empty:
+                    _assert_columns(
+                        piece,
+                        (
+                            "opportunity_id",
+                            "combination_id",
+                            "entry_spec_id",
+                            "exit_spec_id",
+                            "period",
+                            "status",
+                        ),
+                        "corrected opportunity slice",
+                    )
+                    if not piece["combination_id"].astype(str).eq(combination_id).all():
+                        raise ValueError("filtered corrected slice contains a foreign combination")
+                    if set(piece["status"].astype(str)) - LEDGER_STATUSES:
+                        raise ValueError("filtered corrected slice contains an invalid status")
+                    if not piece["period"].astype(str).eq(period).all():
+                        raise ValueError("filtered corrected slice mixes periods")
+                metadata["loaded_rows"] += len(piece)
+                pieces.append(piece)
+
+            combined = pd.concat(pieces, ignore_index=True, copy=False)
+            technical_input_rows += len(combined)
+            combined = _remove_technical_duplicates(combined)
+            technical_duplicates_removed += sum(len(piece) for piece in pieces) - len(combined)
+            _assert_dates_at_cutoff(combined, f"corrected combination {combination_id}")
+            for field in (
+                "capital_rejected",
+                "portfolio_simulated",
+                "sizing_applied",
+                "overlap_discarded",
+                "new_oos_claimed",
+                "optimization_performed_on_opened_data",
+            ):
+                if field in combined and combined[field].map(_as_bool).any():
+                    raise ValueError(f"corrected combination violates {field}=false")
+
+            combined, fx_audit = enrich_fx_causally(combined, fx_rates)
+            if entry_spec_id == exact_entry_spec_id:
+                combined, financing = reconcile_prior_financing(
+                    combined, manifest, exact_strategy, prior_opportunities
+                )
+                financing_frames.append(financing)
+            else:
+                combined["financed_in_old_portfolio"] = False
+                combined["financing_information_only"] = True
+                combined["financing_reconciliation_status"] = (
+                    "not_applicable_different_entry_spec"
+                )
+                combined["prior_audit_opportunity_id"] = ""
+                combined["prior_not_financed_reason"] = ""
+            fx_audit_frames.append(fx_audit)
+
+            full_writer, full_schema = _append_parquet_frame(
+                full_writer, full_schema, full_path, combined
+            )
+            missing_statistics = set(STATISTICAL_LEDGER_COLUMNS) - set(combined.columns)
+            if missing_statistics:
+                raise ValueError(
+                    f"statistical ledger missing columns: {sorted(missing_statistics)}"
+                )
+            statistical_writer, statistical_schema = _append_parquet_frame(
+                statistical_writer,
+                statistical_schema,
+                statistical_path,
+                combined.loc[:, STATISTICAL_LEDGER_COLUMNS],
+            )
+            print(
+                json.dumps(
+                    {
+                        "stage": "streamed_combination",
+                        "combination_id": combination_id,
+                        "rows": len(combined),
+                        "rss_kib": _resident_memory_kib(),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+    finally:
+        if full_writer is not None:
+            full_writer.close()
+        if statistical_writer is not None:
+            statistical_writer.close()
+
+    for coordinate, metadata in coordinates.items():
+        if metadata["loaded_rows"] != metadata["expected_rows"]:
+            raise ValueError(
+                f"corrected shard {coordinate} row count differs from audit"
+            )
+    if full_writer is None or statistical_writer is None:
+        raise ValueError("corrected shards produced no opportunities")
+
+    opportunities = pd.read_parquet(statistical_path, dtype_backend="pyarrow")
+    statistical_path.unlink()
+    coverage = pd.concat(coverage_frames, ignore_index=True, copy=False)
+    shard_reconciliation = pd.concat(
+        reconciliation_frames, ignore_index=True, copy=False
+    )
+    financing_reconciliation = pd.concat(
+        financing_frames, ignore_index=True, copy=False
+    ).drop_duplicates(["symbol", "selection_date", "entry_date"], keep="first")
+    fx_audit = pd.concat(fx_audit_frames, ignore_index=True, copy=False).drop_duplicates()
+    return (
+        opportunities,
+        coverage,
+        shard_reconciliation,
+        audits,
+        fx_audit,
+        financing_reconciliation.reset_index(drop=True),
+        technical_input_rows,
+        technical_duplicates_removed,
+    )
 
 
 def _remove_technical_duplicates(frame: pd.DataFrame) -> pd.DataFrame:
@@ -2177,8 +2506,22 @@ def merge_event_study(
     historical, historical_audit = merge_historical_shards(
         Path(historical_shards_root), manifest
     )
-    opportunities, coverage, shard_reconciliation, corrected_audits = merge_corrected_shards(
-        Path(corrected_shards_root), manifest
+    (
+        opportunities,
+        coverage,
+        shard_reconciliation,
+        corrected_audits,
+        fx_audit,
+        financing_reconciliation,
+        technical_input_rows,
+        technical_duplicates_removed,
+    ) = stream_corrected_shards(
+        Path(corrected_shards_root),
+        manifest,
+        fx_rates=fx_rates,
+        exact_strategy=exact_strategy,
+        prior_opportunities=prior_opportunities,
+        output_root=output,
     )
     corrected_manifest_hashes = {
         str(audit.get("manifest_sha256", "")) for audit in corrected_audits
@@ -2200,8 +2543,6 @@ def merge_event_study(
         if historical_values != {value}:
             raise ValueError(f"historical and corrected shards use different {field}")
         provenance[field] = value
-    technical_input_rows = sum(int(audit["opportunity_count"]) for audit in corrected_audits)
-    technical_duplicates_removed = technical_input_rows - len(opportunities)
     _assert_dates_at_cutoff(opportunities, "merged opportunities")
     for column in (
         "capital_rejected",
@@ -2213,13 +2554,6 @@ def merge_event_study(
     ):
         if column in opportunities and opportunities[column].map(_as_bool).any():
             raise ValueError(f"merged opportunities violate invariant {column}=false")
-    opportunities, fx_audit = enrich_fx_causally(opportunities, fx_rates)
-    opportunities, financing_reconciliation = reconcile_prior_financing(
-        opportunities,
-        manifest,
-        exact_strategy,
-        prior_opportunities,
-    )
     reconciliation = reconcile_all_combinations(opportunities, manifest)
     semantic = _semantic_audit(manifest, reconciliation)
     statistics = build_statistical_outputs(
@@ -2249,13 +2583,25 @@ def merge_event_study(
         frozen_fx_rates.sort_values(["currency", "date"], kind="stable").to_csv(
             output / FROZEN_FX_RATES_NAME, index=False
         )
-    opportunities.to_parquet(output / OPPORTUNITIES_PARQUET, index=False)
-    opportunities.to_csv(
+    csv_rows = _parquet_to_gzip_csv(
+        output / OPPORTUNITIES_PARQUET,
         output / OPPORTUNITIES_CSV_GZIP,
-        index=False,
-        compression={"method": "gzip", "mtime": 0},
     )
-    _write_partitioned_csv(output / OPPORTUNITIES_PARTS, opportunities)
+    if csv_rows != len(opportunities):
+        raise ValueError("streamed opportunity CSV row count differs")
+    parts_root = output / OPPORTUNITIES_PARTS
+    parts_root.mkdir(parents=True, exist_ok=False)
+    partition_rows = 0
+    for period in PERIOD_NAMES:
+        partition = parts_root / f"period={period}"
+        partition.mkdir()
+        partition_rows += _parquet_to_gzip_csv(
+            output / OPPORTUNITIES_PARQUET,
+            partition / "part-00000.csv.gz",
+            period=period,
+        )
+    if partition_rows != len(opportunities):
+        raise ValueError("partitioned opportunity CSV row count differs")
     coverage.to_parquet(output / COVERAGE_PARQUET, index=False)
     coverage.to_csv(
         output / COVERAGE_CSV_GZIP,

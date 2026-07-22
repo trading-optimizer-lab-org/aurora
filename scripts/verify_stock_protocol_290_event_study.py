@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from aurora.research.stock_protocol.event_study_290_manifest import (
     COMBINATION_MANIFEST_NAME,
@@ -96,6 +97,35 @@ OPPORTUNITY_LEDGER_REQUIRED_COLUMNS = (
     "financed_in_old_portfolio", "financing_information_only",
     "financing_reconciliation_status", "prior_audit_opportunity_id",
     "prior_not_financed_reason",
+)
+
+OPPORTUNITY_VERIFICATION_COLUMNS = (
+    "opportunity_id",
+    "combination_id",
+    "period",
+    "status",
+    "entry_date",
+    "exit_date",
+    "mtm_date",
+    "return_usd",
+    "total_return_local",
+    "primary_event_return",
+    "gross_return",
+    "primary_event_return_basis",
+    "gross_return_basis",
+    "capital_rejected",
+    "capital_rejection_reason",
+    "portfolio_simulated",
+    "sizing_applied",
+    "overlap_discarded",
+    "fx_values_invented",
+    "financing_information_only",
+    "financing_reconciliation_status",
+    "prior_audit_opportunity_id",
+    "fx_entry_date",
+    "fx_exit_date",
+    "dividend_payments_local_json",
+    "fx_dividend_dates_used",
 )
 
 COVERAGE_REQUIRED_COLUMNS = (
@@ -364,15 +394,27 @@ def _verify_historical(root: Path, contract: pd.DataFrame) -> None:
 
 
 def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.DataFrame) -> pd.DataFrame:
-    parquet = pd.read_parquet(root / OPPORTUNITIES_PARQUET)
-    csv_gzip = pd.read_csv(root / OPPORTUNITIES_CSV_GZIP, low_memory=False)
-    _columns(
-        parquet,
-        OPPORTUNITY_LEDGER_REQUIRED_COLUMNS,
-        "opportunities",
+    parquet_path = root / OPPORTUNITIES_PARQUET
+    parquet_schema = pq.ParquetFile(parquet_path).schema_arrow.names
+    missing = set(OPPORTUNITY_LEDGER_REQUIRED_COLUMNS) - set(parquet_schema)
+    _require(not missing, f"opportunities missing columns: {sorted(missing)}")
+    csv_columns = pd.read_csv(root / OPPORTUNITIES_CSV_GZIP, nrows=0).columns.tolist()
+    _require(set(parquet_schema) == set(csv_columns), "parquet and gzip ledger schemas differ")
+    parquet = pd.read_parquet(
+        parquet_path,
+        columns=list(OPPORTUNITY_VERIFICATION_COLUMNS),
+        dtype_backend="pyarrow",
     )
-    _require(set(parquet.columns) == set(csv_gzip.columns), "parquet and gzip ledger schemas differ")
-    _require(len(parquet) == len(csv_gzip), "parquet and gzip opportunity counts differ")
+    csv_rows = sum(
+        len(chunk)
+        for chunk in pd.read_csv(
+            root / OPPORTUNITIES_CSV_GZIP,
+            usecols=["opportunity_id"],
+            chunksize=200_000,
+            dtype_backend="pyarrow",
+        )
+    )
+    _require(len(parquet) == csv_rows, "parquet and gzip opportunity counts differ")
     _require(len(parquet) == int(summary["opportunity_count"]), "opportunity count differs from audit")
     _require(parquet["opportunity_id"].nunique() == len(parquet), "technical opportunity IDs are duplicated")
     _require(set(parquet["combination_id"].astype(str)) == set(contract["combination_id"]), "opportunities do not cover exact contract")
@@ -476,7 +518,10 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
         not (fx_exit_dates.notna() & (fx_exit_dates > valuation_dates)).any(),
         "future FX was used at exit or mark-to-market",
     )
-    for row in parquet.itertuples(index=False):
+    dividend_rows = parquet.loc[
+        parquet["dividend_payments_local_json"].fillna("[]").astype(str).ne("[]")
+    ]
+    for row in dividend_rows.itertuples(index=False):
         try:
             payments = json.loads(str(row.dividend_payments_local_json))
         except json.JSONDecodeError as exc:
@@ -500,10 +545,19 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
             _require(pd.notna(valuation), "dividend row lacks a valuation endpoint")
             _require(timestamp <= pd.Timestamp(valuation).normalize(), "dividend follows valuation")
     _dates(parquet, "opportunities")
-    part_frames = [pd.read_csv(path, low_memory=False) for path in sorted((root / OPPORTUNITIES_PARTS).glob("period=*/part-*.csv.gz"))]
-    _require(sum(len(frame) for frame in part_frames) == len(parquet), "partitioned opportunity count differs")
-    part_ids = pd.concat(part_frames, ignore_index=True)["opportunity_id"]
-    _require(set(part_ids) == set(parquet["opportunity_id"]), "partitioned opportunity IDs differ")
+    part_rows = 0
+    part_periods: set[str] = set()
+    for path in sorted((root / OPPORTUNITIES_PARTS).glob("period=*/part-*.csv.gz")):
+        for chunk in pd.read_csv(
+            path,
+            usecols=["period"],
+            chunksize=200_000,
+            dtype_backend="pyarrow",
+        ):
+            part_rows += len(chunk)
+            part_periods.update(chunk["period"].astype(str).unique())
+    _require(part_rows == len(parquet), "partitioned opportunity count differs")
+    _require(part_periods == set(PERIOD_NAMES), "partitioned opportunity periods differ")
     return parquet
 
 
