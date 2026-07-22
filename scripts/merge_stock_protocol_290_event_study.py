@@ -566,9 +566,21 @@ def reconcile_prior_financing(
         supplement_rows: list[dict[str, object]] = []
         supplement_reconciliation: list[dict[str, object]] = []
         for _, prior_row in prior_only.iterrows():
-            selection_date = pd.Timestamp(prior_row["selection_date"]).normalize()
+            selection_date = pd.to_datetime(
+                prior_row["selection_date"], errors="coerce"
+            )
+            signal_date = pd.to_datetime(prior_row.get("signal_date"), errors="coerce")
             entry_date = pd.Timestamp(prior_row["entry_date"]).normalize()
-            selection_date_iso = selection_date.date().isoformat()
+            selection_date_iso = (
+                None
+                if pd.isna(selection_date)
+                else pd.Timestamp(selection_date).date().isoformat()
+            )
+            signal_date_iso = (
+                None
+                if pd.isna(signal_date)
+                else pd.Timestamp(signal_date).date().isoformat()
+            )
             entry_date_iso = entry_date.date().isoformat()
             period = next(
                 (
@@ -600,6 +612,10 @@ def reconcile_prior_financing(
                 if column in payload and column in prior_row.index:
                     payload[column] = prior_row[column]
             payload["selection_date"] = selection_date_iso
+            if "signal_date" in payload:
+                payload["signal_date"] = signal_date_iso
+            if "entry_signal_date" in payload:
+                payload["entry_signal_date"] = signal_date_iso
             payload["entry_date"] = entry_date_iso
             for column in ("dataset_hash", "policy_hash", "source_snapshot_sha256"):
                 if column in payload:

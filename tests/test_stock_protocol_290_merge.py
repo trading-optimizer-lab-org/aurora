@@ -565,6 +565,8 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
             "status": ["completed"],
             "symbol": ["AAA"],
             "selection_date": ["2009-01-02"],
+            "signal_date": ["2009-01-02"],
+            "entry_signal_date": ["2009-01-02"],
             "entry_date": ["2009-01-05"],
         }
     )
@@ -572,7 +574,8 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
         {
             "opportunity_id": ["old-a", "old-gap"],
             "symbol": ["AAA", "GAP"],
-            "selection_date": ["2009-01-02", "2009-02-02"],
+            "selection_date": ["2009-01-02", None],
+            "signal_date": ["2009-01-02", "2009-02-02"],
             "entry_date": ["2009-01-05", "2009-02-03"],
             "originally_financed": [True, False],
             "not_financed_reason": ["", "rejected_insufficient_capital"],
@@ -588,9 +591,11 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
     assert gap["period"] == "A"
     assert not gap["capital_rejected"]
     assert gap["prior_audit_opportunity_id"] == "old-gap"
-    assert gap["selection_date"] == "2009-02-02"
+    assert pd.isna(gap["selection_date"])
+    assert gap["signal_date"] == "2009-02-02"
+    assert gap["entry_signal_date"] == "2009-02-02"
     assert gap["entry_date"] == "2009-02-03"
-    assert " " not in gap["selection_date"]
+    assert " " not in gap["signal_date"]
     assert " " not in gap["entry_date"]
     pd.to_datetime(result["selection_date"], errors="raise")
     pd.to_datetime(result["entry_date"], errors="raise")
