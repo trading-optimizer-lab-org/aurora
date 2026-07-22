@@ -952,6 +952,28 @@ def stream_corrected_shards(
             technical_input_rows += len(combined)
             combined = _remove_technical_duplicates(combined)
             technical_duplicates_removed += sum(len(piece) for piece in pieces) - len(combined)
+            for column in base_column_order:
+                if column not in combined:
+                    combined[column] = pd.Series(
+                        pa.nulls(len(combined), type=base_column_types[column]),
+                        dtype=pd.ArrowDtype(base_column_types[column]),
+                    )
+                else:
+                    try:
+                        values = pa.array(
+                            combined[column],
+                            type=base_column_types[column],
+                            from_pandas=True,
+                            safe=False,
+                        )
+                    except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
+                        raise ValueError(
+                            f"cannot normalize base column {column} to "
+                            f"{base_column_types[column]}"
+                        ) from exc
+                    combined[column] = pd.Series(
+                        values, dtype=pd.ArrowDtype(base_column_types[column])
+                    )
             _assert_dates_at_cutoff(combined, f"corrected combination {combination_id}")
             for field in (
                 "capital_rejected",
@@ -980,22 +1002,6 @@ def stream_corrected_shards(
                 combined["prior_not_financed_reason"] = ""
             fx_audit_frames.append(fx_audit)
 
-            for column in base_column_order:
-                if column not in combined:
-                    combined[column] = pd.Series(
-                        pa.nulls(len(combined), type=base_column_types[column]),
-                        dtype=pd.ArrowDtype(base_column_types[column]),
-                    )
-                else:
-                    combined[column] = pd.Series(
-                        pa.array(
-                            combined[column],
-                            type=base_column_types[column],
-                            from_pandas=True,
-                            safe=False,
-                        ),
-                        dtype=pd.ArrowDtype(base_column_types[column]),
-                    )
             base_columns = set(base_column_order)
             output_columns = [
                 *base_column_order,
