@@ -1193,6 +1193,7 @@ def stream_corrected_shards(
     fx_audit_frames: list[pd.DataFrame] = []
     technical_input_rows = 0
     technical_duplicates_removed = 0
+    prior_reconciliation_rows_added = 0
     exact_entry_spec_id = str(
         manifest.loc[
             manifest["combination_id"].astype(str).eq(str(exact_strategy["candidate_id"])),
@@ -1279,9 +1280,14 @@ def stream_corrected_shards(
 
             combined, fx_audit = enrich_fx_causally(combined, fx_rates)
             if entry_spec_id == exact_entry_spec_id:
+                rows_before_reconciliation = len(combined)
                 combined, financing = reconcile_prior_financing(
                     combined, manifest, exact_strategy, prior_opportunities
                 )
+                reconciliation_delta = len(combined) - rows_before_reconciliation
+                if reconciliation_delta < 0:
+                    raise ValueError("prior financing reconciliation removed opportunities")
+                prior_reconciliation_rows_added += reconciliation_delta
                 financing_frames.append(financing)
             else:
                 combined["financed_in_old_portfolio"] = False
@@ -1348,7 +1354,11 @@ def stream_corrected_shards(
     statistical_rows = _concatenate_parquet_files(
         statistical_piece_paths, statistical_path
     )
-    expected_rows = technical_input_rows - technical_duplicates_removed
+    expected_rows = (
+        technical_input_rows
+        - technical_duplicates_removed
+        + prior_reconciliation_rows_added
+    )
     if full_rows != statistical_rows:
         raise ValueError(
             "full and statistical piece concatenation differ: "
@@ -1359,6 +1369,7 @@ def stream_corrected_shards(
             "piece concatenation changed the corrected opportunity count: "
             f"full={full_rows}, technical_input={technical_input_rows}, "
             f"duplicates_removed={technical_duplicates_removed}, "
+            f"prior_reconciliation_added={prior_reconciliation_rows_added}, "
             f"expected={expected_rows}"
         )
     shutil.rmtree(full_pieces_root)
@@ -1488,8 +1499,33 @@ def load_prepared_corrected_parts(
         int(audit.get("technical_duplicates_removed", -1))
         for _, audit in ordered
     )
-    if technical_input_rows < 1 or technical_duplicates_removed < 0:
+    prior_reconciliation_rows_added = sum(
+        int(
+            audit.get(
+                "prior_reconciliation_rows_added",
+                int(audit.get("opportunity_rows", -1))
+                - int(audit.get("technical_input_rows", -1))
+                + int(audit.get("technical_duplicates_removed", -1)),
+            )
+        )
+        for _, audit in ordered
+    )
+    if (
+        technical_input_rows < 1
+        or technical_duplicates_removed < 0
+        or prior_reconciliation_rows_added < 0
+    ):
         raise ValueError("prepared part technical counts are invalid")
+    expected_rows = (
+        technical_input_rows
+        - technical_duplicates_removed
+        + prior_reconciliation_rows_added
+    )
+    if full_rows != expected_rows:
+        raise ValueError(
+            "prepared ledgers do not reconcile to shard and prior-audit rows: "
+            f"full={full_rows}, expected={expected_rows}"
+        )
     return (
         opportunities,
         coverage,
@@ -3172,6 +3208,11 @@ def merge_event_study(
         "failed_due_to_data": int(aggregate["failed_due_to_data"].sum()),
         "technical_input_rows": technical_input_rows,
         "technical_duplicates_removed": technical_duplicates_removed,
+        "prior_reconciliation_rows_added": int(
+            len(opportunities)
+            - technical_input_rows
+            + technical_duplicates_removed
+        ),
         "all_combinations_reconciled": bool(reconciliation["reconciled"].all()),
         "historical_replication_passed": True,
         "semantic_audit_preserved": True,

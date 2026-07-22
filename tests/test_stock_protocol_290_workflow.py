@@ -11,6 +11,7 @@ DISPATCH = ROOT / ".github/workflows/stock-protocol-original-290-event-study.yml
 RECOVERY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-recovery.yml"
 MERGE_ONLY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-merge-only.yml"
 CHECKPOINTED = ROOT / ".github/workflows/stock-protocol-original-290-event-study-checkpointed.yml"
+PREPARE_SCRIPT = ROOT / "scripts/prepare_stock_protocol_290_merge_part.py"
 FX_ARTIFACT = "stock-protocol-290-frozen-fx"
 FX_RATES = "stock-protocol-290-fx-rates.csv"
 
@@ -40,6 +41,7 @@ def test_checkpointed_workflow_prepares_each_entry_once_and_merges_checkpoints()
     assert prepare["strategy"]["matrix"]["entry_index"] == list(range(10))
     assert prepare["strategy"]["max-parallel"] == 10
     text = CHECKPOINTED.read_text(encoding="utf-8")
+    prepare_script = PREPARE_SCRIPT.read_text(encoding="utf-8")
     assert "stock-protocol-290-corrected-${{ matrix.entry_index }}-*" in text
     assert "if: matrix.entry_index != 7" in text
     assert "if: matrix.entry_index == 7" in text
@@ -48,6 +50,7 @@ def test_checkpointed_workflow_prepares_each_entry_once_and_merges_checkpoints()
     assert "prepare_stock_protocol_290_merge_part.py" in text
     assert "--prepared-parts-root prepared-parts" in text
     assert "stock-protocol-290-prepared-entry-*" in text
+    assert "prior_reconciliation_rows_added" in prepare_script
     merge_text = text.split("  merge-and-verify:", 1)[1]
     assert "--corrected-shards-root" not in merge_text
     assert "verify_stock_protocol_290_event_study.py final" in merge_text

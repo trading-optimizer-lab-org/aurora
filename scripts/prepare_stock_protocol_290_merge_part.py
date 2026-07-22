@@ -98,6 +98,11 @@ def prepare_part(
         for name in file_names
     }
     entry_ids = sorted(opportunities["entry_spec_id"].astype(str).unique())
+    prior_reconciliation_rows_added = (
+        len(opportunities) - technical_input_rows + technical_duplicates_removed
+    )
+    if prior_reconciliation_rows_added < 0:
+        raise ValueError("prepared checkpoint lost technical input rows")
     payload: dict[str, object] = {
         "schema_version": 1,
         "entry_index": entry_index,
@@ -106,6 +111,7 @@ def prepare_part(
         "opportunity_rows": len(opportunities),
         "technical_input_rows": technical_input_rows,
         "technical_duplicates_removed": technical_duplicates_removed,
+        "prior_reconciliation_rows_added": prior_reconciliation_rows_added,
         "corrected_audits": corrected_audits,
         "cutoff": CUTOFF.date().isoformat(),
         "locked_opened": False,
