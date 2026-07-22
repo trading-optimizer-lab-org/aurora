@@ -1193,7 +1193,10 @@ def enrich_fx_causally(
     for column in ("fx_entry_date", "fx_exit_date"):
         result[column] = pd.to_datetime(result[column], errors="coerce")
     result["fx_dividend_dates_used"] = (
-        result["fx_dividend_dates_used"].fillna("").astype(object)
+        result["fx_dividend_dates_used"]
+        .astype("string[python]")
+        .fillna("")
+        .astype(object)
     )
     for column in set(FX_COLUMNS) - {
         "fx_entry_date",
