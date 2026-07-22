@@ -1348,8 +1348,19 @@ def stream_corrected_shards(
     statistical_rows = _concatenate_parquet_files(
         statistical_piece_paths, statistical_path
     )
-    if full_rows != statistical_rows or full_rows != technical_input_rows - technical_duplicates_removed:
-        raise ValueError("piece concatenation changed the corrected opportunity count")
+    expected_rows = technical_input_rows - technical_duplicates_removed
+    if full_rows != statistical_rows:
+        raise ValueError(
+            "full and statistical piece concatenation differ: "
+            f"full={full_rows}, statistical={statistical_rows}"
+        )
+    if full_rows != expected_rows:
+        raise ValueError(
+            "piece concatenation changed the corrected opportunity count: "
+            f"full={full_rows}, technical_input={technical_input_rows}, "
+            f"duplicates_removed={technical_duplicates_removed}, "
+            f"expected={expected_rows}"
+        )
     shutil.rmtree(full_pieces_root)
     shutil.rmtree(statistical_pieces_root)
 
