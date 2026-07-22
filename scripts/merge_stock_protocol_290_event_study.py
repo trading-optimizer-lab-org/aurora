@@ -12,7 +12,7 @@ import os
 from itertools import combinations
 from pathlib import Path
 import shutil
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Collection, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -86,6 +86,14 @@ FROZEN_FX_RATES_NAME = "frozen_fx_rates.csv"
 SOURCE_LOCK_NAME = "stock-protocol-290-source-lock.json"
 EXACT_STRATEGY_NAME = "frozen_oos_strategy_manifest.json"
 PRIOR_AUDIT_RECONCILIATION_NAME = "prior_audit_financing_reconciliation.csv"
+PREPARED_PART_AUDIT_NAME = "stock-protocol-290-prepared-part-audit.json"
+PREPARED_STATISTICAL_PARQUET = "stock-protocol-290-statistical-ledger.parquet"
+PREPARED_COVERAGE_PARQUET = "stock-protocol-290-entry-coverage.parquet"
+PREPARED_SHARD_RECONCILIATION_PARQUET = (
+    "stock-protocol-290-shard-reconciliation.parquet"
+)
+PREPARED_FX_AUDIT_PARQUET = "stock-protocol-290-fx-audit.parquet"
+PREPARED_FINANCING_PARQUET = "stock-protocol-290-financing-reconciliation.parquet"
 
 STATISTIC_FILES: dict[str, str] = {
     "summary": "combination_summary_results.csv",
@@ -255,6 +263,43 @@ def _append_parquet_frame(
         table = table.cast(schema, safe=False)
     writer.write_table(table)
     return writer, schema
+
+
+def _concatenate_parquet_files(paths: Sequence[Path], output_path: Path) -> int:
+    """Concatenate checkpoint Parquets with one deterministic union schema."""
+
+    if not paths:
+        raise ValueError("no checkpoint parquet files supplied")
+    column_order: list[str] = []
+    column_types: dict[str, pa.DataType] = {}
+    for path in paths:
+        for field in pq.ParquetFile(path).schema_arrow:
+            if field.name not in column_types:
+                column_order.append(field.name)
+                column_types[field.name] = field.type
+            else:
+                column_types[field.name] = _unify_arrow_types(
+                    column_types[field.name], field.type
+                )
+    schema = pa.schema(
+        [pa.field(column, column_types[column]) for column in column_order]
+    )
+    rows = 0
+    with pq.ParquetWriter(output_path, schema, compression="zstd") as writer:
+        for path in paths:
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=50_000):
+                table = pa.Table.from_batches([batch])
+                for field in schema:
+                    if field.name not in table.column_names:
+                        table = table.append_column(
+                            field.name, pa.nulls(len(table), type=field.type)
+                        )
+                table = table.select(schema.names)
+                if table.schema != schema:
+                    table = table.cast(schema, safe=False)
+                writer.write_table(table)
+                rows += len(table)
+    return rows
 
 
 def _parquet_to_gzip_csv(
@@ -1023,6 +1068,7 @@ def stream_corrected_shards(
     exact_strategy: Mapping[str, Any],
     prior_opportunities: pd.DataFrame,
     output_root: Path,
+    entry_indices: Collection[int] | None = None,
 ) -> tuple[
     pd.DataFrame,
     pd.DataFrame,
@@ -1035,8 +1081,19 @@ def stream_corrected_shards(
 ]:
     """Merge the large ledgers out of core, retaining only statistics columns."""
 
+    selected_indices = (
+        set(range(EXPECTED_ENTRY_SPEC_COUNT))
+        if entry_indices is None
+        else {int(index) for index in entry_indices}
+    )
+    if not selected_indices or not selected_indices <= set(
+        range(EXPECTED_ENTRY_SPEC_COUNT)
+    ):
+        raise ValueError("entry_indices must be a non-empty subset of 0..9")
     shards = _discover_shards(
-        shards_root, CORRECTED_AUDIT_NAME, EXPECTED_CORRECTED_SHARDS
+        shards_root,
+        CORRECTED_AUDIT_NAME,
+        len(selected_indices) * len(PERIOD_NAMES),
     )
     contract_ids = set(manifest["combination_id"].astype(str))
     coordinates: dict[tuple[int, str], dict[str, Any]] = {}
@@ -1116,13 +1173,13 @@ def stream_corrected_shards(
 
     expected_coordinates = {
         (index, period)
-        for index in range(EXPECTED_ENTRY_SPEC_COUNT)
+        for index in selected_indices
         for period in PERIOD_NAMES
     }
     if set(coordinates) != expected_coordinates:
         raise ValueError("corrected shards do not cover the exact 10 by 3 coordinates")
-    if set(entry_indexes) != set(manifest["entry_spec_id"].astype(str)):
-        raise ValueError("corrected shards do not cover the exact entry specs")
+    if len(entry_indexes) != len(selected_indices):
+        raise ValueError("corrected shards do not cover each requested entry spec")
 
     full_path = output_root / OPPORTUNITIES_PARQUET
     statistical_path = output_root / "_statistical_ledger.parquet"
@@ -1142,7 +1199,12 @@ def stream_corrected_shards(
     )
 
     try:
-        for row in manifest.to_dict(orient="records"):
+        selected_manifest = manifest.loc[
+            manifest["entry_spec_id"].astype(str).isin(entry_indexes)
+        ]
+        if len(selected_manifest) != len(selected_indices) * EXPECTED_EXIT_SPEC_COUNT:
+            raise ValueError("requested entry shards do not map to exactly 29 exits each")
+        for row in selected_manifest.to_dict(orient="records"):
             combination_id = str(row["combination_id"])
             entry_spec_id = str(row["entry_spec_id"])
             index = entry_indexes[entry_spec_id]
@@ -1283,15 +1345,131 @@ def stream_corrected_shards(
     shard_reconciliation = pd.concat(
         reconciliation_frames, ignore_index=True, copy=False
     )
-    financing_reconciliation = pd.concat(
-        financing_frames, ignore_index=True, copy=False
-    ).drop_duplicates(["symbol", "selection_date", "entry_date"], keep="first")
+    if financing_frames:
+        financing_reconciliation = pd.concat(
+            financing_frames, ignore_index=True, copy=False
+        ).drop_duplicates(["symbol", "selection_date", "entry_date"], keep="first")
+    else:
+        financing_reconciliation = pd.DataFrame()
     fx_audit = pd.concat(fx_audit_frames, ignore_index=True, copy=False).drop_duplicates()
     return (
         opportunities,
         coverage,
         shard_reconciliation,
         audits,
+        fx_audit,
+        financing_reconciliation.reset_index(drop=True),
+        technical_input_rows,
+        technical_duplicates_removed,
+    )
+
+
+def load_prepared_corrected_parts(
+    prepared_root: Path,
+    *,
+    output_root: Path,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    list[dict[str, Any]],
+    pd.DataFrame,
+    pd.DataFrame,
+    int,
+    int,
+]:
+    """Load ten hash-bound entry checkpoints without replaying raw shards."""
+
+    discovered = _discover_shards(
+        Path(prepared_root), PREPARED_PART_AUDIT_NAME, EXPECTED_ENTRY_SPEC_COUNT
+    )
+    by_index: dict[int, tuple[Path, dict[str, Any]]] = {}
+    for root, audit in discovered:
+        index = int(audit.get("entry_index", -1))
+        if index not in range(EXPECTED_ENTRY_SPEC_COUNT) or index in by_index:
+            raise ValueError("prepared parts must cover each entry index exactly once")
+        if int(audit.get("combination_count", -1)) != EXPECTED_EXIT_SPEC_COUNT:
+            raise ValueError("prepared part must contain exactly 29 combinations")
+        if str(audit.get("cutoff")) != CUTOFF.date().isoformat():
+            raise ValueError("prepared part changed the cutoff")
+        if _as_bool(audit.get("locked_opened", True)):
+            raise ValueError("prepared part claims locked data was opened")
+        files = audit.get("files")
+        if not isinstance(files, dict):
+            raise ValueError("prepared part has no file manifest")
+        for name, metadata in files.items():
+            if not isinstance(metadata, dict):
+                raise ValueError("prepared part file metadata is invalid")
+            path = root / str(name)
+            if not path.is_file():
+                raise ValueError(f"prepared part is missing {name}")
+            if path.stat().st_size != int(metadata.get("bytes", -1)):
+                raise ValueError(f"prepared part size mismatch for {name}")
+            _assert_sha256(path, metadata.get("sha256"), f"prepared part {name}")
+        by_index[index] = (root, audit)
+    if set(by_index) != set(range(EXPECTED_ENTRY_SPEC_COUNT)):
+        raise ValueError("prepared parts do not cover entry indexes 0..9")
+
+    ordered = [by_index[index] for index in range(EXPECTED_ENTRY_SPEC_COUNT)]
+    full_paths = [root / OPPORTUNITIES_PARQUET for root, _ in ordered]
+    statistical_paths = [root / PREPARED_STATISTICAL_PARQUET for root, _ in ordered]
+    full_rows = _concatenate_parquet_files(
+        full_paths, output_root / OPPORTUNITIES_PARQUET
+    )
+    statistical_combined = output_root / "_statistical_ledger.parquet"
+    statistical_rows = _concatenate_parquet_files(
+        statistical_paths, statistical_combined
+    )
+    if full_rows != statistical_rows:
+        raise ValueError("prepared full and statistical ledgers have different rows")
+    opportunities = pd.read_parquet(statistical_combined, dtype_backend="pyarrow")
+    statistical_combined.unlink()
+
+    def frames(name: str) -> list[pd.DataFrame]:
+        return [
+            _read_parquet_compact(root / name)
+            for root, audit in ordered
+            if name in audit["files"]
+        ]
+
+    coverage = pd.concat(
+        frames(PREPARED_COVERAGE_PARQUET), ignore_index=True, copy=False
+    )
+    shard_reconciliation = pd.concat(
+        frames(PREPARED_SHARD_RECONCILIATION_PARQUET),
+        ignore_index=True,
+        copy=False,
+    )
+    fx_audit = pd.concat(
+        frames(PREPARED_FX_AUDIT_PARQUET), ignore_index=True, copy=False
+    ).drop_duplicates()
+    financing_frames = frames(PREPARED_FINANCING_PARQUET)
+    if len(financing_frames) != 1:
+        raise ValueError("exactly one prepared part must contain financing provenance")
+    financing_reconciliation = financing_frames[0].drop_duplicates(
+        ["symbol", "selection_date", "entry_date"], keep="first"
+    )
+    corrected_audits = [
+        shard_audit
+        for _, audit in ordered
+        for shard_audit in audit.get("corrected_audits", [])
+    ]
+    if len(corrected_audits) != EXPECTED_CORRECTED_SHARDS:
+        raise ValueError("prepared parts do not contain all 30 corrected audits")
+    technical_input_rows = sum(
+        int(audit.get("technical_input_rows", -1)) for _, audit in ordered
+    )
+    technical_duplicates_removed = sum(
+        int(audit.get("technical_duplicates_removed", -1))
+        for _, audit in ordered
+    )
+    if technical_input_rows < 1 or technical_duplicates_removed < 0:
+        raise ValueError("prepared part technical counts are invalid")
+    return (
+        opportunities,
+        coverage,
+        shard_reconciliation,
+        corrected_audits,
         fx_audit,
         financing_reconciliation.reset_index(drop=True),
         technical_input_rows,
@@ -2786,7 +2964,8 @@ def merge_event_study(
     *,
     contract_root: Path,
     historical_shards_root: Path,
-    corrected_shards_root: Path,
+    corrected_shards_root: Path | None,
+    prepared_parts_root: Path | None = None,
     prior_audit_root: Path,
     exact_strategy_root: Path,
     output_root: Path,
@@ -2820,6 +2999,24 @@ def merge_event_study(
     historical, historical_audit = merge_historical_shards(
         Path(historical_shards_root), manifest
     )
+    if (corrected_shards_root is None) == (prepared_parts_root is None):
+        raise ValueError(
+            "exactly one of corrected_shards_root or prepared_parts_root is required"
+        )
+    if prepared_parts_root is not None:
+        corrected_payload = load_prepared_corrected_parts(
+            Path(prepared_parts_root), output_root=output
+        )
+    else:
+        assert corrected_shards_root is not None
+        corrected_payload = stream_corrected_shards(
+            Path(corrected_shards_root),
+            manifest,
+            fx_rates=fx_rates,
+            exact_strategy=exact_strategy,
+            prior_opportunities=prior_opportunities,
+            output_root=output,
+        )
     (
         opportunities,
         coverage,
@@ -2829,14 +3026,7 @@ def merge_event_study(
         financing_reconciliation,
         technical_input_rows,
         technical_duplicates_removed,
-    ) = stream_corrected_shards(
-        Path(corrected_shards_root),
-        manifest,
-        fx_rates=fx_rates,
-        exact_strategy=exact_strategy,
-        prior_opportunities=prior_opportunities,
-        output_root=output,
-    )
+    ) = corrected_payload
     corrected_manifest_hashes = {
         str(audit.get("manifest_sha256", "")) for audit in corrected_audits
     }
@@ -3024,7 +3214,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--contract-root", type=Path, required=True)
     parser.add_argument("--historical-shards-root", type=Path, required=True)
-    parser.add_argument("--corrected-shards-root", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--corrected-shards-root", type=Path)
+    source.add_argument("--prepared-parts-root", type=Path)
     parser.add_argument("--prior-audit-root", type=Path, required=True)
     parser.add_argument("--exact-strategy-root", type=Path, required=True)
     parser.add_argument("--source-lock", type=Path)
@@ -3041,6 +3233,7 @@ def main() -> int:
         contract_root=args.contract_root,
         historical_shards_root=args.historical_shards_root,
         corrected_shards_root=args.corrected_shards_root,
+        prepared_parts_root=args.prepared_parts_root,
         prior_audit_root=args.prior_audit_root,
         exact_strategy_root=args.exact_strategy_root,
         output_root=args.output_root,

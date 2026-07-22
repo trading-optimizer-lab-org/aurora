@@ -10,6 +10,7 @@ CORE = ROOT / ".github/workflows/_stock-protocol-original-290-event-study.yml"
 DISPATCH = ROOT / ".github/workflows/stock-protocol-original-290-event-study.yml"
 RECOVERY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-recovery.yml"
 MERGE_ONLY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-merge-only.yml"
+CHECKPOINTED = ROOT / ".github/workflows/stock-protocol-original-290-event-study-checkpointed.yml"
 FX_ARTIFACT = "stock-protocol-290-frozen-fx"
 FX_RATES = "stock-protocol-290-fx-rates.csv"
 
@@ -19,6 +20,7 @@ def test_workflows_are_valid_yaml() -> None:
     dispatch = yaml.safe_load(DISPATCH.read_text(encoding="utf-8"))
     recovery = yaml.safe_load(RECOVERY.read_text(encoding="utf-8"))
     merge_only = yaml.safe_load(MERGE_ONLY.read_text(encoding="utf-8"))
+    checkpointed = yaml.safe_load(CHECKPOINTED.read_text(encoding="utf-8"))
     assert core["name"] == "Stock Protocol Original 290 Event Study Core"
     assert dispatch["name"] == "Stock Protocol Original 290 Opportunity Event Study"
     assert recovery["name"] == (
@@ -27,6 +29,28 @@ def test_workflows_are_valid_yaml() -> None:
     assert merge_only["name"] == (
         "Stock Protocol Original 290 Opportunity Event Study Merge Only"
     )
+    assert checkpointed["name"] == (
+        "Stock Protocol Original 290 Event Study Checkpointed"
+    )
+
+
+def test_checkpointed_workflow_prepares_each_entry_once_and_merges_checkpoints() -> None:
+    document = yaml.safe_load(CHECKPOINTED.read_text(encoding="utf-8"))
+    prepare = document["jobs"]["prepare-entry"]
+    assert prepare["strategy"]["matrix"]["entry_index"] == list(range(10))
+    assert prepare["strategy"]["max-parallel"] == 10
+    text = CHECKPOINTED.read_text(encoding="utf-8")
+    assert "stock-protocol-290-corrected-${{ matrix.entry_index }}-*" in text
+    assert "if: matrix.entry_index != 7" in text
+    assert "if: matrix.entry_index == 7" in text
+    for period in ("A", "B", "C"):
+        assert f"name: stock-protocol-290-corrected-7-{period}" in text
+    assert "prepare_stock_protocol_290_merge_part.py" in text
+    assert "--prepared-parts-root prepared-parts" in text
+    assert "stock-protocol-290-prepared-entry-*" in text
+    merge_text = text.split("  merge-and-verify:", 1)[1]
+    assert "--corrected-shards-root" not in merge_text
+    assert "verify_stock_protocol_290_event_study.py final" in merge_text
 
 
 def test_merge_only_reuses_all_completed_artifacts_and_frozen_sources() -> None:
