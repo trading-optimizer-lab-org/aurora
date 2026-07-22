@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     _global_functional_mapping,
     _remove_technical_duplicates,
     _report,
+    _two_sided_sign_pvalue,
     enrich_fx_causally,
     reconcile_prior_financing,
     _concatenate_parquet_files,
@@ -78,6 +80,37 @@ def test_bounded_bootstrap_preserves_combinations_without_complete_events() -> N
     assert summary["combination_id"].nunique() == 289
     assert samples["combination_id"].nunique() == 289
     assert "c-289" not in set(summary["combination_id"].astype(str))
+
+
+@pytest.mark.parametrize(
+    ("positive", "negative"),
+    ((0, 0), (1, 0), (3, 2), (8, 4), (10, 10)),
+)
+def test_vectorized_sign_pvalue_matches_exact_symmetric_tail(
+    positive: int,
+    negative: int,
+) -> None:
+    nonzero = positive + negative
+    expected = 1.0
+    if nonzero:
+        expected = min(
+            1.0,
+            2.0
+            * sum(
+                math.comb(nonzero, index)
+                for index in range(min(positive, negative) + 1)
+            )
+            / (2**nonzero),
+        )
+
+    assert _two_sided_sign_pvalue(positive, negative) == pytest.approx(expected)
+
+
+def test_vectorized_sign_pvalue_handles_large_paired_samples() -> None:
+    value = _two_sided_sign_pvalue(14_000, 13_000)
+
+    assert np.isfinite(value)
+    assert 0.0 <= value <= 1.0
 
 
 def _summary() -> dict[str, object]:

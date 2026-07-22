@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from scipy.stats import binom
 
 from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
@@ -1958,6 +1959,16 @@ PAIRED_ENTRY_METRICS = (
 )
 
 
+def _two_sided_sign_pvalue(positive: int, negative: int) -> float:
+    """Return the exact symmetric sign-test tail without huge integer sums."""
+
+    nonzero = positive + negative
+    if not nonzero:
+        return 1.0
+    tail = float(binom.cdf(min(positive, negative), nonzero, 0.5))
+    return min(1.0, 2.0 * tail)
+
+
 def _paired_delta_row(
     left: pd.DataFrame,
     right: pd.DataFrame,
@@ -2013,14 +2024,7 @@ def _paired_delta_row(
         half_width = 0.0
     positive = int((deltas > 0).sum())
     negative = int((deltas < 0).sum())
-    nonzero = positive + negative
-    if nonzero:
-        tail = sum(
-            math.comb(nonzero, index) for index in range(min(positive, negative) + 1)
-        ) / (2**nonzero)
-        sign_pvalue = min(1.0, 2.0 * tail)
-    else:
-        sign_pvalue = 1.0
+    sign_pvalue = _two_sided_sign_pvalue(positive, negative)
     return {
         **common,
         "analysis_status": "estimable",
