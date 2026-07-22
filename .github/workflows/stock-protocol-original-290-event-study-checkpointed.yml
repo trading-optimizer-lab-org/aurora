@@ -15,6 +15,10 @@ on:
         description: Run containing reconstructed corrected 7-A
         required: true
         default: "29864708267"
+      checkpoint_run_id:
+        description: Frozen run containing the ten completed entry checkpoints
+        required: true
+        default: "29917559421"
 
 permissions:
   actions: read
@@ -168,8 +172,11 @@ jobs:
       - run: python -m pip install -e . scipy statsmodels pyarrow
       - uses: actions/download-artifact@v4
         with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.checkpoint_run_id }}
           pattern: stock-protocol-290-prepared-entry-*
           merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: prepared-parts
       - uses: actions/download-artifact@v4
         with:
@@ -254,4 +261,3 @@ jobs:
           if-no-files-found: error
           compression-level: 6
           retention-days: 90
-
