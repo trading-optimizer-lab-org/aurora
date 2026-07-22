@@ -23,6 +23,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     SEMANTIC_AUDIT_NAME,
     STATISTIC_FILES,
     _artifact_manifest,
+    _bounded_cluster_bootstrap,
     _discover_shards,
     _global_functional_mapping,
     _remove_technical_duplicates,
@@ -52,6 +53,31 @@ def _manifest() -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def test_bounded_bootstrap_preserves_combinations_without_complete_events() -> None:
+    rows = []
+    for combination_index in range(290):
+        censored = combination_index == 289
+        rows.append(
+            {
+                "combination_id": f"c-{combination_index:03d}",
+                "opportunity_id": f"o-{combination_index:03d}",
+                "symbol": "SPY",
+                "entry_date": pd.Timestamp("2000-01-03"),
+                "gross_return": np.nan if censored else 0.01,
+                "holding_sessions": 5,
+                "censored": censored,
+            }
+        )
+
+    summary, samples = _bounded_cluster_bootstrap(
+        pd.DataFrame(rows), bootstrap_samples=1
+    )
+
+    assert summary["combination_id"].nunique() == 289
+    assert samples["combination_id"].nunique() == 289
+    assert "c-289" not in set(summary["combination_id"].astype(str))
 
 
 def _summary() -> dict[str, object]:

@@ -2728,14 +2728,22 @@ def _bounded_cluster_bootstrap(
     summaries: list[pd.DataFrame] = []
     samples: list[pd.DataFrame] = []
     seen = 0
+    skipped_without_complete = 0
     for combination_id, group in development.groupby(
         "combination_id", sort=True, dropna=False
     ):
-        summary, records = cluster_bootstrap_confidence_intervals(
-            group,
-            bootstrap_samples=bootstrap_samples,
-            seed=20260721,
-        )
+        try:
+            summary, records = cluster_bootstrap_confidence_intervals(
+                group,
+                bootstrap_samples=bootstrap_samples,
+                seed=20260721,
+            )
+        except ValueError as exc:
+            if str(exc) != "cluster bootstrap requires complete opportunities":
+                raise
+            skipped_without_complete += 1
+            seen += 1
+            continue
         summaries.append(summary)
         samples.append(records)
         seen += 1
@@ -2749,6 +2757,13 @@ def _bounded_cluster_bootstrap(
         raise ValueError(
             f"bounded bootstrap expected 290 combinations; found {seen}"
         )
+    if not summaries or not samples:
+        raise ValueError("cluster bootstrap produced no complete opportunities")
+    _merge_progress(
+        "bounded_bootstrap_complete",
+        combinations=seen,
+        skipped_without_complete=skipped_without_complete,
+    )
     return (
         pd.concat(summaries, ignore_index=True, copy=False),
         pd.concat(samples, ignore_index=True, copy=False),
