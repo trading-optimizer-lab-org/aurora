@@ -270,6 +270,20 @@ jobs:
         with:
           name: stock-protocol-290-frozen-fx
           path: fx-rates
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.AUDIT_RUN_ID }}
+          name: ${{ env.AUDIT_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: audit-source
+      - uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ env.EXACT_RUN_ID }}
+          name: ${{ env.EXACT_ARTIFACT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: exact-source
       - name: Verify frozen FX artifact
         run: python scripts/prepare_stock_protocol_290_fx.py --verify-root fx-rates
       - name: Merge statistics, audits and report
@@ -279,6 +293,9 @@ jobs:
           --historical-shards-root historical-shards
           --corrected-shards-root corrected-shards
           --fx-rates fx-rates/stock-protocol-290-fx-rates.csv
+          --prior-audit-root audit-source
+          --exact-strategy-root exact-source
+          --source-lock contract/stock-protocol-290-source-lock.json
           --output-root final
       - name: Preserve frozen source evidence in final artifact
         shell: bash

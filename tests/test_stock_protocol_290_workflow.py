@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / ".github/workflows/_stock-protocol-original-290-event-study.yml"
 DISPATCH = ROOT / ".github/workflows/stock-protocol-original-290-event-study.yml"
 RECOVERY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-recovery.yml"
+MERGE_ONLY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-merge-only.yml"
 FX_ARTIFACT = "stock-protocol-290-frozen-fx"
 FX_RATES = "stock-protocol-290-fx-rates.csv"
 
@@ -17,11 +18,28 @@ def test_workflows_are_valid_yaml() -> None:
     core = yaml.safe_load(CORE.read_text(encoding="utf-8"))
     dispatch = yaml.safe_load(DISPATCH.read_text(encoding="utf-8"))
     recovery = yaml.safe_load(RECOVERY.read_text(encoding="utf-8"))
+    merge_only = yaml.safe_load(MERGE_ONLY.read_text(encoding="utf-8"))
     assert core["name"] == "Stock Protocol Original 290 Event Study Core"
     assert dispatch["name"] == "Stock Protocol Original 290 Opportunity Event Study"
     assert recovery["name"] == (
         "Stock Protocol Original 290 Opportunity Event Study Recovery"
     )
+    assert merge_only["name"] == (
+        "Stock Protocol Original 290 Opportunity Event Study Merge Only"
+    )
+
+
+def test_merge_only_reuses_all_completed_artifacts_and_frozen_sources() -> None:
+    text = MERGE_ONLY.read_text(encoding="utf-8")
+    assert 'default: "29837829828"' in text
+    assert 'default: "29864708267"' in text
+    assert "stock-protocol-290-historical-*" in text
+    assert "stock-protocol-290-corrected-*" in text
+    assert "stock-protocol-290-corrected-7-A" in text
+    assert "--prior-audit-root audit-source" in text
+    assert "--exact-strategy-root exact-source" in text
+    assert "--source-lock contract/stock-protocol-290-source-lock.json" in text
+    assert "verify_stock_protocol_290_event_study.py final" in text
 
 
 def test_recovery_splits_only_the_missing_shard_and_reuses_completed_artifacts() -> None:
