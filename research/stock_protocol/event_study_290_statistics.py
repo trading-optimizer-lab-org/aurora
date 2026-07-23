@@ -1474,17 +1474,21 @@ def cluster_mean_significance_tests(
     rng = np.random.default_rng(seed)
     rows: list[dict[str, Any]] = []
     for combination, group in frame.groupby(combination_column, sort=True, dropna=False):
+        group = group.reset_index(drop=True)
         observed = float(group["net_event_return"].mean())
         centered = group.copy()
         centered["net_event_return"] = centered["net_event_return"] - observed
-        null = np.asarray(
-            [
-                float(
-                    _cluster_sample(centered, cluster_method, rng)["net_event_return"].mean()
-                )
-                for _ in range(bootstrap_samples)
-            ]
+        weights = _cluster_bootstrap_weights(
+            centered,
+            cluster_method,
+            bootstrap_samples,
+            rng,
         )
+        centered_returns = centered["net_event_return"].to_numpy(dtype=float)
+        totals = weights.sum(axis=1)
+        if np.any(totals <= 0):
+            raise ValueError("cluster bootstrap produced an empty resample")
+        null = (weights @ centered_returns) / totals
         rows.append(
             {
                 combination_column: combination,

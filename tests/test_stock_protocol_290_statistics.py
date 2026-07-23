@@ -13,6 +13,7 @@ from aurora.research.stock_protocol.event_study_290_statistics import (
     benjamini_hochberg,
     censoring_audit,
     cluster_bootstrap_confidence_intervals,
+    cluster_mean_significance_tests,
     concentration_statistics,
     cscv_pbo,
     deflated_event_statistic,
@@ -276,6 +277,33 @@ def test_cluster_bootstrap_array_path_matches_degenerate_cluster_estimates() -> 
     assert np.allclose(records["median_return"], expected["net_event_return"].median())
     assert np.allclose(records["event_speed"], expected["event_speed"].median())
     assert summary["ci_low95"].equals(summary["ci_high95"])
+
+
+def test_cluster_mean_significance_uses_reproducible_vectorized_resampling() -> None:
+    first = cluster_mean_significance_tests(
+        _ledger(), bootstrap_samples=25, seed=23
+    )
+    second = cluster_mean_significance_tests(
+        _ledger(), bootstrap_samples=25, seed=23
+    )
+
+    pd.testing.assert_frame_equal(first, second)
+    assert set(first["combination_id"]) == {"A", "B"}
+    assert first["pvalue_one_sided"].between(0.0, 1.0).all()
+    assert first["method"].eq(
+        "centered_hierarchical_year_symbol_cluster_bootstrap_mean"
+    ).all()
+
+
+def test_cluster_mean_significance_vector_path_handles_large_sample_count() -> None:
+    ledger = pd.concat([_ledger()] * 40, ignore_index=True)
+    ledger["opportunity_id"] = [f"large-{index}" for index in range(len(ledger))]
+    result = cluster_mean_significance_tests(
+        ledger, bootstrap_samples=200, seed=29
+    )
+
+    assert len(result) == 2
+    assert np.isfinite(result["pvalue_one_sided"]).all()
 
 
 def test_leave_one_out_and_concentration_cover_requested_stress_tests() -> None:
