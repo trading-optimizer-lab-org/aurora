@@ -2357,6 +2357,18 @@ def _deduplicate_result_vectors(matrix: pd.DataFrame) -> tuple[pd.DataFrame, dic
     return matrix[retained], canonical
 
 
+def _initialize_estimable_columns(
+    frame: pd.DataFrame,
+    columns: tuple[str, ...],
+) -> None:
+    for column in columns:
+        frame[column] = pd.Series(
+            ["not_estimable"] * len(frame),
+            index=frame.index,
+            dtype=object,
+        )
+
+
 def _multiple_testing(
     development: pd.DataFrame,
     manifest: pd.DataFrame,
@@ -2392,8 +2404,7 @@ def _multiple_testing(
         "westfall_young_statistic",
         "westfall_young_pvalue",
     )
-    for column in result_columns:
-        declared[column] = "not_estimable"
+    _initialize_estimable_columns(declared, result_columns)
     declared["cluster_method"] = "not_supported"
     declared["westfall_young_method"] = "not_supported"
 

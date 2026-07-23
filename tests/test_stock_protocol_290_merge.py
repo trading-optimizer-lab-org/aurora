@@ -27,6 +27,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     _bounded_cluster_bootstrap,
     _discover_shards,
     _global_functional_mapping,
+    _initialize_estimable_columns,
     _remove_technical_duplicates,
     _report,
     _two_sided_sign_pvalue,
@@ -111,6 +112,21 @@ def test_vectorized_sign_pvalue_handles_large_paired_samples() -> None:
 
     assert np.isfinite(value)
     assert 0.0 <= value <= 1.0
+
+
+def test_estimable_columns_accept_mixed_numeric_and_status_values() -> None:
+    frame = pd.DataFrame({"combination_id": ["a", "b"]})
+    columns = ("mean_return", "cluster_pvalue_one_sided")
+
+    _initialize_estimable_columns(frame, columns)
+    frame.loc[frame["combination_id"].eq("a"), "mean_return"] = 0.015
+    frame.loc[frame["combination_id"].eq("a"), "cluster_pvalue_one_sided"] = 0.25
+
+    assert frame["mean_return"].dtype == object
+    assert frame["cluster_pvalue_one_sided"].dtype == object
+    assert frame.loc[0, "mean_return"] == pytest.approx(0.015)
+    assert frame.loc[0, "cluster_pvalue_one_sided"] == pytest.approx(0.25)
+    assert frame.loc[1, "mean_return"] == "not_estimable"
 
 
 def _summary() -> dict[str, object]:
