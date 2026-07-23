@@ -2696,6 +2696,73 @@ def _replace_nonfinite_with_status(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _serialize_ranking_output(frame: pd.DataFrame) -> pd.DataFrame:
+    """Make optional ranking fields explicit without invalidating supported rows."""
+
+    result = frame.copy()
+    invalid_fields: list[list[str]] = [[] for _ in range(len(result))]
+    for column in result.columns:
+        invalid = result[column].map(
+            lambda value: bool(pd.isna(value))
+            or (
+                isinstance(value, (float, np.floating))
+                and not np.isfinite(float(value))
+            )
+        ).to_numpy(dtype=bool)
+        if not invalid.any():
+            continue
+        result[column] = result[column].astype(object)
+        result.loc[invalid, column] = "not_estimable"
+        for position in np.flatnonzero(invalid):
+            invalid_fields[int(position)].append(str(column))
+    result["not_estimable_fields_json"] = [
+        json.dumps(sorted(fields)) for fields in invalid_fields
+    ]
+    if "analysis_status" not in result:
+        result["analysis_status"] = np.where(
+            [bool(fields) for fields in invalid_fields],
+            "supported_with_not_estimable_fields",
+            "supported",
+        )
+    return result
+
+
+def _build_ranking_outputs(eligible_ranked: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Build and serialize the three ordered ranking views."""
+
+    pareto_raw = eligible_ranked.loc[
+        eligible_ranked["pareto_rank"].eq(1)
+    ].reset_index(drop=True)
+    ideal_raw = (
+        eligible_ranked.loc[eligible_ranked["pareto_rank"].eq(1)]
+        .sort_values(["ideal_distance", "combination_id"], kind="stable")
+        .reset_index(drop=True)
+    )
+    balanced_raw = eligible_ranked.sort_values(
+        ["balanced_score", "combination_id"],
+        ascending=[False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    return {
+        "pareto": _serialize_ranking_output(pareto_raw),
+        "ideal": _serialize_ranking_output(ideal_raw),
+        "balanced": _serialize_ranking_output(balanced_raw),
+    }
+
+
+def _serialize_objective_output(frame: pd.DataFrame) -> pd.DataFrame:
+    """Represent objective metadata that does not apply without empty CSV cells."""
+
+    result = frame.copy()
+    for column in result.columns:
+        missing = result[column].isna()
+        if not missing.any():
+            continue
+        result[column] = result[column].astype(object)
+        result.loc[missing, column] = "not_applicable"
+    return result
+
+
 def _common_event_horizon(ledger: pd.DataFrame) -> float:
     """Return the contract-wide follow-up horizon without enriching the ledger."""
 
@@ -3524,6 +3591,7 @@ def build_statistical_outputs(
     serializable = {
         key: _replace_nonfinite_with_status(value) for key, value in raw_outputs.items()
     }
+    ranking_outputs = _build_ranking_outputs(eligible_ranked)
     return {
         "summary": serializable["summary"],
         "period": serializable["period"],
@@ -3542,16 +3610,10 @@ def build_statistical_outputs(
         "pbo_payload": pbo_payload,
         "leave_out": serializable["leave_out"],
         "concentration": concentration,
-        "pareto": eligible_ranked.loc[eligible_ranked["pareto_rank"].eq(1)].reset_index(drop=True),
-        "ideal": eligible_ranked.loc[
-            eligible_ranked["pareto_rank"].eq(1)
-        ].sort_values(
-            ["ideal_distance", "combination_id"], kind="stable"
-        ).reset_index(drop=True),
-        "balanced": eligible_ranked.sort_values(
-            ["balanced_score", "combination_id"], ascending=[False, True], kind="stable"
-        ).reset_index(drop=True),
-        "top_objectives": winners,
+        "pareto": ranking_outputs["pareto"],
+        "ideal": ranking_outputs["ideal"],
+        "balanced": ranking_outputs["balanced"],
+        "top_objectives": _serialize_objective_output(winners),
         "classifications": _replace_nonfinite_with_status(ranked),
         "censoring": serializable["censoring"],
         "survival": survival,

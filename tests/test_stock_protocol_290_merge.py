@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
@@ -30,8 +31,11 @@ from scripts.merge_stock_protocol_290_event_study import (
     _discover_shards,
     _global_functional_mapping,
     _initialize_estimable_columns,
+    _build_ranking_outputs,
     _remove_technical_duplicates,
     _report,
+    _assert_event_outputs_finite,
+    _serialize_objective_output,
     _two_sided_sign_pvalue,
     enrich_fx_causally,
     reconcile_prior_financing,
@@ -159,6 +163,60 @@ def test_estimable_columns_accept_mixed_numeric_and_status_values() -> None:
     assert frame.loc[0, "mean_return"] == pytest.approx(0.015)
     assert frame.loc[0, "cluster_pvalue_one_sided"] == pytest.approx(0.25)
     assert frame.loc[1, "mean_return"] == "not_estimable"
+
+
+def test_ranking_outputs_preserve_order_and_serialize_optional_nonfinite_fields() -> None:
+    ranked = pd.DataFrame(
+        {
+            "combination_id": ["a", "b", "c"],
+            "selection_eligible": [True, True, True],
+            "pareto_rank": pd.Series([1, 1, 2], dtype="Int64"),
+            "balanced_score": [0.8, 0.7, 0.9],
+            "ideal_distance": [0.2, 0.1, 0.3],
+            "profit_factor": [1.4, 1.3, 1.5],
+            "payoff_ratio": [np.nan, 1.2, 1.4],
+        }
+    )
+
+    outputs = _build_ranking_outputs(ranked)
+
+    assert outputs["pareto"]["combination_id"].tolist() == ["a", "b"]
+    assert outputs["ideal"]["combination_id"].tolist() == ["b", "a"]
+    assert outputs["balanced"]["combination_id"].tolist() == ["c", "a", "b"]
+    assert outputs["pareto"].loc[0, "payoff_ratio"] == "not_estimable"
+    assert (
+        outputs["pareto"].loc[0, "analysis_status"]
+        == "supported_with_not_estimable_fields"
+    )
+    assert json.loads(outputs["pareto"].loc[0, "not_estimable_fields_json"]) == [
+        "payoff_ratio"
+    ]
+    _assert_event_outputs_finite(outputs)
+    round_tripped = {
+        name: pd.read_csv(StringIO(frame.to_csv(index=False)))
+        for name, frame in outputs.items()
+    }
+    _assert_event_outputs_finite(round_tripped)
+
+
+def test_objective_output_uses_not_applicable_and_survives_csv_round_trip() -> None:
+    objectives = pd.DataFrame(
+        {
+            "objective": ["highest_median_return", "best_at_25_bps"],
+            "combination_id": ["a", "b"],
+            "objective_value": [0.2, 0.15],
+            "cost_bps_per_side": [pd.NA, 25],
+            "period": [pd.NA, pd.NA],
+            "pareto_rank": pd.Series([1, pd.NA], dtype="Int64"),
+        }
+    )
+
+    serialized = _serialize_objective_output(objectives)
+
+    assert serialized.loc[0, "cost_bps_per_side"] == "not_applicable"
+    assert serialized.loc[1, "pareto_rank"] == "not_applicable"
+    round_tripped = pd.read_csv(StringIO(serialized.to_csv(index=False)))
+    _assert_event_outputs_finite({"top_objectives": round_tripped})
 
 
 def test_robust_leader_requires_every_explicit_gate() -> None:
