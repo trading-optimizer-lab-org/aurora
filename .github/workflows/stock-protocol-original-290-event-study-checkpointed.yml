@@ -24,6 +24,11 @@ on:
         required: true
         type: boolean
         default: true
+      contract_only:
+        description: Run the complete focused contract without rebuilding or merging
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -59,12 +64,17 @@ jobs:
       - name: Run focused contracts in GitHub
         run: >-
           pytest -q
+          tests/test_stock_protocol_290_manifest.py
+          tests/test_stock_protocol_independent_opportunity_executor.py
+          tests/test_stock_protocol_290_statistics.py
+          tests/test_stock_protocol_290_shards.py
           tests/test_stock_protocol_290_merge.py
+          tests/test_prepare_stock_protocol_290_fx.py
           tests/test_stock_protocol_290_workflow.py
 
   prepare-entry:
     needs: contract
-    if: ${{ !inputs.reuse_frozen_checkpoints }}
+    if: ${{ !inputs.contract_only && !inputs.reuse_frozen_checkpoints }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     strategy:
@@ -166,7 +176,7 @@ jobs:
   merge-and-verify:
     needs: [contract, prepare-entry]
     if: >-
-      ${{ always() && needs.contract.result == 'success' &&
+      ${{ always() && !inputs.contract_only && needs.contract.result == 'success' &&
       (needs.prepare-entry.result == 'success' || inputs.reuse_frozen_checkpoints) }}
     runs-on: ubuntu-latest
     timeout-minutes: 350
