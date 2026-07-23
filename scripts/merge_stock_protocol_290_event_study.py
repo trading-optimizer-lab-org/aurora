@@ -33,7 +33,11 @@ from aurora.research.stock_protocol.event_study_290_manifest import (
 )
 from aurora.research.stock_protocol.event_study_290_statistics import (
     COSTS_BPS_PER_SIDE,
+    MINIMUM_COMPLETE_EVENTS_PER_PERIOD,
+    MINIMUM_TOTAL_COMPLETE_EVENTS,
     REQUIRED_OBJECTIVES,
+    ROBUST_CLEAR_MAJORITY_POSITIVE_YEARS,
+    ROBUST_MAX_CENSORING_RATE,
     benjamini_hochberg,
     censoring_audit,
     cluster_bootstrap_confidence_intervals,
@@ -48,6 +52,7 @@ from aurora.research.stock_protocol.event_study_290_statistics import (
     metrics_by_combination,
     objective_winners,
     rank_combinations,
+    robust_combination_inference,
     survival_incidence_table,
     westfall_young_max_t,
     white_spa_equivalent,
@@ -108,6 +113,7 @@ STATISTIC_FILES: dict[str, str] = {
     "paired_exit": "paired_exit_comparisons.csv",
     "cluster_summary": "clustered_bootstrap_results.csv",
     "cluster_samples": "clustered_bootstrap_samples.parquet",
+    "inference": "robust_inference_diagnostics.csv",
     "multiple_testing": "multiple_testing_results.csv",
     "pbo": "cscv_pbo_results.csv",
     "leave_out": "leave_one_group_out_results.csv",
@@ -166,8 +172,14 @@ STATISTICAL_LEDGER_COLUMNS = (
     "exit_date",
     "exit_reason",
     "gross_return",
+    "mtm_return",
     "maximum_adverse_excursion",
+    "maximum_favourable_excursion",
+    "intratrade_max_drawdown",
     "holding_sessions",
+    "calendar_days_invested",
+    "remaining_sessions_estimate",
+    "volatility",
     "stop_hit",
     "target_hit",
     "time_exit",
@@ -1468,18 +1480,25 @@ def load_prepared_corrected_parts(
 
     ordered = [by_index[index] for index in range(EXPECTED_ENTRY_SPEC_COUNT)]
     full_paths = [root / OPPORTUNITIES_PARQUET for root, _ in ordered]
-    statistical_paths = [root / PREPARED_STATISTICAL_PARQUET for root, _ in ordered]
     full_rows = _concatenate_parquet_files(
         full_paths, output_root / OPPORTUNITIES_PARQUET
     )
-    statistical_combined = output_root / "_statistical_ledger.parquet"
-    statistical_rows = _concatenate_parquet_files(
-        statistical_paths, statistical_combined
+    full_schema = set(
+        pq.ParquetFile(output_root / OPPORTUNITIES_PARQUET).schema_arrow.names
     )
-    if full_rows != statistical_rows:
-        raise ValueError("prepared full and statistical ledgers have different rows")
-    opportunities = pd.read_parquet(statistical_combined, dtype_backend="pyarrow")
-    statistical_combined.unlink()
+    missing_statistics = set(STATISTICAL_LEDGER_COLUMNS) - full_schema
+    if missing_statistics:
+        raise ValueError(
+            "prepared full ledger cannot provide required statistical columns: "
+            f"{sorted(missing_statistics)}"
+        )
+    opportunities = pd.read_parquet(
+        output_root / OPPORTUNITIES_PARQUET,
+        columns=list(STATISTICAL_LEDGER_COLUMNS),
+        dtype_backend="pyarrow",
+    )
+    if len(opportunities) != full_rows:
+        raise ValueError("prepared statistical projection changed the opportunity count")
     _merge_progress(
         "prepared_ledgers_loaded",
         rows=len(opportunities),
@@ -2737,6 +2756,8 @@ def _bounded_cluster_bootstrap(
     development: pd.DataFrame,
     *,
     bootstrap_samples: int,
+    collect_samples: bool = True,
+    methods: Sequence[str] = ("symbol", "year", "hierarchical_year_symbol"),
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Bootstrap one combination at a time to cap the estimate cube in memory."""
 
@@ -2752,6 +2773,8 @@ def _bounded_cluster_bootstrap(
                 group,
                 bootstrap_samples=bootstrap_samples,
                 seed=20260721,
+                methods=methods,
+                include_records=collect_samples,
             )
         except ValueError as exc:
             if str(exc) != "cluster bootstrap requires complete opportunities":
@@ -2760,7 +2783,8 @@ def _bounded_cluster_bootstrap(
             seen += 1
             continue
         summaries.append(summary)
-        samples.append(records)
+        if collect_samples:
+            samples.append(records)
         seen += 1
         if seen % 25 == 0 or seen == EXPECTED_COMBINATION_COUNT:
             _merge_progress(
@@ -2772,7 +2796,7 @@ def _bounded_cluster_bootstrap(
         raise ValueError(
             f"bounded bootstrap expected 290 combinations; found {seen}"
         )
-    if not summaries or not samples:
+    if not summaries or (collect_samples and not samples):
         raise ValueError("cluster bootstrap produced no complete opportunities")
     _merge_progress(
         "bounded_bootstrap_complete",
@@ -2781,8 +2805,405 @@ def _bounded_cluster_bootstrap(
     )
     return (
         pd.concat(summaries, ignore_index=True, copy=False),
-        pd.concat(samples, ignore_index=True, copy=False),
+        pd.concat(samples, ignore_index=True, copy=False)
+        if collect_samples
+        else pd.DataFrame(),
     )
+
+
+def _bootstrap_metric_columns(
+    cluster_summary: pd.DataFrame,
+    *,
+    prefix: str = "bootstrap",
+) -> pd.DataFrame:
+    """Return hierarchical mean and median confidence limits in wide form."""
+
+    hierarchical = cluster_summary.loc[
+        cluster_summary["method"].astype(str).eq("hierarchical_year_symbol")
+        & cluster_summary["metric"].astype(str).isin(("mean_return", "median_return")),
+        ["combination_id", "metric", "ci_low95", "ci_high95"],
+    ].copy()
+    if hierarchical.empty:
+        raise ValueError("hierarchical bootstrap contains no mean or median estimates")
+    if hierarchical.duplicated(["combination_id", "metric"]).any():
+        raise ValueError("hierarchical bootstrap has duplicate combination metrics")
+    rows: list[dict[str, Any]] = []
+    for combination_id, group in hierarchical.groupby(
+        "combination_id", sort=True, dropna=False
+    ):
+        row: dict[str, Any] = {"combination_id": combination_id}
+        for record in group.itertuples(index=False):
+            metric = str(record.metric)
+            low_name = f"{prefix}_{metric}_ci_low95"
+            high_name = f"{prefix}_{metric}_ci_high95"
+            row[low_name] = float(record.ci_low95)
+            row[high_name] = float(record.ci_high95)
+            row[f"{prefix}_{metric}_ci_width95"] = float(
+                record.ci_high95 - record.ci_low95
+            )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _apply_robust_leader_gates(
+    ranked: pd.DataFrame,
+    *,
+    all_period_summary: pd.DataFrame,
+    period_results: pd.DataFrame,
+    global_cluster_summary: pd.DataFrame,
+    multiple_testing: pd.DataFrame,
+    leave_out: pd.DataFrame,
+) -> pd.DataFrame:
+    """Apply every declared robust-leader gate without changing the ranking."""
+
+    result = ranked.copy()
+    all_zero = all_period_summary.loc[
+        pd.to_numeric(all_period_summary["cost_bps_per_side"], errors="coerce").eq(0)
+    ].copy()
+    if all_zero.duplicated("combination_id").any():
+        raise ValueError("all-period zero-cost summary must be unique by combination")
+    all_zero = all_zero.set_index("combination_id")
+
+    periods_zero = period_results.loc[
+        pd.to_numeric(period_results["cost_bps_per_side"], errors="coerce").eq(0)
+    ].copy()
+    period_matrix = periods_zero.pivot(
+        index="combination_id", columns="cut_value", values="median_return"
+    )
+    period_complete_matrix = periods_zero.pivot(
+        index="combination_id", columns="cut_value", values="complete_events"
+    )
+    for period_name in PERIOD_NAMES:
+        if period_name not in period_matrix:
+            period_matrix[period_name] = np.nan
+        if period_name not in period_complete_matrix:
+            period_complete_matrix[period_name] = np.nan
+    period_matrix = period_matrix[list(PERIOD_NAMES)].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    period_complete_matrix = period_complete_matrix[list(PERIOD_NAMES)].apply(
+        pd.to_numeric, errors="coerce"
+    )
+
+    global_ci = _bootstrap_metric_columns(
+        global_cluster_summary,
+        prefix="grouped_global",
+    ).set_index("combination_id")
+    multiple = multiple_testing.set_index("combination_id")
+
+    leave_numeric = leave_out.copy()
+    leave_numeric["_estimate"] = pd.to_numeric(
+        leave_numeric["leave_out_mean_return"], errors="coerce"
+    )
+    leave_minimum = (
+        leave_numeric.loc[leave_numeric["omission"].isin(("year", "country"))]
+        .groupby(["combination_id", "omission"])["_estimate"]
+        .agg(["min", "count"])
+    )
+
+    gate_columns = (
+        "robust_gate_semantic_unique_sample",
+        "robust_gate_positive_net_median",
+        "robust_gate_grouped_global_lower_positive",
+        "robust_gate_clear_majority_positive_years",
+        "robust_gate_not_single_year_dependent",
+        "robust_gate_not_single_country_dependent",
+        "robust_gate_pareto_front",
+        "robust_gate_all_three_periods_positive",
+        "robust_gate_multiple_testing",
+        "robust_gate_low_censoring",
+    )
+    for column in gate_columns:
+        result[column] = False
+    result["robust_gate_fail_reasons_json"] = "[]"
+    result["robust_gate_thresholds_json"] = json.dumps(
+        {
+            "minimum_total_complete_events": MINIMUM_TOTAL_COMPLETE_EVENTS,
+            "minimum_complete_events_per_period": MINIMUM_COMPLETE_EVENTS_PER_PERIOD,
+            "clear_majority_positive_years": ROBUST_CLEAR_MAJORITY_POSITIVE_YEARS,
+            "maximum_censoring_rate": ROBUST_MAX_CENSORING_RATE,
+            "multiple_testing_alpha": 0.05,
+            "period_rule": "median_net_return_strictly_positive_in_A_B_C",
+            "dependency_rule": "minimum_leave_one_year_and_country_mean_strictly_positive",
+        },
+        sort_keys=True,
+    )
+
+    for index, row in result.iterrows():
+        combination_id = str(row["combination_id"])
+        if combination_id not in all_zero.index:
+            continue
+        aggregate = all_zero.loc[combination_id]
+        correction = multiple.loc[combination_id]
+        combination_periods = (
+            period_matrix.loc[combination_id]
+            if combination_id in period_matrix.index
+            else pd.Series(np.nan, index=PERIOD_NAMES)
+        )
+        combination_period_samples = (
+            period_complete_matrix.loc[combination_id]
+            if combination_id in period_complete_matrix.index
+            else pd.Series(np.nan, index=PERIOD_NAMES)
+        )
+        year_leave = (
+            leave_minimum.loc[(combination_id, "year")]
+            if (combination_id, "year") in leave_minimum.index
+            else pd.Series({"min": np.nan, "count": 0})
+        )
+        country_leave = (
+            leave_minimum.loc[(combination_id, "country")]
+            if (combination_id, "country") in leave_minimum.index
+            else pd.Series({"min": np.nan, "count": 0})
+        )
+        grouped_lower = (
+            float(global_ci.loc[combination_id, "grouped_global_median_return_ci_low95"])
+            if combination_id in global_ci.index
+            else np.nan
+        )
+        correction_values = pd.to_numeric(
+            correction.reindex(
+                [
+                    "bh_declared_290_pvalue",
+                    "holm_declared_290_pvalue",
+                    "westfall_young_pvalue",
+                ]
+            ),
+            errors="coerce",
+        ).dropna()
+        gates = {
+            "robust_gate_semantic_unique_sample": bool(
+                row["selection_eligible"]
+                and float(aggregate["complete_events"])
+                >= MINIMUM_TOTAL_COMPLETE_EVENTS
+                and combination_period_samples.notna().all()
+                and combination_period_samples.ge(
+                    MINIMUM_COMPLETE_EVENTS_PER_PERIOD
+                ).all()
+            ),
+            "robust_gate_positive_net_median": float(aggregate["median_return"]) > 0,
+            "robust_gate_grouped_global_lower_positive": bool(
+                np.isfinite(grouped_lower) and grouped_lower > 0
+            ),
+            "robust_gate_clear_majority_positive_years": float(
+                aggregate["positive_years_pct"]
+            )
+            >= ROBUST_CLEAR_MAJORITY_POSITIVE_YEARS,
+            "robust_gate_not_single_year_dependent": bool(
+                int(year_leave["count"]) >= 2 and float(year_leave["min"]) > 0
+            ),
+            "robust_gate_not_single_country_dependent": bool(
+                int(country_leave["count"]) >= 2 and float(country_leave["min"]) > 0
+            ),
+            "robust_gate_pareto_front": int(row["pareto_rank"]) == 1
+            if not pd.isna(row["pareto_rank"])
+            else False,
+            "robust_gate_all_three_periods_positive": bool(
+                combination_periods.notna().all()
+                and combination_periods.gt(0).all()
+            ),
+            "robust_gate_multiple_testing": bool(
+                len(correction_values) and correction_values.le(0.05).any()
+            ),
+            "robust_gate_low_censoring": float(aggregate["censoring_rate"])
+            <= ROBUST_MAX_CENSORING_RATE,
+        }
+        for column, passed in gates.items():
+            result.at[index, column] = passed
+        failures = [
+            column.removeprefix("robust_gate_")
+            for column, passed in gates.items()
+            if not passed
+        ]
+        result.at[index, "robust_gate_fail_reasons_json"] = json.dumps(failures)
+        if all(gates.values()):
+            result.at[index, "classification"] = "robust_leader"
+        elif (
+            bool(row["selection_eligible"])
+            and not gates["robust_gate_all_three_periods_positive"]
+        ):
+            result.at[index, "classification"] = "period_dependent"
+    result["robust_gate_all_passed"] = result[list(gate_columns)].all(axis=1)
+    result["classification_evidence_role"] = "retrospective_all_periods_diagnostic"
+    return result
+
+
+def _extended_objective_winners(
+    ranked: pd.DataFrame,
+    *,
+    all_period_summary: pd.DataFrame,
+    period_results: pd.DataFrame,
+) -> pd.DataFrame:
+    """Publish every distinct winner requested by part 15 of the contract."""
+
+    eligible = ranked.loc[ranked["selection_eligible"].astype(bool)].copy()
+    if eligible.empty:
+        raise ValueError("cannot select objective winners without eligible combinations")
+
+    def winner(
+        frame: pd.DataFrame,
+        *,
+        label: str,
+        metric: str,
+        maximize: bool,
+        evidence_role: str,
+        cost_bps_per_side: float | None = None,
+        period: str | None = None,
+    ) -> dict[str, Any]:
+        candidate = frame.loc[
+            frame["combination_id"].astype(str).isin(
+                eligible["combination_id"].astype(str)
+            )
+        ].copy()
+        candidate["_objective_value"] = pd.to_numeric(
+            candidate[metric], errors="coerce"
+        )
+        candidate = candidate.loc[np.isfinite(candidate["_objective_value"])]
+        if candidate.empty:
+            raise ValueError(f"objective {label} has no finite candidates")
+        candidate = candidate.sort_values(
+            ["_objective_value", "combination_id"],
+            ascending=[not maximize, True],
+            kind="stable",
+        )
+        row = candidate.iloc[0]
+        return {
+            "objective": label,
+            "metric": metric,
+            "direction": "maximize" if maximize else "minimize",
+            "combination_id": str(row["combination_id"]),
+            "objective_value": float(row["_objective_value"]),
+            "cost_bps_per_side": cost_bps_per_side,
+            "period": period,
+            "balanced_score": pd.to_numeric(
+                pd.Series([row.get("balanced_score", np.nan)]), errors="coerce"
+            ).iloc[0],
+            "pareto_rank": row.get("pareto_rank", pd.NA),
+            "classification": row.get("classification", "diagnostic"),
+            "evidence_role": evidence_role,
+        }
+
+    rows = [
+        winner(
+            eligible,
+            label="01_highest_median_return",
+            metric="median_return",
+            maximize=True,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="02_highest_mean_return",
+            metric="mean_return",
+            maximize=True,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="03_highest_event_speed",
+            metric="event_speed",
+            maximize=True,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="04_lowest_mae",
+            metric="mae_median_abs",
+            maximize=False,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="05_lowest_expected_shortfall",
+            metric="expected_shortfall_10_abs",
+            maximize=False,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="06_lowest_duration",
+            metric="duration_median",
+            maximize=False,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="07_highest_profit_factor",
+            metric="profit_factor",
+            maximize=True,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="08_best_annual_stability",
+            metric="positive_years_pct",
+            maximize=True,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible.loc[eligible["pareto_rank"].eq(1)],
+            label="09_pareto_closest_to_ideal",
+            metric="ideal_distance",
+            maximize=False,
+            evidence_role="period_A_development_selection",
+        ),
+        winner(
+            eligible,
+            label="10_highest_balanced_opportunity_score",
+            metric="balanced_score",
+            maximize=True,
+            evidence_role="period_A_development_selection",
+        ),
+    ]
+    for ordinal, cost in ((11, 25), (12, 50), (13, 100)):
+        cost_frame = all_period_summary.loc[
+            pd.to_numeric(
+                all_period_summary["cost_bps_per_side"], errors="coerce"
+            ).eq(cost)
+        ]
+        rows.append(
+            winner(
+                cost_frame,
+                label=f"{ordinal:02d}_best_at_{cost}_bps_per_side",
+                metric="median_return",
+                maximize=True,
+                evidence_role="all_periods_cost_sensitivity_diagnostic",
+                cost_bps_per_side=float(cost),
+            )
+        )
+    for period_name in PERIOD_NAMES:
+        period_frame = period_results.loc[
+            period_results["cut_value"].astype(str).eq(period_name)
+            & pd.to_numeric(
+                period_results["cost_bps_per_side"], errors="coerce"
+            ).eq(0)
+        ]
+        rows.append(
+            winner(
+                period_frame,
+                label=f"14_best_in_period_{period_name}",
+                metric="median_return",
+                maximize=True,
+                evidence_role=(
+                    "period_A_development_selection"
+                    if period_name == "A"
+                    else "observed_period_diagnostic_not_selection"
+                ),
+                period=period_name,
+            )
+        )
+    all_zero = all_period_summary.loc[
+        pd.to_numeric(all_period_summary["cost_bps_per_side"], errors="coerce").eq(0)
+    ]
+    rows.append(
+        winner(
+            all_zero,
+            label="15_most_stable_across_periods",
+            metric="period_return_dispersion",
+            maximize=False,
+            evidence_role="retrospective_all_periods_diagnostic",
+        )
+    )
+    return pd.DataFrame(rows)
 
 
 def _bounded_paired_exits(
@@ -2850,6 +3271,9 @@ def build_statistical_outputs(
     bootstrap_samples: int,
 ) -> dict[str, pd.DataFrame | dict[str, Any]]:
     ledger = _event_ledger(opportunities)
+    ledger["entry_year"] = pd.to_datetime(
+        ledger["entry_date"], errors="raise"
+    ).dt.year.astype(int)
     _merge_progress("event_ledger_ready", rows=len(ledger))
     development = _selection_ledger(ledger)
     _merge_progress("development_ledger_ready", rows=len(development))
@@ -2864,9 +3288,28 @@ def build_statistical_outputs(
         costs_bps_per_side=(0,),
     )
     _merge_progress("development_metrics_complete")
-    cluster_summary, cluster_samples = _bounded_cluster_bootstrap(
+    development_cluster_summary, cluster_samples = _bounded_cluster_bootstrap(
         development,
         bootstrap_samples=bootstrap_samples,
+    )
+    development_cluster_summary["analysis_scope"] = "period_A_development"
+    development_cluster_summary["evidence_role"] = (
+        "period_A_development_selection"
+    )
+    global_cluster_summary, _ = _bounded_cluster_bootstrap(
+        ledger,
+        bootstrap_samples=bootstrap_samples,
+        collect_samples=False,
+        methods=("hierarchical_year_symbol",),
+    )
+    global_cluster_summary["analysis_scope"] = "all_periods"
+    global_cluster_summary["evidence_role"] = (
+        "retrospective_all_periods_diagnostic"
+    )
+    cluster_summary = pd.concat(
+        [development_cluster_summary, global_cluster_summary],
+        ignore_index=True,
+        copy=False,
     )
     cluster_numeric = cluster_samples.select_dtypes(include=[np.number])
     cluster_samples = cluster_samples.loc[
@@ -2930,20 +3373,7 @@ def build_statistical_outputs(
         functional["combination_id"].astype(str)
         == functional["global_functional_canonical_combination_id"]
     )
-    bootstrap_rank = cluster_summary.loc[
-        cluster_summary["method"].astype(str).eq("hierarchical_year_symbol")
-        & cluster_summary["metric"].astype(str).eq("mean_return"),
-        ["combination_id", "ci_low95", "ci_high95"],
-    ].rename(
-        columns={
-            "ci_low95": "bootstrap_mean_return_ci_low95",
-            "ci_high95": "bootstrap_mean_return_ci_high95",
-        }
-    )
-    bootstrap_rank["bootstrap_mean_return_ci_width95"] = (
-        bootstrap_rank["bootstrap_mean_return_ci_high95"]
-        - bootstrap_rank["bootstrap_mean_return_ci_low95"]
-    )
+    bootstrap_rank = _bootstrap_metric_columns(development_cluster_summary)
     development_zero = development_zero.merge(
         bootstrap_rank,
         on="combination_id",
@@ -2965,9 +3395,8 @@ def build_statistical_outputs(
         validate="one_to_one",
     )
     ranked = rank_combinations(development_zero)
+    ranked["ranking_evidence_role"] = "period_A_development_selection"
     ranked["evidence_role"] = "period_A_development_selection"
-    winners = objective_winners(ranked)
-    winners["evidence_role"] = "period_A_development_selection"
     multiple, pbo, pbo_payload = _multiple_testing(
         development,
         manifest,
@@ -2979,29 +3408,62 @@ def build_statistical_outputs(
     pbo["evidence_role"] = "period_A_development_selection"
     paired_entry["evidence_role"] = "all_periods_diagnostic"
     paired_exit["evidence_role"] = "all_periods_diagnostic"
-    cluster_summary["evidence_role"] = "period_A_development_selection"
     cluster_samples["evidence_role"] = "period_A_development_selection"
+    leave_out = _bounded_combination_audit(ledger, leave_one_out_audit).assign(
+        evidence_role="all_periods_diagnostic"
+    )
+    censoring_overall = _bounded_combination_audit(
+        ledger, censoring_audit
+    ).assign(cut="all", cut_value="ALL")
+    censoring_period = _bounded_combination_audit(
+        ledger,
+        lambda group: censoring_audit(group, group_columns=("period",)),
+    ).rename(columns={"period": "cut_value"}).assign(cut="period")
+    censoring_year = _bounded_combination_audit(
+        ledger,
+        lambda group: censoring_audit(group, group_columns=("entry_year",)),
+    ).rename(columns={"entry_year": "cut_value"}).assign(cut="year")
+    censoring = pd.concat(
+        [censoring_overall, censoring_period, censoring_year],
+        ignore_index=True,
+        copy=False,
+    ).assign(evidence_role="all_periods_diagnostic")
+    concentration = _bounded_combination_audit(
+        ledger, concentration_statistics
+    ).assign(evidence_role="all_periods_diagnostic")
+    inference = _bounded_combination_audit(
+        ledger, robust_combination_inference
+    ).assign(evidence_role="all_periods_diagnostic")
+    survival = _bounded_combination_audit(
+        ledger, survival_incidence_table
+    ).assign(evidence_role="all_periods_diagnostic")
+    period_results = cuts.loc[cuts["cut"].eq("period")].reset_index(drop=True)
+    ranked = _apply_robust_leader_gates(
+        ranked,
+        all_period_summary=summary,
+        period_results=period_results,
+        global_cluster_summary=global_cluster_summary,
+        multiple_testing=multiple,
+        leave_out=leave_out,
+    )
+    winners = _extended_objective_winners(
+        ranked,
+        all_period_summary=summary,
+        period_results=period_results,
+    )
     eligible_ranked = ranked.loc[ranked["selection_eligible"].astype(bool)].copy()
     if eligible_ranked.empty:
         raise ValueError("no semantically supported combination can be ranked")
     raw_outputs = {
         "summary": summary,
-        "period": cuts.loc[cuts["cut"].eq("period")].reset_index(drop=True),
+        "period": period_results,
         "year": cuts.loc[cuts["cut"].eq("year")].reset_index(drop=True),
         "decade": cuts.loc[cuts["cut"].eq("decade")].reset_index(drop=True),
         "country": cuts.loc[cuts["cut"].eq("country")].reset_index(drop=True),
         "market": cuts.loc[cuts["cut"].eq("market")].reset_index(drop=True),
         "currency": cuts.loc[cuts["cut"].eq("currency")].reset_index(drop=True),
-        "leave_out": _bounded_combination_audit(
-            ledger, leave_one_out_audit
-        ).assign(
-            evidence_role="all_periods_diagnostic"
-        ),
-        "censoring": _bounded_combination_audit(
-            ledger, censoring_audit
-        ).assign(
-            evidence_role="all_periods_diagnostic"
-        ),
+        "leave_out": leave_out,
+        "censoring": censoring,
     }
     serializable = {
         key: _replace_nonfinite_with_status(value) for key, value in raw_outputs.items()
@@ -3018,17 +3480,16 @@ def build_statistical_outputs(
         "paired_exit": paired_exit,
         "cluster_summary": _replace_nonfinite_with_status(cluster_summary),
         "cluster_samples": cluster_samples,
+        "inference": _replace_nonfinite_with_status(inference),
         "multiple_testing": multiple,
         "pbo": pbo,
         "pbo_payload": pbo_payload,
         "leave_out": serializable["leave_out"],
-        "concentration": _bounded_combination_audit(
-            ledger, concentration_statistics
-        ).assign(
-            evidence_role="all_periods_diagnostic"
-        ),
+        "concentration": concentration,
         "pareto": eligible_ranked.loc[eligible_ranked["pareto_rank"].eq(1)].reset_index(drop=True),
-        "ideal": eligible_ranked.sort_values(
+        "ideal": eligible_ranked.loc[
+            eligible_ranked["pareto_rank"].eq(1)
+        ].sort_values(
             ["ideal_distance", "combination_id"], kind="stable"
         ).reset_index(drop=True),
         "balanced": eligible_ranked.sort_values(
@@ -3037,11 +3498,7 @@ def build_statistical_outputs(
         "top_objectives": winners,
         "classifications": _replace_nonfinite_with_status(ranked),
         "censoring": serializable["censoring"],
-        "survival": _bounded_combination_audit(
-            ledger, survival_incidence_table
-        ).assign(
-            evidence_role="all_periods_diagnostic"
-        ),
+        "survival": survival,
         "functional_duplicates": functional,
     }
 
@@ -3099,155 +3556,229 @@ def _report(
     summary: Mapping[str, Any],
     pbo: Mapping[str, Any],
     statistics: Mapping[str, pd.DataFrame | dict[str, Any]],
+    coverage: pd.DataFrame,
+    manifest: pd.DataFrame,
 ) -> str:
     combination = statistics["summary"]
     period = statistics["period"]
-    yearly = statistics["year"]
-    country = statistics["country"]
-    market = statistics["market"]
-    paired_entry = statistics["paired_entry"]
-    paired_exit = statistics["paired_exit"]
-    clusters = statistics["cluster_summary"]
     multiple = statistics["multiple_testing"]
     pareto = statistics["pareto"]
     ideal = statistics["ideal"]
     balanced = statistics["balanced"]
     objectives = statistics["top_objectives"]
-    censoring = statistics["censoring"]
     concentration = statistics["concentration"]
     leave_out = statistics["leave_out"]
+    functional = statistics["functional_duplicates"]
+    classifications = statistics["classifications"]
     frames = (
         combination,
         period,
-        yearly,
-        country,
-        market,
-        paired_entry,
-        paired_exit,
-        clusters,
         multiple,
         pareto,
         ideal,
         balanced,
         objectives,
-        censoring,
         concentration,
         leave_out,
+        functional,
+        classifications,
     )
     if not all(isinstance(frame, pd.DataFrame) for frame in frames):
         raise TypeError("report statistics must be data frames")
 
-    def best_estimable(
-        frame: pd.DataFrame, column: str, *, ascending: bool = False
-    ) -> pd.Series:
-        estimable = frame.copy()
-        estimable["_report_value"] = pd.to_numeric(
-            estimable[column], errors="coerce"
+    zero = combination.loc[
+        pd.to_numeric(combination["cost_bps_per_side"], errors="coerce").eq(0)
+    ].copy()
+    mapping = manifest[
+        ["combination_id", "entry_spec_id", "exit_spec_id"]
+    ].drop_duplicates()
+    zero = zero.merge(mapping, on="combination_id", how="left", validate="one_to_one")
+
+    def weighted_family(frame: pd.DataFrame, key: str) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        metrics = (
+            "mean_return",
+            "median_return",
+            "expected_shortfall_10_abs",
+            "mae_median_abs",
+            "duration_median",
+            "median_return_per_session",
         )
-        estimable = estimable.dropna(subset=["_report_value"])
-        if estimable.empty:
-            raise ValueError(f"report has no estimable {column}")
-        return estimable.sort_values(
-            "_report_value", ascending=ascending, kind="stable"
+        for family_id, group in frame.groupby(key, sort=True):
+            weights = pd.to_numeric(group["complete_events"], errors="coerce").fillna(0)
+            row: dict[str, Any] = {key: family_id}
+            row["complete_events"] = int(weights.sum())
+            for metric in metrics:
+                values = pd.to_numeric(group[metric], errors="coerce")
+                valid = values.notna() & weights.gt(0)
+                row[metric] = (
+                    float(np.average(values.loc[valid], weights=weights.loc[valid]))
+                    if valid.any()
+                    else np.nan
+                )
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    def best(
+        frame: pd.DataFrame,
+        metric: str,
+        *,
+        maximize: bool,
+    ) -> pd.Series:
+        candidate = frame.copy()
+        candidate["_value"] = pd.to_numeric(candidate[metric], errors="coerce")
+        candidate = candidate.loc[np.isfinite(candidate["_value"])]
+        if candidate.empty:
+            raise ValueError(f"report has no finite values for {metric}")
+        sort_columns = ["_value"]
+        ascending = [not maximize]
+        if "combination_id" in candidate:
+            sort_columns.append("combination_id")
+            ascending.append(True)
+        return candidate.sort_values(
+            sort_columns, ascending=ascending, kind="stable"
         ).iloc[0]
 
-    zero = combination.loc[combination["cost_bps_per_side"].eq(0)]
-    high_cost = combination.loc[combination["cost_bps_per_side"].eq(max(COSTS_BPS_PER_SIDE))]
-    best_mean = best_estimable(zero, "mean_return")
-    best_cost = best_estimable(high_cost, "mean_return")
-    period_a = period.loc[period["cut_value"].astype(str).eq("A")]
-    best_period = best_estimable(period_a, "mean_return")
-    best_year = best_estimable(yearly, "mean_return")
-    best_country = best_estimable(country, "mean_return")
-    best_market = best_estimable(market, "mean_return")
-    paired_entry_return = paired_entry.loc[
-        paired_entry["metric"].astype(str).eq("return")
-    ]
-    if paired_entry_return.empty:
-        paired_entry_answer = (
-            "Ninguna: hubo 0 comparaciones con pares causales completos entre entradas."
-        )
-    else:
-        best_entry = best_estimable(paired_entry_return, "mean_delta")
-        paired_entry_answer = (
-            f"Para la salida `{best_entry['exit_spec_id']}`, "
-            f"`{best_entry['challenger']}` frente a `{best_entry['baseline']}`: "
-            f"{float(best_entry['mean_delta']):.8f} sobre {int(best_entry['pairs'])} pares."
-        )
-    paired_exit_return = paired_exit.loc[
-        paired_exit["metric"].astype(str).eq("return")
-    ]
-    if paired_exit_return.empty:
-        paired_exit_answer = (
-            "Ninguna: hubo 0 comparaciones con pares causales completos entre salidas."
-        )
-    else:
-        best_exit = best_estimable(paired_exit_return, "mean_delta")
-        paired_exit_answer = (
-            f"Para la entrada `{best_exit['entry_spec_id']}`, "
-            f"`{best_exit['challenger']}` frente a `{best_exit['baseline']}`: "
-            f"{float(best_exit['mean_delta']):.8f} sobre {int(best_exit['pairs'])} pares."
-        )
-    cluster_mean = clusters.loc[clusters["metric"].eq("mean_return")]
-    best_cluster = best_estimable(cluster_mean, "estimate")
-    best_declared = best_estimable(multiple, "bh_declared_290_pvalue", ascending=True)
-    best_unique = best_estimable(
-        multiple.drop_duplicates("global_functional_canonical_combination_id"),
-        "bh_functionally_unique_pvalue",
-        ascending=True,
+    def objective(label: str) -> pd.Series:
+        rows = objectives.loc[objectives["objective"].astype(str).eq(label)]
+        if rows.empty:
+            raise ValueError(f"required objective winner is missing: {label}")
+        return rows.iloc[0]
+
+    entry_coverage = coverage.copy()
+    entry_coverage["_triggered"] = entry_coverage["triggered"].map(_as_bool)
+    entry_coverage["_wait"] = pd.to_numeric(
+        entry_coverage["wait_sessions"], errors="coerce"
     )
+    entry_stats = (
+        entry_coverage.groupby("entry_spec_id", as_index=False)
+        .agg(
+            selected_candidates=("entry_spec_id", "size"),
+            triggered_entries=("_triggered", "sum"),
+            median_wait_sessions=("_wait", "median"),
+            p90_wait_sessions=("_wait", lambda value: value.quantile(0.90)),
+        )
+    )
+    entry_stats["trigger_rate"] = (
+        entry_stats["triggered_entries"] / entry_stats["selected_candidates"]
+    )
+    entry_returns = weighted_family(zero, "entry_spec_id")
+    entry_stats = entry_stats.merge(
+        entry_returns, on="entry_spec_id", how="left", validate="one_to_one"
+    )
+    entry_stats["return_percentile"] = entry_stats["median_return"].rank(pct=True)
+    entry_stats["coverage_percentile"] = entry_stats["trigger_rate"].rank(pct=True)
+    entry_stats["return_coverage_score"] = np.sqrt(
+        entry_stats["return_percentile"].clip(lower=1e-12)
+        * entry_stats["coverage_percentile"].clip(lower=1e-12)
+    )
+    most_active_entry = best(entry_stats, "triggered_entries", maximize=True)
+    best_entry_return = best(entry_stats, "median_return", maximize=True)
+    best_entry_balance = best(entry_stats, "return_coverage_score", maximize=True)
+
+    exit_stats = weighted_family(zero, "exit_spec_id")
+    best_exit_return = best(exit_stats, "median_return", maximize=True)
+    best_exit_risk = best(exit_stats, "expected_shortfall_10_abs", maximize=False)
+    fastest_exit = best(exit_stats, "duration_median", maximize=False)
+    best_exit_session = best(exit_stats, "median_return_per_session", maximize=True)
+
+    highest_median = objective("01_highest_median_return")
+    lowest_mae = objective("04_lowest_mae")
+    lowest_es = objective("05_lowest_expected_shortfall")
+    highest_speed = objective("03_highest_event_speed")
+    stable = objective("15_most_stable_across_periods")
     ideal_row = ideal.iloc[0]
+    pareto_balanced = best(pareto, "balanced_score", maximize=True)
     balanced_row = balanced.iloc[0]
-    mean_objective = objectives.loc[objectives["objective"].eq("mean_return")].iloc[0]
-    speed_objective = objectives.loc[objectives["objective"].eq("event_speed")].iloc[0]
-    highest_censor = censoring.sort_values("censoring_rate", ascending=False, kind="stable").iloc[0]
-    highest_concentration = concentration.sort_values(
-        "concentration_hhi", ascending=False, kind="stable"
-    ).iloc[0]
-    estimable_leave_out = leave_out.copy()
-    estimable_leave_out["_change"] = pd.to_numeric(
-        estimable_leave_out["change_from_baseline"], errors="coerce"
+    cost_rows = objectives.loc[
+        objectives["objective"].astype(str).str.match(
+            r"^(11|12|13)_best_at_"
+        )
+    ]
+    cost_answer = "; ".join(
+        f"{int(float(row.cost_bps_per_side))} bps `{row.combination_id}` "
+        f"mediana {float(row.objective_value):.8f}"
+        for row in cost_rows.itertuples(index=False)
     )
-    estimable_leave_out = estimable_leave_out.dropna(subset=["_change"])
-    worst_leave_out = estimable_leave_out.sort_values("_change", kind="stable").iloc[0]
-    pareto_ids = ", ".join(pareto["combination_id"].astype(str).head(5))
-    if len(pareto) > 5:
-        pareto_ids += ", ..."
+
+    unique_count = int(
+        functional["global_functional_canonical_combination_id"].astype(str).nunique()
+    )
+    duplicate_count = EXPECTED_COMBINATION_COUNT - unique_count
+    complete_by_combination = pd.to_numeric(
+        zero.set_index("combination_id")["complete_events"], errors="coerce"
+    )
+    leave_numeric = leave_out.copy()
+    leave_numeric["_change"] = pd.to_numeric(
+        leave_numeric["change_from_baseline"], errors="coerce"
+    )
+    year_leave = leave_numeric.loc[leave_numeric["omission"].eq("year")].dropna(
+        subset=["_change"]
+    )
+    symbol_leave = leave_numeric.loc[
+        leave_numeric["omission"].isin(("symbol", "top5_symbols", "top20_symbols"))
+    ].dropna(subset=["_change"])
+    worst_year = year_leave.sort_values("_change", kind="stable").iloc[0]
+    worst_symbol = symbol_leave.sort_values("_change", kind="stable").iloc[0]
+    highest_concentration = best(concentration, "concentration_hhi", maximize=True)
+
+    correction_columns = (
+        "bh_declared_290_pvalue",
+        "holm_declared_290_pvalue",
+        "westfall_young_pvalue",
+    )
+    correction_values = multiple[list(correction_columns)].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    multiple_pass = multiple.loc[correction_values.le(0.05).any(axis=1)]
+    multiple_ids = ", ".join(multiple_pass["combination_id"].astype(str).head(10))
+    if len(multiple_pass) > 10:
+        multiple_ids += ", ..."
+    robust = classifications.loc[
+        classifications["classification"].astype(str).eq("robust_leader")
+    ].copy()
+    freeze_pool = robust if not robust.empty else pareto
+    freeze_candidate = best(freeze_pool, "ideal_distance", maximize=False)
+    freeze_status = (
+        "robust_leader"
+        if not robust.empty
+        else "candidata Pareto prospectiva, todavía no validada"
+    )
     return f"""# Estudio de eventos de las 290 combinaciones
 
 ## Hechos
 
-1. **[Q01] ¿Cuál es el contrato declarado?** Resultado: 290 combinaciones, 10 entradas y 29 salidas.
-2. **[Q02] ¿Qué estrategia y fuentes congeladas se preservan?** Resultado: estrategia exacta `{summary['exact_strategy_candidate_id']}`, source lock `{summary['source_lock_sha256']}` y estrategia `{summary['exact_strategy_sha256']}`.
-3. **[Q03] ¿Cuántos shards históricos se integraron?** Resultado: exactamente 10.
-4. **[Q04] ¿Cuántos shards corregidos se integraron?** Resultado: exactamente 30.
-5. **[Q05] ¿La réplica histórica respetó las tolerancias congeladas?** Resultado: sí, las 290 comparaciones pasaron.
-6. **[Q06] ¿Cuántas oportunidades hay y cómo terminan?** Resultado: {int(summary['opportunity_count'])}; {int(summary['completed'])} observadas, {int(summary['censored'])} censuradas y {int(summary['failed_due_to_data'])} fallidas por datos.
-7. **[Q07] ¿Cómo se reconcilia la financiación del portfolio antiguo?** Resultado: reconciliación informativa completa; {int(summary['financed_in_old_portfolio'])} financiadas y {int(summary['not_financed_in_old_portfolio'])} no financiadas, sin excluir ninguna oportunidad.
-8. **[Q08] ¿Cómo se valoran FX y dividendos?** Resultado: FX exclusivamente desde `frozen_fx_rates.csv` `{summary['frozen_fx_rates_sha256']}` y cada pago de `dividend_payments_local_json` se convierte en su fecha causal.
-9. **[Q09] ¿Reconciliaron todas las combinaciones?** Resultado: sí, las 290 en A, B, C y agregado.
-10. **[Q10] ¿Qué combinación lidera sin costes en el diagnóstico combinado?** Resultado: `{best_mean['combination_id']}`, retorno medio {float(best_mean['mean_return']):.8f}; no selecciona.
-11. **[Q11] ¿Qué combinación lidera con 200 puntos básicos por lado?** Resultado: `{best_cost['combination_id']}`, retorno medio {float(best_cost['mean_return']):.8f}; no selecciona.
-12. **[Q12] ¿Cuál lidera el periodo A de desarrollo?** Resultado: `{best_period['combination_id']}`, retorno medio {float(best_period['mean_return']):.8f}.
-13. **[Q13] ¿Qué líderes aparecen por año, país y mercado?** Resultado: año `{best_year['combination_id']}`/{best_year['cut_value']}; país `{best_country['combination_id']}`/{best_country['cut_value']}; mercado `{best_market['combination_id']}`/{best_market['cut_value']}.
-14. **[Q14] ¿Qué muestran las entradas emparejadas?** Resultado: {paired_entry_answer} Se publican trigger probability, precio, retraso, retorno, MAE, duración y cobertura usando cohorte upstream.
-15. **[Q15] ¿Qué muestran las salidas emparejadas?** Resultado: {paired_exit_answer} Se publican todas las parejas para retorno, pérdida, MAE, duración y retorno por sesión.
+1. **[Q01] ¿Cuántas reglas de las 290 eran realmente únicas?** Resultado: {unique_count} grupos funcionalmente únicos.
+2. **[Q02] ¿Cuántas eran duplicadas?** Resultado: {duplicate_count} combinaciones pertenecían a grupos funcionales ya representados.
+3. **[Q03] ¿Cuántas eran semánticamente inválidas?** Resultado: {int(summary['semantic_not_applicable_count'])} no aplicables; siguen en el inventario, pero no en el ranking económico.
+4. **[Q04] ¿Cuántas oportunidades completas tuvo cada combinación?** Resultado: mínimo {int(complete_by_combination.min())}, mediana {float(complete_by_combination.median()):.1f}, máximo {int(complete_by_combination.max())}. El detalle completo está en `combination_summary_results.csv`.
+5. **[Q05] ¿Qué entrada activó más oportunidades?** Resultado: `{most_active_entry['entry_spec_id']}`, {int(most_active_entry['triggered_entries'])} de {int(most_active_entry['selected_candidates'])}, tasa {float(most_active_entry['trigger_rate']):.4%}.
+6. **[Q06] ¿Qué entrada obtuvo mejor retorno condicionado?** Resultado: `{best_entry_return['entry_spec_id']}`, retorno mediano ponderado {float(best_entry_return['median_return']):.8f}.
+7. **[Q07] ¿Qué entrada ofreció mejor equilibrio entre retorno y cobertura?** Resultado: `{best_entry_balance['entry_spec_id']}`, score geométrico de percentiles {float(best_entry_balance['return_coverage_score']):.8f}, cobertura {float(best_entry_balance['trigger_rate']):.4%}.
+8. **[Q08] ¿Qué salida produjo mayor retorno?** Resultado: `{best_exit_return['exit_spec_id']}`, retorno mediano ponderado {float(best_exit_return['median_return']):.8f}.
+9. **[Q09] ¿Qué salida redujo más el riesgo?** Resultado: `{best_exit_risk['exit_spec_id']}`, expected shortfall 10% absoluto {float(best_exit_risk['expected_shortfall_10_abs']):.8f}.
+10. **[Q10] ¿Qué salida fue más rápida?** Resultado: `{fastest_exit['exit_spec_id']}`, duración mediana {float(fastest_exit['duration_median']):.2f} sesiones.
+11. **[Q11] ¿Qué salida mejoró más el retorno por sesión?** Resultado: `{best_exit_session['exit_spec_id']}`, retorno mediano por sesión {float(best_exit_session['median_return_per_session']):.8f}.
 
 ## Inferencias
 
-16. **[Q16] ¿Qué combinación destaca en el bootstrap agrupado?** Resultado: `{best_cluster['combination_id']}`, método `{best_cluster['method']}`, estimación {float(best_cluster['estimate']):.8f}, IC [{float(best_cluster['ci_low95']):.8f}, {float(best_cluster['ci_high95']):.8f}].
-17. **[Q17] ¿Cuál es el menor BH dentro de las 290 pruebas declaradas?** Resultado: `{best_declared['combination_id']}`, BH {float(best_declared['bh_declared_290_pvalue']):.8f} y Holm {float(best_declared['holm_declared_290_pvalue']):.8f}; las no estimables permanecen explícitas.
-18. **[Q18] ¿Cuál es el menor BH entre reglas funcionalmente únicas?** Resultado: `{best_unique['global_functional_canonical_combination_id']}`, BH {float(best_unique['bh_functionally_unique_pvalue']):.8f} y Holm {float(best_unique['holm_functionally_unique_pvalue']):.8f}; hay {int(pbo['functionally_unique_tests'])} grupos derivados de la auditoría global.
-19. **[Q19] ¿Qué indica CSCV/PBO?** Resultado: PBO {float(pbo['pbo']):.6f} para `{pbo['entry_spec_id']}` sobre {int(pbo['matrix_rows'])} filas; es un gate familiar, no el contador global de duplicados.
-20. **[Q20] ¿Cuántas combinaciones forman el primer frente de Pareto?** Resultado: {len(pareto)}; IDs iniciales {pareto_ids}.
-21. **[Q21] ¿Qué combinación queda más cerca del punto ideal?** Resultado: `{ideal_row['combination_id']}`, distancia {float(ideal_row['ideal_distance']):.8f}.
-22. **[Q22] ¿Qué combinación equilibra mejor los pilares y objetivos?** Resultado: `{balanced_row['combination_id']}`, puntuación {float(balanced_row['balanced_score']):.8f}; retorno `{mean_objective['combination_id']}` y velocidad `{speed_objective['combination_id']}`.
+12. **[Q12] ¿Qué combinación obtuvo el mayor retorno mediano?** Resultado: `{highest_median['combination_id']}`, {float(highest_median['objective_value']):.8f}, seleccionado sólo con A.
+13. **[Q13] ¿Cuál tuvo menor MAE?** Resultado: `{lowest_mae['combination_id']}`, MAE mediana absoluta {float(lowest_mae['objective_value']):.8f}.
+14. **[Q14] ¿Cuál tuvo menor expected shortfall?** Resultado: `{lowest_es['combination_id']}`, ES10 absoluto {float(lowest_es['objective_value']):.8f}.
+15. **[Q15] ¿Cuál tuvo mayor event speed?** Resultado: `{highest_speed['combination_id']}`, {float(highest_speed['objective_value']):.8f}.
+16. **[Q16] ¿Cuál fue la más estable entre periodos?** Resultado: `{stable['combination_id']}`, dispersión de medianas {float(stable['objective_value']):.8f}; B y C sólo diagnostican.
+17. **[Q17] ¿Cuál fue la mejor en la frontera de Pareto?** Resultado: `{pareto_balanced['combination_id']}`, mejor Balanced Score dentro del primer frente {float(pareto_balanced['balanced_score']):.8f}.
+18. **[Q18] ¿Cuál quedó más cerca del punto ideal?** Resultado: `{ideal_row['combination_id']}`, distancia tridimensional {float(ideal_row['ideal_distance']):.8f}.
+19. **[Q19] ¿Cuál obtuvo mayor Balanced Opportunity Score?** Resultado: `{balanced_row['combination_id']}`, {float(balanced_row['balanced_score']):.8f}; media geométrica con igual peso de retorno, riesgo y tiempo.
+20. **[Q20] ¿Cuál sobrevivió mejor a costes?** Resultado: {cost_answer}.
+21. **[Q21] ¿Cuáles dependieron excesivamente de un año?** Resultado: el peor caso fue `{worst_year['combination_id']}` al excluir `{worst_year['omitted_value']}`, delta {float(worst_year['_change']):.8f}; todas las filas y gates están en `leave_one_group_out_results.csv` y `combination_classifications.csv`.
+22. **[Q22] ¿Cuáles dependieron de pocos símbolos?** Resultado: HHI máximo `{highest_concentration['combination_id']}`={float(highest_concentration['concentration_hhi']):.8f}; peor leave-out `{worst_symbol['combination_id']}`/{worst_symbol['omission']}, delta {float(worst_symbol['_change']):.8f}.
+23. **[Q23] ¿Cuáles superaron las correcciones por múltiples pruebas?** Resultado: {len(multiple_pass)} combinaciones pasaron al menos BH-290, Holm-290 o Westfall-Young al 5%: {multiple_ids or 'ninguna'}.
+24. **[Q24] ¿Cuál sería la mejor candidata para congelar prospectivamente?** Resultado: `{freeze_candidate['combination_id']}` como {freeze_status}. El PBO familiar fue {float(pbo['pbo']):.6f}; esto no convierte datos observados en nuevo OOS.
 
 ## Limitaciones
 
-23. **[Q23] ¿Qué muestra supervivencia y censura?** Resultado: `survival_analysis_by_combination.csv`; mayor censura en `{highest_censor['combination_id']}` con {float(highest_censor['censoring_rate']):.8f}, sin convertir censura en retorno.
-24. **[Q24] ¿Qué fragilidad muestran concentración y leave-out?** Resultado: HHI máximo `{highest_concentration['combination_id']}`={float(highest_concentration['concentration_hhi']):.8f}; peor omisión `{worst_leave_out['combination_id']}` `{worst_leave_out['omission']}`=`{worst_leave_out['omitted_value']}`, delta {float(worst_leave_out['change_from_baseline']):.8f}.
-25. **[Q25] ¿Qué clasificaciones y gates limitan la conclusión?** Resultado: clasificaciones `{json.dumps(summary['classification_counts'], sort_keys=True)}`. B/C son diagnóstico, no selección; {int(summary['semantic_not_applicable_count'])} reglas no aplicables, {int(summary['fx_currency_unknown_count'])} monedas desconocidas y {int(summary['fx_dividend_detail_missing_count'])} dividendos sin FX causal completo. Gates: source lock, réplica, esquema, causalidad, reconciliación, multiplicidad y clasificación explícita de no estimables. No hubo exclusiones de capital ni portfolio nuevo.
+25. **[Q25] ¿Qué limitaciones impiden considerarla validada?** Resultado: A, B y C ya fueron observados; `new_oos_claimed=false` y `optimization_performed_on_opened_data=false`. B/C no seleccionan. Las oportunidades se solapan y se concentran por símbolo/año; la censura no es retorno; existen {int(summary['semantic_not_applicable_count'])} reglas no aplicables, {duplicate_count} duplicadas, {int(summary['fx_currency_unknown_count'])} filas con moneda desconocida y {int(summary['fx_dividend_detail_missing_count'])} dividendos sin FX causal completo. Clasificaciones: `{json.dumps(summary['classification_counts'], sort_keys=True)}`. No se simuló cartera y ninguna oportunidad fue excluida por capital.
 """
 
 
@@ -3516,6 +4047,18 @@ def merge_event_study(
             str(key): int(value)
             for key, value in classifications["classification"].value_counts().items()
         },
+        "robust_leader_count": int(
+            classifications["classification"].astype(str).eq("robust_leader").sum()
+        ),
+        "robust_gate_thresholds": {
+            "minimum_total_complete_events": MINIMUM_TOTAL_COMPLETE_EVENTS,
+            "minimum_complete_events_per_period": MINIMUM_COMPLETE_EVENTS_PER_PERIOD,
+            "clear_majority_positive_years": ROBUST_CLEAR_MAJORITY_POSITIVE_YEARS,
+            "maximum_censoring_rate": ROBUST_MAX_CENSORING_RATE,
+            "multiple_testing_alpha": 0.05,
+        },
+        "balanced_opportunity_score_pillars": ["return", "risk", "time"],
+        "pareto_objectives": dict(REQUIRED_OBJECTIVES),
         "new_oos_claimed": False,
         "optimization_performed_on_opened_data": False,
         "validation_used_for_selection": False,
@@ -3533,7 +4076,14 @@ def merge_event_study(
     }
     _json(output / AUDIT_SUMMARY_NAME, summary)
     (output / FINAL_REPORT_NAME).write_text(
-        _report(summary, pbo_payload, statistics), encoding="utf-8"
+        _report(
+            summary,
+            pbo_payload,
+            statistics,
+            coverage,
+            manifest,
+        ),
+        encoding="utf-8",
     )
     _json(output / FINAL_MANIFEST_NAME, _artifact_manifest(output))
     print(json.dumps(summary, sort_keys=True))

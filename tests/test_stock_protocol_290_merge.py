@@ -24,6 +24,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     SEMANTIC_AUDIT_NAME,
     STATISTIC_FILES,
     _artifact_manifest,
+    _apply_robust_leader_gates,
     _bounded_cluster_bootstrap,
     _discover_shards,
     _global_functional_mapping,
@@ -129,6 +130,88 @@ def test_estimable_columns_accept_mixed_numeric_and_status_values() -> None:
     assert frame.loc[1, "mean_return"] == "not_estimable"
 
 
+def test_robust_leader_requires_every_explicit_gate() -> None:
+    ranked = pd.DataFrame(
+        {
+            "combination_id": ["pass", "period-fail"],
+            "selection_eligible": [True, True],
+            "pareto_rank": pd.Series([1, 1], dtype="Int64"),
+            "classification": ["pareto_promising", "pareto_promising"],
+        }
+    )
+    all_summary = pd.DataFrame(
+        {
+            "combination_id": ["pass", "period-fail"],
+            "cost_bps_per_side": [0, 0],
+            "complete_events": [600, 600],
+            "median_return": [0.08, 0.08],
+            "positive_years_pct": [0.75, 0.75],
+            "censoring_rate": [0.05, 0.05],
+        }
+    )
+    period_rows = []
+    for combination_id in ("pass", "period-fail"):
+        for period_name in ("A", "B", "C"):
+            period_rows.append(
+                {
+                    "combination_id": combination_id,
+                    "cut_value": period_name,
+                    "cost_bps_per_side": 0,
+                    "complete_events": 200,
+                    "median_return": (
+                        -0.01
+                        if combination_id == "period-fail" and period_name == "C"
+                        else 0.05
+                    ),
+                }
+            )
+    cluster = pd.DataFrame(
+        {
+            "combination_id": ["pass", "period-fail"],
+            "method": ["hierarchical_year_symbol"] * 2,
+            "metric": ["median_return"] * 2,
+            "ci_low95": [0.02, 0.02],
+            "ci_high95": [0.10, 0.10],
+        }
+    )
+    multiple = pd.DataFrame(
+        {
+            "combination_id": ["pass", "period-fail"],
+            "bh_declared_290_pvalue": [0.04, 0.04],
+            "holm_declared_290_pvalue": [0.08, 0.08],
+            "westfall_young_pvalue": [0.06, 0.06],
+        }
+    )
+    leave_rows = []
+    for combination_id in ("pass", "period-fail"):
+        for omission, values in (("year", ("2008", "2009")), ("country", ("US", "GB"))):
+            for value in values:
+                leave_rows.append(
+                    {
+                        "combination_id": combination_id,
+                        "omission": omission,
+                        "omitted_value": value,
+                        "leave_out_mean_return": 0.03,
+                    }
+                )
+
+    result = _apply_robust_leader_gates(
+        ranked,
+        all_period_summary=all_summary,
+        period_results=pd.DataFrame(period_rows),
+        global_cluster_summary=cluster,
+        multiple_testing=multiple,
+        leave_out=pd.DataFrame(leave_rows),
+    ).set_index("combination_id")
+
+    assert result.loc["pass", "classification"] == "robust_leader"
+    assert result.loc["pass", "robust_gate_all_passed"]
+    assert result.loc["period-fail", "classification"] == "period_dependent"
+    assert not result.loc[
+        "period-fail", "robust_gate_all_three_periods_positive"
+    ]
+
+
 def _summary() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -209,96 +292,89 @@ def test_concatenate_parquet_files_unions_columns_without_losing_rows(
 def _report_statistics() -> dict[str, pd.DataFrame]:
     combination = pd.DataFrame(
         {
-            "combination_id": ["best", "cost"],
-            "cost_bps_per_side": [0, 200],
-            "mean_return": [0.2, 0.1],
+            "combination_id": ["best"],
+            "cost_bps_per_side": [0],
+            "complete_events": [250],
+            "mean_return": [0.2],
+            "median_return": [0.18],
+            "expected_shortfall_10_abs": [0.04],
+            "mae_median_abs": [0.03],
+            "duration_median": [12.0],
+            "median_return_per_session": [0.01],
         }
     )
     cut = pd.DataFrame(
         {
-            "combination_id": ["cut-best"],
+            "combination_id": ["best"],
             "cut_value": ["A"],
-            "mean_return": [0.15],
+            "median_return": [0.15],
         }
     )
-    paired_entry = pd.DataFrame(
-        {
-            "exit_spec_id": ["exit-00"],
-            "baseline": ["entry-00"],
-            "challenger": ["entry-01"],
-            "mean_delta": [0.01],
-            "pairs": [12],
-            "metric": ["return"],
-            "analysis_status": ["estimable"],
-        }
-    )
-    paired_exit = pd.DataFrame(
-        {
-            "entry_spec_id": ["entry-00"],
-            "baseline": ["exit-00"],
-            "challenger": ["exit-01"],
-            "mean_delta": [0.02],
-            "pairs": [14],
-            "metric": ["return"],
-            "analysis_status": ["estimable"],
-        }
-    )
+    objective_rows = [
+        ("01_highest_median_return", "best", 0.18, None),
+        ("03_highest_event_speed", "best", 0.02, None),
+        ("04_lowest_mae", "best", 0.03, None),
+        ("05_lowest_expected_shortfall", "best", 0.04, None),
+        ("15_most_stable_across_periods", "best", 0.01, None),
+        ("11_best_at_25_bps_per_side", "best", 0.17, 25),
+        ("12_best_at_50_bps_per_side", "best", 0.16, 50),
+        ("13_best_at_100_bps_per_side", "best", 0.14, 100),
+    ]
     return {
         "summary": combination,
         "period": cut,
-        "year": cut.assign(cut_value=2012),
-        "country": cut.assign(cut_value="US"),
-        "market": cut.assign(cut_value="NYSE"),
-        "paired_entry": paired_entry,
-        "paired_exit": paired_exit,
-        "cluster_summary": pd.DataFrame(
-            {
-                "combination_id": ["cluster-best"],
-                "method": ["symbol"],
-                "metric": ["mean_return"],
-                "estimate": [0.12],
-                "ci_low95": [0.08],
-                "ci_high95": [0.16],
-            }
-        ),
         "multiple_testing": pd.DataFrame(
             {
-                "combination_id": ["adjusted-best"],
+                "combination_id": ["best"],
                 "westfall_young_pvalue": [0.04],
-                "pbo_included": [True],
                 "bh_declared_290_pvalue": [0.05],
                 "holm_declared_290_pvalue": [0.06],
-                "bh_functionally_unique_pvalue": [0.04],
-                "holm_functionally_unique_pvalue": [0.05],
-                "global_functional_canonical_combination_id": ["adjusted-best"],
             }
         ),
-        "pareto": pd.DataFrame({"combination_id": ["pareto-a", "pareto-b"]}),
+        "pareto": pd.DataFrame(
+            {
+                "combination_id": ["best"],
+                "balanced_score": [0.85],
+                "ideal_distance": [0.1],
+            }
+        ),
         "ideal": pd.DataFrame(
-            {"combination_id": ["ideal-best"], "ideal_distance": [0.1]}
+            {"combination_id": ["best"], "ideal_distance": [0.1]}
         ),
         "balanced": pd.DataFrame(
-            {"combination_id": ["balanced-best"], "balanced_score": [0.9]}
+            {"combination_id": ["best"], "balanced_score": [0.9]}
         ),
         "top_objectives": pd.DataFrame(
-            {
-                "objective": ["mean_return", "event_speed"],
-                "combination_id": ["mean-best", "speed-best"],
-                "objective_value": [0.2, 0.03],
-            }
-        ),
-        "censoring": pd.DataFrame(
-            {"combination_id": ["censor-high"], "censoring_rate": [0.3]}
+            objective_rows,
+            columns=(
+                "objective",
+                "combination_id",
+                "objective_value",
+                "cost_bps_per_side",
+            ),
         ),
         "concentration": pd.DataFrame(
-            {"combination_id": ["concentrated"], "concentration_hhi": [0.4]}
+            {"combination_id": ["best"], "concentration_hhi": [0.4]}
         ),
         "leave_out": pd.DataFrame(
             {
-                "combination_id": ["fragile"],
-                "omission": ["symbol"],
-                "omitted_value": ["AAA"],
-                "change_from_baseline": [-0.05],
+                "combination_id": ["best", "best"],
+                "omission": ["year", "symbol"],
+                "omitted_value": [2012, "AAA"],
+                "change_from_baseline": [-0.04, -0.05],
+            }
+        ),
+        "functional_duplicates": pd.DataFrame(
+            {
+                "combination_id": ["best", "other"],
+                "global_functional_canonical_combination_id": ["best", "other"],
+            }
+        ),
+        "classifications": pd.DataFrame(
+            {
+                "combination_id": ["best"],
+                "classification": ["robust_leader"],
+                "ideal_distance": [0.1],
             }
         ),
     }
@@ -320,6 +396,7 @@ def test_minimum_output_names_match_the_frozen_specification() -> None:
         "paired_entry_comparisons.csv",
         "paired_exit_comparisons.csv",
         "clustered_bootstrap_results.csv",
+        "robust_inference_diagnostics.csv",
         "multiple_testing_results.csv",
         "cscv_pbo_results.csv",
         "leave_one_group_out_results.csv",
@@ -749,6 +826,20 @@ def test_report_has_exactly_25_questions_and_separate_epistemic_sections(
             "functionally_unique_tests": 240,
         },
         _report_statistics(),
+        pd.DataFrame(
+            {
+                "entry_spec_id": ["entry-00", "entry-00"],
+                "triggered": [True, False],
+                "wait_sessions": [1, 21],
+            }
+        ),
+        pd.DataFrame(
+            {
+                "combination_id": ["best"],
+                "entry_spec_id": ["entry-00"],
+                "exit_spec_id": ["exit-00"],
+            }
+        ),
     )
     (tmp_path / FINAL_REPORT_NAME).write_text(report, encoding="utf-8")
 
@@ -760,11 +851,11 @@ def test_report_has_exactly_25_questions_and_separate_epistemic_sections(
     assert "## Hechos" in report
     assert "## Inferencias" in report
     assert "## Limitaciones" in report
-    assert "`ideal-best`" in report
-    assert "`balanced-best`" in report
-    assert "survival_analysis_by_combination.csv" in report
-    assert "dividend_payments_local_json" in report
-    assert "290 pruebas declaradas" in report
+    assert "`best`" in report
+    assert "¿Qué entrada activó más oportunidades?" in report
+    assert "¿Qué salida mejoró más el retorno por sesión?" in report
+    assert "¿Cuál sería la mejor candidata para congelar prospectivamente?" in report
+    assert "ninguna oportunidad fue excluida por capital" in report
 
 
 def test_fx_rate_after_cutoff_fails() -> None:

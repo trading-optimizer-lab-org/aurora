@@ -23,70 +23,70 @@ import pandas as pd
 COSTS_BPS_PER_SIDE: tuple[int, ...] = (0, 5, 10, 25, 50, 100, 200)
 RETURN_PERCENTILES: tuple[int, ...] = (5, 10, 25, 50, 75, 90, 95)
 
-# One means maximize and minus one minimize. These objectives cover every
-# contractual pillar and are computed only from independent opportunities.
+# One means maximize and minus one minimize. Risk losses are represented as
+# positive magnitudes so their objectives are minimized.
 REQUIRED_OBJECTIVES: dict[str, int] = {
-    "mean_return": 1,
     "median_return": 1,
-    "geometric_mean_return": 1,
-    "return_p05": 1,
-    "return_p95": 1,
-    "downside_deviation": -1,
-    "semivariance": -1,
-    "expected_shortfall_5": 1,
-    "expected_shortfall_10": 1,
-    "event_return_to_risk": 1,
-    "event_return_to_mae": 1,
     "event_speed": 1,
-    "duration_p90": -1,
-    "target_cumulative_incidence": 1,
-    "stop_cumulative_incidence": -1,
-    "censoring_rate": -1,
-    "km_median_duration": -1,
-    "period_return_dispersion": -1,
+    "win_rate": 1,
+    "profit_factor": 1,
     "worst_period_median_return": 1,
+    "bootstrap_median_return_ci_low95": 1,
+    "expected_shortfall_10_abs": -1,
+    "mae_median_abs": -1,
+    "mae_p95_abs": -1,
+    "maximum_loss_abs": -1,
+    "duration_median": -1,
+    "duration_p90": -1,
+    "censoring_rate": -1,
+    "period_return_dispersion": -1,
     "concentration_hhi": -1,
-    "bootstrap_mean_return_ci_low95": 1,
-    "bootstrap_mean_return_ci_width95": -1,
 }
 
+# Balanced Opportunity Score is deliberately limited to the three pillars
+# specified by the protocol. Stability and concentration are risk inputs, not
+# extra pillars with independent weight.
 PILLARS: dict[str, tuple[str, ...]] = {
     "return": (
-        "mean_return",
         "median_return",
-        "geometric_mean_return",
-        "return_p05",
-        "return_p95",
+        "mean_log_return",
+        "profit_factor",
+        "bootstrap_median_return_ci_low95",
     ),
     "risk": (
-        "downside_deviation",
-        "semivariance",
-        "expected_shortfall_5",
-        "expected_shortfall_10",
-        "event_return_to_risk",
-        "event_return_to_mae",
-        "stop_cumulative_incidence",
+        "expected_shortfall_10_abs",
+        "mae_median_abs",
+        "worst_decile_loss_abs",
+        "period_return_dispersion",
+        "concentration_hhi",
     ),
     "time": (
         "event_speed",
-        "duration_p90",
-        "target_cumulative_incidence",
-        "censoring_rate",
-        "km_median_duration",
+        "median_return_per_session",
+        "duration_median",
+        "time_to_target_median_penalized",
     ),
-    "stability": (
-        "period_return_dispersion",
-        "worst_period_median_return",
-    ),
-    "concentration": ("concentration_hhi",),
-    "bootstrap": (
-        "bootstrap_mean_return_ci_low95",
-        "bootstrap_mean_return_ci_width95",
-    ),
+}
+PILLAR_DIRECTIONS: dict[str, int] = {
+    "median_return": 1,
+    "mean_log_return": 1,
+    "profit_factor": 1,
+    "bootstrap_median_return_ci_low95": 1,
+    "expected_shortfall_10_abs": -1,
+    "mae_median_abs": -1,
+    "worst_decile_loss_abs": -1,
+    "period_return_dispersion": -1,
+    "concentration_hhi": -1,
+    "event_speed": 1,
+    "median_return_per_session": 1,
+    "duration_median": -1,
+    "time_to_target_median_penalized": -1,
 }
 
 MINIMUM_TOTAL_COMPLETE_EVENTS = 200
 MINIMUM_COMPLETE_EVENTS_PER_PERIOD = 30
+ROBUST_CLEAR_MAJORITY_POSITIVE_YEARS = 0.60
+ROBUST_MAX_CENSORING_RATE = 0.20
 # Compatibility aliases retained for callers that used opportunity terminology.
 MINIMUM_TOTAL_OPPORTUNITIES = MINIMUM_TOTAL_COMPLETE_EVENTS
 MINIMUM_OPPORTUNITIES_PER_PERIOD = MINIMUM_COMPLETE_EVENTS_PER_PERIOD
@@ -561,16 +561,77 @@ def _survival_statistics(group: pd.DataFrame, horizon: float) -> dict[str, float
 def _event_summary(group: pd.DataFrame, *, common_horizon: float) -> dict[str, Any]:
     observed = group.loc[group["event_observed"]]
     values = observed["net_event_return"].dropna().astype(float)
-    duration = group["event_duration"].astype(float)
+    duration = observed["event_duration"].astype(float)
     survival = _survival_statistics(group, common_horizon)
     return_array = values.to_numpy(dtype=float)
+    log_returns = (
+        np.log1p(return_array)
+        if len(return_array) and np.all(return_array > -1.0)
+        else np.asarray([], dtype=float)
+    )
     median_return = float(values.median()) if len(values) else np.nan
     downside = return_array[return_array < 0.0]
+    upside = return_array[return_array > 0.0]
     semivariance = float(np.mean(np.square(downside))) if len(downside) else 0.0
     expected_shortfall_05 = _expected_shortfall(return_array, 0.05)
     expected_shortfall_10 = _expected_shortfall(return_array, 0.10)
-    median_mae_abs = float(group["event_mae"].abs().median())
+    mae_abs = observed["event_mae"].abs().dropna().astype(float)
+    median_mae_abs = float(mae_abs.median()) if len(mae_abs) else np.nan
     event_speed = float(observed["event_speed"].median())
+    valid_session_duration = duration.replace(0.0, np.nan)
+    return_per_session = values.div(valid_session_duration.reindex(values.index))
+    log_return_per_session = pd.Series(
+        log_returns,
+        index=values.index if len(log_returns) else pd.Index([]),
+        dtype=float,
+    ).div(valid_session_duration.reindex(values.index)) if len(log_returns) else pd.Series(dtype=float)
+    finite_log_speed = (
+        log_return_per_session.replace([np.inf, -np.inf], np.nan).dropna()
+    )
+    log_speed_es10 = (
+        _expected_shortfall(finite_log_speed.to_numpy(dtype=float), 0.10)
+        if len(finite_log_speed)
+        else np.nan
+    )
+    calendar_days = pd.to_numeric(
+        observed.get("calendar_days_invested", duration),
+        errors="coerce",
+    ).astype(float)
+    valid_calendar_days = calendar_days.replace(0.0, np.nan)
+    capital_day_return = values.div(valid_calendar_days.reindex(values.index))
+    mae_per_session = mae_abs.div(valid_session_duration.reindex(mae_abs.index))
+    intratrade_drawdown = pd.to_numeric(
+        observed.get(
+            "intratrade_max_drawdown",
+            pd.Series(np.nan, index=observed.index),
+        ),
+        errors="coerce",
+    ).dropna()
+    target_mask = observed["event_type"].eq("target")
+    target_duration = duration.loc[target_mask]
+    time_to_target_mean = (
+        float(target_duration.mean()) if len(target_duration) else np.nan
+    )
+    time_to_target_median = (
+        float(target_duration.median()) if len(target_duration) else np.nan
+    )
+    time_to_target_penalized = (
+        time_to_target_median
+        if np.isfinite(time_to_target_median)
+        else float(common_horizon) + 1.0
+    )
+    analysis_year = group["analysis_date"].dt.year
+    year_span = max(1, int(analysis_year.max() - analysis_year.min() + 1))
+    observed_with_calendar = observed.assign(
+        _entry_year=observed["analysis_date"].dt.year,
+        _entry_month=observed["analysis_date"].dt.to_period("M"),
+    )
+    yearly_means = observed_with_calendar.groupby("_entry_year")[
+        "net_event_return"
+    ].mean()
+    monthly_means = observed_with_calendar.groupby("_entry_month")[
+        "net_event_return"
+    ].mean()
     (
         periods,
         minimum_period,
@@ -581,16 +642,31 @@ def _event_summary(group: pd.DataFrame, *, common_horizon: float) -> dict[str, A
     concentration_hhi, concentration_top5, concentration_top20 = _return_concentration(group)
     result: dict[str, Any] = {
         "opportunities": int(len(group)),
+        "opportunities_per_year": float(len(group) / year_span),
         "complete_events": int(group["event_observed"].sum()),
         "censored_events": int(group["censored"].sum()),
         "censoring_rate": float(group["censored"].mean()),
         "mean_return": float(values.mean()) if len(values) else np.nan,
         "median_return": median_return,
+        "net_mean_return": float(values.mean()) if len(values) else np.nan,
+        "net_median_return": median_return,
         "geometric_mean_return": (
-            float(np.expm1(np.log1p(values.to_numpy()).mean())) if len(values) else np.nan
+            float(np.expm1(log_returns.mean())) if len(log_returns) else np.nan
         ),
+        "mean_log_return": float(log_returns.mean()) if len(log_returns) else np.nan,
         "win_rate": float(values.gt(0).mean()) if len(values) else np.nan,
         "profit_factor": _profit_factor(values) if len(values) else np.nan,
+        "payoff_ratio": _safe_ratio(
+            float(np.mean(upside)) if len(upside) else np.nan,
+            abs(float(np.mean(downside))) if len(downside) else np.nan,
+        ),
+        "target_hit_rate": float(target_mask.mean()) if len(observed) else np.nan,
+        "best_return": float(values.max()) if len(values) else np.nan,
+        "worst_return": float(values.min()) if len(values) else np.nan,
+        "maximum_loss_abs": (
+            abs(min(float(values.min()), 0.0)) if len(values) else np.nan
+        ),
+        "return_std": float(values.std(ddof=1)) if len(values) > 1 else 0.0,
         "downside_deviation": float(math.sqrt(semivariance)),
         "semivariance": semivariance,
         "expected_shortfall_5": expected_shortfall_05,
@@ -601,6 +677,32 @@ def _event_summary(group: pd.DataFrame, *, common_horizon: float) -> dict[str, A
         "es5": expected_shortfall_05,
         "es05": expected_shortfall_05,
         "es10": expected_shortfall_10,
+        "expected_shortfall_5_abs": abs(min(expected_shortfall_05, 0.0)),
+        "expected_shortfall_10_abs": abs(min(expected_shortfall_10, 0.0)),
+        "mean_loss": float(np.mean(downside)) if len(downside) else 0.0,
+        "median_loss": float(np.median(downside)) if len(downside) else 0.0,
+        "worst_decile": expected_shortfall_10,
+        "worst_decile_loss_abs": abs(min(expected_shortfall_10, 0.0)),
+        "mae_mean_abs": float(mae_abs.mean()) if len(mae_abs) else np.nan,
+        "mae_median_abs": median_mae_abs,
+        "mae_p90_abs": float(mae_abs.quantile(0.90)) if len(mae_abs) else np.nan,
+        "mae_p95_abs": float(mae_abs.quantile(0.95)) if len(mae_abs) else np.nan,
+        "intratrade_drawdown_mean": (
+            float(intratrade_drawdown.mean()) if len(intratrade_drawdown) else np.nan
+        ),
+        "intratrade_drawdown_median": (
+            float(intratrade_drawdown.median())
+            if len(intratrade_drawdown)
+            else np.nan
+        ),
+        **{
+            f"probability_loss_gt_{threshold}pct": (
+                float(values.lt(-threshold / 100.0).mean())
+                if len(values)
+                else np.nan
+            )
+            for threshold in (10, 20, 30, 40, 50)
+        },
         **survival,
         # Backward-compatible names now carry Aalen-Johansen estimates.
         "target_incidence": survival["target_cumulative_incidence"],
@@ -608,19 +710,57 @@ def _event_summary(group: pd.DataFrame, *, common_horizon: float) -> dict[str, A
         "duration_mean": float(duration.mean()),
         "duration_median": float(duration.median()),
         "duration_p90": float(duration.quantile(0.90)),
+        "calendar_days_mean": float(calendar_days.mean()),
+        "calendar_days_median": float(calendar_days.median()),
+        "time_to_target_mean": time_to_target_mean,
+        "time_to_target_median": time_to_target_median,
+        "time_to_target_median_penalized": time_to_target_penalized,
+        "mean_return_per_session": _safe_mean(return_per_session),
+        "median_return_per_session": (
+            float(return_per_session.median())
+            if len(return_per_session.dropna())
+            else np.nan
+        ),
+        "mean_log_return_per_session": _safe_mean(log_return_per_session),
+        "return_per_capital_day": _safe_mean(capital_day_return),
+        "mae_per_session": _safe_mean(mae_per_session),
         "event_return_to_risk": _safe_ratio(median_return, abs(expected_shortfall_10)),
         "event_return_to_mae": _safe_ratio(median_return, median_mae_abs),
         "event_speed": event_speed,
+        "event_risk_adjusted_speed": _safe_ratio(
+            event_speed, abs(log_speed_es10)
+        ),
+        "expected_shortfall_10_log_return_per_session": log_speed_es10,
         "event_return_to_risk_mean": _safe_ratio(
             median_return, abs(expected_shortfall_10)
         ),
         "event_return_to_mae_mean": _safe_ratio(median_return, median_mae_abs),
         "event_speed_mean": event_speed,
-        "event_risk_adjusted_speed_mean": _safe_mean(
-            observed["event_risk_adjusted_speed"]
+        "event_risk_adjusted_speed_mean": _safe_ratio(
+            event_speed, abs(log_speed_es10)
         ),
-        "mae_median": float(group["event_mae"].median()),
+        "mae_median": float(observed["event_mae"].median()),
         "median_mae_abs": median_mae_abs,
+        "months_with_opportunities": int(
+            group["analysis_date"].dt.to_period("M").nunique()
+        ),
+        "unique_symbols": int(group["symbol"].nunique()),
+        "unique_countries": int(
+            group["country"].dropna().astype(str).replace("", np.nan).nunique()
+        )
+        if "country" in group
+        else 0,
+        "unique_markets": int(
+            group["market"].dropna().astype(str).replace("", np.nan).nunique()
+        )
+        if "market" in group
+        else 0,
+        "positive_years_pct": (
+            float(yearly_means.gt(0).mean()) if len(yearly_means) else np.nan
+        ),
+        "positive_entry_months_pct": (
+            float(monthly_means.gt(0).mean()) if len(monthly_means) else np.nan
+        ),
         "periods_evaluated": periods,
         "minimum_period_opportunities": minimum_period,
         "minimum_period_complete_events": minimum_period_complete,
@@ -783,8 +923,22 @@ def censoring_audit(
     for keys, group in frame.groupby(grouper, sort=True, dropna=False):
         key_values = (keys,) if len(grouping) == 1 else tuple(keys)
         row = dict(zip(grouping, key_values, strict=True))
-        censored = group.loc[group["censored"], "event_duration"]
+        censored_frame = group.loc[group["censored"]]
+        censored = censored_frame["event_duration"]
         observed = group.loc[group["event_observed"], "event_duration"]
+        mtm = pd.to_numeric(
+            censored_frame.get(
+                "mtm_return", pd.Series(np.nan, index=censored_frame.index)
+            ),
+            errors="coerce",
+        ).dropna()
+        remaining = pd.to_numeric(
+            censored_frame.get(
+                "remaining_sessions_estimate",
+                pd.Series(np.nan, index=censored_frame.index),
+            ),
+            errors="coerce",
+        ).dropna()
         row.update(
             {
                 "opportunities": int(len(group)),
@@ -796,6 +950,18 @@ def censoring_audit(
                 "target_events": int(group["event_type"].eq("target").sum()),
                 "stop_events": int(group["event_type"].eq("stop").sum()),
                 "other_events": int(group["event_type"].eq("other").sum()),
+                "censored_mtm_return_mean": (
+                    float(mtm.mean()) if len(mtm) else np.nan
+                ),
+                "censored_mtm_return_median": (
+                    float(mtm.median()) if len(mtm) else np.nan
+                ),
+                "remaining_sessions_estimate_mean": (
+                    float(remaining.mean()) if len(remaining) else np.nan
+                ),
+                "remaining_sessions_estimate_median": (
+                    float(remaining.median()) if len(remaining) else np.nan
+                ),
             }
         )
         rows.append(row)
@@ -865,6 +1031,19 @@ def _sign_test_pvalue(deltas: np.ndarray) -> tuple[int, int, float]:
     n = positives + negatives
     if n == 0:
         return positives, negatives, 1.0
+    try:
+        from scipy.stats import binomtest
+
+        return (
+            positives,
+            negatives,
+            float(binomtest(positives, n, 0.5, alternative="two-sided").pvalue),
+        )
+    except ImportError:
+        if n > 1_000:
+            z = (abs(positives - n / 2.0) - 0.5) / math.sqrt(n / 4.0)
+            pvalue = math.erfc(max(0.0, z) / math.sqrt(2.0))
+            return positives, negatives, min(1.0, pvalue)
     tail = min(positives, negatives)
     probability = 2.0 * sum(math.comb(n, k) for k in range(tail + 1)) / (2.0**n)
     return positives, negatives, min(1.0, probability)
@@ -1163,6 +1342,8 @@ def cluster_bootstrap_confidence_intervals(
     cost_bps_per_side: int | float = 0,
     bootstrap_samples: int = 2000,
     seed: int = 20260721,
+    methods: Sequence[str] = ("symbol", "year", "hierarchical_year_symbol"),
+    include_records: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Bootstrap symbol, year and hierarchical year-to-symbol clusters."""
 
@@ -1178,7 +1359,12 @@ def cluster_bootstrap_confidence_intervals(
         raise ValueError("cluster bootstrap requires complete opportunities")
     frame["entry_year"] = frame["entry_date"].dt.year.astype(int)
     rng = np.random.default_rng(seed)
-    methods = ("symbol", "year", "hierarchical_year_symbol")
+    methods = tuple(methods)
+    supported_methods = {"symbol", "year", "hierarchical_year_symbol"}
+    if not methods or len(set(methods)) != len(methods):
+        raise ValueError("cluster bootstrap methods must be non-empty and unique")
+    if set(methods) - supported_methods:
+        raise ValueError("cluster bootstrap contains an unsupported method")
     grouped = list(frame.groupby(combination_column, sort=True, dropna=False))
     combinations = [combination for combination, _ in grouped]
     estimate_cube = np.empty(
@@ -1213,6 +1399,8 @@ def cluster_bootstrap_confidence_intervals(
                     }
                 )
 
+    if not include_records:
+        return pd.DataFrame(summaries), pd.DataFrame()
     row_count = len(grouped) * len(methods) * bootstrap_samples
     combination_codes = np.repeat(
         np.arange(len(grouped)), len(methods) * bootstrap_samples
@@ -1239,6 +1427,82 @@ def cluster_bootstrap_confidence_intervals(
 
 
 cluster_bootstrap_ci = cluster_bootstrap_confidence_intervals
+
+
+def robust_combination_inference(
+    ledger: pd.DataFrame,
+    *,
+    combination_column: str = "combination_id",
+) -> pd.DataFrame:
+    """Two-way clustered mean inference plus sign and Wilcoxon diagnostics."""
+
+    frame = add_event_efficiency_metrics(
+        ledger,
+        cost_bps_per_side=0,
+        combination_column=combination_column,
+    )
+    frame = frame.loc[frame["event_observed"]].copy()
+    if frame.empty:
+        raise ValueError("robust inference requires complete opportunities")
+    frame["entry_month"] = frame["analysis_date"].dt.to_period("M").astype(str)
+    rows: list[dict[str, Any]] = []
+
+    def cluster_meat(scores: pd.Series, labels: pd.Series) -> float:
+        sums = scores.groupby(labels, sort=False).sum().to_numpy(dtype=float)
+        cluster_count = len(sums)
+        correction = (
+            cluster_count / (cluster_count - 1)
+            if cluster_count > 1
+            else 1.0
+        )
+        return float(correction * np.square(sums).sum())
+
+    normal = NormalDist()
+    for combination_id, group in frame.groupby(
+        combination_column, sort=True, dropna=False
+    ):
+        values = group["net_event_return"].to_numpy(dtype=float)
+        mean_return = float(np.mean(values))
+        scores = pd.Series(values - mean_return, index=group.index)
+        symbol_meat = cluster_meat(scores, group["symbol"])
+        month_meat = cluster_meat(scores, group["entry_month"])
+        observation_meat = float(np.square(scores.to_numpy(dtype=float)).sum())
+        variance = max(
+            0.0,
+            (symbol_meat + month_meat - observation_meat) / (len(group) ** 2),
+        )
+        standard_error = math.sqrt(variance)
+        statistic = (
+            mean_return / standard_error if standard_error > 0 else 0.0
+        )
+        pvalue = (
+            2.0 * (1.0 - normal.cdf(abs(statistic)))
+            if standard_error > 0
+            else 1.0
+        )
+        positives, negatives, sign_pvalue = _sign_test_pvalue(values)
+        wilcoxon = _wilcoxon_with_fallback(values)
+        rows.append(
+            {
+                combination_column: combination_id,
+                "complete_events": int(len(group)),
+                "mean_return": mean_return,
+                "two_way_cluster_standard_error": standard_error,
+                "two_way_cluster_ci_low95": mean_return - 1.96 * standard_error,
+                "two_way_cluster_ci_high95": mean_return + 1.96 * standard_error,
+                "two_way_cluster_statistic": statistic,
+                "two_way_cluster_pvalue_two_sided": pvalue,
+                "two_way_cluster_dimensions": "symbol,entry_month",
+                "sign_positive_events": positives,
+                "sign_negative_events": negatives,
+                "sign_test_pvalue": sign_pvalue,
+                **wilcoxon,
+                "sign_and_wilcoxon_evidence_role": (
+                    "diagnostic_non_cluster_robust"
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def concentration_statistics(
@@ -1889,16 +2153,17 @@ def rank_combinations(
     combination_column: str = "combination_id",
     objectives: Mapping[str, int] = REQUIRED_OBJECTIVES,
 ) -> pd.DataFrame:
-    """Apply contractual eligibility, classification and six-pillar Pareto ranks."""
+    """Apply sample eligibility, Pareto ranks and the three balanced pillars."""
 
     _require_columns(metrics, (combination_column, *objectives), "ranking metrics")
     pillar_objectives = tuple(
         objective for pillar in PILLARS.values() for objective in pillar
     )
-    if len(pillar_objectives) != len(set(pillar_objectives)) or set(
-        pillar_objectives
-    ) != set(objectives):
-        raise ValueError("ranking objectives and contractual pillars must coincide")
+    if len(pillar_objectives) != len(set(pillar_objectives)):
+        raise ValueError("a metric cannot appear in more than one balanced pillar")
+    if set(pillar_objectives) != set(PILLAR_DIRECTIONS):
+        raise ValueError("every balanced-pillar metric requires an explicit direction")
+    _require_columns(metrics, pillar_objectives, "balanced pillar metrics")
     result = metrics.copy().reset_index(drop=True)
     if "selection_eligible" not in result:
         result["selection_eligible"] = _selection_eligibility(result)
@@ -1907,7 +2172,12 @@ def rank_combinations(
         assert declared_eligibility is not None
         result["selection_eligible"] = declared_eligibility
     declared_eligibility = result["selection_eligible"].copy()
-    objective_values = result[list(objectives)].apply(pd.to_numeric, errors="coerce")
+    required_metric_columns = tuple(
+        dict.fromkeys((*objectives.keys(), *pillar_objectives))
+    )
+    objective_values = result[list(required_metric_columns)].apply(
+        pd.to_numeric, errors="coerce"
+    )
     result["ranking_metrics_complete"] = np.isfinite(
         objective_values.to_numpy(dtype=float)
     ).all(axis=1)
@@ -1974,22 +2244,20 @@ def rank_combinations(
         total_sample.lt(MINIMUM_TOTAL_COMPLETE_EVENTS)
         | minimum_period.lt(MINIMUM_COMPLETE_EVENTS_PER_PERIOD)
     )
-    bootstrap_supported = pd.to_numeric(
-        result["bootstrap_mean_return_ci_low95"], errors="coerce"
-    ).gt(0)
     result["selection_eligible"] = (
         declared_eligibility
         & ~invalid
         & ~not_applicable
         & ~duplicated
         & ~insufficient
-        & bootstrap_supported
     )
     result["pareto_rank"] = pd.Series(pd.NA, index=result.index, dtype="Int64")
     result["balanced_score"] = np.nan
     result["ideal_distance"] = np.nan
     result["classification"] = "not_supported"
-    for objective in objectives:
+    percentile_directions = dict(PILLAR_DIRECTIONS)
+    percentile_directions.update(objectives)
+    for objective in percentile_directions:
         result[f"{objective}_percentile"] = np.nan
     for pillar in PILLARS:
         result[f"{pillar}_percentile"] = np.nan
@@ -2000,8 +2268,10 @@ def rank_combinations(
     eligible = result.loc[result["selection_eligible"]].copy()
     if eligible.empty:
         return result
-    for objective, direction in objectives.items():
-        eligible[f"{objective}_percentile"] = _objective_percentile(eligible[objective], direction)
+    for objective, direction in percentile_directions.items():
+        eligible[f"{objective}_percentile"] = _objective_percentile(
+            eligible[objective], direction
+        )
     for pillar, pillar_objectives in PILLARS.items():
         eligible[f"{pillar}_percentile"] = eligible[
             [f"{objective}_percentile" for objective in pillar_objectives]
@@ -2013,10 +2283,9 @@ def rank_combinations(
     eligible["pareto_rank"] = _pareto_ranks(eligible, objectives)
     eligible["classification"] = np.select(
         [
-            eligible["pareto_rank"].eq(1) & eligible["balanced_score"].ge(0.75),
             eligible["time_percentile"].ge(0.75)
-            & eligible["stability_percentile"].lt(0.50),
-            eligible["stability_percentile"].le(0.25),
+            & eligible["risk_percentile"].lt(0.50),
+            eligible["period_return_dispersion_percentile"].le(0.25),
             eligible["return_percentile"].ge(0.75)
             & eligible["risk_percentile"].lt(0.50),
             eligible["risk_percentile"].ge(0.75)
@@ -2024,7 +2293,6 @@ def rank_combinations(
             eligible["pareto_rank"].eq(1),
         ],
         [
-            "robust_leader",
             "fast_but_unstable",
             "period_dependent",
             "high_return_high_risk",
@@ -2128,20 +2396,25 @@ def event_study_290_statistics(
         bootstrap_samples=bootstrap_samples,
         seed=seed,
     )
-    bootstrap_rank = bootstrap_summary.loc[
+    hierarchical = bootstrap_summary.loc[
         bootstrap_summary["method"].eq("hierarchical_year_symbol")
-        & bootstrap_summary["metric"].eq("mean_return"),
-        [combination_column, "ci_low95", "ci_high95"],
-    ].rename(
-        columns={
-            "ci_low95": "bootstrap_mean_return_ci_low95",
-            "ci_high95": "bootstrap_mean_return_ci_high95",
-        }
-    )
-    bootstrap_rank["bootstrap_mean_return_ci_width95"] = (
-        bootstrap_rank["bootstrap_mean_return_ci_high95"]
-        - bootstrap_rank["bootstrap_mean_return_ci_low95"]
-    )
+        & bootstrap_summary["metric"].isin(("mean_return", "median_return")),
+        [combination_column, "metric", "ci_low95", "ci_high95"],
+    ]
+    bootstrap_rows: list[dict[str, Any]] = []
+    for combination, group in hierarchical.groupby(
+        combination_column, sort=True, dropna=False
+    ):
+        row: dict[str, Any] = {combination_column: combination}
+        for record in group.itertuples(index=False):
+            metric = str(record.metric)
+            row[f"bootstrap_{metric}_ci_low95"] = float(record.ci_low95)
+            row[f"bootstrap_{metric}_ci_high95"] = float(record.ci_high95)
+            row[f"bootstrap_{metric}_ci_width95"] = float(
+                record.ci_high95 - record.ci_low95
+            )
+        bootstrap_rows.append(row)
+    bootstrap_rank = pd.DataFrame(bootstrap_rows)
     zero_cost = zero_cost.merge(
         bootstrap_rank,
         on=combination_column,
@@ -2278,6 +2551,10 @@ def event_study_290_statistics(
         "bootstrap_summary": bootstrap_summary,
         "bootstrap_records": bootstrap_records,
         "cluster_multiple_testing": cluster_tests,
+        "robust_inference_diagnostics": robust_combination_inference(
+            prepared,
+            combination_column=combination_column,
+        ),
         "westfall_young_max_t": max_t,
         "white_spa": white_spa,
         "cscv_pbo_summary": pbo_summary,
@@ -2305,7 +2582,10 @@ __all__ = [
     "MINIMUM_TOTAL_COMPLETE_EVENTS",
     "MINIMUM_TOTAL_OPPORTUNITIES",
     "PILLARS",
+    "PILLAR_DIRECTIONS",
     "REQUIRED_OBJECTIVES",
+    "ROBUST_CLEAR_MAJORITY_POSITIVE_YEARS",
+    "ROBUST_MAX_CENSORING_RATE",
     "add_event_efficiency_metrics",
     "benjamini_hochberg",
     "censoring_audit",
@@ -2324,6 +2604,7 @@ __all__ = [
     "paired_variant_comparison",
     "prepare_opportunity_ledger",
     "rank_combinations",
+    "robust_combination_inference",
     "survival_incidence_table",
     "westfall_young_max_t",
     "white_spa_equivalent",

@@ -728,6 +728,33 @@ def _verify_statistics(
                 f"forbidden event-study metric in {filename}: {column}",
             )
     summary = frames["summary"]
+    _columns(
+        summary,
+        (
+            "opportunities", "opportunities_per_year", "complete_events",
+            "censored_events", "censoring_rate", "mean_return", "median_return",
+            "geometric_mean_return", "mean_log_return", "net_mean_return",
+            "net_median_return", "win_rate", "profit_factor", "payoff_ratio",
+            "target_hit_rate", "return_p10", "return_p25", "return_p75",
+            "return_p90", "best_return", "worst_return", "return_std",
+            "downside_deviation", "semivariance", "expected_shortfall_5",
+            "expected_shortfall_10", "mean_loss", "median_loss", "worst_decile",
+            "mae_mean_abs", "mae_median_abs", "mae_p90_abs", "mae_p95_abs",
+            "intratrade_drawdown_mean", "intratrade_drawdown_median",
+            "probability_loss_gt_10pct", "probability_loss_gt_20pct",
+            "probability_loss_gt_30pct", "probability_loss_gt_40pct",
+            "probability_loss_gt_50pct", "duration_mean", "duration_median",
+            "calendar_days_mean", "calendar_days_median", "time_to_target_mean",
+            "time_to_target_median", "duration_p90", "mean_return_per_session",
+            "median_return_per_session", "mean_log_return_per_session",
+            "return_per_capital_day", "mae_per_session", "months_with_opportunities",
+            "unique_symbols", "unique_countries", "unique_markets",
+            "positive_years_pct", "positive_entry_months_pct",
+            "event_return_to_risk", "event_return_to_mae", "event_speed",
+            "event_risk_adjusted_speed",
+        ),
+        "combination summary metrics",
+    )
     _require(len(summary) == EXPECTED_COMBINATION_COUNT * 7, "summary is not 290 by seven costs")
     _require(set(summary["combination_id"].astype(str)) == set(contract["combination_id"]), "summary IDs differ")
     _require(set(summary["cost_bps_per_side"]) == {0, 5, 10, 25, 50, 100, 200}, "cost grid differs")
@@ -756,16 +783,40 @@ def _verify_statistics(
         "survival",
         "leave_out",
         "concentration",
+        "inference",
     ):
         _require(not frames[key].empty, f"{key} output is empty")
-    ranked_ids = set(frames["ideal"]["combination_id"].astype(str))
-    _require(bool(ranked_ids) and ranked_ids <= set(contract["combination_id"]), "ideal ranking IDs are invalid")
+    _columns(
+        frames["inference"],
+        (
+            "combination_id",
+            "two_way_cluster_standard_error",
+            "two_way_cluster_ci_low95",
+            "two_way_cluster_ci_high95",
+            "two_way_cluster_pvalue_two_sided",
+            "two_way_cluster_dimensions",
+            "sign_test_pvalue",
+            "wilcoxon_pvalue",
+        ),
+        "robust inference diagnostics",
+    )
     _require(
-        set(frames["balanced"]["combination_id"].astype(str)) == ranked_ids,
-        "balanced and ideal rankings cover different supported rules",
+        frames["inference"]["two_way_cluster_dimensions"]
+        .astype(str)
+        .eq("symbol,entry_month")
+        .all(),
+        "two-way clustered inference does not use symbol and entry month",
+    )
+    ranked_ids = set(frames["balanced"]["combination_id"].astype(str))
+    pareto_ids = set(frames["pareto"]["combination_id"].astype(str))
+    ideal_ids = set(frames["ideal"]["combination_id"].astype(str))
+    _require(bool(ranked_ids) and ranked_ids <= set(contract["combination_id"]), "balanced ranking IDs are invalid")
+    _require(
+        bool(pareto_ids) and ideal_ids == pareto_ids and pareto_ids <= ranked_ids,
+        "ideal ranking must contain exactly the Pareto front",
     )
     _require(not frames["pareto"].empty, "Pareto front is empty")
-    for key in ("ideal", "balanced", "pareto", "top_objectives"):
+    for key in ("ideal", "balanced", "pareto"):
         _require(
             frames[key]["evidence_role"]
             .astype(str)
@@ -773,28 +824,69 @@ def _verify_statistics(
             .all(),
             f"{key} is not restricted to development selection",
         )
-    objectives = set(frames["top_objectives"]["objective"])
+    objectives = set(frames["top_objectives"]["objective"].astype(str))
     from aurora.research.stock_protocol.event_study_290_statistics import (
         CONTRACT_CLASSIFICATIONS,
-        REQUIRED_OBJECTIVES,
     )
 
-    _require(objectives == set(REQUIRED_OBJECTIVES), "top objectives are not the contractual set")
+    required_winners = {
+        "01_highest_median_return",
+        "02_highest_mean_return",
+        "03_highest_event_speed",
+        "04_lowest_mae",
+        "05_lowest_expected_shortfall",
+        "06_lowest_duration",
+        "07_highest_profit_factor",
+        "08_best_annual_stability",
+        "09_pareto_closest_to_ideal",
+        "10_highest_balanced_opportunity_score",
+        "11_best_at_25_bps_per_side",
+        "12_best_at_50_bps_per_side",
+        "13_best_at_100_bps_per_side",
+        "14_best_in_period_A",
+        "14_best_in_period_B",
+        "14_best_in_period_C",
+        "15_most_stable_across_periods",
+    }
+    _require(objectives == required_winners, "top objective winners differ from part 15")
     classifications = frames["classifications"]
     _columns(
         classifications,
         (
             "combination_id", "classification", "selection_eligible",
-            "ranking_metrics_complete", "bootstrap_mean_return_ci_low95",
-            "bootstrap_mean_return_ci_width95", "complete_events",
+            "ranking_metrics_complete", "bootstrap_median_return_ci_low95",
+            "bootstrap_median_return_ci_width95", "complete_events",
             "minimum_period_complete_events", "functionally_duplicated",
-            "evidence_role",
+            "evidence_role", "classification_evidence_role",
+            "robust_gate_all_passed", "robust_gate_fail_reasons_json",
+            "robust_gate_semantic_unique_sample",
+            "robust_gate_positive_net_median",
+            "robust_gate_grouped_global_lower_positive",
+            "robust_gate_clear_majority_positive_years",
+            "robust_gate_not_single_year_dependent",
+            "robust_gate_not_single_country_dependent",
+            "robust_gate_pareto_front",
+            "robust_gate_all_three_periods_positive",
+            "robust_gate_multiple_testing",
+            "robust_gate_low_censoring",
         ),
         "classifications",
     )
     _require(len(classifications) == EXPECTED_COMBINATION_COUNT, "classifications are not 290 rows")
     _require(set(classifications["combination_id"].astype(str)) == set(contract["combination_id"]), "classification IDs differ")
     _require(set(classifications["classification"].astype(str)) <= set(CONTRACT_CLASSIFICATIONS), "unknown classification")
+    robust_rows = classifications["classification"].astype(str).eq("robust_leader")
+    gate_passed = classifications["robust_gate_all_passed"].map(
+        lambda value: _as_bool(value, "robust_gate_all_passed")
+    )
+    _require(
+        gate_passed.loc[robust_rows].all(),
+        "a robust leader fails at least one declared gate",
+    )
+    _require(
+        (~gate_passed.loc[~robust_rows]).all(),
+        "a combination passes all robust gates without robust_leader classification",
+    )
     observed_classifications = {
         str(key): int(value)
         for key, value in classifications["classification"].value_counts().items()
@@ -927,14 +1019,32 @@ def _verify_report(root: Path) -> None:
     for forbidden in FORBIDDEN_EVENT_METRICS:
         _require(forbidden not in lowered, f"final report contains forbidden metric {forbidden}")
     required_content = (
-        "financiación del portfolio antiguo",
-        "dividend_payments_local_json",
-        "todas las parejas",
-        "290 pruebas declaradas",
-        "funcionalmente únicas",
-        "survival_analysis_by_combination.csv",
-        "clasificaciones y gates",
-        "No hubo exclusiones de capital",
+        "¿Cuántas reglas de las 290 eran realmente únicas?",
+        "¿Cuántas eran duplicadas?",
+        "¿Cuántas eran semánticamente inválidas?",
+        "¿Cuántas oportunidades completas tuvo cada combinación?",
+        "¿Qué entrada activó más oportunidades?",
+        "¿Qué entrada obtuvo mejor retorno condicionado?",
+        "¿Qué entrada ofreció mejor equilibrio entre retorno y cobertura?",
+        "¿Qué salida produjo mayor retorno?",
+        "¿Qué salida redujo más el riesgo?",
+        "¿Qué salida fue más rápida?",
+        "¿Qué salida mejoró más el retorno por sesión?",
+        "¿Qué combinación obtuvo el mayor retorno mediano?",
+        "¿Cuál tuvo menor MAE?",
+        "¿Cuál tuvo menor expected shortfall?",
+        "¿Cuál tuvo mayor event speed?",
+        "¿Cuál fue la más estable entre periodos?",
+        "¿Cuál fue la mejor en la frontera de Pareto?",
+        "¿Cuál quedó más cerca del punto ideal?",
+        "¿Cuál obtuvo mayor Balanced Opportunity Score?",
+        "¿Cuál sobrevivió mejor a costes?",
+        "¿Cuáles dependieron excesivamente de un año?",
+        "¿Cuáles dependieron de pocos símbolos?",
+        "¿Cuáles superaron las correcciones por múltiples pruebas?",
+        "¿Cuál sería la mejor candidata para congelar prospectivamente?",
+        "¿Qué limitaciones impiden considerarla validada?",
+        "ninguna oportunidad fue excluida por capital",
     )
     for text in required_content:
         _require(text.lower() in lowered, f"final report lacks required answer content: {text}")

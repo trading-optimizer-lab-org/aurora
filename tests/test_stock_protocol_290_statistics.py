@@ -8,6 +8,7 @@ from aurora.research.stock_protocol.event_study_290_statistics import (
     COSTS_BPS_PER_SIDE,
     CONTRACT_CLASSIFICATIONS,
     PILLARS,
+    PILLAR_DIRECTIONS,
     REQUIRED_OBJECTIVES,
     add_event_efficiency_metrics,
     benjamini_hochberg,
@@ -27,6 +28,7 @@ from aurora.research.stock_protocol.event_study_290_statistics import (
     paired_variant_comparison,
     prepare_opportunity_ledger,
     rank_combinations,
+    robust_combination_inference,
     survival_incidence_table,
     westfall_young_max_t,
     white_spa_equivalent,
@@ -168,8 +170,22 @@ def test_contractual_tail_risk_speed_mae_and_duration_formulas_are_literal() -> 
         median_return / median_mae_abs
     )
     assert metrics["duration_p90"] == pytest.approx(
-        np.quantile(_ledger().query("combination_id == 'A'")["holding_sessions"], 0.9)
+        np.quantile(observed["event_duration"], 0.9)
     )
+    assert metrics["mae_mean_abs"] == pytest.approx(
+        observed["event_mae"].abs().mean()
+    )
+    assert metrics["mae_p95_abs"] == pytest.approx(
+        observed["event_mae"].abs().quantile(0.95)
+    )
+    assert metrics["mean_return_per_session"] == pytest.approx(
+        np.mean(returns / observed["event_duration"].to_numpy())
+    )
+    assert metrics["median_return_per_session"] == pytest.approx(
+        np.median(returns / observed["event_duration"].to_numpy())
+    )
+    assert metrics["maximum_loss_abs"] == pytest.approx(abs(min(returns)))
+    assert metrics["probability_loss_gt_10pct"] == 0
 
 
 def test_period_geography_cuts_and_censoring_audit_are_complete() -> None:
@@ -304,6 +320,16 @@ def test_cluster_mean_significance_vector_path_handles_large_sample_count() -> N
 
     assert len(result) == 2
     assert np.isfinite(result["pvalue_one_sided"]).all()
+
+
+def test_robust_inference_uses_symbol_and_entry_month_clusters() -> None:
+    result = robust_combination_inference(_ledger())
+
+    assert set(result["combination_id"]) == {"A", "B"}
+    assert result["two_way_cluster_dimensions"].eq("symbol,entry_month").all()
+    assert result["two_way_cluster_pvalue_two_sided"].between(0, 1).all()
+    assert result["sign_test_pvalue"].between(0, 1).all()
+    assert result["wilcoxon_pvalue"].between(0, 1).all()
 
 
 def test_leave_one_out_and_concentration_cover_requested_stress_tests() -> None:
@@ -449,15 +475,28 @@ def _ranking_metrics() -> pd.DataFrame:
             if combination == "balanced":
                 value = 0.7 if direction > 0 else 0.3
             elif combination == "specialist":
-                value = 0.9 if objective == "mean_return" else (0.5 if direction > 0 else 0.5)
+                value = 0.9 if objective == "median_return" else (0.5 if direction > 0 else 0.5)
             else:
                 value = 1.0 if direction > 0 else 0.0
             row[objective] = value
+        for metric, direction in PILLAR_DIRECTIONS.items():
+            row.setdefault(
+                metric,
+                0.7
+                if combination == "balanced" and direction > 0
+                else 0.3
+                if combination == "balanced"
+                else 0.5
+                if combination == "specialist"
+                else 1.0
+                if direction > 0
+                else 0.0,
+            )
         rows.append(row)
     return pd.DataFrame(rows)
 
 
-def test_pareto_uses_six_contractual_pillars_and_winners_exclude_locked() -> None:
+def test_pareto_and_three_balanced_pillars_exclude_locked() -> None:
     ranked = rank_combinations(_ranking_metrics())
     locked = ranked.loc[ranked["combination_id"].eq("locked_best")].iloc[0]
     assert not locked["selection_eligible"]
@@ -467,18 +506,8 @@ def test_pareto_uses_six_contractual_pillars_and_winners_exclude_locked() -> Non
         "return_percentile",
         "risk_percentile",
         "time_percentile",
-        "stability_percentile",
-        "concentration_percentile",
-        "bootstrap_percentile",
     } <= set(ranked.columns)
-    assert set(PILLARS) == {
-        "return",
-        "risk",
-        "time",
-        "stability",
-        "concentration",
-        "bootstrap",
-    }
+    assert set(PILLARS) == {"return", "risk", "time"}
     assert ranked.loc[ranked["selection_eligible"], "balanced_score"].between(0, 1).all()
     assert ranked.loc[ranked["selection_eligible"], "ideal_distance"].ge(0).all()
 
@@ -536,15 +565,12 @@ def test_contractual_terminal_classifications_have_explicit_precedence() -> None
         base["combination_id"].eq("thin-period"),
         "minimum_period_complete_events",
     ] = 29
-    base.loc[base["combination_id"].eq("invalid"), "mean_return"] = np.nan
-    base.loc[
-        base["combination_id"].eq("unsupported"),
-        "bootstrap_mean_return_ci_low95",
-    ] = -0.01
+    base.loc[base["combination_id"].eq("invalid"), "median_return"] = np.nan
+    base.loc[base["combination_id"].eq("unsupported"), "selection_role"] = "locked"
 
     ranked = rank_combinations(base).set_index("combination_id")
 
-    assert ranked.loc["supported", "classification"] == "robust_leader"
+    assert ranked.loc["supported", "classification"] == "pareto_promising"
     assert ranked.loc["small", "classification"] == "insufficient_sample"
     assert ranked.loc["thin-period", "classification"] == "insufficient_sample"
     assert ranked.loc["duplicate", "classification"] == "functionally_duplicate"

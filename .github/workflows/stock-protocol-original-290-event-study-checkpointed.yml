@@ -270,13 +270,27 @@ jobs:
         shell: bash
         run: |
           cat final/audit_summary.json
+          cat final/top_combinations_by_objective.csv
+          cat final/final_290_opportunity_event_study.md
           echo "FINAL_FILE_COUNT=$(find final -type f | wc -l)"
           echo "FINAL_BYTES=$(du -sb final | cut -f1)"
           sha256sum final/final_artifact_manifest.json
+      - name: Build compact review package
+        shell: bash
+        run: |
+          mkdir review
+          find final -maxdepth 1 -type f \( -name '*.csv' -o -name '*.json' -o -name '*.md' \) -exec cp {} review/ \;
       - uses: actions/upload-artifact@v4
         with:
           name: stock-protocol-original-290-opportunity-event-study
           path: final
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-original-290-opportunity-event-study-review
+          path: review
           if-no-files-found: error
           compression-level: 6
           retention-days: 90
