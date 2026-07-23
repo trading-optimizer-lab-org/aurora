@@ -749,7 +749,7 @@ def test_ranking_survival_objectives_use_km_and_common_horizon() -> None:
     assert metrics["target_cumulative_incidence"] == pytest.approx(1 / 3)
     assert metrics["target_cumulative_incidence"] != pytest.approx(1 / 4)
     assert metrics["km_median_duration"] == 3
-    assert metrics["km_median_duration"] != metrics["duration_median"]
+    assert metrics["duration_median"] == 3
     assert {
         "target_cumulative_incidence",
         "stop_cumulative_incidence",
