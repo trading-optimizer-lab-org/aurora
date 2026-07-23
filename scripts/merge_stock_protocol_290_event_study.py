@@ -3275,14 +3275,30 @@ def build_statistical_outputs(
         ledger["entry_date"], errors="raise"
     ).dt.year.astype(int)
     _merge_progress("event_ledger_ready", rows=len(ledger))
-    development = _selection_ledger(ledger)
-    _merge_progress("development_ledger_ready", rows=len(development))
     summary, cuts_value = _bounded_metrics(ledger, include_cuts=True)
     assert cuts_value is not None
     cuts = cuts_value
     summary["evidence_role"] = "all_periods_diagnostic"
     cuts["evidence_role"] = "all_periods_diagnostic"
     _merge_progress("all_period_metrics_complete")
+    # The full ledger and the period-A copy together consume most of a standard
+    # GitHub runner. Run the all-period bootstrap before materialising period A
+    # so the per-combination bootstrap weights cannot push the runner over its
+    # memory limit. Each bounded bootstrap resets its deterministic seed, so
+    # this scheduling change does not alter estimates.
+    global_cluster_summary, _ = _bounded_cluster_bootstrap(
+        ledger,
+        bootstrap_samples=bootstrap_samples,
+        collect_samples=False,
+        methods=("hierarchical_year_symbol",),
+    )
+    global_cluster_summary["analysis_scope"] = "all_periods"
+    global_cluster_summary["evidence_role"] = (
+        "retrospective_all_periods_diagnostic"
+    )
+    _merge_progress("global_cluster_bootstrap_complete")
+    development = _selection_ledger(ledger)
+    _merge_progress("development_ledger_ready", rows=len(development))
     development_zero, _ = _bounded_metrics(
         development,
         costs_bps_per_side=(0,),
@@ -3295,16 +3311,6 @@ def build_statistical_outputs(
     development_cluster_summary["analysis_scope"] = "period_A_development"
     development_cluster_summary["evidence_role"] = (
         "period_A_development_selection"
-    )
-    global_cluster_summary, _ = _bounded_cluster_bootstrap(
-        ledger,
-        bootstrap_samples=bootstrap_samples,
-        collect_samples=False,
-        methods=("hierarchical_year_symbol",),
-    )
-    global_cluster_summary["analysis_scope"] = "all_periods"
-    global_cluster_summary["evidence_role"] = (
-        "retrospective_all_periods_diagnostic"
     )
     cluster_summary = pd.concat(
         [development_cluster_summary, global_cluster_summary],
