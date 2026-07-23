@@ -754,7 +754,12 @@ def test_ranking_survival_objectives_use_km_and_common_horizon() -> None:
         "target_cumulative_incidence",
         "stop_cumulative_incidence",
         "km_median_duration",
-    } <= set(REQUIRED_OBJECTIVES)
+    } <= set(metrics.index)
+    assert {
+        "target_cumulative_incidence",
+        "stop_cumulative_incidence",
+        "km_median_duration",
+    }.isdisjoint(REQUIRED_OBJECTIVES)
 
 
 def test_missing_mandatory_cut_fails_instead_of_silently_disappearing() -> None:
