@@ -370,6 +370,42 @@ def test_max_t_white_spa_cscv_and_deflated_event_statistic_are_reproducible() ->
     assert str(many["evidence_role"]).startswith("diagnostic_non_cluster_robust")
 
 
+def test_batched_max_t_and_white_spa_handle_large_cluster_samples() -> None:
+    rows = 2_000
+    returns = pd.DataFrame(
+        {
+            "A": np.sin(np.arange(rows) / 17) / 100,
+            "B": np.cos(np.arange(rows) / 23) / 100,
+            "C": np.sin(np.arange(rows) / 31) / 200,
+        }
+    )
+    clusters = pd.DataFrame(
+        {
+            "symbol": [f"S{index % 50:02d}" for index in range(rows)],
+            "entry_year": 1995 + (np.arange(rows) % 16),
+        }
+    )
+
+    max_t = westfall_young_max_t(
+        returns,
+        cluster_frame=clusters,
+        bootstrap_samples=65,
+        seed=19,
+    )
+    white_spa = white_spa_equivalent(
+        returns,
+        cluster_frame=clusters,
+        bootstrap_samples=65,
+        seed=19,
+    )
+
+    assert len(max_t) == 3
+    assert max_t["adjusted_pvalue"].between(0, 1).all()
+    assert white_spa["pvalue"].between(0, 1).all()
+    assert np.isfinite(max_t["statistic"]).all()
+    assert np.isfinite(white_spa["statistic"]).all()
+
+
 def test_functional_duplicates_are_detected_independently() -> None:
     specs = pd.DataFrame(
         {

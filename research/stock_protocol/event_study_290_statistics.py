@@ -1367,6 +1367,53 @@ def _return_matrix(values: pd.DataFrame | np.ndarray) -> tuple[np.ndarray, list[
     return matrix, labels
 
 
+def _batched_cluster_null_moments(
+    centered: np.ndarray,
+    metadata: pd.DataFrame,
+    *,
+    cluster_method: str,
+    bootstrap_samples: int,
+    rng: np.random.Generator,
+    batch_size: int = 32,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute cluster-resampled means and errors without materializing row samples."""
+
+    if bootstrap_samples < 1:
+        raise ValueError("bootstrap_samples must be positive")
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    sample_count, combination_count = centered.shape
+    means = np.empty((bootstrap_samples, combination_count), dtype=float)
+    errors = np.empty_like(means)
+    totals = np.empty(bootstrap_samples, dtype=float)
+    squared = np.square(centered)
+    for start in range(0, bootstrap_samples, batch_size):
+        stop = min(start + batch_size, bootstrap_samples)
+        weights = _cluster_bootstrap_weights(
+            metadata,
+            cluster_method,
+            stop - start,
+            rng,
+        )
+        batch_totals = weights.sum(axis=1, dtype=np.int64).astype(float)
+        if np.any(batch_totals <= 1):
+            raise ValueError("cluster bootstrap requires at least two sampled rows")
+        batch_means = (weights @ centered) / batch_totals[:, None]
+        centered_squares = (
+            (weights @ squared)
+            - batch_totals[:, None] * np.square(batch_means)
+        )
+        variances = np.maximum(centered_squares, 0.0) / (
+            batch_totals[:, None] - 1.0
+        )
+        means[start:stop] = batch_means
+        errors[start:stop] = np.sqrt(variances / batch_totals[:, None])
+        totals[start:stop] = batch_totals
+    if sample_count < 2:
+        raise ValueError("cluster bootstrap requires at least two source rows")
+    return means, errors, totals
+
+
 def westfall_young_max_t(
     returns: pd.DataFrame | np.ndarray,
     *,
@@ -1386,12 +1433,20 @@ def westfall_young_max_t(
     )
     centered = matrix - matrix.mean(axis=0)
     rng = np.random.default_rng(seed)
-    maxima = np.empty(bootstrap_samples)
-    for index in range(bootstrap_samples):
-        sample = centered[_cluster_resample_indices(metadata, cluster_method, rng)]
-        error = sample.std(axis=0, ddof=1) / math.sqrt(len(sample))
-        statistic = np.divide(sample.mean(axis=0), error, out=np.zeros_like(error), where=error > 0)
-        maxima[index] = np.max(np.abs(statistic))
+    null_means, null_errors, _ = _batched_cluster_null_moments(
+        centered,
+        metadata,
+        cluster_method=cluster_method,
+        bootstrap_samples=bootstrap_samples,
+        rng=rng,
+    )
+    null_statistics = np.divide(
+        null_means,
+        null_errors,
+        out=np.zeros_like(null_means),
+        where=null_errors > 0,
+    )
+    maxima = np.max(np.abs(null_statistics), axis=1)
     return pd.DataFrame(
         {
             "combination_id": labels,
@@ -1424,16 +1479,23 @@ def white_spa_equivalent(
     spa_observed = float(np.max(np.divide(means, errors, out=np.zeros_like(means), where=errors > 0)))
     centered = matrix - matrix.mean(axis=0)
     rng = np.random.default_rng(seed)
-    white_null = np.empty(bootstrap_samples)
-    spa_null = np.empty(bootstrap_samples)
-    for index in range(bootstrap_samples):
-        sample = centered[_cluster_resample_indices(metadata, cluster_method, rng)]
-        sample_means = sample.mean(axis=0)
-        sample_errors = sample.std(axis=0, ddof=1) / math.sqrt(len(sample))
-        white_null[index] = np.max(np.sqrt(len(sample)) * sample_means)
-        spa_null[index] = np.max(
-            np.divide(sample_means, sample_errors, out=np.zeros_like(sample_means), where=sample_errors > 0)
-        )
+    null_means, null_errors, null_totals = _batched_cluster_null_moments(
+        centered,
+        metadata,
+        cluster_method=cluster_method,
+        bootstrap_samples=bootstrap_samples,
+        rng=rng,
+    )
+    white_null = np.max(np.sqrt(null_totals[:, None]) * null_means, axis=1)
+    spa_null = np.max(
+        np.divide(
+            null_means,
+            null_errors,
+            out=np.zeros_like(null_means),
+            where=null_errors > 0,
+        ),
+        axis=1,
+    )
     return pd.DataFrame(
         [
             {
