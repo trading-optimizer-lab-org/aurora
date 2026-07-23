@@ -3263,6 +3263,56 @@ def _bounded_combination_audit(
     return pd.concat(frames, ignore_index=True, copy=False)
 
 
+def _bounded_robust_inference(ledger: pd.DataFrame) -> pd.DataFrame:
+    """Keep all 290 combinations when inference is mathematically unavailable."""
+
+    frames: list[pd.DataFrame] = []
+    seen = 0
+    for combination_id, group in ledger.groupby(
+        "combination_id", sort=True, dropna=False
+    ):
+        try:
+            frame = robust_combination_inference(group)
+            frame["analysis_status"] = "supported"
+        except ValueError as exc:
+            if str(exc) != "robust inference requires complete opportunities":
+                raise
+            frame = pd.DataFrame(
+                [
+                    {
+                        "combination_id": combination_id,
+                        "complete_events": 0,
+                        "mean_return": np.nan,
+                        "two_way_cluster_standard_error": np.nan,
+                        "two_way_cluster_ci_low95": np.nan,
+                        "two_way_cluster_ci_high95": np.nan,
+                        "two_way_cluster_statistic": np.nan,
+                        "two_way_cluster_pvalue_two_sided": np.nan,
+                        "two_way_cluster_dimensions": "symbol,entry_month",
+                        "sign_positive_events": 0,
+                        "sign_negative_events": 0,
+                        "sign_test_pvalue": np.nan,
+                        "wilcoxon_method": "not_estimable_no_complete_opportunities",
+                        "wilcoxon_statistic": np.nan,
+                        "wilcoxon_pvalue": np.nan,
+                        "sign_and_wilcoxon_evidence_role": (
+                            "diagnostic_non_cluster_robust"
+                        ),
+                        "analysis_status": (
+                            "not_estimable_no_complete_opportunities"
+                        ),
+                    }
+                ]
+            )
+        frames.append(frame)
+        seen += 1
+    if seen != EXPECTED_COMBINATION_COUNT:
+        raise ValueError(
+            f"bounded robust inference expected 290 combinations; found {seen}"
+        )
+    return pd.concat(frames, ignore_index=True, copy=False)
+
+
 def build_statistical_outputs(
     opportunities: pd.DataFrame,
     coverage: pd.DataFrame,
@@ -3437,9 +3487,9 @@ def build_statistical_outputs(
     concentration = _bounded_combination_audit(
         ledger, concentration_statistics
     ).assign(evidence_role="all_periods_diagnostic")
-    inference = _bounded_combination_audit(
-        ledger, robust_combination_inference
-    ).assign(evidence_role="all_periods_diagnostic")
+    inference = _bounded_robust_inference(ledger).assign(
+        evidence_role="all_periods_diagnostic"
+    )
     survival = _bounded_combination_audit(
         ledger, survival_incidence_table
     ).assign(evidence_role="all_periods_diagnostic")

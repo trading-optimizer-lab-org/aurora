@@ -26,6 +26,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     _artifact_manifest,
     _apply_robust_leader_gates,
     _bounded_cluster_bootstrap,
+    _bounded_robust_inference,
     _discover_shards,
     _global_functional_mapping,
     _initialize_estimable_columns,
@@ -82,6 +83,36 @@ def test_bounded_bootstrap_preserves_combinations_without_complete_events() -> N
     assert summary["combination_id"].nunique() == 289
     assert samples["combination_id"].nunique() == 289
     assert "c-289" not in set(summary["combination_id"].astype(str))
+
+
+def test_bounded_robust_inference_marks_censored_only_combinations() -> None:
+    rows = []
+    for combination_index in range(290):
+        censored = combination_index == 289
+        rows.append(
+            {
+                "combination_id": f"c-{combination_index:03d}",
+                "opportunity_id": f"o-{combination_index:03d}",
+                "symbol": "SPY",
+                "entry_date": pd.Timestamp("2000-01-03"),
+                "gross_return": np.nan if censored else 0.01,
+                "holding_sessions": 5,
+                "censored": censored,
+            }
+        )
+
+    result = _bounded_robust_inference(pd.DataFrame(rows))
+
+    assert len(result) == 290
+    unavailable = result.loc[result["combination_id"].eq("c-289")].iloc[0]
+    assert unavailable["complete_events"] == 0
+    assert (
+        unavailable["analysis_status"]
+        == "not_estimable_no_complete_opportunities"
+    )
+    assert result.loc[
+        result["combination_id"].ne("c-289"), "analysis_status"
+    ].eq("supported").all()
 
 
 @pytest.mark.parametrize(
