@@ -31,6 +31,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     EXPECTED_HISTORICAL_SHARDS,
     FINAL_MANIFEST_NAME,
     FINAL_REPORT_NAME,
+    FINANCING_RECONCILIATION_STATUSES,
     FROZEN_FX_RATES_NAME,
     FUNCTIONAL_DUPLICATES_NAME,
     FX_AUDIT_NAME,
@@ -488,20 +489,22 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
     )
     financing_status = parquet["financing_reconciliation_status"].astype(str)
     _require(
-        set(financing_status)
-        <= {"matched_prior_audit", "not_applicable_different_entry_spec"},
+        set(financing_status) <= FINANCING_RECONCILIATION_STATUSES,
         "old financing reconciliation status is invalid",
     )
     matched_financing = financing_status.eq("matched_prior_audit")
     _require(matched_financing.any(), "no opportunity reconciles to prior financing")
+    linked_to_prior = financing_status.isin(
+        {"matched_prior_audit", "prior_audit_only_failed_due_to_data"}
+    )
     _require(
-        parquet.loc[matched_financing, "prior_audit_opportunity_id"]
+        parquet.loc[linked_to_prior, "prior_audit_opportunity_id"]
         .fillna("")
         .astype(str)
         .str.strip()
         .ne("")
         .all(),
-        "matched financing rows lack prior audit IDs",
+        "prior-linked financing rows lack prior audit IDs",
     )
     entry_dates = pd.to_datetime(parquet["entry_date"], errors="coerce")
     valuation_dates = pd.to_datetime(parquet["exit_date"], errors="coerce").where(
@@ -671,7 +674,9 @@ def _verify_prior_financing(
     _require(int(financed.sum()) == int(summary["financed_in_old_portfolio"]), "financed count differs")
     _require(int((~financed).sum()) == int(summary["not_financed_in_old_portfolio"]), "unfinanced count differs")
     matched = opportunities.loc[
-        opportunities["financing_reconciliation_status"].astype(str).eq("matched_prior_audit")
+        opportunities["financing_reconciliation_status"]
+        .astype(str)
+        .isin({"matched_prior_audit", "prior_audit_only_failed_due_to_data"})
     ]
     _require(
         set(matched["prior_audit_opportunity_id"].astype(str))

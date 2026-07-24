@@ -18,6 +18,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     EXPECTED_HISTORICAL_SHARDS,
     FINAL_MANIFEST_NAME,
     FINAL_REPORT_NAME,
+    FINANCING_RECONCILIATION_STATUSES,
     FUNCTIONAL_DUPLICATES_NAME,
     PAIRED_ENTRY_METRICS,
     PAIRED_EXIT_METRICS,
@@ -26,6 +27,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     STATISTICAL_LEDGER_COLUMNS,
     STATISTIC_FILES,
     _artifact_manifest,
+    _assert_opportunity_audit_contract,
     _apply_robust_leader_gates,
     _bounded_cluster_bootstrap,
     _bounded_robust_inference,
@@ -840,17 +842,27 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
             "signal_date": ["2009-01-02"],
             "entry_signal_date": ["2009-01-02"],
             "entry_date": ["2009-01-05"],
+            "currency": ["USD"],
+            "currency_unknown": [False],
+            "fx_merge_status": ["already_enriched"],
+            "fx_values_invented": [False],
+            "capital_rejection_reason": [""],
         }
     )
     prior = pd.DataFrame(
         {
-            "opportunity_id": ["old-a", "old-gap"],
-            "symbol": ["AAA", "GAP"],
-            "selection_date": ["2009-01-02", None],
-            "signal_date": ["2009-01-02", "2009-02-02"],
-            "entry_date": ["2009-01-05", "2009-02-03"],
-            "originally_financed": [True, False],
-            "not_financed_reason": ["", "rejected_insufficient_capital"],
+            "opportunity_id": ["old-a", "old-gap-usd", "old-gap-unknown"],
+            "symbol": ["AAA", "GAP", "UNK"],
+            "selection_date": ["2009-01-02", None, None],
+            "signal_date": ["2009-01-02", "2009-02-02", "2009-03-02"],
+            "entry_date": ["2009-01-05", "2009-02-03", "2009-03-03"],
+            "currency": ["USD", "USD", ""],
+            "originally_financed": [True, False, False],
+            "not_financed_reason": [
+                "",
+                "rejected_insufficient_capital",
+                "missing_currency_metadata",
+            ],
         }
     )
 
@@ -862,13 +874,30 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
     assert gap["status"] == "failed_due_to_data"
     assert gap["period"] == "A"
     assert not gap["capital_rejected"]
-    assert gap["prior_audit_opportunity_id"] == "old-gap"
+    assert gap["prior_audit_opportunity_id"] == "old-gap-usd"
     assert pd.isna(gap["selection_date"])
     assert gap["signal_date"] == "2009-02-02"
     assert gap["entry_signal_date"] == "2009-02-02"
     assert gap["entry_date"] == "2009-02-03"
     assert " " not in gap["signal_date"]
     assert " " not in gap["entry_date"]
+    assert gap["currency"] == "USD"
+    assert not gap["currency_unknown"]
+    assert gap["fx_merge_status"] == "not_applicable_failed_due_to_data"
+    assert not gap["fx_values_invented"]
+    assert gap["capital_rejection_reason"] == ""
+    unknown = result.loc[result["symbol"].eq("UNK")].iloc[0]
+    assert unknown["currency_unknown"]
+    assert unknown["fx_merge_status"] == "currency_unknown"
+    assert not unknown["fx_values_invented"]
+    assert set(result["financing_reconciliation_status"]) <= (
+        FINANCING_RECONCILIATION_STATUSES
+    )
+    _assert_opportunity_audit_contract(result, "synthetic prior gap")
+    invalid = result.copy()
+    invalid.loc[invalid["symbol"].eq("UNK"), "fx_values_invented"] = pd.NA
+    with pytest.raises(ValueError, match="null fx_values_invented"):
+        _assert_opportunity_audit_contract(invalid, "synthetic prior gap")
     assert result["entry_date"].dropna().map(type).eq(str).all()
     assert reconciliation["entry_date"].dropna().map(type).eq(str).all()
     pd.to_datetime(result["selection_date"], errors="raise")

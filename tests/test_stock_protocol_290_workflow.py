@@ -50,6 +50,16 @@ def test_checkpointed_workflow_prepares_each_entry_once_and_merges_checkpoints()
     assert "prepare_stock_protocol_290_merge_part.py" in text
     assert "--prepared-parts-root prepared-parts" in text
     assert "stock-protocol-290-prepared-entry-*" in text
+    assert "Download frozen entry checkpoints" in text
+    assert "Download rebuilt entry checkpoints from this run" in text
+    rebuilt = next(
+        step
+        for step in document["jobs"]["merge-and-verify"]["steps"]
+        if step.get("name") == "Download rebuilt entry checkpoints from this run"
+    )
+    assert rebuilt["if"] == "${{ !inputs.reuse_frozen_checkpoints }}"
+    assert "run-id" not in rebuilt["with"]
+    assert "repository" not in rebuilt["with"]
     assert "prior_reconciliation_rows_added" in prepare_script
     merge_text = text.split("  merge-and-verify:", 1)[1]
     assert "--corrected-shards-root" not in merge_text

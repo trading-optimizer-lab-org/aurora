@@ -695,6 +695,8 @@ def reconcile_prior_financing(
                     values = result[column].dropna()
                     if not values.empty:
                         payload[column] = values.iloc[0]
+            currency = payload.get("currency")
+            currency_unknown = pd.isna(currency) or not str(currency).strip()
             payload.update(
                 {
                     "opportunity_id": "stock_prior_gap_"
@@ -716,11 +718,19 @@ def reconcile_prior_financing(
                         prior_row.get("not_financed_reason", "") or ""
                     ),
                     "capital_rejected": False,
+                    "capital_rejection_reason": "",
                     "portfolio_simulated": False,
                     "sizing_applied": False,
                     "overlap_discarded": False,
                     "new_oos_claimed": False,
                     "optimization_performed_on_opened_data": False,
+                    "currency_unknown": bool(currency_unknown),
+                    "fx_merge_status": (
+                        "currency_unknown"
+                        if currency_unknown
+                        else "not_applicable_failed_due_to_data"
+                    ),
+                    "fx_values_invented": False,
                 }
             )
             supplement_rows.append(payload)
@@ -763,6 +773,59 @@ def reconcile_prior_financing(
         if column in reconciliation:
             reconciliation[column] = reconciliation[column].map(_daily_iso_or_none)
     return result, reconciliation.reset_index(drop=True)
+
+
+FINANCING_RECONCILIATION_STATUSES = frozenset(
+    {
+        "matched_prior_audit",
+        "new_corrected_opportunity_not_in_prior_audit",
+        "not_applicable_different_entry_spec",
+        "prior_audit_only_failed_due_to_data",
+    }
+)
+
+
+def _assert_opportunity_audit_contract(
+    opportunities: pd.DataFrame,
+    label: str,
+) -> None:
+    """Fail before checkpointing if mandatory audit fields are nullable or invalid."""
+
+    required = (
+        "currency_unknown",
+        "fx_merge_status",
+        "fx_values_invented",
+        "financing_information_only",
+        "financing_reconciliation_status",
+    )
+    _assert_columns(opportunities, required, label)
+    for column in (
+        "currency_unknown",
+        "fx_values_invented",
+        "financing_information_only",
+    ):
+        if opportunities[column].isna().any():
+            raise ValueError(f"{label} has null {column}")
+        opportunities[column].map(_as_bool)
+    if opportunities["fx_values_invented"].map(_as_bool).any():
+        raise ValueError(f"{label} invented FX values")
+    if not opportunities["financing_information_only"].map(_as_bool).all():
+        raise ValueError(f"{label} contains non-informational financing")
+    fx_status = opportunities["fx_merge_status"].fillna("").astype(str).str.strip()
+    if fx_status.eq("").any():
+        raise ValueError(f"{label} has empty fx_merge_status")
+    financing_status = (
+        opportunities["financing_reconciliation_status"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    unknown = set(financing_status) - FINANCING_RECONCILIATION_STATUSES
+    if unknown:
+        raise ValueError(
+            f"{label} has invalid financing reconciliation statuses: "
+            f"{sorted(unknown)}"
+        )
 
 
 def _as_bool(value: object) -> bool:
@@ -1331,6 +1394,10 @@ def stream_corrected_shards(
                 )
                 combined["prior_audit_opportunity_id"] = ""
                 combined["prior_not_financed_reason"] = ""
+            _assert_opportunity_audit_contract(
+                combined,
+                f"corrected combination {combination_id}",
+            )
             fx_audit_frames.append(fx_audit)
 
             base_columns = set(base_column_order)
