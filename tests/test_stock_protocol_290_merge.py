@@ -23,6 +23,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     PAIRED_EXIT_METRICS,
     RECONCILIATION_NAME,
     SEMANTIC_AUDIT_NAME,
+    STATISTICAL_LEDGER_COLUMNS,
     STATISTIC_FILES,
     _artifact_manifest,
     _apply_robust_leader_gates,
@@ -497,6 +498,9 @@ def test_minimum_output_names_match_the_frozen_specification() -> None:
         "survival_analysis_by_combination.csv",
     }
     assert STATISTIC_FILES["survival"] == "survival_analysis_by_combination.csv"
+    assert {"currency_unknown", "fx_merge_status"} <= set(
+        STATISTICAL_LEDGER_COLUMNS
+    )
     assert set(PAIRED_EXIT_METRICS) == {
         "return", "loss", "mae", "duration", "return_per_session"
     }

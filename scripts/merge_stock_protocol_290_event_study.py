@@ -187,6 +187,8 @@ STATISTICAL_LEDGER_COLUMNS = (
     "country",
     "market",
     "currency",
+    "currency_unknown",
+    "fx_merge_status",
     "semantic_applicability",
     "ranking_eligible",
 )
