@@ -895,6 +895,7 @@ def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:
     )
     _assert_opportunity_audit_contract(result, "synthetic prior gap")
     invalid = result.copy()
+    invalid["fx_values_invented"] = invalid["fx_values_invented"].astype("boolean")
     invalid.loc[invalid["symbol"].eq("UNK"), "fx_values_invented"] = pd.NA
     with pytest.raises(ValueError, match="null fx_values_invented"):
         _assert_opportunity_audit_contract(invalid, "synthetic prior gap")
