@@ -48,6 +48,7 @@ from scripts.merge_stock_protocol_290_event_study import (
 from scripts.verify_stock_protocol_290_event_study import (
     EventStudy290VerificationError,
     _verify_manifest,
+    _verify_prior_financing,
     _verify_report,
     _verify_summary,
 )
@@ -819,6 +820,50 @@ def test_prior_financing_keeps_new_corrected_opportunities_as_unfinanced() -> No
     )
     assert reconciliation["reconciled"].all()
     assert reconciliation["present_in_prior_audit"].tolist() == [True, False]
+
+
+def test_verifier_compares_only_rows_present_in_prior_audit(tmp_path: Path) -> None:
+    reconciliation = pd.DataFrame(
+        {
+            "exact_combination_id": ["exact", "exact", "exact"],
+            "exact_entry_spec_id": ["entry-exact", "entry-exact", "entry-exact"],
+            "symbol": ["AAA", "NEW", "GAP"],
+            "selection_date": ["2020-01-02", "2020-02-03", None],
+            "entry_date": ["2020-01-03", "2020-02-04", "2020-03-04"],
+            "prior_audit_opportunity_id": ["old-a", None, "old-gap"],
+            "financed_in_old_portfolio": [True, False, False],
+            "prior_not_financed_reason": ["", "not_present_in_prior_audit", "missing_data"],
+            "present_in_prior_audit": [True, False, True],
+            "informational_only": [True, True, True],
+            "reconciled": [True, True, True],
+        }
+    )
+    reconciliation.to_csv(tmp_path / "prior_audit_reconciliation.csv", index=False)
+    opportunities = pd.DataFrame(
+        {
+            "financing_reconciliation_status": [
+                "matched_prior_audit",
+                "new_corrected_opportunity_not_in_prior_audit",
+                "prior_audit_only_failed_due_to_data",
+            ],
+            "prior_audit_opportunity_id": ["old-a", "", "old-gap"],
+        }
+    )
+    summary = {
+        "financed_in_old_portfolio": 1,
+        "not_financed_in_old_portfolio": 2,
+    }
+
+    _verify_prior_financing(tmp_path, opportunities, summary)
+
+    invalid = reconciliation.copy()
+    invalid.loc[1, "prior_audit_opportunity_id"] = "old-unexpected"
+    invalid.to_csv(tmp_path / "prior_audit_reconciliation.csv", index=False)
+    with pytest.raises(
+        EventStudy290VerificationError,
+        match="new corrected opportunities unexpectedly reference prior audit IDs",
+    ):
+        _verify_prior_financing(tmp_path, opportunities, summary)
 
 
 def test_prior_unresolved_gap_is_retained_as_failed_due_to_data() -> None:

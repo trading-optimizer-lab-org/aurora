@@ -648,6 +648,7 @@ def _verify_prior_financing(
             "prior_audit_opportunity_id",
             "financed_in_old_portfolio",
             "prior_not_financed_reason",
+            "present_in_prior_audit",
             "informational_only",
             "reconciled",
         ),
@@ -668,6 +669,27 @@ def _verify_prior_financing(
         not reconciliation.duplicated(["symbol", "selection_date", "entry_date"]).any(),
         "prior financing reconciliation keys repeat",
     )
+    present_in_prior = reconciliation["present_in_prior_audit"].map(
+        lambda value: _as_bool(value, "present_in_prior_audit")
+    )
+    reconciliation_ids = (
+        reconciliation["prior_audit_opportunity_id"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    _require(
+        reconciliation_ids.loc[present_in_prior].ne("").all(),
+        "prior financing rows marked present lack prior audit IDs",
+    )
+    _require(
+        reconciliation_ids.loc[~present_in_prior].eq("").all(),
+        "new corrected opportunities unexpectedly reference prior audit IDs",
+    )
+    _require(
+        not reconciliation_ids.loc[present_in_prior].duplicated().any(),
+        "prior financing reconciliation repeats prior audit IDs",
+    )
     financed = reconciliation["financed_in_old_portfolio"].map(
         lambda value: _as_bool(value, "financed_in_old_portfolio")
     )
@@ -678,10 +700,26 @@ def _verify_prior_financing(
         .astype(str)
         .isin({"matched_prior_audit", "prior_audit_only_failed_due_to_data"})
     ]
+    matched_ids = (
+        matched["prior_audit_opportunity_id"].fillna("").astype(str).str.strip()
+    )
     _require(
-        set(matched["prior_audit_opportunity_id"].astype(str))
-        == set(reconciliation["prior_audit_opportunity_id"].astype(str)),
+        set(matched_ids) == set(reconciliation_ids.loc[present_in_prior]),
         "ledger and prior financing IDs differ",
+    )
+    new_corrected = opportunities.loc[
+        opportunities["financing_reconciliation_status"]
+        .astype(str)
+        .eq("new_corrected_opportunity_not_in_prior_audit")
+    ]
+    _require(
+        new_corrected["prior_audit_opportunity_id"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .eq("")
+        .all(),
+        "new corrected ledger opportunities unexpectedly reference prior audit IDs",
     )
 
 

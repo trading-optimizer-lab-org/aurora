@@ -64,6 +64,13 @@ def test_checkpointed_workflow_prepares_each_entry_once_and_merges_checkpoints()
     merge_text = text.split("  merge-and-verify:", 1)[1]
     assert "--corrected-shards-root" not in merge_text
     assert "verify_stock_protocol_290_event_study.py final" in merge_text
+    recovery = next(
+        step
+        for step in document["jobs"]["merge-and-verify"]["steps"]
+        if step.get("name") == "Preserve unverified merge for diagnosis"
+    )
+    assert recovery["if"] == "${{ failure() }}"
+    assert recovery["with"]["compression-level"] == 0
 
 
 def test_merge_only_reuses_all_completed_artifacts_and_frozen_sources() -> None:
