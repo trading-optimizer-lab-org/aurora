@@ -55,6 +55,7 @@ from scripts.run_stock_protocol_290_historical_shard import (
     METRIC_TOLERANCES,
     OUTPUT_NAME as HISTORICAL_RESULTS_NAME,
 )
+from scripts.run_stock_protocol_290_corrected_shard import PERIODS
 
 
 FORBIDDEN_EVENT_METRICS = ("cagr", "sharpe", "portfolio_sharpe")
@@ -130,6 +131,8 @@ OPPORTUNITY_VERIFICATION_COLUMNS = (
     "censored",
     "time_exit",
     "exit_reason",
+    "selection_date",
+    "entry_signal_date",
     "entry_date",
     "exit_date",
     "mtm_date",
@@ -500,6 +503,48 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
         .any(),
         "a right-censored opportunity declares a temporal exit reason",
     )
+    selection_dates = pd.to_datetime(parquet["selection_date"], errors="coerce")
+    signal_dates = pd.to_datetime(parquet["entry_signal_date"], errors="coerce")
+    entry_dates = pd.to_datetime(parquet["entry_date"], errors="coerce")
+    exit_dates = pd.to_datetime(parquet["exit_date"], errors="coerce")
+    mtm_dates = pd.to_datetime(parquet["mtm_date"], errors="coerce")
+    entered = statuses.isin(("completed", "right_censored"))
+    _require(
+        entry_dates.loc[entered].notna().all()
+        and signal_dates.loc[entered].notna().all()
+        and selection_dates.loc[entered].notna().all(),
+        "an entered opportunity lacks selection, signal or entry date",
+    )
+    _require(
+        (selection_dates.loc[entered] <= signal_dates.loc[entered]).all(),
+        "an entry signal predates candidate selection",
+    )
+    _require(
+        (signal_dates.loc[entered] < entry_dates.loc[entered]).all(),
+        "an opportunity was bought before its close-known signal",
+    )
+    _require(
+        exit_dates.loc[completed_status].notna().all()
+        and (exit_dates.loc[completed_status] >= entry_dates.loc[completed_status]).all(),
+        "a completed opportunity lacks a causal exit date",
+    )
+    _require(
+        exit_dates.loc[right_censored].isna().all()
+        and mtm_dates.loc[right_censored].notna().all()
+        and (mtm_dates.loc[right_censored] >= entry_dates.loc[right_censored]).all(),
+        "a right-censored opportunity has a false exit or invalid mark-to-market date",
+    )
+    for period, bounds in PERIODS.items():
+        period_rows = parquet["period"].astype(str).eq(period) & entered
+        _require(period_rows.any(), f"period {period} has no entered opportunities")
+        _require(
+            entry_dates.loc[period_rows].between(
+                pd.Timestamp(str(bounds["entry_start"])),
+                pd.Timestamp(str(bounds["entry_end"])),
+                inclusive="both",
+            ).all(),
+            f"period {period} is not assigned by entry date",
+        )
     actual_counts = {
         "completed": int(statuses.eq("completed").sum()),
         "censored": int(statuses.eq("right_censored").sum()),
@@ -507,12 +552,17 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
     }
     for key, value in actual_counts.items():
         _require(value == int(summary[key]), f"opportunity {key} count differs from audit")
-    completed = statuses.eq("completed")
+    completed = completed_status
     usd = pd.to_numeric(parquet["return_usd"], errors="coerce")
     local = pd.to_numeric(parquet["total_return_local"], errors="coerce")
     primary = pd.to_numeric(parquet["primary_event_return"], errors="coerce")
     gross = pd.to_numeric(parquet["gross_return"], errors="coerce")
     expected_primary = usd.where(usd.notna(), local)
+    _require(
+        np.isfinite(primary.loc[completed].to_numpy(dtype=float)).all()
+        and np.isfinite(gross.loc[completed].to_numpy(dtype=float)).all(),
+        "completed opportunities contain non-finite returns",
+    )
     _require(
         np.isclose(
             primary.loc[completed].to_numpy(dtype=float),
@@ -584,7 +634,6 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
         .all(),
         "prior-linked financing rows lack prior audit IDs",
     )
-    entry_dates = pd.to_datetime(parquet["entry_date"], errors="coerce")
     valuation_dates = pd.to_datetime(parquet["exit_date"], errors="coerce").where(
         statuses.ne("right_censored"),
         pd.to_datetime(parquet["mtm_date"], errors="coerce"),
