@@ -74,7 +74,9 @@ TRUE_FLAGS = (
 
 OPPORTUNITY_LEDGER_REQUIRED_COLUMNS = (
     "entry_index", "opportunity_id", "combination_id", "entry_spec_id",
-    "exit_spec_id", "track", "status", "applicability", "censor_reason",
+    "exit_spec_id", "candidate_id", "upstream_candidate_id",
+    "entry_upstream_candidate_id", "upstream_candidate_ids_json",
+    "track", "status", "applicability", "censored", "censor_reason",
     "delisting_date", "symbol", "selection_date", "signal_date",
     "entry_signal_date", "entry_date", "entry_price", "exit_date", "exit_price",
     "optimistic_exit_price", "exit_reason", "gross_return", "mtm_date",
@@ -125,6 +127,9 @@ OPPORTUNITY_VERIFICATION_COLUMNS = (
     "combination_id",
     "period",
     "status",
+    "censored",
+    "time_exit",
+    "exit_reason",
     "entry_date",
     "exit_date",
     "mtm_date",
@@ -416,9 +421,34 @@ def _verify_historical(root: Path, contract: pd.DataFrame) -> None:
 
 def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.DataFrame) -> pd.DataFrame:
     parquet_path = root / OPPORTUNITIES_PARQUET
-    parquet_schema = pq.ParquetFile(parquet_path).schema_arrow.names
+    parquet_file = pq.ParquetFile(parquet_path)
+    parquet_schema = parquet_file.schema_arrow.names
     missing = set(OPPORTUNITY_LEDGER_REQUIRED_COLUMNS) - set(parquet_schema)
     _require(not missing, f"opportunities missing columns: {sorted(missing)}")
+    lineage_columns = (
+        "combination_id",
+        "candidate_id",
+        "upstream_candidate_id",
+        "entry_upstream_candidate_id",
+        "upstream_candidate_ids_json",
+    )
+    observed_lineage: set[tuple[str, ...]] = set()
+    for batch in parquet_file.iter_batches(
+        batch_size=100_000, columns=list(lineage_columns)
+    ):
+        lineage = batch.to_pandas(types_mapper=pd.ArrowDtype).drop_duplicates()
+        observed_lineage.update(
+            tuple(str(value) for value in row)
+            for row in lineage.itertuples(index=False, name=None)
+        )
+    expected_lineage = {
+        tuple(str(value) for value in row)
+        for row in contract.loc[:, lineage_columns].itertuples(index=False, name=None)
+    }
+    _require(
+        observed_lineage == expected_lineage,
+        "opportunity lineage differs from the frozen 290-combination manifest",
+    )
     csv_columns = pd.read_csv(root / OPPORTUNITIES_CSV_GZIP, nrows=0).columns.tolist()
     _require(set(parquet_schema) == set(csv_columns), "parquet and gzip ledger schemas differ")
     parquet = pd.read_parquet(
@@ -442,6 +472,34 @@ def _verify_opportunities(root: Path, summary: Mapping[str, Any], contract: pd.D
     _require(set(parquet["period"].astype(str)) == set(PERIOD_NAMES), "opportunities do not cover A, B and C")
     statuses = parquet["status"].astype(str)
     _require(set(statuses) <= {"completed", "right_censored", "failed_due_to_data"}, "opportunity status is invalid")
+    right_censored = statuses.eq("right_censored")
+    completed_status = statuses.eq("completed")
+    censored_right = parquet.loc[right_censored, "censored"].map(
+        lambda value: _as_bool(value, "censored")
+    )
+    censored_completed = parquet.loc[completed_status, "censored"].map(
+        lambda value: _as_bool(value, "censored")
+    )
+    time_exit_censored = parquet.loc[right_censored, "time_exit"].map(
+        lambda value: _as_bool(value, "time_exit")
+    )
+    _require(
+        censored_right.all() and not censored_completed.any(),
+        "censored flag does not match right-censored status",
+    )
+    _require(
+        not time_exit_censored.any(),
+        "a right-censored opportunity was counted as a time exit",
+    )
+    _require(
+        not parquet.loc[right_censored, "exit_reason"]
+        .fillna("")
+        .astype(str)
+        .str.lower()
+        .str.contains("time")
+        .any(),
+        "a right-censored opportunity declares a temporal exit reason",
+    )
     actual_counts = {
         "completed": int(statuses.eq("completed").sum()),
         "censored": int(statuses.eq("right_censored").sum()),

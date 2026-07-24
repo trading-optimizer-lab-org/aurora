@@ -383,6 +383,49 @@ def test_concatenate_parquet_files_unions_columns_without_losing_rows(
     assert combined.loc[2, "right_only"] == pytest.approx(4.5)
 
 
+def test_concatenate_parquet_files_materializes_frozen_lineage(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.parquet"
+    output = tmp_path / "combined.parquet"
+    pd.DataFrame(
+        {
+            "combination_id": ["combo-a", "combo-a", "combo-b"],
+            "value": [1, 2, 3],
+        }
+    ).to_parquet(source, index=False)
+    lineage = {
+        "combo-a": {
+            "candidate_id": "candidate-a",
+            "upstream_candidate_id": "upstream-a",
+        },
+        "combo-b": {
+            "candidate_id": "candidate-b",
+            "upstream_candidate_id": "upstream-b",
+        },
+    }
+
+    rows = _concatenate_parquet_files(
+        [source],
+        output,
+        enrichment_key="combination_id",
+        enrichment_by_key=lineage,
+    )
+    combined = pd.read_parquet(output)
+
+    assert rows == 3
+    assert combined["candidate_id"].tolist() == [
+        "candidate-a",
+        "candidate-a",
+        "candidate-b",
+    ]
+    assert combined["upstream_candidate_id"].tolist() == [
+        "upstream-a",
+        "upstream-a",
+        "upstream-b",
+    ]
+
+
 def _report_statistics() -> dict[str, pd.DataFrame]:
     combination = pd.DataFrame(
         {

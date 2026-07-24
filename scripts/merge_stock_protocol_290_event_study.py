@@ -155,6 +155,13 @@ REQUIRED_TOP_LEVEL_FILES = {
     *STATISTIC_FILES.values(),
 }
 
+OPPORTUNITY_LINEAGE_COLUMNS = (
+    "candidate_id",
+    "upstream_candidate_id",
+    "entry_upstream_candidate_id",
+    "upstream_candidate_ids_json",
+)
+
 STATISTICAL_LEDGER_COLUMNS = (
     "opportunity_id",
     "combination_id",
@@ -293,11 +300,19 @@ def _append_parquet_frame(
     return writer, schema
 
 
-def _concatenate_parquet_files(paths: Sequence[Path], output_path: Path) -> int:
+def _concatenate_parquet_files(
+    paths: Sequence[Path],
+    output_path: Path,
+    *,
+    enrichment_key: str | None = None,
+    enrichment_by_key: Mapping[str, Mapping[str, str]] | None = None,
+) -> int:
     """Concatenate checkpoint Parquets with one deterministic union schema."""
 
     if not paths:
         raise ValueError("no checkpoint parquet files supplied")
+    if (enrichment_key is None) != (enrichment_by_key is None):
+        raise ValueError("parquet enrichment requires both key and mapping")
     column_order: list[str] = []
     column_types: dict[str, pa.DataType] = {}
     for path in paths:
@@ -309,6 +324,23 @@ def _concatenate_parquet_files(paths: Sequence[Path], output_path: Path) -> int:
                 column_types[field.name] = _unify_arrow_types(
                     column_types[field.name], field.type
                 )
+    enrichment_columns: tuple[str, ...] = ()
+    if enrichment_by_key is not None:
+        if not enrichment_by_key:
+            raise ValueError("parquet enrichment mapping is empty")
+        enrichment_columns = tuple(
+            dict.fromkeys(
+                column
+                for values in enrichment_by_key.values()
+                for column in values
+            )
+        )
+        if not enrichment_columns:
+            raise ValueError("parquet enrichment contains no columns")
+        for column in enrichment_columns:
+            if column not in column_types:
+                column_order.append(column)
+            column_types[column] = pa.string()
     schema = pa.schema(
         [pa.field(column, column_types[column]) for column in column_order]
     )
@@ -317,6 +349,33 @@ def _concatenate_parquet_files(paths: Sequence[Path], output_path: Path) -> int:
         for path in paths:
             for batch in pq.ParquetFile(path).iter_batches(batch_size=50_000):
                 table = pa.Table.from_batches([batch])
+                if enrichment_by_key is not None:
+                    assert enrichment_key is not None
+                    if enrichment_key not in table.column_names:
+                        raise ValueError(
+                            f"parquet enrichment key is absent: {enrichment_key}"
+                        )
+                    keys = [str(value) for value in table[enrichment_key].to_pylist()]
+                    unknown = sorted(set(keys) - set(enrichment_by_key))
+                    if unknown:
+                        raise ValueError(
+                            f"parquet enrichment has unknown keys: {unknown[:5]}"
+                        )
+                    for column in enrichment_columns:
+                        values = [
+                            str(enrichment_by_key[key].get(column, "")) for key in keys
+                        ]
+                        if any(not value.strip() for value in values):
+                            raise ValueError(
+                                f"parquet enrichment produced blank {column}"
+                            )
+                        array = pa.array(values, type=pa.string())
+                        if column in table.column_names:
+                            table = table.set_column(
+                                table.schema.get_field_index(column), column, array
+                            )
+                        else:
+                            table = table.append_column(column, array)
                 for field in schema:
                     if field.name not in table.column_names:
                         table = table.append_column(
@@ -1364,6 +1423,14 @@ def stream_corrected_shards(
                         values, dtype=pd.ArrowDtype(base_column_types[column])
                     )
             _assert_dates_at_cutoff(combined, f"corrected combination {combination_id}")
+            for lineage_column in OPPORTUNITY_LINEAGE_COLUMNS:
+                lineage_value = str(row.get(lineage_column, "")).strip()
+                if not lineage_value:
+                    raise ValueError(
+                        f"manifest lineage is blank for {combination_id}: "
+                        f"{lineage_column}"
+                    )
+                combined[lineage_column] = lineage_value
             for field in (
                 "capital_rejected",
                 "portfolio_simulated",
@@ -1505,6 +1572,7 @@ def load_prepared_corrected_parts(
     prepared_root: Path,
     *,
     output_root: Path,
+    manifest: pd.DataFrame,
 ) -> tuple[
     pd.DataFrame,
     pd.DataFrame,
@@ -1549,8 +1617,19 @@ def load_prepared_corrected_parts(
 
     ordered = [by_index[index] for index in range(EXPECTED_ENTRY_SPEC_COUNT)]
     full_paths = [root / OPPORTUNITIES_PARQUET for root, _ in ordered]
+    lineage_by_combination = {
+        str(row["combination_id"]): {
+            column: str(row[column]) for column in OPPORTUNITY_LINEAGE_COLUMNS
+        }
+        for row in manifest.to_dict(orient="records")
+    }
+    if len(lineage_by_combination) != EXPECTED_COMBINATION_COUNT:
+        raise ValueError("manifest lineage does not cover exactly 290 combinations")
     full_rows = _concatenate_parquet_files(
-        full_paths, output_root / OPPORTUNITIES_PARQUET
+        full_paths,
+        output_root / OPPORTUNITIES_PARQUET,
+        enrichment_key="combination_id",
+        enrichment_by_key=lineage_by_combination,
     )
     full_schema = set(
         pq.ParquetFile(output_root / OPPORTUNITIES_PARQUET).schema_arrow.names
@@ -4030,7 +4109,7 @@ def merge_event_study(
         )
     if prepared_parts_root is not None:
         corrected_payload = load_prepared_corrected_parts(
-            Path(prepared_parts_root), output_root=output
+            Path(prepared_parts_root), output_root=output, manifest=manifest
         )
     else:
         assert corrected_shards_root is not None
