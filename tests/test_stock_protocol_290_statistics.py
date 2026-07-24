@@ -191,6 +191,20 @@ def test_contractual_tail_risk_speed_mae_and_duration_formulas_are_literal() -> 
 def test_period_geography_cuts_and_censoring_audit_are_complete() -> None:
     cuts = metric_cuts(_ledger())
     assert {"period", "year", "decade", "country", "market", "currency"} == set(cuts["cut"])
+    yearly = cuts.loc[cuts["cut"].eq("year")]
+    assert set(yearly["mean_return_sign"]) <= {
+        "positive", "negative", "zero", "not_estimable"
+    }
+    assert (
+        yearly.loc[yearly["mean_return"].gt(0), "mean_return_sign"]
+        .eq("positive")
+        .all()
+    )
+    assert (
+        yearly.loc[yearly["mean_return"].lt(0), "mean_return_sign"]
+        .eq("negative")
+        .all()
+    )
     audit = censoring_audit(_ledger(), group_columns=("country",))
     assert int(audit["opportunities"].sum()) == len(_ledger())
     assert int(audit["censored_events"].sum()) == 2
@@ -217,6 +231,9 @@ def test_kaplan_meier_and_competing_incidence_handle_ties_and_censoring() -> Non
     assert first["target_cumulative_incidence"] == pytest.approx(0.25)
     assert second["stop_cumulative_incidence"] == pytest.approx(0.25)
     assert table["kaplan_meier_survival"].is_monotonic_decreasing
+    fixed = table.loc[table["requested_horizon"]]
+    assert set(fixed["event_duration"]) == {20.0, 40.0, 63.0, 126.0, 252.0}
+    assert fixed["kaplan_meier_survival"].eq(table.iloc[-1]["kaplan_meier_survival"]).all()
 
 
 def test_paired_comparison_uses_causal_keys_and_seeded_paired_bootstrap() -> None:
@@ -334,9 +351,20 @@ def test_robust_inference_uses_symbol_and_entry_month_clusters() -> None:
 
 def test_leave_one_out_and_concentration_cover_requested_stress_tests() -> None:
     leave_out = leave_one_out_audit(_ledger())
-    assert {"year", "symbol", "country", "market", "top5_symbols", "top20_symbols"} <= set(
-        leave_out["omission"]
-    )
+    assert {
+        "year",
+        "symbol",
+        "country",
+        "market",
+        "top5_symbols",
+        "top20_symbols",
+        "top5_opportunities",
+        "top20_opportunities",
+    } <= set(leave_out["omission"])
+    opportunity_cuts = leave_out.loc[
+        leave_out["omission"].isin(("top5_opportunities", "top20_opportunities"))
+    ]
+    assert opportunity_cuts.groupby("combination_id")["omission"].nunique().eq(2).all()
     concentration = concentration_statistics(_ledger())
     assert concentration["concentration_hhi"].between(0, 1).all()
     assert concentration["concentration_top5"].between(0, 1).all()

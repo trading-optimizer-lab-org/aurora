@@ -22,6 +22,7 @@ import pandas as pd
 
 COSTS_BPS_PER_SIDE: tuple[int, ...] = (0, 5, 10, 25, 50, 100, 200)
 RETURN_PERCENTILES: tuple[int, ...] = (5, 10, 25, 50, 75, 90, 95)
+SURVIVAL_REPORTING_HORIZONS: tuple[int, ...] = (20, 40, 63, 126, 252)
 
 # One means maximize and minus one minimize. Risk losses are represented as
 # positive magnitudes so their objectives are minimized.
@@ -888,6 +889,12 @@ def metric_cuts(
         )
         summary.insert(1, "cut", cut)
         summary = summary.rename(columns={cut: "cut_value"})
+        mean_return = pd.to_numeric(summary["mean_return"], errors="coerce")
+        summary["mean_return_sign"] = np.select(
+            (mean_return.gt(0), mean_return.lt(0), mean_return.eq(0)),
+            ("positive", "negative", "zero"),
+            default="not_estimable",
+        )
         if set(summary[combination_column].unique()) != expected_combinations:
             raise ValueError(f"mandatory cut {cut} does not cover every combination")
         covered_counts = (
@@ -988,7 +995,12 @@ def survival_incidence_table(
         survival = 1.0
         target_cif = 0.0
         stop_cif = 0.0
-        for time in sorted(group["event_duration"].unique()):
+        observed_times = {
+            float(value)
+            for value in pd.to_numeric(group["event_duration"], errors="raise").unique()
+        }
+        timeline = sorted(observed_times | set(SURVIVAL_REPORTING_HORIZONS))
+        for time in timeline:
             current = group.loc[group["event_duration"].eq(time)]
             target = int(current["event_type"].eq("target").sum())
             stop = int(current["event_type"].eq("stop").sum())
@@ -1004,6 +1016,7 @@ def survival_incidence_table(
                 {
                     **labels,
                     "event_duration": float(time),
+                    "requested_horizon": time in SURVIVAL_REPORTING_HORIZONS,
                     "at_risk": at_risk,
                     "events": events,
                     "target_events": target,
@@ -1579,6 +1592,30 @@ def leave_one_out_audit(
                     combination_column: combination,
                     "omission": f"top{count}_symbols",
                     "omitted_value": json.dumps([str(value) for value in omitted_symbols]),
+                    "remaining_events": int(len(remaining)),
+                    "baseline_mean_return": baseline,
+                    "leave_out_mean_return": estimate,
+                    "change_from_baseline": estimate - baseline,
+                }
+            )
+        ranked_opportunities = complete.sort_values(
+            ["event_return", "opportunity_id"],
+            ascending=[False, True],
+            kind="stable",
+        )
+        for count in (5, 20):
+            omitted_ids = ranked_opportunities.head(count)["opportunity_id"].astype(str)
+            remaining = complete.loc[
+                ~complete["opportunity_id"].astype(str).isin(omitted_ids)
+            ]
+            estimate = (
+                float(remaining["event_return"].mean()) if len(remaining) else np.nan
+            )
+            rows.append(
+                {
+                    combination_column: combination,
+                    "omission": f"top{count}_opportunities",
+                    "omitted_value": json.dumps(omitted_ids.tolist()),
                     "remaining_events": int(len(remaining)),
                     "baseline_mean_return": baseline,
                     "leave_out_mean_return": estimate,

@@ -22,6 +22,9 @@ from aurora.research.stock_protocol.event_study_290_manifest import (
     EXPECTED_ENTRY_SPEC_COUNT,
     EXPECTED_EXIT_SPEC_COUNT,
 )
+from aurora.research.stock_protocol.event_study_290_statistics import (
+    SURVIVAL_REPORTING_HORIZONS,
+)
 from scripts.merge_stock_protocol_290_event_study import (
     AUDIT_SUMMARY_NAME,
     COVERAGE_CSV_GZIP,
@@ -98,6 +101,23 @@ OPPORTUNITY_LEDGER_REQUIRED_COLUMNS = (
     "financed_in_old_portfolio", "financing_information_only",
     "financing_reconciliation_status", "prior_audit_opportunity_id",
     "prior_not_financed_reason",
+    "entry_gap", "signal_score", "mom_12_1", "mom_6_1",
+    "momentum_12_1", "momentum_6_1", "h52", "high_52", "rvol50", "atr20",
+    "wait_sessions", "waits", "waited", "remaining_sessions_estimate",
+    "trajectory_volatility", "entry_rule", "entry_rule_kind", "entry_rule_json",
+    "exit_rule", "exit_rule_json", "component_signals_json",
+    "signal_weights_json", "cost_levels_bps_per_side_json",
+    "net_returns_by_cost_bps_json", "liquidity_entry_volume",
+    "liquidity_entry_notional_local", "liquidity_adv20_local",
+    "liquidity_currency",
+    *(f"breakout_{window}" for window in (20, 50, 100, 150, 200, 252)),
+    *(f"breakout_level_{window}" for window in (20, 50, 100, 150, 200, 252)),
+    *(f"round_trip_cost_{cost}bps" for cost in (0, 5, 10, 25, 50, 100, 200)),
+    *(f"net_return_{cost}bps" for cost in (0, 5, 10, 25, 50, 100, 200)),
+    *(
+        f"net_return_cost_{cost}_bps_per_side"
+        for cost in (0, 5, 10, 25, 50, 100, 200)
+    ),
 )
 
 OPPORTUNITY_VERIFICATION_COLUMNS = (
@@ -816,6 +836,19 @@ def _verify_statistics(
             set(frame["combination_id"].astype(str)) == set(contract["combination_id"]),
             f"{key} output does not cover the 290 combinations",
         )
+    year = frames["year"]
+    _columns(year, ("mean_return", "mean_return_sign"), "yearly return sign")
+    year_mean = pd.to_numeric(year["mean_return"], errors="coerce")
+    expected_sign = np.select(
+        (year_mean.gt(0), year_mean.lt(0), year_mean.eq(0)),
+        ("positive", "negative", "zero"),
+        default="not_estimable",
+    )
+    _require(
+        year["mean_return_sign"].astype(str).to_numpy().tolist()
+        == expected_sign.tolist(),
+        "yearly mean-return sign is missing or inconsistent",
+    )
     for key in (
         "year",
         "decade",
@@ -829,6 +862,52 @@ def _verify_statistics(
         "inference",
     ):
         _require(not frames[key].empty, f"{key} output is empty")
+    leave_out = frames["leave_out"]
+    required_opportunity_omissions = {"top5_opportunities", "top20_opportunities"}
+    opportunity_omissions = leave_out.loc[
+        leave_out["omission"].astype(str).isin(required_opportunity_omissions)
+    ]
+    _require(
+        set(opportunity_omissions["omission"].astype(str))
+        == required_opportunity_omissions,
+        "leave-out audit lacks top-5 or top-20 opportunity stress",
+    )
+    _require(
+        opportunity_omissions.groupby("combination_id")["omission"]
+        .nunique()
+        .eq(len(required_opportunity_omissions))
+        .all()
+        and opportunity_omissions["combination_id"].astype(str).nunique()
+        == EXPECTED_COMBINATION_COUNT,
+        "leave-out opportunity stresses do not cover every combination",
+    )
+    survival = frames["survival"]
+    _columns(
+        survival,
+        ("event_duration", "requested_horizon", "kaplan_meier_survival"),
+        "fixed-horizon survival",
+    )
+    requested = survival.loc[
+        survival["requested_horizon"].map(
+            lambda value: _as_bool(value, "requested_horizon")
+        )
+    ].copy()
+    requested["event_duration"] = pd.to_numeric(
+        requested["event_duration"], errors="raise"
+    ).astype(int)
+    _require(
+        set(requested["event_duration"]) == set(SURVIVAL_REPORTING_HORIZONS),
+        "survival output lacks one or more fixed reporting horizons",
+    )
+    _require(
+        requested.groupby("combination_id")["event_duration"]
+        .nunique()
+        .eq(len(SURVIVAL_REPORTING_HORIZONS))
+        .all()
+        and requested["combination_id"].astype(str).nunique()
+        == EXPECTED_COMBINATION_COUNT,
+        "fixed survival horizons do not cover every combination",
+    )
     _columns(
         frames["inference"],
         (
