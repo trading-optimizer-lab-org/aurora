@@ -22,6 +22,7 @@ from scripts.merge_stock_protocol_290_event_study import (
     FUNCTIONAL_DUPLICATES_NAME,
     PAIRED_ENTRY_METRICS,
     PAIRED_EXIT_METRICS,
+    PRIOR_AUDIT_RECONCILIATION_NAME,
     RECONCILIATION_NAME,
     SEMANTIC_AUDIT_NAME,
     STATISTICAL_LEDGER_COLUMNS,
@@ -838,7 +839,10 @@ def test_verifier_compares_only_rows_present_in_prior_audit(tmp_path: Path) -> N
             "reconciled": [True, True, True],
         }
     )
-    reconciliation.to_csv(tmp_path / "prior_audit_reconciliation.csv", index=False)
+    reconciliation.to_csv(
+        tmp_path / PRIOR_AUDIT_RECONCILIATION_NAME,
+        index=False,
+    )
     opportunities = pd.DataFrame(
         {
             "financing_reconciliation_status": [
@@ -858,7 +862,7 @@ def test_verifier_compares_only_rows_present_in_prior_audit(tmp_path: Path) -> N
 
     invalid = reconciliation.copy()
     invalid.loc[1, "prior_audit_opportunity_id"] = "old-unexpected"
-    invalid.to_csv(tmp_path / "prior_audit_reconciliation.csv", index=False)
+    invalid.to_csv(tmp_path / PRIOR_AUDIT_RECONCILIATION_NAME, index=False)
     with pytest.raises(
         EventStudy290VerificationError,
         match="new corrected opportunities unexpectedly reference prior audit IDs",
