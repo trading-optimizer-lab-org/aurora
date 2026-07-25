@@ -444,7 +444,7 @@ Expected: guard tests pass on Linux and no legacy script is changed.
 - Produces:
   `canonical_sha256(value: BaseModel | Mapping[str, Any]) -> str`.
 
-- [ ] **Step 1: Add deterministic contract tests**
+- [x] **Step 1: Add deterministic contract tests**
 
 ```python
 def _manifest_payload(
@@ -498,7 +498,7 @@ def test_terminal_state_is_closed_enum() -> None:
         )
 ```
 
-- [ ] **Step 2: Implement frozen Pydantic models**
+- [x] **Step 2: Implement frozen Pydantic models**
 
 Use `ConfigDict(frozen=True, extra="forbid")`. Define terminal states exactly:
 
@@ -828,7 +828,7 @@ physical manifests require `output_sha256`, `unit_attempts_path`, and
 `unit_attempts_sha256`; completed logical records require `output_sha256`.
 Other terminal states require `reason_code`.
 
-- [ ] **Step 3: Add complete deterministic test factories**
+- [x] **Step 3: Add complete deterministic test factories**
 
 Create these factories in `tests/github_performance_helpers.py`:
 
@@ -1141,7 +1141,7 @@ def github_job(
 Keep all additional factories in this module deterministic, with hashes at
 their declared lengths, timestamps in UTC, and safe policy flags by default.
 
-- [ ] **Step 4: Register the explicit package**
+- [x] **Step 4: Register the explicit package**
 
 Add:
 
@@ -1155,7 +1155,7 @@ and:
 "aurora.infra.github_performance" = "infra/github_performance"
 ```
 
-- [ ] **Step 5: Push and verify in GitHub**
+- [x] **Step 5: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance pyproject.toml \
