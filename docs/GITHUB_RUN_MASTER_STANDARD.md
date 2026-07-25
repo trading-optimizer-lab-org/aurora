@@ -1,6 +1,6 @@
 # Estándar maestro Aurora para runs de GitHub
 
-**Versión:** 3.0  
+**Versión:** 3.0
 **Objetivo:** que cualquier run falle de forma controlada, conserve todo el trabajo válido, explique la causa y pueda reanudarse exactamente donde quedó.
 
 ## La verdad incómoda

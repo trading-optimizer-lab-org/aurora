@@ -47,4 +47,5 @@ jobs:
         run: >-
           python -m pytest
           tests/test_github_performance_contracts.py
+          --confcutdir=tests
           --tb=short -q
