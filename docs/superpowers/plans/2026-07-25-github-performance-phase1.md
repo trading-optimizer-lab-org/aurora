@@ -363,7 +363,7 @@ Expected: `github-performance-ci` passes on GitHub. Do not run pytest locally.
   `require_github_execution(operation: str, environ: Mapping[str, str] | None = None) -> None`.
 - Raises: `LocalRunBlocked`.
 
-- [ ] **Step 1: Write guard tests**
+- [x] **Step 1: Write guard tests**
 
 ```python
 def test_guard_allows_github() -> None:
@@ -383,7 +383,7 @@ def test_guard_allows_exact_user_token() -> None:
     require_github_execution("candidate sweep", env)
 ```
 
-- [ ] **Step 2: Implement the guard**
+- [x] **Step 2: Implement the guard**
 
 ```python
 EXPLICIT_LOCAL_TOKEN = "USER_REQUESTED_LOCAL_RUN_THIS_TURN"
@@ -409,7 +409,7 @@ def require_github_execution(
     )
 ```
 
-- [ ] **Step 3: Push and verify in GitHub**
+- [x] **Step 3: Push and verify in GitHub**
 
 ```bash
 git add core/execution_policy.py tests/test_execution_policy.py

@@ -7,7 +7,16 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import jsonschema
+import pytest
 import yaml
+from pydantic import ValidationError
+
+from aurora.infra.github_performance.contracts import (
+    AttemptManifest,
+    RunSpec,
+    canonical_sha256,
+)
+from github_performance_helpers import minimal_valid_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,3 +108,65 @@ def test_nested_contract_files_ship_inside_the_aurora_package() -> None:
     template = root.joinpath("config/templates/github_run_v3.yaml")
     assert schema.is_file()
     assert template.is_file()
+
+
+def _manifest_payload(
+    shard_id: str,
+    attempt_id: str,
+    state: str = "completed",
+) -> dict[str, object]:
+    return {
+        "shard_id": shard_id,
+        "attempt_id": attempt_id,
+        "state": state,
+        "spec_hash": "1" * 64,
+        "policy_hash": "2" * 64,
+        "snapshot_hash": "3" * 64,
+        "code_sha": "4" * 40,
+        "dependency_lock_sha256": "5" * 64,
+        "capacity_profile_sha256": "6" * 64,
+        "output_sha256": "7" * 64,
+        "reason_code": None,
+        "artifact_name": f"run-shard-g00-{shard_id}-{attempt_id}",
+        "unit_attempts_path": "unit_attempts.parquet",
+        "unit_attempts_sha256": "8" * 64,
+        "checkpoint_artifact": None,
+        "completed_unit_count": 1,
+        "output_rows": 1,
+        "output_bytes": 128,
+    }
+
+
+def test_contract_hash_ignores_mapping_order() -> None:
+    assert canonical_sha256({"a": 1, "b": 2}) == canonical_sha256(
+        {"b": 2, "a": 1}
+    )
+
+
+def test_run_spec_is_deeply_immutable() -> None:
+    spec = RunSpec.model_validate(minimal_valid_spec())
+    with pytest.raises(TypeError):
+        spec.policy["locked_opened"] = True
+
+
+def test_attempt_identity_is_physical_not_logical() -> None:
+    first = AttemptManifest.model_validate(_manifest_payload("s1", "a1"))
+    second = AttemptManifest.model_validate(_manifest_payload("s1", "a2"))
+    assert first.shard_id == second.shard_id
+    assert first.attempt_id != second.attempt_id
+
+
+def test_terminal_state_is_closed_enum() -> None:
+    with pytest.raises(ValidationError):
+        AttemptManifest.model_validate(
+            _manifest_payload("u", "a", state="skipped")
+        )
+
+
+def test_non_completed_attempt_requires_reason_code() -> None:
+    payload = _manifest_payload("s1", "a1", state="failed_technical")
+    payload["output_sha256"] = None
+    payload["unit_attempts_path"] = None
+    payload["unit_attempts_sha256"] = None
+    with pytest.raises(ValidationError, match="reason_code"):
+        AttemptManifest.model_validate(payload)
