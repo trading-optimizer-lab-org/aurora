@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -20,6 +21,12 @@ from aurora.infra.github_performance.contracts import (
     TerminalState,
     WorkUnitManifest,
     deep_thaw_json,
+)
+from aurora.infra.github_performance.audits import (
+    build_required_audits,
+    combine_runtime_access_ledgers,
+    write_required_audits,
+    write_runtime_access_ledger,
 )
 from aurora.infra.github_performance.merge_planner import (
     SHARD_ATTEMPT_SCHEMA,
@@ -143,6 +150,33 @@ def _verified_unit_attempt_path(
     return path
 
 
+def _verified_runtime_access_path(
+    manifest: AttemptManifest,
+    directory: Path,
+) -> Path | None:
+    if manifest.state is not TerminalState.COMPLETED:
+        return None
+    if (
+        manifest.runtime_access_ledger_path is None
+        or manifest.runtime_access_ledger_sha256 is None
+    ):
+        raise PhysicalMergeError(
+            f"runtime access ledger missing for {manifest.shard_id}"
+        )
+    raw = Path(manifest.runtime_access_ledger_path)
+    candidates = (raw, directory / raw, directory / raw.name)
+    path = next((item for item in candidates if item.is_file()), None)
+    if path is None:
+        raise PhysicalMergeError(
+            f"runtime access ledger file missing for {manifest.shard_id}"
+        )
+    if sha256_file(path) != manifest.runtime_access_ledger_sha256:
+        raise PhysicalMergeError(
+            f"runtime access ledger hash mismatch for {manifest.shard_id}"
+        )
+    return path
+
+
 def _write_sorted_parquet(
     source_paths: Sequence[Path],
     output_path: Path,
@@ -227,6 +261,16 @@ def merge_attempt_group(
         (manifest for manifest, _ in selected),
         root / "shard_attempt_manifest.parquet",
     )
+    access_paths = tuple(
+        path
+        for manifest, directory in selected
+        if (path := _verified_runtime_access_path(manifest, directory))
+        is not None
+    )
+    access_ledger = write_runtime_access_ledger(
+        root / "runtime_access_ledger.parquet",
+        combine_runtime_access_ledgers(access_paths),
+    )
     payload = {
         "schema_version": "1",
         "merge_group": merge_group,
@@ -245,6 +289,8 @@ def merge_attempt_group(
         "unit_attempts_sha256": sha256_file(unit_attempts),
         "shard_attempts": shard_attempts.name,
         "shard_attempts_sha256": sha256_file(shard_attempts),
+        "runtime_access_ledger": access_ledger.name,
+        "runtime_access_ledger_sha256": sha256_file(access_ledger),
     }
     return _atomic_json(root / "partial_merge_manifest.json", payload)
 
@@ -355,19 +401,57 @@ def final_merge(
     if recovery_root is not None:
         evidence_roots.append(Path(recovery_root))
     _copy_contract_files(tuple(evidence_roots), root)
+    partial_access_paths = tuple(
+        path / "runtime_access_ledger.parquet"
+        for path in partial_dirs
+        if (path / "runtime_access_ledger.parquet").is_file()
+    )
+    if len(partial_access_paths) != len(partial_dirs):
+        raise PhysicalMergeError(
+            "runtime access evidence is missing from a partial merge"
+        )
+    access_ledger = combine_runtime_access_ledgers(partial_access_paths)
+    environment_path = root / "environment_manifest.json"
+    environment_manifest: Mapping[str, Any] = {}
+    if environment_path.is_file():
+        payload = json.loads(environment_path.read_text(encoding="utf-8"))
+        if isinstance(payload, Mapping):
+            environment_manifest = payload
+    contract_path = root / "performance_contract.json"
+    performance_contract: Mapping[str, Any] = {}
+    if contract_path.is_file():
+        payload = json.loads(contract_path.read_text(encoding="utf-8"))
+        if isinstance(payload, Mapping):
+            performance_contract = payload
+    audits = build_required_audits(
+        spec,
+        access_ledger,
+        environment={
+            "github_actions": os.environ.get("GITHUB_ACTIONS") == "true",
+            "runner_label": str(spec.performance["runner_label"]),
+            "larger_runner_used": bool(
+                spec.performance["larger_runners_allowed"]
+            ),
+            "code_sha": performance_contract.get("code_sha", ""),
+            "workflow_sha256": performance_contract.get(
+                "workflow_sha256", ""
+            ),
+            "environment_sha256": environment_manifest.get(
+                "environment_sha256", ""
+            ),
+        },
+    )
+    write_required_audits(root, audits)
     evidence: Mapping[str, Any] = {
-        "github_only": True,
-        "standard_runner_only": (
-            spec.performance["runner_label"] == "ubuntu-24.04"
-            and spec.performance["larger_runners_allowed"] is False
-        ),
+        "github_only": audits.runtime.github_only_run,
+        "standard_runner_only": audits.runtime.standard_runner_only,
         "matrix_job_ceiling_respected": (
             int(spec.performance["matrix_max_jobs"]) <= 256
             and int(spec.performance["planner_max_jobs"]) <= 360
         ),
-        "locked_opened": bool(spec.policy["locked_opened"]),
-        "validation_used_for_selection": bool(
-            spec.policy["validation_used_for_selection"]
+        "locked_opened": audits.policy.locked_opened,
+        "validation_used_for_selection": (
+            audits.policy.validation_used_for_selection
         ),
         "reconciliation_complete": not reconciliation.partial,
         "artifact_hashes_valid": True,
@@ -389,9 +473,10 @@ def final_merge(
             "failed_technical": reconciliation.failed_technical,
             "scientific_output": scientific_output.name,
             "scientific_output_sha256": sha256_file(scientific_output),
-            "locked_opened": bool(spec.policy["locked_opened"]),
-            "validation_used_for_selection": bool(
-                spec.policy["validation_used_for_selection"]
+            "locked_opened": audits.policy.locked_opened,
+            "locked_rows_accessed": audits.data.locked_rows_accessed,
+            "validation_used_for_selection": (
+                audits.policy.validation_used_for_selection
             ),
         },
     )

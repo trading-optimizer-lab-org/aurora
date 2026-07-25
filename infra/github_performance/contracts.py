@@ -369,6 +369,8 @@ class AttemptManifest(FrozenModel):
     completed_unit_count: NonNegativeInt
     output_rows: NonNegativeInt
     output_bytes: NonNegativeInt
+    runtime_access_ledger_path: str | None = None
+    runtime_access_ledger_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def _validate_terminal_evidence(self) -> AttemptManifest:

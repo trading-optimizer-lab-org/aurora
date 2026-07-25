@@ -19,6 +19,11 @@ import pyarrow.parquet as pq
 from aurora.core.costs import CostModel
 from aurora.core.engine import run_backtest
 from aurora.infra.github_performance.checkpoint import CheckpointManager
+from aurora.infra.github_performance.audits import (
+    DataAccessRecord,
+    RuntimeAccessLedger,
+    write_runtime_access_ledger,
+)
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointManifest,
@@ -452,6 +457,39 @@ class ReferenceWorkload:
             ),
             root / "unit_attempts.parquet",
         )
+        train = frame.loc[frame["period"] == "train", "date"]
+        validation = frame.loc[frame["period"] == "validation", "date"]
+        access_path = write_runtime_access_ledger(
+            root / "runtime_access_ledger.parquet",
+            RuntimeAccessLedger(
+                records=(
+                    DataAccessRecord(
+                        source="snapshot:deterministic_spy_reference",
+                        partition="train",
+                        minimum_date=train.min().date(),
+                        maximum_date=train.max().date(),
+                        row_count=len(train),
+                        split="train",
+                        purpose="selection",
+                        locked=False,
+                        shard_id=shard.shard_id,
+                        attempt_id=attempt_id,
+                    ),
+                    DataAccessRecord(
+                        source="snapshot:deterministic_spy_reference",
+                        partition="validation",
+                        minimum_date=validation.min().date(),
+                        maximum_date=validation.max().date(),
+                        row_count=len(validation),
+                        split="validation",
+                        purpose="report",
+                        locked=False,
+                        shard_id=shard.shard_id,
+                        attempt_id=attempt_id,
+                    ),
+                )
+            ),
+        )
         return AttemptManifest(
             shard_id=shard.shard_id,
             attempt_id=attempt_id,
@@ -479,6 +517,8 @@ class ReferenceWorkload:
             completed_unit_count=len(rows),
             output_rows=len(rows),
             output_bytes=output_path.stat().st_size,
+            runtime_access_ledger_path=access_path.name,
+            runtime_access_ledger_sha256=sha256_file(access_path),
         )
 
     def merge_group(

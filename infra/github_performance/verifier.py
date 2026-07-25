@@ -128,6 +128,27 @@ def _traceability_passed(path: Path) -> bool:
     return bool(rows) and all(row.get("status") == "pass" for row in rows)
 
 
+def _read_required_json(
+    root: Path,
+    name: str,
+    missing_code: str,
+    failures: list[str],
+) -> Mapping[str, Any]:
+    path = root / name
+    if not path.is_file():
+        failures.append(missing_code)
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        failures.append(missing_code.replace("_MISSING", "_INVALID"))
+        return {}
+    if not isinstance(payload, Mapping):
+        failures.append(missing_code.replace("_MISSING", "_INVALID"))
+        return {}
+    return payload
+
+
 def verify_final_artifact(
     root: Path,
     spec: RunSpec,
@@ -222,12 +243,49 @@ def verify_final_artifact(
             continue
         if contract.get(field) != expected or manifest.get(field) != expected:
             failures.append(failure_code)
-    locked_opened = bool(policy["locked_opened"])
-    validation_used = bool(policy["validation_used_for_selection"])
-    standard_runner_only = (
-        performance["runner_label"] == "ubuntu-24.04"
-        and performance["larger_runners_allowed"] is False
+    data_audit = _read_required_json(
+        root,
+        "data_audit.json",
+        "DATA_AUDIT_MISSING",
+        failures,
     )
+    policy_audit = _read_required_json(
+        root,
+        "policy_audit.json",
+        "POLICY_AUDIT_MISSING",
+        failures,
+    )
+    runtime_audit = _read_required_json(
+        root,
+        "runtime_audit.json",
+        "RUNTIME_AUDIT_MISSING",
+        failures,
+    )
+    _read_required_json(
+        root,
+        "provenance.json",
+        "PROVENANCE_MISSING",
+        failures,
+    )
+    locked_rows_accessed = int(
+        data_audit.get("locked_rows_accessed", -1)
+    )
+    locked_opened = bool(policy_audit.get("locked_opened", True))
+    validation_used = bool(
+        policy_audit.get("validation_used_for_selection", True)
+    )
+    standard_runner_only = bool(
+        runtime_audit.get("standard_runner_only", False)
+    )
+    if locked_rows_accessed != 0:
+        failures.append("RUNTIME_LOCKED_ROWS_ACCESSED")
+        locked_opened = True
+    maximum_accessed = str(
+        data_audit.get("maximum_accessed_date", "9999-12-31")
+    )
+    if maximum_accessed > str(policy["validation_end"]):
+        failures.append("RUNTIME_DATA_AFTER_VALIDATION_END")
+        locked_opened = True
     matrix_ok = (
         int(performance["matrix_max_jobs"]) <= 256
         and int(performance["planner_max_jobs"]) <= 360

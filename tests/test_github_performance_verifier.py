@@ -9,6 +9,12 @@ import pyarrow.parquet as pq
 from aurora.infra.github_performance.contracts import (
     RunSpec,
 )
+from aurora.infra.github_performance.audits import (
+    DataAccessRecord,
+    RuntimeAccessLedger,
+    build_required_audits,
+    write_required_audits,
+)
 from aurora.infra.github_performance.merge_planner import (
     reconcile_attempts,
     write_reconciliation,
@@ -52,6 +58,47 @@ def _resolved_fixture(tmp_path: Path) -> RunSpec:
     resolved = resolve_run_spec(requested, evidence)
     freeze_resolved_contract(requested, evidence, tmp_path)
     return resolved
+
+
+def _write_safe_runtime_audits(tmp_path: Path, spec: RunSpec) -> None:
+    audits = build_required_audits(
+        spec,
+        RuntimeAccessLedger(
+            records=(
+                DataAccessRecord(
+                    source="snapshot:test",
+                    partition="train",
+                    minimum_date="2003-01-02",
+                    maximum_date="2010-12-31",
+                    row_count=2_016,
+                    split="train",
+                    purpose="selection",
+                    locked=False,
+                    shard_id="s000",
+                    attempt_id="a000",
+                ),
+                DataAccessRecord(
+                    source="snapshot:test",
+                    partition="validation",
+                    minimum_date="2011-01-03",
+                    maximum_date="2020-12-31",
+                    row_count=2_520,
+                    split="validation",
+                    purpose="report",
+                    locked=False,
+                    shard_id="s000",
+                    attempt_id="a000",
+                ),
+            )
+        ),
+        environment={
+            "github_actions": True,
+            "runner_label": "ubuntu-24.04",
+            "larger_runner_used": False,
+            "code_sha": spec.identity["code_sha"],
+        },
+    )
+    write_required_audits(tmp_path, audits)
 
 
 def test_traceability_has_exact_required_columns() -> None:
@@ -134,6 +181,7 @@ def test_final_verifier_accepts_complete_untampered_artifact(
         '{"schema_version":"1","value":1}\n',
         encoding="utf-8",
     )
+    _write_safe_runtime_audits(tmp_path, spec)
     write_final_artifact_manifest(
         tmp_path,
         tmp_path / "final_artifact_manifest.json",
@@ -180,6 +228,7 @@ def test_final_verifier_reads_streaming_reconciliation_footer(
         traceability,
         tmp_path / "requirements_traceability.csv",
     )
+    _write_safe_runtime_audits(tmp_path, spec)
     write_final_artifact_manifest(
         tmp_path,
         tmp_path / "final_artifact_manifest.json",
