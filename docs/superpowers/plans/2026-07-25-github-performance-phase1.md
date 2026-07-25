@@ -2245,24 +2245,24 @@ gh pr checks --watch
 - Produces:
   `classify_workflow(path, allowlist) -> "legacy" | "future" | "modified_legacy"`.
 
-- [ ] **Step 1: Freeze adoption-time workflow hashes**
+- [x] **Step 1: Freeze adoption-time workflow hashes**
 
 Generate one entry per tracked `.github/workflows/*.yml` at parent commit
 `0ca928bd1`, containing repository-relative path and SHA-256. Exclude files
 introduced by this branch.
 
-- [ ] **Step 2: Test grandfathering**
+- [x] **Step 2: Test grandfathering**
 
 Assert unchanged legacy files pass, a one-byte change becomes
 `modified_legacy`, and a new heavy workflow must call the framework.
 
-- [ ] **Step 3: Add lightweight policy workflow**
+- [x] **Step 3: Add lightweight policy workflow**
 
 On pull requests touching `.github/**`, `scripts/**`, `research/**`, or
 `infra/github_performance/**`, run only the static validator. It does not launch
 research jobs.
 
-- [ ] **Step 4: Push and verify in GitHub**
+- [x] **Step 4: Push and verify in GitHub**
 
 ```bash
 git add config/legacy_workflow_allowlist.json \
@@ -2291,32 +2291,32 @@ gh pr checks --watch
   non-locked return series. This exercises the real Aurora engine and metrics
   path; only the compact input fixture is generated to remove vendor drift.
 
-- [ ] **Step 1: Write deterministic reference tests**
+- [x] **Step 1: Write deterministic reference tests**
 
 Generate returns with NumPy `default_rng(20260725)`, 4,032 train observations,
 2,520 validation observations, and no dates after `2020-12-31`. Assert the same
 unit key always produces the same output hash.
 
-- [ ] **Step 2: Implement the reference workload**
+- [x] **Step 2: Implement the reference workload**
 
 Create 1,024 logical parameter units over moving-average windows, causal lag one,
 and fixed costs. Train determines the unit parameters; validation is report-only.
 The workload emits no accepted-strategy claim, never reads locked data, and
 does not replace the engine or metrics with test doubles.
 
-- [ ] **Step 3: Add a four-shard PR smoke**
+- [x] **Step 3: Add a four-shard PR smoke**
 
 Extend `github-performance-ci.yml` with a GitHub-only four-shard smoke that uses
 the same workload protocol without invoking the 360-job workflow. Verify exact
 reconciliation and `locked_opened=false`.
 
-- [ ] **Step 4: Add the manual full caller**
+- [x] **Step 4: Add the manual full caller**
 
 `github-performance-reference.yml` contains only `workflow_dispatch`, least
 permissions (`contents: read`, `actions: read`), and one call to
 `_aurora-future-run-v3.yml`.
 
-- [ ] **Step 5: Push and verify in GitHub**
+- [x] **Step 5: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/reference_workload.py \
@@ -2359,7 +2359,7 @@ gh pr checks --watch
 - Produces:
   `write_performance_final(report, path) -> Path`.
 
-- [ ] **Step 1: Write paginated GitHub timeline tests**
+- [x] **Step 1: Write paginated GitHub timeline tests**
 
 Mock two GitHub API pages. The first returns 100 jobs and a `Link` header with
 `rel="next"`; the second returns 3 jobs. Assert all 103 jobs are preserved,
@@ -2383,7 +2383,7 @@ The collector reports `queue_seconds` from `started_at - created_at` and
 `runner_bootstrap_proxy_seconds` from the first Aurora step minus job start.
 It must not label the proxy as measured GitHub provisioning.
 
-- [ ] **Step 2: Implement read-only timeline collection**
+- [x] **Step 2: Implement read-only timeline collection**
 
 Use `urllib.request` with `GITHUB_API_URL`, `GITHUB_REPOSITORY`,
 `GITHUB_RUN_ID`, and `GITHUB_TOKEN`. Paginate until there is no `next` link.
@@ -2400,7 +2400,7 @@ Change the final dependency chain to
 and not-yet-started publisher from concurrency calculations. Publish includes
 the timeline files alongside verification and scientific artifacts.
 
-- [ ] **Step 3: Write equivalence and benchmark tests**
+- [x] **Step 3: Write equivalence and benchmark tests**
 
 Require identical unit keys and scientific output hashes before comparing
 performance. Report cold/warm setup, queue, wall time, billable minutes,
@@ -2410,14 +2410,14 @@ straggler ratio, and predicted-versus-observed error. Write
 compute fraction, setup fraction, transfer fraction, retry waste, merge path,
 and total wall and billable time.
 
-- [ ] **Step 4: Add equivalent baseline mode**
+- [x] **Step 4: Add equivalent baseline mode**
 
 The baseline uses equal-count shards, repeated standard setup, flat merge, and
 the same job-count ceiling selected for the optimized run. It uses the exact same
 code SHA, spec, input hash, units, seeds, runner label, and scientific output
 contract.
 
-- [ ] **Step 5: Add the manual benchmark workflow**
+- [x] **Step 5: Add the manual benchmark workflow**
 
 Run baseline and optimized modes, compare only after output equivalence, and
 declare `contents: read` plus `actions: read`, then upload:
@@ -2451,7 +2451,7 @@ campaign_closure.json
 github_performance_phase1_closure.json
 ```
 
-- [ ] **Step 6: Push and wait for all PR checks**
+- [x] **Step 6: Push and wait for all PR checks**
 
 ```bash
 git add .github/workflows/github-performance-benchmark.yml \
@@ -2467,6 +2467,12 @@ git commit -m "feat: close GitHub performance phase one"
 git push
 gh pr checks --watch
 ```
+
+Verified on GitHub at commit `7902cc55d`: performance contracts, the real
+four-shard engine smoke, future-workflow policy, build, CodeQL, strict Ruff,
+and dependency audit passed. Repository-wide lint, typecheck, Bandit, and full
+test failures reproduce failures already present on `main`; the performance
+framework adds no remaining errors to those logs.
 
 - [ ] **Step 7: Mark the PR ready for review**
 
