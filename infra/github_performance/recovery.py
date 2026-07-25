@@ -134,6 +134,7 @@ def _retry_descriptor(
     return {
         "shard_id": shard.shard_id,
         "attempt_id": attempt_id,
+        "merge_group": shard.merge_group,
         "checkpoint_artifact": (
             checkpoint.artifact_name if checkpoint is not None else ""
         ),

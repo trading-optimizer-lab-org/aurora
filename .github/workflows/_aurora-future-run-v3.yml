@@ -1,0 +1,1073 @@
+name: Aurora Future Run v3
+
+on:
+  workflow_call:
+    inputs:
+      spec_path:
+        description: Repository-relative version-3 run spec
+        required: true
+        type: string
+      workload:
+        description: Aurora workload reference, aurora.module:OBJECT
+        required: true
+        type: string
+      run_label:
+        description: Stable artifact prefix
+        required: true
+        type: string
+      retention_days:
+        description: Retention for intermediate and final artifacts
+        required: false
+        default: 7
+        type: number
+
+permissions:
+  contents: read
+
+env:
+  PYTHONHASHSEED: "0"
+  TZ: UTC
+  LC_ALL: C.UTF-8
+  LANG: C.UTF-8
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Validate requested contract
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          aurora github validate \
+            --spec "$SPEC_PATH" \
+            --output-dir "$RUNNER_TEMP/preflight"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from aurora.infra.github_performance.preflight import load_github_yaml
+
+          payload = load_github_yaml(Path(os.environ["SPEC_PATH"]))
+          supplied = str(payload["identity"]["code_sha"])
+          observed = os.environ["TRIGGER_SHA"]
+          if supplied not in ("", observed):
+              raise SystemExit(
+                  "CODE_SHA_MISMATCH: spec does not match triggering commit"
+              )
+          PY
+      - name: Upload preflight evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preflight
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  prepare_environment:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      environment_sha256: ${{ steps.runtime.outputs.environment-sha256 }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build canonical Aurora runtime
+        id: runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: writer
+      - name: Upload immutable environment
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-environment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: environment_manifest.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  prepare_data:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Prepare immutable data once
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github prepare \
+            --spec "$SPEC_PATH" \
+            --workload "$WORKLOAD" \
+            --output-dir "$RUNNER_TEMP/prepared"
+      - name: Upload prepared inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  freeze_contract:
+    needs: [validate, prepare_environment, prepare_data]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download environment
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-environment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/environment
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Freeze resolved scientific and performance contract
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
+        run: |
+          set -euo pipefail
+          metric_contract="$(
+            python - <<'PY'
+          import os
+          from pathlib import Path
+          from aurora.infra.github_performance.preflight import load_github_yaml
+          print(load_github_yaml(Path(os.environ["SPEC_PATH"]))["metrics"]["contract_path"])
+          PY
+          )"
+          aurora github freeze-contract \
+            --spec "$SPEC_PATH" \
+            --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
+            --environment-manifest "$RUNNER_TEMP/environment/environment_manifest.json" \
+            --workflow ".github/workflows/_aurora-future-run-v3.yml" \
+            --metric-contract "$metric_contract" \
+            --capacity-profile "config/github_capacity_profile.json" \
+            --code-sha "$GITHUB_SHA" \
+            --output-dir "$RUNNER_TEMP/contract"
+      - name: Upload frozen contract
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  smoke:
+    needs: freeze_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Run bounded smoke
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github smoke \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
+            --output "$RUNNER_TEMP/smoke/smoke_result.json"
+      - name: Upload smoke evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  pilot:
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Measure real pilot
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github pilot \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
+            --output "$RUNNER_TEMP/pilot/performance_pilot.json"
+      - name: Upload pilot evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pilot
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  plan:
+    needs: pilot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      matrix_a: ${{ steps.outputs.outputs.matrix_a }}
+      matrix_b: ${{ steps.outputs.outputs.matrix_b }}
+      has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
+      merge_matrix: ${{ steps.outputs.outputs.merge_matrix }}
+      selected_jobs: ${{ steps.outputs.outputs.selected_jobs }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Download pilot evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pilot
+      - name: Build adaptive balanced plan
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github plan \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
+            --pilot "$RUNNER_TEMP/pilot/performance_pilot.json" \
+            --output-dir "$RUNNER_TEMP/plan"
+      - name: Emit compact GitHub matrices
+        id: outputs
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("plan", "plan_outputs.json")
+              .read_text(encoding="utf-8")
+          )
+          names = {
+              "matrix_a": "matrix_a_json",
+              "matrix_b": "matrix_b_json",
+              "has_matrix_b": "has_matrix_b",
+              "merge_matrix": "merge_matrix_json",
+              "selected_jobs": "selected_jobs",
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for output, source in names.items():
+                  out.write(f"{output}={payload[source]}\n")
+          PY
+      - name: Upload immutable execution plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  fanout_a:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_a) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Download assignment plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Materialize shard descriptor
+        env:
+          SHARD_JSON: ${{ toJSON(matrix) }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          descriptor = json.loads(os.environ["SHARD_JSON"])
+          plan = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("plan", "balanced_shard_plan.json")
+              .read_text(encoding="utf-8")
+          )
+          payload = next(
+              shard
+              for shard in plan["shards"]
+              if shard["shard_id"] == descriptor["shard_id"]
+          )
+          for key in (
+              "merge_group",
+              "assignment_artifact",
+              "assignment_member",
+              "assignment_sha256",
+          ):
+              if payload[key] != descriptor[key]:
+                  raise SystemExit(f"SHARD_DESCRIPTOR_MISMATCH: {key}")
+          Path(os.environ["RUNNER_TEMP"]).joinpath("shard.json").write_text(
+              json.dumps(payload, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+      - name: Execute shard
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+          ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+        run: |
+          set -euo pipefail
+          aurora github run-shard \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --shard "$RUNNER_TEMP/shard.json" \
+            --attempt-id "${{ matrix.attempt_id }}" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
+      - name: Salvage attempt evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Salvage valid checkpoint
+        if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: run-checkpoint-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt/**/checkpoint*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  fanout_b:
+    needs: plan
+    if: needs.plan.outputs.has_matrix_b == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix_b) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Download assignment plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Materialize shard descriptor
+        env:
+          SHARD_JSON: ${{ toJSON(matrix) }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          descriptor = json.loads(os.environ["SHARD_JSON"])
+          plan = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("plan", "balanced_shard_plan.json")
+              .read_text(encoding="utf-8")
+          )
+          payload = next(
+              shard
+              for shard in plan["shards"]
+              if shard["shard_id"] == descriptor["shard_id"]
+          )
+          for key in (
+              "merge_group",
+              "assignment_artifact",
+              "assignment_member",
+              "assignment_sha256",
+          ):
+              if payload[key] != descriptor[key]:
+                  raise SystemExit(f"SHARD_DESCRIPTOR_MISMATCH: {key}")
+          Path(os.environ["RUNNER_TEMP"]).joinpath("shard.json").write_text(
+              json.dumps(payload, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+      - name: Execute shard
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+          ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+        run: |
+          set -euo pipefail
+          aurora github run-shard \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --shard "$RUNNER_TEMP/shard.json" \
+            --attempt-id "${{ matrix.attempt_id }}" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
+      - name: Salvage attempt evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Salvage valid checkpoint
+        if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: run-checkpoint-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt/**/checkpoint*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  recovery_plan:
+    needs: [plan, fanout_a, fanout_b]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      matrix_a: ${{ steps.outputs.outputs.matrix_a }}
+      matrix_b: ${{ steps.outputs.outputs.matrix_b }}
+      has_matrix_a: ${{ steps.outputs.outputs.has_matrix_a }}
+      has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Download attempt manifests
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-shard-*
+          path: ${{ runner.temp }}/attempts
+      - name: Download checkpoints
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: run-checkpoint-*
+          path: ${{ runner.temp }}/checkpoints
+      - name: Build selective recovery plan
+        run: |
+          set -euo pipefail
+          mapfile -t attempts < <(
+            find "$RUNNER_TEMP/attempts" \
+              -name shard_attempt_manifest.json -type f 2>/dev/null |
+              sort
+          )
+          mapfile -t checkpoints < <(
+            find "$RUNNER_TEMP/checkpoints" \
+              -name checkpoint_manifest.json -type f 2>/dev/null |
+              sort
+          )
+          args=(
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
+            --output-dir "$RUNNER_TEMP/recovery"
+          )
+          for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
+          for path in "${checkpoints[@]}"; do
+            args+=(--checkpoint "$path")
+          done
+          aurora github recover-plan "${args[@]}"
+      - name: Emit compact retry matrices
+        id: outputs
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "recovery"
+          plan = json.loads((root / "recovery_plan.json").read_text())
+          matrix_a = (root / "retry_matrix_a.json").read_text().strip()
+          matrix_b = (root / "retry_matrix_b.json").read_text().strip()
+          values = {
+              "matrix_a": matrix_a,
+              "matrix_b": matrix_b,
+              "has_matrix_a": str(plan["has_retry_matrix_a"]).lower(),
+              "has_matrix_b": str(plan["has_retry_matrix_b"]).lower(),
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for name, value in values.items():
+                  out.write(f"{name}={value}\n")
+          PY
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  retry_a:
+    needs: [plan, recovery_plan]
+    if: needs.recovery_plan.outputs.has_matrix_a == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan.outputs.matrix_a) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Download assignment plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Download verified checkpoint
+        if: matrix.checkpoint_artifact != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ matrix.checkpoint_artifact }}
+          path: ${{ runner.temp }}/checkpoint
+      - name: Materialize retry descriptor
+        env:
+          SHARD_JSON: ${{ toJSON(matrix) }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          descriptor = json.loads(os.environ["SHARD_JSON"])
+          plan = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("plan", "balanced_shard_plan.json")
+              .read_text(encoding="utf-8")
+          )
+          payload = next(
+              shard
+              for shard in plan["shards"]
+              if shard["shard_id"] == descriptor["shard_id"]
+          )
+          for key in (
+              "merge_group",
+              "assignment_artifact",
+              "assignment_member",
+              "assignment_sha256",
+          ):
+              if payload[key] != descriptor[key]:
+                  raise SystemExit(f"SHARD_DESCRIPTOR_MISMATCH: {key}")
+          Path(os.environ["RUNNER_TEMP"]).joinpath("shard.json").write_text(
+              json.dumps(payload, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+      - name: Execute retry
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+          ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+        run: |
+          set -euo pipefail
+          checkpoint_args=()
+          if [[ -n "${{ matrix.checkpoint_artifact }}" ]]; then
+            checkpoint_path="$(
+              find "$RUNNER_TEMP/checkpoint" \
+                -name checkpoint_manifest.json -type f |
+                head -1
+            )"
+            checkpoint_args=(--checkpoint "$checkpoint_path")
+          fi
+          aurora github run-shard \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --shard "$RUNNER_TEMP/shard.json" \
+            --attempt-id "${{ matrix.attempt_id }}" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
+            "${checkpoint_args[@]}"
+      - name: Salvage retry evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  retry_b:
+    needs: [plan, recovery_plan]
+    if: needs.recovery_plan.outputs.has_matrix_b == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan.outputs.matrix_b) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download prepared inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Download assignment plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Download verified checkpoint
+        if: matrix.checkpoint_artifact != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ matrix.checkpoint_artifact }}
+          path: ${{ runner.temp }}/checkpoint
+      - name: Materialize retry descriptor
+        env:
+          SHARD_JSON: ${{ toJSON(matrix) }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          descriptor = json.loads(os.environ["SHARD_JSON"])
+          plan = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("plan", "balanced_shard_plan.json")
+              .read_text(encoding="utf-8")
+          )
+          payload = next(
+              shard
+              for shard in plan["shards"]
+              if shard["shard_id"] == descriptor["shard_id"]
+          )
+          for key in (
+              "merge_group",
+              "assignment_artifact",
+              "assignment_member",
+              "assignment_sha256",
+          ):
+              if payload[key] != descriptor[key]:
+                  raise SystemExit(f"SHARD_DESCRIPTOR_MISMATCH: {key}")
+          Path(os.environ["RUNNER_TEMP"]).joinpath("shard.json").write_text(
+              json.dumps(payload, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+      - name: Execute retry
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+          ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+        run: |
+          set -euo pipefail
+          checkpoint_args=()
+          if [[ -n "${{ matrix.checkpoint_artifact }}" ]]; then
+            checkpoint_path="$(
+              find "$RUNNER_TEMP/checkpoint" \
+                -name checkpoint_manifest.json -type f |
+                head -1
+            )"
+            checkpoint_args=(--checkpoint "$checkpoint_path")
+          fi
+          aurora github run-shard \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --shard "$RUNNER_TEMP/shard.json" \
+            --attempt-id "${{ matrix.attempt_id }}" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
+            "${checkpoint_args[@]}"
+      - name: Salvage retry evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  merge_partials:
+    needs: [plan, fanout_a, fanout_b, retry_a, retry_b]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.plan.outputs.merge_matrix) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Download this group's attempts
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-*
+          path: ${{ runner.temp }}/attempts
+      - name: Merge bounded group
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github merge-group \
+            --workload "$WORKLOAD" \
+            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json" \
+            --merge-group "${{ matrix.merge_group }}" \
+            --inputs-root "$RUNNER_TEMP/attempts" \
+            --output-dir "$RUNNER_TEMP/partial/${{ matrix.merge_group }}"
+      - name: Upload partial merge
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-partial-${{ matrix.merge_group }}
+          path: ${{ runner.temp }}/partial
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  final_merge:
+    needs: [plan, freeze_contract, merge_partials]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
+      - name: Download execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+      - name: Download partial merges only
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-partial-*
+          path: ${{ runner.temp }}/partials
+      - name: Build final artifact and reconciliation
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github final-merge \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --partials-root "$RUNNER_TEMP/partials" \
+            --plan-root "$RUNNER_TEMP/plan" \
+            --contract-root "$RUNNER_TEMP/contract" \
+            --output-dir "$RUNNER_TEMP/final"
+      - name: Upload sealed pre-verification artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  verify:
+    needs: final_merge
+    if: always() && needs.final_merge.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download sealed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+      - name: Independently reopen and verify every file
+        run: |
+          set -euo pipefail
+          aurora github verify \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --root "$RUNNER_TEMP/final"
+      - name: Upload verified stage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  publish:
+    needs: verify
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download verified stage
+        if: needs.verify.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publish
+      - name: Publish final reader artifact
+        if: needs.verify.result == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-results
+          path: ${{ runner.temp }}/publish
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Preserve failed verification status
+        if: needs.verify.result != 'success'
+        run: |
+          echo "::error::Aurora final verification did not pass"
+          exit 1

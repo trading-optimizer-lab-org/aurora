@@ -268,16 +268,19 @@ def prepare_with_canonical_services(
     """Prepare once while enforcing Aurora's existing lineage services."""
 
     active_services = services or AuroraCanonicalServices.create()
-    expected_policy = str(spec.policy["policy_hash"])
     active_policy = active_services.protocol_policy_hash()
-    if expected_policy != active_policy:
+    requested_policy = str(spec.policy["policy_hash"])
+    if requested_policy and requested_policy != active_policy:
         raise WorkloadPolicyMismatch(
             "spec.policy_hash does not match ProtocolPolicy"
         )
+    effective_payload = deep_thaw_json(spec)
+    effective_payload["policy"]["policy_hash"] = active_policy
+    effective_spec = RunSpec.model_validate(effective_payload)
     snapshot_hash = str(spec.data["snapshot_hash"])
     if snapshot_hash:
         snapshot_policy = active_services.snapshot_policy_hash(snapshot_hash)
-        if snapshot_policy != expected_policy:
+        if snapshot_policy != active_policy:
             raise WorkloadPolicyMismatch(
                 "snapshot.policy_hash does not match spec.policy_hash"
             )
@@ -285,12 +288,15 @@ def prepare_with_canonical_services(
         str(spec.identity["campaign_id"])
     )
     features = active_services.feature_identities()
-    experiment_id = active_services.start_experiment(spec)
+    experiment_id = active_services.start_experiment(effective_spec)
     root = output_dir or canonical_root
     try:
-        with active_services.witness_context(spec, features) as recorder:
-            prepared = workload.prepare(spec, Path(root))
-            if prepared.policy_hash != expected_policy:
+        with active_services.witness_context(
+            effective_spec,
+            features,
+        ) as recorder:
+            prepared = workload.prepare(effective_spec, Path(root))
+            if prepared.policy_hash != active_policy:
                 raise WorkloadPolicyMismatch(
                     "prepared inputs policy hash does not match spec"
                 )
@@ -313,6 +319,9 @@ def run_shard_with_lineage_check(
     shard: ShardDefinition,
     output_dir: Path,
     checkpoint: CheckpointManifest | None,
+    *,
+    expected_attempt_id: str | None = None,
+    expected_artifact_name: str | None = None,
 ) -> AttemptManifest:
     """Block mismatched shard evidence before it can enter reconciliation."""
 
@@ -350,5 +359,17 @@ def run_shard_with_lineage_check(
     if mismatched:
         raise WorkloadPolicyMismatch(
             "attempt lineage mismatch: " + ", ".join(mismatched)
+        )
+    if (
+        expected_attempt_id is not None
+        and attempt.attempt_id != expected_attempt_id
+    ):
+        raise WorkloadPolicyMismatch("attempt_id does not match execution plan")
+    if (
+        expected_artifact_name is not None
+        and attempt.artifact_name != expected_artifact_name
+    ):
+        raise WorkloadPolicyMismatch(
+            "artifact_name does not match execution plan"
         )
     return attempt

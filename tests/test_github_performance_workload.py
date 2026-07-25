@@ -171,3 +171,24 @@ def test_policy_mismatch_blocks_before_workload(tmp_path: Path) -> None:
         )
     assert workload.prepare_calls == 0
     assert services.calls == ["policy"]
+
+
+def test_blank_runtime_policy_is_filled_from_canonical_service(
+    tmp_path: Path,
+) -> None:
+    payload = minimal_valid_spec()
+    payload["policy"]["policy_hash"] = ""
+    payload["data"]["snapshot_hash"] = "b" * 64
+    spec = RunSpec.model_validate(payload)
+    services = FakeServices("a" * 64)
+    workload = CompleteWorkload()
+
+    prepared = prepare_with_canonical_services(
+        workload,
+        spec,
+        tmp_path,
+        services=services,
+    )
+
+    assert prepared.policy_hash == "a" * 64
+    assert workload.prepare_calls == 1
