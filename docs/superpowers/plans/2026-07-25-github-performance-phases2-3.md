@@ -294,29 +294,42 @@ alternatives; compilation and warm-up are mandatory end-to-end evidence.
 - Produces: `BudgetLedger`, `DeadlineDecision`, and `SafeStopReason`.
 - Produces artifacts: `resource_samples.parquet`, `budget_audit.json`, and `deadline_audit.json`.
 
-- [ ] **Step 1: Write failing guardrail tests**
+- [x] **Step 1: Write failing guardrail tests**
 
 Cover child CPU/RSS aggregation, disk and I/O samples, budget projection, deadline projection, graceful checkpoint request, and fail-closed behavior when evidence is missing.
 
-- [ ] **Step 2: Record RED in GitHub**
+- [x] **Step 2: Record RED in GitHub**
 
 Require failure because periodic monitoring and enforced budgets are absent.
 
-- [ ] **Step 3: Implement periodic monitor**
+- [x] **Step 3: Implement periodic monitor**
 
 Sample the process tree at a bounded interval, publish maximum and p95 resources, and request a checkpoint before memory, disk, deadline, or budget exhaustion.
 
-- [ ] **Step 4: Enforce planner and runtime decisions**
+- [x] **Step 4: Enforce planner and runtime decisions**
 
 Planner refuses a route projected beyond hard budget/deadline. Runtime stops only at durable unit boundaries and records the exact reason.
 
-- [ ] **Step 5: Run GitHub tests and commit**
+- [x] **Step 5: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: enforce GitHub runtime guardrails
 ```
+
+**Evidence:** RED run `30171721269` used commit `893c2be30` and failed
+only on the deliberately absent guardrail CLI, module, and process-tree
+telemetry contracts. The first GREEN run `30172204050` proved the exact
+dependency lock and all four real-engine shards, while exposing one strict
+floating-point audit mismatch (`40.400000000000006` versus `40.4`). Commit
+`998344847` replaced binary monetary multiplication with decimal arithmetic.
+Final GREEN run `30172263777` completed successfully with the reproducible
+dependency lock, `199` contract tests, and all four real-engine shards.
+`ResourceMonitor` now records child-aware RSS, peak memory, CPU, disk, read and
+write bytes, I/O wait, load, maximums, and p95. Planner routes fail closed on
+deadline, billable-minute, or cost evidence violations. Runtime pressure is
+latched and can request a stop only at a declared durable unit boundary.
 
 ---
 
