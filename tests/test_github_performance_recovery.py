@@ -170,6 +170,12 @@ def test_zero_retry_plan_still_writes_all_outputs(tmp_path: Path) -> None:
     }
     assert plan.has_retry_matrix_a is False
     assert plan.has_retry_matrix_b is False
+    assert (tmp_path / "retry_matrix_a.json").read_text().strip() == (
+        '{"include":[]}'
+    )
+    assert (tmp_path / "retry_matrix_b.json").read_text().strip() == (
+        '{"include":[]}'
+    )
 
 
 def test_corrupt_checkpoint_is_rejected_without_blocking_recovery(
