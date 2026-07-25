@@ -12,7 +12,9 @@ on:
       - "config/templates/**"
       - "core/execution_policy.py"
       - "infra/github_performance/**"
+      - "requirements/github-performance.*"
       - "scripts/aurora_github_*"
+      - "scripts/build_github_performance_wheelhouse.py"
       - "scripts/collect_github_run_timeline.py"
       - "scripts/compare_github_performance_runs.py"
       - "scripts/validate_github_workflow_policy.py"
@@ -26,6 +28,54 @@ permissions:
   contents: read
 
 jobs:
+  dependency_lock:
+    name: Reproduce dependency lock
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned lock compiler
+        run: python -m pip install --disable-pip-version-check pip-tools==7.6.0
+
+      - name: Compile complete hashed lock
+        env:
+          CUSTOM_COMPILE_COMMAND: >-
+            GitHub Performance CI / Reproduce dependency lock
+        run: |
+          set -euo pipefail
+          python -m piptools compile \
+            --allow-unsafe \
+            --generate-hashes \
+            --resolver=backtracking \
+            --strip-extras \
+            --output-file="$RUNNER_TEMP/github-performance.lock" \
+            requirements/github-performance.in
+
+      - name: Verify committed lock is reproducible
+        if: hashFiles('requirements/github-performance.lock') != ''
+        run: |
+          set -euo pipefail
+          diff -u \
+            requirements/github-performance.lock \
+            "$RUNNER_TEMP/github-performance.lock"
+
+      - name: Upload generated lock
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-lock-${{ github.run_id }}
+          path: ${{ runner.temp }}/github-performance.lock
+          if-no-files-found: error
+          retention-days: 7
+
   contracts:
     name: GitHub performance contracts
     runs-on: ubuntu-24.04
