@@ -1,0 +1,1130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trading-optimizer-lab-org/aurora/config/schemas/github_run_spec_v3.schema.json",
+  "title": "Aurora GitHub Run Specification v3",
+  "description": "Requested contract for future GitHub-only Aurora runs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "objective",
+    "policy",
+    "data",
+    "execution",
+    "resources",
+    "performance",
+    "retries",
+    "artifacts",
+    "security",
+    "statistics",
+    "metrics",
+    "reconciliation",
+    "gates"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "3.0"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "campaign_id",
+        "run_type",
+        "repo",
+        "code_ref",
+        "code_sha",
+        "workflow",
+        "workflow_sha256",
+        "deadline_utc"
+      ],
+      "properties": {
+        "campaign_id": {
+          "type": "string"
+        },
+        "run_type": {
+          "type": "string"
+        },
+        "repo": {
+          "const": "trading-optimizer-lab-org/aurora"
+        },
+        "code_ref": {
+          "type": "string"
+        },
+        "code_sha": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          ]
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "workflow_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "deadline_utc": {
+          "type": "string"
+        }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "success_criteria",
+        "negative_result_criteria",
+        "technical_failure_criteria"
+      ],
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "success_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "negative_result_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "technical_failure_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_hash",
+        "train_start",
+        "train_end",
+        "validation_start",
+        "validation_end",
+        "locked_start",
+        "locked_opened",
+        "locked_rows_allowed",
+        "validation_used_for_selection",
+        "causal_lag_minimum",
+        "decision_timezone",
+        "decision_timestamp_rule",
+        "execution_timestamp_rule",
+        "market_calendar",
+        "purging_periods",
+        "embargo_periods"
+      ],
+      "properties": {
+        "policy_hash": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "train_start": {
+          "type": "string"
+        },
+        "train_end": {
+          "type": "string"
+        },
+        "validation_start": {
+          "type": "string"
+        },
+        "validation_end": {
+          "type": "string"
+        },
+        "locked_start": {
+          "type": "string"
+        },
+        "locked_opened": {
+          "const": false
+        },
+        "locked_rows_allowed": {
+          "const": 0
+        },
+        "validation_used_for_selection": {
+          "const": false
+        },
+        "causal_lag_minimum": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision_timezone": {
+          "type": "string"
+        },
+        "decision_timestamp_rule": {
+          "type": "string"
+        },
+        "execution_timestamp_rule": {
+          "type": "string"
+        },
+        "market_calendar": {
+          "type": "string"
+        },
+        "purging_periods": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "embargo_periods": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest",
+        "manifest_sha256",
+        "snapshot_hash",
+        "schema_version",
+        "max_date",
+        "required_datasets",
+        "total_return_policy",
+        "corporate_actions_policy",
+        "delisting_policy",
+        "fx_policy",
+        "cash_yield_policy"
+      ],
+      "properties": {
+        "manifest": {
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "max_date": {
+          "type": "string"
+        },
+        "required_datasets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "total_return_policy": {
+          "type": "string"
+        },
+        "corporate_actions_policy": {
+          "type": "string"
+        },
+        "delisting_policy": {
+          "type": "string"
+        },
+        "fx_policy": {
+          "type": "string"
+        },
+        "cash_yield_policy": {
+          "type": "string"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "github_only",
+        "execution_location",
+        "local_runs_allowed",
+        "requires_explicit_user_local_permission",
+        "waves",
+        "jobs_per_wave",
+        "matrices_per_wave",
+        "max_matrix_jobs",
+        "requested_parallelism",
+        "conservative_parallelism",
+        "internal_minutes_per_job",
+        "job_timeout_minutes",
+        "merge_timeout_minutes",
+        "fail_fast",
+        "global_seed",
+        "shard_seed_formula",
+        "timezone",
+        "locale",
+        "python_version",
+        "dependency_lock_sha256",
+        "environment_sha256",
+        "runner_image"
+      ],
+      "properties": {
+        "github_only": {
+          "const": true
+        },
+        "execution_location": {
+          "const": "github_actions"
+        },
+        "local_runs_allowed": {
+          "const": false
+        },
+        "requires_explicit_user_local_permission": {
+          "const": true
+        },
+        "waves": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "jobs_per_wave": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "matrices_per_wave": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_matrix_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "requested_parallelism": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 360
+        },
+        "conservative_parallelism": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 360
+        },
+        "internal_minutes_per_job": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "job_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "merge_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fail_fast": {
+          "const": false
+        },
+        "global_seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shard_seed_formula": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "python_version": {
+          "type": "string"
+        },
+        "dependency_lock_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "environment_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "runner_image": {
+          "type": "string"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_billable_minutes",
+        "max_cost",
+        "max_artifact_gb",
+        "min_free_disk_gb",
+        "max_memory_pct",
+        "max_peak_temporary_disk_gb",
+        "atomic_rewrite_multiplier"
+      ],
+      "properties": {
+        "max_billable_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_cost": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_artifact_gb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_free_disk_gb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_memory_pct": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 95
+        },
+        "max_peak_temporary_disk_gb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "atomic_rewrite_multiplier": {
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "optimize_for",
+        "capacity_profile_path",
+        "capacity_profile_sha256",
+        "confirmed_standard_concurrency",
+        "concurrency_confirmation_source",
+        "reserve_concurrency",
+        "capacity_probe_required",
+        "planner_selects_job_count",
+        "planner_min_jobs",
+        "planner_max_jobs",
+        "planner_job_count_search",
+        "planner_large_unit_threshold",
+        "planner_exact_lpt_candidates_max",
+        "matrix_max_jobs",
+        "auto_split_matrices",
+        "runner_label",
+        "detect_runner_resources",
+        "record_runner_image_metadata",
+        "reuse_valid_gates",
+        "prepare_data_once",
+        "precompute_common_features_once",
+        "distribute_only_required_partitions",
+        "transport_mode",
+        "artifact_granularity",
+        "forbid_partial_download_claim_for_monolithic_artifact",
+        "shard_planning",
+        "work_unit_manifest_format",
+        "shard_assignment_format",
+        "matrix_descriptors_only",
+        "max_github_output_kb",
+        "target_setup_fraction_max",
+        "target_checkpoint_fraction_max",
+        "target_straggler_ratio_max",
+        "adaptive_batch_size",
+        "adaptive_threads",
+        "adaptive_shard_size",
+        "forbid_nested_process_pools",
+        "pin_numeric_library_threads",
+        "parquet_projection",
+        "parquet_predicate_pushdown",
+        "forbid_repeated_full_scans",
+        "forbid_large_csv_intermediates",
+        "artifact_compression_precompressed",
+        "artifact_compression_text",
+        "cache_single_writer",
+        "hierarchical_merge",
+        "merge_fan_in",
+        "merge_incremental",
+        "preserve_partial_merges",
+        "larger_runners_allowed",
+        "native_acceleration_allowed_after_profile",
+        "native_hot_path_min_fraction",
+        "native_projected_end_to_end_gain_min",
+        "native_python_fallback_required",
+        "engine_candidates",
+        "require_engine_equivalence_before_timing",
+        "record_queue_time",
+        "record_parallelism_timeline",
+        "record_phase_breakdown",
+        "generate_bottleneck_report"
+      ],
+      "properties": {
+        "optimize_for": {
+          "type": "string",
+          "enum": [
+            "wall_clock",
+            "billable_minutes",
+            "balanced"
+          ]
+        },
+        "capacity_profile_path": {
+          "type": "string"
+        },
+        "capacity_profile_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "confirmed_standard_concurrency": {
+          "const": 360
+        },
+        "concurrency_confirmation_source": {
+          "type": "string"
+        },
+        "reserve_concurrency": {
+          "type": "integer"
+        },
+        "capacity_probe_required": {
+          "type": "boolean"
+        },
+        "planner_selects_job_count": {
+          "type": "boolean"
+        },
+        "planner_min_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 360
+        },
+        "planner_max_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 360
+        },
+        "planner_job_count_search": {
+          "const": "adaptive_exact"
+        },
+        "planner_large_unit_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "planner_exact_lpt_candidates_max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "matrix_max_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "auto_split_matrices": {
+          "type": "boolean"
+        },
+        "runner_label": {
+          "const": "ubuntu-24.04"
+        },
+        "detect_runner_resources": {
+          "type": "boolean"
+        },
+        "record_runner_image_metadata": {
+          "type": "boolean"
+        },
+        "reuse_valid_gates": {
+          "type": "boolean"
+        },
+        "prepare_data_once": {
+          "type": "boolean"
+        },
+        "precompute_common_features_once": {
+          "type": "boolean"
+        },
+        "distribute_only_required_partitions": {
+          "type": "boolean"
+        },
+        "transport_mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "actions_artifact",
+            "snapshot_backend"
+          ]
+        },
+        "artifact_granularity": {
+          "type": "string",
+          "enum": [
+            "single",
+            "coarse_partition",
+            "external_partition"
+          ]
+        },
+        "forbid_partial_download_claim_for_monolithic_artifact": {
+          "type": "boolean"
+        },
+        "shard_planning": {
+          "const": "weighted_lpt"
+        },
+        "work_unit_manifest_format": {
+          "const": "parquet"
+        },
+        "shard_assignment_format": {
+          "const": "parquet"
+        },
+        "matrix_descriptors_only": {
+          "type": "boolean"
+        },
+        "max_github_output_kb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "target_setup_fraction_max": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "target_checkpoint_fraction_max": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "target_straggler_ratio_max": {
+          "type": "number",
+          "minimum": 1
+        },
+        "adaptive_batch_size": {
+          "type": "boolean"
+        },
+        "adaptive_threads": {
+          "type": "boolean"
+        },
+        "adaptive_shard_size": {
+          "type": "boolean"
+        },
+        "forbid_nested_process_pools": {
+          "type": "boolean"
+        },
+        "pin_numeric_library_threads": {
+          "type": "boolean"
+        },
+        "parquet_projection": {
+          "type": "boolean"
+        },
+        "parquet_predicate_pushdown": {
+          "type": "boolean"
+        },
+        "forbid_repeated_full_scans": {
+          "type": "boolean"
+        },
+        "forbid_large_csv_intermediates": {
+          "type": "boolean"
+        },
+        "artifact_compression_precompressed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "artifact_compression_text": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "cache_single_writer": {
+          "type": "boolean"
+        },
+        "hierarchical_merge": {
+          "type": "boolean"
+        },
+        "merge_fan_in": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 100
+        },
+        "merge_incremental": {
+          "type": "boolean"
+        },
+        "preserve_partial_merges": {
+          "type": "boolean"
+        },
+        "larger_runners_allowed": {
+          "const": false
+        },
+        "native_acceleration_allowed_after_profile": {
+          "type": "boolean"
+        },
+        "native_hot_path_min_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "native_projected_end_to_end_gain_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "native_python_fallback_required": {
+          "type": "boolean"
+        },
+        "engine_candidates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "python_reference",
+              "numpy",
+              "numba",
+              "pyarrow",
+              "duckdb",
+              "threads",
+              "processes"
+            ]
+          }
+        },
+        "require_engine_equivalence_before_timing": {
+          "type": "boolean"
+        },
+        "record_queue_time": {
+          "type": "boolean"
+        },
+        "record_parallelism_timeline": {
+          "type": "boolean"
+        },
+        "record_phase_breakdown": {
+          "type": "boolean"
+        },
+        "generate_bottleneck_report": {
+          "type": "boolean"
+        }
+      }
+    },
+    "retries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transient_network",
+        "github_5xx",
+        "provider_429",
+        "artifact_upload",
+        "runner_lost"
+      ],
+      "properties": {
+        "transient_network": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "github_5xx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "provider_429": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "artifact_upload": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "runner_lost": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shard_format",
+        "final_name",
+        "retention_days_shards",
+        "retention_days_final",
+        "if_no_files_found",
+        "require_final_artifact_manifest",
+        "require_requirement_traceability",
+        "require_final_verification_report"
+      ],
+      "properties": {
+        "shard_format": {
+          "type": "string",
+          "enum": [
+            "parquet",
+            "jsonl",
+            "jsonl_zst"
+          ]
+        },
+        "final_name": {
+          "type": "string"
+        },
+        "retention_days_shards": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "retention_days_final": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "if_no_files_found": {
+          "const": "error"
+        },
+        "require_final_artifact_manifest": {
+          "type": "boolean"
+        },
+        "require_requirement_traceability": {
+          "type": "boolean"
+        },
+        "require_final_verification_report": {
+          "type": "boolean"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_permissions",
+        "actions_pinned_by_sha",
+        "checkout_persist_credentials",
+        "external_code_allowlist",
+        "pinned_actions"
+      ],
+      "properties": {
+        "default_permissions": {
+          "const": "contents:read"
+        },
+        "actions_pinned_by_sha": {
+          "const": true
+        },
+        "checkout_persist_credentials": {
+          "const": false
+        },
+        "external_code_allowlist": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "pinned_actions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "checkout",
+            "setup_python",
+            "upload_artifact",
+            "download_artifact"
+          ],
+          "properties": {
+            "checkout": {
+              "type": "string",
+              "anyOf": [
+                {
+                  "maxLength": 0
+                },
+                {
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              ]
+            },
+            "setup_python": {
+              "type": "string",
+              "anyOf": [
+                {
+                  "maxLength": 0
+                },
+                {
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              ]
+            },
+            "upload_artifact": {
+              "type": "string",
+              "anyOf": [
+                {
+                  "maxLength": 0
+                },
+                {
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              ]
+            },
+            "download_artifact": {
+              "type": "string",
+              "anyOf": [
+                {
+                  "maxLength": 0
+                },
+                {
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hypothesis_family",
+        "null_hypothesis",
+        "alternative_hypothesis",
+        "n_trials_global",
+        "alpha",
+        "multiple_testing_correction",
+        "bootstrap_method",
+        "bootstrap_samples",
+        "bootstrap_block_length",
+        "statistical_seed",
+        "minimum_sample_size"
+      ],
+      "properties": {
+        "hypothesis_family": {
+          "type": "string"
+        },
+        "null_hypothesis": {
+          "type": "string"
+        },
+        "alternative_hypothesis": {
+          "type": "string"
+        },
+        "n_trials_global": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "alpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "multiple_testing_correction": {
+          "type": "string"
+        },
+        "bootstrap_method": {
+          "type": "string"
+        },
+        "bootstrap_samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bootstrap_block_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "statistical_seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum_sample_size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_path",
+        "contract_sha256",
+        "return_type",
+        "return_basis",
+        "annualization_rule",
+        "risk_free_source",
+        "undefined_metric_policy"
+      ],
+      "properties": {
+        "contract_path": {
+          "type": "string"
+        },
+        "contract_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "return_type": {
+          "type": "string"
+        },
+        "return_basis": {
+          "type": "string"
+        },
+        "annualization_rule": {
+          "type": "string"
+        },
+        "risk_free_source": {
+          "type": "string"
+        },
+        "undefined_metric_policy": {
+          "type": "string"
+        }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_terminal_states",
+        "require_expected_equals_terminal_sum",
+        "forbid_silent_row_drops"
+      ],
+      "properties": {
+        "required_terminal_states": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "right_censored",
+              "unsupported",
+              "failed_technical"
+            ]
+          },
+          "allOf": [
+            {
+              "contains": {
+                "const": "completed"
+              }
+            },
+            {
+              "contains": {
+                "const": "right_censored"
+              }
+            },
+            {
+              "contains": {
+                "const": "unsupported"
+              }
+            },
+            {
+              "contains": {
+                "const": "failed_technical"
+              }
+            }
+          ]
+        },
+        "require_expected_equals_terminal_sum": {
+          "type": "boolean"
+        },
+        "forbid_silent_row_drops": {
+          "type": "boolean"
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "require_preflight",
+        "require_smoke",
+        "require_pilot",
+        "require_complete_merge",
+        "require_policy_audit",
+        "require_reconciliation",
+        "require_independent_metric_reference",
+        "require_final_verifier",
+        "require_traceability_matrix"
+      ],
+      "properties": {
+        "require_preflight": {
+          "type": "boolean"
+        },
+        "require_smoke": {
+          "type": "boolean"
+        },
+        "require_pilot": {
+          "type": "boolean"
+        },
+        "require_complete_merge": {
+          "type": "boolean"
+        },
+        "require_policy_audit": {
+          "type": "boolean"
+        },
+        "require_reconciliation": {
+          "type": "boolean"
+        },
+        "require_independent_metric_reference": {
+          "type": "boolean"
+        },
+        "require_final_verifier": {
+          "type": "boolean"
+        },
+        "require_traceability_matrix": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,402 @@
+{
+  "adoption_commit": "0ca928bd1f901c47a1c411fd95ba626e772152f6",
+  "schema_version": "1",
+  "workflows": [
+    {
+      "path": ".github/workflows/_stock-protocol-original-290-event-study.yml",
+      "sha256": "4288d461f154957d959345deff4acf50437e06e5f12126a9389d71e0e55a0d81"
+    },
+    {
+      "path": ".github/workflows/body-wick-selected-prior-period.yml",
+      "sha256": "d4a3e7a6d362d0ee01639ae4e67721a81960453ffc1507dde4233808871a639f"
+    },
+    {
+      "path": ".github/workflows/body-wick-sr-15m-21symbols-backtest.yml",
+      "sha256": "a780171c2703eeb3f4d2e72cc236e2fbf1170cdc5eb70f1704d2ea12d03402fe"
+    },
+    {
+      "path": ".github/workflows/body-wick-sr-15m-overnight-age-sweep.yml",
+      "sha256": "f898cab095c898ea72d8cc2df9e4af2a19adf0a6e85c5a4fbefa7dac2d60b75c"
+    },
+    {
+      "path": ".github/workflows/btc-5m-all-features-5methods-trainonly-1h-180jobs.yml",
+      "sha256": "2a6de8933a3794d147a2140820a480fad25ff4fb7cc25df3fca7992e5e52f012"
+    },
+    {
+      "path": ".github/workflows/btc-5m-all-features-5methods-trainonly-9h-max500-real180.yml",
+      "sha256": "82a85872eb1489757d3eecb88ef2c92ca47237e4dc728790bdc610c6e46df265"
+    },
+    {
+      "path": ".github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml",
+      "sha256": "cb7dbf1f279d93d26ee57210af03ba4dc7c5c0cc958303dc17e44bc3bbaa996e"
+    },
+    {
+      "path": ".github/workflows/btc-5m-pf105-statistical-robustness.yml",
+      "sha256": "bac1fbcac3ac204ea2db6b4903cecd72c827edab567d70986174be9c8545b9e6"
+    },
+    {
+      "path": ".github/workflows/calmar-gt1-pvalue-bootstrap-173495.yml",
+      "sha256": "6136678f995f905c1f3bb235d6997aa4330d0c4a6fc26e6c9c333a5734fd26c3"
+    },
+    {
+      "path": ".github/workflows/concurrency-smoke-500.yml",
+      "sha256": "25fe8efbe93da526c3edd0a3738aa74ccad2eda2807c8bcfea21a7397b239f1e"
+    },
+    {
+      "path": ".github/workflows/docs.yml",
+      "sha256": "8c5514b0e0eb4f5a1e31df4199f79de5b5565020afcb99c153ba1dd6082e6fce"
+    },
+    {
+      "path": ".github/workflows/free-15m-equity-universe-download.yml",
+      "sha256": "6901858178218bb48e22b012040719d87b287d7e096607493be804cb3e2a3bd7"
+    },
+    {
+      "path": ".github/workflows/global-technical-buy-indicator-355jobs.yml",
+      "sha256": "6910fb3ad03ce897926aa09fc95672cebbca168b05ff19bf5ee85c0a59238d18"
+    },
+    {
+      "path": ".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml",
+      "sha256": "c6553406cf3a7752f0b86aefe59a12babba88ba4a2297806a4fbad52e02fbb46"
+    },
+    {
+      "path": ".github/workflows/global-technical-buy-indicator-final-recheck-parallel.yml",
+      "sha256": "b011532246a3f332e1fb815c70524a4430ea692ed55b2e9b2744dd46e3e889ee"
+    },
+    {
+      "path": ".github/workflows/global-technical-buy-indicator-final-recheck.yml",
+      "sha256": "9b338aacf6648c943025f4c5143564f1387efb8a4855c8e86ff027bfe4132310"
+    },
+    {
+      "path": ".github/workflows/lint.yml",
+      "sha256": "dfcdd69aab2061bd59d783a0fde40a230c1689ab9a9dd979cfa0eb3e5b6d2507"
+    },
+    {
+      "path": ".github/workflows/literature-campaign-to-backtest.yml",
+      "sha256": "4bb52c316e8acc84a92f98ed3fc93952fd3cd84490eb71831b08aac4d8c5eec9"
+    },
+    {
+      "path": ".github/workflows/literature-pdf-text-extract-29855.yml",
+      "sha256": "a2b4a153a9e64b04b228f2a11bcdcb55e88ed04757ca56dea6294f86ecc5af19"
+    },
+    {
+      "path": ".github/workflows/literature-sharpe2-paper-variants-360jobs.yml",
+      "sha256": "bb0866a00fb08935dd40ab1deacf31efcc61b72f2180c1ff1b0231042ad6c1fb"
+    },
+    {
+      "path": ".github/workflows/literature-strategy-backtest-9419-9h.yml",
+      "sha256": "18a67d0e28d8d0c6c887837e2f5dd5149c47ffb6a03d4a7b3252bfa456a15014"
+    },
+    {
+      "path": ".github/workflows/literature-strategy-idea-discovery-9h.yml",
+      "sha256": "a0799dbad241f8091aa14eb58b06880417dba1b849fef2b6a945be2ae53c667e"
+    },
+    {
+      "path": ".github/workflows/minervini-sepa-marketcap2b-daily-screener.yml",
+      "sha256": "e6f22f1364c0d333c7cc2c77a7f73f71bcf58a95f55353ce087ecc8e88be69eb"
+    },
+    {
+      "path": ".github/workflows/minervini-sepa-usa-europe-50m-daily-screener.yml",
+      "sha256": "0dbee58a291ca161340514e436b33acee94f58b0a0b9bbdcdbad658a000b0e97"
+    },
+    {
+      "path": ".github/workflows/paper-aqr-factor-sharpe2-360stages.yml",
+      "sha256": "1f600109277f217bb0789f5256e426edfca7d7d5a941fd99bff16b485100138c"
+    },
+    {
+      "path": ".github/workflows/paper-cboe-sentiment-sharpe2-360jobs.yml",
+      "sha256": "2f372420575665fd5f2ced06ae4789007b2f96842d89cc9cbb9224e499e3d4f7"
+    },
+    {
+      "path": ".github/workflows/paper-operable-ensemble-sharpe2-360stages.yml",
+      "sha256": "36e456df8537533a1ed37fa4e01fed7de973312ae0894b5c3d57cf33e594bea0"
+    },
+    {
+      "path": ".github/workflows/paper-sharpe2-nightly-30min-until-0630.yml",
+      "sha256": "f1f70a6e5e577399d9c1c2b62ff2f930811395af6196a3ff0d89ebcad8e8ba5c"
+    },
+    {
+      "path": ".github/workflows/paper-sharpe2-nightly-novel-30min-until-0630.yml",
+      "sha256": "5d8435ee5d4ef41a459eebe2c7fa823e92aaf3d28d905b8ed4fe11100fc1b376"
+    },
+    {
+      "path": ".github/workflows/paper-sharpe2-overnight-360jobs.yml",
+      "sha256": "7007393dcfdbdbf987456db77cae325671b00a69737dd602b3cbbe7745af3ecb"
+    },
+    {
+      "path": ".github/workflows/paper-spy-daily-event-sharpe2-360jobs.yml",
+      "sha256": "29c09f1e2bfae23ae0fb23264895e2d233c45471a641091243cb626310edb39c"
+    },
+    {
+      "path": ".github/workflows/paper-spy-monthly-sharpe2-quick-360jobs.yml",
+      "sha256": "6006e0188338b1b31407083ae82aed569f4fe26fab4bf0361a1ffef68bf4fdbf"
+    },
+    {
+      "path": ".github/workflows/paper-spy-weekly-regime-sharpe2-quick-360jobs.yml",
+      "sha256": "27320e4dcff64d1c65b5b4bf7b33e4cab8c4200b77353644693a8776c6fbaa2f"
+    },
+    {
+      "path": ".github/workflows/paper-spy-weekly-sharpe2-360jobs.yml",
+      "sha256": "7d86f2c9b2514632917b84bc938b366e7f6c219f7e92913f4debd343b4a98f95"
+    },
+    {
+      "path": ".github/workflows/paper-spy-weekly-sharpe2-quick-360jobs.yml",
+      "sha256": "ff2e3be0f2d63c81d0d9f1f7a5606ac4eca007f0c3bb09c431eb85c8a31cb7c0"
+    },
+    {
+      "path": ".github/workflows/property-thorough.yml",
+      "sha256": "1c67a46e7854d690413fa3ac72a405b8e40f189511652fa049c228474154b837"
+    },
+    {
+      "path": ".github/workflows/security.yml",
+      "sha256": "365ec0a42dfd7ff92c005f8ddd86b06f74ae1cb4df34685800498217bcb5ff90"
+    },
+    {
+      "path": ".github/workflows/sp500-26-paper-locked-strategy-report.yml",
+      "sha256": "5f06681285b1174472ddb843194546db23ca0c0b7356755bcd6fb24a14d9c56d"
+    },
+    {
+      "path": ".github/workflows/sp500-26-paper-replication-backtest.yml",
+      "sha256": "869ef901b9697d2ad6bc9a5cf29262864fca4888c5eb52d4193374e8cb7d4a6d"
+    },
+    {
+      "path": ".github/workflows/sp500-event-study-factory-core1950.yml",
+      "sha256": "00a2743baf1353211898a1218d87c1d46daf71ee64f00874916437585e44e746"
+    },
+    {
+      "path": ".github/workflows/sp500-only-outperforming-study-finder.yml",
+      "sha256": "3c76304afbac0cfeb4254fc8839dae19eee8a43e977bac04fd42634745cfab66"
+    },
+    {
+      "path": ".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-1wave-80jobs-1h.yml",
+      "sha256": "3f24623cb706d2b21711a0051969803d9ff36bd629333aa19c5424632f08e34a"
+    },
+    {
+      "path": ".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-1h.yml",
+      "sha256": "780e7f3658d6164a30fa9f9834bd40d56ce17181d2da307bff3c7ccb1e72708a"
+    },
+    {
+      "path": ".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml",
+      "sha256": "0d841776a378b24abdbaf52efe18bbcf0804708f5da326612a5e0c86e9c5227c"
+    },
+    {
+      "path": ".github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml",
+      "sha256": "28310924a60c0e331279572eb4be2de6151f1642066061ba54e590a4b1b5be5b"
+    },
+    {
+      "path": ".github/workflows/spy-15m-support-resistance-2015-retest.yml",
+      "sha256": "2033b7b382dfa5a820cbd241def8fbb508d89e99171b18ca31ae05f5c78b64d5"
+    },
+    {
+      "path": ".github/workflows/spy-15m-support-resistance-355jobs.yml",
+      "sha256": "4a0c3209c68737302e9ede6015fd1c29375b099d0cb0f1d24e0076edbcb95dda"
+    },
+    {
+      "path": ".github/workflows/spy-daily-direction-accuracy-355jobs.yml",
+      "sha256": "1660ce0618dabce8233662a2bf1b7011c80b69d1605b7ada8540c76adac01ec3"
+    },
+    {
+      "path": ".github/workflows/spy-daily-direction-funnel-top-all-features-4waves-1h.yml",
+      "sha256": "e2f086e4179bb448902e8e72420290690864929aa940ca78368e47773342a022"
+    },
+    {
+      "path": ".github/workflows/spy-monthly-annual-dominance-360jobs.yml",
+      "sha256": "e534c4de928103580bf66ea2013d9d95ad073b92c9f74af6b6f8c733dcf78661"
+    },
+    {
+      "path": ".github/workflows/spy-monthly-tf21-ma10-locked-table.yml",
+      "sha256": "f3849d6f503f2cfa684407d13e9c366e5b7415a767c8fe19854eddcdddef59dc"
+    },
+    {
+      "path": ".github/workflows/spy-monthly-trend-following-paper21-355jobs.yml",
+      "sha256": "1f35cd22705b8cf60efd0a23cf41dd1f60a6115fdaef170121987e5d8dff6e75"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-global-random-train-yearly-calmar-beat-counts.yml",
+      "sha256": "c06919b56f437222883e597fb73a9e561ccbd00ce6deedc2f24bd4206e9164e7"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-global-random-train-yearly-calmar.yml",
+      "sha256": "d01b121d0d5f15604695758195317658c8da42e135df4591db90d5fc61969af0"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-global-random-yearly-outperformance.yml",
+      "sha256": "2ca268151e233f03d3d3a2641b94c67c7cf7a43766471fb33ec9ec69577de5a4"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-longshort-locked-strategy-report.yml",
+      "sha256": "8206e56e886526e6516f6f5f8b7999c812c27a2fdfdb1a6a9bd28c7ff8fe6b36"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-longshort-sharpe2-355jobs.yml",
+      "sha256": "4d190041d2fccff7b24129e41bac397863251d38d85d974cc2e78da8066b9fb6"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-noleverage-50ideas-nightly-until-0700.yml",
+      "sha256": "13010b1dadfc182751ba54dca68966a3e26f8f5618019c8bd01dbe63a006b6d7"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-noleverage-50ideas-v2-nightly-until-0700.yml",
+      "sha256": "710dbea9d525990bb49c9a22389be3c29194df1fde11ab2fd3f4e3a847384a08"
+    },
+    {
+      "path": ".github/workflows/spy-weekly-noleverage-global-random-nightly-until-0700.yml",
+      "sha256": "f459ad839cb6e0b4666c230d8e9e1636aacf104ad5bff57ac394aaa56e67c72a"
+    },
+    {
+      "path": ".github/workflows/sr-15m-equity-universe-feature-search.yml",
+      "sha256": "f9ff8fde49ed3d18d973e0596db7ac7cdc685f8abe464ef344b0122ada517c0c"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-36-tests-360jobs.yml",
+      "sha256": "485f66d61f93b72a255338c20abcc2498b8a39096ec05551a5666258c19de39f"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-36-tests-finalize-recovery.yml",
+      "sha256": "0823dd2c29f5c54884bd66baa921825c6584a54774125ed2d7dadeab7366a3e3"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-original-290-event-study-checkpointed.yml",
+      "sha256": "ab871ff6e80a2b0a6ee50a091dd5856f86df1a9571e55dfd79cccbcbcba7ca6e"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-original-290-event-study-finalize-recovery.yml",
+      "sha256": "17b8faa28e212460e5f86c0d008fd56930df333159d3ec785d54dfcb076d81e1"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-original-290-event-study-merge-only.yml",
+      "sha256": "3ceac75f818f0263bf1cc8830680ab230b1a1d5a278d4934f38a774d545f52bb"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-original-290-event-study-recovery.yml",
+      "sha256": "1e4dd52a10c096178aa7ec3f0054133ff2d0fb3b7825997547bcddda76662142"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-original-290-event-study.yml",
+      "sha256": "263525b721985e67e981fd7a191600e48e0c73cbdc5772b8f6683300ff22c718"
+    },
+    {
+      "path": ".github/workflows/stock-protocol-scientific-full-universe-360jobs.yml",
+      "sha256": "4c9165e6daa08a3866481510e66c633f3f12888f98194740b4dd669bc10b03e3"
+    },
+    {
+      "path": ".github/workflows/swr-20-etf-proxy-2000-no-locked-360jobs.yml",
+      "sha256": "e4e4548af46ef0ccad2d26eecfbefacb1e27566f171318bc1194129e8837f2a7"
+    },
+    {
+      "path": ".github/workflows/swr-cashfloor-controller-mdd15-corr95-360jobs.yml",
+      "sha256": "35c575a722bfc3a44feb9f7c756b812e3a61b62d707d7a1e1c375ca323e38689"
+    },
+    {
+      "path": ".github/workflows/swr-corr95-drawdown-guard-mdd25-360jobs.yml",
+      "sha256": "19bcc2eb6690adb738e940161976af2d249e9677c09231172b0f67d357a34d10"
+    },
+    {
+      "path": ".github/workflows/swr-corr95-feature-sweep-mdd25-360jobs.yml",
+      "sha256": "27942a6646de41dd62df1e2087c0cb761080c9f28fc1b5fba8769edfb3adaff1"
+    },
+    {
+      "path": ".github/workflows/swr-cppi-corr95-360jobs.yml",
+      "sha256": "fb40b33dece382c23adead16c9aef9a85363e068662e4c775c7a3e2f4e5f04b0"
+    },
+    {
+      "path": ".github/workflows/swr-daily-tactical-mdd15-corr95-360jobs.yml",
+      "sha256": "f63c94b4e464ca8e6ca5fa44d0b9ef13d63221cd978a72f6ca1917bac8ea554f"
+    },
+    {
+      "path": ".github/workflows/swr-floor-controller-mdd15-corr95-360jobs.yml",
+      "sha256": "00efa42803d2703ec6a113cb821630b5d3ae4bf1b746a2fb6e785c02d2182aea"
+    },
+    {
+      "path": ".github/workflows/swr-invvol-guard-mdd15-corr95-360jobs.yml",
+      "sha256": "936a6277f9931efd6e8608dae270abd37c09d7dd612f2938481951a1b336b808"
+    },
+    {
+      "path": ".github/workflows/swr-mdd15-trainonly-corr95-360jobs.yml",
+      "sha256": "f754f5c9d9b75f90ce9057e5fdeb2c680f894cb9fb7011f601d75c0de37ca768"
+    },
+    {
+      "path": ".github/workflows/swr-multiasset-corr95-mdd25-360jobs.yml",
+      "sha256": "868a94ddd5c1339c7226e38973997afcf801242cbd31e5b547019780e4509814"
+    },
+    {
+      "path": ".github/workflows/swr-path-cppi-expanded-universe-mdd15-corr95-360jobs.yml",
+      "sha256": "9eeb9ced31d0691276be0bbda760d95472417ea73d546fb30f7c3726ce860ab2"
+    },
+    {
+      "path": ".github/workflows/swr-path-cppi-focused-cv-mdd15-corr95-360jobs.yml",
+      "sha256": "b1517621daa409b292ebb51bb1161923148335be2f69ec50661bf9bd92e82c36"
+    },
+    {
+      "path": ".github/workflows/swr-path-cppi-focused-mdd15-corr95-360jobs.yml",
+      "sha256": "77eb18a4229b81f0ce7ba03d9f5f1c06029b6088a54112457d2274659ec2b5aa"
+    },
+    {
+      "path": ".github/workflows/swr-path-cppi-mdd15-trainonly-corr95-360jobs.yml",
+      "sha256": "fdfadcceb53b83fe07a9d5404987aeed742722e8b703c553f5dc19e875c9cdc7"
+    },
+    {
+      "path": ".github/workflows/swr-path-cppi-refined-mdd15-corr95-360jobs.yml",
+      "sha256": "7daa28518ca2477812c0f9450bd3201a90c615c1fe4e7825d03d3ba22195c8ee"
+    },
+    {
+      "path": ".github/workflows/swr-regime-timing-mdd15-corr95-360jobs.yml",
+      "sha256": "cba7e786e4163dad97ba0b6350f71e9ed1315730890eb703ffba3cffd0c401ee"
+    },
+    {
+      "path": ".github/workflows/swr-static-smooth-hardstress-mdd15-corr95-360jobs.yml",
+      "sha256": "9a4be06c13fe99c3f37053c9fd5e9437a17367a77794e2d25a4fb4b4da998a71"
+    },
+    {
+      "path": ".github/workflows/swr-static-smooth-mdd15-corr95-360jobs.yml",
+      "sha256": "aed9c3efd83318d254ded011726b5fea51f7c33304dfe9ab718e45cfc11d4a65"
+    },
+    {
+      "path": ".github/workflows/swr-strict-final-gt-initial-360jobs.yml",
+      "sha256": "1cec2c7aa8fa6f7e51aad0573dd0f897afa74ef813658c3706852deac16ab691"
+    },
+    {
+      "path": ".github/workflows/swr-tsmom-corr95-360jobs.yml",
+      "sha256": "3d698cdc55df63b3c830342d4364332b52583ed0fe7726bd26346619424661ac"
+    },
+    {
+      "path": ".github/workflows/tests.yml",
+      "sha256": "f2922ef8844e84ee3140146ce38346e82143b619e06238597f80a8ba3f844c7c"
+    },
+    {
+      "path": ".github/workflows/tradingview-minervini-indicator-small.yml",
+      "sha256": "40d595221e08b7d19b62325227e857a8f0ae10775c78462676f3540a8584043e"
+    },
+    {
+      "path": ".github/workflows/typecheck.yml",
+      "sha256": "288643e2e1549a47747fcf1d5140041d61e230dc756c919b71e9257640f2da45"
+    },
+    {
+      "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml",
+      "sha256": "944dc56bd7687983a96f7d02e3ff14edd5a3347469729b475fbf78fa736d9179"
+    },
+    {
+      "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-merge-now.yml",
+      "sha256": "c7258074d8aeb5675fb575b8465d22ab01cf9306de01d285fdbcb58fbb3fa728"
+    },
+    {
+      "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-stop.yml",
+      "sha256": "d1a206d633f887fb6b041b06ab4ade62856fc93f11bf33f51c8ee84b3350d44a"
+    },
+    {
+      "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality.yml",
+      "sha256": "45760ccedee38f4b9d3fd79a3a2016e10977d66ffc09a5cf4fd4c744cd87b546"
+    },
+    {
+      "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stop.yml",
+      "sha256": "03118bc33899d811702e6e35e2de721ecf828de93ad987d4834ba5173771a65f"
+    },
+    {
+      "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend.yml",
+      "sha256": "0084277a4ea131833719e456a27c77a90232b455006bc7586ceb96cab7063377"
+    },
+    {
+      "path": ".github/workflows/wheel.yml",
+      "sha256": "e4c8a81f9503855748c772ca65b37c948fa8efc9d30b40b61e926e39ac82da77"
+    }
+  ]
+}
