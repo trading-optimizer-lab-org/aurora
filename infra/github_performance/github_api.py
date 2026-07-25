@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import statistics
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
@@ -499,7 +500,7 @@ def summarize_timeline(
             float(row["duration_seconds"]) for row in job_rows
         ]
     median_duration = (
-        sorted(fanout_durations)[len(fanout_durations) // 2]
+        statistics.median(fanout_durations)
         if fanout_durations
         else 0.0
     )

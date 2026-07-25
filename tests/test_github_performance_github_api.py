@@ -240,7 +240,7 @@ def test_reusable_prefix_still_selects_only_fanout_for_stragglers() -> None:
         ),
     ]
     summary = summarize_timeline(jobs, 360)
-    assert summary["straggler_ratio"] == 2.0
+    assert round(summary["straggler_ratio"], 6) == 1.333333
     assert summary["observed_peak_parallelism"] == 2
     assert summary["observed_average_parallelism"] > 0
     assert summary["restore_setup_seconds_total"] == 780.0
