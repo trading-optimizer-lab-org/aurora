@@ -192,29 +192,38 @@ all failure-code lists were empty.
 - Produces: `ComputationNode`, `ComputationGraph`, `SharedIntermediateManifest`.
 - Stable node identity: SHA-256 of operation, implementation version, exact inputs, parameters, policy hash, and snapshot hash.
 
-- [ ] **Step 1: Write failing graph tests**
+- [x] **Step 1: Write failing graph tests**
 
 Build the chain `data -> features -> signals -> positions -> returns -> metrics -> robustness`. Assert topological order, cycle rejection, stable hashes, exact deduplication, preservation of original candidate identities, and no approximate candidate elimination.
 
-- [ ] **Step 2: Record RED in GitHub**
+- [x] **Step 2: Record RED in GitHub**
 
 Require failure because adapter and DAG contracts do not exist.
 
-- [ ] **Step 3: Implement adapter compatibility**
+- [x] **Step 3: Implement adapter compatibility**
 
 Support phase-1 workloads through a compatibility adapter while exposing the phase-2 interface to new workloads.
 
-- [ ] **Step 4: Implement content-addressed shared nodes**
+- [x] **Step 4: Implement content-addressed shared nodes**
 
 Write intermediates atomically under their content hash and verify schema, size, and hash before reuse. Reuse only exact matches.
 
-- [ ] **Step 5: Run GitHub tests and commit**
+- [x] **Step 5: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: plan content-addressed workload DAGs
 ```
+
+Evidence: RED run `30170818898` failed on the intentionally absent adapter
+and DAG modules. GREEN run `30171198090` used commit `809875ded` and completed
+successfully on `ubuntu-24.04`: the dependency lock reproduced exactly, all
+`166` GitHub-performance contract tests passed, and all `4` real-engine shard
+smokes passed. The stable adapter preserves original candidate identities and
+supports phase-1 workloads; the DAG uses exact content hashes, rejects cycles
+and missing dependencies, and verifies schema identity, byte size, and SHA-256
+before reusing an atomically published shared intermediate.
 
 ---
 
