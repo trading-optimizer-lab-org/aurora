@@ -33,7 +33,9 @@ def test_checkpoint_manifest_is_published_after_payload(
         tmp_path / "checkpoint" / "checkpoint_manifest.json"
     )
     assert loaded == manifest
-    assert sha256_file(Path(loaded.payload_path)) == loaded.payload_sha256
+    assert Path(loaded.payload_path).is_absolute() is False
+    stored_payload = tmp_path / "checkpoint" / loaded.payload_path
+    assert sha256_file(stored_payload) == loaded.payload_sha256
 
 
 def test_transient_failure_retries_with_new_attempt_id() -> None:
@@ -90,8 +92,9 @@ def test_corrupt_checkpoint_is_rejected(tmp_path: Path) -> None:
     payload = tmp_path / "rows.parquet"
     payload.write_bytes(b"valid")
     manager = CheckpointManager(tmp_path / "checkpoint")
-    manager.commit("s001", "a001", 12, "u0012", payload)
-    payload.write_bytes(b"tampered")
+    manifest = manager.commit("s001", "a001", 12, "u0012", payload)
+    stored_payload = tmp_path / "checkpoint" / manifest.payload_path
+    stored_payload.write_bytes(b"tampered")
     with pytest.raises(CheckpointIntegrityError, match="sha256"):
         load_checkpoint(
             tmp_path / "checkpoint" / "checkpoint_manifest.json"

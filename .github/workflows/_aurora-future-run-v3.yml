@@ -453,6 +453,8 @@ jobs:
             --shard "$RUNNER_TEMP/shard.json" \
             --attempt-id "${{ matrix.attempt_id }}" \
             --artifact-name "$ARTIFACT_NAME" \
+            --assignment-root "$RUNNER_TEMP/plan" \
+            --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
       - name: Salvage attempt evidence
         if: always()
@@ -556,6 +558,8 @@ jobs:
             --shard "$RUNNER_TEMP/shard.json" \
             --attempt-id "${{ matrix.attempt_id }}" \
             --artifact-name "$ARTIFACT_NAME" \
+            --assignment-root "$RUNNER_TEMP/plan" \
+            --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
       - name: Salvage attempt evidence
         if: always()
@@ -775,6 +779,8 @@ jobs:
             --shard "$RUNNER_TEMP/shard.json" \
             --attempt-id "${{ matrix.attempt_id }}" \
             --artifact-name "$ARTIFACT_NAME" \
+            --assignment-root "$RUNNER_TEMP/plan" \
+            --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
             "${checkpoint_args[@]}"
       - name: Salvage retry evidence
@@ -885,6 +891,8 @@ jobs:
             --shard "$RUNNER_TEMP/shard.json" \
             --attempt-id "${{ matrix.attempt_id }}" \
             --artifact-name "$ARTIFACT_NAME" \
+            --assignment-root "$RUNNER_TEMP/plan" \
+            --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
             "${checkpoint_args[@]}"
       - name: Salvage retry evidence
@@ -919,6 +927,11 @@ jobs:
           extras: ""
           cache-key: aurora-v3
           cache-mode: restore-only
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/contract
       - name: Download execution plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -936,6 +949,7 @@ jobs:
         run: |
           set -euo pipefail
           aurora github merge-group \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --workload "$WORKLOAD" \
             --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json" \
             --merge-group "${{ matrix.merge_group }}" \

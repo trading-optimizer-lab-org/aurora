@@ -266,6 +266,9 @@ def _copy_contract_files(
     names = (
         "resolved_run_spec.json",
         "performance_contract.json",
+        "environment_manifest.json",
+        "metric_contract.json",
+        "capacity_profile.json",
         "performance_pilot.json",
         "performance_plan.json",
         "execution_plan.json",

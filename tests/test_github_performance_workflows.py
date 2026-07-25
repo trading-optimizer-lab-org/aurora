@@ -65,6 +65,13 @@ def test_runtime_setup_defaults_to_restore_only() -> None:
     assert writer["if"] == "inputs.cache-mode == 'writer'"
 
 
+def test_runtime_setup_reuses_exact_tracked_source_wheel() -> None:
+    text = ACTION_PATH.read_text(encoding="utf-8")
+    assert "git ls-files -s | sha256sum" in text
+    assert 'if [[ -z "$wheel_path" ]]; then' in text
+    assert 'identity_payload["cache"].pop("hit", None)' in text
+
+
 def test_runtime_setup_pins_numeric_threads_to_detected_cpus() -> None:
     action_text = ACTION_PATH.read_text(encoding="utf-8")
     for variable in (
@@ -188,6 +195,8 @@ def test_reusable_workflow_uses_compact_unique_attempt_artifacts() -> None:
     ) in text
     assert "compression-level: 0" in text
     assert "if-no-files-found: error" in text
+    assert text.count('--assignment-root "$RUNNER_TEMP/plan"') == 4
+    assert text.count('--prepared-root "$RUNNER_TEMP/prepared"') == 4
 
 
 def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:

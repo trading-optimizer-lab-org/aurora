@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +16,36 @@ def test_validate_parser_binds_expected_command() -> None:
         ["github", "validate", "--spec", "x.yaml"]
     )
     assert args.func is cmd_github.cmd_github_validate
+
+
+def test_environment_identity_ignores_cache_hit_but_detects_tampering(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "schema_version": "1",
+        "cache": {"key": "exact", "hit": False},
+        "installed_wheel_sha256": "a" * 64,
+    }
+    identity = json.loads(json.dumps(payload))
+    identity["cache"].pop("hit")
+    digest = hashlib.sha256(
+        json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    payload["environment_sha256"] = digest
+    path = tmp_path / "environment_manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert cmd_github._verified_environment_sha256(path) == digest
+    payload["cache"]["hit"] = True
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert cmd_github._verified_environment_sha256(path) == digest
+    payload["cache"]["key"] = "different"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="identity hash mismatch"):
+        cmd_github._verified_environment_sha256(path)
 
 
 def test_phase_commands_are_registered() -> None:
@@ -29,7 +62,7 @@ def test_phase_commands_are_registered() -> None:
         ("pilot", "--spec x --workload aurora.x:W --prepared p --output o"),
         (
             "merge-group",
-            "--workload aurora.x:W --shard-plan p --merge-group g "
+            "--spec s --workload aurora.x:W --shard-plan p --merge-group g "
             "--inputs-root i --output-dir o",
         ),
         (

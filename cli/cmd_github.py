@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -14,6 +16,7 @@ from aurora.core.execution_policy import require_github_execution
 from aurora.infra.github_performance.checkpoint import load_checkpoint
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
+    CheckpointManifest,
     PilotResult,
     PreparedInputs,
     RunSpec,
@@ -58,7 +61,19 @@ from aurora.infra.github_performance.workload import (
 
 
 def _load_spec(path: str | Path) -> RunSpec:
-    return RunSpec.model_validate(load_github_yaml(Path(path)))
+    spec = RunSpec.model_validate(load_github_yaml(Path(path)))
+    expected = str(spec.execution["environment_sha256"])
+    if expected:
+        manifest_path = Path(
+            os.environ.get(
+                "AURORA_ENVIRONMENT_MANIFEST",
+                "environment_manifest.json",
+            )
+        )
+        observed = _verified_environment_sha256(manifest_path)
+        if observed != expected:
+            raise ValueError("runtime environment sha256 mismatch")
+    return spec
 
 
 def _write_json(path: Path, payload: Any) -> Path:
@@ -133,6 +148,58 @@ def _runtime_value(path: Path, key: str) -> Any:
     return payload[key]
 
 
+def _verified_environment_sha256(path: Path) -> str:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("environment manifest is not an object")
+    claimed = payload.pop("environment_sha256", None)
+    if not isinstance(claimed, str):
+        raise ValueError("environment manifest has no identity hash")
+    cache = payload.get("cache")
+    if isinstance(cache, dict):
+        cache.pop("hit", None)
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    observed = hashlib.sha256(encoded).hexdigest()
+    if observed != claimed:
+        raise ValueError("environment manifest identity hash mismatch")
+    return claimed
+
+
+def _normalise_shard_assignment(
+    shard: ShardDefinition,
+    assignment_root: Path | None,
+) -> ShardDefinition:
+    member = Path(shard.assignment_member)
+    if not member.is_absolute():
+        if assignment_root is None:
+            raise ValueError(
+                "relative shard assignment requires --assignment-root"
+            )
+        member = Path(assignment_root).resolve() / member
+    member = member.resolve()
+    if not member.is_file():
+        raise FileNotFoundError(f"shard assignment is missing: {member}")
+    if sha256_file(member) != shard.assignment_sha256:
+        raise ValueError("shard assignment sha256 mismatch")
+    return shard.model_copy(update={"assignment_member": str(member)})
+
+
+def _load_runtime_checkpoint(path: Path) -> CheckpointManifest:
+    source = Path(path).resolve()
+    checkpoint = load_checkpoint(source)
+    payload = Path(checkpoint.payload_path)
+    if not payload.is_absolute():
+        payload = source.parent / payload
+    return checkpoint.model_copy(
+        update={"payload_path": str(payload.resolve())}
+    )
+
+
 def cmd_github_validate(args: argparse.Namespace) -> int:
     report = validate_run_spec(Path(args.spec))
     output_dir = Path(args.output_dir)
@@ -182,15 +249,29 @@ def cmd_github_freeze_contract(args: argparse.Namespace) -> int:
         metric_contract_sha256=sha256_file(
             Path(args.metric_contract)
         ),
-        environment_sha256=str(
-            _runtime_value(environment_path, "environment_sha256")
-        ),
+        environment_sha256=_verified_environment_sha256(environment_path),
     )
-    paths = freeze_resolved_contract(
+    output_dir = Path(args.output_dir)
+    paths = list(freeze_resolved_contract(
         requested,
         evidence,
-        Path(args.output_dir),
+        output_dir,
+    ))
+    copied = (
+        (environment_path, output_dir / "environment_manifest.json"),
+        (
+            Path(args.metric_contract),
+            output_dir / "metric_contract.json",
+        ),
+        (
+            Path(args.capacity_profile),
+            output_dir / "capacity_profile.json",
+        ),
     )
+    for source, destination in copied:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        paths.append(destination)
     _print({"contract_paths": [str(path) for path in paths]})
     return 0
 
@@ -345,12 +426,20 @@ def cmd_github_run_shard(args: argparse.Namespace) -> int:
     shard = ShardDefinition.model_validate_json(
         Path(args.shard).read_text(encoding="utf-8")
     )
+    shard = _normalise_shard_assignment(
+        shard,
+        Path(args.assignment_root) if args.assignment_root else None,
+    )
     checkpoint = None
     if args.checkpoint:
-        checkpoint = load_checkpoint(Path(args.checkpoint))
+        checkpoint = _load_runtime_checkpoint(Path(args.checkpoint))
     output_dir = Path(args.output_dir)
     os.environ["AURORA_ATTEMPT_ID"] = args.attempt_id
     os.environ["AURORA_ARTIFACT_NAME"] = args.artifact_name
+    if args.prepared_root:
+        os.environ["AURORA_PREPARED_ROOT"] = str(
+            Path(args.prepared_root).resolve()
+        )
     try:
         attempt = run_shard_with_lineage_check(
             workload,
@@ -431,6 +520,7 @@ def cmd_github_run_shard(args: argparse.Namespace) -> int:
 
 def cmd_github_recover_plan(args: argparse.Namespace) -> int:
     require_github_execution("github recover-plan")
+    _load_spec(args.spec)
     from aurora.infra.github_performance.recovery import (
         build_recovery_plan_from_paths,
         write_recovery_plan,
@@ -465,6 +555,7 @@ def cmd_github_merge_plan(args: argparse.Namespace) -> int:
 
 def cmd_github_merge_group(args: argparse.Namespace) -> int:
     require_github_execution("github merge-group")
+    _load_spec(args.spec)
     shard_plan = ShardPlan.model_validate_json(
         Path(args.shard_plan).read_text(encoding="utf-8")
     )
@@ -576,6 +667,8 @@ def register(subparsers, parent_parser=None) -> None:
     run_shard.add_argument("--output-dir", required=True)
     run_shard.add_argument("--attempt-id", required=True)
     run_shard.add_argument("--artifact-name", required=True)
+    run_shard.add_argument("--assignment-root")
+    run_shard.add_argument("--prepared-root")
     run_shard.add_argument("--checkpoint")
     run_shard.set_defaults(func=cmd_github_run_shard)
 
@@ -596,6 +689,7 @@ def register(subparsers, parent_parser=None) -> None:
     merge.set_defaults(func=cmd_github_merge_plan)
 
     merge_group = commands.add_parser("merge-group")
+    merge_group.add_argument("--spec", required=True)
     merge_group.add_argument("--workload", required=True)
     merge_group.add_argument("--shard-plan", required=True)
     merge_group.add_argument("--merge-group", required=True)

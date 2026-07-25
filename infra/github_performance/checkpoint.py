@@ -26,14 +26,14 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _atomic_payload_refresh(path: Path) -> None:
-    temporary = path.with_suffix(path.suffix + ".checkpoint.tmp")
-    with path.open("rb") as source, temporary.open("wb") as target:
+def _atomic_payload_copy(source_path: Path, destination: Path) -> None:
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    with source_path.open("rb") as source, temporary.open("wb") as target:
         shutil.copyfileobj(source, target, length=1024 * 1024)
         target.flush()
         os.fsync(target.fileno())
-    temporary.replace(path)
-    _fsync_directory(path.parent)
+    temporary.replace(destination)
+    _fsync_directory(destination.parent)
 
 
 def _atomic_manifest(path: Path, manifest: CheckpointManifest) -> None:
@@ -63,9 +63,9 @@ class CheckpointManager:
         last_completed_unit_key: str | None,
         payload_path: Path,
     ) -> CheckpointManifest:
-        payload_path = Path(payload_path).resolve()
-        if not payload_path.is_file():
-            raise FileNotFoundError(payload_path)
+        source_path = Path(payload_path).resolve()
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
         if completed_unit_count < 0:
             raise ValueError("completed_unit_count must be non-negative")
         if self.manifest_path.is_file():
@@ -78,15 +78,17 @@ class CheckpointManager:
                 raise CheckpointIntegrityError(
                     "checkpoint completed-unit count regressed"
                 )
-        _atomic_payload_refresh(payload_path)
+        suffix = source_path.suffix or ".bin"
+        portable_payload = self.root / f"checkpoint_payload{suffix}"
+        _atomic_payload_copy(source_path, portable_payload)
         manifest = CheckpointManifest(
             shard_id=shard_id,
             attempt_id=attempt_id,
             artifact_name=f"run-checkpoint-{shard_id}-{attempt_id}",
             completed_unit_count=completed_unit_count,
             last_completed_unit_key=last_completed_unit_key,
-            payload_path=str(payload_path),
-            payload_sha256=sha256_file(payload_path),
+            payload_path=portable_payload.name,
+            payload_sha256=sha256_file(portable_payload),
             created_at=datetime.now(timezone.utc),
         )
         _atomic_manifest(self.manifest_path, manifest)
@@ -112,6 +114,8 @@ def load_checkpoint(path: Path) -> CheckpointManifest:
             "checkpoint shard or attempt identity mismatch"
         )
     payload = Path(manifest.payload_path)
+    if not payload.is_absolute():
+        payload = path.parent / payload
     if not payload.is_file():
         raise CheckpointIntegrityError(
             f"checkpoint payload is missing: {payload}"

@@ -1,0 +1,17 @@
+{
+  "annualization_periods": 252,
+  "calmar_definition": "cagr_percent_divided_by_absolute_max_drawdown_percent",
+  "cost_model": {
+    "commission_bps": 0.5,
+    "slippage_bps": 0.5,
+    "spread_bps": 0.5
+  },
+  "engine": "aurora.core.engine.run_backtest",
+  "locked_data_allowed": false,
+  "max_drawdown_definition": "minimum_nav_divided_by_running_peak_minus_one",
+  "return_basis": "deterministic_generated_close_to_close",
+  "schema_version": "1",
+  "sharpe_definition": "mean_daily_return_divided_by_population_std_times_sqrt_252",
+  "signal_execution": "engine_applies_signal_at_bar_i_to_return_i_plus_1",
+  "validation_used_for_selection": false
+}

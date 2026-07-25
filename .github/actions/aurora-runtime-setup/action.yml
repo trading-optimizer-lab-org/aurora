@@ -97,16 +97,7 @@ runs:
       run: |
         set -euo pipefail
         dependency_sha="$(sha256sum pyproject.toml | cut -d' ' -f1)"
-        build_sha="$(
-          {
-            sha256sum pyproject.toml
-            find . -maxdepth 2 -type f \
-              \( -name 'setup.cfg' -o -name 'setup.py' -o \
-                 -name 'MANIFEST.in' \) -print0 |
-              sort -z |
-              xargs -0 -r sha256sum
-          } | sha256sum | cut -d' ' -f1
-        )"
+        build_sha="$(git ls-files -s | sha256sum | cut -d' ' -f1)"
         resolved_key="${CACHE_NAMESPACE}-${RUNNER_OS}-${RUNNER_ARCH}"
         resolved_key+="-py${PYTHON_VERSION}-dep${dependency_sha}"
         resolved_key+="-build${build_sha}"
@@ -159,8 +150,6 @@ runs:
         set -euo pipefail
         mkdir -p .aurora-wheel-cache/wheels
         python -m pip install --disable-pip-version-check --upgrade pip
-        python -m pip wheel . --no-deps \
-          --wheel-dir .aurora-wheel-cache/wheels
         wheel_path="$(
           find .aurora-wheel-cache/wheels -maxdepth 1 \
             -type f -name 'aurora-*.whl' -printf '%T@ %p\n' |
@@ -169,8 +158,19 @@ runs:
             cut -d' ' -f2-
         )"
         if [[ -z "$wheel_path" ]]; then
-          echo "::error::Aurora wheel was not produced"
-          exit 3
+          python -m pip wheel . --no-deps \
+            --wheel-dir .aurora-wheel-cache/wheels
+          wheel_path="$(
+            find .aurora-wheel-cache/wheels -maxdepth 1 \
+              -type f -name 'aurora-*.whl' -printf '%T@ %p\n' |
+              sort -n |
+              tail -1 |
+              cut -d' ' -f2-
+          )"
+          if [[ -z "$wheel_path" ]]; then
+            echo "::error::Aurora wheel was not produced"
+            exit 3
+          fi
         fi
         if [[ -n "$EXTRAS" ]]; then
           install_target="${wheel_path}[${EXTRAS}]"
@@ -250,8 +250,10 @@ runs:
                 for name, version in packages
             ],
         }
+        identity_payload = json.loads(json.dumps(payload))
+        identity_payload["cache"].pop("hit", None)
         encoded = json.dumps(
-            payload,
+            identity_payload,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
