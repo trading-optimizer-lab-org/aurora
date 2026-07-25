@@ -2,7 +2,7 @@
 
 Date: 2026-07-25
 
-Status: approved concept; pending written-spec review
+Status: internally reviewed and approved after repository compatibility audit
 
 ## 1. Purpose
 
@@ -58,8 +58,17 @@ local execution in the same turn.
 | Existing workflows | Grandfathered |
 | Future workflows | Framework mandatory |
 | Heavy local validation | Prohibited |
+| Repository at design time | Public, Enterprise organization |
+| Standard Linux runner at design time | 4 vCPU, 16 GB RAM, 14 GB SSD |
 
-The value 360 is support-confirmed but must be revalidated at campaign preflight.
+The value 360 is support-confirmed for this organization. GitHub does not expose
+a dependable per-campaign API for the currently free portion of standard-runner
+concurrency. Therefore preflight validates against a versioned
+`capacity_profile.json`; the run records observed concurrency and flags drift.
+A separate explicit capacity probe updates that profile when support or account
+settings change. Production campaigns do not launch 360 empty probe jobs merely
+to rediscover the same limit.
+
 It is a ceiling, not a target that must always be filled. The planner chooses
 fewer jobs whenever startup, queue, transfer, artifact, or merge overhead would
 make 360 jobs slower.
@@ -157,6 +166,8 @@ Every run, plan, shard, attempt, dataset, intermediate, and final output carries
 - dependency-lock hash;
 - data-snapshot hash;
 - policy hash;
+- capacity-profile hash;
+- runner label, image OS, image version, architecture, CPU, RAM, and disk;
 - logical `unit_key`;
 - physical `attempt_id` where applicable.
 
@@ -176,6 +187,22 @@ GitHub cache is an acceleration layer, never the only copy of scientific state.
 Every restored object is hash-verified. Cache misses change runtime only, not
 results. Large manifests are transported as files or artifacts rather than job
 outputs.
+
+### 6.6 Aurora integration contract
+
+The performance system extends existing Aurora primitives instead of creating
+parallel replacements:
+
+- `ProtocolPolicy` remains the source of `policy_hash`;
+- `SnapshotStore` and `SnapshotBackend` remain the immutable data contract;
+- `FeatureStore` remains the point-in-time feature contract;
+- `WitnessRecorder` remains the input/output provenance record;
+- `ExperimentTracker` remains the research lineage source where applicable;
+- `monitoring.telemetry` remains the generic telemetry surface;
+- `runtime_paths` remains the only runtime-path resolver.
+
+Performance-specific schemas and aggregations may wrap these components, but
+must not redefine their scientific identity or persistence semantics.
 
 ## 7. Phase 1: workflow efficiency foundation
 
@@ -201,6 +228,16 @@ spine without requiring each campaign author to rebuild orchestration.
 `fanout_a` and `fanout_b` are generated from the manifest. At full confirmed
 capacity they contain 256 and 104 jobs.
 
+For 256 or fewer planned jobs, only one non-empty matrix is emitted. Empty
+matrices are never submitted. Every matrix uses `fail-fast: false`; downstream
+reconciliation and salvage jobs run with `if: always()` so one failed shard does
+not discard valid siblings.
+
+Heavy future workflows are manual or reusable (`workflow_dispatch` and/or
+`workflow_call`) by default. They do not run 360-job campaigns automatically on
+ordinary pushes or pull requests. Lightweight static enforcement remains
+automatic.
+
 ### 7.3 Data preparation
 
 Data and common features are prepared once. A shard downloads only its required:
@@ -217,6 +254,20 @@ manifests, telemetry, and errors.
 Preparation writes a partition manifest with sizes, row counts, date ranges,
 schema hashes, and checksums. Shards use predicate and column projection and
 never download an entire lake when they need a small subset.
+
+GitHub artifact downloads are artifact-granular, not byte-range or
+file-selective. The transport plan therefore chooses explicitly:
+
+- small input: one immutable input artifact;
+- medium input: a bounded number of coarse partition artifacts, each containing
+  several files;
+- large input: an already configured immutable `SnapshotBackend` or external
+  object store with partition/range access.
+
+Aurora never claims selective partition downloads from one monolithic Actions
+artifact. Remote object storage is optional and cannot be assumed configured.
+When it is unavailable, the planner must choose a viable artifact layout or
+block before fan-out.
 
 ### 7.4 Environment startup
 
@@ -236,6 +287,12 @@ wheelhouses, and containers are never rebuilt independently by every shard.
 The runtime setup pins numerical-library thread counts to detected runner CPUs.
 Nested process pools and BLAS/OpenMP oversubscription are prohibited. A job may
 use processes or threads only within its measured CPU and memory budget.
+
+The public-repository baseline is currently 4 vCPU, 16 GB RAM, and 14 GB SSD on
+standard Ubuntu runners. These values are detected and recorded at runtime,
+never treated as permanent constants. The workflow pins a stable Ubuntu label
+rather than `ubuntu-latest`, and records GitHub runner image metadata because
+the hosted image itself can still change.
 
 ### 7.5 Static shard balancing
 
@@ -362,6 +419,10 @@ CI rejects a newly introduced heavy workflow unless it:
 
 Existing workflows remain untouched.
 
+Static validation also rejects missing local reusable-workflow references,
+missing local actions, oversized matrices, unpinned external actions, unsafe
+automatic heavy triggers, and invalid artifact-name reuse.
+
 The detector classifies a workflow as heavy from declared policy plus static
 signals such as matrices, research entry points, backtests, optimization,
 robustness, mass download, or large merge. Renaming a script cannot bypass the
@@ -462,6 +523,11 @@ The planner chooses the fastest valid option for that workload and runner.
 Engine trials receive equal data, batches, seeds, thread budgets, and output
 contracts. Compilation and warm-up time are included when they affect the real
 run. Microbenchmarks cannot override a slower end-to-end result.
+
+Arrow and Numba already exist in Aurora. DuckDB is introduced through a
+dedicated optional performance dependency and is selected only after equivalent
+GitHub measurements. A missing optional engine is a planner capability result,
+not an implicit dependency install in every shard.
 
 ### 8.6 Plan outputs
 
@@ -607,6 +673,11 @@ Build provenance records toolchain versions and source hashes. Fan-out jobs
 verify the wheel hash before import. A missing or incompatible wheel selects the
 reference implementation rather than compiling independently inside each shard.
 
+The initial native toolchain is PyO3 plus maturin. Research workflows standardize
+one Python runtime for fan-out, so one compatible wheel is built for that exact
+Python, Linux, architecture, and toolchain contract. Cross-version wheels are
+built only for CI compatibility testing, not repeated inside a campaign.
+
 ### 9.6 Correctness
 
 Native and reference implementations run against:
@@ -655,15 +726,18 @@ docs/GITHUB_RUN_MASTER_STANDARD.md
 schemas/github_run_spec_v3.schema.json
 config/templates/github_run_v3.yaml
 config/legacy_workflow_allowlist.json
+config/github_capacity_profile.json
 
-core/github_performance/contracts.py
-core/github_performance/preflight.py
-core/github_performance/telemetry.py
-core/github_performance/shard_planner.py
-core/github_performance/execution_planner.py
-core/github_performance/merge_planner.py
-core/github_performance/verifier.py
-core/github_performance/workload.py
+core/execution_policy.py
+
+infra/github_performance/contracts.py
+infra/github_performance/preflight.py
+infra/github_performance/telemetry.py
+infra/github_performance/shard_planner.py
+infra/github_performance/execution_planner.py
+infra/github_performance/merge_planner.py
+infra/github_performance/verifier.py
+infra/github_performance/workload.py
 
 scripts/aurora_github_run.py
 scripts/aurora_github_merge.py
@@ -678,6 +752,12 @@ native/aurora_hotpaths/
 The exact module split may be refined during implementation, but the boundaries
 must remain: contracts, planning, execution, merge, verification, and optional
 native kernels are independent.
+
+Because Aurora uses an explicit setuptools package list, implementation must
+register `aurora.infra.github_performance` and its package directory in
+`pyproject.toml`. It must also include nested config templates in package data
+and define optional performance/native build dependencies rather than relying on
+undeclared packages.
 
 ## 11. Required artifacts
 
@@ -754,6 +834,15 @@ conditions, queue delay, wall time, and billable minutes. They do not fail merel
 because GitHub was temporarily congested; correctness and policy failures remain
 hard failures.
 
+Three reference workload shapes are required:
+
+1. candidate sweep: CPU-heavy and embarrassingly parallel;
+2. event-study aggregation: I/O and partition heavy;
+3. statistical robustness: compute-heavy with expensive merge/reduction.
+
+Synthetic fixtures test failure paths. At least one frozen real Aurora workload
+tests end-to-end performance without reading locked data.
+
 ## 14. Rollout
 
 ### Phase 1
@@ -792,3 +881,21 @@ The system is complete when:
 - native code exists only where profile evidence justifies it;
 - the master template and implementation enforce the same rules;
 - all required artifacts and verification reports are present.
+
+## 16. Authoritative GitHub references
+
+Implementation must recheck these official sources because platform limits and
+action versions can change:
+
+- [Workflow syntax and 256-job matrix limit](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+- [GitHub Actions limits](https://docs.github.com/en/actions/reference/limits)
+- [GitHub-hosted runner specifications](https://docs.github.com/en/enterprise-cloud@latest/actions/reference/runners/github-hosted-runners)
+- [Dependency cache limits](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+- [Official upload-artifact behavior](https://github.com/actions/upload-artifact)
+- [GitHub Actions billing and storage](https://docs.github.com/en/enterprise-cloud@latest/billing/concepts/product-billing/github-actions)
+
+At design review time the repository is public under an Enterprise organization,
+standard Ubuntu runners expose 4 vCPU, 16 GB RAM, and 14 GB SSD, a matrix is
+limited to 256 jobs, cache operations are rate-limited, and Actions artifacts are
+immutable and artifact-granular. The organization-specific standard concurrency
+remains the support-confirmed 360 rather than the generic plan-table value.
