@@ -2483,7 +2483,7 @@ gh pr view --json url,headRefName,baseRefName,statusCheckRollup
 
 Do not merge while checks are pending.
 
-- [ ] **Step 8: Run the manual benchmark after the framework exists on `main`**
+- [x] **Step 8: Run the manual benchmark after the framework exists on `main`**
 
 After the reviewed PR is merged:
 
@@ -2506,3 +2506,30 @@ larger_runner_used=false
 
 Phase 1 is complete only after the closure artifact records those values and the
 measured bottleneck report is available for the Phase-2 planner design.
+
+Completed on `main` in
+[run 30162193823](https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30162193823)
+after merging the framework and two benchmark-discovered integration fixes.
+The final closure recorded:
+
+```text
+status=success
+compared_units=1024
+locked_opened=false
+validation_used_for_selection=false
+partial=false
+scientific_outputs_equal=true
+timing_comparable=true
+same_performance_contract=true
+same_snapshot_hash=true
+matrix_job_ceiling_respected=true
+larger_runner_used=false
+```
+
+The adaptive planner correctly selected one job for both paths because the
+reference computation itself took only 12 aggregate seconds. Observed workflow
+wall time was 580 seconds optimized versus 578 seconds baseline
+(`speedup=0.9966`), so this workload does not support a speedup claim. The
+measured bottleneck was setup: 466 aggregate job-seconds optimized and 477
+baseline. Phase 2 should therefore reduce fixed job startup and transfer costs
+before tuning shard balancing on a larger representative workload.
