@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import importlib.metadata
 import os
 import shutil
@@ -13,17 +14,32 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT.parent))
 
-from aurora.infra.github_performance.environment import (  # noqa: E402
-    build_wheelhouse_manifest,
-    current_target,
-    load_wheelhouse_manifest,
-    parse_hashed_lock,
-    verify_wheelhouse,
-    write_dependency_lock_manifest,
-    write_wheelhouse_manifest,
-)
+
+def _load_environment_module():
+    module_path = (
+        ROOT / "infra" / "github_performance" / "environment.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_aurora_github_environment",
+        module_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load environment module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_environment = _load_environment_module()
+build_wheelhouse_manifest = _environment.build_wheelhouse_manifest
+current_target = _environment.current_target
+load_wheelhouse_manifest = _environment.load_wheelhouse_manifest
+parse_hashed_lock = _environment.parse_hashed_lock
+verify_wheelhouse = _environment.verify_wheelhouse
+write_dependency_lock_manifest = _environment.write_dependency_lock_manifest
+write_wheelhouse_manifest = _environment.write_wheelhouse_manifest
 
 
 def _run(command: list[str], *, env: dict[str, str] | None = None) -> None:
