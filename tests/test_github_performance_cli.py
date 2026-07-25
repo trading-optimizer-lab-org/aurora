@@ -49,6 +49,46 @@ def test_environment_identity_ignores_cache_hit_but_detects_tampering(
         cmd_github._verified_environment_sha256(path)
 
 
+def test_environment_identity_v2_separates_observations_from_identity(
+    tmp_path: Path,
+) -> None:
+    identity = {
+        "schema_version": "2",
+        "dependency_lock_sha256": "a" * 64,
+        "installed_wheelhouse_sha256": "b" * 64,
+        "installed_packages": [{"name": "aurora", "version": "1.5.0"}],
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    payload = {
+        "schema_version": "2",
+        "identity": identity,
+        "observations": {
+            "image_version": "one",
+            "setup_seconds": 5.0,
+        },
+        "environment_sha256": digest,
+    }
+    path = tmp_path / "environment_manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert cmd_github._verified_environment_sha256(path) == digest
+
+    payload["observations"]["image_version"] = "two"
+    payload["observations"]["setup_seconds"] = 9.0
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert cmd_github._verified_environment_sha256(path) == digest
+
+    payload["identity"]["dependency_lock_sha256"] = "c" * 64
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="identity hash mismatch"):
+        cmd_github._verified_environment_sha256(path)
+
+
 def test_phase_commands_are_registered() -> None:
     parser = build_parser()
     commands = (

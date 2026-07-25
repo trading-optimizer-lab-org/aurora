@@ -198,13 +198,19 @@ runs:
             allow_nan=False,
         ).encode()
         digest = hashlib.sha256(encoded).hexdigest()
-        payload = dict(identity)
-        payload["environment_sha256"] = digest
-        payload["runner"]["image_os"] = os.environ["AURORA_IMAGE_OS"]
-        payload["runner"]["image_version"] = os.environ["AURORA_IMAGE_VERSION"]
-        payload["setup_seconds"] = (
+        setup_seconds = (
             int(os.environ["AURORA_SETUP_NANOSECONDS"]) / 1_000_000_000.0
         )
+        payload = {
+            "schema_version": "2",
+            "identity": identity,
+            "observations": {
+                "image_os": os.environ["AURORA_IMAGE_OS"],
+                "image_version": os.environ["AURORA_IMAGE_VERSION"],
+                "setup_seconds": setup_seconds,
+            },
+            "environment_sha256": digest,
+        }
         with open("environment_manifest.json", "w", encoding="utf-8") as out:
             json.dump(payload, out, indent=2, sort_keys=True)
             out.write("\n")
@@ -214,5 +220,5 @@ runs:
                 "wheelhouse_sha256="
                 f"{wheelhouse_manifest['wheelhouse_sha256']}\n"
             )
-            out.write(f"setup_seconds={payload['setup_seconds']:.9f}\n")
+            out.write(f"setup_seconds={setup_seconds:.9f}\n")
         PY

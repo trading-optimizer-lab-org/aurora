@@ -155,11 +155,18 @@ def _verified_environment_sha256(path: Path) -> str:
     claimed = payload.pop("environment_sha256", None)
     if not isinstance(claimed, str):
         raise ValueError("environment manifest has no identity hash")
-    cache = payload.get("cache")
-    if isinstance(cache, dict):
-        cache.pop("hit", None)
+    if payload.get("schema_version") == "2":
+        identity = payload.get("identity")
+        if not isinstance(identity, dict):
+            raise ValueError("environment manifest has no version-2 identity")
+        hashed_payload = identity
+    else:
+        cache = payload.get("cache")
+        if isinstance(cache, dict):
+            cache.pop("hit", None)
+        hashed_payload = payload
     encoded = json.dumps(
-        payload,
+        hashed_payload,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
