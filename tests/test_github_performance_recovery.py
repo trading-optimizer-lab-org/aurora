@@ -11,10 +11,16 @@ from aurora.infra.github_performance.checkpoint import (
     CheckpointManager,
     load_checkpoint,
 )
-from aurora.infra.github_performance.contracts import CheckpointManifest
+from aurora.infra.github_performance.contracts import (
+    AttemptManifest,
+    CheckpointManifest,
+    TerminalState,
+)
 from aurora.infra.github_performance.recovery import (
+    RecoveryLoopStatus,
     build_recovery_plan,
     build_recovery_plan_from_paths,
+    build_recovery_loop,
     write_recovery_plan,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
@@ -214,3 +220,120 @@ def test_corrupt_checkpoint_is_rejected_without_blocking_recovery(
     assert plan.checkpoint_audit[0].reason_code == (
         "CHECKPOINT_INTEGRITY_ERROR"
     )
+
+
+def _completed_attempt(shard_id: str, attempt_id: str) -> AttemptManifest:
+    return AttemptManifest(
+        shard_id=shard_id,
+        attempt_id=attempt_id,
+        state=TerminalState.COMPLETED,
+        spec_hash="1" * 64,
+        policy_hash="2" * 64,
+        snapshot_hash="3" * 64,
+        code_sha="4" * 40,
+        dependency_lock_sha256="5" * 64,
+        capacity_profile_sha256="6" * 64,
+        output_sha256="7" * 64,
+        reason_code=None,
+        artifact_name=f"artifact-{shard_id}-{attempt_id}",
+        unit_attempts_path="unit_attempts.parquet",
+        unit_attempts_sha256="8" * 64,
+        checkpoint_artifact=None,
+        completed_unit_count=1,
+        output_rows=1,
+        output_bytes=100,
+        runtime_access_ledger_path="runtime_access_ledger.parquet",
+        runtime_access_ledger_sha256="9" * 64,
+        metric_inputs_path="metric_inputs.parquet",
+        metric_inputs_sha256="a" * 64,
+    )
+
+
+def test_recovery_loop_retries_repeated_transient_waves() -> None:
+    shard = make_shard(1)
+    first = build_recovery_loop(
+        [shard],
+        [failed_attempt("s001", "a001", "GITHUB_5XX")],
+        [],
+        {"github_5xx": 3},
+        current_wave=0,
+        max_waves=4,
+    )
+    second_attempt = first.plan.decisions[0].next_attempt_id
+    assert second_attempt is not None
+    second = build_recovery_loop(
+        [shard],
+        [
+            failed_attempt("s001", "a001", "GITHUB_5XX"),
+            failed_attempt("s001", second_attempt, "GITHUB_5XX"),
+        ],
+        [],
+        {"github_5xx": 3},
+        current_wave=1,
+        max_waves=4,
+    )
+
+    assert first.status is RecoveryLoopStatus.RETRY
+    assert second.status is RecoveryLoopStatus.RETRY
+    assert second.next_wave == 2
+    assert second.plan.decisions[0].next_attempt_id not in {
+        "a001",
+        second_attempt,
+    }
+
+
+@pytest.mark.parametrize("reason", ["OUT_OF_MEMORY", "DISK_EXHAUSTED"])
+def test_recovery_loop_requires_operational_replan(reason: str) -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [failed_attempt("s001", "a001", reason)],
+        [],
+        {"runner_lost": 2},
+        current_wave=0,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.REPLAN
+    assert result.retry_count == 0
+    assert result.replan_shard_ids == ("s001",)
+
+
+def test_recovery_loop_never_retries_deterministic_failure() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [failed_attempt("s001", "a001", "SCHEMA_MISMATCH")],
+        [],
+        {"runner_lost": 2},
+        current_wave=0,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+    assert result.retry_count == 0
+    assert result.reason_codes == ("SCHEMA_MISMATCH",)
+
+
+def test_recovery_loop_completes_when_every_shard_is_verified() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [_completed_attempt("s001", "a001")],
+        [],
+        {"runner_lost": 2},
+        current_wave=2,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.COMPLETE
+    assert result.next_wave is None
+    assert result.terminal_shard_count == 1
+
+
+def test_recovery_loop_stops_at_wave_budget() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [failed_attempt("s001", "a001", "RUNNER_LOST")],
+        [],
+        {"runner_lost": 5},
+        current_wave=3,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.BUDGET_EXHAUSTED
+    assert result.retry_count == 0
+    assert result.next_wave is None

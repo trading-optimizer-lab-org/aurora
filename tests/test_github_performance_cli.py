@@ -124,6 +124,29 @@ def test_phase_commands_are_registered() -> None:
             "--spec x --projected-wall-seconds 10 "
             "--projected-billable-minutes 20 --output-dir o",
         ),
+        (
+            "campaign-update",
+            "--spec x --state-root s --phase executing",
+        ),
+        (
+            "recovery-loop",
+            "--spec x --shard-plan p --state-root s --output-dir o",
+        ),
+        (
+            "replan",
+            "--spec x --state-root s --new-plan-sha256 "
+            + "a" * 64
+            + " --logical-unit-manifest-sha256 "
+            + "b" * 64
+            + " --completed-unit-manifest-sha256 "
+            + "c" * 64
+            + " --output-dir o",
+        ),
+        (
+            "merge-only",
+            "--spec x --state-root s --source-artifact a "
+            "--output-dir o",
+        ),
     )
     for command, tail in commands:
         args = parser.parse_args(["github", command, *tail.split()])
@@ -160,6 +183,10 @@ def test_phase_commands_are_registered() -> None:
         (cmd_github.cmd_github_final_merge, {"spec": "missing"}),
         (cmd_github.cmd_github_verify, {"spec": "missing"}),
         (cmd_github.cmd_github_guardrail_check, {"spec": "missing"}),
+        (cmd_github.cmd_github_campaign_update, {"spec": "missing"}),
+        (cmd_github.cmd_github_recovery_loop, {"spec": "missing"}),
+        (cmd_github.cmd_github_replan, {"spec": "missing"}),
+        (cmd_github.cmd_github_merge_only, {"spec": "missing"}),
     ],
 )
 def test_heavy_commands_call_github_guard_first(
