@@ -150,6 +150,12 @@ def _runtime_value(path: Path, key: str) -> Any:
     identity = payload.get("identity")
     if isinstance(identity, dict) and key in identity:
         return identity[key]
+    legacy_aliases = {
+        "dependency_lock_sha256": "installed_wheel_sha256",
+    }
+    legacy_key = legacy_aliases.get(key)
+    if legacy_key is not None and legacy_key in payload:
+        return payload[legacy_key]
     raise ValueError(f"{path} does not contain {key}")
 
 

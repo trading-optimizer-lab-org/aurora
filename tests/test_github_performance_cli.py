@@ -81,6 +81,10 @@ def test_environment_identity_v2_separates_observations_from_identity(
     path = tmp_path / "environment_manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert cmd_github._verified_environment_sha256(path) == digest
+    assert (
+        cmd_github._runtime_value(path, "dependency_lock_sha256")
+        == "a" * 64
+    )
 
     payload["observations"]["image_version"] = "two"
     payload["observations"]["setup_seconds"] = 9.0
