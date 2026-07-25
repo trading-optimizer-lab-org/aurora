@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from aurora.infra.github_performance.contracts import (
     RunSpec,
 )
@@ -138,3 +141,53 @@ def test_final_verifier_accepts_complete_untampered_artifact(
     report = verify_final_artifact(tmp_path, spec)
     assert report.passed is True
     assert report.partial is False
+
+
+def test_final_verifier_reads_streaming_reconciliation_footer(
+    tmp_path: Path,
+) -> None:
+    spec = _resolved_fixture(tmp_path)
+    path = tmp_path / "unit_reconciliation.parquet"
+    schema = pa.schema(
+        [pa.field("unit_key", pa.string(), nullable=False)],
+        metadata={b"schema_version": b"1"},
+    )
+    writer = pq.ParquetWriter(path, schema)
+    writer.write_table(pa.Table.from_pylist([{"unit_key": "u1"}], schema))
+    writer.add_key_value_metadata(
+        {
+            "summary_json": json.dumps(
+                {
+                    "expected_units": 1,
+                    "completed": 1,
+                    "right_censored": 0,
+                    "unsupported": 0,
+                    "failed_technical": 0,
+                    "missing_units": 0,
+                    "partial": False,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        }
+    )
+    writer.close()
+    traceability = build_requirements_traceability(
+        spec,
+        _complete_evidence(),
+    )
+    write_requirements_traceability(
+        traceability,
+        tmp_path / "requirements_traceability.csv",
+    )
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is True
+    assert report.partial is False
+    assert report.terminal_counts["expected_units"] == 1
+    assert report.terminal_counts["completed"] == 1

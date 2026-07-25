@@ -327,6 +327,14 @@ def _atomic_json(path: Path, payload: Any) -> Path:
     return path
 
 
+def _atomic_text(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
+    return path
+
+
 def write_recovery_plan(
     plan: RecoveryPlan,
     output_dir: Path,
@@ -350,13 +358,13 @@ def write_recovery_plan(
             "recovery matrix outputs exceed 262144 bytes"
         )
     plan_path = _atomic_json(root / "recovery_plan.json", plan)
-    matrix_a_path = _atomic_json(
+    matrix_a_path = _atomic_text(
         root / "retry_matrix_a.json",
-        {"include": deep_thaw_json(plan.retry_matrix_a)},
+        compact_a + "\n",
     )
-    matrix_b_path = _atomic_json(
+    matrix_b_path = _atomic_text(
         root / "retry_matrix_b.json",
-        {"include": deep_thaw_json(plan.retry_matrix_b)},
+        compact_b + "\n",
     )
     audit_schema = pa.schema(
         [

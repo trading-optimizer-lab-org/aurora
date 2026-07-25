@@ -108,8 +108,12 @@ def write_final_artifact_manifest(root: Path, path: Path) -> Path:
 def _read_reconciliation_summary(path: Path) -> Mapping[str, Any]:
     if not path.is_file():
         return {}
-    metadata = pq.ParquetFile(path).schema_arrow.metadata or {}
-    raw = metadata.get(b"summary_json")
+    parquet = pq.ParquetFile(path)
+    footer_metadata = parquet.metadata.metadata or {}
+    schema_metadata = parquet.schema_arrow.metadata or {}
+    raw = footer_metadata.get(b"summary_json")
+    if raw is None:
+        raw = schema_metadata.get(b"summary_json")
     if raw is None:
         return {}
     payload = json.loads(raw.decode("utf-8"))
