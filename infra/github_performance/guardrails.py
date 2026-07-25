@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 
@@ -52,7 +53,10 @@ class BudgetLedger(FrozenModel):
             + projected_additional_billable_minutes
         )
         projected_cost = (
-            total * cost_per_billable_minute
+            float(
+                Decimal(str(total))
+                * Decimal(str(cost_per_billable_minute))
+            )
             if cost_per_billable_minute is not None
             else None
         )
