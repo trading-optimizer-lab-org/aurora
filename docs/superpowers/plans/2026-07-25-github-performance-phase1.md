@@ -145,14 +145,14 @@ Actions, Parquet, immutable Actions artifacts.
   `runner_label`, and `confirmed_on`.
 - Produces: action lock mapping action name to full 40-character SHA.
 
-- [ ] **Step 1: Copy the reviewed standard into the repository**
+- [x] **Step 1: Copy the reviewed standard into the repository**
 
 Copy the exact UTF-8 content of
 `C:\Users\HP\Desktop\PLANTILLA_MAESTRA_RUN_GITHUB_AURORA.md` to
 `docs/GITHUB_RUN_MASTER_STANDARD.md`. Confirm both files have the same SHA-256
 before staging.
 
-- [ ] **Step 2: Add schema and capacity tests**
+- [x] **Step 2: Add schema and capacity tests**
 
 ```python
 def load_schema() -> dict[str, Any]:
@@ -213,7 +213,7 @@ def test_schema_covers_every_master_template_key() -> None:
     )
 ```
 
-- [ ] **Step 3: Add the version-3 schema and template**
+- [x] **Step 3: Add the version-3 schema and template**
 
 Require these top-level objects:
 
@@ -255,7 +255,7 @@ spec and are filled by `freeze_contract`; if supplied, they must match observed
 evidence. SHA-256 fields use 64 lowercase hexadecimal characters and
 `code_sha` uses 40.
 
-- [ ] **Step 4: Add immutable capacity and action locks**
+- [x] **Step 4: Add immutable capacity and action locks**
 
 Use this capacity record:
 
@@ -290,7 +290,7 @@ Pin these current official action commits:
 }
 ```
 
-- [ ] **Step 5: Declare the runtime dependency and exact package data**
+- [x] **Step 5: Declare the runtime dependency and exact package data**
 
 Add `jsonschema>=4.23` to the main project dependencies because every future
 workflow executes preflight. Extend Aurora package data exactly to:
@@ -315,7 +315,7 @@ assert schema.is_file()
 assert template.is_file()
 ```
 
-- [ ] **Step 6: Add the lightweight GitHub test workflow**
+- [x] **Step 6: Add the lightweight GitHub test workflow**
 
 Use `pull_request` and `workflow_dispatch`; pin checkout and setup-python to the
 SHAs above. Run only:
@@ -330,7 +330,7 @@ python -m pytest \
 The workflow uses `ubuntu-24.04`, `permissions: contents: read`, and a
 15-minute timeout.
 
-- [ ] **Step 7: Commit, push, and open the draft PR**
+- [x] **Step 7: Commit, push, and open the draft PR**
 
 ```bash
 git add docs/GITHUB_RUN_MASTER_STANDARD.md config/schemas \
