@@ -136,33 +136,44 @@ zero mismatches, `partial=false`, `locked_opened=false`, and
 - Consumes: exact transitive pins from `requirements/github-performance.lock`.
 - Fan-out setup accepts `wheelhouse-path` and installs with `--no-index --require-hashes`.
 
-- [ ] **Step 1: Write failing environment tests**
+- [x] **Step 1: Write failing environment tests**
 
 Require exact transitive pins, hashes for every requirement, wheel hashes, Python/OS/architecture compatibility, and rejection of missing or extra wheels.
 
-- [ ] **Step 2: Generate the lock in GitHub**
+- [x] **Step 2: Generate the lock in GitHub**
 
 Run a dedicated lock job on `ubuntu-24.04`, Python 3.12, using pinned `pip-tools`. Download the artifact, review it, and commit the generated lock.
 
-- [ ] **Step 3: Build one immutable wheelhouse**
+- [x] **Step 3: Build one immutable wheelhouse**
 
 `prepare_environment` downloads every locked wheel once, builds Aurora once, hashes all files, uploads one immutable wheelhouse artifact, and records build provenance.
 
-- [ ] **Step 4: Add the fan-out fast path**
+- [x] **Step 4: Add the fan-out fast path**
 
 Fan-out jobs restore the exact wheelhouse, verify its manifest, and install without dependency resolution or wheel building. Remove per-job pip upgrade and network resolution.
 
-- [ ] **Step 5: Benchmark setup cold and warm**
+- [x] **Step 5: Benchmark setup cold and warm**
 
 Publish setup distributions and reject the fast path if environment hashes differ or wall time is slower.
 
-- [ ] **Step 6: Run GitHub tests and commit**
+- [x] **Step 6: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: freeze and reuse GitHub wheelhouse
 ```
+
+Evidence: environment RED run `30168711668`; lock-generation run
+`30168825373`; setup-benchmark RED run `30169832258`; GREEN contract and
+four-shard smoke run `30170050477`. Full reusable-workflow closure run
+`30169599148` completed `1024/1024` units with zero metric mismatches and one
+immutable `225233720`-byte wheelhouse. Equivalent cold/warm benchmark run
+`30170101585` installed the same package and environment hashes in all eight
+samples. The wheelhouse reduced cold setup from `20.0185s` to `12.7623s`
+(`1.5686x`) and warm median setup from `15.5765s` to `12.4928s` (`1.2468x`);
+`dependency_environment_reproducible=true`, `fast_path_selected=true`, and
+all failure-code lists were empty.
 
 ---
 
