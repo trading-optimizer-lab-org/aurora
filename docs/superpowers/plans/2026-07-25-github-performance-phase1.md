@@ -1292,7 +1292,7 @@ gh pr checks --watch
 - Produces:
   `freeze_resolved_contract(spec, runtime_evidence, output_dir) -> Sequence[Path]`.
 
-- [ ] **Step 1: Write policy tests**
+- [x] **Step 1: Write policy tests**
 
 Cover:
 
@@ -1390,12 +1390,12 @@ def test_accepts_manual_framework_caller(tmp_path: Path) -> None:
 Each test writes a complete minimal YAML fixture and asserts the exact violation
 code, such as `LOCAL_REFERENCE_MISSING` or `HEAVY_AUTOMATIC_TRIGGER`.
 
-- [ ] **Step 2: Implement GitHub-safe YAML loading**
+- [x] **Step 2: Implement GitHub-safe YAML loading**
 
 Create a SafeLoader that treats `on`, `off`, `yes`, and `no` as strings rather
 than YAML-1.1 booleans. Reject duplicate mapping keys with line numbers.
 
-- [ ] **Step 3: Implement run-spec preflight**
+- [x] **Step 3: Implement run-spec preflight**
 
 Validate JSON Schema, load `CapacityProfile`, enforce 360/256, require
 GitHub-only policy, and verify user-owned files and hashes. Write
@@ -1405,13 +1405,13 @@ preparation, resolve runtime-derived evidence and write
 the capacity-profile hash, runner label, standard-runner-only flag, planner
 limits, memory/disk limits, artifact policy, and hard scientific invariants.
 
-- [ ] **Step 4: Implement workflow checks**
+- [x] **Step 4: Implement workflow checks**
 
 External `uses:` values must end in `@[0-9a-f]{40}`. Local `uses:` paths must
 exist. Heavy callers must use `_aurora-future-run-v3.yml`, avoid push/PR
 triggers, and declare standard Ubuntu only.
 
-- [ ] **Step 5: Push and verify in GitHub**
+- [x] **Step 5: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/preflight.py \
