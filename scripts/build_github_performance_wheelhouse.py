@@ -94,6 +94,8 @@ def _build(args: argparse.Namespace) -> int:
                 "install",
                 "--disable-pip-version-check",
                 "--no-index",
+                "--no-deps",
+                "--no-compile",
                 "--find-links",
                 str(wheelhouse),
                 "--require-hashes",

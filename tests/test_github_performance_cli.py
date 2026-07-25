@@ -40,6 +40,10 @@ def test_environment_identity_ignores_cache_hit_but_detects_tampering(
     path = tmp_path / "environment_manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert cmd_github._verified_environment_sha256(path) == digest
+    assert (
+        cmd_github._runtime_value(path, "dependency_lock_sha256")
+        == "a" * 64
+    )
     payload["cache"]["hit"] = True
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert cmd_github._verified_environment_sha256(path) == digest

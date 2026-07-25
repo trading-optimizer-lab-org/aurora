@@ -143,9 +143,14 @@ def _portable_prepared(
 
 def _runtime_value(path: Path, key: str) -> Any:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or key not in payload:
+    if not isinstance(payload, dict):
         raise ValueError(f"{path} does not contain {key}")
-    return payload[key]
+    if key in payload:
+        return payload[key]
+    identity = payload.get("identity")
+    if isinstance(identity, dict) and key in identity:
+        return identity[key]
+    raise ValueError(f"{path} does not contain {key}")
 
 
 def _verified_environment_sha256(path: Path) -> str:
