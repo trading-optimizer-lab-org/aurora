@@ -206,6 +206,7 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     assert set(inputs) == {
         "execution_mode",
         "forced_job_count",
+        "prepared_artifact_name",
         "spec_path",
         "workload",
         "run_label",
@@ -214,6 +215,36 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     assert "push" not in workflow["on"]
     assert "pull_request" not in workflow["on"]
+
+
+def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
+    workflow = _workflow()
+    prepared = workflow["jobs"]["prepare_data"]
+    shared_download = next(
+        step
+        for step in prepared["steps"]
+        if step["name"] == "Download shared immutable inputs"
+    )
+    prepare = next(
+        step
+        for step in prepared["steps"]
+        if step["name"] == "Prepare immutable data once"
+    )
+    upload = next(
+        step
+        for step in prepared["steps"]
+        if step["name"] == "Upload prepared inputs"
+    )
+    assert shared_download["if"] == "inputs.prepared_artifact_name != ''"
+    assert prepare["if"] == "inputs.prepared_artifact_name == ''"
+    assert upload["if"] == "inputs.prepared_artifact_name == ''"
+    assert (
+        shared_download["with"]["name"]
+        == "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
+    )
+    assert "inputs.prepared_artifact_name" in str(
+        workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    )
 
 
 def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:

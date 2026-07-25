@@ -200,8 +200,14 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     jobs = workflow["jobs"]
     assert jobs["optimized"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["with"]["execution_mode"] == "optimized"
+    shared_snapshot = jobs["optimized"]["with"]["prepared_artifact_name"]
+    assert "shared-prepared" in str(shared_snapshot)
     assert jobs["baseline"]["needs"] == "optimized"
     assert jobs["baseline"]["with"]["execution_mode"] == "baseline"
+    assert (
+        jobs["baseline"]["with"]["prepared_artifact_name"]
+        == shared_snapshot
+    )
     forced = jobs["baseline"]["with"]["forced_job_count"]
     assert "needs.optimized.outputs.selected_jobs" in str(forced)
     assert jobs["compare"]["needs"] == ["optimized", "baseline"]

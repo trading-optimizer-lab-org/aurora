@@ -24,6 +24,21 @@ jobs:
           extras: ""
           cache-key: aurora-v3
           cache-mode: writer
+      - name: Prepare one shared immutable benchmark snapshot
+        run: |
+          set -euo pipefail
+          aurora github prepare \
+            --spec "config/github_performance_reference.yaml" \
+            --workload "aurora.infra.github_performance.reference_workload:WORKLOAD" \
+            --output-dir "$RUNNER_TEMP/prepared"
+      - name: Upload shared immutable benchmark snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
 
   optimized:
     needs: prime_runtime
@@ -35,6 +50,7 @@ jobs:
       retention_days: 30
       execution_mode: optimized
       forced_job_count: 0
+      prepared_artifact_name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
 
   baseline:
     needs: optimized
@@ -46,6 +62,7 @@ jobs:
       retention_days: 30
       execution_mode: baseline
       forced_job_count: ${{ fromJSON(needs.optimized.outputs.selected_jobs) }}
+      prepared_artifact_name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
 
   compare:
     needs: [optimized, baseline]
