@@ -205,6 +205,7 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "execution_mode",
         "forced_job_count",
         "prepared_artifact_name",
+        "wheelhouse_artifact_name",
         "spec_path",
         "workload",
         "run_label",
@@ -232,6 +233,33 @@ def test_reusable_workflow_builds_aurora_and_wheelhouse_exactly_once() -> None:
     assert "wheelhouse" in str(upload["with"]["path"])
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["compression-level"] == 0
+
+
+def test_reusable_workflow_can_reuse_exact_wheelhouse_artifact() -> None:
+    workflow = _workflow()
+    prepare = workflow["jobs"]["prepare_environment"]
+    shared_download = next(
+        step
+        for step in prepare["steps"]
+        if step["name"] == "Download shared immutable wheelhouse"
+    )
+    build = next(
+        step
+        for step in prepare["steps"]
+        if step["name"] == "Build immutable wheelhouse once"
+    )
+    upload = next(
+        step
+        for step in prepare["steps"]
+        if step["name"] == "Upload immutable wheelhouse"
+    )
+    assert shared_download["if"] == "inputs.wheelhouse_artifact_name != ''"
+    assert build["if"] == "inputs.wheelhouse_artifact_name == ''"
+    assert upload["if"] == "inputs.wheelhouse_artifact_name == ''"
+    assert (
+        shared_download["with"]["name"]
+        == "${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}"
+    )
 
 
 def test_every_runtime_consumer_downloads_the_same_wheelhouse_first() -> None:

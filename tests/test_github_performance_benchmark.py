@@ -198,8 +198,14 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         "actions": "read",
     }
     jobs = workflow["jobs"]
+    assert "setup_benchmark" in jobs
+    assert jobs["setup_benchmark"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["with"]["execution_mode"] == "optimized"
+    shared_wheelhouse = jobs["optimized"]["with"][
+        "wheelhouse_artifact_name"
+    ]
+    assert "shared-wheelhouse" in str(shared_wheelhouse)
     shared_snapshot = jobs["optimized"]["with"]["prepared_artifact_name"]
     assert "shared-prepared" in str(shared_snapshot)
     assert jobs["baseline"]["needs"] == "optimized"
@@ -208,9 +214,19 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         jobs["baseline"]["with"]["prepared_artifact_name"]
         == shared_snapshot
     )
+    assert (
+        jobs["baseline"]["with"]["wheelhouse_artifact_name"]
+        == shared_wheelhouse
+    )
     forced = jobs["baseline"]["with"]["forced_job_count"]
     assert "needs.optimized.outputs.selected_jobs" in str(forced)
-    assert jobs["compare"]["needs"] == ["optimized", "baseline"]
+    assert jobs["compare"]["needs"] == [
+        "optimized",
+        "baseline",
+        "setup_benchmark",
+    ]
+    compare_text = str(jobs["compare"])
+    assert "environment_setup_benchmark.json" in compare_text
     upload = jobs["compare"]["steps"][-1]
     assert upload["if"] == "always()"
     assert str(upload["with"]["path"]).endswith(
