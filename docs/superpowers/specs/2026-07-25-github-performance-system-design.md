@@ -214,16 +214,20 @@ spine without requiring each campaign author to rebuild orchestration.
 ### 7.2 Workflow stages
 
 1. `validate`
-2. `prepare_data`
-3. `smoke`
-4. `pilot`
-5. `plan`
-6. `fanout_a`
-7. `fanout_b`
-8. optional hierarchical merge levels
-9. `final_merge`
-10. `verify`
-11. `publish`
+2. `prepare_environment` and `prepare_data` in parallel
+3. `freeze_contract`
+4. `smoke`
+5. `pilot`
+6. `plan`
+7. `fanout_a`
+8. `fanout_b`
+9. `recovery_plan`
+10. optional `retry_a` and `retry_b`
+11. optional hierarchical merge levels
+12. `final_merge`
+13. `verify`
+14. `collect_timeline`
+15. `publish`
 
 `fanout_a` and `fanout_b` are generated from the manifest. At full confirmed
 capacity they contain 256 and 104 jobs.
@@ -233,10 +237,26 @@ matrices are never submitted. Every matrix uses `fail-fast: false`; downstream
 reconciliation and salvage jobs run with `if: always()` so one failed shard does
 not discard valid siblings.
 
+`recovery_plan` reads immutable attempt and checkpoint manifests after the
+initial fan-out. It emits compact retry matrices only for retryable technical
+failures and only while the configured attempt budget remains. Deterministic
+input, schema, policy, and code failures are not retried. OOM and disk failures
+require a new operational plan rather than an identical attempt. Every retry
+has a new `attempt_id` and preserves the original `unit_key`.
+
 Heavy future workflows are manual or reusable (`workflow_dispatch` and/or
 `workflow_call`) by default. They do not run 360-job campaigns automatically on
 ordinary pushes or pull requests. Lightweight static enforcement remains
 automatic.
+
+The checked-in YAML is a requested spec and may leave runtime-derived hashes
+blank. `validate` verifies all user-owned fields and the triggering context.
+After environment and data preparation finish, `freeze_contract` fills and
+verifies code SHA, workflow hash, policy hash, dependency hash, capacity-profile
+hash, data-manifest hash, snapshot hash, and metric-contract hash. It writes
+`resolved_run_spec.json`; every later job references that immutable file and
+hash. A user-supplied derived value that disagrees with observed evidence
+blocks instead of being overwritten.
 
 ### 7.3 Data preparation
 
@@ -269,6 +289,12 @@ artifact. Remote object storage is optional and cannot be assumed configured.
 When it is unavailable, the planner must choose a viable artifact layout or
 block before fan-out.
 
+Phase 1 implements the small-artifact and existing-`SnapshotBackend` paths and
+computes repeated transfer cost before launch. It blocks when neither is viable.
+Phase 2 adds automatic construction and publication of the bounded coarse
+artifact layout for medium inputs. This boundary keeps Phase 1 honest: it does
+not pretend that one Actions artifact supports selective member download.
+
 ### 7.4 Environment startup
 
 The pilot compares approved startup options:
@@ -280,6 +306,13 @@ The pilot compares approved startup options:
 
 The selected option must preserve exact versions and have the shortest measured
 critical path. One job writes each cache key; fan-out jobs restore only.
+
+`prepare_environment` is the only cache writer. It uses a content-addressed key
+over the dependency lock, Python version, runner OS and architecture, and
+Aurora build inputs. It runs in parallel with `prepare_data`, publishes a
+hashed environment manifest, and may publish a bounded wheelhouse when the
+pilot shows that artifact transfer is faster than repeated installation.
+Fan-out jobs never race to save the same cache key.
 
 Checkout is shallow and sparse when the workload allows it. Repositories,
 wheelhouses, and containers are never rebuilt independently by every shard.
@@ -300,6 +333,14 @@ Phase 1 supports deterministic weighted bundles using user-supplied or
 pilot-measured unit costs. It applies longest-processing-time-first allocation
 and emits `balanced_shard_plan.json`.
 
+Logical units are stored columnarly in immutable `work_units.parquet`.
+`balanced_unit_assignments.parquet` maps every `unit_key` to one `shard_id`,
+estimated cost, and merge group. Neither millions of Pydantic objects nor full
+unit-key lists are embedded in workflow outputs. GitHub receives only one
+compact descriptor per shard containing identity, assignment reference and
+hash, unit count, projected cost, and merge group. Dynamic planner outputs are
+hard-limited to 256 KiB.
+
 The planner estimates the useful job count before fan-out. Its model includes:
 
 ```text
@@ -312,9 +353,17 @@ predicted_wall_time =
   + verification
 ```
 
-It evaluates feasible job counts from 1 through the confirmed ceiling and
-selects the lowest predicted critical path. A job is not created when its
-expected useful compute is too small relative to setup and transfer overhead.
+It evaluates the cheap lower-bound model for every feasible job count from 1
+through the confirmed ceiling. For at most 50,000 units it may run exact LPT for
+all counts. Above that threshold it uses the measured cost histogram to rank
+all counts, then runs exact LPT only for the provisional winner and its two
+nearest feasible neighbours. The chosen count always receives an exact shard
+plan before fan-out. This avoids multiplying a multi-million-unit planning pass
+by 360 while retaining a local exact check around the predicted optimum.
+
+A job is not created when its expected useful compute is too small relative to
+setup and transfer overhead. The plan records which alternatives were
+analytical, histogram-estimated, or exact.
 
 Unknown workloads use a representative pilot. Highly skewed workloads use
 cost classes and deterministic heavy/light mixing. A single oversized unit is
@@ -367,6 +416,13 @@ budgets. Reads use projection and streaming aggregation. The final merge rejects
 duplicate logical units, conflicting attempts, schema drift, and unexplained
 missing units.
 
+Reconciliation is a sorted streaming merge between `work_units.parquet` and
+unit-attempt records sorted by `(unit_key, attempt_id)`. Physical shard attempts
+live separately in `shard_attempt_manifest.parquet`; logical outcomes live in
+`unit_attempt_manifest.parquet`. It retains only one logical unit and one record
+batch per source in memory; it never builds Python sets or Pydantic objects for
+the whole campaign.
+
 ### 7.9 Telemetry
 
 Every job records:
@@ -392,6 +448,18 @@ Every job records:
 Telemetry records both p50 and tail behavior by shard and separates queue time
 from runner time. It contains no secrets and no scientific result values used
 for selection.
+
+Runner-local telemetry cannot observe the time spent waiting for a GitHub
+runner. After all execution jobs reach a terminal state, a dedicated
+`collect_timeline` job with read-only `actions: read` permission queries the
+GitHub Actions jobs API for the current run. It paginates every job, records
+`created_at`, `started_at`, `completed_at`, and step timestamps, and joins those
+timestamps to runner-local telemetry by immutable job and attempt identity.
+`queue_seconds` is `started_at - created_at`.
+`runner_bootstrap_proxy_seconds` is the interval from GitHub's job start to the
+first Aurora runtime step. It is explicitly labelled as a proxy rather than an
+unobservable GitHub provisioning measurement. The token is never written to
+logs or outputs.
 
 The final report includes:
 
@@ -723,7 +791,7 @@ Planned shared implementation:
 
 ```text
 docs/GITHUB_RUN_MASTER_STANDARD.md
-schemas/github_run_spec_v3.schema.json
+config/schemas/github_run_spec_v3.schema.json
 config/templates/github_run_v3.yaml
 config/legacy_workflow_allowlist.json
 config/github_capacity_profile.json
@@ -735,13 +803,18 @@ infra/github_performance/preflight.py
 infra/github_performance/telemetry.py
 infra/github_performance/shard_planner.py
 infra/github_performance/execution_planner.py
+infra/github_performance/checkpoint.py
+infra/github_performance/recovery.py
 infra/github_performance/merge_planner.py
 infra/github_performance/verifier.py
 infra/github_performance/workload.py
+infra/github_performance/github_api.py
 
 scripts/aurora_github_run.py
+scripts/aurora_github_recover.py
 scripts/aurora_github_merge.py
 scripts/aurora_github_verify.py
+scripts/collect_github_run_timeline.py
 
 .github/actions/aurora-runtime-setup/action.yml
 .github/workflows/_aurora-future-run-v3.yml
@@ -755,9 +828,10 @@ native kernels are independent.
 
 Because Aurora uses an explicit setuptools package list, implementation must
 register `aurora.infra.github_performance` and its package directory in
-`pyproject.toml`. It must also include nested config templates in package data
-and define optional performance/native build dependencies rather than relying on
-undeclared packages.
+`pyproject.toml`. It must include `config/templates/*.yaml` and
+`config/schemas/*.json` as `aurora` package data. JSON Schema validation is a
+runtime dependency of the mandatory preflight, while DuckDB and native build
+tools remain optional performance dependencies.
 
 ## 11. Required artifacts
 
@@ -766,11 +840,19 @@ preflight_report.json
 performance_contract.json
 performance_pilot.json
 performance_plan.json
+environment_manifest.json
+resolved_run_spec.json
 execution_plan.json
 balanced_shard_plan.json
+work_units.parquet
+balanced_unit_assignments.parquet
 runtime_breakdown.parquet
 parallelism_timeline.csv
 bottleneck_report.json
+recovery_plan.json
+checkpoint_audit.parquet
+shard_attempt_manifest.parquet
+unit_attempt_manifest.parquet
 merge_plan.json
 performance_final.json
 unit_reconciliation.parquet
@@ -841,7 +923,10 @@ Three reference workload shapes are required:
 3. statistical robustness: compute-heavy with expensive merge/reduction.
 
 Synthetic fixtures test failure paths. At least one frozen real Aurora workload
-tests end-to-end performance without reading locked data.
+tests end-to-end performance without reading locked data. Here, "real Aurora
+workload" means the actual `aurora.core.engine` and metrics path, not a mock;
+its compact input may be deterministically generated and hash-frozen so vendor
+revisions and network availability cannot alter the benchmark.
 
 ## 14. Rollout
 
