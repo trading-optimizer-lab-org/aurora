@@ -14,6 +14,10 @@ from aurora.infra.github_performance.contracts import (
 from aurora.infra.github_performance.merge_planner import (
     reconcile_attempt_files,
 )
+from aurora.infra.github_performance.metric_verifier import (
+    read_metric_inputs,
+    verify_metric_inputs,
+)
 from aurora.infra.github_performance.preflight import (
     load_github_yaml,
     validate_run_spec,
@@ -27,7 +31,10 @@ from aurora.infra.github_performance.reference_workload import (
     _evaluate,
     _generate_prices,
 )
-from aurora.infra.github_performance.shard_planner import weighted_lpt
+from aurora.infra.github_performance.shard_planner import (
+    sha256_file,
+    weighted_lpt,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -148,6 +155,13 @@ def test_four_shard_reference_smoke_reconciles_exactly(
             attempt_dir,
             None,
         )
+        assert attempt.metric_inputs_path is not None
+        assert attempt.metric_inputs_sha256 is not None
+        metric_path = attempt_dir / attempt.metric_inputs_path
+        assert sha256_file(metric_path) == attempt.metric_inputs_sha256
+        metric_records = read_metric_inputs(metric_path)
+        assert len(metric_records) == shard.unit_count * 2
+        assert verify_metric_inputs(metric_records).passed is True
         (attempt_dir / "shard_attempt_manifest.json").write_text(
             attempt.model_dump_json(indent=2) + "\n",
             encoding="utf-8",

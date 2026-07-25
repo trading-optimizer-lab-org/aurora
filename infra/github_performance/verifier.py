@@ -18,6 +18,11 @@ from aurora.infra.github_performance.contracts import (
     deep_thaw_json,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
+from aurora.infra.github_performance.metric_verifier import (
+    independent_metric_verification_payload,
+    read_metric_inputs,
+    verify_metric_inputs,
+)
 
 
 TRACEABILITY_COLUMNS = (
@@ -267,6 +272,51 @@ def verify_final_artifact(
         "PROVENANCE_MISSING",
         failures,
     )
+    metric_inputs_path = root / "metric_verification_inputs.parquet"
+    independent_metric_path = root / "independent_metric_verification.json"
+    metric_unit_keys: set[str] = set()
+    if not metric_inputs_path.is_file():
+        failures.append("METRIC_INPUTS_MISSING")
+    independent_metric_report = _read_required_json(
+        root,
+        "independent_metric_verification.json",
+        "INDEPENDENT_METRIC_REPORT_MISSING",
+        failures,
+    )
+    if metric_inputs_path.is_file() and independent_metric_report:
+        try:
+            metric_records = read_metric_inputs(metric_inputs_path)
+            metric_unit_keys = {
+                record.unit_key for record in metric_records
+            }
+            recomputed_metric_report = verify_metric_inputs(metric_records)
+            expected_metric_payload = (
+                independent_metric_verification_payload(
+                    recomputed_metric_report,
+                    metric_inputs_path,
+                )
+            )
+        except (OSError, ValueError, TypeError, pa.ArrowInvalid):
+            failures.append("METRIC_INPUTS_INVALID")
+        else:
+            if not recomputed_metric_report.passed:
+                failures.append("INDEPENDENT_METRICS_MISMATCH")
+            if independent_metric_report != expected_metric_payload:
+                failures.append(
+                    "INDEPENDENT_METRIC_REPORT_INCONSISTENT"
+                )
+            evidence_paths.extend(
+                (
+                    metric_inputs_path.name,
+                    independent_metric_path.name,
+                )
+            )
+            evidence_hashes[metric_inputs_path.name] = sha256_file(
+                metric_inputs_path
+            )
+            evidence_hashes[independent_metric_path.name] = sha256_file(
+                independent_metric_path
+            )
     locked_rows_accessed = int(
         data_audit.get("locked_rows_accessed", -1)
     )
@@ -354,6 +404,25 @@ def verify_final_artifact(
         )
     )
     partial = bool(reconciliation.get("partial", True))
+    reconciliation_path = root / "unit_reconciliation.parquet"
+    if reconciliation_path.is_file():
+        reconciliation_schema = pq.ParquetFile(
+            reconciliation_path
+        ).schema_arrow
+        if {"unit_key", "state"}.issubset(
+            reconciliation_schema.names
+        ):
+            reconciliation_table = pq.read_table(
+                reconciliation_path,
+                columns=["unit_key", "state"],
+            )
+            completed_metric_units = {
+                str(row["unit_key"])
+                for row in reconciliation_table.to_pylist()
+                if row["state"] == "completed"
+            }
+            if completed_metric_units != metric_unit_keys:
+                failures.append("METRIC_EVIDENCE_INCOMPLETE")
     if (
         terminal_sum + terminal_counts["missing_units"]
         != terminal_counts["expected_units"]
@@ -449,11 +518,11 @@ def build_requirements_traceability(
             "final_artifact_manifest.json",
         ),
         (
-            "independent_verification",
-            "Independent final verification passes",
+            "independent_metrics",
+            "Independent metric recalculation matches primary outputs",
             True,
-            evidence.get("independent_verification"),
-            "final_verification_report.json",
+            evidence.get("independent_metrics_equal"),
+            "independent_metric_verification.json",
         ),
     )
     rows = [

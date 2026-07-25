@@ -55,7 +55,7 @@ def _complete_evidence() -> dict[str, bool]:
         "validation_used_for_selection": False,
         "reconciliation_complete": True,
         "artifact_hashes_valid": True,
-        "independent_verification": True,
+        "independent_metrics_equal": True,
     }
 
 

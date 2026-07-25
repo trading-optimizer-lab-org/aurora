@@ -140,6 +140,10 @@ def _manifest_payload(
         "completed_unit_count": 1,
         "output_rows": 1,
         "output_bytes": 128,
+        "runtime_access_ledger_path": "runtime_access_ledger.parquet",
+        "runtime_access_ledger_sha256": "9" * 64,
+        "metric_inputs_path": "metric_verification_inputs.parquet",
+        "metric_inputs_sha256": "a" * 64,
     }
 
 

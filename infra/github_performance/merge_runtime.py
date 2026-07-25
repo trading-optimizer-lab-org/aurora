@@ -34,6 +34,13 @@ from aurora.infra.github_performance.merge_planner import (
     reconcile_attempt_files,
     write_shard_attempt_manifest,
 )
+from aurora.infra.github_performance.metric_verifier import (
+    MetricInputRecord,
+    read_metric_inputs,
+    verify_metric_inputs,
+    write_independent_metric_verification,
+    write_metric_inputs,
+)
 from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.github_performance.verifier import (
     build_requirements_traceability,
@@ -177,6 +184,46 @@ def _verified_runtime_access_path(
     return path
 
 
+def _verified_metric_inputs_path(
+    manifest: AttemptManifest,
+    directory: Path,
+) -> Path:
+    if (
+        manifest.metric_inputs_path is None
+        or manifest.metric_inputs_sha256 is None
+    ):
+        raise PhysicalMergeError(
+            f"metric inputs missing for {manifest.shard_id}"
+        )
+    raw = Path(manifest.metric_inputs_path)
+    candidates = (raw, directory / raw, directory / raw.name)
+    path = next((item for item in candidates if item.is_file()), None)
+    if path is None:
+        raise PhysicalMergeError(
+            f"metric input file missing for {manifest.shard_id}"
+        )
+    if sha256_file(path) != manifest.metric_inputs_sha256:
+        raise PhysicalMergeError(
+            f"metric input hash mismatch for {manifest.shard_id}"
+        )
+    return path
+
+
+def _combine_metric_inputs(paths: Sequence[Path]) -> tuple[
+    MetricInputRecord,
+    ...,
+]:
+    records: list[MetricInputRecord] = []
+    for path in paths:
+        records.extend(read_metric_inputs(path))
+    identities = [(record.unit_key, record.split) for record in records]
+    if len(identities) != len(set(identities)):
+        raise PhysicalMergeError("duplicate metric input identity")
+    return tuple(
+        sorted(records, key=lambda item: (item.unit_key, item.split))
+    )
+
+
 def _write_sorted_parquet(
     source_paths: Sequence[Path],
     output_path: Path,
@@ -271,6 +318,15 @@ def merge_attempt_group(
         root / "runtime_access_ledger.parquet",
         combine_runtime_access_ledgers(access_paths),
     )
+    metric_paths = tuple(
+        _verified_metric_inputs_path(manifest, directory)
+        for manifest, directory in selected
+        if manifest.state is TerminalState.COMPLETED
+    )
+    metric_inputs = write_metric_inputs(
+        root / "metric_verification_inputs.parquet",
+        _combine_metric_inputs(metric_paths),
+    )
     payload = {
         "schema_version": "1",
         "merge_group": merge_group,
@@ -291,6 +347,8 @@ def merge_attempt_group(
         "shard_attempts_sha256": sha256_file(shard_attempts),
         "runtime_access_ledger": access_ledger.name,
         "runtime_access_ledger_sha256": sha256_file(access_ledger),
+        "metric_inputs": metric_inputs.name,
+        "metric_inputs_sha256": sha256_file(metric_inputs),
     }
     return _atomic_json(root / "partial_merge_manifest.json", payload)
 
@@ -411,6 +469,27 @@ def final_merge(
             "runtime access evidence is missing from a partial merge"
         )
     access_ledger = combine_runtime_access_ledgers(partial_access_paths)
+    partial_metric_paths = tuple(
+        path / "metric_verification_inputs.parquet"
+        for path in partial_dirs
+        if (path / "metric_verification_inputs.parquet").is_file()
+    )
+    if len(partial_metric_paths) != len(partial_dirs):
+        raise PhysicalMergeError(
+            "metric inputs are missing from a partial merge"
+        )
+    metric_inputs_path = write_metric_inputs(
+        root / "metric_verification_inputs.parquet",
+        _combine_metric_inputs(partial_metric_paths),
+    )
+    metric_verification = verify_metric_inputs(
+        read_metric_inputs(metric_inputs_path)
+    )
+    write_independent_metric_verification(
+        metric_verification,
+        metric_inputs_path,
+        root / "independent_metric_verification.json",
+    )
     environment_path = root / "environment_manifest.json"
     environment_manifest: Mapping[str, Any] = {}
     if environment_path.is_file():
@@ -455,7 +534,7 @@ def final_merge(
         ),
         "reconciliation_complete": not reconciliation.partial,
         "artifact_hashes_valid": True,
-        "independent_verification": True,
+        "independent_metrics_equal": metric_verification.passed,
     }
     write_requirements_traceability(
         build_requirements_traceability(spec, evidence),
@@ -478,6 +557,12 @@ def final_merge(
             "validation_used_for_selection": (
                 audits.policy.validation_used_for_selection
             ),
+            "independent_metrics_equal": metric_verification.passed,
+            "metric_records_verified": (
+                metric_verification.records_verified
+            ),
+            "metric_fields_compared": metric_verification.fields_compared,
+            "metric_mismatches": len(metric_verification.mismatches),
         },
     )
     return write_final_artifact_manifest(

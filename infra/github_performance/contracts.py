@@ -371,6 +371,8 @@ class AttemptManifest(FrozenModel):
     output_bytes: NonNegativeInt
     runtime_access_ledger_path: str | None = None
     runtime_access_ledger_sha256: Sha256 | None = None
+    metric_inputs_path: str | None = None
+    metric_inputs_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def _validate_terminal_evidence(self) -> AttemptManifest:
@@ -380,9 +382,16 @@ class AttemptManifest(FrozenModel):
                 self.artifact_name,
                 self.unit_attempts_path,
                 self.unit_attempts_sha256,
+                self.runtime_access_ledger_path,
+                self.runtime_access_ledger_sha256,
+                self.metric_inputs_path,
+                self.metric_inputs_sha256,
             )
             if any(value is None for value in required):
-                raise ValueError("completed attempt requires output and unit-attempt evidence")
+                raise ValueError(
+                    "completed attempt requires output, unit, runtime, "
+                    "and metric evidence"
+                )
         elif not self.reason_code:
             raise ValueError("non-completed attempt requires reason_code")
         return self

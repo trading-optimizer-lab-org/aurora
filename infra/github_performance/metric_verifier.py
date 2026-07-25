@@ -3,12 +3,107 @@
 from __future__ import annotations
 
 import math
+import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+from pydantic import Field, field_validator
 
-from aurora.infra.github_performance.contracts import FrozenModel
+from aurora.infra.github_performance.contracts import (
+    FrozenModel,
+    deep_freeze_json,
+    deep_thaw_json,
+)
+from aurora.infra.github_performance.shard_planner import sha256_file
+
+
+METRIC_INPUT_SCHEMA = pa.schema(
+    [
+        pa.field("unit_key", pa.string(), nullable=False),
+        pa.field("split", pa.string(), nullable=False),
+        pa.field(
+            "returns",
+            pa.list_(pa.field("item", pa.float64(), nullable=True)),
+            nullable=False,
+        ),
+        pa.field("periods_per_year", pa.int32(), nullable=False),
+        pa.field("undefined_policy", pa.string(), nullable=False),
+        pa.field("reported_json", pa.string(), nullable=False),
+    ],
+    metadata={b"schema_version": b"1"},
+)
+
+DEFAULT_METRIC_TOLERANCES: Mapping[str, Mapping[str, float]] = {
+    "total_return_pct": {"absolute": 0.0001, "relative": 1e-12},
+    "cagr_pct": {"absolute": 0.000051, "relative": 1e-12},
+    "annualized_return_pct": {"absolute": 0.000051, "relative": 1e-12},
+    "annualized_volatility_pct": {
+        "absolute": 0.000051,
+        "relative": 1e-12,
+    },
+    "sharpe": {"absolute": 0.000051, "relative": 1e-12},
+    "sortino": {"absolute": 0.000051, "relative": 1e-12},
+    "max_drawdown_pct": {"absolute": 0.000051, "relative": 1e-12},
+    "calmar": {"absolute": 0.000051, "relative": 1e-12},
+    "profit_factor": {"absolute": 0.000051, "relative": 1e-12},
+    "win_rate": {"absolute": 0.000051, "relative": 1e-12},
+    "average_return_pct": {"absolute": 1e-12, "relative": 1e-12},
+    "median_return_pct": {"absolute": 1e-12, "relative": 1e-12},
+    "period_count_raw": {"absolute": 0.0, "relative": 0.0},
+    "period_count": {"absolute": 0.0, "relative": 0.0},
+    "final_nav": {"absolute": 0.00000051, "relative": 1e-12},
+}
+
+
+class MetricInputRecord(FrozenModel):
+    """Raw scientific inputs plus values reported by the primary engine."""
+
+    unit_key: str
+    split: str
+    returns: tuple[float, ...]
+    periods_per_year: int = Field(ge=1)
+    undefined_policy: str
+    reported: Mapping[str, float | int | None]
+
+    @field_validator("reported", mode="after")
+    @classmethod
+    def _freeze_reported(
+        cls,
+        value: Mapping[str, float | int | None],
+    ) -> Mapping[str, float | int | None]:
+        return deep_freeze_json(value)
+
+    @field_validator("undefined_policy")
+    @classmethod
+    def _known_undefined_policy(cls, value: str) -> str:
+        if value != "null":
+            raise ValueError("only the fail-closed null policy is supported")
+        return value
+
+
+class MetricMismatch(FrozenModel):
+    unit_key: str
+    split: str
+    field: str
+    reported: float | int | None
+    recomputed: float | int | None
+    absolute_error: float | None
+    relative_error: float | None
+    absolute_tolerance: float
+    relative_tolerance: float
+    reason: str
+
+
+class IndependentMetricVerification(FrozenModel):
+    schema_version: str = "1"
+    passed: bool
+    records_verified: int = Field(ge=0)
+    fields_compared: int = Field(ge=0)
+    mismatches: tuple[MetricMismatch, ...]
 
 
 class MetricFieldResult(FrozenModel):
@@ -225,3 +320,235 @@ def verify_metric_table(
         mismatched_fields=mismatched,
     )
 
+
+def _encode_metric_value(value: float | int | None) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError("boolean is not a metric value")
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    number = float(value)
+    if math.isnan(number):
+        return {"nonfinite": "nan"}
+    if math.isinf(number):
+        return {"nonfinite": "+inf" if number > 0.0 else "-inf"}
+    return number
+
+
+def _decode_metric_value(value: Any) -> float | int | None:
+    if value is None or isinstance(value, (int, float)):
+        return value
+    if isinstance(value, Mapping):
+        marker = value.get("nonfinite")
+        if marker == "nan":
+            return float("nan")
+        if marker == "+inf":
+            return float("inf")
+        if marker == "-inf":
+            return float("-inf")
+    raise ValueError("invalid encoded metric value")
+
+
+def _reported_json(
+    reported: Mapping[str, float | int | None],
+) -> str:
+    payload = {
+        str(field): _encode_metric_value(value)
+        for field, value in sorted(reported.items())
+    }
+    return json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _read_reported_json(value: str) -> Mapping[str, float | int | None]:
+    payload = json.loads(value)
+    if not isinstance(payload, Mapping):
+        raise ValueError("reported metrics must be a mapping")
+    return {
+        str(field): _decode_metric_value(metric)
+        for field, metric in payload.items()
+    }
+
+
+def write_metric_inputs(
+    path: Path,
+    records: Sequence[MetricInputRecord],
+) -> Path:
+    """Write deterministic, independently reusable metric evidence."""
+
+    ordered = tuple(
+        sorted(records, key=lambda item: (item.unit_key, item.split))
+    )
+    identities = [(item.unit_key, item.split) for item in ordered]
+    if len(identities) != len(set(identities)):
+        raise ValueError("duplicate metric input identity")
+    rows = [
+        {
+            "unit_key": record.unit_key,
+            "split": record.split,
+            "returns": list(record.returns),
+            "periods_per_year": record.periods_per_year,
+            "undefined_policy": record.undefined_policy,
+            "reported_json": _reported_json(record.reported),
+        }
+        for record in ordered
+    ]
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    table = pa.Table.from_pylist(rows, schema=METRIC_INPUT_SCHEMA)
+    pq.write_table(
+        table,
+        temporary,
+        compression="zstd",
+        version="2.6",
+    )
+    temporary.replace(destination)
+    return destination
+
+
+def read_metric_inputs(path: Path) -> tuple[MetricInputRecord, ...]:
+    table = pq.read_table(Path(path), schema=METRIC_INPUT_SCHEMA)
+    records = tuple(
+        MetricInputRecord(
+            unit_key=str(row["unit_key"]),
+            split=str(row["split"]),
+            returns=tuple(float(value) for value in row["returns"]),
+            periods_per_year=int(row["periods_per_year"]),
+            undefined_policy=str(row["undefined_policy"]),
+            reported=_read_reported_json(str(row["reported_json"])),
+        )
+        for row in table.to_pylist()
+    )
+    identities = [(item.unit_key, item.split) for item in records]
+    if len(identities) != len(set(identities)):
+        raise ValueError("duplicate metric input identity")
+    return records
+
+
+def _normalise_undefined(
+    metrics: Mapping[str, float | int | None],
+    undefined_policy: str,
+) -> Mapping[str, float | int | None]:
+    if undefined_policy != "null":
+        raise ValueError("only the fail-closed null policy is supported")
+    normalised: dict[str, float | int | None] = {}
+    for field, value in metrics.items():
+        if (
+            isinstance(value, (float, np.floating))
+            and not math.isfinite(float(value))
+        ):
+            normalised[field] = None
+        else:
+            normalised[field] = value
+    return normalised
+
+
+def verify_metric_inputs(
+    records: Sequence[MetricInputRecord],
+    *,
+    tolerances: Mapping[str, Mapping[str, float]] = (
+        DEFAULT_METRIC_TOLERANCES
+    ),
+) -> IndependentMetricVerification:
+    """Recompute every declared field from raw returns."""
+
+    mismatches: list[MetricMismatch] = []
+    fields_compared = 0
+    for record in records:
+        unknown = sorted(set(record.reported) - set(tolerances))
+        if unknown:
+            raise ValueError(
+                "metric inputs contain fields without a tolerance: "
+                + ", ".join(unknown)
+            )
+        recomputed = _normalise_undefined(
+            recompute_metrics(
+                record.returns,
+                periods_per_year=record.periods_per_year,
+                undefined_policy=record.undefined_policy,
+            ),
+            record.undefined_policy,
+        )
+        selected_tolerances = {
+            field: tolerances[field] for field in record.reported
+        }
+        comparison = verify_metric_table(
+            record.reported,
+            recomputed,
+            tolerances=selected_tolerances,
+        )
+        fields_compared += len(comparison.fields)
+        for field in comparison.fields:
+            if field.passed:
+                continue
+            mismatches.append(
+                MetricMismatch(
+                    unit_key=record.unit_key,
+                    split=record.split,
+                    field=field.field,
+                    reported=field.reported,
+                    recomputed=field.recomputed,
+                    absolute_error=field.absolute_error,
+                    relative_error=field.relative_error,
+                    absolute_tolerance=field.absolute_tolerance,
+                    relative_tolerance=field.relative_tolerance,
+                    reason=field.reason,
+                )
+            )
+    return IndependentMetricVerification(
+        passed=not mismatches,
+        records_verified=len(records),
+        fields_compared=fields_compared,
+        mismatches=tuple(mismatches),
+    )
+
+
+def independent_metric_verification_payload(
+    report: IndependentMetricVerification,
+    metric_inputs_path: Path,
+) -> Mapping[str, Any]:
+    report_payload = deep_thaw_json(report)
+    for mismatch in report_payload["mismatches"]:
+        mismatch["reported"] = _encode_metric_value(
+            mismatch["reported"]
+        )
+        mismatch["recomputed"] = _encode_metric_value(
+            mismatch["recomputed"]
+        )
+    return {
+        **report_payload,
+        "metric_inputs_path": Path(metric_inputs_path).name,
+        "metric_inputs_sha256": sha256_file(Path(metric_inputs_path)),
+    }
+
+
+def write_independent_metric_verification(
+    report: IndependentMetricVerification,
+    metric_inputs_path: Path,
+    path: Path,
+) -> Path:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(
+            independent_metric_verification_payload(
+                report,
+                Path(metric_inputs_path),
+            ),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(destination)
+    return destination

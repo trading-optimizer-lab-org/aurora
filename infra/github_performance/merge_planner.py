@@ -31,7 +31,7 @@ from aurora.infra.github_performance.shard_planner import sha256_file
 
 
 UNIT_ATTEMPT_SCHEMA_VERSION = "1"
-SHARD_ATTEMPT_SCHEMA_VERSION = "1"
+SHARD_ATTEMPT_SCHEMA_VERSION = "2"
 RECONCILIATION_SCHEMA_VERSION = "1"
 UNIT_ATTEMPT_SCHEMA = pa.schema(
     [
@@ -63,6 +63,10 @@ SHARD_ATTEMPT_SCHEMA = pa.schema(
         pa.field("completed_unit_count", pa.int64(), nullable=False),
         pa.field("output_rows", pa.int64(), nullable=False),
         pa.field("output_bytes", pa.int64(), nullable=False),
+        pa.field("runtime_access_ledger_path", pa.string(), nullable=True),
+        pa.field("runtime_access_ledger_sha256", pa.string(), nullable=True),
+        pa.field("metric_inputs_path", pa.string(), nullable=True),
+        pa.field("metric_inputs_sha256", pa.string(), nullable=True),
     ]
 )
 RECONCILIATION_SCHEMA = pa.schema(
