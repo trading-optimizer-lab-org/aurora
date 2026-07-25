@@ -445,6 +445,15 @@ class RecoveryPlan(FrozenModel):
         return tuple(deep_freeze_json(item) for item in value)
 
 
+class UnitReconciliationRecord(FrozenModel):
+    unit_key: str
+    state: TerminalState
+    selected_attempt_id: str
+    output_sha256: Sha256 | None
+    reason_code: str | None
+    duplicate_attempt_ids: tuple[str, ...] = ()
+
+
 class ReconciliationResult(FrozenModel):
     expected_units: NonNegativeInt
     completed: NonNegativeInt
@@ -456,6 +465,7 @@ class ReconciliationResult(FrozenModel):
     conflicting_unit_keys: tuple[str, ...]
     missing_unit_keys: tuple[str, ...]
     partial: bool
+    unit_records: tuple[UnitReconciliationRecord, ...] = ()
 
     @model_validator(mode="after")
     def _validate_totals(self) -> ReconciliationResult:
@@ -492,6 +502,17 @@ class VerificationReport(FrozenModel):
     standard_runner_only: bool
     matrix_job_ceiling_respected: bool
     evidence_paths: tuple[str, ...]
+    terminal_counts: Mapping[str, int] = Field(default_factory=dict)
+    evidence_sha256: Mapping[str, Sha256] = Field(default_factory=dict)
+    failure_codes: tuple[str, ...] = ()
+
+    @field_validator("terminal_counts", "evidence_sha256", mode="after")
+    @classmethod
+    def _freeze_evidence_mapping(
+        cls,
+        value: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        return deep_freeze_json(value)
 
 
 class BenchmarkReport(FrozenModel):

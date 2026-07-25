@@ -1449,7 +1449,7 @@ gh pr checks --watch
 - Produces:
   `write_pilot_result(pilot, path) -> Path` for `performance_pilot.json`.
 
-- [ ] **Step 1: Write deterministic planner tests**
+- [x] **Step 1: Write deterministic planner tests**
 
 ```python
 def test_lpt_is_balanced_and_deterministic(tmp_path: Path) -> None:
@@ -1519,7 +1519,7 @@ def test_large_path_runs_at_most_three_exact_lpt_calls(
     assert 1 <= len(calls) <= 3
 ```
 
-- [ ] **Step 2: Implement weighted LPT**
+- [x] **Step 2: Implement weighted LPT**
 
 Write `work_units.parquet` with the fixed columns `unit_key`,
 `estimated_seconds`, `payload_ref`, and `payload_sha256`, sorted by
@@ -1547,7 +1547,7 @@ single Actions artifact.
 `MatrixOutputTooLarge` before writing `$GITHUB_OUTPUT` when the combined UTF-8
 payload reaches 262,144 bytes.
 
-- [ ] **Step 3: Implement the adaptive wall-time search**
+- [x] **Step 3: Implement the adaptive wall-time search**
 
 For each feasible job count `j` from 1 through
 `min(unit_count, planner_max_jobs)`, first compute a cheap lower bound using
@@ -1581,7 +1581,7 @@ three exact LPT calls. Add a skewed-cost test where the exact neighbour beats
 the provisional histogram winner. This checks million-unit control flow without
 allocating a million Python objects in CI.
 
-- [ ] **Step 4: Assemble and serialize one immutable execution plan**
+- [x] **Step 4: Assemble and serialize one immutable execution plan**
 
 Add this test:
 
@@ -1624,7 +1624,7 @@ descriptors and the hash of `balanced_unit_assignments.parquet`; the assignment
 catalog contains every logical unit key exactly once and sorted by
 `(shard_id, unit_key)`.
 
-- [ ] **Step 5: Push and verify in GitHub**
+- [x] **Step 5: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/shard_planner.py \
