@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aurora.infra.github_performance.adapter import (
     Phase1CompatibilityAdapter,
     StableWorkloadAdapter,
@@ -12,6 +14,7 @@ from aurora.infra.github_performance.contracts import (
     RunSpec,
     WorkUnit,
 )
+from aurora.infra.github_performance.workload import WorkloadLoadError
 from github_performance_helpers import minimal_valid_spec
 
 
@@ -69,6 +72,15 @@ class NativeWorkload:
 
     def merge_outputs(self, inputs, output_dir):
         return "native-merge"
+
+
+class IdentityDroppingWorkload(NativeWorkload):
+    def describe_contract(self):
+        return {
+            "name": "identity-dropping",
+            "scientific_contract": {"causal": True},
+            "original_candidate_id_preserved": False,
+        }
 
 
 def _spec() -> RunSpec:
@@ -154,3 +166,13 @@ def test_native_phase2_workload_delegates_every_stable_method(
     assert adapter.merge_outputs((tmp_path / "a",), tmp_path) == (
         "native-merge"
     )
+
+
+def test_native_phase2_workload_cannot_drop_candidate_identity() -> None:
+    adapter = adapt_workload(IdentityDroppingWorkload())
+
+    with pytest.raises(
+        WorkloadLoadError,
+        match="must preserve candidate identities",
+    ):
+        adapter.describe_contract()

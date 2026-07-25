@@ -274,6 +274,41 @@ class WorkUnitManifest(FrozenModel):
     total_estimated_seconds: NonNegativeFloat
 
 
+class WorkloadContract(FrozenModel):
+    """Stable scientific and execution interface for one workload."""
+
+    schema_version: Literal["1"] = "1"
+    interface_kind: Literal["phase2_native", "phase1_compatibility"]
+    adapter_version: str
+    workload_name: str
+    scientific_contract: Mapping[str, Any]
+    original_candidate_id_preserved: bool
+    candidate_identity_mode: Literal["preserve_original"] = (
+        "preserve_original"
+    )
+    deduplication_mode: Literal["exact_content_hash_only"] = (
+        "exact_content_hash_only"
+    )
+    methods: tuple[str, ...]
+
+    @field_validator("scientific_contract", mode="after")
+    @classmethod
+    def _freeze_scientific_contract(
+        cls,
+        value: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        return deep_freeze_json(value)
+
+
+class UnitVerification(FrozenModel):
+    """Exact verification result for one logical workload unit."""
+
+    unit_key: str
+    passed: bool
+    output_sha256: Sha256 | None
+    failure_codes: tuple[str, ...]
+
+
 class ShardDefinition(FrozenModel):
     shard_id: str
     assignment_artifact: str
