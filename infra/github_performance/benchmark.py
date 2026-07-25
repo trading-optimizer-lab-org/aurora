@@ -31,12 +31,16 @@ class BenchmarkReport(FrozenModel):
     same_policy_hash: bool
     same_snapshot_hash: bool
     same_environment_sha256: bool
+    dependency_environment_reproducible: bool
+    setup_fast_path_selected: bool
     same_cache_state: bool
     same_performance_contract: bool
     same_selected_jobs: bool
     baseline_assignment_strategy: str
     optimized_assignment_strategy: str
     speedup: float
+    setup_cold_speedup: float
+    setup_warm_speedup: float
     estimated_billable_minutes_ratio: float
     baseline_predicted_error_fraction: float
     optimized_predicted_error_fraction: float
@@ -49,6 +53,7 @@ class BenchmarkReport(FrozenModel):
     baseline: Mapping[str, Any]
     optimized: Mapping[str, Any]
     bottleneck: Mapping[str, Any]
+    environment_setup_benchmark: Mapping[str, Any]
     failure_codes: tuple[str, ...]
 
 
@@ -90,6 +95,17 @@ def _run_metrics(root: Path) -> dict[str, Any]:
     plan = _json(root / "execution_plan.json")
     contract = _json(root / "performance_contract.json")
     environment = _json(root / "environment_manifest.json")
+    observations = environment.get("observations", {})
+    if not isinstance(observations, dict):
+        observations = {}
+    cache = environment.get("cache", {})
+    if not isinstance(cache, dict):
+        cache = {}
+    delivery_state = (
+        str(observations.get("install_mode", "wheelhouse"))
+        if environment.get("schema_version") == "2"
+        else f"cache_hit={bool(cache.get('hit', False))}"
+    )
     merge = _json(root / "final_merge_summary.json")
     wall = float(timeline["workflow_wall_seconds"])
     predicted = float(plan["job_count"]["predicted_seconds"])
@@ -173,7 +189,8 @@ def _run_metrics(root: Path) -> dict[str, Any]:
         "policy_hash": str(contract["policy_hash"]),
         "snapshot_hash": str(contract["snapshot_hash"]),
         "environment_sha256": str(contract["environment_sha256"]),
-        "environment_cache_hit": bool(environment["cache"]["hit"]),
+        "environment_cache_hit": bool(cache.get("hit", False)),
+        "environment_delivery_state": delivery_state,
         "standard_runner_only": bool(
             contract["standard_runner_only"]
         ),
@@ -227,6 +244,7 @@ def build_bottleneck_report(
 def compare_runs(
     reference_dir: Path,
     optimized_dir: Path,
+    environment_setup_benchmark: Path | Mapping[str, Any] | None = None,
 ) -> BenchmarkReport:
     """Compare performance only after exact unit-level equivalence."""
 
@@ -261,8 +279,31 @@ def compare_runs(
         == optimized["environment_sha256"]
     )
     same_cache_state = (
-        baseline["environment_cache_hit"]
-        == optimized["environment_cache_hit"]
+        baseline["environment_delivery_state"]
+        == optimized["environment_delivery_state"]
+    )
+    if environment_setup_benchmark is None:
+        setup_benchmark: dict[str, Any] = {
+            "schema_version": "0",
+            "status": "not_supplied",
+            "dependency_environment_reproducible": True,
+            "fast_path_selected": True,
+            "cold_speedup": 0.0,
+            "warm_speedup": 0.0,
+            "failure_codes": [],
+        }
+    elif isinstance(environment_setup_benchmark, Mapping):
+        setup_benchmark = dict(environment_setup_benchmark)
+    else:
+        setup_benchmark = _json(Path(environment_setup_benchmark))
+    dependency_reproducible = bool(
+        setup_benchmark.get(
+            "dependency_environment_reproducible",
+            False,
+        )
+    )
+    setup_fast_path_selected = bool(
+        setup_benchmark.get("fast_path_selected", False)
     )
     same_performance_contract = (
         baseline["performance_contract_sha256"]
@@ -302,6 +343,11 @@ def compare_runs(
         (same_policy, "POLICY_HASH_MISMATCH"),
         (same_snapshot, "SNAPSHOT_HASH_MISMATCH"),
         (same_environment, "ENVIRONMENT_HASH_MISMATCH"),
+        (
+            dependency_reproducible,
+            "DEPENDENCY_ENVIRONMENT_NOT_REPRODUCIBLE",
+        ),
+        (setup_fast_path_selected, "SETUP_FAST_PATH_REJECTED"),
         (same_cache_state, "CACHE_STATE_MISMATCH"),
         (
             same_performance_contract,
@@ -325,6 +371,12 @@ def compare_runs(
         (not partial, "PARTIAL_OR_INCOMPLETE"),
     )
     failures.extend(code for passed, code in checks if not passed)
+    failures.extend(
+        str(code)
+        for code in setup_benchmark.get("failure_codes", [])
+        if str(code)
+    )
+    failures = sorted(set(failures))
     timing_comparable = not failures
     for metrics in (baseline, optimized):
         canonical = float(metrics["canonical_setup_seconds_total"])
@@ -363,6 +415,8 @@ def compare_runs(
         same_policy_hash=same_policy,
         same_snapshot_hash=same_snapshot,
         same_environment_sha256=same_environment,
+        dependency_environment_reproducible=dependency_reproducible,
+        setup_fast_path_selected=setup_fast_path_selected,
         same_cache_state=same_cache_state,
         same_performance_contract=same_performance_contract,
         same_selected_jobs=same_jobs,
@@ -373,6 +427,12 @@ def compare_runs(
             optimized["assignment_strategy"]
         ),
         speedup=speedup,
+        setup_cold_speedup=float(
+            setup_benchmark.get("cold_speedup", 0.0)
+        ),
+        setup_warm_speedup=float(
+            setup_benchmark.get("warm_speedup", 0.0)
+        ),
         estimated_billable_minutes_ratio=billable_ratio,
         baseline_predicted_error_fraction=float(
             baseline["predicted_error_fraction"]
@@ -389,7 +449,8 @@ def compare_runs(
         baseline=baseline,
         optimized=optimized,
         bottleneck=bottleneck,
-        failure_codes=tuple(sorted(failures)),
+        environment_setup_benchmark=setup_benchmark,
+        failure_codes=tuple(failures),
     )
 
 
@@ -441,6 +502,12 @@ def write_benchmark_outputs(
             "timing_comparable": report.timing_comparable,
             "same_performance_contract": (
                 report.same_performance_contract
+            ),
+            "dependency_environment_reproducible": (
+                report.dependency_environment_reproducible
+            ),
+            "setup_fast_path_selected": (
+                report.setup_fast_path_selected
             ),
             "compared_units": report.compared_units,
             "locked_opened": report.locked_opened,

@@ -35,6 +35,11 @@ on:
         required: false
         default: ""
         type: string
+      wheelhouse_artifact_name:
+        description: Existing immutable wheelhouse artifact to reuse
+        required: false
+        default: ""
+        type: string
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
@@ -49,7 +54,7 @@ env:
   LC_ALL: C.UTF-8
   LANG: C.UTF-8
   AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
 jobs:
   validate:
@@ -122,12 +127,20 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download shared immutable wheelhouse
+        if: inputs.wheelhouse_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Set up build Python
+        if: inputs.wheelhouse_artifact_name == ''
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: ""
       - name: Build immutable wheelhouse once
+        if: inputs.wheelhouse_artifact_name == ''
         run: |
           set -euo pipefail
           source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
@@ -155,6 +168,7 @@ jobs:
               )
           PY
       - name: Upload immutable wheelhouse
+        if: inputs.wheelhouse_artifact_name == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
