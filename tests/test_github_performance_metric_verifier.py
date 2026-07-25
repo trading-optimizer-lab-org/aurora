@@ -6,8 +6,12 @@ import numpy as np
 import pytest
 
 from aurora.infra.github_performance.metric_verifier import (
+    MetricInputRecord,
+    read_metric_inputs,
     recompute_metrics,
+    verify_metric_inputs,
     verify_metric_table,
+    write_metric_inputs,
 )
 
 
@@ -150,3 +154,71 @@ def test_nan_infinity_and_signed_zero_are_not_silently_equivalent() -> None:
     assert infinity_report.passed is False
     assert signed_zero_report.passed is False
 
+
+def test_metric_input_file_recomputes_every_reported_field(
+    tmp_path,
+) -> None:
+    returns = (0.02, -0.01, 0.03, -0.02)
+    reported = recompute_metrics(
+        returns,
+        periods_per_year=4,
+        undefined_policy="null",
+    )
+    path = write_metric_inputs(
+        tmp_path / "metric_verification_inputs.parquet",
+        (
+            MetricInputRecord(
+                unit_key="u001",
+                split="validation",
+                returns=returns,
+                periods_per_year=4,
+                undefined_policy="null",
+                reported=reported,
+            ),
+        ),
+    )
+
+    records = read_metric_inputs(path)
+    report = verify_metric_inputs(records)
+
+    assert len(records) == 1
+    assert report.passed is True
+    assert report.records_verified == 1
+    assert report.fields_compared == len(reported)
+    assert report.mismatches == ()
+
+
+def test_metric_input_file_detects_tampered_reported_metric(
+    tmp_path,
+) -> None:
+    returns = (0.02, -0.01, 0.03, -0.02)
+    reported = dict(
+        recompute_metrics(
+            returns,
+            periods_per_year=4,
+            undefined_policy="null",
+        )
+    )
+    reported["sharpe"] = float(reported["sharpe"]) + 0.5
+    path = write_metric_inputs(
+        tmp_path / "metric_verification_inputs.parquet",
+        (
+            MetricInputRecord(
+                unit_key="u001",
+                split="validation",
+                returns=returns,
+                periods_per_year=4,
+                undefined_policy="null",
+                reported=reported,
+            ),
+        ),
+    )
+
+    report = verify_metric_inputs(read_metric_inputs(path))
+
+    assert report.passed is False
+    assert report.records_verified == 1
+    assert len(report.mismatches) == 1
+    assert report.mismatches[0].unit_key == "u001"
+    assert report.mismatches[0].split == "validation"
+    assert report.mismatches[0].field == "sharpe"

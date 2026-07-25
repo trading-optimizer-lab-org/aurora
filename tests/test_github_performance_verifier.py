@@ -15,6 +15,13 @@ from aurora.infra.github_performance.audits import (
     build_required_audits,
     write_required_audits,
 )
+from aurora.infra.github_performance.metric_verifier import (
+    MetricInputRecord,
+    recompute_metrics,
+    verify_metric_inputs,
+    write_independent_metric_verification,
+    write_metric_inputs,
+)
 from aurora.infra.github_performance.merge_planner import (
     reconcile_attempts,
     write_reconciliation,
@@ -101,6 +108,41 @@ def _write_safe_runtime_audits(tmp_path: Path, spec: RunSpec) -> None:
     write_required_audits(tmp_path, audits)
 
 
+def _write_safe_metric_evidence(tmp_path: Path) -> None:
+    returns = (0.02, -0.01, 0.03, -0.02)
+    reported = recompute_metrics(
+        returns,
+        periods_per_year=252,
+        undefined_policy="null",
+    )
+    inputs = write_metric_inputs(
+        tmp_path / "metric_verification_inputs.parquet",
+        (
+            MetricInputRecord(
+                unit_key="u1",
+                split="validation",
+                returns=returns,
+                periods_per_year=252,
+                undefined_policy="null",
+                reported=reported,
+            ),
+        ),
+    )
+    report = verify_metric_inputs((MetricInputRecord(
+        unit_key="u1",
+        split="validation",
+        returns=returns,
+        periods_per_year=252,
+        undefined_policy="null",
+        reported=reported,
+    ),))
+    write_independent_metric_verification(
+        report,
+        inputs,
+        tmp_path / "independent_metric_verification.json",
+    )
+
+
 def test_traceability_has_exact_required_columns() -> None:
     spec = RunSpec.model_validate(minimal_valid_spec())
     table = build_requirements_traceability(spec, _complete_evidence())
@@ -182,6 +224,7 @@ def test_final_verifier_accepts_complete_untampered_artifact(
         encoding="utf-8",
     )
     _write_safe_runtime_audits(tmp_path, spec)
+    _write_safe_metric_evidence(tmp_path)
     write_final_artifact_manifest(
         tmp_path,
         tmp_path / "final_artifact_manifest.json",
@@ -229,6 +272,7 @@ def test_final_verifier_reads_streaming_reconciliation_footer(
         tmp_path / "requirements_traceability.csv",
     )
     _write_safe_runtime_audits(tmp_path, spec)
+    _write_safe_metric_evidence(tmp_path)
     write_final_artifact_manifest(
         tmp_path,
         tmp_path / "final_artifact_manifest.json",
@@ -274,6 +318,35 @@ def test_final_verifier_requires_runtime_derived_policy_audits(
     assert "POLICY_AUDIT_MISSING" in report.failure_codes
     assert "RUNTIME_AUDIT_MISSING" in report.failure_codes
     assert "PROVENANCE_MISSING" in report.failure_codes
+
+
+def test_final_verifier_requires_independent_metric_inputs_and_report(
+    tmp_path: Path,
+) -> None:
+    spec = _resolved_fixture(tmp_path)
+    reconciliation = reconcile_attempts(
+        {"u1"},
+        [completed_unit("u1", "a1", "1" * 64)],
+    )
+    write_reconciliation(
+        reconciliation,
+        tmp_path / "unit_reconciliation.parquet",
+    )
+    write_requirements_traceability(
+        build_requirements_traceability(spec, _complete_evidence()),
+        tmp_path / "requirements_traceability.csv",
+    )
+    _write_safe_runtime_audits(tmp_path, spec)
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is False
+    assert "METRIC_INPUTS_MISSING" in report.failure_codes
+    assert "INDEPENDENT_METRIC_REPORT_MISSING" in report.failure_codes
 
 
 def test_final_verifier_rejects_declared_safe_policy_with_locked_runtime_rows(
