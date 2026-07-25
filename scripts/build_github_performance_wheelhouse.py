@@ -32,14 +32,17 @@ def _load_environment_module():
     return module
 
 
-_environment = _load_environment_module()
-build_wheelhouse_manifest = _environment.build_wheelhouse_manifest
-current_target = _environment.current_target
-load_wheelhouse_manifest = _environment.load_wheelhouse_manifest
-parse_hashed_lock = _environment.parse_hashed_lock
-verify_wheelhouse = _environment.verify_wheelhouse
-write_dependency_lock_manifest = _environment.write_dependency_lock_manifest
-write_wheelhouse_manifest = _environment.write_wheelhouse_manifest
+def _environment_api():
+    return _load_environment_module()
+
+
+def _bootstrap_packaging_from_wheelhouse(wheelhouse: Path) -> None:
+    wheels = sorted(wheelhouse.glob("packaging-*.whl"))
+    if len(wheels) != 1:
+        raise RuntimeError(
+            "locked wheelhouse must contain exactly one packaging wheel"
+        )
+    sys.path.insert(0, str(wheels[0]))
 
 
 def _run(command: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -58,7 +61,6 @@ def _build(args: argparse.Namespace) -> int:
         shutil.rmtree(wheelhouse)
     wheelhouse.mkdir(parents=True)
 
-    dependency_lock = parse_hashed_lock(lock_path)
     _run(
         [
             sys.executable,
@@ -74,6 +76,9 @@ def _build(args: argparse.Namespace) -> int:
             str(lock_path),
         ]
     )
+    _bootstrap_packaging_from_wheelhouse(wheelhouse)
+    environment = _environment_api()
+    dependency_lock = environment.parse_hashed_lock(lock_path)
 
     with tempfile.TemporaryDirectory(prefix="aurora-wheel-build-") as temp:
         build_venv = Path(temp) / "venv"
@@ -114,8 +119,8 @@ def _build(args: argparse.Namespace) -> int:
             env=build_env,
         )
 
-    python_version, runner_os, runner_arch = current_target()
-    manifest = build_wheelhouse_manifest(
+    python_version, runner_os, runner_arch = environment.current_target()
+    manifest = environment.build_wheelhouse_manifest(
         wheelhouse=wheelhouse,
         dependency_lock=dependency_lock,
         python_version=python_version,
@@ -123,11 +128,11 @@ def _build(args: argparse.Namespace) -> int:
         runner_arch=runner_arch,
         code_sha=args.code_sha,
     )
-    write_dependency_lock_manifest(
+    environment.write_dependency_lock_manifest(
         wheelhouse / "dependency_lock_manifest.json",
         dependency_lock,
     )
-    write_wheelhouse_manifest(
+    environment.write_wheelhouse_manifest(
         wheelhouse / "wheelhouse_manifest.json",
         manifest,
     )
@@ -151,12 +156,13 @@ def _build(args: argparse.Namespace) -> int:
 
 
 def _verify(args: argparse.Namespace) -> int:
-    dependency_lock = parse_hashed_lock(args.requirements_lock)
-    manifest = load_wheelhouse_manifest(
+    environment = _environment_api()
+    dependency_lock = environment.parse_hashed_lock(args.requirements_lock)
+    manifest = environment.load_wheelhouse_manifest(
         args.wheelhouse / "wheelhouse_manifest.json"
     )
-    python_version, runner_os, runner_arch = current_target()
-    verification = verify_wheelhouse(
+    python_version, runner_os, runner_arch = environment.current_target()
+    verification = environment.verify_wheelhouse(
         wheelhouse=args.wheelhouse,
         dependency_lock=dependency_lock,
         manifest=manifest,
