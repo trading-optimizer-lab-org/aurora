@@ -428,8 +428,20 @@ class RecoveryDecision(FrozenModel):
     reason_code: str
 
 
+class CheckpointAuditRecord(FrozenModel):
+    checkpoint_ref: str
+    shard_id: str | None
+    attempt_id: str | None
+    artifact_name: str | None
+    status: Literal["verified", "selected", "rejected"]
+    completed_unit_count: NonNegativeInt | None
+    payload_sha256: Sha256 | None
+    reason_code: str | None
+
+
 class RecoveryPlan(FrozenModel):
     decisions: tuple[RecoveryDecision, ...]
+    checkpoint_audit: tuple[CheckpointAuditRecord, ...] = ()
     retry_matrix_a: tuple[Mapping[str, Any], ...]
     retry_matrix_b: tuple[Mapping[str, Any], ...]
     has_retry_matrix_a: bool

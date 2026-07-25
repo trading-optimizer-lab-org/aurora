@@ -1804,7 +1804,7 @@ gh pr checks --watch
   `ProtocolPolicy`, `SnapshotStore`, `FeatureStore`, `WitnessRecorder`,
   `ExperimentTracker`, and `runtime_paths`.
 
-- [ ] **Step 1: Define and test the workload protocol**
+- [x] **Step 1: Define and test the workload protocol**
 
 ```python
 class GithubWorkload(Protocol):
@@ -1843,13 +1843,13 @@ class GithubWorkload(Protocol):
 Reject module references outside `aurora.*` and objects that do not satisfy all
 runtime-checkable protocol methods.
 
-- [ ] **Step 2: Add CLI parser tests**
+- [x] **Step 2: Add CLI parser tests**
 
 Assert `build_parser().parse_args(["github", "validate", "--spec", "x.yaml"])`
 binds `cmd_github_validate`, and every run or merge command calls
 `require_github_execution`.
 
-- [ ] **Step 3: Implement commands and wrappers**
+- [x] **Step 3: Implement commands and wrappers**
 
 Wrappers import command functions; they do not duplicate contract logic.
 Failures emit machine-readable JSON to stderr and non-zero exit status.
@@ -1867,7 +1867,7 @@ Add integration-contract tests with fakes for those six services that assert
 each canonical service is called once and that a policy-hash mismatch blocks
 before the workload method runs.
 
-- [ ] **Step 4: Push and verify in GitHub**
+- [x] **Step 4: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/workload.py cli/cmd_github.py cli/forge.py \
