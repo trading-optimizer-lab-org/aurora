@@ -30,6 +30,11 @@ on:
         required: false
         default: 0
         type: number
+      prepared_artifact_name:
+        description: Existing immutable prepared-input artifact to reuse
+        required: false
+        default: ""
+        type: string
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
@@ -43,6 +48,7 @@ env:
   TZ: UTC
   LC_ALL: C.UTF-8
   LANG: C.UTF-8
+  AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
 jobs:
   validate:
@@ -136,7 +142,14 @@ jobs:
           extras: ""
           cache-key: aurora-v3
           cache-mode: restore-only
+      - name: Download shared immutable inputs
+        if: inputs.prepared_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/prepared
       - name: Prepare immutable data once
+        if: inputs.prepared_artifact_name == ''
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
           WORKLOAD: ${{ inputs.workload }}
@@ -147,9 +160,10 @@ jobs:
             --workload "$WORKLOAD" \
             --output-dir "$RUNNER_TEMP/prepared"
       - name: Upload prepared inputs
+        if: inputs.prepared_artifact_name == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
           if-no-files-found: error
           compression-level: 0
@@ -180,7 +194,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Freeze resolved scientific and performance contract
         env:
@@ -237,7 +251,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Run bounded smoke
         env:
@@ -282,7 +296,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Measure real pilot
         env:
@@ -333,7 +347,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Download pilot evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -418,7 +432,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Download assignment plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -523,7 +537,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Download assignment plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -729,7 +743,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Download assignment plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -841,7 +855,7 @@ jobs:
       - name: Download prepared inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Download assignment plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
