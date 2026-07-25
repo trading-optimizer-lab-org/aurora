@@ -49,9 +49,11 @@ env:
   LC_ALL: C.UTF-8
   LANG: C.UTF-8
   AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
 jobs:
   validate:
+    needs: prepare_environment
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -60,13 +62,18 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
+        id: runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Validate requested contract
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
@@ -96,33 +103,64 @@ jobs:
           path: ${{ runner.temp }}/preflight
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}
-
-  prepare_environment:
-    needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    outputs:
-      environment_sha256: ${{ steps.runtime.outputs.environment-sha256 }}
-    steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Build canonical Aurora runtime
-        id: runtime
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: writer
       - name: Upload immutable environment
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-environment-${{ github.run_id }}-${{ github.run_attempt }}
           path: environment_manifest.json
           if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  prepare_environment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      wheelhouse_sha256: ${{ steps.identity.outputs.wheelhouse_sha256 }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up build Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Build immutable wheelhouse once
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python scripts/build_github_performance_wheelhouse.py build \
+            --requirements-lock requirements/github-performance.lock \
+            --wheelhouse "$RUNNER_TEMP/wheelhouse" \
+            --code-sha "$GITHUB_SHA" \
+            --source-date-epoch "$source_date_epoch"
+      - name: Read wheelhouse identity
+        id: identity
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "wheelhouse"
+               / "wheelhouse_manifest.json").read_text(encoding="utf-8")
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(
+                  f"wheelhouse_sha256={manifest['wheelhouse_sha256']}\n"
+              )
+          PY
+      - name: Upload immutable wheelhouse
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+          if-no-files-found: error
+          compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
   prepare_data:
@@ -135,13 +173,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download shared immutable inputs
         if: inputs.prepared_artifact_name != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -179,13 +221,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download environment
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -236,13 +282,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -281,13 +331,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -332,13 +386,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -417,13 +475,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -522,13 +584,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -628,13 +694,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -728,13 +798,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -840,13 +914,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -952,13 +1030,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1008,13 +1090,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1075,13 +1161,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download sealed artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1118,13 +1208,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Collect read-only GitHub timing
         continue-on-error: true
         env:
