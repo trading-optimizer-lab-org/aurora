@@ -355,4 +355,3 @@ def write_engine_decision(
     """Publish the auditable engine decision."""
 
     return _write_json(Path(path), decision)
-

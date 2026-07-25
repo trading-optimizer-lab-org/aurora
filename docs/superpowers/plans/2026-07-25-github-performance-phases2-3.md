@@ -242,29 +242,40 @@ before reusing an atomically published shared intermediate.
 - Produces: `select_fastest_equivalent_engine(trials) -> EngineDecision`.
 - Produces: `performance_profile.json` and `engine_trials.json`.
 
-- [ ] **Step 1: Write failing profile tests**
+- [x] **Step 1: Write failing profile tests**
 
 Require exact key matching, expiry outside confidence bands, cold/warm samples, measurement uncertainty, and mandatory pilot on mismatch.
 
-- [ ] **Step 2: Write failing engine tests**
+- [x] **Step 2: Write failing engine tests**
 
 Compare Python reference, NumPy, Numba, Arrow, DuckDB when installed, processes, and threads. Reject non-equivalent or slower trials; include compilation and warm-up in end-to-end time.
 
-- [ ] **Step 3: Implement profile persistence**
+- [x] **Step 3: Implement profile persistence**
 
 Profiles are immutable artifacts and never selected by candidate quality.
 
-- [ ] **Step 4: Implement engine decision and fallback**
+- [x] **Step 4: Implement engine decision and fallback**
 
 Choose only an equivalent faster engine. Missing optional engines become capability outcomes. Preserve reference fallback.
 
-- [ ] **Step 5: Run GitHub tests and commit**
+- [x] **Step 5: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: select engines from equivalent profiles
 ```
+
+Evidence: RED run `30171377698` failed only because the profile, engine, and
+planner-resolution contracts were intentionally absent. GREEN run
+`30171537001` used commit `06d86abb2` and completed successfully on
+`ubuntu-24.04`: the dependency lock reproduced exactly, all `185` contract
+tests passed, and all `4` real-engine shard smokes passed. Profiles require an
+exact six-field compatibility key, preserve separate cold/warm samples with
+measurement uncertainty, expire on out-of-band observations, and require a
+fresh pilot on mismatch. Engine selection preserves Python as fallback and
+rejects unavailable, scientifically different, slower, or uncertainty-overlap
+alternatives; compilation and warm-up are mandatory end-to-end evidence.
 
 ---
 
