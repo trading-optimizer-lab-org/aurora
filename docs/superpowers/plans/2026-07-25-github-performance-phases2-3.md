@@ -38,15 +38,15 @@
 - Produces: `write_required_audits(root, spec, access_records, environment) -> tuple[Path, ...]`.
 - Consumes: runtime access records emitted by every workload shard.
 
-- [ ] **Step 1: Write failing audit tests**
+- [x] **Step 1: Write failing audit tests**
 
 Assert that every access record includes source, partition, minimum date, maximum date, row count, split, purpose (`selection` or `report`), and locked flag. Assert that any locked row, any selection read from validation, or any date after the declared split fails closed.
 
-- [ ] **Step 2: Run the focused GitHub test job and record RED**
+- [x] **Step 2: Run the focused GitHub test job and record RED**
 
 Dispatch `github-performance-ci.yml` with the audit test selector. Require failure because `RuntimeAccessLedger` and the four mandatory audit files do not exist.
 
-- [ ] **Step 3: Implement runtime-ledger and audit writers**
+- [x] **Step 3: Implement runtime-ledger and audit writers**
 
 Use immutable Pydantic models. Aggregate rows without trusting requested policy values. Write:
 
@@ -59,11 +59,11 @@ provenance.json
 
 The data audit derives `locked_rows_accessed`, maximum accessed dates, and split/purpose counts from records emitted during execution.
 
-- [ ] **Step 4: Enforce audits in final verification**
+- [x] **Step 4: Enforce audits in final verification**
 
 Require all four files in the final manifest. Verification reads their contents, checks hashes, and fails on missing runtime evidence even when the requested spec declares safe values.
 
-- [ ] **Step 5: Run GitHub tests and commit**
+- [x] **Step 5: Run GitHub tests and commit**
 
 Require audit and verifier tests to pass, then commit:
 
@@ -539,4 +539,3 @@ At least one representative optimized workload must be materially faster than it
 - [ ] **Step 7: Synchronize documentation and close**
 
 Update the canonical standard, copy it to the Desktop master template, write the closure evidence, open a PR, wait for required checks, merge only after review, and rerun the closure workflow from `main`.
-
