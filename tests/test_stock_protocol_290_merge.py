@@ -426,6 +426,56 @@ def test_concatenate_parquet_files_materializes_frozen_lineage(
     ]
 
 
+def test_concatenate_parquet_files_materializes_censoring_from_status(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.parquet"
+    output = tmp_path / "combined.parquet"
+    pd.DataFrame(
+        {
+            "status": [
+                "completed",
+                "right_censored",
+                "failed_due_to_data",
+            ],
+            "value": [1, 2, 3],
+        }
+    ).to_parquet(source, index=False)
+
+    rows = _concatenate_parquet_files(
+        [source],
+        output,
+        derive_censored_from_status=True,
+    )
+    combined = pd.read_parquet(output)
+
+    assert rows == 3
+    assert combined["censored"].tolist() == [False, True, False]
+
+
+def test_concatenate_parquet_files_rejects_contradictory_censoring(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.parquet"
+    output = tmp_path / "combined.parquet"
+    pd.DataFrame(
+        {
+            "status": ["completed", "right_censored"],
+            "censored": [True, True],
+        }
+    ).to_parquet(source, index=False)
+
+    with pytest.raises(
+        ValueError,
+        match="declared censored values contradict status",
+    ):
+        _concatenate_parquet_files(
+            [source],
+            output,
+            derive_censored_from_status=True,
+        )
+
+
 def _report_statistics() -> dict[str, pd.DataFrame]:
     combination = pd.DataFrame(
         {

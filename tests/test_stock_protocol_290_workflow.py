@@ -11,6 +11,10 @@ DISPATCH = ROOT / ".github/workflows/stock-protocol-original-290-event-study.yml
 RECOVERY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-recovery.yml"
 MERGE_ONLY = ROOT / ".github/workflows/stock-protocol-original-290-event-study-merge-only.yml"
 CHECKPOINTED = ROOT / ".github/workflows/stock-protocol-original-290-event-study-checkpointed.yml"
+FINALIZE_RECOVERY = ROOT / (
+    ".github/workflows/"
+    "stock-protocol-original-290-event-study-finalize-recovery.yml"
+)
 PREPARE_SCRIPT = ROOT / "scripts/prepare_stock_protocol_290_merge_part.py"
 FX_ARTIFACT = "stock-protocol-290-frozen-fx"
 FX_RATES = "stock-protocol-290-fx-rates.csv"
@@ -22,6 +26,9 @@ def test_workflows_are_valid_yaml() -> None:
     recovery = yaml.safe_load(RECOVERY.read_text(encoding="utf-8"))
     merge_only = yaml.safe_load(MERGE_ONLY.read_text(encoding="utf-8"))
     checkpointed = yaml.safe_load(CHECKPOINTED.read_text(encoding="utf-8"))
+    finalize_recovery = yaml.safe_load(
+        FINALIZE_RECOVERY.read_text(encoding="utf-8")
+    )
     assert core["name"] == "Stock Protocol Original 290 Event Study Core"
     assert dispatch["name"] == "Stock Protocol Original 290 Opportunity Event Study"
     assert recovery["name"] == (
@@ -32,6 +39,9 @@ def test_workflows_are_valid_yaml() -> None:
     )
     assert checkpointed["name"] == (
         "Stock Protocol Original 290 Event Study Checkpointed"
+    )
+    assert finalize_recovery["name"] == (
+        "Stock Protocol Original 290 Event Study Finalize Recovery"
     )
 
 
@@ -71,6 +81,46 @@ def test_checkpointed_workflow_prepares_each_entry_once_and_merges_checkpoints()
     )
     assert recovery["if"] == "${{ failure() }}"
     assert recovery["with"]["compression-level"] == 0
+
+
+def test_finalize_recovery_reuses_preserved_merge_and_reverifies_everything() -> None:
+    document = yaml.safe_load(FINALIZE_RECOVERY.read_text(encoding="utf-8"))
+    steps = document["jobs"]["recover-and-verify"]["steps"]
+    download = next(
+        step
+        for step in steps
+        if step.get("name") == "Download preserved unverified merge"
+    )
+    assert download["with"]["run-id"] == "${{ inputs.recovery_run_id }}"
+    assert download["with"]["name"] == (
+        "stock-protocol-original-290-unverified-merge-recovery"
+    )
+    repair = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Materialize censored contract without recomputing statistics"
+    )
+    assert "repair_stock_protocol_290_final_artifact.py" in repair["run"]
+    verify = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Fail hard unless repaired final contract is complete"
+    )
+    assert "verify_stock_protocol_290_event_study.py final" in verify["run"]
+    uploads = [
+        step["with"]["name"]
+        for step in steps
+        if step.get("uses") == "actions/upload-artifact@v4"
+    ]
+    assert uploads == [
+        "stock-protocol-original-290-opportunity-event-study",
+        "stock-protocol-original-290-opportunity-event-study-review",
+    ]
+    assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in (
+        FINALIZE_RECOVERY.read_text(encoding="utf-8")
+    )
 
 
 def test_merge_only_reuses_all_completed_artifacts_and_frozen_sources() -> None:

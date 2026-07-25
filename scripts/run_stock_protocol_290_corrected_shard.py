@@ -795,6 +795,21 @@ def complete_ledger_contract(opportunities: pd.DataFrame) -> pd.DataFrame:
     """Materialize mandatory audit, cost, liquidity and FX ledger fields."""
 
     result = opportunities.copy().reset_index(drop=True)
+    statuses = result.get("status", pd.Series("", index=result.index)).astype(str)
+    unknown_statuses = sorted(
+        set(statuses) - {"completed", "right_censored", "failed_due_to_data"}
+    )
+    if unknown_statuses:
+        raise ValueError(
+            f"cannot materialize censored for unknown statuses: {unknown_statuses[:5]}"
+        )
+    derived_censored = statuses.eq("right_censored")
+    if "censored" in result:
+        declared = result["censored"].astype("boolean")
+        contradictions = declared.notna() & declared.ne(derived_censored)
+        if contradictions.any():
+            raise ValueError("declared censored values contradict status")
+    result["censored"] = derived_censored
     mandatory_numeric = (
         "entry_gap",
         "signal_score",

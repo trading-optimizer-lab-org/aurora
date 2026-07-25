@@ -306,6 +306,7 @@ def _concatenate_parquet_files(
     *,
     enrichment_key: str | None = None,
     enrichment_by_key: Mapping[str, Mapping[str, str]] | None = None,
+    derive_censored_from_status: bool = False,
 ) -> int:
     """Concatenate checkpoint Parquets with one deterministic union schema."""
 
@@ -341,6 +342,12 @@ def _concatenate_parquet_files(
             if column not in column_types:
                 column_order.append(column)
             column_types[column] = pa.string()
+    if derive_censored_from_status:
+        if "status" not in column_types:
+            raise ValueError("cannot derive censored without status")
+        if "censored" not in column_types:
+            column_order.append("censored")
+        column_types["censored"] = pa.bool_()
     schema = pa.schema(
         [pa.field(column, column_types[column]) for column in column_order]
     )
@@ -376,6 +383,41 @@ def _concatenate_parquet_files(
                             )
                         else:
                             table = table.append_column(column, array)
+                if derive_censored_from_status:
+                    statuses = [str(value) for value in table["status"].to_pylist()]
+                    unknown_statuses = sorted(
+                        set(statuses)
+                        - {"completed", "right_censored", "failed_due_to_data"}
+                    )
+                    if unknown_statuses:
+                        raise ValueError(
+                            "cannot derive censored from unknown statuses: "
+                            f"{unknown_statuses[:5]}"
+                        )
+                    derived = pa.array(
+                        [status == "right_censored" for status in statuses],
+                        type=pa.bool_(),
+                    )
+                    if "censored" in table.column_names:
+                        declared = table["censored"].to_pylist()
+                        contradictions = [
+                            index
+                            for index, (value, expected) in enumerate(
+                                zip(declared, derived.to_pylist(), strict=True)
+                            )
+                            if value is not None and bool(value) != expected
+                        ]
+                        if contradictions:
+                            raise ValueError(
+                                "declared censored values contradict status"
+                            )
+                        table = table.set_column(
+                            table.schema.get_field_index("censored"),
+                            "censored",
+                            derived,
+                        )
+                    else:
+                        table = table.append_column("censored", derived)
                 for field in schema:
                     if field.name not in table.column_names:
                         table = table.append_column(
@@ -1518,7 +1560,11 @@ def stream_corrected_shards(
     if not full_piece_paths or not statistical_piece_paths:
         raise ValueError("corrected shards produced no opportunities")
 
-    full_rows = _concatenate_parquet_files(full_piece_paths, full_path)
+    full_rows = _concatenate_parquet_files(
+        full_piece_paths,
+        full_path,
+        derive_censored_from_status=True,
+    )
     statistical_rows = _concatenate_parquet_files(
         statistical_piece_paths, statistical_path
     )
@@ -1630,6 +1676,7 @@ def load_prepared_corrected_parts(
         output_root / OPPORTUNITIES_PARQUET,
         enrichment_key="combination_id",
         enrichment_by_key=lineage_by_combination,
+        derive_censored_from_status=True,
     )
     full_schema = set(
         pq.ParquetFile(output_root / OPPORTUNITIES_PARQUET).schema_arrow.names
