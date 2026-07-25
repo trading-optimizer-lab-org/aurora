@@ -1670,7 +1670,7 @@ gh pr checks --watch
   `unit_attempt_manifest.parquet` for logical-unit outcomes before
   reconciliation.
 
-- [ ] **Step 1: Write reconciliation failure tests**
+- [x] **Step 1: Write reconciliation failure tests**
 
 Cover one accepted completed attempt, identical duplicate attempts, conflicting
 completed digests, missing units, unsupported units, right-censored units, and
@@ -1686,14 +1686,14 @@ def test_conflicting_successful_attempts_block_merge() -> None:
         reconcile_attempts({"u1"}, attempts)
 ```
 
-- [ ] **Step 2: Implement bounded merge groups**
+- [x] **Step 2: Implement bounded merge groups**
 
 Group sorted shard IDs into immutable groups of at most `fan_in`. Reject a group
 whose projected download plus output exceeds 80 percent of the configured disk
 budget. Derive group artifact names from run ID, level, group index, and plan
 hash. Serialize the immutable plan to `merge_plan.json`.
 
-- [ ] **Step 3: Implement exact reconciliation**
+- [x] **Step 3: Implement exact reconciliation**
 
 Require:
 
@@ -1713,7 +1713,7 @@ write `unit_reconciliation.parquet` incrementally, and retain only the current
 logical unit's attempts in memory. The production merge must not materialize all
 expected keys or attempts as Python sets or Pydantic objects.
 
-- [ ] **Step 4: Implement final manifest verification**
+- [x] **Step 4: Implement final manifest verification**
 
 Verify every path, byte size, SHA-256, schema version, code SHA, spec hash,
 snapshot hash, policy hash, and reconciliation total. `campaign_closure.json`
@@ -1722,7 +1722,7 @@ Write `final_artifact_manifest.json` before verification and
 `final_verification_report.json` after independently reopening every listed
 file.
 
-- [ ] **Step 5: Write reconciliation, traceability, and formal closure**
+- [x] **Step 5: Write reconciliation, traceability, and formal closure**
 
 Add deterministic tests:
 
@@ -1768,7 +1768,7 @@ complete reconciliation, artifact hashes, and independent verification.
 final manifest, traceability CSV, reconciliation Parquet, and verification
 report.
 
-- [ ] **Step 6: Push and verify in GitHub**
+- [x] **Step 6: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/merge_planner.py \
