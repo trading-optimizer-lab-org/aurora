@@ -570,6 +570,25 @@ class CapacityProfile(FrozenModel):
 
 
 class PerformanceContract(FrozenModel):
+    resolved_spec_sha256: Sha256
+    code_sha: CodeSha
+    workflow_sha256: Sha256
+    policy_hash: Sha256
+    snapshot_hash: Sha256
+    data_manifest_sha256: Sha256
+    metric_contract_sha256: Sha256
+    dependency_lock_sha256: Sha256
+    capacity_profile_sha256: Sha256
+    environment_sha256: Sha256
+    standard_runner_only: bool
+    locked_opened: bool
+    validation_used_for_selection: bool
+    larger_runners_allowed: bool
+    artifact_transport_mode: Literal[
+        "auto",
+        "actions_artifact",
+        "snapshot_backend",
+    ]
     planner_min_jobs: int
     planner_max_jobs: int
     planner_job_count_search: Literal["adaptive_exact"]
@@ -956,6 +975,21 @@ def make_shard(index: int) -> ShardDefinition:
 
 def contract() -> PerformanceContract:
     return PerformanceContract(
+        resolved_spec_sha256="0" * 64,
+        code_sha="a" * 40,
+        workflow_sha256="b" * 64,
+        policy_hash="c" * 64,
+        snapshot_hash="d" * 64,
+        data_manifest_sha256="e" * 64,
+        metric_contract_sha256="f" * 64,
+        dependency_lock_sha256="1" * 64,
+        capacity_profile_sha256="2" * 64,
+        environment_sha256="3" * 64,
+        standard_runner_only=True,
+        locked_opened=False,
+        validation_used_for_selection=False,
+        larger_runners_allowed=False,
+        artifact_transport_mode="auto",
         planner_min_jobs=1,
         planner_max_jobs=360,
         planner_job_count_search="adaptive_exact",
@@ -1181,7 +1215,7 @@ gh pr checks --watch
 - Produces:
   `PerformanceRecorder.write_parquet(path: Path) -> None`.
 
-- [ ] **Step 1: Write deterministic span tests**
+- [x] **Step 1: Write deterministic span tests**
 
 Inject a fake monotonic clock and fake resource sampler:
 
@@ -1207,7 +1241,7 @@ def test_span_records_phase_without_scientific_values(tmp_path: Path) -> None:
     assert "score" not in row.model_dump()
 ```
 
-- [ ] **Step 2: Implement bounded phase recording**
+- [x] **Step 2: Implement bounded phase recording**
 
 Record:
 
@@ -1221,12 +1255,12 @@ peak_memory_mb, peak_disk_mb, cpu_seconds, io_wait_seconds
 Use `time.perf_counter`, `resource.getrusage` on Linux, and `shutil.disk_usage`.
 No candidate metrics, validation values, or secrets may enter labels or payload.
 
-- [ ] **Step 3: Export one fixed PyArrow schema**
+- [x] **Step 3: Export one fixed PyArrow schema**
 
 `write_parquet` writes one table with Zstandard compression and a stable schema.
 The file metadata includes schema version, code SHA, run ID, and policy hash.
 
-- [ ] **Step 4: Push and verify in GitHub**
+- [x] **Step 4: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/telemetry.py \

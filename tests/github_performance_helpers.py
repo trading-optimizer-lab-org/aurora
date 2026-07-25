@@ -121,6 +121,21 @@ def make_shard(index: int) -> ShardDefinition:
 
 def contract() -> PerformanceContract:
     return PerformanceContract(
+        resolved_spec_sha256="0" * 64,
+        code_sha="a" * 40,
+        workflow_sha256="b" * 64,
+        policy_hash="c" * 64,
+        snapshot_hash="d" * 64,
+        data_manifest_sha256="e" * 64,
+        metric_contract_sha256="f" * 64,
+        dependency_lock_sha256="1" * 64,
+        capacity_profile_sha256="2" * 64,
+        environment_sha256="3" * 64,
+        standard_runner_only=True,
+        locked_opened=False,
+        validation_used_for_selection=False,
+        larger_runners_allowed=False,
+        artifact_transport_mode="auto",
         planner_min_jobs=1,
         planner_max_jobs=360,
         planner_job_count_search="adaptive_exact",

@@ -177,6 +177,25 @@ class CapacityProfile(FrozenModel):
 
 
 class PerformanceContract(FrozenModel):
+    resolved_spec_sha256: Sha256
+    code_sha: CodeSha
+    workflow_sha256: Sha256
+    policy_hash: Sha256
+    snapshot_hash: Sha256
+    data_manifest_sha256: Sha256
+    metric_contract_sha256: Sha256
+    dependency_lock_sha256: Sha256
+    capacity_profile_sha256: Sha256
+    environment_sha256: Sha256
+    standard_runner_only: bool
+    locked_opened: bool
+    validation_used_for_selection: bool
+    larger_runners_allowed: bool
+    artifact_transport_mode: Literal[
+        "auto",
+        "actions_artifact",
+        "snapshot_backend",
+    ]
     planner_min_jobs: Annotated[int, Field(ge=1)]
     planner_max_jobs: Annotated[int, Field(ge=1, le=360)]
     planner_job_count_search: Literal["adaptive_exact"]

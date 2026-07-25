@@ -1543,6 +1543,7 @@ execution:
   locale: "C.UTF-8"
   python_version: ""
   dependency_lock_sha256: ""
+  environment_sha256: ""
   runner_image: ""
 
 resources:
@@ -1557,6 +1558,7 @@ resources:
 performance:
   optimize_for: "wall_clock"
   capacity_profile_path: "config/github_capacity_profile.json"
+  capacity_profile_sha256: ""
   confirmed_standard_concurrency: 360
   concurrency_confirmation_source: "github_support"
   reserve_concurrency: 0

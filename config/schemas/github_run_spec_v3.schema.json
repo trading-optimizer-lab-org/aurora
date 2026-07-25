@@ -297,6 +297,7 @@
         "locale",
         "python_version",
         "dependency_lock_sha256",
+        "environment_sha256",
         "runner_image"
       ],
       "properties": {
@@ -381,6 +382,17 @@
             }
           ]
         },
+        "environment_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
         "runner_image": {
           "type": "string"
         }
@@ -436,6 +448,7 @@
       "required": [
         "optimize_for",
         "capacity_profile_path",
+        "capacity_profile_sha256",
         "confirmed_standard_concurrency",
         "concurrency_confirmation_source",
         "reserve_concurrency",
@@ -505,6 +518,17 @@
         },
         "capacity_profile_path": {
           "type": "string"
+        },
+        "capacity_profile_sha256": {
+          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 0
+            },
+            {
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
         },
         "confirmed_standard_concurrency": {
           "const": 360
