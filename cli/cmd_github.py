@@ -386,11 +386,27 @@ def cmd_github_plan(args: argparse.Namespace) -> int:
         output_dir / "work_unit_manifest.json",
         portable_manifest,
     )
-    plan = build_execution_plan(spec, manifest, pilot, output_dir)
+    plan = build_execution_plan(
+        spec,
+        manifest,
+        pilot,
+        output_dir,
+        mode=args.execution_mode,
+        forced_job_count=(
+            args.forced_job_count
+            if args.forced_job_count > 0
+            else None
+        ),
+    )
     paths = write_execution_plan(plan, output_dir)
+    merge_fan_in = (
+        max(2, len(plan.shard_plan.shards))
+        if args.execution_mode == "baseline"
+        else int(spec.performance["merge_fan_in"])
+    )
     merge_plan = build_merge_plan(
         plan.shard_plan.shards,
-        fan_in=int(spec.performance["merge_fan_in"]),
+        fan_in=merge_fan_in,
         disk_budget_bytes=14 * 1024**3,
         run_id=str(spec.identity["campaign_id"]),
     )
@@ -581,6 +597,16 @@ def cmd_github_final_merge(args: argparse.Namespace) -> int:
         Path(args.plan_root),
         Path(args.contract_root),
         Path(args.output_dir),
+        (
+            Path(args.preflight_root)
+            if args.preflight_root
+            else None
+        ),
+        (
+            Path(args.recovery_root)
+            if args.recovery_root
+            else None
+        ),
     )
     _print({"final_artifact_manifest": str(path)})
     return 0
@@ -658,6 +684,12 @@ def register(subparsers, parent_parser=None) -> None:
     plan.add_argument("--output-dir", required=True)
     plan.add_argument("--prepared")
     plan.add_argument("--pilot")
+    plan.add_argument(
+        "--execution-mode",
+        choices=("optimized", "baseline"),
+        default="optimized",
+    )
+    plan.add_argument("--forced-job-count", type=int, default=0)
     plan.set_defaults(func=cmd_github_plan)
 
     run_shard = commands.add_parser("run-shard")
@@ -703,6 +735,8 @@ def register(subparsers, parent_parser=None) -> None:
     final_merge_command.add_argument("--partials-root", required=True)
     final_merge_command.add_argument("--plan-root", required=True)
     final_merge_command.add_argument("--contract-root", required=True)
+    final_merge_command.add_argument("--preflight-root")
+    final_merge_command.add_argument("--recovery-root")
     final_merge_command.add_argument("--output-dir", required=True)
     final_merge_command.set_defaults(func=cmd_github_final_merge)
 

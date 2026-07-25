@@ -24,6 +24,7 @@ from aurora.infra.github_performance.contracts import (
     deep_thaw_json,
 )
 from aurora.infra.github_performance.shard_planner import (
+    equal_count,
     encode_matrix_outputs,
     read_work_units,
     split_matrices,
@@ -347,6 +348,9 @@ def build_execution_plan(
     manifest: WorkUnitManifest,
     pilot: PilotResult,
     output_dir: Path,
+    *,
+    mode: str = "optimized",
+    forced_job_count: int | None = None,
 ) -> ExecutionPlan:
     """Build the only immutable execution plan accepted by fan-out jobs."""
 
@@ -370,10 +374,94 @@ def build_execution_plan(
         _SpecContract(),  # type: ignore[arg-type]
         pilot,
     )
-    shard_plan = weighted_lpt(
-        manifest,
+    if forced_job_count is not None:
+        units = read_work_units(manifest)
+        if forced_job_count < 1 or forced_job_count > min(
+            len(units),
+            settings.planner_max_jobs,
+            360,
+        ):
+            raise ValueError("forced job count is outside planner bounds")
+        keyed_costs = tuple(
+            (unit.unit_key, unit.estimated_seconds) for unit in units
+        )
+        selected = _alternative(
+            forced_job_count,
+            _exact_lpt_slowest(keyed_costs, forced_job_count),
+            pilot,
+            "exact_lpt",
+        )
+        alternatives = tuple(
+            item
+            for item in decision.alternatives
+            if not (
+                item.jobs == forced_job_count
+                and item.estimate_kind == "exact_lpt"
+            )
+        ) + (selected,)
+        decision = JobCountDecision(
+            selected_jobs=forced_job_count,
+            predicted_seconds=selected.predicted_seconds,
+            alternatives=tuple(
+                sorted(
+                    alternatives,
+                    key=lambda item: (
+                        item.jobs,
+                        {
+                            "analytical": 0,
+                            "histogram": 1,
+                            "exact_lpt": 2,
+                        }[item.estimate_kind],
+                    ),
+                )
+            ),
+        )
+    if mode == "optimized":
+        shard_plan = weighted_lpt(
+            manifest,
+            decision.selected_jobs,
+            root,
+        )
+        assignment_strategy = "weighted_lpt_hierarchical"
+    elif mode == "baseline":
+        shard_plan = equal_count(
+            manifest,
+            decision.selected_jobs,
+            root,
+        )
+        assignment_strategy = "equal_count_flat"
+    else:
+        raise ValueError("execution mode must be optimized or baseline")
+    actual_selected = _alternative(
         decision.selected_jobs,
-        root,
+        max(shard.estimated_seconds for shard in shard_plan.shards),
+        pilot,
+        "exact_lpt",
+    )
+    alternatives = tuple(
+        item
+        for item in decision.alternatives
+        if not (
+            item.jobs == decision.selected_jobs
+            and item.estimate_kind == "exact_lpt"
+        )
+    ) + (actual_selected,)
+    decision = JobCountDecision(
+        selected_jobs=decision.selected_jobs,
+        predicted_seconds=actual_selected.predicted_seconds,
+        alternatives=tuple(
+            sorted(
+                alternatives,
+                key=lambda item: (
+                    item.jobs,
+                    {
+                        "analytical": 0,
+                        "histogram": 1,
+                        "exact_lpt": 2,
+                    }[item.estimate_kind],
+                ),
+            )
+        ),
     )
     _transport_budget_check(spec, shard_plan, root)
     matrix_split = split_matrices(
@@ -420,6 +508,7 @@ def build_execution_plan(
         job_count=decision,
         shard_plan=shard_plan,
         matrix_split=matrix_split,
+        assignment_strategy=assignment_strategy,
         numeric_threads=1,
         checkpoint_interval_seconds=checkpoint_interval,
         artifact_compression_level=int(

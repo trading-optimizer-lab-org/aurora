@@ -16,6 +16,7 @@ from aurora.infra.github_performance.execution_planner import (
     write_pilot_result,
 )
 from aurora.infra.github_performance.shard_planner import (
+    equal_count,
     encode_matrix_outputs,
     split_matrices,
     weighted_lpt,
@@ -69,6 +70,18 @@ def test_assignment_catalog_contains_every_unit_once(tmp_path: Path) -> None:
     keys = table.column("unit_key").to_pylist()
     assert len(keys) == len(set(keys)) == 20
     assert sum(shard.unit_count for shard in plan.shards) == 20
+
+
+def test_equal_count_uses_flat_groups_and_even_counts(
+    tmp_path: Path,
+) -> None:
+    manifest = write_work_unit_manifest(
+        (make_unit(index, seconds=float(index + 1)) for index in range(10)),
+        tmp_path / "work_units.parquet",
+    )
+    plan = equal_count(manifest, jobs=3, output_dir=tmp_path / "equal")
+    assert [shard.unit_count for shard in plan.shards] == [4, 3, 3]
+    assert {shard.merge_group for shard in plan.shards} == {"g000"}
 
 
 def test_full_capacity_splits_256_and_104() -> None:
@@ -166,3 +179,35 @@ def test_execution_plan_is_complete_and_hash_stable(
     }
     assert pilot_path.name == "performance_pilot.json"
     assert json.loads(paths[1].read_text())["numeric_threads"] == 1
+
+
+def test_baseline_plan_uses_forced_equal_count_and_actual_estimate(
+    tmp_path: Path,
+) -> None:
+    run_spec = RunSpec.model_validate(minimal_valid_spec())
+    manifest = write_work_unit_manifest(
+        tuple(make_unit(index) for index in range(20)),
+        tmp_path / "work_units.parquet",
+    )
+    plan = build_execution_plan(
+        run_spec,
+        manifest,
+        pilot(),
+        tmp_path / "baseline",
+        mode="baseline",
+        forced_job_count=4,
+    )
+    assert plan.assignment_strategy == "equal_count_flat"
+    assert plan.job_count.selected_jobs == 4
+    assert {shard.merge_group for shard in plan.shard_plan.shards} == {
+        "g000"
+    }
+    assert {shard.unit_count for shard in plan.shard_plan.shards} == {5}
+    selected = next(
+        item
+        for item in plan.job_count.alternatives
+        if item.jobs == 4 and item.estimate_kind == "exact_lpt"
+    )
+    assert selected.slowest_shard_seconds == max(
+        shard.estimated_seconds for shard in plan.shard_plan.shards
+    )

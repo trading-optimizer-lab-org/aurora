@@ -101,7 +101,7 @@ def test_phase_commands_are_registered() -> None:
         ),
         (
             cmd_github.cmd_github_merge_group,
-            {"shard_plan": "missing"},
+            {"spec": "missing", "shard_plan": "missing"},
         ),
         (cmd_github.cmd_github_final_merge, {"spec": "missing"}),
         (cmd_github.cmd_github_verify, {"spec": "missing"}),

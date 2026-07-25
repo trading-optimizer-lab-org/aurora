@@ -244,6 +244,72 @@ def weighted_lpt(
     )
 
 
+def equal_count(
+    manifest: WorkUnitManifest,
+    jobs: int,
+    output_dir: Path,
+) -> ShardPlan:
+    """Assign contiguous unit-key ranges evenly to one flat merge group."""
+
+    units = read_work_units(manifest)
+    if not units:
+        raise ValueError("cannot shard an empty work-unit manifest")
+    if jobs < 1 or jobs > min(len(units), 360):
+        raise ValueError("jobs must be between 1 and min(unit_count, 360)")
+
+    quotient, remainder = divmod(len(units), jobs)
+    root = Path(output_dir)
+    all_tables: list[pa.Table] = []
+    shards: list[ShardDefinition] = []
+    offset = 0
+    for index in range(jobs):
+        count = quotient + (1 if index < remainder else 0)
+        shard_units = units[offset : offset + count]
+        offset += count
+        shard_id = f"s{index:03d}"
+        table = _assignment_table(shard_id, shard_units)
+        member = Path("assignments") / f"{shard_id}.parquet"
+        member_path = root / member
+        _atomic_write_parquet(table, member_path)
+        all_tables.append(table)
+        shards.append(
+            ShardDefinition(
+                shard_id=shard_id,
+                assignment_artifact=ASSIGNMENT_ARTIFACT,
+                assignment_member=member.as_posix(),
+                assignment_sha256=sha256_file(member_path),
+                unit_count=len(shard_units),
+                estimated_seconds=sum(
+                    unit.estimated_seconds for unit in shard_units
+                ),
+                merge_group="g000",
+            )
+        )
+    if offset != len(units):
+        raise AssertionError("equal-count planner dropped work units")
+
+    catalog = pa.concat_tables(all_tables)
+    sort_indices = pc.sort_indices(
+        catalog,
+        sort_keys=[("shard_id", "ascending"), ("unit_key", "ascending")],
+    )
+    catalog = pc.take(catalog, sort_indices)
+    catalog_path = root / "balanced_unit_assignments.parquet"
+    _atomic_write_parquet(catalog, catalog_path)
+    assignment_manifest_sha256 = sha256_file(catalog_path)
+    plan_payload = {
+        "selected_jobs": jobs,
+        "work_unit_manifest_sha256": manifest.sha256,
+        "assignment_artifact": ASSIGNMENT_ARTIFACT,
+        "assignment_manifest_sha256": assignment_manifest_sha256,
+        "shards": [deep_thaw_json(shard) for shard in shards],
+    }
+    return ShardPlan(
+        **plan_payload,
+        plan_sha256=canonical_sha256(plan_payload),
+    )
+
+
 def split_matrices(
     shards: Iterable[ShardDefinition],
     matrix_ceiling: int = 256,

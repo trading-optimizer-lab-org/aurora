@@ -139,7 +139,8 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "merge_partials",
     }
     assert _needs(jobs["verify"]) == {"final_merge"}
-    assert _needs(jobs["publish"]) == {"verify"}
+    assert _needs(jobs["collect_timeline"]) == {"verify"}
+    assert _needs(jobs["publish"]) == {"verify", "collect_timeline"}
 
 
 def test_reusable_workflow_respects_standard_runner_limits() -> None:
@@ -203,6 +204,8 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     workflow = _workflow()
     inputs = workflow["on"]["workflow_call"]["inputs"]
     assert set(inputs) == {
+        "execution_mode",
+        "forced_job_count",
         "spec_path",
         "workload",
         "run_label",
@@ -211,6 +214,28 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     assert "push" not in workflow["on"]
     assert "pull_request" not in workflow["on"]
+
+
+def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:
+    jobs = _workflow()["jobs"]
+    collector = jobs["collect_timeline"]
+    assert collector["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
+    step = next(
+        item
+        for item in collector["steps"]
+        if item["name"] == "Collect read-only GitHub timing"
+    )
+    assert step["continue-on-error"] is True
+    publisher = jobs["publish"]
+    assert "always()" in publisher["if"]
+    assert any(
+        item["name"]
+        == "Record incomplete timing without touching scientific files"
+        for item in publisher["steps"]
+    )
 
 
 def test_policy_workflow_is_lightweight_static_pr_enforcement() -> None:

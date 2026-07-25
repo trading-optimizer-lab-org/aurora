@@ -1,0 +1,92 @@
+name: GitHub Performance Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prime_runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prime exact Aurora runtime cache
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: writer
+
+  optimized:
+    needs: prime_runtime
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: github-performance-benchmark-optimized
+      retention_days: 30
+      execution_mode: optimized
+      forced_job_count: 0
+
+  baseline:
+    needs: optimized
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: github-performance-benchmark-baseline
+      retention_days: 30
+      execution_mode: baseline
+      forced_job_count: ${{ fromJSON(needs.optimized.outputs.selected_jobs) }}
+
+  compare:
+    needs: [optimized, baseline]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Download optimized result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: github-performance-benchmark-optimized-results
+          path: ${{ runner.temp }}/benchmark/optimized
+      - name: Download equivalent baseline result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: github-performance-benchmark-baseline-results
+          path: ${{ runner.temp }}/benchmark/baseline
+      - name: Compare only equivalent scientific outputs
+        run: |
+          set -euo pipefail
+          python scripts/compare_github_performance_runs.py \
+            --baseline-dir "$RUNNER_TEMP/benchmark/baseline" \
+            --optimized-dir "$RUNNER_TEMP/benchmark/optimized" \
+            --output-dir "$RUNNER_TEMP/benchmark/comparison"
+      - name: Publish benchmark and phase closure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-benchmark-results
+          path: ${{ runner.temp }}/benchmark/comparison
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

@@ -2676,6 +2676,60 @@ Aurora declara paquetes explícitamente en `pyproject.toml`. Todo subpaquete nue
 config anidada o dependencia opcional debe registrarse; no basta con crear la
 carpeta.
 
+## 94. Workload de referencia real
+
+`config/github_performance_reference.yaml` define 1.024 unidades deterministas
+que atraviesan el motor real `aurora.core.engine.run_backtest`. Sirve para
+validar el framework, no para aprobar estrategias:
+
+- genera datos reproducibles con seed fija;
+- termina en `2020-12-31`;
+- aplica costes y lag causal dentro del motor;
+- separa train y validación;
+- no produce afirmaciones de aceptación;
+- reconcilia cada `unit_key` con un hash científico que no depende del runner,
+  shard, intento ni artifact.
+
+El caller manual es `github-performance-reference.yml`. La prueba de PR usa
+cuatro shards del mismo workload y se ejecuta únicamente en GitHub.
+
+## 95. Telemetría y benchmark equivalente
+
+Cada run nuevo añade al artifact final:
+
+- `github_jobs_timeline.parquet`;
+- `parallelism_timeline.csv`;
+- `runtime_breakdown.parquet`;
+- `timeline_summary.json`;
+- `performance_telemetry_status.json`;
+- `performance_telemetry_manifest.json`.
+
+La telemetría usa la API de GitHub en modo lectura, pagina todos los jobs y
+guarda sólo campos permitidos. Nunca serializa el token, cabeceras, correos ni
+logs. `runner_bootstrap_proxy_seconds` es un proxy desde el inicio del job hasta
+el primer paso de Aurora; no se presenta como tiempo real de aprovisionamiento
+de GitHub.
+
+`github-performance-benchmark.yml` ejecuta primero el modo optimizado y después
+un baseline con el mismo SHA, spec, snapshot, entorno, unidades, seeds, runner y
+número de jobs. Antes prepara una única caché exacta para que ninguno reciba
+ventaja por ejecutarse después. El baseline usa shards de igual cantidad y
+merge plano. El optimizado usa coste estimado, LPT y merge jerárquico.
+
+No se calcula speedup hasta demostrar igualdad exacta de `unit_key` y
+`unit_output_sha256`, contrato de rendimiento, entorno y estado de caché. El
+informe separa setup canónico, restauraciones de runtime, cola, transferencia,
+cómputo, retries y merge. El cierre exige:
+
+```text
+scientific_outputs_equal=true
+locked_opened=false
+validation_used_for_selection=false
+partial=false
+matrix_job_ceiling_respected=true
+larger_runner_used=false
+```
+
 ---
 
 # REGLA FINAL

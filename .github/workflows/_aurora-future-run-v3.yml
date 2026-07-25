@@ -20,6 +20,20 @@ on:
         required: false
         default: 7
         type: number
+      execution_mode:
+        description: Optimized weighted plan or equivalent baseline
+        required: false
+        default: optimized
+        type: string
+      forced_job_count:
+        description: Exact baseline job count; zero lets the planner decide
+        required: false
+        default: 0
+        type: number
+    outputs:
+      selected_jobs:
+        description: Exact standard-runner shard count selected by the plan
+        value: ${{ jobs.plan.outputs.selected_jobs }}
 
 permissions:
   contents: read
@@ -329,6 +343,8 @@ jobs:
       - name: Build adaptive balanced plan
         env:
           WORKLOAD: ${{ inputs.workload }}
+          EXECUTION_MODE: ${{ inputs.execution_mode }}
+          FORCED_JOB_COUNT: ${{ inputs.forced_job_count }}
         run: |
           set -euo pipefail
           aurora github plan \
@@ -336,6 +352,8 @@ jobs:
             --workload "$WORKLOAD" \
             --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
             --pilot "$RUNNER_TEMP/pilot/performance_pilot.json" \
+            --execution-mode "$EXECUTION_MODE" \
+            --forced-job-count "$FORCED_JOB_COUNT" \
             --output-dir "$RUNNER_TEMP/plan"
       - name: Emit compact GitHub matrices
         id: outputs
@@ -998,6 +1016,16 @@ jobs:
         with:
           pattern: ${{ inputs.run_label }}-partial-*
           path: ${{ runner.temp }}/partials
+      - name: Download preflight evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preflight
+      - name: Download recovery evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery
       - name: Build final artifact and reconciliation
         env:
           WORKLOAD: ${{ inputs.workload }}
@@ -1009,6 +1037,8 @@ jobs:
             --partials-root "$RUNNER_TEMP/partials" \
             --plan-root "$RUNNER_TEMP/plan" \
             --contract-root "$RUNNER_TEMP/contract" \
+            --preflight-root "$RUNNER_TEMP/preflight" \
+            --recovery-root "$RUNNER_TEMP/recovery" \
             --output-dir "$RUNNER_TEMP/final"
       - name: Upload sealed pre-verification artifact
         if: always()
@@ -1059,8 +1089,50 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
-  publish:
+  collect_timeline:
+    name: Collect GitHub timeline
     needs: verify
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          extras: ""
+          cache-key: aurora-v3
+          cache-mode: restore-only
+      - name: Collect read-only GitHub timing
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/collect_github_run_timeline.py \
+            --spec "${{ inputs.spec_path }}" \
+            --output-dir "$RUNNER_TEMP/timeline"
+      - name: Upload bounded timing evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/timeline
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  publish:
+    name: Publish final artifact
+    needs: [verify, collect_timeline]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -1071,6 +1143,23 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/publish
+      - name: Download timing evidence
+        if: needs.verify.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publish
+      - name: Record incomplete timing without touching scientific files
+        if: needs.verify.result == 'success'
+        run: |
+          set -euo pipefail
+          status="$RUNNER_TEMP/publish/performance_telemetry_status.json"
+          if [[ ! -f "$status" ]]; then
+            printf '%s\n' \
+              '{"complete":false,"schema_version":"1","token_serialized":false}' \
+              > "$status"
+          fi
       - name: Publish final reader artifact
         if: needs.verify.result == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

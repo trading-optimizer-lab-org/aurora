@@ -325,6 +325,10 @@ class ExecutionPlan(FrozenModel):
     job_count: JobCountDecision
     shard_plan: ShardPlan
     matrix_split: MatrixSplit
+    assignment_strategy: Literal[
+        "weighted_lpt_hierarchical",
+        "equal_count_flat",
+    ]
     numeric_threads: Annotated[int, Field(ge=1)]
     checkpoint_interval_seconds: NonNegativeFloat
     artifact_compression_level: Annotated[int, Field(ge=0, le=9)]

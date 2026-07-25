@@ -266,6 +266,7 @@ def _copy_contract_files(
     names = (
         "resolved_run_spec.json",
         "performance_contract.json",
+        "preflight_report.json",
         "environment_manifest.json",
         "metric_contract.json",
         "capacity_profile.json",
@@ -277,6 +278,8 @@ def _copy_contract_files(
         "work_units.parquet",
         "balanced_unit_assignments.parquet",
         "merge_plan.json",
+        "recovery_plan.json",
+        "checkpoint_audit.parquet",
     )
     for name in names:
         matches = [
@@ -293,6 +296,8 @@ def final_merge(
     plan_root: Path,
     contract_root: Path,
     output_dir: Path,
+    preflight_root: Path | None = None,
+    recovery_root: Path | None = None,
 ) -> Path:
     """Merge only bounded partials, reconcile units, and seal the artifact."""
 
@@ -322,6 +327,12 @@ def final_merge(
         for path in partial_dirs
         if (path / "unit_attempts.parquet").is_file()
     )
+    _write_sorted_parquet(
+        unit_attempt_paths,
+        root / "unit_attempt_manifest.parquet",
+        UNIT_ATTEMPT_SCHEMA,
+        (("unit_key", "ascending"), ("attempt_id", "ascending")),
+    )
     reconciliation = reconcile_attempt_files(
         expected_manifest,
         unit_attempt_paths,
@@ -338,10 +349,12 @@ def final_merge(
         SHARD_ATTEMPT_SCHEMA,
         (("shard_id", "ascending"), ("attempt_id", "ascending")),
     )
-    _copy_contract_files(
-        (Path(contract_root), Path(plan_root)),
-        root,
-    )
+    evidence_roots = [Path(contract_root), Path(plan_root)]
+    if preflight_root is not None:
+        evidence_roots.append(Path(preflight_root))
+    if recovery_root is not None:
+        evidence_roots.append(Path(recovery_root))
+    _copy_contract_files(tuple(evidence_roots), root)
     evidence: Mapping[str, Any] = {
         "github_only": True,
         "standard_runner_only": (

@@ -9,6 +9,27 @@ standalone. 12 strategies, intraday + DL/RL + dashboard + multi-broker
 / v1.3 / v1.4 / v1.5 (count in `tests/`; verify with
 `pytest --collect-only -q`).
 
+## GitHub-only performance framework
+
+Los runs pesados nuevos usan
+`.github/workflows/_aurora-future-run-v3.yml`: preflight, datos preparados una
+vez, smoke, piloto real, planificación adaptativa hasta 360 runners estándar,
+shards reanudables, retries selectivos, merge acotado, reconciliación exacta y
+verificación independiente.
+
+Comprobaciones disponibles:
+
+- `github-performance-ci.yml`: contratos y smoke real de cuatro shards.
+- `github-performance-reference.yml`: workload manual de 1.024 unidades.
+- `github-performance-benchmark.yml`: baseline equivalente frente al modo
+  optimizado; sólo compara velocidad si los resultados científicos coinciden.
+- `github-performance-policy.yml`: impide que workflows pesados futuros eviten
+  el framework.
+
+La especificación de referencia está en
+`config/github_performance_reference.yaml` y el estándar completo en
+`docs/GITHUB_RUN_MASTER_STANDARD.md`.
+
 Renamed from Aurora to Aurora in v1.5.0 (R23). The legacy
 `aurora` namespace remains importable as a thin compat shim that
 emits a `DeprecationWarning`; the shim is removed in v1.6.
