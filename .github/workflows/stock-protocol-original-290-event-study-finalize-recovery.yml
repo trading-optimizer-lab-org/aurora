@@ -1,0 +1,107 @@
+name: Stock Protocol Original 290 Event Study Finalize Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Branch containing the audited repair and verifier
+        required: true
+        default: codex/stock-protocol-290-event-study
+      recovery_run_id:
+        description: Failed run containing the preserved unverified merge
+        required: true
+        default: "30116698236"
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  MALLOC_ARENA_MAX: "2"
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . pytest scipy statsmodels pyarrow
+      - name: Compile repair and final verifier
+        run: >-
+          python -m py_compile
+          scripts/repair_stock_protocol_290_final_artifact.py
+          scripts/merge_stock_protocol_290_event_study.py
+          scripts/verify_stock_protocol_290_event_study.py
+      - name: Run focused recovery contracts in GitHub
+        run: >-
+          pytest -q
+          tests/test_repair_stock_protocol_290_final_artifact.py
+          tests/test_stock_protocol_290_merge.py
+          tests/test_stock_protocol_290_workflow.py
+
+  recover-and-verify:
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e . scipy statsmodels pyarrow
+      - name: Download preserved unverified merge
+        uses: actions/download-artifact@v4
+        with:
+          repository: trading-optimizer-lab-org/aurora
+          run-id: ${{ inputs.recovery_run_id }}
+          name: stock-protocol-original-290-unverified-merge-recovery
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: final
+      - name: Show runner capacity before atomic repair
+        run: df -h .
+      - name: Materialize censored contract without recomputing statistics
+        run: >-
+          python scripts/repair_stock_protocol_290_final_artifact.py
+          --artifact-root final
+          --source-run-id ${{ inputs.recovery_run_id }}
+      - name: Fail hard unless repaired final contract is complete
+        run: python scripts/verify_stock_protocol_290_event_study.py final
+      - name: Print final audited summary
+        shell: bash
+        run: |
+          cat final/final_artifact_repair_audit.json
+          cat final/audit_summary.json
+          cat final/top_combinations_by_objective.csv
+          cat final/final_290_opportunity_event_study.md
+          echo "FINAL_FILE_COUNT=$(find final -type f | wc -l)"
+          echo "FINAL_BYTES=$(du -sb final | cut -f1)"
+          sha256sum final/final_artifact_manifest.json
+      - name: Build compact review package
+        shell: bash
+        run: |
+          mkdir review
+          find final -maxdepth 1 -type f \( -name '*.csv' -o -name '*.json' -o -name '*.md' \) -exec cp {} review/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-original-290-opportunity-event-study
+          path: final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-protocol-original-290-opportunity-event-study-review
+          path: review
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90
