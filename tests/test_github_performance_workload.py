@@ -129,7 +129,7 @@ def test_load_workload_accepts_complete_aurora_object(
     monkeypatch,
 ) -> None:
     module = ModuleType("aurora.fake_github_workload")
-    module.WORKLOAD = CompleteWorkload()
+    setattr(module, "WORKLOAD", CompleteWorkload())
     monkeypatch.setitem(sys.modules, module.__name__, module)
     loaded = load_workload(f"{module.__name__}:WORKLOAD")
     assert isinstance(loaded, CompleteWorkload)

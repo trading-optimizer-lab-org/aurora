@@ -6,7 +6,7 @@ import json
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,7 @@ from aurora.infra.github_performance.contracts import (
 from aurora.infra.github_performance.preflight import load_github_yaml
 
 
-class FailureClass(StrEnum):
+class FailureClass(str, Enum):
     TRANSIENT_NETWORK = "transient_network"
     GITHUB_5XX = "github_5xx"
     PROVIDER_429 = "provider_429"
@@ -44,6 +44,9 @@ class FailureClass(StrEnum):
     CODE = "code"
     OUT_OF_MEMORY = "out_of_memory"
     DISK_EXHAUSTED = "disk_exhausted"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 TRANSIENT_CLASSES = frozenset(

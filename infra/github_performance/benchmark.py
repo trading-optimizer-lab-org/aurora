@@ -296,7 +296,7 @@ def compare_runs(
         or not baseline["telemetry_complete"]
         or not optimized["telemetry_complete"]
     )
-    failures = []
+    failures: list[str] = []
     checks = (
         (same_code, "CODE_SHA_MISMATCH"),
         (same_policy, "POLICY_HASH_MISMATCH"),

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,7 +22,7 @@ def test_validate_parser_binds_expected_command() -> None:
 def test_environment_identity_ignores_cache_hit_but_detects_tampering(
     tmp_path: Path,
 ) -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "schema_version": "1",
         "cache": {"key": "exact", "hit": False},
         "installed_wheel_sha256": "a" * 64,

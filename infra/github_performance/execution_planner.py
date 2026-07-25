@@ -371,7 +371,7 @@ def build_execution_plan(
 
     decision = choose_job_count(
         manifest,
-        _SpecContract(),  # type: ignore[arg-type]
+        _SpecContract(),
         pilot,
     )
     if forced_job_count is not None:
