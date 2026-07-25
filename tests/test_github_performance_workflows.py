@@ -43,11 +43,6 @@ def test_runtime_setup_is_composite_and_pinned() -> None:
         if "uses" in step
     ]
     assert _locked_action("actions/setup-python") in uses
-    assert _locked_action("actions/cache") in uses
-    assert (
-        "actions/cache/restore@"
-        + _locked_action("actions/cache").split("@", 1)[1]
-    ) in uses
     assert all(
         value.rsplit("@", 1)[-1].isalnum() and
         len(value.rsplit("@", 1)[-1]) == 40
@@ -55,21 +50,23 @@ def test_runtime_setup_is_composite_and_pinned() -> None:
     )
 
 
-def test_runtime_setup_defaults_to_restore_only() -> None:
+def test_runtime_setup_requires_exact_wheelhouse_and_lock() -> None:
     action = _load_action()
-    assert action["inputs"]["cache-mode"]["default"] == "restore-only"
-    steps = action["runs"]["steps"]
-    restore = next(step for step in steps if step.get("id") == "cache-restore")
-    writer = next(step for step in steps if step.get("id") == "cache-writer")
-    assert restore["if"] == "inputs.cache-mode == 'restore-only'"
-    assert writer["if"] == "inputs.cache-mode == 'writer'"
+    assert action["inputs"]["wheelhouse-path"]["required"] is True
+    assert action["inputs"]["dependency-lock-path"]["required"] is True
 
 
-def test_runtime_setup_reuses_exact_tracked_source_wheel() -> None:
+def test_runtime_setup_installs_offline_without_resolution_or_building() -> None:
     text = ACTION_PATH.read_text(encoding="utf-8")
-    assert "git ls-files -s | sha256sum" in text
-    assert 'if [[ -z "$wheel_path" ]]; then' in text
-    assert 'identity_payload["cache"].pop("hit", None)' in text
+    assert "--no-index" in text
+    assert "--require-hashes" in text
+    assert "--no-deps" in text
+    assert "pip wheel" not in text
+    assert "--upgrade pip" not in text
+    assert "https://" not in text
+    assert "http://" not in text
+    assert "wheelhouse_manifest.json" in text
+    assert "dependency_lock_manifest.json" in text
 
 
 def test_runtime_setup_pins_numeric_threads_to_detected_cpus() -> None:
@@ -107,7 +104,8 @@ def _needs(job: dict[str, Any]) -> set[str]:
 
 def test_reusable_workflow_has_complete_dependency_spine() -> None:
     jobs = _workflow()["jobs"]
-    assert _needs(jobs["prepare_environment"]) == {"validate"}
+    assert _needs(jobs["prepare_environment"]) == set()
+    assert _needs(jobs["validate"]) == {"prepare_environment"}
     assert _needs(jobs["prepare_data"]) == {"validate"}
     assert _needs(jobs["freeze_contract"]) == {
         "validate",
@@ -215,6 +213,63 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     assert "push" not in workflow["on"]
     assert "pull_request" not in workflow["on"]
+
+
+def test_reusable_workflow_builds_aurora_and_wheelhouse_exactly_once() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    prepare_text = str(jobs["prepare_environment"])
+    assert "build_github_performance_wheelhouse.py" in prepare_text
+    assert text.count("build_github_performance_wheelhouse.py") == 1
+    assert text.count("pip wheel") <= 1
+    assert "requirements/github-performance.lock" in prepare_text
+    upload = next(
+        step
+        for step in jobs["prepare_environment"]["steps"]
+        if step["name"] == "Upload immutable wheelhouse"
+    )
+    assert "wheelhouse" in str(upload["with"]["path"])
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["compression-level"] == 0
+
+
+def test_every_runtime_consumer_downloads_the_same_wheelhouse_first() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    runtime_jobs = {
+        name
+        for name, job in jobs.items()
+        if any(
+            step.get("uses")
+            == "./.github/actions/aurora-runtime-setup"
+            for step in job.get("steps", ())
+        )
+    }
+    assert runtime_jobs
+    for name in runtime_jobs:
+        steps = jobs[name]["steps"]
+        setup_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses")
+            == "./.github/actions/aurora-runtime-setup"
+        )
+        download_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Download immutable wheelhouse"
+        )
+        assert download_index < setup_index, name
+        setup = steps[setup_index]
+        assert (
+            setup["with"]["wheelhouse-path"]
+            == "${{ runner.temp }}/wheelhouse"
+        )
+        assert (
+            setup["with"]["dependency-lock-path"]
+            == "requirements/github-performance.lock"
+        )
 
 
 def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
