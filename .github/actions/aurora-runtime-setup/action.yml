@@ -1,0 +1,266 @@
+name: Aurora runtime setup
+description: Restore a verified Aurora runtime on a standard GitHub runner
+
+inputs:
+  python-version:
+    description: Exact Python version used by the run contract
+    required: true
+  extras:
+    description: Aurora dependency extra to install
+    required: false
+    default: dev
+  cache-key:
+    description: Contract-specific cache namespace
+    required: true
+  cache-mode:
+    description: Either restore-only or writer
+    required: false
+    default: restore-only
+
+outputs:
+  cpu-count:
+    description: Logical CPUs visible to the standard runner
+    value: ${{ steps.runner.outputs.cpu_count }}
+  memory-mb:
+    description: Memory visible to the standard runner
+    value: ${{ steps.runner.outputs.memory_mb }}
+  free-disk-mb:
+    description: Free workspace disk before installation
+    value: ${{ steps.runner.outputs.free_disk_mb }}
+  image-os:
+    description: GitHub runner image operating system
+    value: ${{ steps.runner.outputs.image_os }}
+  image-version:
+    description: GitHub runner image version
+    value: ${{ steps.runner.outputs.image_version }}
+  cache-hit:
+    description: Whether the exact environment cache was restored
+    value: ${{ steps.cache-result.outputs.cache_hit }}
+  environment-sha256:
+    description: Canonical SHA-256 of environment_manifest.json
+    value: ${{ steps.manifest.outputs.environment_sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate setup inputs
+      shell: bash
+      env:
+        CACHE_MODE: ${{ inputs.cache-mode }}
+      run: |
+        set -euo pipefail
+        case "$CACHE_MODE" in
+          restore-only|writer) ;;
+          *)
+            echo "::error::cache-mode must be restore-only or writer"
+            exit 2
+            ;;
+        esac
+
+    - name: Inspect standard runner
+      id: runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        cpu_count="$(getconf _NPROCESSORS_ONLN)"
+        memory_mb="$(awk '/MemTotal/ {print int($2 / 1024)}' /proc/meminfo)"
+        free_disk_mb="$(df -Pm "$GITHUB_WORKSPACE" | awk 'NR == 2 {print $4}')"
+        {
+          echo "cpu_count=$cpu_count"
+          echo "memory_mb=$memory_mb"
+          echo "free_disk_mb=$free_disk_mb"
+          echo "image_os=${ImageOS:-unknown}"
+          echo "image_version=${ImageVersion:-unknown}"
+        } >> "$GITHUB_OUTPUT"
+        {
+          echo "OMP_NUM_THREADS=$cpu_count"
+          echo "OPENBLAS_NUM_THREADS=$cpu_count"
+          echo "MKL_NUM_THREADS=$cpu_count"
+          echo "NUMEXPR_NUM_THREADS=$cpu_count"
+          echo "VECLIB_MAXIMUM_THREADS=$cpu_count"
+          echo "BLIS_NUM_THREADS=$cpu_count"
+          echo "AURORA_RUNNER_CPU_COUNT=$cpu_count"
+        } >> "$GITHUB_ENV"
+
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: ""
+
+    - name: Resolve immutable cache key
+      id: cache-key
+      shell: bash
+      env:
+        CACHE_NAMESPACE: ${{ inputs.cache-key }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        dependency_sha="$(sha256sum pyproject.toml | cut -d' ' -f1)"
+        build_sha="$(
+          {
+            sha256sum pyproject.toml
+            find . -maxdepth 2 -type f \
+              \( -name 'setup.cfg' -o -name 'setup.py' -o \
+                 -name 'MANIFEST.in' \) -print0 |
+              sort -z |
+              xargs -0 -r sha256sum
+          } | sha256sum | cut -d' ' -f1
+        )"
+        resolved_key="${CACHE_NAMESPACE}-${RUNNER_OS}-${RUNNER_ARCH}"
+        resolved_key+="-py${PYTHON_VERSION}-dep${dependency_sha}"
+        resolved_key+="-build${build_sha}"
+        {
+          echo "dependency_sha256=$dependency_sha"
+          echo "build_input_sha256=$build_sha"
+          echo "resolved_key=$resolved_key"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore dependency cache
+      id: cache-restore
+      if: inputs.cache-mode == 'restore-only'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          ~/.cache/pip
+          .aurora-wheel-cache
+        key: ${{ steps.cache-key.outputs.resolved_key }}
+
+    - name: Restore and populate dependency cache
+      id: cache-writer
+      if: inputs.cache-mode == 'writer'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          ~/.cache/pip
+          .aurora-wheel-cache
+        key: ${{ steps.cache-key.outputs.resolved_key }}
+
+    - name: Consolidate cache result
+      id: cache-result
+      shell: bash
+      env:
+        RESTORE_HIT: ${{ steps.cache-restore.outputs.cache-hit }}
+        WRITER_HIT: ${{ steps.cache-writer.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        if [[ "$RESTORE_HIT" == "true" || "$WRITER_HIT" == "true" ]]; then
+          echo "cache_hit=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "cache_hit=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build and install Aurora wheel
+      id: install
+      shell: bash
+      env:
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        set -euo pipefail
+        mkdir -p .aurora-wheel-cache/wheels
+        python -m pip install --disable-pip-version-check --upgrade pip
+        python -m pip wheel . --no-deps \
+          --wheel-dir .aurora-wheel-cache/wheels
+        wheel_path="$(
+          find .aurora-wheel-cache/wheels -maxdepth 1 \
+            -type f -name 'aurora-*.whl' -printf '%T@ %p\n' |
+            sort -n |
+            tail -1 |
+            cut -d' ' -f2-
+        )"
+        if [[ -z "$wheel_path" ]]; then
+          echo "::error::Aurora wheel was not produced"
+          exit 3
+        fi
+        if [[ -n "$EXTRAS" ]]; then
+          install_target="${wheel_path}[${EXTRAS}]"
+        else
+          install_target="$wheel_path"
+        fi
+        python -m pip install --disable-pip-version-check "$install_target"
+        wheel_sha256="$(sha256sum "$wheel_path" | cut -d' ' -f1)"
+        {
+          echo "wheel_path=$wheel_path"
+          echo "wheel_sha256=$wheel_sha256"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Write environment manifest
+      id: manifest
+      shell: bash
+      env:
+        AURORA_CACHE_HIT: ${{ steps.cache-result.outputs.cache_hit }}
+        AURORA_CACHE_KEY: ${{ steps.cache-key.outputs.resolved_key }}
+        AURORA_DEPENDENCY_SHA: ${{ steps.cache-key.outputs.dependency_sha256 }}
+        AURORA_BUILD_SHA: ${{ steps.cache-key.outputs.build_input_sha256 }}
+        AURORA_WHEEL_SHA: ${{ steps.install.outputs.wheel_sha256 }}
+        AURORA_IMAGE_OS: ${{ steps.runner.outputs.image_os }}
+        AURORA_IMAGE_VERSION: ${{ steps.runner.outputs.image_version }}
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import hashlib
+        import importlib.metadata
+        import json
+        import os
+        import platform
+        import sys
+
+        packages = sorted(
+            {
+                (
+                    distribution.metadata.get("Name", "unknown"),
+                    distribution.version,
+                )
+                for distribution in importlib.metadata.distributions()
+            }
+        )
+        thread_names = (
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+            "BLIS_NUM_THREADS",
+        )
+        payload = {
+            "schema_version": "1",
+            "runner": {
+                "os": os.environ["AURORA_IMAGE_OS"],
+                "image_version": os.environ["AURORA_IMAGE_VERSION"],
+                "architecture": platform.machine(),
+                "cpu_count": int(os.environ["AURORA_RUNNER_CPU_COUNT"]),
+            },
+            "python": {
+                "version": platform.python_version(),
+                "implementation": platform.python_implementation(),
+                "executable_name": os.path.basename(sys.executable),
+            },
+            "cache": {
+                "key": os.environ["AURORA_CACHE_KEY"],
+                "hit": os.environ["AURORA_CACHE_HIT"] == "true",
+            },
+            "dependency_lock_sha256": os.environ["AURORA_DEPENDENCY_SHA"],
+            "build_input_sha256": os.environ["AURORA_BUILD_SHA"],
+            "installed_wheel_sha256": os.environ["AURORA_WHEEL_SHA"],
+            "thread_limits": {
+                name: int(os.environ[name]) for name in thread_names
+            },
+            "installed_packages": [
+                {"name": name, "version": version}
+                for name, version in packages
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+        digest = hashlib.sha256(encoded).hexdigest()
+        payload["environment_sha256"] = digest
+        with open("environment_manifest.json", "w", encoding="utf-8") as out:
+            json.dump(payload, out, indent=2, sort_keys=True)
+            out.write("\n")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(f"environment_sha256={digest}\n")
+        PY

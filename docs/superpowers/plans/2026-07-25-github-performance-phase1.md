@@ -1907,7 +1907,7 @@ gh pr checks --watch
 - Produces: `recovery_plan.json` and `checkpoint_audit.parquet`, including
   valid zero-retry outputs when no recovery is needed.
 
-- [ ] **Step 1: Write checkpoint and recovery tests**
+- [x] **Step 1: Write checkpoint and recovery tests**
 
 ```python
 def test_checkpoint_manifest_is_published_after_payload(
@@ -2016,7 +2016,7 @@ def test_verified_checkpoint_is_selected_for_resume() -> None:
     )
 ```
 
-- [ ] **Step 2: Implement atomic checkpoint publication**
+- [x] **Step 2: Implement atomic checkpoint publication**
 
 Write payload and manifest to temporary sibling paths, flush and `fsync` each
 file, atomically `Path.replace` the payload first, and publish
@@ -2025,7 +2025,7 @@ SHA-256, shard identity, attempt identity, and monotonic completed-unit count.
 A corrupt or regressing checkpoint is ignored and recorded as technical
 evidence; it is never used to skip work.
 
-- [ ] **Step 3: Implement failure classification and retry budgets**
+- [x] **Step 3: Implement failure classification and retry budgets**
 
 Define:
 
@@ -2049,7 +2049,7 @@ the run spec. OOM and disk exhaustion emit `replan`; deterministic classes emit
 `do_not_retry`. A retry preserves `shard_id` and logical unit keys, receives a
 new UUIDv4 `attempt_id`, and resumes only from a verified checkpoint.
 
-- [ ] **Step 4: Write compact recovery outputs**
+- [x] **Step 4: Write compact recovery outputs**
 
 Write `recovery_plan.json`, `retry_matrix_a.json`, `retry_matrix_b.json`, and
 `checkpoint_audit.parquet`. Empty matrices are represented by
@@ -2057,13 +2057,13 @@ Write `recovery_plan.json`, `retry_matrix_a.json`, `retry_matrix_b.json`, and
 contain only shard, attempt, checkpoint-artifact, and assignment references.
 Reject combined GitHub outputs at 262,144 bytes.
 
-- [ ] **Step 5: Expose recovery through the CLI**
+- [x] **Step 5: Expose recovery through the CLI**
 
 `aurora github recover-plan` and `scripts/aurora_github_recover.py` load
 attempt/checkpoint manifests, apply the spec retry budget, write machine-readable
 outputs, and call `require_github_execution` before any recovery operation.
 
-- [ ] **Step 6: Push and verify in GitHub**
+- [x] **Step 6: Push and verify in GitHub**
 
 ```bash
 git add infra/github_performance/checkpoint.py \
