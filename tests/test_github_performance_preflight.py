@@ -9,11 +9,14 @@ from aurora.infra.github_performance.contracts import RunSpec
 from aurora.infra.github_performance.preflight import (
     DuplicateYamlKey,
     PreflightError,
+    classify_workflow,
     freeze_resolved_contract,
     load_github_yaml,
+    load_legacy_workflow_allowlist,
     resolve_run_spec,
     validate_future_workflow,
     validate_run_spec,
+    validate_workflow_policy,
     write_preflight_report,
 )
 from github_performance_helpers import (
@@ -193,3 +196,78 @@ def test_github_loader_rejects_duplicate_keys(tmp_path: Path) -> None:
     path.write_text("name: first\nname: second\n", encoding="utf-8")
     with pytest.raises(DuplicateYamlKey, match="name"):
         load_github_yaml(path)
+
+
+def test_legacy_workflow_is_identified_by_path_and_hash(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / ".github/workflows/legacy.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: legacy\n", encoding="utf-8")
+    allowlist = {
+        ".github/workflows/legacy.yml": (
+            "e94863e008af0ffe480b5078baf6681b8ac8b9944eacf5eae59ac4046623da02"
+        )
+    }
+    assert classify_workflow(workflow, allowlist, tmp_path) == "legacy"
+
+
+def test_one_byte_legacy_change_is_modified_legacy(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / ".github/workflows/legacy.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: changed\n", encoding="utf-8")
+    allowlist = {".github/workflows/legacy.yml": "0" * 64}
+    assert (
+        classify_workflow(workflow, allowlist, tmp_path)
+        == "modified_legacy"
+    )
+    violations = validate_workflow_policy(workflow, tmp_path, allowlist)
+    assert "LEGACY_WORKFLOW_MODIFIED" in {
+        item.code for item in violations
+    }
+
+
+def test_new_heavy_workflow_must_call_framework(tmp_path: Path) -> None:
+    workflow = write_yaml(
+        tmp_path / ".github/workflows/new-backtest.yml",
+        {
+            "name": "new backtest",
+            "on": {"workflow_dispatch": {}},
+            "permissions": {"contents": "read"},
+            "jobs": {
+                "search": {
+                    "runs-on": "ubuntu-24.04",
+                    "strategy": {
+                        "fail-fast": False,
+                        "matrix": {"stage": [0, 1]},
+                    },
+                    "steps": [{"run": "python scripts/run_search.py"}],
+                }
+            },
+        },
+    )
+    violations = validate_workflow_policy(workflow, tmp_path, {})
+    assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
+        item.code for item in violations
+    }
+
+
+def test_new_framework_caller_passes_policy(tmp_path: Path) -> None:
+    reusable = tmp_path / ".github/workflows/_aurora-future-run-v3.yml"
+    reusable.parent.mkdir(parents=True)
+    reusable.write_text("name: reusable\n", encoding="utf-8")
+    caller = write_yaml(
+        tmp_path / ".github/workflows/new-backtest.yml",
+        manual_heavy_workflow(
+            "./.github/workflows/_aurora-future-run-v3.yml"
+        ),
+    )
+    assert validate_workflow_policy(caller, tmp_path, {}) == []
+
+
+def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
+    allowlist = load_legacy_workflow_allowlist()
+    assert len(allowlist) == 99
+    assert ".github/workflows/tests.yml" in allowlist

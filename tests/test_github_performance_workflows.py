@@ -16,6 +16,9 @@ ACTION_PATH = (
 WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "_aurora-future-run-v3.yml"
 )
+POLICY_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "github-performance-policy.yml"
+)
 
 
 def _load_action() -> dict[str, Any]:
@@ -199,3 +202,17 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     assert "push" not in workflow["on"]
     assert "pull_request" not in workflow["on"]
+
+
+def test_policy_workflow_is_lightweight_static_pr_enforcement() -> None:
+    workflow = load_github_yaml(POLICY_WORKFLOW_PATH)
+    assert "pull_request" in workflow["on"]
+    assert workflow["permissions"] == {"contents": "read"}
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"workflow_policy"}
+    job = jobs["workflow_policy"]
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert "strategy" not in job
+    text = POLICY_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "validate_github_workflow_policy.py" in text
+    assert "workflow_dispatch" in workflow["on"]

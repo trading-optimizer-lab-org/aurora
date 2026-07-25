@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
 import json
 import re
@@ -28,6 +29,24 @@ from aurora.infra.github_performance.contracts import (
 
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 FRAMEWORK_WORKFLOW = "./.github/workflows/_aurora-future-run-v3.yml"
+FRAMEWORK_WORKFLOW_PATH = ".github/workflows/_aurora-future-run-v3.yml"
+HEAVY_WORKFLOW_MARKERS = (
+    "backtest",
+    "research",
+    "optim",
+    "robust",
+    "sweep",
+    "search",
+    "campaign",
+    "nightly",
+    "mass-download",
+    "mass_download",
+    "merge-group",
+    "merge_group",
+    "run-shard",
+    "run_shard",
+    "fanout",
+)
 DERIVED_EVIDENCE_PATHS = (
     ("identity", "code_sha", "code_sha", "CODE_SHA_MISMATCH"),
     (
@@ -492,6 +511,163 @@ def _iter_uses(workflow: Mapping[str, Any]) -> list[tuple[str, str]]:
     return output
 
 
+def load_legacy_workflow_allowlist(
+    path: Path | None = None,
+) -> dict[str, str]:
+    """Load and validate the immutable adoption-time workflow hashes."""
+
+    if path is None:
+        payload = _package_json("config/legacy_workflow_allowlist.json")
+    else:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "1":
+        raise ValueError("legacy workflow allowlist schema is unsupported")
+    adoption_commit = payload.get("adoption_commit")
+    if (
+        not isinstance(adoption_commit, str)
+        or not FULL_SHA_RE.fullmatch(adoption_commit)
+    ):
+        raise ValueError("legacy workflow adoption commit is invalid")
+    rows = payload.get("workflows")
+    if not isinstance(rows, list):
+        raise ValueError("legacy workflow allowlist rows are missing")
+    allowlist: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("legacy workflow allowlist row is invalid")
+        workflow_path = row.get("path")
+        digest = row.get("sha256")
+        if (
+            not isinstance(workflow_path, str)
+            or not workflow_path.startswith(".github/workflows/")
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ValueError("legacy workflow allowlist entry is invalid")
+        if workflow_path in allowlist:
+            raise ValueError("duplicate legacy workflow allowlist path")
+        allowlist[workflow_path] = digest
+    return allowlist
+
+
+def classify_workflow(
+    path: Path,
+    allowlist: Mapping[str, str],
+    repo_root: Path | None = None,
+) -> str:
+    """Classify a workflow by its adoption-time path and exact bytes."""
+
+    workflow_path = Path(path).resolve()
+    root = (
+        Path(repo_root).resolve()
+        if repo_root is not None
+        else workflow_path.parents[2]
+    )
+    try:
+        relative = workflow_path.relative_to(root).as_posix()
+    except ValueError:
+        relative = workflow_path.as_posix()
+    expected = allowlist.get(relative)
+    if expected is None:
+        return "future"
+    observed = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
+    return "legacy" if observed == expected else "modified_legacy"
+
+
+def _iter_scalar_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Mapping):
+        output: list[str] = []
+        for child in value.values():
+            output.extend(_iter_scalar_strings(child))
+        return output
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        output = []
+        for child in value:
+            output.extend(_iter_scalar_strings(child))
+        return output
+    return []
+
+
+def _calls_future_framework(workflow: Mapping[str, Any]) -> bool:
+    return any(
+        uses == FRAMEWORK_WORKFLOW
+        for _, uses in _iter_uses(workflow)
+    )
+
+
+def _is_heavy_workflow(
+    workflow: Mapping[str, Any],
+    path: Path,
+) -> bool:
+    if _calls_future_framework(workflow):
+        return True
+    jobs = workflow.get("jobs", {})
+    if isinstance(jobs, Mapping):
+        for job in jobs.values():
+            if not isinstance(job, Mapping):
+                continue
+            strategy = job.get("strategy")
+            if isinstance(strategy, Mapping) and (
+                "matrix" in strategy or "max-parallel" in strategy
+            ):
+                return True
+            timeout = job.get("timeout-minutes")
+            if isinstance(timeout, (int, float)) and timeout > 60:
+                return True
+    searchable = " ".join(
+        [Path(path).name, *_iter_scalar_strings(jobs)]
+    ).lower()
+    return any(marker in searchable for marker in HEAVY_WORKFLOW_MARKERS)
+
+
+def validate_workflow_policy(
+    path: Path,
+    repo_root: Path,
+    allowlist: Mapping[str, str] | None = None,
+) -> list[Violation]:
+    """Apply grandfathering and the future heavy-workflow framework rule."""
+
+    active_allowlist = (
+        dict(allowlist)
+        if allowlist is not None
+        else load_legacy_workflow_allowlist()
+    )
+    classification = classify_workflow(path, active_allowlist, repo_root)
+    if classification == "legacy":
+        return []
+    if classification == "modified_legacy":
+        return [
+            _violation(
+                "LEGACY_WORKFLOW_MODIFIED",
+                (),
+                "legacy workflow bytes changed after framework adoption",
+            )
+        ]
+    violations = validate_future_workflow(path, repo_root)
+    try:
+        workflow = load_github_yaml(Path(path))
+    except (OSError, ValueError, yaml.YAMLError):
+        return violations
+    relative = Path(path).resolve().relative_to(
+        Path(repo_root).resolve()
+    ).as_posix()
+    if (
+        relative != FRAMEWORK_WORKFLOW_PATH
+        and _is_heavy_workflow(workflow, path)
+        and not _calls_future_framework(workflow)
+    ):
+        violations.append(
+            _violation(
+                "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK",
+                ("jobs",),
+                "new heavy workflows must call _aurora-future-run-v3.yml",
+            )
+        )
+    return violations
+
+
 def validate_future_workflow(
     path: Path,
     repo_root: Path,
@@ -504,7 +680,7 @@ def validate_future_workflow(
         return [_violation("WORKFLOW_PARSE_FAILED", (), str(exc))]
     violations: list[Violation] = []
     uses_entries = _iter_uses(workflow)
-    heavy = any(value == FRAMEWORK_WORKFLOW for _, value in uses_entries)
+    heavy = _is_heavy_workflow(workflow, path)
     action_lock = _package_json("config/official_actions_lock.json")
     for yaml_path, uses in uses_entries:
         if uses.startswith("./"):
@@ -519,7 +695,14 @@ def validate_future_workflow(
                     )
                 )
                 continue
-            if not target.is_file():
+            reference_exists = target.is_file() or (
+                target.is_dir()
+                and (
+                    (target / "action.yml").is_file()
+                    or (target / "action.yaml").is_file()
+                )
+            )
+            if not reference_exists:
                 violations.append(
                     _violation(
                         "LOCAL_REFERENCE_MISSING",

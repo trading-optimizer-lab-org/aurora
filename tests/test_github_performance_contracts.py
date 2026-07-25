@@ -106,8 +106,14 @@ def test_nested_contract_files_ship_inside_the_aurora_package() -> None:
     root = importlib.resources.files("aurora")
     schema = root.joinpath("config/schemas/github_run_spec_v3.schema.json")
     template = root.joinpath("config/templates/github_run_v3.yaml")
+    allowlist = root.joinpath("config/legacy_workflow_allowlist.json")
+    capacity = root.joinpath("config/github_capacity_profile.json")
+    actions_lock = root.joinpath("config/official_actions_lock.json")
     assert schema.is_file()
     assert template.is_file()
+    assert allowlist.is_file()
+    assert capacity.is_file()
+    assert actions_lock.is_file()
 
 
 def _manifest_payload(

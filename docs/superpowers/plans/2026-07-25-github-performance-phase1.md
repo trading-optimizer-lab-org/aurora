@@ -2090,7 +2090,7 @@ gh pr checks --watch
 - Produces: `environment_manifest.json` with runner, Python, dependency,
   cache-key, installed-wheel, and thread-limit hashes.
 
-- [ ] **Step 1: Write static action tests**
+- [x] **Step 1: Write static action tests**
 
 Load the action YAML and assert:
 
@@ -2101,7 +2101,7 @@ Load the action YAML and assert:
 - `persist-credentials` is not enabled;
 - no larger-runner label appears.
 
-- [ ] **Step 2: Implement restore-only setup**
+- [x] **Step 2: Implement restore-only setup**
 
 The action:
 
@@ -2118,7 +2118,7 @@ The action:
 every other job uses `restore-only`. The cache key contains the dependency-lock
 hash, Python version, runner OS, architecture, and Aurora build-input hash.
 
-- [ ] **Step 3: Push and verify in GitHub**
+- [x] **Step 3: Push and verify in GitHub**
 
 ```bash
 git add .github/actions/aurora-runtime-setup/action.yml \
@@ -2142,7 +2142,7 @@ gh pr checks --watch
 - Produces artifact:
   `<run_label>-results`.
 
-- [ ] **Step 1: Add structural workflow tests**
+- [x] **Step 1: Add structural workflow tests**
 
 Assert the workflow contains:
 
@@ -2164,7 +2164,7 @@ Assert both matrices use `fail-fast: false`; A is at most 256, B is at most 104;
 all salvage and merge jobs use `if: always()`; all runners are
 `ubuntu-24.04`.
 
-- [ ] **Step 2: Implement compact dynamic matrices**
+- [x] **Step 2: Implement compact dynamic matrices**
 
 `plan` writes only compact shard descriptors to `$GITHUB_OUTPUT`:
 
@@ -2190,7 +2190,7 @@ and the exact `identity.code_sha` from the validated spec. `validate` compares
 that SHA with the triggering commit and blocks `CODE_SHA_MISMATCH` before any
 preparation job.
 
-- [ ] **Step 3: Implement unique shard artifacts**
+- [x] **Step 3: Implement unique shard artifacts**
 
 Name artifacts:
 
@@ -2201,7 +2201,7 @@ Name artifacts:
 Use pinned upload-artifact, `compression-level: 0` for Parquet, and
 `if-no-files-found: error`.
 
-- [ ] **Step 4: Integrate salvage and selective retry**
+- [x] **Step 4: Integrate salvage and selective retry**
 
 Every fan-out job runs an `if: always()` salvage step that uploads its valid
 checkpoint, attempt manifest, and technical diagnostics under a unique
@@ -2214,13 +2214,13 @@ boolean output is true, verify any checkpoint hash before resuming, and preserve
 the original shard and unit identities. Merge waits for initial and retry jobs
 with `if: always()`.
 
-- [ ] **Step 5: Implement one bounded partial-merge level**
+- [x] **Step 5: Implement one bounded partial-merge level**
 
 Each partial merge downloads only artifacts matching its merge-group prefix.
 The final merge downloads partial artifacts, not every original shard. The
 verifier always runs and publishes diagnostics even on partial failure.
 
-- [ ] **Step 6: Push and verify in GitHub**
+- [x] **Step 6: Push and verify in GitHub**
 
 ```bash
 git add .github/workflows/_aurora-future-run-v3.yml \

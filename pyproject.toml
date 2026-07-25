@@ -153,6 +153,7 @@ packages = [
 [tool.setuptools.package-data]
 "aurora" = [
     "py.typed",
+    "config/*.json",
     "config/*.yaml",
     "config/*.yml",
     "config/templates/*.yaml",
