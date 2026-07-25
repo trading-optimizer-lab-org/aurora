@@ -9,6 +9,7 @@ import os
 import shutil
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,12 @@ from aurora.infra.github_performance.execution_planner import (
     write_execution_plan,
     write_pilot_result,
 )
+from aurora.infra.github_performance.guardrails import (
+    PlanGuardrailViolation,
+    assess_plan_guardrails,
+    write_budget_audit,
+    write_deadline_audit,
+)
 from aurora.infra.github_performance.merge_planner import (
     build_merge_plan,
     write_merge_plan,
@@ -48,6 +55,7 @@ from aurora.infra.github_performance.preflight import (
     write_preflight_report,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
+from aurora.infra.github_performance.telemetry import ResourceMonitor
 from aurora.infra.github_performance.verifier import (
     verify_final_artifact,
     write_campaign_closure,
@@ -468,22 +476,37 @@ def cmd_github_run_shard(args: argparse.Namespace) -> int:
     if args.checkpoint:
         checkpoint = _load_runtime_checkpoint(Path(args.checkpoint))
     output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     os.environ["AURORA_ATTEMPT_ID"] = args.attempt_id
     os.environ["AURORA_ARTIFACT_NAME"] = args.artifact_name
     if args.prepared_root:
         os.environ["AURORA_PREPARED_ROOT"] = str(
             Path(args.prepared_root).resolve()
         )
+    monitor = ResourceMonitor(
+        workspace=output_dir,
+        interval_seconds=5.0,
+    )
+    first_sample = monitor.sample_once()
+    if first_sample is None or not first_sample.child_aware:
+        raise RuntimeError("RESOURCE_EVIDENCE_MISSING")
+    monitor.start()
     try:
-        attempt = run_shard_with_lineage_check(
-            workload,
-            spec,
-            shard,
-            output_dir,
-            checkpoint,
-            expected_attempt_id=args.attempt_id,
-            expected_artifact_name=args.artifact_name,
-        )
+        try:
+            attempt = run_shard_with_lineage_check(
+                workload,
+                spec,
+                shard,
+                output_dir,
+                checkpoint,
+                expected_attempt_id=args.attempt_id,
+                expected_artifact_name=args.artifact_name,
+            )
+        finally:
+            monitor.stop()
+            monitor.write_parquet(
+                output_dir / "resource_samples.parquet"
+            )
     except BaseException as exc:
         reason = "DETERMINISTIC_CODE_ERROR"
         if isinstance(exc, MemoryError):
@@ -653,6 +676,48 @@ def cmd_github_verify(args: argparse.Namespace) -> int:
     return 0 if report.passed else 3
 
 
+def cmd_github_guardrail_check(args: argparse.Namespace) -> int:
+    require_github_execution("github guardrail-check")
+    spec = _load_spec(args.spec)
+    now_raw = getattr(args, "now", "")
+    now = (
+        datetime.fromisoformat(now_raw.replace("Z", "+00:00"))
+        if now_raw
+        else datetime.now(timezone.utc)
+    )
+    deadline, ledger, budget = assess_plan_guardrails(
+        spec,
+        now=now,
+        projected_wall_seconds=args.projected_wall_seconds,
+        projected_billable_minutes=args.projected_billable_minutes,
+        cost_per_billable_minute=args.cost_per_billable_minute,
+        checkpoint_margin_seconds=args.checkpoint_margin_seconds,
+        consumed_billable_minutes=args.consumed_billable_minutes,
+        committed_billable_minutes=args.committed_billable_minutes,
+    )
+    output_dir = Path(args.output_dir)
+    budget_path = write_budget_audit(
+        ledger,
+        budget,
+        output_dir / "budget_audit.json",
+    )
+    deadline_path = write_deadline_audit(
+        deadline,
+        output_dir / "deadline_audit.json",
+    )
+    reasons = (*deadline.reason_codes, *budget.reason_codes)
+    if reasons:
+        raise PlanGuardrailViolation(",".join(reasons))
+    _print(
+        {
+            "budget_audit": str(budget_path),
+            "deadline_audit": str(deadline_path),
+            "route_allowed": True,
+        }
+    )
+    return 0
+
+
 def register(subparsers, parent_parser=None) -> None:
     parser = subparsers.add_parser(
         "github",
@@ -762,6 +827,38 @@ def register(subparsers, parent_parser=None) -> None:
     verify.add_argument("--spec", required=True)
     verify.add_argument("--root", required=True)
     verify.set_defaults(func=cmd_github_verify)
+
+    guardrail = commands.add_parser("guardrail-check")
+    guardrail.add_argument("--spec", required=True)
+    guardrail.add_argument(
+        "--projected-wall-seconds",
+        type=float,
+        required=True,
+    )
+    guardrail.add_argument(
+        "--projected-billable-minutes",
+        type=float,
+        required=True,
+    )
+    guardrail.add_argument("--output-dir", required=True)
+    guardrail.add_argument("--cost-per-billable-minute", type=float)
+    guardrail.add_argument(
+        "--checkpoint-margin-seconds",
+        type=float,
+        default=60.0,
+    )
+    guardrail.add_argument(
+        "--consumed-billable-minutes",
+        type=float,
+        default=0.0,
+    )
+    guardrail.add_argument(
+        "--committed-billable-minutes",
+        type=float,
+        default=0.0,
+    )
+    guardrail.add_argument("--now", default="")
+    guardrail.set_defaults(func=cmd_github_guardrail_check)
 
 
 def script_main(command: str, argv: list[str] | None = None) -> int:
