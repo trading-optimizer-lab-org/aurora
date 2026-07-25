@@ -119,6 +119,11 @@ def test_phase_commands_are_registered() -> None:
             "--spec x --workload aurora.x:W --partials-root p "
             "--plan-root r --contract-root c --output-dir o",
         ),
+        (
+            "guardrail-check",
+            "--spec x --projected-wall-seconds 10 "
+            "--projected-billable-minutes 20 --output-dir o",
+        ),
     )
     for command, tail in commands:
         args = parser.parse_args(["github", command, *tail.split()])
@@ -154,6 +159,7 @@ def test_phase_commands_are_registered() -> None:
         ),
         (cmd_github.cmd_github_final_merge, {"spec": "missing"}),
         (cmd_github.cmd_github_verify, {"spec": "missing"}),
+        (cmd_github.cmd_github_guardrail_check, {"spec": "missing"}),
     ],
 )
 def test_heavy_commands_call_github_guard_first(

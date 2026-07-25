@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 
 import pyarrow.parquet as pq
+import pytest
 
 from aurora.infra.github_performance.contracts import ResourceSample
-from aurora.infra.github_performance.telemetry import PerformanceRecorder
+from aurora.infra.github_performance.telemetry import (
+    PerformanceRecorder,
+    ProcessRecord,
+    ResourceMonitor,
+    ResourceObservation,
+    aggregate_process_tree,
+)
 from aurora.monitoring.telemetry import InMemorySink
 
 
@@ -89,3 +98,150 @@ def test_parquet_export_has_fixed_schema_and_provenance(tmp_path: Path) -> None:
     assert table.schema.metadata[b"schema_version"] == b"1"
     assert table.schema.metadata[b"code_sha"] == b"a" * 40
     assert table.schema.metadata[b"policy_hash"] == b"b" * 64
+
+
+def _observation(index: int) -> ResourceObservation:
+    return ResourceObservation(
+        observed_at=datetime(2026, 7, 25, tzinfo=timezone.utc),
+        root_pid=100,
+        process_count=2,
+        child_aware=True,
+        rss_mb=float(index * 100),
+        peak_memory_mb=float(index * 120),
+        total_memory_mb=16_000.0,
+        free_disk_mb=float(20_000 - index * 10),
+        cpu_seconds=float(index),
+        io_read_bytes=index * 1000,
+        io_write_bytes=index * 2000,
+        io_wait_seconds=index * 0.1,
+        load_1m=1.0,
+    )
+
+
+def test_process_tree_aggregation_includes_descendants_only() -> None:
+    records = (
+        ProcessRecord(
+            pid=100,
+            parent_pid=1,
+            rss_mb=100,
+            peak_memory_mb=120,
+            cpu_seconds=1.0,
+            io_read_bytes=10,
+            io_write_bytes=20,
+            io_wait_seconds=0.1,
+        ),
+        ProcessRecord(
+            pid=101,
+            parent_pid=100,
+            rss_mb=200,
+            peak_memory_mb=240,
+            cpu_seconds=2.0,
+            io_read_bytes=30,
+            io_write_bytes=40,
+            io_wait_seconds=0.2,
+        ),
+        ProcessRecord(
+            pid=102,
+            parent_pid=101,
+            rss_mb=300,
+            peak_memory_mb=360,
+            cpu_seconds=3.0,
+            io_read_bytes=50,
+            io_write_bytes=60,
+            io_wait_seconds=0.3,
+        ),
+        ProcessRecord(
+            pid=999,
+            parent_pid=1,
+            rss_mb=9_999,
+            peak_memory_mb=9_999,
+            cpu_seconds=99.0,
+            io_read_bytes=9_999,
+            io_write_bytes=9_999,
+            io_wait_seconds=9.9,
+        ),
+    )
+
+    aggregate = aggregate_process_tree(records, root_pid=100)
+
+    assert aggregate.process_count == 3
+    assert aggregate.rss_mb == 600
+    assert aggregate.peak_memory_mb == 720
+    assert aggregate.cpu_seconds == 6.0
+    assert aggregate.io_read_bytes == 90
+    assert aggregate.io_write_bytes == 120
+    assert aggregate.io_wait_seconds == pytest.approx(0.6)
+
+
+def test_resource_monitor_reports_maximum_p95_and_parquet(
+    tmp_path: Path,
+) -> None:
+    values = iter((_observation(1), _observation(2), _observation(3)))
+    monitor = ResourceMonitor(
+        workspace=tmp_path,
+        interval_seconds=1.0,
+        sampler=lambda: next(values),
+    )
+    monitor.sample_once()
+    monitor.sample_once()
+    monitor.sample_once()
+
+    summary = monitor.summary()
+    output = tmp_path / "resource_samples.parquet"
+    monitor.write_parquet(output)
+    table = pq.read_table(output)
+
+    assert summary.sample_count == 3
+    assert summary.max_rss_mb == 300
+    assert summary.p95_rss_mb == 300
+    assert summary.minimum_free_disk_mb == 19_970
+    assert summary.maximum_process_count == 2
+    assert summary.evidence_complete is True
+    assert table.num_rows == 3
+    assert table.schema.names == list(ResourceMonitor.COLUMN_NAMES)
+
+
+def test_resource_monitor_samples_periodically_and_stops_cleanly(
+    tmp_path: Path,
+) -> None:
+    sampled = Event()
+    count = 0
+
+    def sampler() -> ResourceObservation:
+        nonlocal count
+        count += 1
+        if count >= 3:
+            sampled.set()
+        return _observation(count)
+
+    monitor = ResourceMonitor(
+        workspace=tmp_path,
+        interval_seconds=0.01,
+        sampler=sampler,
+    )
+    monitor.start()
+    assert sampled.wait(timeout=1.0)
+    monitor.stop()
+    count_after_stop = count
+
+    assert count_after_stop >= 3
+    assert monitor.running is False
+
+
+def test_resource_monitor_marks_sampler_failure_as_missing_evidence(
+    tmp_path: Path,
+) -> None:
+    def broken() -> ResourceObservation:
+        raise OSError("proc disappeared")
+
+    monitor = ResourceMonitor(
+        workspace=tmp_path,
+        interval_seconds=1.0,
+        sampler=broken,
+    )
+    monitor.sample_once()
+
+    summary = monitor.summary()
+    assert summary.sample_count == 0
+    assert summary.sampling_error_count == 1
+    assert summary.evidence_complete is False
