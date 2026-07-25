@@ -368,6 +368,18 @@ class ExecutionPlan(FrozenModel):
     checkpoint_interval_seconds: NonNegativeFloat
     artifact_compression_level: Annotated[int, Field(ge=0, le=9)]
     fallback_plan_sha256: Sha256
+    performance_profile_sha256: Sha256 | None = None
+    engine_decision_sha256: Sha256 | None = None
+
+
+class PlanningPilotResolution(FrozenModel):
+    """Pilot evidence selected without reading scientific outcomes."""
+
+    pilot_result: PilotResult
+    source: Literal["historical_profile", "fresh_pilot"]
+    profile_reused: bool
+    reason_codes: tuple[str, ...]
+    performance_profile_sha256: Sha256 | None
 
 
 class MergeGroup(FrozenModel):

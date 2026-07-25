@@ -17,11 +17,17 @@ from aurora.infra.github_performance.contracts import (
     JobCountDecision,
     PerformanceContract,
     PilotResult,
+    PlanningPilotResolution,
     RunSpec,
     ShardPlan,
     WorkUnitManifest,
     canonical_sha256,
     deep_thaw_json,
+)
+from aurora.infra.github_performance.profiles import (
+    PerformanceProfile,
+    PerformanceProfileKey,
+    assess_profile_reuse,
 )
 from aurora.infra.github_performance.shard_planner import (
     equal_count,
@@ -37,6 +43,52 @@ LptBuilder = Callable[[WorkUnitManifest, int, Path], ShardPlan]
 
 class AssignmentTransportBudgetExceeded(RuntimeError):
     """Raised before wasteful repeated artifact downloads can begin."""
+
+
+class PilotRequired(RuntimeError):
+    """Raised when no exact reusable profile or fresh pilot is available."""
+
+
+def resolve_planning_pilot(
+    *,
+    profile: PerformanceProfile | None,
+    requested_key: PerformanceProfileKey,
+    fresh_pilot: PilotResult | None,
+    observed_seconds: Mapping[str, float] | None = None,
+) -> PlanningPilotResolution:
+    """Select exact historical evidence or require a current pilot."""
+
+    if profile is not None:
+        decision = assess_profile_reuse(
+            profile,
+            requested_key,
+            observed_seconds=observed_seconds,
+        )
+        if decision.reuse_allowed:
+            return PlanningPilotResolution(
+                pilot_result=profile.pilot_result,
+                source="historical_profile",
+                profile_reused=True,
+                reason_codes=(),
+                performance_profile_sha256=profile.profile_sha256,
+            )
+        reason_codes = decision.reason_codes
+        profile_sha256 = profile.profile_sha256
+    else:
+        reason_codes = ("PERFORMANCE_PROFILE_MISSING",)
+        profile_sha256 = None
+    if fresh_pilot is None:
+        raise PilotRequired(
+            "fresh representative pilot required: "
+            + ",".join(reason_codes)
+        )
+    return PlanningPilotResolution(
+        pilot_result=fresh_pilot,
+        source="fresh_pilot",
+        profile_reused=False,
+        reason_codes=reason_codes,
+        performance_profile_sha256=profile_sha256,
+    )
 
 
 @dataclass(frozen=True)
