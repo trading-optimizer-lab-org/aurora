@@ -1,0 +1,226 @@
+schema_version: "3.0"
+
+identity:
+  campaign_id: ""
+  run_type: ""
+  repo: "trading-optimizer-lab-org/aurora"
+  code_ref: ""
+  code_sha: ""
+  workflow: ""
+  workflow_sha256: ""
+  deadline_utc: ""
+
+objective:
+  description: ""
+  success_criteria: []
+  negative_result_criteria: []
+  technical_failure_criteria: []
+
+policy:
+  policy_hash: ""
+  train_start: ""
+  train_end: ""
+  validation_start: ""
+  validation_end: ""
+  locked_start: ""
+  locked_opened: false
+  locked_rows_allowed: 0
+  validation_used_for_selection: false
+  causal_lag_minimum: 1
+  decision_timezone: ""
+  decision_timestamp_rule: ""
+  execution_timestamp_rule: ""
+  market_calendar: ""
+  purging_periods: 0
+  embargo_periods: 0
+
+data:
+  manifest: ""
+  manifest_sha256: ""
+  snapshot_hash: ""
+  schema_version: ""
+  max_date: ""
+  required_datasets: []
+  total_return_policy: ""
+  corporate_actions_policy: ""
+  delisting_policy: ""
+  fx_policy: ""
+  cash_yield_policy: ""
+
+execution:
+  github_only: true
+  execution_location: "github_actions"
+  local_runs_allowed: false
+  requires_explicit_user_local_permission: true
+  waves: 1
+  jobs_per_wave: 1
+  matrices_per_wave: 1
+  max_matrix_jobs: 256
+  requested_parallelism: 1
+  conservative_parallelism: 1
+  internal_minutes_per_job: 1
+  job_timeout_minutes: 2
+  merge_timeout_minutes: 15
+  fail_fast: false
+  global_seed: 0
+  shard_seed_formula: ""
+  timezone: "UTC"
+  locale: "C.UTF-8"
+  python_version: ""
+  dependency_lock_sha256: ""
+  runner_image: ""
+
+resources:
+  max_billable_minutes: 0
+  max_cost: 0
+  max_artifact_gb: 0
+  min_free_disk_gb: 5
+  max_memory_pct: 80
+  max_peak_temporary_disk_gb: 0
+  atomic_rewrite_multiplier: 1.0
+
+performance:
+  optimize_for: "wall_clock"
+  capacity_profile_path: "config/github_capacity_profile.json"
+  confirmed_standard_concurrency: 360
+  concurrency_confirmation_source: "github_support"
+  reserve_concurrency: 0
+  capacity_probe_required: false
+  planner_selects_job_count: true
+  planner_min_jobs: 1
+  planner_max_jobs: 360
+  planner_job_count_search: "adaptive_exact"
+  planner_large_unit_threshold: 50000
+  planner_exact_lpt_candidates_max: 3
+  matrix_max_jobs: 256
+  auto_split_matrices: true
+  runner_label: "ubuntu-24.04"
+  detect_runner_resources: true
+  record_runner_image_metadata: true
+
+  reuse_valid_gates: true
+  prepare_data_once: true
+  precompute_common_features_once: true
+  distribute_only_required_partitions: true
+  transport_mode: "auto"
+  artifact_granularity: "coarse_partition"
+  forbid_partial_download_claim_for_monolithic_artifact: true
+
+  shard_planning: "weighted_lpt"
+  work_unit_manifest_format: "parquet"
+  shard_assignment_format: "parquet"
+  matrix_descriptors_only: true
+  max_github_output_kb: 256
+  target_setup_fraction_max: 0.10
+  target_checkpoint_fraction_max: 0.03
+  target_straggler_ratio_max: 1.50
+  adaptive_batch_size: true
+  adaptive_threads: true
+  adaptive_shard_size: true
+  forbid_nested_process_pools: true
+  pin_numeric_library_threads: true
+
+  parquet_projection: true
+  parquet_predicate_pushdown: true
+  forbid_repeated_full_scans: true
+  forbid_large_csv_intermediates: true
+
+  artifact_compression_precompressed: 0
+  artifact_compression_text: 1
+  cache_single_writer: true
+
+  hierarchical_merge: true
+  merge_fan_in: 30
+  merge_incremental: true
+  preserve_partial_merges: true
+
+  larger_runners_allowed: false
+  native_acceleration_allowed_after_profile: true
+  native_hot_path_min_fraction: 0.10
+  native_projected_end_to_end_gain_min: 0.05
+  native_python_fallback_required: true
+
+  engine_candidates:
+    - "python_reference"
+    - "numpy"
+    - "numba"
+    - "pyarrow"
+    - "duckdb"
+    - "threads"
+    - "processes"
+  require_engine_equivalence_before_timing: true
+
+  record_queue_time: true
+  record_parallelism_timeline: true
+  record_phase_breakdown: true
+  generate_bottleneck_report: true
+
+retries:
+  transient_network: 3
+  github_5xx: 3
+  provider_429: 5
+  artifact_upload: 3
+  runner_lost: 2
+
+artifacts:
+  shard_format: "parquet"
+  final_name: ""
+  retention_days_shards: 7
+  retention_days_final: 30
+  if_no_files_found: "error"
+  require_final_artifact_manifest: true
+  require_requirement_traceability: true
+  require_final_verification_report: true
+
+security:
+  default_permissions: "contents:read"
+  actions_pinned_by_sha: true
+  checkout_persist_credentials: false
+  external_code_allowlist: []
+  pinned_actions:
+    checkout: ""
+    setup_python: ""
+    upload_artifact: ""
+    download_artifact: ""
+
+statistics:
+  hypothesis_family: ""
+  null_hypothesis: ""
+  alternative_hypothesis: ""
+  n_trials_global: 0
+  alpha: 0.05
+  multiple_testing_correction: ""
+  bootstrap_method: ""
+  bootstrap_samples: 0
+  bootstrap_block_length: 0
+  statistical_seed: 0
+  minimum_sample_size: 0
+
+metrics:
+  contract_path: ""
+  contract_sha256: ""
+  return_type: ""
+  return_basis: ""
+  annualization_rule: ""
+  risk_free_source: ""
+  undefined_metric_policy: ""
+
+reconciliation:
+  required_terminal_states:
+    - completed
+    - right_censored
+    - unsupported
+    - failed_technical
+  require_expected_equals_terminal_sum: true
+  forbid_silent_row_drops: true
+
+gates:
+  require_preflight: true
+  require_smoke: true
+  require_pilot: true
+  require_complete_merge: true
+  require_policy_audit: true
+  require_reconciliation: true
+  require_independent_metric_reference: true
+  require_final_verifier: true
+  require_traceability_matrix: true

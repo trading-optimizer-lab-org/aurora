@@ -22,6 +22,7 @@ dependencies = [
     "pydantic>=2",
     "platformdirs>=4.0",
     "networkx>=3.0",
+    "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]
@@ -148,7 +149,13 @@ packages = [
 "aurora.validation" = "validation"
 
 [tool.setuptools.package-data]
-"aurora" = ["py.typed", "config/*.yaml", "config/*.yml"]
+"aurora" = [
+    "py.typed",
+    "config/*.yaml",
+    "config/*.yml",
+    "config/templates/*.yaml",
+    "config/schemas/*.json",
+]
 "aurora.exports.lean" = ["templates/*.template"]
 
 [tool.ruff]

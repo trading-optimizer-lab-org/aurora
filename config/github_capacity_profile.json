@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "organization": "trading-optimizer-lab-org",
+  "repository": "aurora",
+  "repository_visibility": "public",
+  "plan": "enterprise",
+  "standard_concurrency_ceiling": 360,
+  "matrix_job_ceiling": 256,
+  "runner_label": "ubuntu-24.04",
+  "reference_cpu": 4,
+  "reference_memory_gb": 16,
+  "reference_ssd_gb": 14,
+  "larger_runners_allowed": false,
+  "confirmed_on": "2026-06-02",
+  "confirmation_source": "github_support_email"
+}
