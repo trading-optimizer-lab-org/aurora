@@ -86,29 +86,36 @@ feat: verify runtime policy evidence
 - Produces: `verify_metric_table(source, recomputed, tolerances) -> MetricEquivalenceReport`.
 - Produces final artifact: `independent_metric_verification.json`.
 
-- [ ] **Step 1: Write failing differential tests**
+- [x] **Step 1: Write failing differential tests**
 
 Cover CAGR, annualized return, volatility, Sharpe, Sortino, maximum drawdown, Calmar, profit factor, win rate, trade count, average return, and total return. Include empty inputs, one return, NaN policy, signed zero, and a deliberate mismatch.
 
-- [ ] **Step 2: Record RED in GitHub**
+- [x] **Step 2: Record RED in GitHub**
 
 Run only metric-verifier tests and require failure because the independent implementation is absent.
 
-- [ ] **Step 3: Implement independent formulas**
+- [x] **Step 3: Implement independent formulas**
 
 Use arrays read from final canonical return/trade outputs, never metric values produced by the workload. Apply explicit annualization, risk-free rate, NaN, infinity, and tolerance rules from the metric contract.
 
-- [ ] **Step 4: Add verifier gate**
+- [x] **Step 4: Add verifier gate**
 
 Set `independent_metrics_equal=true` only when every required metric matches. Include per-field expected, observed, absolute error, relative error, and tolerance in the report.
 
-- [ ] **Step 5: Run GitHub tests and commit**
+- [x] **Step 5: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: independently verify scientific metrics
 ```
+
+Evidence: RED run `30167836306`; GREEN run `30168194017`;
+implementation commits `851cd7e80` and `72565f1b3`. Full reusable-workflow
+closure run `30168253488` completed successfully: `1024/1024` units,
+`2048` metric-input records, `30720` independently recomputed fields,
+zero mismatches, `partial=false`, `locked_opened=false`, and
+`validation_used_for_selection=false`.
 
 ---
 
