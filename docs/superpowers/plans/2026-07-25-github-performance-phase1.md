@@ -2474,7 +2474,7 @@ and dependency audit passed. Repository-wide lint, typecheck, Bandit, and full
 test failures reproduce failures already present on `main`; the performance
 framework adds no remaining errors to those logs.
 
-- [ ] **Step 7: Mark the PR ready for review**
+- [x] **Step 7: Mark the PR ready for review**
 
 ```bash
 gh pr ready
