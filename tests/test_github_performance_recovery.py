@@ -323,6 +323,9 @@ def test_recovery_loop_completes_when_every_shard_is_verified() -> None:
     assert result.status is RecoveryLoopStatus.COMPLETE
     assert result.next_wave is None
     assert result.terminal_shard_count == 1
+    assert result.terminal_unit_count == 1
+    assert len(result.terminal_unit_manifest_sha256 or "") == 64
+    assert result.verified_source_artifacts == ("artifact-s001-a001",)
 
 
 def test_recovery_loop_stops_at_wave_budget() -> None:

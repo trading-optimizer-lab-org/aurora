@@ -25,6 +25,12 @@ RECOVERY_WAVE_WORKFLOW_PATH = (
 RETRY_SHARD_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "_aurora-retry-shard-v3.yml"
 )
+MERGE_ONLY_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "github-performance-merge-only.yml"
+)
+REPLAN_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "github-performance-replan.yml"
+)
 
 
 def _load_action() -> dict[str, Any]:
@@ -245,6 +251,50 @@ def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
     retry_text = RETRY_SHARD_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "aurora github run-shard" in retry_text
     assert "matrix" not in retry_text
+
+
+def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
+    workflow = dict(load_github_yaml(MERGE_ONLY_WORKFLOW_PATH))
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert {
+        "source_run_id",
+        "source_state_artifact_name",
+        "run_label",
+        "workload",
+        "retention_days",
+    } <= set(inputs)
+    text = MERGE_ONLY_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "aurora github merge-only" in text
+    assert "aurora github final-merge" in text
+    assert "aurora github verify" in text
+    assert "campaign_state_latest.json" in text
+    assert "verified_source_artifacts" in text
+    assert "gh run download" in text
+    assert "aurora github run-shard" not in text
+    for job in workflow["jobs"].values():
+        assert job["runs-on"] == "ubuntu-24.04"
+
+
+def test_universal_replan_workflow_changes_only_operational_plan() -> None:
+    workflow = dict(load_github_yaml(REPLAN_WORKFLOW_PATH))
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert {
+        "source_run_id",
+        "source_state_artifact_name",
+        "run_label",
+        "requested_jobs",
+        "operational_overrides",
+        "retention_days",
+    } <= set(inputs)
+    text = REPLAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "aurora github replan-pending" in text
+    assert "campaign_state_latest.json" in text
+    assert "work_unit_manifest.json" in text
+    assert "unit_attempts.parquet" in text
+    assert "operational_overrides" in text
+    assert "aurora github run-shard" not in text
+    for job in workflow["jobs"].values():
+        assert job["runs-on"] == "ubuntu-24.04"
 
 
 def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:

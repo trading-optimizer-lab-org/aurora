@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,14 @@ import pytest
 
 from aurora.cli import cmd_github
 from aurora.cli.forge import build_parser
+from aurora.infra.github_performance.campaign import (
+    CampaignPhase,
+    initialize_campaign_state,
+    load_latest_campaign_state,
+    transition_campaign_state,
+    write_campaign_state,
+)
+from github_performance_helpers import minimal_valid_spec, write_yaml
 
 
 def test_validate_parser_binds_expected_command() -> None:
@@ -151,6 +160,63 @@ def test_phase_commands_are_registered() -> None:
     for command, tail in commands:
         args = parser.parse_args(["github", command, *tail.split()])
         assert callable(args.func)
+
+
+def test_campaign_update_preserves_verified_sources_when_omitted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_path = write_yaml(tmp_path / "spec.yaml", minimal_valid_spec())
+    state_root = tmp_path / "state"
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    initial = initialize_campaign_state(
+        campaign_id="test-campaign",
+        scientific_contract_sha256="1" * 64,
+        logical_unit_manifest_sha256="2" * 64,
+        logical_unit_count=2,
+        active_plan_sha256="3" * 64,
+        created_at=now,
+    )
+    write_campaign_state(initial, state_root)
+    merging = transition_campaign_state(
+        initial,
+        phase=CampaignPhase.MERGING,
+        completed_unit_count=2,
+        completed_unit_manifest_sha256="4" * 64,
+        pending_unit_count=0,
+        verified_source_artifacts=("partial-a", "partial-b"),
+        created_at=now,
+    )
+    write_campaign_state(merging, state_root)
+    monkeypatch.setattr(
+        cmd_github,
+        "require_github_execution",
+        lambda _operation: None,
+    )
+    args = argparse.Namespace(
+        spec=str(spec_path),
+        state_root=str(state_root),
+        phase=CampaignPhase.VERIFYING.value,
+        logical_unit_manifest_sha256="",
+        logical_unit_count=0,
+        active_plan_sha256="",
+        completed_unit_manifest_sha256="",
+        completed_unit_count=None,
+        pending_unit_count=None,
+        verified_source_artifact=[],
+        active_attempt_id=[],
+        wave=None,
+        hard_failure_reason="",
+        created_at="2026-07-26T01:00:00Z",
+    )
+
+    assert cmd_github.cmd_github_campaign_update(args) == 0
+    updated = load_latest_campaign_state(state_root)
+
+    assert updated.verified_source_artifacts == (
+        "partial-a",
+        "partial-b",
+    )
 
 
 @pytest.mark.parametrize(
