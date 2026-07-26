@@ -150,10 +150,16 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     }
     assert _needs(jobs["retry_a"]) == {"plan", "recovery_plan"}
     assert _needs(jobs["retry_b"]) == {"plan", "recovery_plan"}
-    assert "fromJSON(needs.recovery_plan.outputs.has_matrix_a)" in str(
+    assert (
+        "contains(needs.recovery_plan.outputs.matrix_a, "
+        "'\"shard_id\"')"
+    ) in str(
         jobs["retry_a"]["if"]
     )
-    assert "fromJSON(needs.recovery_plan.outputs.has_matrix_b)" in str(
+    assert (
+        "contains(needs.recovery_plan.outputs.matrix_b, "
+        "'\"shard_id\"')"
+    ) in str(
         jobs["retry_b"]["if"]
     )
     previous_a = "retry_a"
@@ -174,11 +180,13 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             assert _needs(jobs[next_a]) == {"plan", recovery}
             assert _needs(jobs[next_b]) == {"plan", recovery}
             assert (
-                f"fromJSON(needs.{recovery}.outputs.has_matrix_a)"
+                f"contains(needs.{recovery}.outputs.matrix_a, "
+                "'\"shard_id\"')"
                 in str(jobs[next_a]["if"])
             )
             assert (
-                f"fromJSON(needs.{recovery}.outputs.has_matrix_b)"
+                f"contains(needs.{recovery}.outputs.matrix_b, "
+                "'\"shard_id\"')"
                 in str(jobs[next_b]["if"])
             )
             previous_a = next_a
@@ -461,6 +469,18 @@ def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
         "${{ needs.plan.outputs.merge_root_artifact }}"
     )
     assert "pattern" not in final_download["with"]
+
+
+def test_checkpoint_salvage_detects_files_outside_github_workspace() -> None:
+    workflows = (
+        WORKFLOW_PATH.read_text(encoding="utf-8"),
+        RETRY_SHARD_WORKFLOW_PATH.read_text(encoding="utf-8"),
+    )
+    for text in workflows:
+        assert "find \"$RUNNER_TEMP/attempt\"" in text
+        assert "-name checkpoint_manifest.json" in text
+        assert "steps.checkpoint.outputs.exists == 'true'" in text
+        assert "hashFiles(format('{0}/attempt" not in text
 
 
 def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:

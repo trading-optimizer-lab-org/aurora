@@ -678,8 +678,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
+      - name: Detect valid checkpoint
+        if: always()
+        id: checkpoint
+        run: |
+          set -euo pipefail
+          checkpoint="$(
+            find "$RUNNER_TEMP/attempt" \
+              -name checkpoint_manifest.json -type f -print -quit \
+              2>/dev/null || true
+          )"
+          if [[ -n "$checkpoint" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Salvage valid checkpoint
-        if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        if: always() && steps.checkpoint.outputs.exists == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -792,8 +807,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
+      - name: Detect valid checkpoint
+        if: always()
+        id: checkpoint
+        run: |
+          set -euo pipefail
+          checkpoint="$(
+            find "$RUNNER_TEMP/attempt" \
+              -name checkpoint_manifest.json -type f -print -quit \
+              2>/dev/null || true
+          )"
+          if [[ -n "$checkpoint" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Salvage valid checkpoint
-        if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        if: always() && steps.checkpoint.outputs.exists == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -896,7 +926,7 @@ jobs:
 
   retry_a:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.status == 'retry' && fromJSON(needs.recovery_plan.outputs.has_matrix_a)
+    if: needs.recovery_plan.outputs.status == 'retry' && contains(needs.recovery_plan.outputs.matrix_a, '"shard_id"')
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -1011,10 +1041,35 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
+      - name: Detect valid checkpoint
+        if: always()
+        id: checkpoint
+        run: |
+          set -euo pipefail
+          checkpoint="$(
+            find "$RUNNER_TEMP/attempt" \
+              -name checkpoint_manifest.json -type f -print -quit \
+              2>/dev/null || true
+          )"
+          if [[ -n "$checkpoint" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Salvage valid checkpoint
+        if: always() && steps.checkpoint.outputs.exists == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: run-checkpoint-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt/**/checkpoint*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
 
   retry_b:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.status == 'retry' && fromJSON(needs.recovery_plan.outputs.has_matrix_b)
+    if: needs.recovery_plan.outputs.status == 'retry' && contains(needs.recovery_plan.outputs.matrix_b, '"shard_id"')
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -1129,6 +1184,31 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
+      - name: Detect valid checkpoint
+        if: always()
+        id: checkpoint
+        run: |
+          set -euo pipefail
+          checkpoint="$(
+            find "$RUNNER_TEMP/attempt" \
+              -name checkpoint_manifest.json -type f -print -quit \
+              2>/dev/null || true
+          )"
+          if [[ -n "$checkpoint" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Salvage valid checkpoint
+        if: always() && steps.checkpoint.outputs.exists == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: run-checkpoint-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          path: ${{ runner.temp }}/attempt/**/checkpoint*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
 
   recovery_plan_1:
     needs: [plan, recovery_plan, retry_a, retry_b]
@@ -1146,7 +1226,7 @@ jobs:
 
   retry_2_a:
     needs: [plan, recovery_plan_1]
-    if: needs.recovery_plan_1.outputs.status == 'retry' && fromJSON(needs.recovery_plan_1.outputs.has_matrix_a)
+    if: needs.recovery_plan_1.outputs.status == 'retry' && contains(needs.recovery_plan_1.outputs.matrix_a, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1164,7 +1244,7 @@ jobs:
 
   retry_2_b:
     needs: [plan, recovery_plan_1]
-    if: needs.recovery_plan_1.outputs.status == 'retry' && fromJSON(needs.recovery_plan_1.outputs.has_matrix_b)
+    if: needs.recovery_plan_1.outputs.status == 'retry' && contains(needs.recovery_plan_1.outputs.matrix_b, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -1196,7 +1276,7 @@ jobs:
 
   retry_3_a:
     needs: [plan, recovery_plan_2]
-    if: needs.recovery_plan_2.outputs.status == 'retry' && fromJSON(needs.recovery_plan_2.outputs.has_matrix_a)
+    if: needs.recovery_plan_2.outputs.status == 'retry' && contains(needs.recovery_plan_2.outputs.matrix_a, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1214,7 +1294,7 @@ jobs:
 
   retry_3_b:
     needs: [plan, recovery_plan_2]
-    if: needs.recovery_plan_2.outputs.status == 'retry' && fromJSON(needs.recovery_plan_2.outputs.has_matrix_b)
+    if: needs.recovery_plan_2.outputs.status == 'retry' && contains(needs.recovery_plan_2.outputs.matrix_b, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -1246,7 +1326,7 @@ jobs:
 
   retry_4_a:
     needs: [plan, recovery_plan_3]
-    if: needs.recovery_plan_3.outputs.status == 'retry' && fromJSON(needs.recovery_plan_3.outputs.has_matrix_a)
+    if: needs.recovery_plan_3.outputs.status == 'retry' && contains(needs.recovery_plan_3.outputs.matrix_a, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1264,7 +1344,7 @@ jobs:
 
   retry_4_b:
     needs: [plan, recovery_plan_3]
-    if: needs.recovery_plan_3.outputs.status == 'retry' && fromJSON(needs.recovery_plan_3.outputs.has_matrix_b)
+    if: needs.recovery_plan_3.outputs.status == 'retry' && contains(needs.recovery_plan_3.outputs.matrix_b, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -1296,7 +1376,7 @@ jobs:
 
   retry_5_a:
     needs: [plan, recovery_plan_4]
-    if: needs.recovery_plan_4.outputs.status == 'retry' && fromJSON(needs.recovery_plan_4.outputs.has_matrix_a)
+    if: needs.recovery_plan_4.outputs.status == 'retry' && contains(needs.recovery_plan_4.outputs.matrix_a, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1314,7 +1394,7 @@ jobs:
 
   retry_5_b:
     needs: [plan, recovery_plan_4]
-    if: needs.recovery_plan_4.outputs.status == 'retry' && fromJSON(needs.recovery_plan_4.outputs.has_matrix_b)
+    if: needs.recovery_plan_4.outputs.status == 'retry' && contains(needs.recovery_plan_4.outputs.matrix_b, '"shard_id"')
     strategy:
       fail-fast: false
       max-parallel: 104
