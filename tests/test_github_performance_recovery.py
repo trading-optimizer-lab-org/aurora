@@ -488,6 +488,93 @@ def test_terminal_unit_evidence_rejects_unbound_manifest(
         )
 
 
+def test_terminal_unit_evidence_accepts_checkpoint_resumed_rows(
+    tmp_path: Path,
+) -> None:
+    inherited = UnitAttemptRecord(
+        unit_key="u000",
+        shard_id="s000",
+        attempt_id="a000",
+        state=TerminalState.COMPLETED,
+        output_sha256="b" * 64,
+        reason_code=None,
+    )
+    original_attempt, original_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=(inherited,),
+        reason_code="TRANSIENT_NETWORK",
+    )
+    resumed = UnitAttemptRecord(
+        unit_key="u001",
+        shard_id="s000",
+        attempt_id="a001",
+        state=TerminalState.COMPLETED,
+        output_sha256="c" * 64,
+        reason_code=None,
+    )
+    retry_attempt, retry_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a001",
+        rows=(inherited, resumed),
+    )
+
+    evidence = build_terminal_unit_evidence_from_paths(
+        (original_attempt, retry_attempt),
+        (original_units, retry_units),
+    )
+
+    assert evidence.unit_keys == ("u000", "u001")
+    assert evidence.unit_count == 2
+    assert evidence.source_artifacts == (
+        "artifact-s000-a000",
+        "artifact-s000-a001",
+    )
+
+
+def test_terminal_unit_evidence_rejects_unbound_resumed_row(
+    tmp_path: Path,
+) -> None:
+    original = UnitAttemptRecord(
+        unit_key="u000",
+        shard_id="s000",
+        attempt_id="a000",
+        state=TerminalState.COMPLETED,
+        output_sha256="b" * 64,
+        reason_code=None,
+    )
+    original_attempt, original_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=(original,),
+        reason_code="TRANSIENT_NETWORK",
+    )
+    altered = original.model_copy(update={"output_sha256": "c" * 64})
+    resumed = UnitAttemptRecord(
+        unit_key="u001",
+        shard_id="s000",
+        attempt_id="a001",
+        state=TerminalState.COMPLETED,
+        output_sha256="d" * 64,
+        reason_code=None,
+    )
+    retry_attempt, retry_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a001",
+        rows=(altered, resumed),
+    )
+
+    with pytest.raises(ValueError, match="independently bound"):
+        build_terminal_unit_evidence_from_paths(
+            (original_attempt, retry_attempt),
+            (original_units, retry_units),
+        )
+
+
 def test_recovery_loop_stops_at_wave_budget() -> None:
     result = build_recovery_loop(
         [make_shard(1)],

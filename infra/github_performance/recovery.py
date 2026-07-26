@@ -647,37 +647,66 @@ def build_terminal_unit_evidence_from_paths(
         TerminalState.RIGHT_CENSORED,
         TerminalState.UNSUPPORTED,
     }
+    loaded_files: list[
+        tuple[Path, AttemptManifest, tuple[UnitAttemptRecord, ...]]
+    ] = []
     for raw_path in unit_attempt_paths:
         path = Path(raw_path)
         observed_sha256 = sha256_file(path)
-        if not any(
-            attempt.unit_attempts_sha256 == observed_sha256
+        carriers = tuple(
+            attempt
             for attempt in attempts
-        ):
+            if attempt.unit_attempts_sha256 == observed_sha256
+        )
+        if len(carriers) != 1:
             raise ValueError("unit attempt manifest hash mismatch")
         rows = tuple(
             UnitAttemptRecord.model_validate(row)
             for row in pq.read_table(path).to_pylist()
         )
-        identities = {(row.shard_id, row.attempt_id) for row in rows}
-        if len(identities) > 1:
-            raise ValueError(
-                f"unit attempt file mixes attempt identities: {path}"
-            )
-        if not identities:
-            continue
-        identity = next(iter(identities))
-        manifest = attempts_by_identity.get(identity)
-        if manifest is None:
-            raise ValueError(
-                "unit attempt evidence has no shard manifest: "
-                f"{identity[0]}/{identity[1]}"
-            )
-        if manifest.unit_attempts_sha256 is None:
-            raise ValueError("shard manifest does not bind unit attempts")
-        if observed_sha256 != manifest.unit_attempts_sha256:
-            raise ValueError("unit attempt manifest hash mismatch")
+        loaded_files.append((path, carriers[0], rows))
+
+    directly_bound_rows: dict[
+        tuple[str, str],
+        set[tuple[str, str, str | None, str | None]],
+    ] = defaultdict(set)
+    for _, carrier, rows in loaded_files:
         for row in rows:
+            identity = (row.shard_id, row.attempt_id)
+            if identity == (carrier.shard_id, carrier.attempt_id):
+                directly_bound_rows[identity].add(
+                    _unit_attempt_signature(row)
+                )
+
+    for path, carrier, rows in loaded_files:
+        carrier_identity = (carrier.shard_id, carrier.attempt_id)
+        for row in rows:
+            identity = (row.shard_id, row.attempt_id)
+            manifest = attempts_by_identity.get(identity)
+            if manifest is None:
+                raise ValueError(
+                    "unit attempt evidence has no shard manifest: "
+                    f"{identity[0]}/{identity[1]}"
+                )
+            if row.shard_id != carrier.shard_id:
+                raise ValueError(
+                    f"unit attempt file mixes shard identities: {path}"
+                )
+            if _attempt_scientific_identity(manifest) != (
+                _attempt_scientific_identity(carrier)
+            ):
+                raise ValueError(
+                    "resumed unit attempt crosses scientific identity"
+                )
+            if (
+                identity != carrier_identity
+                and _unit_attempt_signature(row)
+                not in directly_bound_rows.get(identity, set())
+            ):
+                raise ValueError(
+                    "resumed unit attempt row lacks independently bound "
+                    f"source evidence: {row.unit_key}"
+                )
             if row.state in terminal_states:
                 grouped[row.unit_key].append(row)
 
@@ -729,6 +758,30 @@ def build_terminal_unit_evidence_from_paths(
             canonical_sha256(payload) if payload else None
         ),
         source_artifacts=tuple(sorted(source_artifacts)),
+    )
+
+
+def _unit_attempt_signature(
+    row: UnitAttemptRecord,
+) -> tuple[str, str, str | None, str | None]:
+    return (
+        row.unit_key,
+        row.state.value,
+        row.output_sha256,
+        row.reason_code,
+    )
+
+
+def _attempt_scientific_identity(
+    attempt: AttemptManifest,
+) -> tuple[str, str, str, str, str, str]:
+    return (
+        attempt.spec_hash,
+        attempt.policy_hash,
+        attempt.snapshot_hash,
+        attempt.code_sha,
+        attempt.dependency_lock_sha256,
+        attempt.capacity_profile_sha256,
     )
 
 
