@@ -21,6 +21,7 @@ from aurora.infra.github_performance.metric_verifier import (
     read_metric_inputs,
     verify_metric_inputs,
 )
+from aurora.infra.github_performance.preflight import validate_run_spec
 from aurora.infra.github_performance.shard_planner import (
     ASSIGNMENT_SCHEMA,
     ASSIGNMENT_SCHEMA_VERSION,
@@ -39,10 +40,18 @@ from github_performance_helpers import minimal_valid_spec
 
 
 WORKLOADS = (CANDIDATE_SWEEP, EVENT_STUDY, ROBUSTNESS)
+ROOT = Path(__file__).resolve().parents[1]
+CONFIGS = (
+    ROOT / "config" / "github_performance_candidate_sweep.yaml",
+    ROOT / "config" / "github_performance_event_study.yaml",
+    ROOT / "config" / "github_performance_robustness.yaml",
+)
 
 
 def _spec() -> RunSpec:
     payload = minimal_valid_spec()
+    payload["identity"]["code_sha"] = "a" * 40
+    payload["identity"]["workflow_sha256"] = "b" * 64
     payload["policy"]["train_start"] = "1995-01-01"
     payload["policy"]["train_end"] = "2010-12-31"
     payload["policy"]["validation_start"] = "2011-01-01"
@@ -51,7 +60,14 @@ def _spec() -> RunSpec:
     payload["policy"]["locked_opened"] = False
     payload["policy"]["locked_rows_allowed"] = 0
     payload["policy"]["validation_used_for_selection"] = False
+    payload["policy"]["policy_hash"] = "c" * 64
     payload["data"]["max_date"] = "2020-12-31"
+    payload["data"]["manifest_sha256"] = "d" * 64
+    payload["data"]["snapshot_hash"] = "e" * 64
+    payload["execution"]["dependency_lock_sha256"] = "f" * 64
+    payload["execution"]["environment_sha256"] = "1" * 64
+    payload["performance"]["capacity_profile_sha256"] = "2" * 64
+    payload["metrics"]["contract_sha256"] = "3" * 64
     return RunSpec.model_validate(payload)
 
 
@@ -114,6 +130,22 @@ def test_three_distinct_native_workload_contracts() -> None:
         for item in contracts
     } == {"candidate_sweep", "event_study", "robustness"}
     assert all(item.original_candidate_id_preserved for item in contracts)
+
+
+@pytest.mark.parametrize("config_path", CONFIGS)
+def test_representative_workload_specs_are_valid_and_locked(
+    config_path: Path,
+) -> None:
+    report = validate_run_spec(config_path)
+    text = config_path.read_text(encoding="utf-8")
+
+    assert report.valid is True, report.violations
+    assert 'validation_end: "2020-12-31"' in text
+    assert 'locked_start: "2021-01-01"' in text
+    assert "locked_opened: false" in text
+    assert "validation_used_for_selection: false" in text
+    assert 'runner_image: "ubuntu-24.04"' in text
+    assert "C:\\" not in text
 
 
 @pytest.mark.parametrize("workload", WORKLOADS)

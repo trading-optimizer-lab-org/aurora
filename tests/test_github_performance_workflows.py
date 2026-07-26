@@ -37,6 +37,9 @@ REPLAN_WORKFLOW_PATH = (
 REFERENCE_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-reference.yml"
 )
+VALIDATION_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "github-performance-validation.yml"
+)
 
 
 def _load_action() -> dict[str, Any]:
@@ -358,6 +361,53 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     assert jobs["replan_fixture_source"]["uses"] == (
         "./.github/workflows/_aurora-future-run-v3.yml"
     )
+
+
+def test_registered_validation_workflow_routes_three_real_families() -> None:
+    workflow = dict(load_github_yaml(VALIDATION_WORKFLOW_PATH))
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert inputs["workload_family"]["options"] == [
+        "candidate_sweep",
+        "event_study",
+        "robustness",
+    ]
+    assert inputs["execution_mode"]["options"] == [
+        "baseline",
+        "optimized",
+    ]
+    jobs = workflow["jobs"]
+    assert set(jobs) == {
+        "candidate_sweep",
+        "event_study",
+        "robustness",
+    }
+    expected = {
+        "candidate_sweep": (
+            "config/github_performance_candidate_sweep.yaml",
+            "aurora.infra.github_performance.workloads."
+            "candidate_sweep:WORKLOAD",
+        ),
+        "event_study": (
+            "config/github_performance_event_study.yaml",
+            "aurora.infra.github_performance.workloads."
+            "event_study:WORKLOAD",
+        ),
+        "robustness": (
+            "config/github_performance_robustness.yaml",
+            "aurora.infra.github_performance.workloads."
+            "robustness:WORKLOAD",
+        ),
+    }
+    for name, job in jobs.items():
+        assert job["uses"] == "./.github/workflows/_aurora-future-run-v3.yml"
+        assert job["with"]["spec_path"] == expected[name][0]
+        assert job["with"]["workload"] == expected[name][1]
+        assert job["with"]["execution_mode"] == "${{ inputs.execution_mode }}"
+        assert "fromJSON" in job["with"]["forced_job_count"]
+    text = VALIDATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "self-hosted" not in text
+    assert "ubuntu-latest" not in text
+    assert "C:\\" not in text
     fixture = jobs["build_replan_fixture"]
     assert fixture["runs-on"] == "ubuntu-24.04"
     fixture_text = REFERENCE_WORKFLOW_PATH.read_text(encoding="utf-8")
