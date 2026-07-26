@@ -9,7 +9,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from aurora.infra.github_performance.contracts import (
     FrozenModel,
@@ -119,6 +124,13 @@ class CampaignState(FrozenModel):
             )
         return deep_freeze_json(value)
 
+    @field_serializer("operational_overrides")
+    def _serialize_overrides(
+        self,
+        value: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        return deep_thaw_json(value)
+
     @model_validator(mode="after")
     def _validate_state(self) -> CampaignState:
         if self.completed_unit_count + self.pending_unit_count != (
@@ -142,7 +154,7 @@ class CampaignState(FrozenModel):
 
 def _state_payload(state: CampaignState | Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(state, CampaignState):
-        payload = state.model_dump(mode="json")
+        payload = deep_thaw_json(state)
     else:
         payload = deep_thaw_json(state)
     payload.pop("state_sha256", None)
@@ -377,8 +389,7 @@ def _state_filename(version: int) -> str:
 def _atomic_json(path: Path, payload: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    if hasattr(payload, "model_dump"):
-        payload = payload.model_dump(mode="json")
+    payload = deep_thaw_json(payload)
     temporary.write_text(
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
