@@ -461,6 +461,13 @@ def _atomic_json(path: Path, payload: object) -> Path:
     return target
 
 
+def _finite_nonnegative_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
 def write_native_qualification_artifacts(
     profile: HotPathProfile,
     qualification: NativeQualification,
@@ -583,19 +590,19 @@ def ensure_runtime_native_fallback_artifacts(
     rows = tuple(runtime_rows)
     if not rows:
         raise ValueError("runtime rows are required for native fallback")
-    by_phase: dict[str, list[Mapping[str, object]]] = {}
+    by_phase: dict[str, list[float]] = {}
     for row in rows:
         phase = str(row.get("phase", "")).strip()
-        duration = float(row.get("duration_seconds", 0.0))
-        if phase and math.isfinite(duration) and duration >= 0:
-            by_phase.setdefault(phase, []).append(row)
+        duration = _finite_nonnegative_number(
+            row.get("duration_seconds", 0.0)
+        )
+        if phase and duration is not None:
+            by_phase.setdefault(phase, []).append(duration)
     if not by_phase:
         raise ValueError("runtime rows contain no measurable phases")
 
     preferred = by_phase.get("execute_shard", [])
-    preferred_seconds = sum(
-        float(row["duration_seconds"]) for row in preferred
-    )
+    preferred_seconds = sum(preferred)
     if preferred and preferred_seconds > 0:
         phase_names = ("execute_shard",)
         node_name = "scientific_shard_execution"
@@ -603,16 +610,16 @@ def ensure_runtime_native_fallback_artifacts(
         pure_bounded_io = True
         network_access = False
     else:
-        phase_name, phase_rows = max(
+        phase_name, phase_durations = max(
             by_phase.items(),
             key=lambda item: (
-                sum(float(row["duration_seconds"]) for row in item[1]),
+                sum(item[1]),
                 item[0],
             ),
         )
         phase_names = (phase_name,)
         node_name = f"observed_phase:{phase_name}"
-        invocation_count = len(phase_rows)
+        invocation_count = len(phase_durations)
         pure_bounded_io = False
         network_access = True
 
@@ -739,15 +746,18 @@ def validate_native_qualification_artifacts(
     ):
         failures.append("NATIVE_CANDIDATE_ENGINE_INVALID")
     if profile is not None:
-        try:
-            fraction_matches = math.isclose(
-                float(candidate.get("hot_path_fraction", -1.0)),
+        candidate_fraction = _finite_nonnegative_number(
+            candidate.get("hot_path_fraction")
+        )
+        fraction_matches = (
+            candidate_fraction is not None
+            and math.isclose(
+                candidate_fraction,
                 profile.measured_fraction,
                 rel_tol=1e-12,
                 abs_tol=1e-12,
             )
-        except (TypeError, ValueError):
-            fraction_matches = False
+        )
         if not fraction_matches:
             failures.append("NATIVE_HOT_PATH_FRACTION_MISMATCH")
         if candidate.get("invocation_count") != profile.invocation_count:
