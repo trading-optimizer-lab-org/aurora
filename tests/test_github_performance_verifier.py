@@ -6,6 +6,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from aurora.infra.github_performance import verifier as verifier_module
 from aurora.infra.github_performance.contracts import (
     RunSpec,
 )
@@ -50,12 +51,28 @@ def _complete_evidence() -> dict[str, bool]:
     return {
         "github_only": True,
         "standard_runner_only": True,
+        "larger_runner_used": False,
         "matrix_job_ceiling_respected": True,
+        "standard_concurrency_ceiling_respected": True,
+        "deadline_respected": True,
+        "budget_respected": True,
         "locked_opened": False,
+        "runtime_locked_rows_zero": True,
         "validation_used_for_selection": False,
+        "maximum_accessed_date_valid": True,
+        "causal_lag_respected": True,
         "reconciliation_complete": True,
         "artifact_hashes_valid": True,
+        "required_outputs_complete": True,
+        "telemetry_complete": True,
         "independent_metrics_equal": True,
+        "dependency_environment_reproducible": True,
+        "selective_recovery_verified": True,
+        "replan_verified": True,
+        "merge_only_verified": True,
+        "multi_level_merge_verified": True,
+        "scientific_equivalence_verified": True,
+        "scientific_content_identity_verified": True,
     }
 
 
@@ -147,8 +164,118 @@ def test_traceability_has_exact_required_columns() -> None:
     spec = RunSpec.model_validate(minimal_valid_spec())
     table = build_requirements_traceability(spec, _complete_evidence())
     assert tuple(table.column_names) == TRACEABILITY_COLUMNS
-    assert table.num_rows == 8
+    assert table.num_rows == 24
+    assert set(table.column("requirement_id").to_pylist()) == {
+        "github_only",
+        "standard_runner",
+        "larger_runner_forbidden",
+        "matrix_ceiling",
+        "concurrency_ceiling",
+        "deadline_guard",
+        "budget_guard",
+        "locked_closed",
+        "runtime_locked_rows_zero",
+        "validation_report_only",
+        "no_future_data",
+        "causal_execution",
+        "complete_reconciliation",
+        "artifact_hashes",
+        "required_outputs",
+        "telemetry_complete",
+        "independent_metrics",
+        "dependency_environment",
+        "selective_recovery",
+        "replan",
+        "merge_only",
+        "multi_level_merge",
+        "scientific_equivalence",
+        "scientific_content_identity",
+    }
     assert set(table.column("status").to_pylist()) == {"pass"}
+
+
+def _write_placeholder(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".json":
+        path.write_text(
+            '{"schema_version":"1"}\n',
+            encoding="utf-8",
+        )
+    elif path.suffix == ".parquet":
+        schema = pa.schema(
+            [pa.field("placeholder", pa.int64(), nullable=False)],
+            metadata={b"schema_version": b"1"},
+        )
+        pq.write_table(
+            pa.Table.from_pylist([], schema=schema),
+            path,
+        )
+    elif path.suffix == ".csv":
+        path.write_text("placeholder\n", encoding="utf-8")
+    else:
+        path.write_bytes(b"placeholder\n")
+
+
+def _write_complete_final_fixture(root: Path) -> RunSpec:
+    spec = _resolved_fixture(root)
+    reconciliation = reconcile_attempts(
+        {"u1"},
+        [completed_unit("u1", "a1", "1" * 64)],
+    )
+    write_reconciliation(
+        reconciliation,
+        root / "unit_reconciliation.parquet",
+    )
+    write_requirements_traceability(
+        build_requirements_traceability(spec, _complete_evidence()),
+        root / "requirements_traceability.csv",
+    )
+    _write_safe_runtime_audits(root, spec)
+    _write_safe_metric_evidence(root)
+    for name in verifier_module.MANDATORY_FINAL_OUTPUTS:
+        path = root / name
+        if not path.exists():
+            _write_placeholder(path)
+    return spec
+
+
+def test_final_verifier_rejects_each_omitted_mandatory_output(
+    tmp_path: Path,
+) -> None:
+    for index, name in enumerate(verifier_module.MANDATORY_FINAL_OUTPUTS):
+        root = tmp_path / f"case-{index:03d}"
+        spec = _write_complete_final_fixture(root)
+        (root / name).unlink()
+        write_final_artifact_manifest(
+            root,
+            root / "final_artifact_manifest.json",
+        )
+
+        report = verify_final_artifact(root, spec)
+
+        assert report.passed is False, name
+        assert f"REQUIRED_OUTPUT_MISSING:{name}" in report.failure_codes
+
+
+def test_final_verifier_rejects_file_added_after_artifact_seal(
+    tmp_path: Path,
+) -> None:
+    spec = _write_complete_final_fixture(tmp_path)
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+    (tmp_path / "late_telemetry.json").write_text(
+        '{"schema_version":"1"}\n',
+        encoding="utf-8",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is False
+    assert "MANIFEST_UNSEALED_FILE:late_telemetry.json" in (
+        report.failure_codes
+    )
 
 
 def test_closure_cannot_claim_success_with_failed_requirement(

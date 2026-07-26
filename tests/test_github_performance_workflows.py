@@ -207,9 +207,16 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "merge_level_2",
         "merge_level_3",
     }
-    assert _needs(jobs["verify"]) == {"final_merge"}
-    assert _needs(jobs["collect_timeline"]) == {"verify"}
-    assert _needs(jobs["publish"]) == {"verify", "collect_timeline"}
+    assert _needs(jobs["collect_timeline"]) == {"final_merge"}
+    assert _needs(jobs["seal_final_artifact"]) == {
+        "final_merge",
+        "collect_timeline",
+    }
+    assert _needs(jobs["verify"]) == {
+        "final_merge",
+        "seal_final_artifact",
+    }
+    assert _needs(jobs["publish"]) == {"verify"}
 
 
 def test_reusable_workflow_respects_standard_runner_limits() -> None:
@@ -582,11 +589,24 @@ def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:
         if item["name"] == "Collect read-only GitHub timing"
     )
     assert step["continue-on-error"] is True
+    seal = jobs["seal_final_artifact"]
+    assert any(
+        "aurora github seal-final-artifact"
+        in str(item.get("run", ""))
+        for item in seal["steps"]
+    )
+    assert _needs(seal) == {"final_merge", "collect_timeline"}
+    verify = jobs["verify"]
+    assert _needs(verify) == {"final_merge", "seal_final_artifact"}
     publisher = jobs["publish"]
     assert "always()" in publisher["if"]
-    assert any(
+    assert not any(
         item["name"]
         == "Record incomplete timing without touching scientific files"
+        for item in publisher["steps"]
+    )
+    assert not any(
+        "timeline" in str(item.get("name", "")).lower()
         for item in publisher["steps"]
     )
 
