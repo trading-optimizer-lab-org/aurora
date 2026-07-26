@@ -236,6 +236,35 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "seal_final_artifact",
     }
     assert _needs(jobs["publish"]) == {"verify"}
+    assert _needs(jobs["conclude"]) == {"plan", "publish"}
+
+
+def test_reusable_workflow_conclusion_is_bound_to_verified_publication() -> None:
+    workflow = _workflow()
+    outputs = workflow["on"]["workflow_call"]["outputs"]
+    jobs = workflow["jobs"]
+    conclude = jobs["conclude"]
+
+    assert outputs["selected_jobs"]["value"] == (
+        "${{ jobs.conclude.outputs.selected_jobs }}"
+    )
+    assert outputs["profile_reused"]["value"] == (
+        "${{ jobs.conclude.outputs.profile_reused }}"
+    )
+    assert outputs["verification_passed"]["value"] == (
+        "${{ jobs.conclude.outputs.verification_passed }}"
+    )
+    assert conclude["if"] == "always()"
+    assert conclude["runs-on"] == "ubuntu-24.04"
+    assert _needs(conclude) == {"plan", "publish"}
+    verdict = next(
+        step
+        for step in conclude["steps"]
+        if step["name"] == "Bind reusable result to verified publication"
+    )
+    assert verdict["env"]["PLAN_RESULT"] == "${{ needs.plan.result }}"
+    assert verdict["env"]["PUBLISH_RESULT"] == "${{ needs.publish.result }}"
+    assert "verification_passed=true" in verdict["run"]
 
 
 def test_reusable_workflow_respects_standard_runner_limits() -> None:

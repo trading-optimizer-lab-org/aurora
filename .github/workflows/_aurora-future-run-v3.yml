@@ -63,10 +63,13 @@ on:
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
-        value: ${{ jobs.plan.outputs.selected_jobs }}
+        value: ${{ jobs.conclude.outputs.selected_jobs }}
       profile_reused:
         description: Whether planning reused an exact compatible profile
-        value: ${{ jobs.plan.outputs.profile_reused }}
+        value: ${{ jobs.conclude.outputs.profile_reused }}
+      verification_passed:
+        description: Whether the reusable workflow published a verified result
+        value: ${{ jobs.conclude.outputs.verification_passed }}
 
 permissions:
   contents: read
@@ -1907,3 +1910,37 @@ jobs:
         run: |
           echo "::error::Aurora final verification did not pass"
           exit 1
+
+  conclude:
+    name: Conclude verified reusable workflow
+    needs: [plan, publish]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      selected_jobs: ${{ steps.verdict.outputs.selected_jobs }}
+      profile_reused: ${{ steps.verdict.outputs.profile_reused }}
+      verification_passed: ${{ steps.verdict.outputs.verification_passed }}
+    steps:
+      - name: Bind reusable result to verified publication
+        id: verdict
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          SELECTED_JOBS: ${{ needs.plan.outputs.selected_jobs }}
+          PROFILE_REUSED: ${{ needs.plan.outputs.profile_reused }}
+        run: |
+          set -euo pipefail
+          if [[ "$PLAN_RESULT" != "success" ]]; then
+            echo "::error::Aurora execution plan did not complete"
+            exit 1
+          fi
+          if [[ "$PUBLISH_RESULT" != "success" ]]; then
+            echo "::error::Aurora verified artifact was not published"
+            exit 1
+          fi
+          {
+            echo "selected_jobs=$SELECTED_JOBS"
+            echo "profile_reused=$PROFILE_REUSED"
+            echo "verification_passed=true"
+          } >> "$GITHUB_OUTPUT"
