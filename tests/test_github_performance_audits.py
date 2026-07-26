@@ -198,4 +198,3 @@ def test_required_audit_files_are_complete_and_derived(
     assert data["locked_rows_accessed"] == 0
     assert data["maximum_accessed_date"] == "2020-12-31"
     assert policy["validation_used_for_selection"] is False
-

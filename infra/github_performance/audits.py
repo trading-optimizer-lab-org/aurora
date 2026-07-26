@@ -342,4 +342,3 @@ def write_required_audits(
     if sha256_file(ledger_path) == "":
         raise AssertionError("runtime access ledger hash must not be empty")
     return paths
-

@@ -272,4 +272,3 @@ def test_budget_and_deadline_audits_are_written(tmp_path: Path) -> None:
         == 35
     )
     assert deadline_payload["route_allowed"] is True
-
