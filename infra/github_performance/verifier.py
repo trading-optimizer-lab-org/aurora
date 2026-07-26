@@ -269,6 +269,73 @@ def _read_required_json(
     return payload
 
 
+def _validate_planning_pilot_resolution(
+    root: Path,
+    failures: list[str],
+) -> bool:
+    pilot = _read_required_json(
+        root,
+        "performance_pilot.json",
+        "PERFORMANCE_PILOT_MISSING",
+        failures,
+    )
+    resolution = _read_required_json(
+        root,
+        "planning_pilot_resolution.json",
+        "PLANNING_PILOT_RESOLUTION_MISSING",
+        failures,
+    )
+    execution_plan = _read_required_json(
+        root,
+        "execution_plan.json",
+        "EXECUTION_PLAN_MISSING",
+        failures,
+    )
+    if not pilot or not resolution or not execution_plan:
+        return False
+    if resolution.get("pilot_result") != pilot:
+        failures.append("PLANNING_PILOT_RESULT_MISMATCH")
+
+    reused = resolution.get("profile_reused")
+    source = resolution.get("source")
+    resolution_hash = resolution.get("performance_profile_sha256")
+    plan_hash = execution_plan.get("performance_profile_sha256")
+    valid_resolution_hash = (
+        isinstance(resolution_hash, str)
+        and len(resolution_hash) == 64
+        and all(
+            character in "0123456789abcdef"
+            for character in resolution_hash
+        )
+    )
+    if reused is True:
+        if source != "historical_profile":
+            failures.append("HISTORICAL_PROFILE_SOURCE_MISMATCH")
+        if not valid_resolution_hash:
+            failures.append("HISTORICAL_PROFILE_HASH_INVALID")
+        if plan_hash != resolution_hash:
+            failures.append("HISTORICAL_PROFILE_HASH_NOT_PROPAGATED")
+        if resolution.get("reason_codes") not in ([], ()):
+            failures.append("HISTORICAL_PROFILE_REUSE_HAS_REJECTION_REASONS")
+    elif reused is False:
+        if source != "fresh_pilot":
+            failures.append("FRESH_PILOT_SOURCE_MISMATCH")
+        if plan_hash is not None:
+            failures.append("UNREUSED_PROFILE_HASH_PROPAGATED")
+    else:
+        failures.append("PLANNING_PILOT_REUSE_FLAG_INVALID")
+
+    profile_failure_prefixes = (
+        "PLANNING_PILOT_",
+        "HISTORICAL_PROFILE_",
+        "FRESH_PILOT_",
+        "UNREUSED_PROFILE_",
+    )
+    return not any(
+        code.startswith(profile_failure_prefixes) for code in failures
+    )
+
+
 def _validate_telemetry_evidence(
     root: Path,
     failures: list[str],
@@ -583,6 +650,7 @@ def verify_final_artifact(
             continue
         if contract.get(field) != expected or manifest.get(field) != expected:
             failures.append(failure_code)
+    _validate_planning_pilot_resolution(root, failures)
     deadline_audit = _read_required_json(
         root,
         "deadline_audit.json",
