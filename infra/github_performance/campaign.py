@@ -147,6 +147,14 @@ class CampaignState(FrozenModel):
             raise ValueError("completed units require immutable evidence")
         if self.merge_only and self.compute_scheduled:
             raise ValueError("merge-only cannot schedule compute")
+        if self.phase is CampaignPhase.COMPLETED and (
+            self.pending_unit_count != 0
+            or self.completed_unit_count != self.logical_unit_count
+            or self.completed_unit_manifest_sha256 is None
+        ):
+            raise ValueError(
+                "completed campaign requires every logical unit and manifest"
+            )
         if canonical_sha256(_state_payload(self)) != self.state_sha256:
             raise ValueError("campaign state content hash mismatch")
         return self

@@ -184,3 +184,26 @@ def test_transition_rejects_completed_count_regression() -> None:
             pending_unit_count=7,
             created_at=NOW,
         )
+
+
+def test_completed_campaign_requires_every_unit_and_manifest() -> None:
+    with pytest.raises(
+        ValueError,
+        match="completed campaign requires every logical unit",
+    ):
+        transition_campaign_state(
+            _initial(),
+            phase=CampaignPhase.COMPLETED,
+            created_at=NOW,
+        )
+
+    completed = transition_campaign_state(
+        _initial(),
+        phase=CampaignPhase.COMPLETED,
+        completed_unit_count=10,
+        completed_unit_manifest_sha256=SHA["completed"],
+        pending_unit_count=0,
+        created_at=NOW,
+    )
+    assert completed.completed_unit_count == completed.logical_unit_count
+    assert completed.pending_unit_count == 0

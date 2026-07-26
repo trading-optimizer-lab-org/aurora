@@ -692,16 +692,14 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
-  recovery_plan:
-    needs: [plan, fanout_a, fanout_b]
-    if: always() && needs.plan.result == 'success'
+  campaign_initialize:
+    needs: [plan, freeze_contract]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     outputs:
-      matrix_a: ${{ steps.outputs.outputs.matrix_a }}
-      matrix_b: ${{ steps.outputs.outputs.matrix_b }}
-      has_matrix_a: ${{ steps.outputs.outputs.has_matrix_a }}
-      has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
+      state_artifact_name: ${{ steps.identity.outputs.state_artifact_name }}
+    env:
+      STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-initial-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -729,77 +727,65 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/plan
-      - name: Download attempt manifests
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: ${{ inputs.run_label }}-shard-*
-          path: ${{ runner.temp }}/attempts
-      - name: Download checkpoints
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: run-checkpoint-*
-          path: ${{ runner.temp }}/checkpoints
-      - name: Build selective recovery plan
+      - name: Create immutable campaign state
         run: |
           set -euo pipefail
-          mapfile -t attempts < <(
-            find "$RUNNER_TEMP/attempts" \
-              -name shard_attempt_manifest.json -type f 2>/dev/null |
-              sort
-          )
-          mapfile -t checkpoints < <(
-            find "$RUNNER_TEMP/checkpoints" \
-              -name checkpoint_manifest.json -type f 2>/dev/null |
-              sort
-          )
-          args=(
-            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
-            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
-            --output-dir "$RUNNER_TEMP/recovery"
-          )
-          for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
-          for path in "${checkpoints[@]}"; do
-            args+=(--checkpoint "$path")
-          done
-          aurora github recover-plan "${args[@]}"
-      - name: Emit compact retry matrices
-        id: outputs
-        run: |
-          set -euo pipefail
-          python - <<'PY'
+          readarray -t identities < <(
+            python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          root = Path(os.environ["RUNNER_TEMP"]) / "recovery"
-          plan = json.loads((root / "recovery_plan.json").read_text())
-          matrix_a = (root / "retry_matrix_a.json").read_text().strip()
-          matrix_b = (root / "retry_matrix_b.json").read_text().strip()
-          values = {
-              "matrix_a": matrix_a,
-              "matrix_b": matrix_b,
-              "has_matrix_a": str(plan["has_retry_matrix_a"]).lower(),
-              "has_matrix_b": str(plan["has_retry_matrix_b"]).lower(),
-          }
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              for name, value in values.items():
-                  out.write(f"{name}={value}\n")
+          root = Path(os.environ["RUNNER_TEMP"]) / "plan"
+          units = json.loads(
+              (root / "work_unit_manifest.json").read_text(encoding="utf-8")
+          )
+          plan = json.loads(
+              (root / "balanced_shard_plan.json").read_text(encoding="utf-8")
+          )
+          print(units["sha256"])
+          print(units["unit_count"])
+          print(plan["plan_sha256"])
           PY
-      - name: Upload recovery evidence
-        if: always()
+          )
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase executing \
+            --logical-unit-manifest-sha256 "${identities[0]}" \
+            --logical-unit-count "${identities[1]}" \
+            --active-plan-sha256 "${identities[2]}" \
+            --wave 0
+      - name: Emit campaign artifact identity
+        id: identity
+        run: |
+          echo "state_artifact_name=$STATE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable campaign state
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.run_label }}-recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/recovery
+          name: ${{ env.STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
+  recovery_plan:
+    needs: [plan, fanout_a, fanout_b, campaign_initialize]
+    if: always() && needs.plan.result == 'success' && needs.campaign_initialize.result == 'success'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.campaign_initialize.outputs.state_artifact_name }}
+      current_wave: 0
+      max_waves: 6
+
   retry_a:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan.outputs.status == 'retry' && needs.recovery_plan.outputs.has_matrix_a == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -915,7 +901,7 @@ jobs:
 
   retry_b:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan.outputs.status == 'retry' && needs.recovery_plan.outputs.has_matrix_b == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -1029,9 +1015,233 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
+  recovery_plan_1:
+    needs: [plan, recovery_plan, retry_a, retry_b]
+    if: always() && needs.recovery_plan.result == 'success' && needs.recovery_plan.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan.outputs.state_artifact_name }}
+      current_wave: 1
+      max_waves: 6
+
+  retry_2_a:
+    needs: [plan, recovery_plan_1]
+    if: needs.recovery_plan_1.outputs.status == 'retry' && needs.recovery_plan_1.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_1.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_2_b:
+    needs: [plan, recovery_plan_1]
+    if: needs.recovery_plan_1.outputs.status == 'retry' && needs.recovery_plan_1.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_1.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_2:
+    needs: [plan, recovery_plan_1, retry_2_a, retry_2_b]
+    if: always() && needs.recovery_plan_1.result == 'success' && needs.recovery_plan_1.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_1.outputs.state_artifact_name }}
+      current_wave: 2
+      max_waves: 6
+
+  retry_3_a:
+    needs: [plan, recovery_plan_2]
+    if: needs.recovery_plan_2.outputs.status == 'retry' && needs.recovery_plan_2.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_2.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_3_b:
+    needs: [plan, recovery_plan_2]
+    if: needs.recovery_plan_2.outputs.status == 'retry' && needs.recovery_plan_2.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_2.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_3:
+    needs: [plan, recovery_plan_2, retry_3_a, retry_3_b]
+    if: always() && needs.recovery_plan_2.result == 'success' && needs.recovery_plan_2.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_2.outputs.state_artifact_name }}
+      current_wave: 3
+      max_waves: 6
+
+  retry_4_a:
+    needs: [plan, recovery_plan_3]
+    if: needs.recovery_plan_3.outputs.status == 'retry' && needs.recovery_plan_3.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_3.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_4_b:
+    needs: [plan, recovery_plan_3]
+    if: needs.recovery_plan_3.outputs.status == 'retry' && needs.recovery_plan_3.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_3.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_4:
+    needs: [plan, recovery_plan_3, retry_4_a, retry_4_b]
+    if: always() && needs.recovery_plan_3.result == 'success' && needs.recovery_plan_3.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_3.outputs.state_artifact_name }}
+      current_wave: 4
+      max_waves: 6
+
+  retry_5_a:
+    needs: [plan, recovery_plan_4]
+    if: needs.recovery_plan_4.outputs.status == 'retry' && needs.recovery_plan_4.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_4.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_5_b:
+    needs: [plan, recovery_plan_4]
+    if: needs.recovery_plan_4.outputs.status == 'retry' && needs.recovery_plan_4.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_4.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_5:
+    needs: [plan, recovery_plan_4, retry_5_a, retry_5_b]
+    if: always() && needs.recovery_plan_4.result == 'success' && needs.recovery_plan_4.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_4.outputs.state_artifact_name }}
+      current_wave: 5
+      max_waves: 6
+
   merge_partials:
-    needs: [plan, fanout_a, fanout_b, retry_a, retry_b]
-    if: always() && needs.plan.result == 'success'
+    needs: [plan, fanout_a, fanout_b, recovery_plan, retry_a, retry_b, recovery_plan_1, retry_2_a, retry_2_b, recovery_plan_2, retry_3_a, retry_3_b, recovery_plan_3, retry_4_a, retry_4_b, recovery_plan_4, retry_5_a, retry_5_b, recovery_plan_5]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      (
+        needs.recovery_plan_5.outputs.status == 'complete' ||
+        needs.recovery_plan_4.outputs.status == 'complete' ||
+        needs.recovery_plan_3.outputs.status == 'complete' ||
+        needs.recovery_plan_2.outputs.status == 'complete' ||
+        needs.recovery_plan_1.outputs.status == 'complete' ||
+        needs.recovery_plan.outputs.status == 'complete'
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -1095,9 +1305,13 @@ jobs:
 
   final_merge:
     needs: [plan, freeze_contract, merge_partials]
-    if: always() && needs.plan.result == 'success'
+    if: always() && needs.plan.result == 'success' && needs.merge_partials.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    outputs:
+      state_artifact_name: ${{ steps.state_identity.outputs.state_artifact_name }}
+    env:
+      MERGED_STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-merged-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -1135,11 +1349,62 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-preflight-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/preflight
-      - name: Download recovery evidence
+      - name: Download all recovery evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/recovery
+          pattern: ${{ inputs.run_label }}-recovery-wave-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery-waves
+      - name: Select latest successful recovery evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "recovery-waves"
+          candidates = []
+          for loop_path in source.rglob("recovery_loop.json"):
+              payload = json.loads(loop_path.read_text(encoding="utf-8"))
+              candidates.append((int(payload["current_wave"]), loop_path))
+          if not candidates:
+              raise SystemExit("RECOVERY_EVIDENCE_MISSING")
+          _, selected = max(candidates)
+          target = Path(os.environ["RUNNER_TEMP"]) / "recovery"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in selected.parent.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          PY
+      - name: Download immutable campaign states
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-campaign-state-after-recovery-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/state-waves
+      - name: Select latest immutable campaign state
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "state-waves"
+          candidates = []
+          for pointer in source.rglob("campaign_state_latest.json"):
+              payload = json.loads(pointer.read_text(encoding="utf-8"))
+              candidates.append((int(payload["version"]), pointer))
+          if not candidates:
+              raise SystemExit("CAMPAIGN_STATE_MISSING")
+          _, selected = max(candidates)
+          target = Path(os.environ["RUNNER_TEMP"]) / "state"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in selected.parent.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          PY
       - name: Build final artifact and reconciliation
         env:
           WORKLOAD: ${{ inputs.workload }}
@@ -1154,6 +1419,60 @@ jobs:
             --preflight-root "$RUNNER_TEMP/preflight" \
             --recovery-root "$RUNNER_TEMP/recovery" \
             --output-dir "$RUNNER_TEMP/final"
+      - name: Record verified merge sources and terminal units
+        run: |
+          set -euo pipefail
+          readarray -t reconciliation < <(
+            python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          import pyarrow.parquet as pq
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          path = root / "final" / "unit_reconciliation.parquet"
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          rows = pq.read_metadata(path).num_rows
+          plan = json.loads(
+              (root / "plan" / "balanced_shard_plan.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          print(digest)
+          print(rows)
+          for group in sorted(
+              {item["merge_group"] for item in plan["shards"]}
+          ):
+              print(f"${{ inputs.run_label }}-partial-{group}")
+          PY
+          )
+          args=(
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+            --state-root "$RUNNER_TEMP/state"
+            --phase merging
+            --completed-unit-manifest-sha256 "${reconciliation[0]}"
+            --completed-unit-count "${reconciliation[1]}"
+            --pending-unit-count 0
+          )
+          for artifact in "${reconciliation[@]:2}"; do
+            args+=(--verified-source-artifact "$artifact")
+          done
+          aurora github campaign-update "${args[@]}"
+      - name: Emit merged campaign artifact identity
+        id: state_identity
+        run: |
+          echo "state_artifact_name=$MERGED_STATE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - name: Upload merged immutable campaign state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.MERGED_STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
       - name: Upload sealed pre-verification artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1169,6 +1488,8 @@ jobs:
     if: always() && needs.final_merge.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      VERIFIED_STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-verified-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -1191,12 +1512,51 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/final
+      - name: Download merged campaign state
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.final_merge.outputs.state_artifact_name }}
+          path: ${{ runner.temp }}/state
+      - name: Record verification start
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase verifying
       - name: Independently reopen and verify every file
+        id: scientific_verify
         run: |
           set -euo pipefail
           aurora github verify \
             --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
             --root "$RUNNER_TEMP/final"
+      - name: Record completed campaign
+        if: steps.scientific_verify.outcome == 'success'
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase completed
+      - name: Record blocked verification
+        if: failure() && steps.scientific_verify.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase blocked_hard_failure \
+            --hard-failure-reason FINAL_VERIFICATION_FAILED
+      - name: Upload verified immutable campaign state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.VERIFIED_STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
       - name: Upload verified stage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
