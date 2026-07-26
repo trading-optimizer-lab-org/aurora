@@ -16,6 +16,46 @@ class CheckpointIntegrityError(RuntimeError):
     """Raised when checkpoint evidence is incomplete or has changed."""
 
 
+def raise_controlled_transient_after_checkpoint(
+    shard_id: str,
+    completed_unit_count: int,
+    checkpoint: CheckpointManifest | None,
+) -> None:
+    """Inject one opt-in transient failure at an exact checkpoint boundary."""
+
+    target_shard = os.environ.get(
+        "AURORA_FAULT_INJECTION_SHARD_ID",
+        "",
+    )
+    raw_after = os.environ.get(
+        "AURORA_FAULT_INJECTION_AFTER_UNITS",
+        "0",
+    )
+    if not target_shard and raw_after in {"", "0"}:
+        return
+    try:
+        after_units = int(raw_after)
+    except ValueError as exc:
+        raise ValueError(
+            "AURORA_FAULT_INJECTION_AFTER_UNITS must be an integer"
+        ) from exc
+    if after_units < 0:
+        raise ValueError(
+            "AURORA_FAULT_INJECTION_AFTER_UNITS cannot be negative"
+        )
+    if target_shard != shard_id or completed_unit_count != after_units:
+        return
+    if (
+        checkpoint is None
+        or checkpoint.completed_unit_count != completed_unit_count
+    ):
+        raise RuntimeError(
+            "controlled transient failure requires an exact checkpoint "
+            "boundary"
+        )
+    raise ConnectionError("CONTROLLED_TRANSIENT_NETWORK_AFTER_CHECKPOINT")
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return

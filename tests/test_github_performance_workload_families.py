@@ -24,6 +24,9 @@ from aurora.infra.github_performance.metric_verifier import (
     verify_metric_inputs,
 )
 from aurora.infra.github_performance.preflight import validate_run_spec
+from aurora.infra.github_performance.reference_workload import (
+    WORKLOAD as REFERENCE_WORKLOAD,
+)
 from aurora.infra.github_performance.shard_planner import (
     ASSIGNMENT_SCHEMA,
     ASSIGNMENT_SCHEMA_VERSION,
@@ -327,11 +330,15 @@ def test_one_unit_shard_emits_runtime_and_independent_metric_evidence(
     assert merged_table.column("unit_key").to_pylist() == [unit.unit_key]
 
 
+@pytest.mark.parametrize(
+    "workload",
+    (CANDIDATE_SWEEP, REFERENCE_WORKLOAD),
+)
 def test_controlled_transient_failure_resumes_exact_checkpoint(
+    workload,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workload = CANDIDATE_SWEEP
     spec = _spec()
     prepared_root = tmp_path / "prepared"
     prepared = workload.prepare(spec, prepared_root)

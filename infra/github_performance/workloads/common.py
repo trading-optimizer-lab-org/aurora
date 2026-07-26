@@ -22,7 +22,10 @@ from aurora.infra.github_performance.audits import (
     RuntimeAccessLedger,
     write_runtime_access_ledger,
 )
-from aurora.infra.github_performance.checkpoint import CheckpointManager
+from aurora.infra.github_performance.checkpoint import (
+    CheckpointManager,
+    raise_controlled_transient_after_checkpoint,
+)
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointManifest,
@@ -432,46 +435,6 @@ class FrozenScientificWorkload(ABC):
             raise ValueError("checkpoint payload is invalid")
         return pq.read_table(path, schema=self.result_schema).to_pylist()
 
-    @staticmethod
-    def _inject_transient_failure_after_checkpoint(
-        shard: ShardDefinition,
-        completed_unit_count: int,
-        checkpoint: CheckpointManifest | None,
-    ) -> None:
-        target_shard = os.environ.get(
-            "AURORA_FAULT_INJECTION_SHARD_ID",
-            "",
-        )
-        raw_after = os.environ.get(
-            "AURORA_FAULT_INJECTION_AFTER_UNITS",
-            "0",
-        )
-        if not target_shard and raw_after in {"", "0"}:
-            return
-        try:
-            after_units = int(raw_after)
-        except ValueError as exc:
-            raise ValueError(
-                "AURORA_FAULT_INJECTION_AFTER_UNITS must be an integer"
-            ) from exc
-        if after_units < 0:
-            raise ValueError(
-                "AURORA_FAULT_INJECTION_AFTER_UNITS cannot be negative"
-            )
-        if target_shard != shard.shard_id or completed_unit_count != after_units:
-            return
-        if (
-            checkpoint is None
-            or checkpoint.completed_unit_count != completed_unit_count
-        ):
-            raise RuntimeError(
-                "controlled transient failure requires an exact checkpoint "
-                "boundary"
-            )
-        raise ConnectionError(
-            "CONTROLLED_TRANSIENT_NETWORK_AFTER_CHECKPOINT"
-        )
-
     def run_shard(
         self,
         spec: RunSpec,
@@ -538,8 +501,8 @@ class FrozenScientificWorkload(ABC):
                     key,
                     checkpoint_path,
                 )
-                self._inject_transient_failure_after_checkpoint(
-                    shard,
+                raise_controlled_transient_after_checkpoint(
+                    shard.shard_id,
                     len(rows),
                     latest_checkpoint,
                 )
