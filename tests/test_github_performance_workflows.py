@@ -19,6 +19,12 @@ WORKFLOW_PATH = (
 POLICY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-policy.yml"
 )
+RECOVERY_WAVE_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "_aurora-recovery-plan-v3.yml"
+)
+RETRY_SHARD_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "_aurora-retry-shard-v3.yml"
+)
 
 
 def _load_action() -> dict[str, Any]:
@@ -117,19 +123,52 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     assert _needs(jobs["plan"]) == {"pilot"}
     assert _needs(jobs["fanout_a"]) == {"plan"}
     assert _needs(jobs["fanout_b"]) == {"plan"}
+    assert _needs(jobs["campaign_initialize"]) == {
+        "plan",
+        "freeze_contract",
+    }
     assert _needs(jobs["recovery_plan"]) == {
         "plan",
         "fanout_a",
         "fanout_b",
+        "campaign_initialize",
     }
     assert _needs(jobs["retry_a"]) == {"plan", "recovery_plan"}
     assert _needs(jobs["retry_b"]) == {"plan", "recovery_plan"}
+    previous_a = "retry_a"
+    previous_b = "retry_b"
+    previous_recovery = "recovery_plan"
+    for wave in range(1, 6):
+        recovery = f"recovery_plan_{wave}"
+        assert _needs(jobs[recovery]) == {
+            "plan",
+            previous_recovery,
+            previous_a,
+            previous_b,
+        }
+        previous_recovery = recovery
+        if wave < 5:
+            next_a = f"retry_{wave + 1}_a"
+            next_b = f"retry_{wave + 1}_b"
+            assert _needs(jobs[next_a]) == {"plan", recovery}
+            assert _needs(jobs[next_b]) == {"plan", recovery}
+            previous_a = next_a
+            previous_b = next_b
     assert _needs(jobs["merge_partials"]) == {
         "plan",
         "fanout_a",
         "fanout_b",
         "retry_a",
         "retry_b",
+        "retry_2_a",
+        "retry_2_b",
+        "retry_3_a",
+        "retry_3_b",
+        "retry_4_a",
+        "retry_4_b",
+        "retry_5_a",
+        "retry_5_b",
+        "recovery_plan_5",
     }
     assert _needs(jobs["final_merge"]) == {
         "plan",
@@ -144,13 +183,19 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
 def test_reusable_workflow_respects_standard_runner_limits() -> None:
     jobs = _workflow()["jobs"]
     for job in jobs.values():
-        assert job["runs-on"] == "ubuntu-24.04"
+        if "uses" in job:
+            assert str(job["uses"]).startswith("./.github/workflows/")
+        else:
+            assert job["runs-on"] == "ubuntu-24.04"
     matrix_limits = {
         "fanout_a": 256,
         "fanout_b": 104,
         "retry_a": 256,
         "retry_b": 104,
     }
+    for wave in range(2, 6):
+        matrix_limits[f"retry_{wave}_a"] = 256
+        matrix_limits[f"retry_{wave}_b"] = 104
     for name, limit in matrix_limits.items():
         strategy = jobs[name]["strategy"]
         assert strategy["fail-fast"] is False
@@ -161,6 +206,40 @@ def test_reusable_workflow_respects_standard_runner_limits() -> None:
         + jobs["fanout_b"]["strategy"]["max-parallel"]
         == 360
     )
+    for wave in range(1, 6):
+        a = "retry_a" if wave == 1 else f"retry_{wave}_a"
+        b = "retry_b" if wave == 1 else f"retry_{wave}_b"
+        assert (
+            jobs[a]["strategy"]["max-parallel"]
+            + jobs[b]["strategy"]["max-parallel"]
+            == 360
+        )
+
+
+def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
+    jobs = _workflow()["jobs"]
+    recovery_jobs = (
+        "recovery_plan",
+        "recovery_plan_1",
+        "recovery_plan_2",
+        "recovery_plan_3",
+        "recovery_plan_4",
+        "recovery_plan_5",
+    )
+    for wave, name in enumerate(recovery_jobs):
+        job = jobs[name]
+        assert job["uses"] == (
+            "./.github/workflows/_aurora-recovery-plan-v3.yml"
+        )
+        assert job["with"]["current_wave"] == wave
+        assert job["with"]["max_waves"] == 6
+    assert "campaign-update" in WORKFLOW_PATH.read_text(encoding="utf-8")
+    recovery_text = RECOVERY_WAVE_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "aurora github recovery-loop" in recovery_text
+    assert "campaign_state_latest.json" in recovery_text
+    retry_text = RETRY_SHARD_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "aurora github run-shard" in retry_text
+    assert "matrix" not in retry_text
 
 
 def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
