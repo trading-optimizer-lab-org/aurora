@@ -133,43 +133,54 @@ def write_partitioned_parquet_transport(
     part_root.mkdir(parents=True, exist_ok=True)
     for stale in part_root.glob("part-*.parquet"):
         stale.unlink()
+    (part_root / ".probe.parquet").unlink(missing_ok=True)
     parts: list[TransportPart] = []
     start = 0
     part_index = 0
     total_rows = table.num_rows
+    if total_rows:
+        estimated_row_bytes = max(1.0, table.nbytes / total_rows)
+        metadata_reserve = min(8192, target_bytes // 4)
+        rows_per_part = max(
+            1,
+            int(
+                ((target_bytes - metadata_reserve) / estimated_row_bytes)
+                * 0.90
+            ),
+        )
+    else:
+        rows_per_part = 0
     while start < total_rows or (total_rows == 0 and not parts):
         if total_rows == 0:
             best_end = 0
         else:
-            low = start + 1
-            high = total_rows
-            best_end: int | None = None
-            probe = part_root / ".probe.parquet"
-            while low <= high:
-                middle = (low + high) // 2
+            current_rows = min(rows_per_part, total_rows - start)
+            path = part_root / f"part-{part_index:05d}.parquet"
+            while True:
+                best_end = start + current_rows
                 pq.write_table(
-                    table.slice(start, middle - start),
-                    probe,
+                    table.slice(start, current_rows),
+                    path,
                     compression="zstd",
                     version="2.6",
                 )
-                if probe.stat().st_size <= target_bytes:
-                    best_end = middle
-                    low = middle + 1
-                else:
-                    high = middle - 1
-            probe.unlink(missing_ok=True)
-            if best_end is None:
-                raise PhysicalMergeError(
-                    "PARTITION_TARGET_TOO_SMALL_FOR_ONE_LOGICAL_ROW"
-                )
+                if path.stat().st_size <= target_bytes:
+                    rows_per_part = current_rows
+                    break
+                if current_rows == 1:
+                    path.unlink(missing_ok=True)
+                    raise PhysicalMergeError(
+                        "PARTITION_TARGET_TOO_SMALL_FOR_ONE_LOGICAL_ROW"
+                    )
+                current_rows = max(1, current_rows // 2)
         path = part_root / f"part-{part_index:05d}.parquet"
-        pq.write_table(
-            table.slice(start, best_end - start),
-            path,
-            compression="zstd",
-            version="2.6",
-        )
+        if total_rows == 0:
+            pq.write_table(
+                table,
+                path,
+                compression="zstd",
+                version="2.6",
+            )
         byte_count = path.stat().st_size
         if byte_count > target_bytes:
             raise PhysicalMergeError(

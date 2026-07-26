@@ -279,10 +279,10 @@ def test_four_shard_reference_smoke_reconciles_exactly(
     for part in scientific_transport.parts:
         part_table = pq.read_table(
             root_output / part.relative_path,
-            columns=(
+            columns=[
                 "locked_opened",
                 "validation_used_for_selection",
-            ),
+            ],
         )
         locked_opened.extend(
             part_table.column("locked_opened").to_pylist()
