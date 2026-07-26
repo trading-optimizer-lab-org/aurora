@@ -82,7 +82,8 @@ jobs:
       source_state_artifact_name: ${{ inputs.source_state_artifact_name }}
       run_label: ${{ inputs.source_run_label }}
       source_infrastructure_label: ${{ inputs.source_infrastructure_label }}
-      requested_jobs: ${{ inputs.requested_jobs }}
+      requested_jobs: >-
+        ${{ fromJSON(format('{0}', inputs.requested_jobs)) }}
       operational_overrides: ${{ inputs.operational_overrides }}
       retention_days: 7
 

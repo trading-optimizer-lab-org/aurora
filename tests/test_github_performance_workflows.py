@@ -323,6 +323,9 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     assert jobs["replan"]["uses"] == (
         "./.github/workflows/github-performance-replan.yml"
     )
+    requested_jobs = jobs["replan"]["with"]["requested_jobs"]
+    assert "fromJSON" in requested_jobs
+    assert "format('{0}', inputs.requested_jobs)" in requested_jobs
     assert jobs["replan_fixture_source"]["uses"] == (
         "./.github/workflows/_aurora-future-run-v3.yml"
     )
@@ -331,6 +334,16 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     fixture_text = REFERENCE_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "OUT_OF_MEMORY" not in fixture_text
     assert "build_github_performance_replan_fixture.py" in fixture_text
+
+
+def test_replan_restores_verified_source_runtime_across_orchestration_fixes() -> None:
+    text = REPLAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "SOURCE_SCIENTIFIC_RUNTIME_MISMATCH" in text
+    assert "source_runtime_verified" in text
+    assert 'wheelhouse["code_sha"]' in text
+    assert 'contract["identity"]["code_sha"]' in text
+    assert "orchestration_code_sha" in text
+    assert "SOURCE_CODE_SHA_MISMATCH" not in text
 
 
 def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:

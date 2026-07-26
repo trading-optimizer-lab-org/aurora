@@ -104,15 +104,12 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$SOURCE_RUN_ID" \
               --jq '.run_attempt'
           )"
-          if [[ "$source_sha" != "$GITHUB_SHA" ]]; then
-            echo "::error::SOURCE_CODE_SHA_MISMATCH"
-            exit 1
-          fi
           infrastructure_label="$SOURCE_INFRASTRUCTURE_LABEL"
           if [[ -z "$infrastructure_label" ]]; then
             infrastructure_label="$RUN_LABEL"
           fi
           {
+            echo "SOURCE_SHA=$source_sha"
             echo "SOURCE_ATTEMPT=$source_attempt"
             echo "WHEELHOUSE_ARTIFACT=$infrastructure_label-wheelhouse-$SOURCE_RUN_ID-$source_attempt"
             echo "CONTRACT_ARTIFACT=$infrastructure_label-contract-$SOURCE_RUN_ID-$source_attempt"
@@ -136,6 +133,50 @@ jobs:
           gh run download "$SOURCE_RUN_ID" \
             --pattern "${{ inputs.run_label }}-shard-*" \
             --dir "$RUNNER_TEMP/attempts"
+      - name: Verify source scientific runtime identity
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          source_sha = os.environ["SOURCE_SHA"]
+          wheelhouse = json.loads(
+              (root / "wheelhouse" / "wheelhouse_manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          contract = json.loads(
+              (root / "contract" / "resolved_run_spec.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          observed = {
+              "source_run_head_sha": source_sha,
+              "wheelhouse_code_sha": wheelhouse["code_sha"],
+              "contract_code_sha": contract["identity"]["code_sha"],
+          }
+          if len(set(observed.values())) != 1:
+              raise SystemExit(
+                  "SOURCE_SCIENTIFIC_RUNTIME_MISMATCH: "
+                  + json.dumps(observed, sort_keys=True)
+              )
+          (root / "source_runtime_identity.json").write_text(
+              json.dumps(
+                  {
+                      **observed,
+                      "orchestration_code_sha": os.environ["GITHUB_SHA"],
+                      "source_runtime_verified": True,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
       - name: Restore exact source Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
@@ -226,7 +267,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-replan-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/replan/replan.json
+          path: |
+            ${{ runner.temp }}/replan/replan.json
+            ${{ runner.temp }}/source_runtime_identity.json
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
