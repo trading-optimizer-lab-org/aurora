@@ -311,6 +311,7 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
         "full",
         "merge_only",
         "replan",
+        "replan_fixture",
     ]
     jobs = workflow["jobs"]
     assert jobs["reference"]["uses"] == (
@@ -322,6 +323,14 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     assert jobs["replan"]["uses"] == (
         "./.github/workflows/github-performance-replan.yml"
     )
+    assert jobs["replan_fixture_source"]["uses"] == (
+        "./.github/workflows/_aurora-future-run-v3.yml"
+    )
+    fixture = jobs["build_replan_fixture"]
+    assert fixture["runs-on"] == "ubuntu-24.04"
+    fixture_text = REFERENCE_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "OUT_OF_MEMORY" not in fixture_text
+    assert "build_github_performance_replan_fixture.py" in fixture_text
 
 
 def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:

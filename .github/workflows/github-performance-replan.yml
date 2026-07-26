@@ -15,6 +15,11 @@ on:
         description: Stable artifact prefix used by the source run
         required: true
         type: string
+      source_infrastructure_label:
+        description: Optional source prefix for wheelhouse, contract, and plan
+        required: false
+        default: ""
+        type: string
       requested_jobs:
         description: New standard-runner shard count for pending units
         required: true
@@ -42,6 +47,11 @@ on:
       run_label:
         description: Stable artifact prefix used by the source run
         required: true
+        type: string
+      source_infrastructure_label:
+        description: Optional source prefix for wheelhouse, contract, and plan
+        required: false
+        default: ""
         type: string
       requested_jobs:
         description: New standard-runner shard count for pending units
@@ -83,6 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           RUN_LABEL: ${{ inputs.run_label }}
+          SOURCE_INFRASTRUCTURE_LABEL: ${{ inputs.source_infrastructure_label }}
         run: |
           set -euo pipefail
           source_sha="$(
@@ -97,11 +108,15 @@ jobs:
             echo "::error::SOURCE_CODE_SHA_MISMATCH"
             exit 1
           fi
+          infrastructure_label="$SOURCE_INFRASTRUCTURE_LABEL"
+          if [[ -z "$infrastructure_label" ]]; then
+            infrastructure_label="$RUN_LABEL"
+          fi
           {
             echo "SOURCE_ATTEMPT=$source_attempt"
-            echo "WHEELHOUSE_ARTIFACT=$RUN_LABEL-wheelhouse-$SOURCE_RUN_ID-$source_attempt"
-            echo "CONTRACT_ARTIFACT=$RUN_LABEL-contract-$SOURCE_RUN_ID-$source_attempt"
-            echo "PLAN_ARTIFACT=$RUN_LABEL-plan-$SOURCE_RUN_ID-$source_attempt"
+            echo "WHEELHOUSE_ARTIFACT=$infrastructure_label-wheelhouse-$SOURCE_RUN_ID-$source_attempt"
+            echo "CONTRACT_ARTIFACT=$infrastructure_label-contract-$SOURCE_RUN_ID-$source_attempt"
+            echo "PLAN_ARTIFACT=$infrastructure_label-plan-$SOURCE_RUN_ID-$source_attempt"
           } >> "$GITHUB_ENV"
       - name: Download source plan, state, and attempt evidence
         env:
