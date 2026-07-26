@@ -152,11 +152,13 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     assert _needs(jobs["retry_b"]) == {"plan", "recovery_plan"}
     assert jobs["retry_a"]["if"] == (
         "always() && needs.recovery_plan.result == 'success' && "
-        "needs.recovery_plan.outputs.status == 'retry'"
+        "needs.recovery_plan.outputs.status == 'retry' && "
+        "needs.recovery_plan.outputs.has_matrix_a == 'true'"
     )
     assert jobs["retry_b"]["if"] == (
         "always() && needs.recovery_plan.result == 'success' && "
-        "needs.recovery_plan.outputs.status == 'retry'"
+        "needs.recovery_plan.outputs.status == 'retry' && "
+        "needs.recovery_plan.outputs.has_matrix_b == 'true'"
     )
     previous_a = "retry_a"
     previous_b = "retry_b"
@@ -177,11 +179,13 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             assert _needs(jobs[next_b]) == {"plan", recovery}
             assert jobs[next_a]["if"] == (
                 f"always() && needs.{recovery}.result == 'success' && "
-                f"needs.{recovery}.outputs.status == 'retry'"
+                f"needs.{recovery}.outputs.status == 'retry' && "
+                f"needs.{recovery}.outputs.has_matrix_a == 'true'"
             )
             assert jobs[next_b]["if"] == (
                 f"always() && needs.{recovery}.result == 'success' && "
-                f"needs.{recovery}.outputs.status == 'retry'"
+                f"needs.{recovery}.outputs.status == 'retry' && "
+                f"needs.{recovery}.outputs.has_matrix_b == 'true'"
             )
             previous_a = next_a
             previous_b = next_b
