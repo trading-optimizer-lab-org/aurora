@@ -31,6 +31,9 @@ MERGE_ONLY_WORKFLOW_PATH = (
 REPLAN_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-replan.yml"
 )
+REFERENCE_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "github-performance-reference.yml"
+)
 
 
 def _load_action() -> dict[str, Any]:
@@ -255,6 +258,7 @@ def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
 
 def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
     workflow = dict(load_github_yaml(MERGE_ONLY_WORKFLOW_PATH))
+    assert "workflow_call" in workflow["on"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert {
         "source_run_id",
@@ -271,12 +275,15 @@ def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
     assert "verified_source_artifacts" in text
     assert "gh run download" in text
     assert "aurora github run-shard" not in text
+    assert '["scientific_output"]' in text
+    assert "reference_results.parquet" not in text
     for job in workflow["jobs"].values():
         assert job["runs-on"] == "ubuntu-24.04"
 
 
 def test_universal_replan_workflow_changes_only_operational_plan() -> None:
     workflow = dict(load_github_yaml(REPLAN_WORKFLOW_PATH))
+    assert "workflow_call" in workflow["on"]
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert {
         "source_run_id",
@@ -295,6 +302,26 @@ def test_universal_replan_workflow_changes_only_operational_plan() -> None:
     assert "aurora github run-shard" not in text
     for job in workflow["jobs"].values():
         assert job["runs-on"] == "ubuntu-24.04"
+
+
+def test_registered_reference_workflow_routes_recovery_operations() -> None:
+    workflow = dict(load_github_yaml(REFERENCE_WORKFLOW_PATH))
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert inputs["operation"]["options"] == [
+        "full",
+        "merge_only",
+        "replan",
+    ]
+    jobs = workflow["jobs"]
+    assert jobs["reference"]["uses"] == (
+        "./.github/workflows/_aurora-future-run-v3.yml"
+    )
+    assert jobs["merge_only"]["uses"] == (
+        "./.github/workflows/github-performance-merge-only.yml"
+    )
+    assert jobs["replan"]["uses"] == (
+        "./.github/workflows/github-performance-replan.yml"
+    )
 
 
 def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:

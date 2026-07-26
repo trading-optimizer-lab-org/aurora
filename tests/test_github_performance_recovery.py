@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 
 from aurora.infra.github_performance.checkpoint import (
@@ -15,12 +16,17 @@ from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointManifest,
     TerminalState,
+    UnitAttemptRecord,
+)
+from aurora.infra.github_performance.merge_planner import (
+    write_unit_attempt_manifest,
 )
 from aurora.infra.github_performance.recovery import (
     RecoveryLoopStatus,
     build_recovery_plan,
     build_recovery_plan_from_paths,
     build_recovery_loop,
+    build_terminal_unit_evidence_from_paths,
     write_recovery_plan,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
@@ -326,6 +332,160 @@ def test_recovery_loop_completes_when_every_shard_is_verified() -> None:
     assert result.terminal_unit_count == 1
     assert len(result.terminal_unit_manifest_sha256 or "") == 64
     assert result.verified_source_artifacts == ("artifact-s001-a001",)
+
+
+def _attempt_with_unit_evidence(
+    tmp_path: Path,
+    *,
+    shard_id: str,
+    attempt_id: str,
+    rows: tuple[UnitAttemptRecord, ...],
+    reason_code: str | None = None,
+) -> tuple[Path, Path]:
+    unit_path = write_unit_attempt_manifest(
+        rows,
+        tmp_path / f"{shard_id}-{attempt_id}-units.parquet",
+    )
+    completed = sum(
+        row.state is TerminalState.COMPLETED for row in rows
+    )
+    attempt = AttemptManifest(
+        shard_id=shard_id,
+        attempt_id=attempt_id,
+        state=(
+            TerminalState.COMPLETED
+            if reason_code is None
+            else TerminalState.FAILED_TECHNICAL
+        ),
+        spec_hash="1" * 64,
+        policy_hash="2" * 64,
+        snapshot_hash="3" * 64,
+        code_sha="4" * 40,
+        dependency_lock_sha256="5" * 64,
+        capacity_profile_sha256="6" * 64,
+        output_sha256=("7" * 64 if reason_code is None else None),
+        reason_code=reason_code,
+        artifact_name=f"artifact-{shard_id}-{attempt_id}",
+        unit_attempts_path=unit_path.name,
+        unit_attempts_sha256=sha256_file(unit_path),
+        checkpoint_artifact=None,
+        completed_unit_count=completed,
+        output_rows=completed,
+        output_bytes=100 * completed,
+        runtime_access_ledger_path=(
+            "runtime_access_ledger.parquet"
+            if reason_code is None
+            else None
+        ),
+        runtime_access_ledger_sha256=(
+            "9" * 64 if reason_code is None else None
+        ),
+        metric_inputs_path=(
+            "metric_inputs.parquet" if reason_code is None else None
+        ),
+        metric_inputs_sha256=(
+            "a" * 64 if reason_code is None else None
+        ),
+    )
+    attempt_path = tmp_path / f"{shard_id}-{attempt_id}.json"
+    attempt_path.write_text(attempt.model_dump_json(), encoding="utf-8")
+    return attempt_path, unit_path
+
+
+def test_terminal_unit_evidence_salvages_verified_units_before_oom(
+    tmp_path: Path,
+) -> None:
+    completed_rows = (
+        UnitAttemptRecord(
+            unit_key="u000",
+            shard_id="s000",
+            attempt_id="a000",
+            state=TerminalState.COMPLETED,
+            output_sha256="b" * 64,
+            reason_code=None,
+        ),
+        UnitAttemptRecord(
+            unit_key="u001",
+            shard_id="s000",
+            attempt_id="a000",
+            state=TerminalState.COMPLETED,
+            output_sha256="c" * 64,
+            reason_code=None,
+        ),
+    )
+    partial_rows = (
+        UnitAttemptRecord(
+            unit_key="u002",
+            shard_id="s001",
+            attempt_id="a001",
+            state=TerminalState.COMPLETED,
+            output_sha256="d" * 64,
+            reason_code=None,
+        ),
+        UnitAttemptRecord(
+            unit_key="u003",
+            shard_id="s001",
+            attempt_id="a001",
+            state=TerminalState.FAILED_TECHNICAL,
+            output_sha256=None,
+            reason_code="OUT_OF_MEMORY",
+        ),
+    )
+    first_attempt, first_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=completed_rows,
+    )
+    second_attempt, second_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s001",
+        attempt_id="a001",
+        rows=partial_rows,
+        reason_code="OUT_OF_MEMORY",
+    )
+
+    evidence = build_terminal_unit_evidence_from_paths(
+        (first_attempt, second_attempt),
+        (first_units, second_units),
+    )
+
+    assert evidence.unit_keys == ("u000", "u001", "u002")
+    assert evidence.unit_count == 3
+    assert len(evidence.unit_manifest_sha256 or "") == 64
+    assert evidence.source_artifacts == (
+        "artifact-s000-a000",
+        "artifact-s001-a001",
+    )
+    assert pq.read_metadata(second_units).num_rows == 2
+
+
+def test_terminal_unit_evidence_rejects_unbound_manifest(
+    tmp_path: Path,
+) -> None:
+    rows = (
+        UnitAttemptRecord(
+            unit_key="u000",
+            shard_id="s000",
+            attempt_id="a000",
+            state=TerminalState.COMPLETED,
+            output_sha256="b" * 64,
+            reason_code=None,
+        ),
+    )
+    attempt_path, unit_path = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=rows,
+    )
+    unit_path.write_bytes(unit_path.read_bytes() + b"tampered")
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        build_terminal_unit_evidence_from_paths(
+            (attempt_path,),
+            (unit_path,),
+        )
 
 
 def test_recovery_loop_stops_at_wave_budget() -> None:

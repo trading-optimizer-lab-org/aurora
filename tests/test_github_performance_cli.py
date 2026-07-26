@@ -152,6 +152,11 @@ def test_phase_commands_are_registered() -> None:
             + " --output-dir o",
         ),
         (
+            "replan-pending",
+            "--spec x --state-root s --work-unit-manifest m "
+            "--work-units u --requested-jobs 2 --output-dir o",
+        ),
+        (
             "merge-only",
             "--spec x --state-root s --source-artifact a "
             "--output-dir o",
@@ -252,6 +257,7 @@ def test_campaign_update_preserves_verified_sources_when_omitted(
         (cmd_github.cmd_github_campaign_update, {"spec": "missing"}),
         (cmd_github.cmd_github_recovery_loop, {"spec": "missing"}),
         (cmd_github.cmd_github_replan, {"spec": "missing"}),
+        (cmd_github.cmd_github_replan_pending, {"spec": "missing"}),
         (cmd_github.cmd_github_merge_only, {"spec": "missing"}),
     ],
 )

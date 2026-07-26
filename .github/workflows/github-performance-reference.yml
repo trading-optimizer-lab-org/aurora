@@ -2,6 +2,41 @@ name: GitHub Performance Reference
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Full reference, merge-only, or pending-unit replan
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - merge_only
+          - replan
+      source_run_id:
+        description: Source run for merge-only or replan
+        required: false
+        default: ""
+        type: string
+      source_state_artifact_name:
+        description: Immutable source campaign-state artifact
+        required: false
+        default: ""
+        type: string
+      comparison_artifact_name:
+        description: Optional source final artifact for merge-only comparison
+        required: false
+        default: ""
+        type: string
+      requested_jobs:
+        description: Pending-only shard count for replan
+        required: false
+        default: 1
+        type: number
+      operational_overrides:
+        description: Operational-only replan overrides as JSON
+        required: false
+        default: "{}"
+        type: string
 
 permissions:
   contents: read
@@ -9,9 +44,32 @@ permissions:
 
 jobs:
   reference:
+    if: inputs.operation == 'full'
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
       workload: aurora.infra.github_performance.reference_workload:WORKLOAD
       run_label: github-performance-reference
+      retention_days: 7
+
+  merge_only:
+    if: inputs.operation == 'merge_only'
+    uses: ./.github/workflows/github-performance-merge-only.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+      source_state_artifact_name: ${{ inputs.source_state_artifact_name }}
+      run_label: github-performance-reference
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      comparison_artifact_name: ${{ inputs.comparison_artifact_name }}
+      retention_days: 7
+
+  replan:
+    if: inputs.operation == 'replan'
+    uses: ./.github/workflows/github-performance-replan.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+      source_state_artifact_name: ${{ inputs.source_state_artifact_name }}
+      run_label: github-performance-reference
+      requested_jobs: ${{ inputs.requested_jobs }}
+      operational_overrides: ${{ inputs.operational_overrides }}
       retention_days: 7

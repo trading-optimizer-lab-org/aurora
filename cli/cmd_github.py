@@ -34,6 +34,7 @@ from aurora.infra.github_performance.contracts import (
     ShardDefinition,
     ShardPlan,
     TerminalState,
+    WorkUnitManifest,
     canonical_sha256,
     deep_thaw_json,
 )
@@ -59,6 +60,7 @@ from aurora.infra.github_performance.merge_runtime import (
 )
 from aurora.infra.github_performance.recovery import (
     RecoveryLoopStatus,
+    build_terminal_unit_evidence_from_paths,
     build_recovery_loop_from_paths,
     write_recovery_loop,
 )
@@ -68,7 +70,12 @@ from aurora.infra.github_performance.preflight import (
     validate_run_spec,
     write_preflight_report,
 )
-from aurora.infra.github_performance.shard_planner import sha256_file
+from aurora.infra.github_performance.shard_planner import (
+    encode_matrix_outputs,
+    replan_pending_units,
+    sha256_file,
+    split_matrices,
+)
 from aurora.infra.github_performance.telemetry import ResourceMonitor
 from aurora.infra.github_performance.verifier import (
     verify_final_artifact,
@@ -783,8 +790,16 @@ def cmd_github_campaign_update(args: argparse.Namespace) -> int:
         completed_unit_manifest_sha256=completed_sha,
         pending_unit_count=args.pending_unit_count,
         active_plan_sha256=args.active_plan_sha256 or None,
-        verified_source_artifacts=tuple(args.verified_source_artifact),
-        active_attempt_ids=tuple(args.active_attempt_id),
+        verified_source_artifacts=(
+            tuple(args.verified_source_artifact)
+            if args.verified_source_artifact
+            else None
+        ),
+        active_attempt_ids=(
+            tuple(args.active_attempt_id)
+            if args.active_attempt_id
+            else None
+        ),
         wave=args.wave,
         hard_failure_reason=args.hard_failure_reason or None,
         created_at=now,
@@ -810,6 +825,9 @@ def cmd_github_recovery_loop(args: argparse.Namespace) -> int:
         Path(args.spec),
         current_wave=args.current_wave,
         max_waves=args.max_waves,
+        unit_attempt_paths=tuple(
+            Path(path) for path in args.unit_attempt
+        ),
     )
     paths = write_recovery_loop(result, Path(args.output_dir))
     state_root = Path(args.state_root)
@@ -831,6 +849,14 @@ def cmd_github_recovery_loop(args: argparse.Namespace) -> int:
     next_state = transition_campaign_state(
         previous,
         phase=phase_by_status[result.status],
+        completed_unit_count=result.terminal_unit_count,
+        completed_unit_manifest_sha256=(
+            result.terminal_unit_manifest_sha256
+        ),
+        pending_unit_count=(
+            previous.logical_unit_count - result.terminal_unit_count
+        ),
+        verified_source_artifacts=result.verified_source_artifacts,
         active_attempt_ids=tuple(
             item.next_attempt_id
             for item in result.plan.decisions
@@ -917,6 +943,120 @@ def cmd_github_replan(args: argparse.Namespace) -> int:
         {
             "campaign_state": str(state_path),
             "replan": str(descriptor),
+        }
+    )
+    return 0
+
+
+def cmd_github_replan_pending(args: argparse.Namespace) -> int:
+    require_github_execution("github replan-pending")
+    spec = _load_spec(args.spec)
+    root = Path(args.state_root)
+    previous = resume_campaign_state(
+        root,
+        campaign_id=str(spec.identity["campaign_id"]),
+    )
+    if previous.phase is not CampaignPhase.REPLANNING:
+        raise ValueError("replan-pending requires campaign phase replanning")
+
+    manifest_payload = json.loads(
+        Path(args.work_unit_manifest).read_text(encoding="utf-8")
+    )
+    manifest_payload["path"] = str(Path(args.work_units))
+    manifest = WorkUnitManifest.model_validate(manifest_payload)
+    if manifest.sha256 != previous.logical_unit_manifest_sha256:
+        raise ValueError("logical work-unit manifest changed during replan")
+    evidence = build_terminal_unit_evidence_from_paths(
+        tuple(Path(path) for path in args.attempt),
+        tuple(Path(path) for path in args.unit_attempt),
+    )
+    if evidence.unit_count != previous.completed_unit_count:
+        raise ValueError("terminal unit count does not match campaign state")
+    if (
+        evidence.unit_manifest_sha256
+        != previous.completed_unit_manifest_sha256
+    ):
+        raise ValueError(
+            "terminal unit evidence does not match campaign state"
+        )
+
+    output_dir = Path(args.output_dir)
+    plan_root = output_dir / "plan"
+    plan = replan_pending_units(
+        manifest,
+        evidence.unit_keys,
+        args.requested_jobs,
+        plan_root,
+        wave=previous.wave + 1,
+    )
+    copied_units = plan_root / "work_units.parquet"
+    shutil.copy2(Path(args.work_units), copied_units)
+    output_manifest = manifest.model_copy(
+        update={"path": str(copied_units)}
+    )
+    _write_json(plan_root / "work_unit_manifest.json", output_manifest)
+    _write_json(plan_root / "balanced_shard_plan.json", plan)
+    matrix_outputs = encode_matrix_outputs(split_matrices(plan.shards))
+    _write_json(plan_root / "plan_outputs.json", matrix_outputs)
+
+    overrides = _load_operational_overrides(
+        args.operational_overrides
+    )
+    supplied_parallelism = overrides.get("requested_parallelism")
+    if (
+        supplied_parallelism is not None
+        and int(supplied_parallelism) != args.requested_jobs
+    ):
+        raise ValueError(
+            "requested_parallelism conflicts with requested_jobs"
+        )
+    overrides["requested_parallelism"] = args.requested_jobs
+    state = replan_campaign_state(
+        previous,
+        new_plan_sha256=plan.plan_sha256,
+        logical_unit_manifest_sha256=manifest.sha256,
+        completed_unit_manifest_sha256=(
+            evidence.unit_manifest_sha256
+        ),
+        operational_overrides=overrides,
+        created_at=_command_now(args),
+    )
+    state_path = write_campaign_state(state, root)
+    descriptor = _write_json(
+        output_dir / "replan.json",
+        {
+            "campaign_state_sha256": state.state_sha256,
+            "previous_plan_sha256": previous.active_plan_sha256,
+            "new_plan_sha256": plan.plan_sha256,
+            "logical_unit_manifest_sha256": manifest.sha256,
+            "completed_unit_manifest_sha256": (
+                evidence.unit_manifest_sha256
+            ),
+            "completed_unit_count": evidence.unit_count,
+            "pending_unit_count": (
+                manifest.unit_count - evidence.unit_count
+            ),
+            "selected_jobs": plan.selected_jobs,
+            "operational_overrides": state.operational_overrides,
+            "scientific_contract_unchanged": (
+                state.scientific_contract_sha256
+                == previous.scientific_contract_sha256
+            ),
+            "logical_units_unchanged": (
+                state.logical_unit_manifest_sha256
+                == previous.logical_unit_manifest_sha256
+            ),
+            "completed_evidence_unchanged": (
+                state.completed_unit_manifest_sha256
+                == previous.completed_unit_manifest_sha256
+            ),
+        },
+    )
+    _print(
+        {
+            "campaign_state": str(state_path),
+            "replan": str(descriptor),
+            "plan": str(plan_root / "balanced_shard_plan.json"),
         }
     )
     return 0
@@ -1130,6 +1270,11 @@ def register(subparsers, parent_parser=None) -> None:
     recovery_loop.add_argument("--spec", required=True)
     recovery_loop.add_argument("--shard-plan", required=True)
     recovery_loop.add_argument("--attempt", action="append", default=[])
+    recovery_loop.add_argument(
+        "--unit-attempt",
+        action="append",
+        default=[],
+    )
     recovery_loop.add_argument("--checkpoint", action="append", default=[])
     recovery_loop.add_argument("--state-root", required=True)
     recovery_loop.add_argument("--output-dir", required=True)
@@ -1154,6 +1299,30 @@ def register(subparsers, parent_parser=None) -> None:
     replan.add_argument("--output-dir", required=True)
     replan.add_argument("--created-at", default="")
     replan.set_defaults(func=cmd_github_replan)
+
+    replan_pending = commands.add_parser("replan-pending")
+    replan_pending.add_argument("--spec", required=True)
+    replan_pending.add_argument("--state-root", required=True)
+    replan_pending.add_argument("--work-unit-manifest", required=True)
+    replan_pending.add_argument("--work-units", required=True)
+    replan_pending.add_argument(
+        "--attempt",
+        action="append",
+        default=[],
+    )
+    replan_pending.add_argument(
+        "--unit-attempt",
+        action="append",
+        default=[],
+    )
+    replan_pending.add_argument("--requested-jobs", type=int, required=True)
+    replan_pending.add_argument(
+        "--operational-overrides",
+        default="{}",
+    )
+    replan_pending.add_argument("--output-dir", required=True)
+    replan_pending.add_argument("--created-at", default="")
+    replan_pending.set_defaults(func=cmd_github_replan_pending)
 
     merge_only = commands.add_parser("merge-only")
     merge_only.add_argument("--spec", required=True)

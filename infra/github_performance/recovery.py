@@ -21,16 +21,18 @@ from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointAuditRecord,
     CheckpointManifest,
+    FrozenModel,
     RecoveryDecision,
     RecoveryPlan,
     ShardDefinition,
     ShardPlan,
     TerminalState,
-    FrozenModel,
+    UnitAttemptRecord,
     canonical_sha256,
     deep_thaw_json,
 )
 from aurora.infra.github_performance.preflight import load_github_yaml
+from aurora.infra.github_performance.shard_planner import sha256_file
 
 
 class FailureClass(str, Enum):
@@ -64,9 +66,19 @@ class RecoveryLoopResult(FrozenModel):
     next_wave: int | None
     retry_count: int
     terminal_shard_count: int
+    terminal_unit_count: int
+    terminal_unit_manifest_sha256: str | None
+    verified_source_artifacts: tuple[str, ...]
     replan_shard_ids: tuple[str, ...]
     reason_codes: tuple[str, ...]
     plan: RecoveryPlan
+
+
+class TerminalUnitEvidence(FrozenModel):
+    unit_keys: tuple[str, ...]
+    unit_count: int
+    unit_manifest_sha256: str | None
+    source_artifacts: tuple[str, ...]
 
 
 TRANSIENT_CLASSES = frozenset(
@@ -359,11 +371,58 @@ def build_recovery_loop(
         TerminalState.RIGHT_CENSORED,
         TerminalState.UNSUPPORTED,
     }
+    shards_by_id = {shard.shard_id: shard for shard in ordered_shards}
+    terminal_attempts_by_shard: dict[str, list[AttemptManifest]] = (
+        defaultdict(list)
+    )
+    for attempt in attempts:
+        if (
+            attempt.state in terminal_states
+            and attempt.shard_id in shards_by_id
+            and attempt.artifact_name is not None
+        ):
+            terminal_attempts_by_shard[attempt.shard_id].append(attempt)
+    selected_terminal_attempts = tuple(
+        min(
+            terminal_attempts_by_shard[shard_id],
+            key=lambda item: (
+                item.attempt_id,
+                item.output_sha256 or "",
+                item.artifact_name or "",
+            ),
+        )
+        for shard_id in sorted(terminal_attempts_by_shard)
+    )
     terminal_shards = {
-        attempt.shard_id
-        for attempt in attempts
-        if attempt.state in terminal_states
+        attempt.shard_id for attempt in selected_terminal_attempts
     }
+    terminal_unit_count = sum(
+        shards_by_id[shard_id].unit_count for shard_id in terminal_shards
+    )
+    terminal_evidence = [
+        {
+            "shard_id": attempt.shard_id,
+            "attempt_id": attempt.attempt_id,
+            "state": attempt.state.value,
+            "artifact_name": attempt.artifact_name,
+            "output_sha256": attempt.output_sha256,
+            "unit_attempts_sha256": attempt.unit_attempts_sha256,
+            "completed_unit_count": attempt.completed_unit_count,
+        }
+        for attempt in selected_terminal_attempts
+    ]
+    terminal_unit_manifest_sha256 = (
+        canonical_sha256(terminal_evidence)
+        if terminal_evidence
+        else None
+    )
+    verified_source_artifacts = tuple(
+        sorted(
+            attempt.artifact_name
+            for attempt in selected_terminal_attempts
+            if attempt.artifact_name is not None
+        )
+    )
     retry_count = len(plan.retry_matrix_a) + len(plan.retry_matrix_b)
     replans = tuple(
         decision.shard_id
@@ -433,6 +492,9 @@ def build_recovery_loop(
         next_wave=next_wave,
         retry_count=retry_count,
         terminal_shard_count=len(terminal_shards),
+        terminal_unit_count=terminal_unit_count,
+        terminal_unit_manifest_sha256=terminal_unit_manifest_sha256,
+        verified_source_artifacts=verified_source_artifacts,
         replan_shard_ids=replans,
         reason_codes=reasons,
         plan=plan,
@@ -562,6 +624,108 @@ def _load_attempt(path: Path) -> tuple[AttemptManifest, ...]:
     return (AttemptManifest.model_validate(payload),)
 
 
+def build_terminal_unit_evidence_from_paths(
+    attempt_paths: Sequence[Path],
+    unit_attempt_paths: Sequence[Path],
+) -> TerminalUnitEvidence:
+    """Verify unit manifests and select one immutable terminal result per key."""
+
+    attempts = tuple(
+        attempt
+        for path in attempt_paths
+        for attempt in _load_attempt(Path(path))
+    )
+    attempts_by_identity = {
+        (attempt.shard_id, attempt.attempt_id): attempt
+        for attempt in attempts
+    }
+    if len(attempts_by_identity) != len(attempts):
+        raise ValueError("duplicate shard attempt evidence")
+    grouped: dict[str, list[UnitAttemptRecord]] = defaultdict(list)
+    terminal_states = {
+        TerminalState.COMPLETED,
+        TerminalState.RIGHT_CENSORED,
+        TerminalState.UNSUPPORTED,
+    }
+    for raw_path in unit_attempt_paths:
+        path = Path(raw_path)
+        rows = tuple(
+            UnitAttemptRecord.model_validate(row)
+            for row in pq.read_table(path).to_pylist()
+        )
+        identities = {(row.shard_id, row.attempt_id) for row in rows}
+        if len(identities) > 1:
+            raise ValueError(
+                f"unit attempt file mixes attempt identities: {path}"
+            )
+        if not identities:
+            continue
+        identity = next(iter(identities))
+        manifest = attempts_by_identity.get(identity)
+        if manifest is None:
+            raise ValueError(
+                "unit attempt evidence has no shard manifest: "
+                f"{identity[0]}/{identity[1]}"
+            )
+        if manifest.unit_attempts_sha256 is None:
+            raise ValueError("shard manifest does not bind unit attempts")
+        if sha256_file(path) != manifest.unit_attempts_sha256:
+            raise ValueError("unit attempt manifest hash mismatch")
+        for row in rows:
+            if row.state in terminal_states:
+                grouped[row.unit_key].append(row)
+
+    selected: list[UnitAttemptRecord] = []
+    for unit_key in sorted(grouped):
+        candidates = sorted(
+            grouped[unit_key],
+            key=lambda item: (item.attempt_id, item.shard_id),
+        )
+        completed = [
+            item
+            for item in candidates
+            if item.state is TerminalState.COMPLETED
+        ]
+        if completed:
+            digests = {item.output_sha256 for item in completed}
+            if len(digests) != 1:
+                raise ValueError(
+                    f"conflicting completed output hashes for {unit_key}"
+                )
+            chosen = completed[0]
+        else:
+            chosen = candidates[-1]
+        selected.append(chosen)
+
+    payload = []
+    source_artifacts: set[str] = set()
+    for row in selected:
+        manifest = attempts_by_identity[(row.shard_id, row.attempt_id)]
+        if manifest.artifact_name is None:
+            raise ValueError("terminal unit evidence has no source artifact")
+        source_artifacts.add(manifest.artifact_name)
+        payload.append(
+            {
+                "unit_key": row.unit_key,
+                "shard_id": row.shard_id,
+                "attempt_id": row.attempt_id,
+                "state": row.state.value,
+                "output_sha256": row.output_sha256,
+                "reason_code": row.reason_code,
+                "artifact_name": manifest.artifact_name,
+                "unit_attempts_sha256": manifest.unit_attempts_sha256,
+            }
+        )
+    return TerminalUnitEvidence(
+        unit_keys=tuple(item["unit_key"] for item in payload),
+        unit_count=len(payload),
+        unit_manifest_sha256=(
+            canonical_sha256(payload) if payload else None
+        ),
+        source_artifacts=tuple(sorted(source_artifacts)),
+    )
+
+
 def build_recovery_plan_from_paths(
     shard_plan_path: Path,
     attempt_paths: Sequence[Path],
@@ -619,6 +783,7 @@ def build_recovery_loop_from_paths(
     *,
     current_wave: int,
     max_waves: int,
+    unit_attempt_paths: Sequence[Path] = (),
 ) -> RecoveryLoopResult:
     shard_plan = ShardPlan.model_validate_json(
         Path(shard_plan_path).read_text(encoding="utf-8")
@@ -653,7 +818,7 @@ def build_recovery_loop_from_paths(
     retry_policy = spec.get("retries", {})
     if not isinstance(retry_policy, Mapping):
         raise ValueError("spec.retries must be a mapping")
-    return build_recovery_loop(
+    result = build_recovery_loop(
         shard_plan.shards,
         attempts,
         tuple(checkpoints_list),
@@ -661,6 +826,29 @@ def build_recovery_loop_from_paths(
         current_wave=current_wave,
         max_waves=max_waves,
         checkpoint_audit=tuple(checkpoint_audit),
+    )
+    if not unit_attempt_paths:
+        return result
+    evidence = build_terminal_unit_evidence_from_paths(
+        attempt_paths,
+        unit_attempt_paths,
+    )
+    expected_units = sum(shard.unit_count for shard in shard_plan.shards)
+    if (
+        result.status is RecoveryLoopStatus.COMPLETE
+        and evidence.unit_count != expected_units
+    ):
+        raise ValueError(
+            "complete recovery lacks terminal evidence for every work unit"
+        )
+    return result.model_copy(
+        update={
+            "terminal_unit_count": evidence.unit_count,
+            "terminal_unit_manifest_sha256": (
+                evidence.unit_manifest_sha256
+            ),
+            "verified_source_artifacts": evidence.source_artifacts,
+        }
     )
 
 

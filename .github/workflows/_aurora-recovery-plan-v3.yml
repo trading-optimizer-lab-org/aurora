@@ -118,6 +118,11 @@ jobs:
               -name checkpoint_manifest.json -type f 2>/dev/null |
               sort
           )
+          mapfile -t unit_attempts < <(
+            find "$RUNNER_TEMP/attempts" \
+              -name unit_attempts.parquet -type f 2>/dev/null |
+              sort
+          )
           args=(
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
             --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
@@ -127,6 +132,9 @@ jobs:
             --max-waves "${{ inputs.max_waves }}"
           )
           for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
+          for path in "${unit_attempts[@]}"; do
+            args+=(--unit-attempt "$path")
+          done
           for path in "${checkpoints[@]}"; do
             args+=(--checkpoint "$path")
           done
