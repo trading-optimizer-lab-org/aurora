@@ -251,6 +251,10 @@ def test_campaign_update_preserves_verified_sources_when_omitted(
             cmd_github.cmd_github_merge_group,
             {"spec": "missing", "shard_plan": "missing"},
         ),
+        (
+            cmd_github.cmd_github_merge_plan_group,
+            {"spec": "missing", "shard_plan": "missing"},
+        ),
         (cmd_github.cmd_github_final_merge, {"spec": "missing"}),
         (cmd_github.cmd_github_verify, {"spec": "missing"}),
         (cmd_github.cmd_github_guardrail_check, {"spec": "missing"}),

@@ -393,6 +393,16 @@ jobs:
       matrix_b: ${{ steps.outputs.outputs.matrix_b }}
       has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
       merge_matrix: ${{ steps.outputs.outputs.merge_matrix }}
+      merge_level_0_matrix: ${{ steps.outputs.outputs.merge_level_0_matrix }}
+      merge_level_0_count: ${{ steps.outputs.outputs.merge_level_0_count }}
+      merge_level_1_matrix: ${{ steps.outputs.outputs.merge_level_1_matrix }}
+      merge_level_1_count: ${{ steps.outputs.outputs.merge_level_1_count }}
+      merge_level_2_matrix: ${{ steps.outputs.outputs.merge_level_2_matrix }}
+      merge_level_2_count: ${{ steps.outputs.outputs.merge_level_2_count }}
+      merge_level_3_matrix: ${{ steps.outputs.outputs.merge_level_3_matrix }}
+      merge_level_3_count: ${{ steps.outputs.outputs.merge_level_3_count }}
+      merge_root_artifact: ${{ steps.outputs.outputs.merge_root_artifact }}
+      merge_root_level: ${{ steps.outputs.outputs.merge_root_level }}
       selected_jobs: ${{ steps.outputs.outputs.selected_jobs }}
     steps:
       - name: Checkout exact revision
@@ -431,6 +441,7 @@ jobs:
           WORKLOAD: ${{ inputs.workload }}
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           FORCED_JOB_COUNT: ${{ inputs.forced_job_count }}
+          ARTIFACT_PREFIX: ${{ inputs.run_label }}
         run: |
           set -euo pipefail
           aurora github plan \
@@ -440,6 +451,7 @@ jobs:
             --pilot "$RUNNER_TEMP/pilot/performance_pilot.json" \
             --execution-mode "$EXECUTION_MODE" \
             --forced-job-count "$FORCED_JOB_COUNT" \
+            --artifact-prefix "$ARTIFACT_PREFIX" \
             --output-dir "$RUNNER_TEMP/plan"
       - name: Emit compact GitHub matrices
         id: outputs
@@ -460,6 +472,16 @@ jobs:
               "matrix_b": "matrix_b_json",
               "has_matrix_b": "has_matrix_b",
               "merge_matrix": "merge_matrix_json",
+              "merge_level_0_matrix": "merge_level_0_matrix_json",
+              "merge_level_0_count": "merge_level_0_count",
+              "merge_level_1_matrix": "merge_level_1_matrix_json",
+              "merge_level_1_count": "merge_level_1_count",
+              "merge_level_2_matrix": "merge_level_2_matrix_json",
+              "merge_level_2_count": "merge_level_2_count",
+              "merge_level_3_matrix": "merge_level_3_matrix_json",
+              "merge_level_3_count": "merge_level_3_count",
+              "merge_root_artifact": "merge_root_artifact",
+              "merge_root_level": "merge_root_level",
               "selected_jobs": "selected_jobs",
           }
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
@@ -1229,11 +1251,12 @@ jobs:
       current_wave: 5
       max_waves: 6
 
-  merge_partials:
+  merge_level_0:
     needs: [plan, fanout_a, fanout_b, recovery_plan, retry_a, retry_b, recovery_plan_1, retry_2_a, retry_2_b, recovery_plan_2, retry_3_a, retry_3_b, recovery_plan_3, retry_4_a, retry_4_b, recovery_plan_4, retry_5_a, retry_5_b, recovery_plan_5]
     if: >-
       always() &&
       needs.plan.result == 'success' &&
+      needs.plan.outputs.merge_level_0_count != '0' &&
       (
         needs.recovery_plan_5.outputs.status == 'complete' ||
         needs.recovery_plan_4.outputs.status == 'complete' ||
@@ -1242,70 +1265,90 @@ jobs:
         needs.recovery_plan_1.outputs.status == 'complete' ||
         needs.recovery_plan.outputs.status == 'complete'
       )
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      max-parallel: 12
-      matrix: ${{ fromJSON(needs.plan.outputs.merge_matrix) }}
-    steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Download immutable wheelhouse
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
-          path: ${{ runner.temp }}/wheelhouse
-      - name: Restore Aurora runtime
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.12"
-          wheelhouse-path: ${{ runner.temp }}/wheelhouse
-          dependency-lock-path: requirements/github-performance.lock
-      - name: Download frozen contract
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/contract
-      - name: Download execution plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/plan
-      - name: Download this group's attempts
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-*
-          path: ${{ runner.temp }}/attempts
-      - name: Merge bounded group
-        env:
-          WORKLOAD: ${{ inputs.workload }}
-        run: |
-          set -euo pipefail
-          aurora github merge-group \
-            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
-            --workload "$WORKLOAD" \
-            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json" \
-            --merge-group "${{ matrix.merge_group }}" \
-            --inputs-root "$RUNNER_TEMP/attempts" \
-            --output-dir "$RUNNER_TEMP/partial/${{ matrix.merge_group }}"
-      - name: Upload partial merge
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.run_label }}-partial-${{ matrix.merge_group }}
-          path: ${{ runner.temp }}/partial
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: ${{ inputs.retention_days }}
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_0_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  merge_level_1:
+    needs: [plan, merge_level_0]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.merge_level_0.result == 'success' &&
+      needs.plan.outputs.merge_level_1_count != '0'
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_1_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  merge_level_2:
+    needs: [plan, merge_level_1]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.merge_level_1.result == 'success' &&
+      needs.plan.outputs.merge_level_2_count != '0'
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_2_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  merge_level_3:
+    needs: [plan, merge_level_2]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.merge_level_2.result == 'success' &&
+      needs.plan.outputs.merge_level_3_count != '0'
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_3_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
   final_merge:
-    needs: [plan, freeze_contract, merge_partials]
-    if: always() && needs.plan.result == 'success' && needs.merge_partials.result == 'success'
+    needs: [plan, freeze_contract, merge_level_0, merge_level_1, merge_level_2, merge_level_3]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      (
+        (
+          needs.plan.outputs.merge_root_level == '0' &&
+          needs.merge_level_0.result == 'success'
+        ) ||
+        (
+          needs.plan.outputs.merge_root_level == '1' &&
+          needs.merge_level_1.result == 'success'
+        ) ||
+        (
+          needs.plan.outputs.merge_root_level == '2' &&
+          needs.merge_level_2.result == 'success'
+        ) ||
+        (
+          needs.plan.outputs.merge_root_level == '3' &&
+          needs.merge_level_3.result == 'success'
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     outputs:
@@ -1339,10 +1382,10 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/plan
-      - name: Download partial merges only
+      - name: Download merge root only
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          pattern: ${{ inputs.run_label }}-partial-*
+          name: ${{ needs.plan.outputs.merge_root_artifact }}
           path: ${{ runner.temp }}/partials
       - name: Download preflight evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1436,16 +1479,13 @@ jobs:
           digest = hashlib.sha256(path.read_bytes()).hexdigest()
           rows = pq.read_metadata(path).num_rows
           plan = json.loads(
-              (root / "plan" / "balanced_shard_plan.json").read_text(
+              (root / "plan" / "merge_plan.json").read_text(
                   encoding="utf-8"
               )
           )
           print(digest)
           print(rows)
-          for group in sorted(
-              {item["merge_group"] for item in plan["shards"]}
-          ):
-              print(f"${{ inputs.run_label }}-partial-{group}")
+          print(plan["root_artifact"])
           PY
           )
           args=(

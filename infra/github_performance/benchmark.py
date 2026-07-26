@@ -8,8 +8,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
+from aurora.infra.github_performance.contracts import PartitionedTransport
 from aurora.infra.github_performance.contracts import (
     FrozenModel,
     canonical_sha256,
@@ -67,10 +69,24 @@ def _json(path: Path) -> dict[str, Any]:
 def _scientific_hashes(root: Path) -> dict[str, str]:
     summary = _json(root / "final_merge_summary.json")
     output = root / str(summary["scientific_output"])
-    table = pq.read_table(
-        output,
-        columns=["unit_key", "unit_output_sha256"],
-    )
+    if bool(summary.get("scientific_output_partitioned", False)):
+        transport = PartitionedTransport.model_validate_json(
+            output.read_text(encoding="utf-8")
+        )
+        table = pa.concat_tables(
+            [
+                pq.read_table(
+                    root / part.relative_path,
+                    columns=["unit_key", "unit_output_sha256"],
+                )
+                for part in transport.parts
+            ]
+        )
+    else:
+        table = pq.read_table(
+            output,
+            columns=["unit_key", "unit_output_sha256"],
+        )
     rows = table.to_pylist()
     hashes = {
         str(row["unit_key"]): str(row["unit_output_sha256"])

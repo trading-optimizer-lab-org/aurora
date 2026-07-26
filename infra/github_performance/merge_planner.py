@@ -33,6 +33,9 @@ from aurora.infra.github_performance.shard_planner import sha256_file
 UNIT_ATTEMPT_SCHEMA_VERSION = "1"
 SHARD_ATTEMPT_SCHEMA_VERSION = "2"
 RECONCILIATION_SCHEMA_VERSION = "1"
+DEFAULT_PARTITION_TARGET_BYTES = 512 * 1024**2
+MAX_GITHUB_MATRIX_JOBS = 256
+MAX_WORKFLOW_MERGE_LEVELS = 4
 UNIT_ATTEMPT_SCHEMA = pa.schema(
     [
         pa.field("unit_key", pa.string(), nullable=False),
@@ -117,6 +120,10 @@ def build_merge_plan(
     *,
     projected_bytes_by_shard: Mapping[str, int] | None = None,
     run_id: str = "run",
+    source_artifact_prefix: str = "{run_label}",
+    partition_target_bytes: int = DEFAULT_PARTITION_TARGET_BYTES,
+    max_groups_per_level: int = MAX_GITHUB_MATRIX_JOBS,
+    max_levels: int = MAX_WORKFLOW_MERGE_LEVELS,
 ) -> MergePlan:
     """Build all immutable merge levels while bounding local disk usage."""
 
@@ -124,30 +131,109 @@ def build_merge_plan(
         raise ValueError("fan_in must be at least 2")
     if disk_budget_bytes <= 0:
         raise ValueError("disk_budget_bytes must be positive")
-    ordered = tuple(sorted(shards, key=lambda item: item.shard_id))
+    if partition_target_bytes < 4096:
+        raise ValueError("partition_target_bytes must be at least 4096")
+    if not 1 <= max_groups_per_level <= MAX_GITHUB_MATRIX_JOBS:
+        raise ValueError("max_groups_per_level exceeds GitHub limits")
+    if max_levels < 1:
+        raise ValueError("max_levels must be positive")
+    ordered = tuple(
+        sorted(shards, key=lambda item: (item.merge_group, item.shard_id))
+    )
     if not ordered:
         raise ValueError("cannot merge an empty shard plan")
     if len({item.shard_id for item in ordered}) != len(ordered):
         raise ValueError("duplicate shard_id in merge inputs")
     byte_map = projected_bytes_by_shard or {}
-    current = [
+    source_groups = tuple(
         (
-            f"run-shard-{shard.shard_id}",
-            int(byte_map.get(shard.shard_id, _projected_shard_bytes(shard))),
+            merge_group,
+            tuple(group),
         )
-        for shard in ordered
-    ]
+        for merge_group, group in groupby(
+            ordered,
+            key=lambda item: item.merge_group,
+        )
+    )
+    if any(len(group) > fan_in for _, group in source_groups):
+        raise MergePlanError(
+            "MERGE_SOURCE_GROUP_EXCEEDS_FAN_IN: shard merge group is "
+            "larger than configured fan-in"
+        )
+    if len(source_groups) > max_groups_per_level:
+        raise MergePlanError(
+            "MERGE_MATRIX_LIMIT_EXCEEDED: first merge level requires "
+            f"{len(source_groups)} groups"
+        )
     seed = canonical_sha256(
         {
             "run_id": run_id,
             "fan_in": fan_in,
             "disk_budget_bytes": disk_budget_bytes,
-            "inputs": current,
+            "partition_target_bytes": partition_target_bytes,
+            "max_groups_per_level": max_groups_per_level,
+            "max_levels": max_levels,
+            "inputs": [
+                (
+                    shard.shard_id,
+                    shard.merge_group,
+                    int(
+                        byte_map.get(
+                            shard.shard_id,
+                            _projected_shard_bytes(shard),
+                        )
+                    ),
+                )
+                for shard in ordered
+            ],
         }
     )
     groups: list[MergeGroup] = []
-    level = 0
-    while len(current) > 1 or not groups:
+    current: list[tuple[str, int]] = []
+    for group_index, (source_group, members) in enumerate(source_groups):
+        input_bytes = sum(
+            int(
+                byte_map.get(
+                    shard.shard_id,
+                    _projected_shard_bytes(shard),
+                )
+            )
+            for shard in members
+        )
+        output_bytes = max(1024, math.ceil(input_bytes * 0.80))
+        if input_bytes + output_bytes > int(disk_budget_bytes * 0.80):
+            raise MergePlanError(
+                "MERGE_DISK_BUDGET_EXCEEDED: projected group requires "
+                f"{input_bytes + output_bytes} bytes"
+            )
+        group_id = f"l00-g{group_index:03d}"
+        output = (
+            f"{run_id}-merge-l00-p{group_index // fan_in:03d}-"
+            f"g{group_index:03d}-{seed[:12]}"
+        )
+        groups.append(
+            MergeGroup(
+                group_id=group_id,
+                level=0,
+                input_artifacts=tuple(
+                    f"shard:{shard.shard_id}" for shard in members
+                ),
+                input_artifact_pattern=(
+                    f"{source_artifact_prefix}-shard-{source_group}-*"
+                ),
+                projected_input_bytes=input_bytes,
+                projected_output_bytes=output_bytes,
+                output_artifact=output,
+            )
+        )
+        current.append((output, output_bytes))
+    level = 1
+    while len(current) > 1:
+        if level >= max_levels:
+            raise MergePlanError(
+                "MERGE_LEVEL_LIMIT_EXCEEDED: immutable plan requires "
+                f"more than {max_levels} levels"
+            )
         next_level: list[tuple[str, int]] = []
         for group_index, start in enumerate(range(0, len(current), fan_in)):
             members = current[start : start + fan_in]
@@ -160,13 +246,19 @@ def build_merge_plan(
                 )
             group_id = f"l{level:02d}-g{group_index:03d}"
             output = (
-                f"{run_id}-merge-{group_id}-{seed[:12]}"
+                f"{run_id}-merge-l{level:02d}-"
+                f"p{group_index // fan_in:03d}-"
+                f"g{group_index:03d}-{seed[:12]}"
             )
             groups.append(
                 MergeGroup(
                     group_id=group_id,
                     level=level,
                     input_artifacts=tuple(name for name, _ in members),
+                    input_artifact_pattern=(
+                        f"{run_id}-merge-l{level - 1:02d}-"
+                        f"p{group_index:03d}-*"
+                    ),
                     projected_input_bytes=input_bytes,
                     projected_output_bytes=output_bytes,
                     output_artifact=output,
@@ -174,17 +266,66 @@ def build_merge_plan(
             )
             next_level.append((output, output_bytes))
         if len(next_level) == 1:
+            current = next_level
             break
         current = next_level
         level += 1
+        if len(current) > max_groups_per_level:
+            raise MergePlanError(
+                "MERGE_MATRIX_LIMIT_EXCEEDED: merge level requires "
+                f"{len(current)} groups"
+            )
+    if not current:
+        raise MergePlanError("merge plan did not produce a root")
+    root_artifact = current[0][0]
+    root_group = next(
+        group for group in reversed(groups)
+        if group.output_artifact == root_artifact
+    )
     payload = {
         "fan_in": fan_in,
+        "partition_target_bytes": partition_target_bytes,
+        "max_groups_per_level": max_groups_per_level,
+        "max_levels": max_levels,
         "groups": [deep_thaw_json(group) for group in groups],
+        "root_artifact": root_artifact,
+        "root_level": root_group.level,
     }
     return MergePlan(
         **payload,
         plan_sha256=canonical_sha256(payload),
     )
+
+
+def build_merge_level_matrices(
+    plan: MergePlan,
+) -> Mapping[int, tuple[Mapping[str, Any], ...]]:
+    """Encode every immutable merge level as compact matrix descriptors."""
+
+    matrices: dict[int, tuple[Mapping[str, Any], ...]] = {}
+    for level in range(plan.max_levels):
+        groups = tuple(
+            group for group in plan.groups if group.level == level
+        )
+        if len(groups) > plan.max_groups_per_level:
+            raise MergePlanError(
+                "MERGE_MATRIX_LIMIT_EXCEEDED: merge level requires "
+                f"{len(groups)} groups"
+            )
+        matrices[level] = tuple(
+            {
+                "group_id": group.group_id,
+                "level": group.level,
+                "input_artifact_pattern": (
+                    group.input_artifact_pattern
+                ),
+                "output_artifact": group.output_artifact,
+                "projected_input_bytes": group.projected_input_bytes,
+                "projected_output_bytes": group.projected_output_bytes,
+            }
+            for group in groups
+        )
+    return matrices
 
 
 def write_merge_plan(plan: MergePlan, path: Path) -> Path:

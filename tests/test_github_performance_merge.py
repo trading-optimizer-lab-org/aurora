@@ -8,6 +8,7 @@ import pytest
 
 from aurora.infra.github_performance import merge_runtime
 from aurora.infra.github_performance.contracts import (
+    ShardDefinition,
     TerminalState,
     UnitAttemptRecord,
 )
@@ -151,7 +152,18 @@ def test_merge_plan_is_hierarchical_and_bounded() -> None:
 
 
 def test_merge_plan_covers_7200_shards_across_every_required_level() -> None:
-    shards = tuple(make_shard(index) for index in range(7200))
+    shards = tuple(
+        ShardDefinition.model_construct(
+            shard_id=f"s{index:04d}",
+            assignment_artifact="run-assignment-bundle-000",
+            assignment_member=f"assignments/s{index:04d}.parquet",
+            assignment_sha256="8" * 64,
+            unit_count=1,
+            estimated_seconds=1.0,
+            merge_group=f"g{index // 30:03d}",
+        )
+        for index in range(7200)
+    )
     plan = build_merge_plan(
         shards,
         fan_in=30,

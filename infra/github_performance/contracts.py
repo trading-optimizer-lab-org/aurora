@@ -386,6 +386,7 @@ class MergeGroup(FrozenModel):
     group_id: str
     level: NonNegativeInt
     input_artifacts: tuple[str, ...]
+    input_artifact_pattern: str = ""
     projected_input_bytes: NonNegativeInt
     projected_output_bytes: NonNegativeInt
     output_artifact: str
@@ -393,8 +394,74 @@ class MergeGroup(FrozenModel):
 
 class MergePlan(FrozenModel):
     fan_in: Annotated[int, Field(ge=2)]
+    partition_target_bytes: Annotated[int, Field(ge=4096)] = 536_870_912
+    max_groups_per_level: Annotated[int, Field(ge=1, le=256)] = 256
+    max_levels: Annotated[int, Field(ge=1)] = 4
     groups: tuple[MergeGroup, ...]
+    root_artifact: str = ""
+    root_level: NonNegativeInt = 0
     plan_sha256: Sha256
+
+
+class TransportPart(FrozenModel):
+    relative_path: str
+    sha256: Sha256
+    byte_count: NonNegativeInt
+    row_count: NonNegativeInt
+    first_key: str
+    last_key: str
+
+
+class PartitionedTransport(FrozenModel):
+    logical_name: str
+    source_file_name: str
+    format: Literal["parquet", "binary"]
+    key_columns: tuple[str, ...]
+    schema_sha256: Sha256
+    logical_sha256: Sha256
+    row_count: NonNegativeInt
+    target_bytes: Annotated[int, Field(ge=4096)]
+    parts: tuple[TransportPart, ...]
+
+    @model_validator(mode="after")
+    def _validate_parts(self) -> PartitionedTransport:
+        if self.format == "parquet" and not self.key_columns:
+            raise ValueError("partitioned transport requires logical keys")
+        if self.format == "binary" and self.key_columns:
+            raise ValueError("binary transport cannot declare logical keys")
+        if not self.parts:
+            raise ValueError("partitioned transport requires at least one part")
+        if sum(part.row_count for part in self.parts) != self.row_count:
+            raise ValueError("partition row counts do not match")
+        paths = tuple(part.relative_path for part in self.parts)
+        if len(paths) != len(set(paths)):
+            raise ValueError("partition paths must be unique")
+        if any(part.byte_count > self.target_bytes for part in self.parts):
+            raise ValueError("partition exceeds configured byte target")
+        return self
+
+
+class MergeNodeManifest(FrozenModel):
+    schema_version: Literal["2"] = "2"
+    group_id: str
+    level: NonNegativeInt
+    output_artifact: str
+    merge_plan_sha256: Sha256
+    input_artifacts: tuple[str, ...]
+    child_manifest_sha256s: Mapping[str, Sha256]
+    source_shard_ids: tuple[str, ...]
+    expected_inputs: NonNegativeInt
+    selected_inputs: NonNegativeInt
+    completed_shards: NonNegativeInt
+    files: tuple[PartitionedTransport, ...]
+
+    @field_validator("child_manifest_sha256s", mode="after")
+    @classmethod
+    def _freeze_child_hashes(
+        cls,
+        value: Mapping[str, Sha256],
+    ) -> Mapping[str, Sha256]:
+        return deep_freeze_json(value)
 
 
 class AttemptManifest(FrozenModel):

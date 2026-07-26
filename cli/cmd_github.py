@@ -50,6 +50,7 @@ from aurora.infra.github_performance.guardrails import (
     write_deadline_audit,
 )
 from aurora.infra.github_performance.merge_planner import (
+    build_merge_level_matrices,
     build_merge_plan,
     write_merge_plan,
     write_shard_attempt_manifest,
@@ -57,6 +58,7 @@ from aurora.infra.github_performance.merge_planner import (
 from aurora.infra.github_performance.merge_runtime import (
     final_merge,
     merge_attempt_group,
+    merge_plan_group,
 )
 from aurora.infra.github_performance.recovery import (
     RecoveryLoopStatus,
@@ -354,7 +356,12 @@ def _matrix_descriptor(shard: ShardDefinition) -> dict[str, Any]:
     }
 
 
-def _write_matrix_outputs(plan, output_dir: Path, max_bytes: int) -> Path:
+def _write_matrix_outputs(
+    plan,
+    merge_plan,
+    output_dir: Path,
+    max_bytes: int,
+) -> Path:
     matrix_a = tuple(
         _matrix_descriptor(shard)
         for shard in plan.matrix_split.matrix_a
@@ -388,7 +395,18 @@ def _write_matrix_outputs(plan, output_dir: Path, max_bytes: int) -> Path:
             separators=(",", ":"),
         ),
         "selected_jobs": str(plan.job_count.selected_jobs),
+        "merge_root_artifact": merge_plan.root_artifact,
+        "merge_root_level": str(merge_plan.root_level),
     }
+    for level, descriptors in build_merge_level_matrices(
+        merge_plan
+    ).items():
+        payload[f"merge_level_{level}_matrix_json"] = json.dumps(
+            {"include": descriptors},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        payload[f"merge_level_{level}_count"] = str(len(descriptors))
     encoded_bytes = sum(
         len(str(value).encode("utf-8")) for value in payload.values()
     )
@@ -456,6 +474,10 @@ def cmd_github_plan(args: argparse.Namespace) -> int:
         fan_in=merge_fan_in,
         disk_budget_bytes=14 * 1024**3,
         run_id=str(spec.identity["campaign_id"]),
+        source_artifact_prefix=(
+            args.artifact_prefix
+            or str(spec.identity["campaign_id"])
+        ),
     )
     merge_plan_path = write_merge_plan(
         merge_plan,
@@ -467,6 +489,7 @@ def cmd_github_plan(args: argparse.Namespace) -> int:
     )
     matrix_path = _write_matrix_outputs(
         plan,
+        merge_plan,
         output_dir,
         max_bytes=int(spec.performance["max_github_output_kb"]) * 1024,
     )
@@ -646,6 +669,29 @@ def cmd_github_merge_group(args: argparse.Namespace) -> int:
         Path(args.output_dir),
     )
     _print({"partial_merge_manifest": str(path)})
+    return 0
+
+
+def cmd_github_merge_plan_group(args: argparse.Namespace) -> int:
+    require_github_execution("github merge-plan-group")
+    _load_spec(args.spec)
+    shard_plan = ShardPlan.model_validate_json(
+        Path(args.shard_plan).read_text(encoding="utf-8")
+    )
+    from aurora.infra.github_performance.contracts import MergePlan
+
+    merge_plan = MergePlan.model_validate_json(
+        Path(args.merge_plan).read_text(encoding="utf-8")
+    )
+    path = merge_plan_group(
+        load_workload(args.workload),
+        shard_plan,
+        merge_plan,
+        args.group_id,
+        Path(args.inputs_root),
+        Path(args.output_dir),
+    )
+    _print({"merge_node_manifest": str(path)})
     return 0
 
 
@@ -1150,6 +1196,7 @@ def register(subparsers, parent_parser=None) -> None:
         default="optimized",
     )
     plan.add_argument("--forced-job-count", type=int, default=0)
+    plan.add_argument("--artifact-prefix", default="")
     plan.set_defaults(func=cmd_github_plan)
 
     run_shard = commands.add_parser("run-shard")
@@ -1188,6 +1235,18 @@ def register(subparsers, parent_parser=None) -> None:
     merge_group.add_argument("--inputs-root", required=True)
     merge_group.add_argument("--output-dir", required=True)
     merge_group.set_defaults(func=cmd_github_merge_group)
+
+    merge_plan_group_command = commands.add_parser("merge-plan-group")
+    merge_plan_group_command.add_argument("--spec", required=True)
+    merge_plan_group_command.add_argument("--workload", required=True)
+    merge_plan_group_command.add_argument("--shard-plan", required=True)
+    merge_plan_group_command.add_argument("--merge-plan", required=True)
+    merge_plan_group_command.add_argument("--group-id", required=True)
+    merge_plan_group_command.add_argument("--inputs-root", required=True)
+    merge_plan_group_command.add_argument("--output-dir", required=True)
+    merge_plan_group_command.set_defaults(
+        func=cmd_github_merge_plan_group
+    )
 
     final_merge_command = commands.add_parser("final-merge")
     final_merge_command.add_argument("--spec", required=True)

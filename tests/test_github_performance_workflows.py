@@ -166,7 +166,7 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             assert _needs(jobs[next_b]) == {"plan", recovery}
             previous_a = next_a
             previous_b = next_b
-    assert _needs(jobs["merge_partials"]) == {
+    assert _needs(jobs["merge_level_0"]) == {
         "plan",
         "fanout_a",
         "fanout_b",
@@ -187,10 +187,25 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "retry_5_b",
         "recovery_plan_5",
     }
+    assert _needs(jobs["merge_level_1"]) == {
+        "plan",
+        "merge_level_0",
+    }
+    assert _needs(jobs["merge_level_2"]) == {
+        "plan",
+        "merge_level_1",
+    }
+    assert _needs(jobs["merge_level_3"]) == {
+        "plan",
+        "merge_level_2",
+    }
     assert _needs(jobs["final_merge"]) == {
         "plan",
         "freeze_contract",
-        "merge_partials",
+        "merge_level_0",
+        "merge_level_1",
+        "merge_level_2",
+        "merge_level_3",
     }
     assert _needs(jobs["verify"]) == {"final_merge"}
     assert _needs(jobs["collect_timeline"]) == {"verify"}
@@ -351,7 +366,7 @@ def test_replan_restores_verified_source_runtime_across_orchestration_fixes() ->
 
 def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
     jobs = _workflow()["jobs"]
-    for name in ("recovery_plan", "merge_partials", "final_merge", "verify"):
+    for name in ("recovery_plan", "merge_level_0", "final_merge", "verify"):
         assert "always()" in jobs[name]["if"]
     for name in ("fanout_a", "fanout_b", "retry_a", "retry_b"):
         upload_steps = [
@@ -364,10 +379,12 @@ def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
     final_download = next(
         step
         for step in jobs["final_merge"]["steps"]
-        if step["name"] == "Download partial merges only"
+        if step["name"] == "Download merge root only"
     )
-    assert "partial-*" in final_download["with"]["pattern"]
-    assert "shard-*" not in final_download["with"]["pattern"]
+    assert final_download["with"]["name"] == (
+        "${{ needs.plan.outputs.merge_root_artifact }}"
+    )
+    assert "pattern" not in final_download["with"]
 
 
 def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
