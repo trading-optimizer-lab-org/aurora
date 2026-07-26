@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from aurora.infra.github_performance import merge_runtime
 from aurora.infra.github_performance.contracts import (
     TerminalState,
     UnitAttemptRecord,
@@ -146,6 +148,105 @@ def test_merge_plan_is_hierarchical_and_bounded() -> None:
     assert max(len(group.input_artifacts) for group in plan.groups) <= 30
     assert max(group.level for group in plan.groups) == 1
     assert len([group for group in plan.groups if group.level == 0]) == 12
+
+
+def test_merge_plan_covers_7200_shards_across_every_required_level() -> None:
+    shards = tuple(make_shard(index) for index in range(7200))
+    plan = build_merge_plan(
+        shards,
+        fan_in=30,
+        disk_budget_bytes=10 * 1024**4,
+        run_id="large",
+    )
+    by_level = {
+        level: tuple(group for group in plan.groups if group.level == level)
+        for level in {group.level for group in plan.groups}
+    }
+    assert {level: len(groups) for level, groups in by_level.items()} == {
+        0: 240,
+        1: 8,
+        2: 1,
+    }
+    assert all(
+        len(group.input_artifacts) <= 30
+        for group in plan.groups
+    )
+    source_inputs = tuple(
+        artifact
+        for group in by_level[0]
+        for artifact in group.input_artifacts
+    )
+    assert len(source_inputs) == 7200
+    assert len(set(source_inputs)) == 7200
+    assert set(source_inputs) == {
+        f"shard:{shard.shard_id}" for shard in shards
+    }
+    consumed_children = tuple(
+        artifact
+        for level in (1, 2)
+        for group in by_level[level]
+        for artifact in group.input_artifacts
+    )
+    non_root_outputs = tuple(
+        group.output_artifact
+        for level in (0, 1)
+        for group in by_level[level]
+    )
+    assert sorted(consumed_children) == sorted(non_root_outputs)
+    assert len(consumed_children) == len(set(consumed_children))
+    assert all(group.input_artifact_pattern for group in plan.groups)
+
+
+def test_partitioned_transport_is_deterministic_bounded_and_lossless(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        {
+            "unit_key": f"u{index:05d}",
+            "payload": f"{index:05d}-" + format(index * 982_451_653, "064x"),
+        }
+        for index in reversed(range(1200))
+    ]
+    source = tmp_path / "source.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), source, compression="zstd")
+    writer = getattr(
+        merge_runtime,
+        "write_partitioned_parquet_transport",
+    )
+    first = writer(
+        source,
+        tmp_path / "first",
+        logical_name="scientific_output",
+        key_columns=("unit_key",),
+        target_bytes=12 * 1024,
+    )
+    second = writer(
+        source,
+        tmp_path / "second",
+        logical_name="scientific_output",
+        key_columns=("unit_key",),
+        target_bytes=12 * 1024,
+    )
+    assert len(first.parts) > 1
+    assert all(part.byte_count <= 12 * 1024 for part in first.parts)
+    assert sum(part.row_count for part in first.parts) == 1200
+    assert first.logical_sha256 == second.logical_sha256
+    assert [
+        (part.row_count, part.first_key, part.last_key)
+        for part in first.parts
+    ] == [
+        (part.row_count, part.first_key, part.last_key)
+        for part in second.parts
+    ]
+    recovered = pa.concat_tables(
+        [
+            pq.read_table(tmp_path / "first" / part.relative_path)
+            for part in first.parts
+        ]
+    )
+    keys = recovered.column("unit_key").to_pylist()
+    assert keys == sorted(row["unit_key"] for row in rows)
+    assert len(keys) == len(set(keys)) == 1200
 
 
 def test_merge_plan_rejects_unsafe_disk_projection() -> None:

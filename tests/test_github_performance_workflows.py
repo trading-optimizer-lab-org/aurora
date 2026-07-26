@@ -25,6 +25,9 @@ RECOVERY_WAVE_WORKFLOW_PATH = (
 RETRY_SHARD_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "_aurora-retry-shard-v3.yml"
 )
+MERGE_LEVEL_WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "_aurora-merge-level-v3.yml"
+)
 MERGE_ONLY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-merge-only.yml"
 )
@@ -365,6 +368,38 @@ def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
     )
     assert "partial-*" in final_download["with"]["pattern"]
     assert "shard-*" not in final_download["with"]["pattern"]
+
+
+def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
+    jobs = _workflow()["jobs"]
+    levels = [f"merge_level_{level}" for level in range(4)]
+    assert all(level in jobs for level in levels)
+    assert jobs["merge_level_0"]["uses"] == (
+        "./.github/workflows/_aurora-merge-level-v3.yml"
+    )
+    for level in range(1, 4):
+        assert _needs(jobs[f"merge_level_{level}"]) == {
+            "plan",
+            f"merge_level_{level - 1}",
+        }
+    assert _needs(jobs["final_merge"]) == {
+        "plan",
+        "freeze_contract",
+        *levels,
+    }
+    merge_workflow = dict(load_github_yaml(MERGE_LEVEL_WORKFLOW_PATH))
+    merge_jobs = merge_workflow["jobs"]
+    assert set(merge_jobs) == {"merge"}
+    merge_job = merge_jobs["merge"]
+    assert merge_job["runs-on"] == "ubuntu-24.04"
+    assert merge_job["strategy"]["fail-fast"] is False
+    assert merge_job["strategy"]["max-parallel"] <= 256
+    merge_text = MERGE_LEVEL_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "aurora github merge-plan-group" in merge_text
+    assert "matrix.output_artifact" in merge_text
+    final_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "needs.plan.outputs.merge_root_artifact" in final_text
+    assert "Download merge root only" in final_text
 
 
 def test_reusable_workflow_uses_compact_unique_attempt_artifacts() -> None:
