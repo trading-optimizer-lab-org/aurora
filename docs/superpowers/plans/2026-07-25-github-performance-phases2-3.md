@@ -425,29 +425,52 @@ Therefore `campaign_state_recoverable=true`,
 - Produces partitioned artifacts under configured byte/file bounds.
 - Final merge downloads only direct children from the preceding level.
 
-- [ ] **Step 1: Write failing merge-tree tests**
+- [x] **Step 1: Write failing merge-tree tests**
 
 Generate 7200 fake shard descriptors and require enough levels to respect fan-in, disk, artifact count, and matrix limits. Assert no source row is lost or duplicated.
 
-- [ ] **Step 2: Record RED in GitHub**
+- [x] **Step 2: Record RED in GitHub**
 
 Require failure because the workflow executes only one bounded partial level.
 
-- [ ] **Step 3: Implement arbitrary merge levels**
+- [x] **Step 3: Implement arbitrary merge levels**
 
 Build and execute each level from the immutable merge plan. Verify every child hash before reduction.
 
-- [ ] **Step 4: Implement partitioned large transport**
+- [x] **Step 4: Implement partitioned large transport**
 
 Split oversized outputs deterministically by logical key and byte target; record all parts in the manifest.
 
-- [ ] **Step 5: Run GitHub tests and commit**
+- [x] **Step 5: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: execute bounded multi-level merges
 ```
+
+Evidence:
+
+- RED `30195541316` required a bounded 7,200-shard hierarchy,
+  deterministic partition transport, and direct-child workflow reduction.
+- Runtime RED `30196850821` reached the real root and exposed both an invalid
+  Arrow projection argument and an unnecessarily expensive binary-search
+  partition writer.
+- GREEN CI `30197132684` verifies the real engine through two merge levels,
+  verifies every child and transport hash, and proves that a corrupted child
+  blocks its parent. The optimized strict partition writer reduced that smoke
+  from 4m32s to 1m16s including runner setup.
+- Workflow GREEN `30197253702` executed 60 source shards, two level-zero
+  reductions, one level-one root, a root-only final download, and independent
+  verification. It completed 1,024 of 1,024 units with zero technical
+  failures, `merge_root_level=1`, `merge_levels_executed=2`,
+  `multi_level_merge_verified=true`, `locked_rows_accessed=0`, and maximum
+  accessed date `2020-12-31`.
+- The 1,024 canonical per-unit scientific hashes and every scientific column
+  are identical to the prior full reference run. The physical Parquet hash
+  differs only because `source_attempt_id` is operational provenance; Task 9
+  must expose a separate canonical scientific-content hash so a physical
+  artifact hash is never mistaken for scientific equivalence.
 
 ---
 
