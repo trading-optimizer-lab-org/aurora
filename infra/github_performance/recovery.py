@@ -627,6 +627,7 @@ def _load_attempt(path: Path) -> tuple[AttemptManifest, ...]:
 def build_terminal_unit_evidence_from_paths(
     attempt_paths: Sequence[Path],
     unit_attempt_paths: Sequence[Path],
+    checkpoint_paths: Sequence[Path] = (),
 ) -> TerminalUnitEvidence:
     """Verify unit manifests and select one immutable terminal result per key."""
 
@@ -677,6 +678,35 @@ def build_terminal_unit_evidence_from_paths(
                 directly_bound_rows[identity].add(
                     _unit_attempt_signature(row)
                 )
+    for raw_path in checkpoint_paths:
+        path = Path(raw_path)
+        try:
+            checkpoint = load_checkpoint(path)
+        except CheckpointIntegrityError:
+            continue
+        payload = pq.read_table(
+            path.parent / checkpoint.payload_path,
+            columns=[
+                "unit_key",
+                "source_attempt_id",
+                "unit_output_sha256",
+            ],
+        )
+        if payload.num_rows != checkpoint.completed_unit_count:
+            raise ValueError("checkpoint completed-unit count mismatch")
+        for item in payload.to_pylist():
+            if item["source_attempt_id"] != checkpoint.attempt_id:
+                continue
+            directly_bound_rows[
+                (checkpoint.shard_id, checkpoint.attempt_id)
+            ].add(
+                (
+                    str(item["unit_key"]),
+                    TerminalState.COMPLETED.value,
+                    str(item["unit_output_sha256"]),
+                    None,
+                )
+            )
 
     for path, carrier, rows in loaded_files:
         carrier_identity = (carrier.shard_id, carrier.attempt_id)
@@ -891,6 +921,7 @@ def build_recovery_loop_from_paths(
     evidence = build_terminal_unit_evidence_from_paths(
         attempt_paths,
         unit_attempt_paths,
+        checkpoint_paths,
     )
     expected_units = sum(shard.unit_count for shard in shard_plan.shards)
     if (

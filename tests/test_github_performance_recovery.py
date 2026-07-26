@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -532,6 +533,70 @@ def test_terminal_unit_evidence_accepts_checkpoint_resumed_rows(
         "artifact-s000-a000",
         "artifact-s000-a001",
     )
+
+
+def test_terminal_unit_evidence_binds_inherited_row_to_checkpoint(
+    tmp_path: Path,
+) -> None:
+    inherited = UnitAttemptRecord(
+        unit_key="u000",
+        shard_id="s000",
+        attempt_id="a000",
+        state=TerminalState.COMPLETED,
+        output_sha256="b" * 64,
+        reason_code=None,
+    )
+    original_attempt, _ = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=(inherited,),
+        reason_code="TRANSIENT_NETWORK",
+    )
+    checkpoint_payload = tmp_path / "checkpoint-payload.parquet"
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "unit_key": inherited.unit_key,
+                    "source_attempt_id": inherited.attempt_id,
+                    "unit_output_sha256": inherited.output_sha256,
+                }
+            ]
+        ),
+        checkpoint_payload,
+    )
+    manager = CheckpointManager(tmp_path / "checkpoint")
+    manager.commit(
+        "s000",
+        "a000",
+        1,
+        inherited.unit_key,
+        checkpoint_payload,
+    )
+    resumed = UnitAttemptRecord(
+        unit_key="u001",
+        shard_id="s000",
+        attempt_id="a001",
+        state=TerminalState.COMPLETED,
+        output_sha256="c" * 64,
+        reason_code=None,
+    )
+    retry_attempt, retry_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a001",
+        rows=(inherited, resumed),
+    )
+
+    evidence = build_terminal_unit_evidence_from_paths(
+        (original_attempt, retry_attempt),
+        (retry_units,),
+        (tmp_path / "checkpoint" / "checkpoint_manifest.json",),
+    )
+
+    assert evidence.unit_keys == ("u000", "u001")
+    assert evidence.unit_count == 2
 
 
 def test_terminal_unit_evidence_rejects_unbound_resumed_row(
