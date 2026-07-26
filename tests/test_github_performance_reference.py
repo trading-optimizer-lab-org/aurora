@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -43,6 +45,7 @@ from aurora.infra.github_performance.shard_planner import (
     sha256_file,
     weighted_lpt,
 )
+from aurora.infra.github_performance.telemetry import ResourceMonitor
 
 
 ROOT = Path(__file__).parents[1]
@@ -170,6 +173,37 @@ def test_four_shard_reference_smoke_reconciles_exactly(
         metric_records = read_metric_inputs(metric_path)
         assert len(metric_records) == shard.unit_count * 2
         assert verify_metric_inputs(metric_records).passed is True
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "observed_at": datetime(
+                            2026,
+                            7,
+                            26,
+                            12,
+                            0,
+                            index,
+                            tzinfo=timezone.utc,
+                        ),
+                        "root_pid": 100 + index,
+                        "process_count": 1,
+                        "child_aware": True,
+                        "rss_mb": 128.0 + index,
+                        "peak_memory_mb": 256.0 + index,
+                        "total_memory_mb": 16_384.0,
+                        "free_disk_mb": 20_000.0,
+                        "cpu_seconds": 1.0 + index,
+                        "io_read_bytes": 1_024 + index,
+                        "io_write_bytes": 2_048 + index,
+                        "io_wait_seconds": 0.0,
+                        "load_1m": 0.5,
+                    }
+                ],
+                schema=ResourceMonitor.ARROW_SCHEMA,
+            ),
+            attempt_dir / "resource_samples.parquet",
+        )
         (attempt_dir / "shard_attempt_manifest.json").write_text(
             attempt.model_dump_json(indent=2) + "\n",
             encoding="utf-8",
@@ -294,6 +328,21 @@ def test_four_shard_reference_smoke_reconciles_exactly(
         )
     assert locked_opened == [False] * 1_024
     assert validation_selected == [False] * 1_024
+    resource_transport = next(
+        item for item in root_manifest.files
+        if item.logical_name == "resource_samples"
+    )
+    assert resource_transport.row_count == 4
+    resource_rows = pa.concat_tables(
+        [
+            pq.read_table(root_output / part.relative_path)
+            for part in resource_transport.parts
+        ]
+    )
+    assert resource_rows.column("child_aware").to_pylist() == [True] * 4
+    assert set(resource_rows.column("shard_id").to_pylist()) == {
+        shard.shard_id for shard in plan.shards
+    }
 
     first_child = MergeNodeManifest.model_validate_json(
         next(iter(child_manifest_paths.values())).read_text(

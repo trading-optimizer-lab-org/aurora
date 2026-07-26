@@ -51,11 +51,22 @@ from aurora.infra.github_performance.metric_verifier import (
     write_metric_inputs,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
+from aurora.infra.github_performance.telemetry import ResourceMonitor
 from aurora.infra.github_performance.workload import GithubWorkload
 
 
 class PhysicalMergeError(RuntimeError):
     """Raised when attempt artifacts cannot be merged without ambiguity."""
+
+
+RESOURCE_SAMPLE_SCHEMA = pa.schema(
+    [
+        pa.field("shard_id", pa.string(), nullable=False),
+        pa.field("attempt_id", pa.string(), nullable=False),
+        *ResourceMonitor.ARROW_SCHEMA,
+    ],
+    metadata={b"schema_version": b"1"},
+)
 
 
 def _atomic_json(path: Path, payload: Any) -> Path:
@@ -553,6 +564,82 @@ def _write_sorted_parquet(
     return output_path
 
 
+def _write_attempt_resource_samples(
+    attempts: Sequence[tuple[AttemptManifest, Path]],
+    output_path: Path,
+) -> Path:
+    """Attach immutable shard identity to every periodic resource sample."""
+
+    tables: list[pa.Table] = []
+    expected_schema = ResourceMonitor.ARROW_SCHEMA.remove_metadata()
+    for manifest, directory in attempts:
+        path = directory / "resource_samples.parquet"
+        if not path.is_file():
+            raise PhysicalMergeError(
+                f"resource samples missing for {manifest.shard_id}"
+            )
+        table = pq.read_table(
+            path,
+            columns=list(ResourceMonitor.COLUMN_NAMES),
+        )
+        if table.schema.remove_metadata() != expected_schema:
+            raise PhysicalMergeError(
+                f"resource sample schema mismatch for {manifest.shard_id}"
+            )
+        if table.num_rows < 1:
+            raise PhysicalMergeError(
+                f"resource samples empty for {manifest.shard_id}"
+            )
+        if not all(table.column("child_aware").to_pylist()):
+            raise PhysicalMergeError(
+                f"resource samples are not child-aware for {manifest.shard_id}"
+            )
+        tables.append(
+            pa.Table.from_arrays(
+                [
+                    pa.array(
+                        [manifest.shard_id] * table.num_rows,
+                        type=pa.string(),
+                    ),
+                    pa.array(
+                        [manifest.attempt_id] * table.num_rows,
+                        type=pa.string(),
+                    ),
+                    *(
+                        table.column(name)
+                        for name in ResourceMonitor.COLUMN_NAMES
+                    ),
+                ],
+                schema=RESOURCE_SAMPLE_SCHEMA,
+            )
+        )
+    combined = (
+        pa.concat_tables(tables)
+        if tables
+        else pa.Table.from_pylist([], schema=RESOURCE_SAMPLE_SCHEMA)
+    )
+    if combined.num_rows:
+        indices = pc.sort_indices(
+            combined,
+            sort_keys=[
+                ("shard_id", "ascending"),
+                ("attempt_id", "ascending"),
+                ("observed_at", "ascending"),
+            ],
+        )
+        combined = pc.take(combined, indices)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".tmp")
+    pq.write_table(
+        combined,
+        temporary,
+        compression="zstd",
+        version="2.6",
+    )
+    temporary.replace(output_path)
+    return output_path
+
+
 def merge_attempt_group(
     workload: GithubWorkload,
     shard_plan: ShardPlan,
@@ -628,6 +715,10 @@ def merge_attempt_group(
         root / "metric_verification_inputs.parquet",
         _combine_metric_inputs(metric_paths),
     )
+    resource_samples = _write_attempt_resource_samples(
+        selected,
+        root / "resource_samples.parquet",
+    )
     payload = {
         "schema_version": "1",
         "merge_group": merge_group,
@@ -650,6 +741,11 @@ def merge_attempt_group(
         "runtime_access_ledger_sha256": sha256_file(access_ledger),
         "metric_inputs": metric_inputs.name,
         "metric_inputs_sha256": sha256_file(metric_inputs),
+        "resource_samples": resource_samples.name,
+        "resource_samples_sha256": sha256_file(resource_samples),
+        "resource_sample_count": pq.ParquetFile(
+            resource_samples
+        ).metadata.num_rows,
     }
     return _atomic_json(root / "partial_merge_manifest.json", payload)
 
@@ -877,6 +973,7 @@ def merge_plan_group(
         selected_manifests = tuple(
             manifest for manifest, _ in selected
         )
+        resource_source_paths: tuple[Path, ...] = ()
     else:
         children = _verified_merge_nodes(
             Path(inputs_root),
@@ -933,6 +1030,11 @@ def merge_plan_group(
             for _, _, _, _, transports in children
             for path in transports["metric_inputs"]
         )
+        resource_source_paths = tuple(
+            path
+            for _, _, _, _, transports in children
+            for path in transports["resource_samples"]
+        )
         selected_inputs = len(children)
         completed_shards = sum(
             manifest.completed_shards
@@ -960,12 +1062,26 @@ def merge_plan_group(
             selected_manifests,
             staging / "shard_attempts.parquet",
         )
+        resource_samples = _write_attempt_resource_samples(
+            selected,
+            staging / "resource_samples.parquet",
+        )
     else:
         shard_attempts = _write_sorted_parquet(
             shard_source_paths,
             staging / "shard_attempts.parquet",
             SHARD_ATTEMPT_SCHEMA,
             (("shard_id", "ascending"), ("attempt_id", "ascending")),
+        )
+        resource_samples = _write_sorted_parquet(
+            resource_source_paths,
+            staging / "resource_samples.parquet",
+            RESOURCE_SAMPLE_SCHEMA,
+            (
+                ("shard_id", "ascending"),
+                ("attempt_id", "ascending"),
+                ("observed_at", "ascending"),
+            ),
         )
     access_ledger = write_runtime_access_ledger(
         staging / "runtime_access_ledger.parquet",
@@ -1016,6 +1132,13 @@ def merge_plan_group(
             root,
             logical_name="metric_inputs",
             key_columns=("unit_key", "split"),
+            target_bytes=target_bytes,
+        ),
+        _write_transport(
+            resource_samples,
+            root,
+            logical_name="resource_samples",
+            key_columns=("shard_id", "attempt_id", "observed_at"),
             target_bytes=target_bytes,
         ),
     )
@@ -1128,6 +1251,7 @@ def final_merge(
             "runtime_access_ledger"
         ]
         partial_metric_paths = root_transports["metric_inputs"]
+        partial_resource_paths = root_transports["resource_samples"]
         legacy_partial_dirs: tuple[Path, ...] = ()
     else:
         root_manifest = None
@@ -1162,6 +1286,11 @@ def final_merge(
                 path / "metric_verification_inputs.parquet"
             ).is_file()
         )
+        partial_resource_paths = tuple(
+            path / "resource_samples.parquet"
+            for path in legacy_partial_dirs
+            if (path / "resource_samples.parquet").is_file()
+        )
         if len(partial_access_paths) != len(legacy_partial_dirs):
             raise PhysicalMergeError(
                 "runtime access evidence is missing from a partial merge"
@@ -1169,6 +1298,10 @@ def final_merge(
         if len(partial_metric_paths) != len(legacy_partial_dirs):
             raise PhysicalMergeError(
                 "metric inputs are missing from a partial merge"
+            )
+        if len(partial_resource_paths) != len(legacy_partial_dirs):
+            raise PhysicalMergeError(
+                "resource samples are missing from a partial merge"
             )
     scientific_output = Path(
         workload.merge_group(scientific_inputs, root)
@@ -1221,6 +1354,16 @@ def final_merge(
         root / "shard_attempt_manifest.parquet",
         SHARD_ATTEMPT_SCHEMA,
         (("shard_id", "ascending"), ("attempt_id", "ascending")),
+    )
+    resource_samples_path = _write_sorted_parquet(
+        partial_resource_paths,
+        root / "resource_samples.parquet",
+        RESOURCE_SAMPLE_SCHEMA,
+        (
+            ("shard_id", "ascending"),
+            ("attempt_id", "ascending"),
+            ("observed_at", "ascending"),
+        ),
     )
     evidence_roots = [Path(contract_root), Path(plan_root)]
     if preflight_root is not None:
@@ -1306,6 +1449,13 @@ def final_merge(
             ),
             "metric_fields_compared": metric_verification.fields_compared,
             "metric_mismatches": len(metric_verification.mismatches),
+            "resource_samples": resource_samples_path.name,
+            "resource_samples_sha256": sha256_file(
+                resource_samples_path
+            ),
+            "resource_sample_count": pq.ParquetFile(
+                resource_samples_path
+            ).metadata.num_rows,
             "merge_plan_sha256": merge_plan.plan_sha256,
             "merge_root_artifact": merge_plan.root_artifact,
             "merge_root_level": merge_plan.root_level,

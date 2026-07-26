@@ -54,6 +54,7 @@ MANDATORY_FINAL_OUTPUTS = (
     "deadline_audit.json",
     "budget_audit.json",
     "runtime_breakdown.parquet",
+    "resource_samples.parquet",
     "github_jobs_timeline.parquet",
     "parallelism_timeline.csv",
     "timeline_summary.json",
@@ -332,6 +333,65 @@ def _validate_telemetry_evidence(
     )
 
 
+def _validate_resource_sample_evidence(
+    root: Path,
+    failures: list[str],
+) -> bool:
+    path = root / "resource_samples.parquet"
+    required_columns = (
+        "shard_id",
+        "attempt_id",
+        "observed_at",
+        "root_pid",
+        "process_count",
+        "child_aware",
+        "rss_mb",
+        "peak_memory_mb",
+        "total_memory_mb",
+        "free_disk_mb",
+        "cpu_seconds",
+        "io_read_bytes",
+        "io_write_bytes",
+        "io_wait_seconds",
+        "load_1m",
+    )
+    if not path.is_file():
+        failures.append("RESOURCE_SAMPLES_MISSING")
+        return False
+    try:
+        table = pq.read_table(path, columns=list(required_columns))
+    except (OSError, ValueError, pa.ArrowInvalid, KeyError):
+        failures.append("RESOURCE_SAMPLES_INVALID")
+        return False
+    if table.num_rows < 1:
+        failures.append("RESOURCE_SAMPLES_EMPTY")
+    if len(set(table.column_names)) != len(required_columns):
+        failures.append("RESOURCE_SAMPLES_INVALID")
+    if not all(table.column("child_aware").to_pylist()):
+        failures.append("RESOURCE_SAMPLES_NOT_CHILD_AWARE")
+    if any(value < 1 for value in table.column("process_count").to_pylist()):
+        failures.append("RESOURCE_SAMPLES_PROCESS_COUNT_INVALID")
+    summary_path = root / "final_merge_summary.json"
+    if summary_path.is_file():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            declared_count = int(summary.get("resource_sample_count", -1))
+            declared_name = str(summary.get("resource_samples", ""))
+            declared_hash = str(summary.get("resource_samples_sha256", ""))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            failures.append("RESOURCE_SAMPLES_SUMMARY_INVALID")
+        else:
+            if declared_count != table.num_rows:
+                failures.append("RESOURCE_SAMPLES_COUNT_MISMATCH")
+            if declared_name != path.name:
+                failures.append("RESOURCE_SAMPLES_NAME_MISMATCH")
+            if declared_hash != sha256_file(path):
+                failures.append("RESOURCE_SAMPLES_HASH_MISMATCH")
+    else:
+        failures.append("RESOURCE_SAMPLES_SUMMARY_INVALID")
+    return not any(code.startswith("RESOURCE_SAMPLES_") for code in failures)
+
+
 def _validate_scientific_content_identity(
     root: Path,
     manifest_files: set[str],
@@ -454,7 +514,17 @@ def verify_final_artifact(
         evidence_paths.append(relative_text)
         evidence_hashes[relative_text] = actual_hash
 
-    telemetry_complete = _validate_telemetry_evidence(root, failures)
+    timeline_telemetry_complete = _validate_telemetry_evidence(
+        root,
+        failures,
+    )
+    resource_telemetry_complete = _validate_resource_sample_evidence(
+        root,
+        failures,
+    )
+    telemetry_complete = (
+        timeline_telemetry_complete and resource_telemetry_complete
+    )
     scientific_identity_valid = (
         _validate_scientific_content_identity(
             root,
