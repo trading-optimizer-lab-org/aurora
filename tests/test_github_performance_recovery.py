@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 
 from aurora.infra.github_performance.checkpoint import (
@@ -11,10 +12,21 @@ from aurora.infra.github_performance.checkpoint import (
     CheckpointManager,
     load_checkpoint,
 )
-from aurora.infra.github_performance.contracts import CheckpointManifest
+from aurora.infra.github_performance.contracts import (
+    AttemptManifest,
+    CheckpointManifest,
+    TerminalState,
+    UnitAttemptRecord,
+)
+from aurora.infra.github_performance.merge_planner import (
+    write_unit_attempt_manifest,
+)
 from aurora.infra.github_performance.recovery import (
+    RecoveryLoopStatus,
     build_recovery_plan,
     build_recovery_plan_from_paths,
+    build_recovery_loop,
+    build_terminal_unit_evidence_from_paths,
     write_recovery_plan,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
@@ -214,3 +226,277 @@ def test_corrupt_checkpoint_is_rejected_without_blocking_recovery(
     assert plan.checkpoint_audit[0].reason_code == (
         "CHECKPOINT_INTEGRITY_ERROR"
     )
+
+
+def _completed_attempt(shard_id: str, attempt_id: str) -> AttemptManifest:
+    return AttemptManifest(
+        shard_id=shard_id,
+        attempt_id=attempt_id,
+        state=TerminalState.COMPLETED,
+        spec_hash="1" * 64,
+        policy_hash="2" * 64,
+        snapshot_hash="3" * 64,
+        code_sha="4" * 40,
+        dependency_lock_sha256="5" * 64,
+        capacity_profile_sha256="6" * 64,
+        output_sha256="7" * 64,
+        reason_code=None,
+        artifact_name=f"artifact-{shard_id}-{attempt_id}",
+        unit_attempts_path="unit_attempts.parquet",
+        unit_attempts_sha256="8" * 64,
+        checkpoint_artifact=None,
+        completed_unit_count=1,
+        output_rows=1,
+        output_bytes=100,
+        runtime_access_ledger_path="runtime_access_ledger.parquet",
+        runtime_access_ledger_sha256="9" * 64,
+        metric_inputs_path="metric_inputs.parquet",
+        metric_inputs_sha256="a" * 64,
+    )
+
+
+def test_recovery_loop_retries_repeated_transient_waves() -> None:
+    shard = make_shard(1)
+    first = build_recovery_loop(
+        [shard],
+        [failed_attempt("s001", "a001", "GITHUB_5XX")],
+        [],
+        {"github_5xx": 3},
+        current_wave=0,
+        max_waves=4,
+    )
+    second_attempt = first.plan.decisions[0].next_attempt_id
+    assert second_attempt is not None
+    second = build_recovery_loop(
+        [shard],
+        [
+            failed_attempt("s001", "a001", "GITHUB_5XX"),
+            failed_attempt("s001", second_attempt, "GITHUB_5XX"),
+        ],
+        [],
+        {"github_5xx": 3},
+        current_wave=1,
+        max_waves=4,
+    )
+
+    assert first.status is RecoveryLoopStatus.RETRY
+    assert second.status is RecoveryLoopStatus.RETRY
+    assert second.next_wave == 2
+    assert second.plan.decisions[0].next_attempt_id not in {
+        "a001",
+        second_attempt,
+    }
+
+
+@pytest.mark.parametrize("reason", ["OUT_OF_MEMORY", "DISK_EXHAUSTED"])
+def test_recovery_loop_requires_operational_replan(reason: str) -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [failed_attempt("s001", "a001", reason)],
+        [],
+        {"runner_lost": 2},
+        current_wave=0,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.REPLAN
+    assert result.retry_count == 0
+    assert result.replan_shard_ids == ("s001",)
+
+
+def test_recovery_loop_never_retries_deterministic_failure() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [failed_attempt("s001", "a001", "SCHEMA_MISMATCH")],
+        [],
+        {"runner_lost": 2},
+        current_wave=0,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+    assert result.retry_count == 0
+    assert result.reason_codes == ("SCHEMA_MISMATCH",)
+
+
+def test_recovery_loop_completes_when_every_shard_is_verified() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [_completed_attempt("s001", "a001")],
+        [],
+        {"runner_lost": 2},
+        current_wave=2,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.COMPLETE
+    assert result.next_wave is None
+    assert result.terminal_shard_count == 1
+    assert result.terminal_unit_count == 1
+    assert len(result.terminal_unit_manifest_sha256 or "") == 64
+    assert result.verified_source_artifacts == ("artifact-s001-a001",)
+
+
+def _attempt_with_unit_evidence(
+    tmp_path: Path,
+    *,
+    shard_id: str,
+    attempt_id: str,
+    rows: tuple[UnitAttemptRecord, ...],
+    reason_code: str | None = None,
+) -> tuple[Path, Path]:
+    unit_path = write_unit_attempt_manifest(
+        rows,
+        tmp_path / f"{shard_id}-{attempt_id}-units.parquet",
+    )
+    completed = sum(
+        row.state is TerminalState.COMPLETED for row in rows
+    )
+    attempt = AttemptManifest(
+        shard_id=shard_id,
+        attempt_id=attempt_id,
+        state=(
+            TerminalState.COMPLETED
+            if reason_code is None
+            else TerminalState.FAILED_TECHNICAL
+        ),
+        spec_hash="1" * 64,
+        policy_hash="2" * 64,
+        snapshot_hash="3" * 64,
+        code_sha="4" * 40,
+        dependency_lock_sha256="5" * 64,
+        capacity_profile_sha256="6" * 64,
+        output_sha256=("7" * 64 if reason_code is None else None),
+        reason_code=reason_code,
+        artifact_name=f"artifact-{shard_id}-{attempt_id}",
+        unit_attempts_path=unit_path.name,
+        unit_attempts_sha256=sha256_file(unit_path),
+        checkpoint_artifact=None,
+        completed_unit_count=completed,
+        output_rows=completed,
+        output_bytes=100 * completed,
+        runtime_access_ledger_path=(
+            "runtime_access_ledger.parquet"
+            if reason_code is None
+            else None
+        ),
+        runtime_access_ledger_sha256=(
+            "9" * 64 if reason_code is None else None
+        ),
+        metric_inputs_path=(
+            "metric_inputs.parquet" if reason_code is None else None
+        ),
+        metric_inputs_sha256=(
+            "a" * 64 if reason_code is None else None
+        ),
+    )
+    attempt_path = tmp_path / f"{shard_id}-{attempt_id}.json"
+    attempt_path.write_text(attempt.model_dump_json(), encoding="utf-8")
+    return attempt_path, unit_path
+
+
+def test_terminal_unit_evidence_salvages_verified_units_before_oom(
+    tmp_path: Path,
+) -> None:
+    completed_rows = (
+        UnitAttemptRecord(
+            unit_key="u000",
+            shard_id="s000",
+            attempt_id="a000",
+            state=TerminalState.COMPLETED,
+            output_sha256="b" * 64,
+            reason_code=None,
+        ),
+        UnitAttemptRecord(
+            unit_key="u001",
+            shard_id="s000",
+            attempt_id="a000",
+            state=TerminalState.COMPLETED,
+            output_sha256="c" * 64,
+            reason_code=None,
+        ),
+    )
+    partial_rows = (
+        UnitAttemptRecord(
+            unit_key="u002",
+            shard_id="s001",
+            attempt_id="a001",
+            state=TerminalState.COMPLETED,
+            output_sha256="d" * 64,
+            reason_code=None,
+        ),
+        UnitAttemptRecord(
+            unit_key="u003",
+            shard_id="s001",
+            attempt_id="a001",
+            state=TerminalState.FAILED_TECHNICAL,
+            output_sha256=None,
+            reason_code="OUT_OF_MEMORY",
+        ),
+    )
+    first_attempt, first_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=completed_rows,
+    )
+    second_attempt, second_units = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s001",
+        attempt_id="a001",
+        rows=partial_rows,
+        reason_code="OUT_OF_MEMORY",
+    )
+
+    evidence = build_terminal_unit_evidence_from_paths(
+        (first_attempt, second_attempt),
+        (first_units, second_units),
+    )
+
+    assert evidence.unit_keys == ("u000", "u001", "u002")
+    assert evidence.unit_count == 3
+    assert len(evidence.unit_manifest_sha256 or "") == 64
+    assert evidence.source_artifacts == (
+        "artifact-s000-a000",
+        "artifact-s001-a001",
+    )
+    assert pq.read_metadata(second_units).num_rows == 2
+
+
+def test_terminal_unit_evidence_rejects_unbound_manifest(
+    tmp_path: Path,
+) -> None:
+    rows = (
+        UnitAttemptRecord(
+            unit_key="u000",
+            shard_id="s000",
+            attempt_id="a000",
+            state=TerminalState.COMPLETED,
+            output_sha256="b" * 64,
+            reason_code=None,
+        ),
+    )
+    attempt_path, unit_path = _attempt_with_unit_evidence(
+        tmp_path,
+        shard_id="s000",
+        attempt_id="a000",
+        rows=rows,
+    )
+    unit_path.write_bytes(unit_path.read_bytes() + b"tampered")
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        build_terminal_unit_evidence_from_paths(
+            (attempt_path,),
+            (unit_path,),
+        )
+
+
+def test_recovery_loop_stops_at_wave_budget() -> None:
+    result = build_recovery_loop(
+        [make_shard(1)],
+        [failed_attempt("s001", "a001", "RUNNER_LOST")],
+        [],
+        {"runner_lost": 5},
+        current_wave=3,
+        max_waves=4,
+    )
+    assert result.status is RecoveryLoopStatus.BUDGET_EXHAUSTED
+    assert result.retry_count == 0
+    assert result.next_wave is None

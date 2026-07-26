@@ -1,0 +1,275 @@
+name: GitHub Performance Replan
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Source run whose recovery state requires replan
+        required: true
+        type: string
+      source_state_artifact_name:
+        description: Source campaign state at phase replanning
+        required: true
+        type: string
+      run_label:
+        description: Stable artifact prefix used by the source run
+        required: true
+        type: string
+      source_infrastructure_label:
+        description: Optional source prefix for wheelhouse, contract, and plan
+        required: false
+        default: ""
+        type: string
+      requested_jobs:
+        description: New standard-runner shard count for pending units
+        required: true
+        type: number
+      operational_overrides:
+        description: JSON containing operational fields only
+        required: false
+        default: "{}"
+        type: string
+      retention_days:
+        description: Retention for immutable replan evidence
+        required: false
+        default: 7
+        type: number
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Source run whose recovery state requires replan
+        required: true
+        type: string
+      source_state_artifact_name:
+        description: Source campaign state at phase replanning
+        required: true
+        type: string
+      run_label:
+        description: Stable artifact prefix used by the source run
+        required: true
+        type: string
+      source_infrastructure_label:
+        description: Optional source prefix for wheelhouse, contract, and plan
+        required: false
+        default: ""
+        type: string
+      requested_jobs:
+        description: New standard-runner shard count for pending units
+        required: true
+        type: number
+      operational_overrides:
+        description: JSON containing operational fields only
+        required: false
+        default: "{}"
+        type: string
+      retention_days:
+        description: Retention for immutable replan evidence
+        required: false
+        default: 7
+        type: number
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONHASHSEED: "0"
+  TZ: UTC
+  LC_ALL: C.UTF-8
+  LANG: C.UTF-8
+
+jobs:
+  replan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve and verify source identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RUN_LABEL: ${{ inputs.run_label }}
+          SOURCE_INFRASTRUCTURE_LABEL: ${{ inputs.source_infrastructure_label }}
+        run: |
+          set -euo pipefail
+          source_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$SOURCE_RUN_ID" \
+              --jq '.head_sha'
+          )"
+          source_attempt="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$SOURCE_RUN_ID" \
+              --jq '.run_attempt'
+          )"
+          infrastructure_label="$SOURCE_INFRASTRUCTURE_LABEL"
+          if [[ -z "$infrastructure_label" ]]; then
+            infrastructure_label="$RUN_LABEL"
+          fi
+          {
+            echo "SOURCE_SHA=$source_sha"
+            echo "SOURCE_ATTEMPT=$source_attempt"
+            echo "WHEELHOUSE_ARTIFACT=$infrastructure_label-wheelhouse-$SOURCE_RUN_ID-$source_attempt"
+            echo "CONTRACT_ARTIFACT=$infrastructure_label-contract-$SOURCE_RUN_ID-$source_attempt"
+            echo "PLAN_ARTIFACT=$infrastructure_label-plan-$SOURCE_RUN_ID-$source_attempt"
+          } >> "$GITHUB_ENV"
+      - name: Download source plan, state, and attempt evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_STATE_ARTIFACT: ${{ inputs.source_state_artifact_name }}
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" --name "$WHEELHOUSE_ARTIFACT" \
+            --dir "$RUNNER_TEMP/wheelhouse"
+          gh run download "$SOURCE_RUN_ID" --name "$CONTRACT_ARTIFACT" \
+            --dir "$RUNNER_TEMP/contract"
+          gh run download "$SOURCE_RUN_ID" --name "$PLAN_ARTIFACT" \
+            --dir "$RUNNER_TEMP/source-plan"
+          gh run download "$SOURCE_RUN_ID" --name "$SOURCE_STATE_ARTIFACT" \
+            --dir "$RUNNER_TEMP/state"
+          gh run download "$SOURCE_RUN_ID" \
+            --pattern "${{ inputs.run_label }}-shard-*" \
+            --dir "$RUNNER_TEMP/attempts"
+      - name: Verify source scientific runtime identity
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          source_sha = os.environ["SOURCE_SHA"]
+          wheelhouse = json.loads(
+              (root / "wheelhouse" / "wheelhouse_manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          contract = json.loads(
+              (root / "contract" / "resolved_run_spec.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          observed = {
+              "source_run_head_sha": source_sha,
+              "wheelhouse_code_sha": wheelhouse["code_sha"],
+              "contract_code_sha": contract["identity"]["code_sha"],
+          }
+          if len(set(observed.values())) != 1:
+              raise SystemExit(
+                  "SOURCE_SCIENTIFIC_RUNTIME_MISMATCH: "
+                  + json.dumps(observed, sort_keys=True)
+              )
+          (root / "source_runtime_identity.json").write_text(
+              json.dumps(
+                  {
+                      **observed,
+                      "orchestration_code_sha": os.environ["GITHUB_SHA"],
+                      "source_runtime_verified": True,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Restore exact source Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Build pending-only operational plan
+        env:
+          OPERATIONAL_OVERRIDES: ${{ inputs.operational_overrides }}
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/state/campaign_state_latest.json"
+          test -f "$RUNNER_TEMP/source-plan/work_unit_manifest.json"
+          mapfile -t attempts < <(
+            find "$RUNNER_TEMP/attempts" \
+              -name shard_attempt_manifest.json -type f |
+              sort
+          )
+          mapfile -t unit_attempts < <(
+            find "$RUNNER_TEMP/attempts" \
+              -name unit_attempts.parquet -type f |
+              sort
+          )
+          args=(
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+            --state-root "$RUNNER_TEMP/state"
+            --work-unit-manifest "$RUNNER_TEMP/source-plan/work_unit_manifest.json"
+            --work-units "$RUNNER_TEMP/source-plan/work_units.parquet"
+            --requested-jobs "${{ inputs.requested_jobs }}"
+            --operational-overrides "$OPERATIONAL_OVERRIDES"
+            --output-dir "$RUNNER_TEMP/replan"
+          )
+          for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
+          for path in "${unit_attempts[@]}"; do
+            args+=(--unit-attempt "$path")
+          done
+          aurora github replan-pending "${args[@]}"
+      - name: Prove scientific identity and pending-only assignment
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import pyarrow.parquet as pq
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          report = json.loads(
+              (root / "replan" / "replan.json").read_text(encoding="utf-8")
+          )
+          required = (
+              "scientific_contract_unchanged",
+              "logical_units_unchanged",
+              "completed_evidence_unchanged",
+          )
+          if not all(report[name] for name in required):
+              raise SystemExit("REPLAN_CHANGED_SCIENTIFIC_IDENTITY")
+          assignments = pq.read_table(
+              root
+              / "replan"
+              / "plan"
+              / "replanned_unit_assignments.parquet",
+              columns=["unit_key"],
+          )
+          if assignments.num_rows != report["pending_unit_count"]:
+              raise SystemExit("REPLAN_PENDING_ASSIGNMENT_MISMATCH")
+          PY
+      - name: Upload immutable replan state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-replan-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Upload pending-only execution plan
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-replan-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/replan/plan
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Upload replan verification
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-replan-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/replan/replan.json
+            ${{ runner.temp }}/source_runtime_identity.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}

@@ -18,6 +18,7 @@ from aurora.infra.github_performance.execution_planner import (
 from aurora.infra.github_performance.shard_planner import (
     equal_count,
     encode_matrix_outputs,
+    replan_pending_units,
     split_matrices,
     weighted_lpt,
     write_work_unit_manifest,
@@ -70,6 +71,35 @@ def test_assignment_catalog_contains_every_unit_once(tmp_path: Path) -> None:
     keys = table.column("unit_key").to_pylist()
     assert len(keys) == len(set(keys)) == 20
     assert sum(shard.unit_count for shard in plan.shards) == 20
+
+
+def test_replan_assigns_only_pending_units_and_preserves_manifest(
+    tmp_path: Path,
+) -> None:
+    manifest = write_work_unit_manifest(
+        (make_unit(index) for index in range(8)),
+        tmp_path / "work_units.parquet",
+    )
+    plan = replan_pending_units(
+        manifest,
+        {"u0001", "u0004", "u0007"},
+        jobs=2,
+        output_dir=tmp_path / "replan",
+        wave=2,
+    )
+    table = pq.read_table(
+        tmp_path / "replan" / "replanned_unit_assignments.parquet"
+    )
+    keys = set(table.column("unit_key").to_pylist())
+
+    assert keys == {"u0000", "u0002", "u0003", "u0005", "u0006"}
+    assert plan.work_unit_manifest_sha256 == manifest.sha256
+    assert plan.selected_jobs == 2
+    assert all(
+        shard.shard_id.startswith("r002-s")
+        for shard in plan.shards
+    )
+    assert sum(shard.unit_count for shard in plan.shards) == 5
 
 
 def test_equal_count_uses_flat_groups_and_even_counts(

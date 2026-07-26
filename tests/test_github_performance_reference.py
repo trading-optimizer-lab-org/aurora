@@ -2,17 +2,29 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pyarrow.parquet as pq
+import pytest
 
 from aurora.core.execution_policy import require_github_execution
 from aurora.infra.github_performance.contracts import (
+    MergeNodeManifest,
     RunSpec,
     deep_thaw_json,
 )
 from aurora.infra.github_performance.merge_planner import (
+    build_merge_plan,
     reconcile_attempt_files,
+)
+from aurora.infra.github_performance.merge_runtime import (
+    PhysicalMergeError,
+    merge_plan_group,
+)
+from aurora.infra.github_performance.metric_verifier import (
+    read_metric_inputs,
+    verify_metric_inputs,
 )
 from aurora.infra.github_performance.preflight import (
     load_github_yaml,
@@ -27,7 +39,10 @@ from aurora.infra.github_performance.reference_workload import (
     _evaluate,
     _generate_prices,
 )
-from aurora.infra.github_performance.shard_planner import weighted_lpt
+from aurora.infra.github_performance.shard_planner import (
+    sha256_file,
+    weighted_lpt,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -148,6 +163,13 @@ def test_four_shard_reference_smoke_reconciles_exactly(
             attempt_dir,
             None,
         )
+        assert attempt.metric_inputs_path is not None
+        assert attempt.metric_inputs_sha256 is not None
+        metric_path = attempt_dir / attempt.metric_inputs_path
+        assert sha256_file(metric_path) == attempt.metric_inputs_sha256
+        metric_records = read_metric_inputs(metric_path)
+        assert len(metric_records) == shard.unit_count * 2
+        assert verify_metric_inputs(metric_records).passed is True
         (attempt_dir / "shard_attempt_manifest.json").write_text(
             attempt.model_dump_json(indent=2) + "\n",
             encoding="utf-8",
@@ -172,3 +194,128 @@ def test_four_shard_reference_smoke_reconciles_exactly(
         (tmp_path / "merged/reference_results_summary.json").read_text()
     )
     assert summary["rows"] == 1_024
+
+    hierarchical_shards = tuple(
+        shard.model_copy(
+            update={"merge_group": f"g{index // 2:03d}"}
+        )
+        for index, shard in enumerate(plan.shards)
+    )
+    merge_plan = build_merge_plan(
+        hierarchical_shards,
+        fan_in=2,
+        disk_budget_bytes=1_000_000_000,
+        run_id="reference-real-tree",
+        partition_target_bytes=32_768,
+    )
+    assert merge_plan.root_level == 1
+    level_zero = tuple(
+        group for group in merge_plan.groups if group.level == 0
+    )
+    assert len(level_zero) == 2
+    attempt_by_shard = dict(zip(
+        (shard.shard_id for shard in plan.shards),
+        attempt_dirs,
+        strict=True,
+    ))
+    child_root = tmp_path / "merge-tree-children"
+    child_manifest_paths: dict[str, Path] = {}
+    for group in level_zero:
+        group_inputs = tmp_path / "merge-tree-inputs" / group.group_id
+        for logical_input in group.input_artifacts:
+            shard_id = logical_input.removeprefix("shard:")
+            shutil.copytree(
+                attempt_by_shard[shard_id],
+                group_inputs / shard_id,
+            )
+        child_output = child_root / group.output_artifact
+        child_manifest_paths[group.output_artifact] = merge_plan_group(
+            WORKLOAD,
+            plan,
+            merge_plan,
+            group.group_id,
+            group_inputs,
+            child_output,
+        )
+
+    root_group = next(
+        group for group in merge_plan.groups
+        if group.output_artifact == merge_plan.root_artifact
+    )
+    root_output = tmp_path / "merge-tree-root"
+    root_manifest_path = merge_plan_group(
+        WORKLOAD,
+        plan,
+        merge_plan,
+        root_group.group_id,
+        child_root,
+        root_output,
+    )
+    root_manifest = MergeNodeManifest.model_validate_json(
+        root_manifest_path.read_text(encoding="utf-8")
+    )
+    assert root_manifest.level == 1
+    assert root_manifest.selected_inputs == 2
+    assert root_manifest.completed_shards == 4
+    assert root_manifest.source_shard_ids == tuple(
+        sorted(shard.shard_id for shard in plan.shards)
+    )
+    assert root_manifest.child_manifest_sha256s == {
+        artifact: sha256_file(path)
+        for artifact, path in child_manifest_paths.items()
+    }
+    scientific_transport = next(
+        item for item in root_manifest.files
+        if item.logical_name == "scientific_output"
+    )
+    assert scientific_transport.row_count == 1_024
+    assert len(scientific_transport.parts) > 1
+    assert all(
+        part.byte_count <= scientific_transport.target_bytes
+        for part in scientific_transport.parts
+    )
+    locked_opened: list[bool] = []
+    validation_selected: list[bool] = []
+    for part in scientific_transport.parts:
+        part_table = pq.read_table(
+            root_output / part.relative_path,
+            columns=[
+                "locked_opened",
+                "validation_used_for_selection",
+            ],
+        )
+        locked_opened.extend(
+            part_table.column("locked_opened").to_pylist()
+        )
+        validation_selected.extend(
+            part_table.column(
+                "validation_used_for_selection"
+            ).to_pylist()
+        )
+    assert locked_opened == [False] * 1_024
+    assert validation_selected == [False] * 1_024
+
+    first_child = MergeNodeManifest.model_validate_json(
+        next(iter(child_manifest_paths.values())).read_text(
+            encoding="utf-8"
+        )
+    )
+    first_transport = next(
+        item for item in first_child.files
+        if item.logical_name == "scientific_output"
+    )
+    corrupted_part = (
+        next(iter(child_manifest_paths.values())).parent
+        / first_transport.parts[0].relative_path
+    )
+    with corrupted_part.open("ab") as stream:
+        stream.write(b"corrupt")
+    with pytest.raises(PhysicalMergeError, match="transport"):
+        merge_plan_group(
+            WORKLOAD,
+            plan,
+            merge_plan,
+            root_group.group_id,
+            child_root,
+            tmp_path / "merge-tree-corrupt-root",
+        )

@@ -94,8 +94,8 @@ def _resolve_object(module: ModuleType, object_path: str) -> Any:
     return value
 
 
-def load_workload(reference: str) -> GithubWorkload:
-    """Load only explicit ``aurora.*:OBJECT`` workload references."""
+def _load_referenced_object(reference: str) -> Any:
+    """Load one explicit safe Aurora object without imposing an interface."""
 
     module_name, separator, object_path = reference.partition(":")
     if (
@@ -120,6 +120,13 @@ def load_workload(reference: str) -> GithubWorkload:
             raise WorkloadLoadError(
                 "workload classes must have a zero-argument constructor"
             ) from exc
+    return value
+
+
+def load_workload(reference: str) -> GithubWorkload:
+    """Load a phase-1 ``GithubWorkload`` without changing its identity."""
+
+    value = _load_referenced_object(reference)
     missing = tuple(
         name for name in REQUIRED_WORKLOAD_METHODS
         if not callable(getattr(value, name, None))

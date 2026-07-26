@@ -1,21 +1,16 @@
 name: Aurora runtime setup
-description: Restore a verified Aurora runtime on a standard GitHub runner
+description: Install one verified offline Aurora runtime on a standard runner
 
 inputs:
   python-version:
     description: Exact Python version used by the run contract
     required: true
-  extras:
-    description: Aurora dependency extra to install
-    required: false
-    default: dev
-  cache-key:
-    description: Contract-specific cache namespace
+  wheelhouse-path:
+    description: Downloaded immutable wheelhouse directory
     required: true
-  cache-mode:
-    description: Either restore-only or writer
-    required: false
-    default: restore-only
+  dependency-lock-path:
+    description: Repository-relative complete hashed dependency lock
+    required: true
 
 outputs:
   cpu-count:
@@ -33,30 +28,19 @@ outputs:
   image-version:
     description: GitHub runner image version
     value: ${{ steps.runner.outputs.image_version }}
-  cache-hit:
-    description: Whether the exact environment cache was restored
-    value: ${{ steps.cache-result.outputs.cache_hit }}
+  wheelhouse-sha256:
+    description: Canonical identity of the installed wheelhouse
+    value: ${{ steps.manifest.outputs.wheelhouse_sha256 }}
   environment-sha256:
     description: Canonical SHA-256 of environment_manifest.json
     value: ${{ steps.manifest.outputs.environment_sha256 }}
+  setup-seconds:
+    description: Total offline runtime setup wall seconds
+    value: ${{ steps.manifest.outputs.setup_seconds }}
 
 runs:
   using: composite
   steps:
-    - name: Validate setup inputs
-      shell: bash
-      env:
-        CACHE_MODE: ${{ inputs.cache-mode }}
-      run: |
-        set -euo pipefail
-        case "$CACHE_MODE" in
-          restore-only|writer) ;;
-          *)
-            echo "::error::cache-mode must be restore-only or writer"
-            exit 2
-            ;;
-        esac
-
     - name: Inspect standard runner
       id: runner
       shell: bash
@@ -88,123 +72,87 @@ runs:
         python-version: ${{ inputs.python-version }}
         cache: ""
 
-    - name: Resolve immutable cache key
-      id: cache-key
-      shell: bash
-      env:
-        CACHE_NAMESPACE: ${{ inputs.cache-key }}
-        PYTHON_VERSION: ${{ inputs.python-version }}
-      run: |
-        set -euo pipefail
-        dependency_sha="$(sha256sum pyproject.toml | cut -d' ' -f1)"
-        build_sha="$(git ls-files -s | sha256sum | cut -d' ' -f1)"
-        resolved_key="${CACHE_NAMESPACE}-${RUNNER_OS}-${RUNNER_ARCH}"
-        resolved_key+="-py${PYTHON_VERSION}-dep${dependency_sha}"
-        resolved_key+="-build${build_sha}"
-        {
-          echo "dependency_sha256=$dependency_sha"
-          echo "build_input_sha256=$build_sha"
-          echo "resolved_key=$resolved_key"
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Restore dependency cache
-      id: cache-restore
-      if: inputs.cache-mode == 'restore-only'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-      with:
-        path: |
-          ~/.cache/pip
-          .aurora-wheel-cache
-        key: ${{ steps.cache-key.outputs.resolved_key }}
-
-    - name: Restore and populate dependency cache
-      id: cache-writer
-      if: inputs.cache-mode == 'writer'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-      with:
-        path: |
-          ~/.cache/pip
-          .aurora-wheel-cache
-        key: ${{ steps.cache-key.outputs.resolved_key }}
-
-    - name: Consolidate cache result
-      id: cache-result
-      shell: bash
-      env:
-        RESTORE_HIT: ${{ steps.cache-restore.outputs.cache-hit }}
-        WRITER_HIT: ${{ steps.cache-writer.outputs.cache-hit }}
-      run: |
-        set -euo pipefail
-        if [[ "$RESTORE_HIT" == "true" || "$WRITER_HIT" == "true" ]]; then
-          echo "cache_hit=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "cache_hit=false" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Build and install Aurora wheel
+    - name: Install exact offline runtime
       id: install
       shell: bash
       env:
-        EXTRAS: ${{ inputs.extras }}
+        WHEELHOUSE_PATH: ${{ inputs.wheelhouse-path }}
+        DEPENDENCY_LOCK_PATH: ${{ inputs.dependency-lock-path }}
       run: |
         set -euo pipefail
-        mkdir -p .aurora-wheel-cache/wheels
-        python -m pip install --disable-pip-version-check --upgrade pip
-        wheel_path="$(
-          find .aurora-wheel-cache/wheels -maxdepth 1 \
-            -type f -name 'aurora-*.whl' -printf '%T@ %p\n' |
-            sort -n |
-            tail -1 |
-            cut -d' ' -f2-
-        )"
-        if [[ -z "$wheel_path" ]]; then
-          python -m pip wheel . --no-deps \
-            --wheel-dir .aurora-wheel-cache/wheels
-          wheel_path="$(
-            find .aurora-wheel-cache/wheels -maxdepth 1 \
-              -type f -name 'aurora-*.whl' -printf '%T@ %p\n' |
-              sort -n |
-              tail -1 |
-              cut -d' ' -f2-
-          )"
-          if [[ -z "$wheel_path" ]]; then
-            echo "::error::Aurora wheel was not produced"
-            exit 3
-          fi
+        started_at="$(date +%s%N)"
+        wheelhouse="$(realpath "$WHEELHOUSE_PATH")"
+        dependency_lock="$(realpath "$DEPENDENCY_LOCK_PATH")"
+        test -f "$wheelhouse/wheelhouse_manifest.json"
+        test -f "$wheelhouse/dependency_lock_manifest.json"
+        runtime="$RUNNER_TEMP/aurora-runtime"
+        rm -rf "$runtime"
+        python -m venv "$runtime"
+        runtime_python="$runtime/bin/python"
+        "$runtime_python" -m pip install \
+          --disable-pip-version-check \
+          --no-index \
+          --no-deps \
+          --no-compile \
+          --find-links "$wheelhouse" \
+          --require-hashes \
+          --requirement "$dependency_lock"
+        mapfile -t aurora_wheels < <(
+          find "$wheelhouse" -maxdepth 1 -type f -name 'aurora-*.whl' |
+            sort
+        )
+        if [[ "${#aurora_wheels[@]}" -ne 1 ]]; then
+          echo "::error::wheelhouse must contain exactly one Aurora wheel"
+          exit 3
         fi
-        if [[ -n "$EXTRAS" ]]; then
-          install_target="${wheel_path}[${EXTRAS}]"
-        else
-          install_target="$wheel_path"
-        fi
-        python -m pip install --disable-pip-version-check "$install_target"
-        wheel_sha256="$(sha256sum "$wheel_path" | cut -d' ' -f1)"
+        "$runtime_python" -m pip install \
+          --disable-pip-version-check \
+          --no-index \
+          --no-deps \
+          "${aurora_wheels[0]}"
+        "$runtime_python" \
+          scripts/build_github_performance_wheelhouse.py verify \
+          --requirements-lock "$dependency_lock" \
+          --wheelhouse "$wheelhouse"
+        finished_at="$(date +%s%N)"
         {
-          echo "wheel_path=$wheel_path"
-          echo "wheel_sha256=$wheel_sha256"
+          echo "runtime=$runtime"
+          echo "runtime_python=$runtime_python"
+          echo "wheelhouse=$wheelhouse"
+          echo "dependency_lock=$dependency_lock"
+          echo "setup_nanoseconds=$((finished_at - started_at))"
         } >> "$GITHUB_OUTPUT"
+        echo "$runtime/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$runtime" >> "$GITHUB_ENV"
 
     - name: Write environment manifest
       id: manifest
       shell: bash
       env:
-        AURORA_CACHE_HIT: ${{ steps.cache-result.outputs.cache_hit }}
-        AURORA_CACHE_KEY: ${{ steps.cache-key.outputs.resolved_key }}
-        AURORA_DEPENDENCY_SHA: ${{ steps.cache-key.outputs.dependency_sha256 }}
-        AURORA_BUILD_SHA: ${{ steps.cache-key.outputs.build_input_sha256 }}
-        AURORA_WHEEL_SHA: ${{ steps.install.outputs.wheel_sha256 }}
+        AURORA_RUNTIME_PYTHON: ${{ steps.install.outputs.runtime_python }}
+        AURORA_SETUP_NANOSECONDS: ${{ steps.install.outputs.setup_nanoseconds }}
+        AURORA_WHEELHOUSE: ${{ steps.install.outputs.wheelhouse }}
         AURORA_IMAGE_OS: ${{ steps.runner.outputs.image_os }}
         AURORA_IMAGE_VERSION: ${{ steps.runner.outputs.image_version }}
       run: |
         set -euo pipefail
-        python - <<'PY'
+        "$AURORA_RUNTIME_PYTHON" - <<'PY'
         import hashlib
         import importlib.metadata
         import json
         import os
         import platform
-        import sys
+        from pathlib import Path
 
+        wheelhouse = Path(os.environ["AURORA_WHEELHOUSE"])
+        wheelhouse_manifest = json.loads(
+            (wheelhouse / "wheelhouse_manifest.json").read_text(encoding="utf-8")
+        )
+        lock_manifest = json.loads(
+            (wheelhouse / "dependency_lock_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
         packages = sorted(
             {
                 (
@@ -222,47 +170,57 @@ runs:
             "VECLIB_MAXIMUM_THREADS",
             "BLIS_NUM_THREADS",
         )
-        payload = {
-            "schema_version": "1",
+        identity = {
+            "schema_version": "2",
             "runner": {
-                "os": os.environ["AURORA_IMAGE_OS"],
-                "image_version": os.environ["AURORA_IMAGE_VERSION"],
+                "os": platform.system(),
                 "architecture": platform.machine(),
                 "cpu_count": int(os.environ["AURORA_RUNNER_CPU_COUNT"]),
             },
             "python": {
                 "version": platform.python_version(),
                 "implementation": platform.python_implementation(),
-                "executable_name": os.path.basename(sys.executable),
             },
-            "cache": {
-                "key": os.environ["AURORA_CACHE_KEY"],
-                "hit": os.environ["AURORA_CACHE_HIT"] == "true",
-            },
-            "dependency_lock_sha256": os.environ["AURORA_DEPENDENCY_SHA"],
-            "build_input_sha256": os.environ["AURORA_BUILD_SHA"],
-            "installed_wheel_sha256": os.environ["AURORA_WHEEL_SHA"],
-            "thread_limits": {
-                name: int(os.environ[name]) for name in thread_names
-            },
+            "dependency_lock_sha256": lock_manifest["lock_sha256"],
+            "installed_wheelhouse_sha256": wheelhouse_manifest[
+                "wheelhouse_sha256"
+            ],
             "installed_packages": [
                 {"name": name, "version": version}
                 for name, version in packages
             ],
+            "thread_limits": {
+                name: int(os.environ[name]) for name in thread_names
+            },
         }
-        identity_payload = json.loads(json.dumps(payload))
-        identity_payload["cache"].pop("hit", None)
         encoded = json.dumps(
-            identity_payload,
+            identity,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
         ).encode()
         digest = hashlib.sha256(encoded).hexdigest()
-        payload["environment_sha256"] = digest
+        setup_seconds = (
+            int(os.environ["AURORA_SETUP_NANOSECONDS"]) / 1_000_000_000.0
+        )
+        payload = {
+            "schema_version": "2",
+            "identity": identity,
+            "observations": {
+                "image_os": os.environ["AURORA_IMAGE_OS"],
+                "image_version": os.environ["AURORA_IMAGE_VERSION"],
+                "setup_seconds": setup_seconds,
+            },
+            "environment_sha256": digest,
+        }
         with open("environment_manifest.json", "w", encoding="utf-8") as out:
             json.dump(payload, out, indent=2, sort_keys=True)
             out.write("\n")
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
             out.write(f"environment_sha256={digest}\n")
+            out.write(
+                "wheelhouse_sha256="
+                f"{wheelhouse_manifest['wheelhouse_sha256']}\n"
+            )
+            out.write(f"setup_seconds={setup_seconds:.9f}\n")
         PY

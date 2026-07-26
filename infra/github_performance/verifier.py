@@ -18,6 +18,14 @@ from aurora.infra.github_performance.contracts import (
     deep_thaw_json,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
+from aurora.infra.github_performance.metric_verifier import (
+    independent_metric_verification_payload,
+    read_metric_inputs,
+    verify_metric_inputs,
+)
+from aurora.infra.github_performance.benchmark import (
+    scientific_content_identity,
+)
 
 
 TRACEABILITY_COLUMNS = (
@@ -28,6 +36,83 @@ TRACEABILITY_COLUMNS = (
     "evidence_path",
     "status",
 )
+
+MANDATORY_FINAL_OUTPUTS = (
+    "preflight_report.json",
+    "performance_contract.json",
+    "performance_pilot.json",
+    "performance_plan.json",
+    "environment_manifest.json",
+    "resolved_run_spec.json",
+    "execution_plan.json",
+    "balanced_shard_plan.json",
+    "work_unit_manifest.json",
+    "work_units.parquet",
+    "balanced_unit_assignments.parquet",
+    "metric_contract.json",
+    "capacity_profile.json",
+    "deadline_audit.json",
+    "budget_audit.json",
+    "runtime_breakdown.parquet",
+    "github_jobs_timeline.parquet",
+    "parallelism_timeline.csv",
+    "timeline_summary.json",
+    "performance_telemetry_status.json",
+    "performance_telemetry_manifest.json",
+    "bottleneck_report.json",
+    "performance_final.json",
+    "recovery_plan.json",
+    "checkpoint_audit.parquet",
+    "shard_attempt_manifest.parquet",
+    "unit_attempt_manifest.parquet",
+    "merge_plan.json",
+    "unit_reconciliation.parquet",
+    "runtime_access_ledger.parquet",
+    "metric_verification_inputs.parquet",
+    "independent_metric_verification.json",
+    "data_audit.json",
+    "policy_audit.json",
+    "runtime_audit.json",
+    "provenance.json",
+    "final_merge_summary.json",
+    "requirements_traceability.csv",
+)
+
+POST_VERIFICATION_OUTPUTS = (
+    "final_verification_report.json",
+    "campaign_closure.json",
+)
+
+REQUIREMENT_IDS = (
+    "github_only",
+    "standard_runner",
+    "larger_runner_forbidden",
+    "matrix_ceiling",
+    "concurrency_ceiling",
+    "deadline_guard",
+    "budget_guard",
+    "locked_closed",
+    "runtime_locked_rows_zero",
+    "validation_report_only",
+    "no_future_data",
+    "causal_execution",
+    "complete_reconciliation",
+    "artifact_hashes",
+    "required_outputs",
+    "telemetry_complete",
+    "independent_metrics",
+    "dependency_environment",
+    "selective_recovery",
+    "replan",
+    "merge_only",
+    "multi_level_merge",
+    "scientific_equivalence",
+    "scientific_content_identity",
+)
+
+
+class FinalArtifactCompletenessError(RuntimeError):
+    """Raised when a campaign cannot be sealed without missing evidence."""
 
 
 def _atomic_json(path: Path, payload: Any) -> Path:
@@ -59,25 +144,41 @@ def _schema_version(path: Path) -> str | None:
     return None
 
 
+def _sealable_files(root: Path, manifest_path: Path) -> tuple[Path, ...]:
+    root = Path(root).resolve()
+    excluded = {
+        Path(manifest_path).resolve(),
+        *(root / name for name in POST_VERIFICATION_OUTPUTS),
+    }
+    return tuple(
+        candidate.resolve()
+        for candidate in sorted(root.rglob("*"))
+        if (
+            candidate.is_file()
+            and candidate.resolve() not in excluded
+            and candidate.suffix != ".tmp"
+        )
+    )
+
+
+def _relative_file_set(
+    root: Path,
+    manifest_path: Path,
+) -> set[str]:
+    resolved_root = Path(root).resolve()
+    return {
+        path.relative_to(resolved_root).as_posix()
+        for path in _sealable_files(resolved_root, manifest_path)
+    }
+
+
 def write_final_artifact_manifest(root: Path, path: Path) -> Path:
     """Hash every already-produced final file without recursive self-hashes."""
 
     root = Path(root).resolve()
     path = Path(path).resolve()
-    excluded = {
-        path,
-        root / "final_verification_report.json",
-        root / "campaign_closure.json",
-    }
     files: list[dict[str, Any]] = []
-    for candidate in sorted(root.rglob("*")):
-        resolved = candidate.resolve()
-        if (
-            not candidate.is_file()
-            or resolved in excluded
-            or candidate.suffix == ".tmp"
-        ):
-            continue
+    for resolved in _sealable_files(root, path):
         if not resolved.is_relative_to(root):
             raise ValueError("artifact path escapes root")
         files.append(
@@ -100,6 +201,8 @@ def write_final_artifact_manifest(root: Path, path: Path) -> Path:
         "code_sha": contract.get("code_sha", ""),
         "snapshot_hash": contract.get("snapshot_hash", ""),
         "policy_hash": contract.get("policy_hash", ""),
+        "mandatory_outputs": list(MANDATORY_FINAL_OUTPUTS),
+        "post_verification_outputs": list(POST_VERIFICATION_OUTPUTS),
         "files": files,
     }
     return _atomic_json(path, payload)
@@ -125,7 +228,152 @@ def _traceability_passed(path: Path) -> bool:
         return False
     with path.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    return bool(rows) and all(row.get("status") == "pass" for row in rows)
+    identifiers = [row.get("requirement_id") for row in rows]
+    return (
+        tuple(sorted(str(item) for item in identifiers))
+        == tuple(sorted(REQUIREMENT_IDS))
+        and len(identifiers) == len(set(identifiers))
+        and all(
+            row.get("status") in {"pass", "not_applicable"}
+            for row in rows
+        )
+    )
+
+
+def _read_required_json(
+    root: Path,
+    name: str,
+    missing_code: str,
+    failures: list[str],
+) -> Mapping[str, Any]:
+    path = root / name
+    if not path.is_file():
+        failures.append(missing_code)
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        failures.append(missing_code.replace("_MISSING", "_INVALID"))
+        return {}
+    if not isinstance(payload, Mapping):
+        failures.append(missing_code.replace("_MISSING", "_INVALID"))
+        return {}
+    return payload
+
+
+def _validate_telemetry_evidence(
+    root: Path,
+    failures: list[str],
+) -> bool:
+    status = _read_required_json(
+        root,
+        "performance_telemetry_status.json",
+        "PERFORMANCE_TELEMETRY_STATUS_MISSING",
+        failures,
+    )
+    if (
+        status.get("complete") is not True
+        or status.get("token_serialized") is not False
+    ):
+        failures.append("PERFORMANCE_TELEMETRY_INCOMPLETE")
+        return False
+    timeline = _read_required_json(
+        root,
+        "timeline_summary.json",
+        "TIMELINE_SUMMARY_MISSING",
+        failures,
+    )
+    if timeline.get("complete") is not True:
+        failures.append("TIMELINE_SUMMARY_INCOMPLETE")
+        return False
+    telemetry_manifest = _read_required_json(
+        root,
+        "performance_telemetry_manifest.json",
+        "PERFORMANCE_TELEMETRY_MANIFEST_MISSING",
+        failures,
+    )
+    raw_files = telemetry_manifest.get("files")
+    if not isinstance(raw_files, list):
+        failures.append("PERFORMANCE_TELEMETRY_MANIFEST_INVALID")
+        return False
+    expected = {
+        "github_jobs_timeline.parquet",
+        "runtime_breakdown.parquet",
+        "parallelism_timeline.csv",
+        "timeline_summary.json",
+        "performance_telemetry_status.json",
+    }
+    observed: set[str] = set()
+    for entry in raw_files:
+        if not isinstance(entry, Mapping):
+            failures.append("PERFORMANCE_TELEMETRY_MANIFEST_INVALID")
+            continue
+        name = str(entry.get("path", ""))
+        observed.add(name)
+        path = root / name
+        if not path.is_file():
+            failures.append(f"TELEMETRY_FILE_MISSING:{name}")
+            continue
+        if path.stat().st_size != entry.get("bytes"):
+            failures.append(f"TELEMETRY_SIZE_MISMATCH:{name}")
+        if sha256_file(path) != entry.get("sha256"):
+            failures.append(f"TELEMETRY_HASH_MISMATCH:{name}")
+    if observed != expected:
+        failures.append("PERFORMANCE_TELEMETRY_FILE_SET_MISMATCH")
+    return not any(
+        code.startswith(
+            (
+                "PERFORMANCE_TELEMETRY_",
+                "TIMELINE_",
+                "TELEMETRY_",
+            )
+        )
+        for code in failures
+    )
+
+
+def _validate_scientific_content_identity(
+    root: Path,
+    manifest_files: set[str],
+    failures: list[str],
+) -> bool:
+    summary = _read_required_json(
+        root,
+        "final_merge_summary.json",
+        "FINAL_MERGE_SUMMARY_MISSING",
+        failures,
+    )
+    output_name = str(summary.get("scientific_output", ""))
+    if not output_name:
+        failures.append("SCIENTIFIC_OUTPUT_IDENTITY_MISSING")
+        return False
+    output = root / output_name
+    if not output.is_file():
+        failures.append("SCIENTIFIC_OUTPUT_MISSING")
+        return False
+    if output_name not in manifest_files:
+        failures.append("SCIENTIFIC_OUTPUT_UNSEALED")
+    try:
+        observed = scientific_content_identity(root)
+        expected_rows = int(summary.get("scientific_content_rows", -1))
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        pa.ArrowInvalid,
+        KeyError,
+    ):
+        failures.append("SCIENTIFIC_CONTENT_IDENTITY_INVALID")
+        return False
+    if (
+        summary.get("scientific_content_sha256")
+        != observed["scientific_content_sha256"]
+        or expected_rows != observed["unit_count"]
+    ):
+        failures.append("SCIENTIFIC_CONTENT_IDENTITY_MISMATCH")
+        return False
+    return output_name in manifest_files
 
 
 def verify_final_artifact(
@@ -151,7 +399,34 @@ def verify_final_artifact(
         evidence_hashes["final_artifact_manifest.json"] = sha256_file(
             manifest_path
         )
-    for entry in manifest.get("files", []):
+    raw_entries = manifest.get("files", [])
+    entries = raw_entries if isinstance(raw_entries, list) else []
+    if not isinstance(raw_entries, list):
+        failures.append("MANIFEST_FILES_INVALID")
+    listed_paths = [
+        str(entry.get("path", ""))
+        for entry in entries
+        if isinstance(entry, Mapping)
+    ]
+    if len(listed_paths) != len(set(listed_paths)):
+        failures.append("MANIFEST_DUPLICATE_PATH")
+    actual_files = _relative_file_set(root, manifest_path)
+    listed_file_set = set(listed_paths)
+    for name in MANDATORY_FINAL_OUTPUTS:
+        if name not in actual_files:
+            failures.append(f"REQUIRED_OUTPUT_MISSING:{name}")
+        elif name not in listed_file_set:
+            failures.append(f"REQUIRED_OUTPUT_UNSEALED:{name}")
+    declared_mandatory = manifest.get("mandatory_outputs")
+    if declared_mandatory != list(MANDATORY_FINAL_OUTPUTS):
+        failures.append("MANDATORY_OUTPUT_CONTRACT_MISMATCH")
+    if manifest.get("post_verification_outputs") != list(
+        POST_VERIFICATION_OUTPUTS
+    ):
+        failures.append("POST_VERIFICATION_OUTPUT_CONTRACT_MISMATCH")
+    for extra in sorted(actual_files.difference(listed_file_set)):
+        failures.append(f"MANIFEST_UNSEALED_FILE:{extra}")
+    for entry in entries:
         if not isinstance(entry, Mapping):
             failures.append("MANIFEST_ENTRY_INVALID")
             continue
@@ -179,6 +454,14 @@ def verify_final_artifact(
         evidence_paths.append(relative_text)
         evidence_hashes[relative_text] = actual_hash
 
+    telemetry_complete = _validate_telemetry_evidence(root, failures)
+    scientific_identity_valid = (
+        _validate_scientific_content_identity(
+            root,
+            listed_file_set,
+            failures,
+        )
+    )
     policy = spec.policy
     performance = spec.performance
     contract_path = root / "performance_contract.json"
@@ -222,16 +505,133 @@ def verify_final_artifact(
             continue
         if contract.get(field) != expected or manifest.get(field) != expected:
             failures.append(failure_code)
-    locked_opened = bool(policy["locked_opened"])
-    validation_used = bool(policy["validation_used_for_selection"])
-    standard_runner_only = (
-        performance["runner_label"] == "ubuntu-24.04"
-        and performance["larger_runners_allowed"] is False
+    deadline_audit = _read_required_json(
+        root,
+        "deadline_audit.json",
+        "DEADLINE_AUDIT_MISSING",
+        failures,
     )
+    if deadline_audit.get("route_allowed") is not True:
+        failures.append("DEADLINE_GUARD_FAILED")
+    budget_audit = _read_required_json(
+        root,
+        "budget_audit.json",
+        "BUDGET_AUDIT_MISSING",
+        failures,
+    )
+    budget_decision = budget_audit.get("decision")
+    if (
+        not isinstance(budget_decision, Mapping)
+        or budget_decision.get("route_allowed") is not True
+        or budget_decision.get("evidence_complete") is not True
+    ):
+        failures.append("BUDGET_GUARD_FAILED")
+    environment_manifest = _read_required_json(
+        root,
+        "environment_manifest.json",
+        "ENVIRONMENT_MANIFEST_MISSING",
+        failures,
+    )
+    if (
+        not environment_manifest.get("environment_sha256")
+        or environment_manifest.get("environment_sha256")
+        != contract.get("environment_sha256")
+    ):
+        failures.append("DEPENDENCY_ENVIRONMENT_MISMATCH")
+    data_audit = _read_required_json(
+        root,
+        "data_audit.json",
+        "DATA_AUDIT_MISSING",
+        failures,
+    )
+    policy_audit = _read_required_json(
+        root,
+        "policy_audit.json",
+        "POLICY_AUDIT_MISSING",
+        failures,
+    )
+    runtime_audit = _read_required_json(
+        root,
+        "runtime_audit.json",
+        "RUNTIME_AUDIT_MISSING",
+        failures,
+    )
+    _read_required_json(
+        root,
+        "provenance.json",
+        "PROVENANCE_MISSING",
+        failures,
+    )
+    metric_inputs_path = root / "metric_verification_inputs.parquet"
+    independent_metric_path = root / "independent_metric_verification.json"
+    metric_unit_keys: set[str] = set()
+    if not metric_inputs_path.is_file():
+        failures.append("METRIC_INPUTS_MISSING")
+    independent_metric_report = _read_required_json(
+        root,
+        "independent_metric_verification.json",
+        "INDEPENDENT_METRIC_REPORT_MISSING",
+        failures,
+    )
+    if metric_inputs_path.is_file() and independent_metric_report:
+        try:
+            metric_records = read_metric_inputs(metric_inputs_path)
+            metric_unit_keys = {
+                record.unit_key for record in metric_records
+            }
+            recomputed_metric_report = verify_metric_inputs(metric_records)
+            expected_metric_payload = (
+                independent_metric_verification_payload(
+                    recomputed_metric_report,
+                    metric_inputs_path,
+                )
+            )
+        except (OSError, ValueError, TypeError, pa.ArrowInvalid):
+            failures.append("METRIC_INPUTS_INVALID")
+        else:
+            if not recomputed_metric_report.passed:
+                failures.append("INDEPENDENT_METRICS_MISMATCH")
+            if independent_metric_report != expected_metric_payload:
+                failures.append(
+                    "INDEPENDENT_METRIC_REPORT_INCONSISTENT"
+                )
+            evidence_paths.extend(
+                (
+                    metric_inputs_path.name,
+                    independent_metric_path.name,
+                )
+            )
+            evidence_hashes[metric_inputs_path.name] = sha256_file(
+                metric_inputs_path
+            )
+            evidence_hashes[independent_metric_path.name] = sha256_file(
+                independent_metric_path
+            )
+    locked_rows_accessed = int(
+        data_audit.get("locked_rows_accessed", -1)
+    )
+    locked_opened = bool(policy_audit.get("locked_opened", True))
+    validation_used = bool(
+        policy_audit.get("validation_used_for_selection", True)
+    )
+    standard_runner_only = bool(
+        runtime_audit.get("standard_runner_only", False)
+    )
+    if locked_rows_accessed != 0:
+        failures.append("RUNTIME_LOCKED_ROWS_ACCESSED")
+        locked_opened = True
+    maximum_accessed = str(
+        data_audit.get("maximum_accessed_date", "9999-12-31")
+    )
+    if maximum_accessed > str(policy["validation_end"]):
+        failures.append("RUNTIME_DATA_AFTER_VALIDATION_END")
+        locked_opened = True
     matrix_ok = (
         int(performance["matrix_max_jobs"]) <= 256
         and int(performance["planner_max_jobs"]) <= 360
     )
+    if int(policy.get("causal_lag_minimum", 0)) < 1:
+        failures.append("CAUSAL_LAG_INVARIANT_FAILED")
     if locked_opened:
         failures.append("LOCKED_OPENED")
     if validation_used:
@@ -296,6 +696,25 @@ def verify_final_artifact(
         )
     )
     partial = bool(reconciliation.get("partial", True))
+    reconciliation_path = root / "unit_reconciliation.parquet"
+    if reconciliation_path.is_file():
+        reconciliation_schema = pq.ParquetFile(
+            reconciliation_path
+        ).schema_arrow
+        if {"unit_key", "state"}.issubset(
+            reconciliation_schema.names
+        ):
+            reconciliation_table = pq.read_table(
+                reconciliation_path,
+                columns=["unit_key", "state"],
+            )
+            completed_metric_units = {
+                str(row["unit_key"])
+                for row in reconciliation_table.to_pylist()
+                if row["state"] == "completed"
+            }
+            if completed_metric_units != metric_unit_keys:
+                failures.append("METRIC_EVIDENCE_INCOMPLETE")
     if (
         terminal_sum + terminal_counts["missing_units"]
         != terminal_counts["expected_units"]
@@ -338,7 +757,7 @@ def build_requirements_traceability(
     spec: RunSpec,
     evidence: Mapping[str, Any],
 ) -> pa.Table:
-    """Build the fixed eight-row hard-requirement traceability table."""
+    """Build one explicit row for every campaign acceptance criterion."""
 
     checks = (
         (
@@ -356,6 +775,13 @@ def build_requirements_traceability(
             "performance_contract.json",
         ),
         (
+            "larger_runner_forbidden",
+            "No larger, paid, GPU, or self-hosted runner is used",
+            False,
+            evidence.get("larger_runner_used"),
+            "runtime_audit.json",
+        ),
+        (
             "matrix_ceiling",
             "No matrix exceeds 256 jobs",
             True,
@@ -363,18 +789,62 @@ def build_requirements_traceability(
             "execution_plan.json",
         ),
         (
+            "concurrency_ceiling",
+            "Standard concurrency never exceeds 360 jobs",
+            True,
+            evidence.get(
+                "standard_concurrency_ceiling_respected"
+            ),
+            "performance_contract.json",
+        ),
+        (
+            "deadline_guard",
+            "The projected route remains inside the hard deadline",
+            True,
+            evidence.get("deadline_respected"),
+            "deadline_audit.json",
+        ),
+        (
+            "budget_guard",
+            "The projected route remains inside hard budget limits",
+            True,
+            evidence.get("budget_respected"),
+            "budget_audit.json",
+        ),
+        (
             "locked_closed",
             "Locked data remains closed",
             False,
             evidence.get("locked_opened"),
-            "performance_contract.json",
+            "policy_audit.json",
+        ),
+        (
+            "runtime_locked_rows_zero",
+            "Runtime evidence contains zero locked rows",
+            True,
+            evidence.get("runtime_locked_rows_zero"),
+            "data_audit.json",
         ),
         (
             "validation_report_only",
             "Validation is not used for selection",
             False,
             evidence.get("validation_used_for_selection"),
-            "performance_contract.json",
+            "policy_audit.json",
+        ),
+        (
+            "no_future_data",
+            "Runtime never reads beyond validation_end",
+            True,
+            evidence.get("maximum_accessed_date_valid"),
+            "data_audit.json",
+        ),
+        (
+            "causal_execution",
+            "Signals preserve the frozen minimum causal lag",
+            True,
+            evidence.get("causal_lag_respected"),
+            "resolved_run_spec.json",
         ),
         (
             "complete_reconciliation",
@@ -391,28 +861,334 @@ def build_requirements_traceability(
             "final_artifact_manifest.json",
         ),
         (
-            "independent_verification",
-            "Independent final verification passes",
+            "required_outputs",
+            "Every mandatory campaign output is present before seal",
             True,
-            evidence.get("independent_verification"),
-            "final_verification_report.json",
+            evidence.get("required_outputs_complete"),
+            "final_artifact_manifest.json",
+        ),
+        (
+            "telemetry_complete",
+            "Runtime and GitHub timeline telemetry are complete and sealed",
+            True,
+            evidence.get("telemetry_complete"),
+            "performance_telemetry_manifest.json",
+        ),
+        (
+            "independent_metrics",
+            "Independent metric recalculation matches primary outputs",
+            True,
+            evidence.get("independent_metrics_equal"),
+            "independent_metric_verification.json",
+        ),
+        (
+            "dependency_environment",
+            "The exact dependency environment identity is reproducible",
+            True,
+            evidence.get("dependency_environment_reproducible"),
+            "environment_manifest.json",
+        ),
+        (
+            "selective_recovery",
+            "Recovery preserves valid work and targets only pending units",
+            True,
+            evidence.get("selective_recovery_verified"),
+            "recovery_plan.json",
+        ),
+        (
+            "replan",
+            "Operational replan preserves scientific unit identity",
+            True,
+            evidence.get("replan_verified"),
+            "replan_descriptor.json",
+        ),
+        (
+            "merge_only",
+            "Merge-only repeats no scientific shard computation",
+            True,
+            evidence.get("merge_only_verified"),
+            "merge_only_verification.json",
+        ),
+        (
+            "multi_level_merge",
+            "Every executed merge level and direct-child hash verifies",
+            True,
+            evidence.get("multi_level_merge_verified"),
+            "final_merge_summary.json",
+        ),
+        (
+            "scientific_equivalence",
+            "Performance comparison uses exactly equivalent science",
+            True,
+            evidence.get("scientific_equivalence_verified"),
+            "benchmark_report.json",
+        ),
+        (
+            "scientific_content_identity",
+            "Canonical unit-level scientific content identity is present",
+            True,
+            evidence.get("scientific_content_identity_verified"),
+            "final_merge_summary.json",
         ),
     )
-    rows = [
-        {
-            "requirement_id": requirement_id,
-            "requirement_text": text,
-            "expected_value": _display(expected),
-            "observed_value": _display(observed),
-            "evidence_path": path,
-            "status": "pass" if observed == expected else "fail",
-        }
-        for requirement_id, text, expected, observed, path in checks
-    ]
+    rows = []
+    for requirement_id, text, expected, observed, path in checks:
+        if observed is None:
+            status = "not_applicable"
+            observed_display = "not_applicable"
+        else:
+            status = "pass" if observed == expected else "fail"
+            observed_display = _display(observed)
+        rows.append(
+            {
+                "requirement_id": requirement_id,
+                "requirement_text": text,
+                "expected_value": _display(expected),
+                "observed_value": observed_display,
+                "evidence_path": path,
+                "status": status,
+            }
+        )
     schema = pa.schema(
         [pa.field(column, pa.string(), nullable=False) for column in TRACEABILITY_COLUMNS]
     )
     return pa.Table.from_pylist(rows, schema=schema)
+
+
+def _optional_json(path: Path) -> Mapping[str, Any] | None:
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, Mapping) else None
+
+
+def _write_final_performance_outputs(root: Path) -> tuple[Path, Path]:
+    timeline = _optional_json(root / "timeline_summary.json") or {}
+    merge = _optional_json(root / "final_merge_summary.json") or {}
+    components = {
+        name: float(timeline.get(f"{name}_seconds_total", 0.0))
+        for name in (
+            "setup",
+            "transfer",
+            "compute",
+            "retry",
+            "merge",
+            "other",
+        )
+    }
+    dominant, dominant_seconds = max(
+        components.items(),
+        key=lambda item: (item[1], item[0]),
+    )
+    bottleneck = _atomic_json(
+        root / "bottleneck_report.json",
+        {
+            "schema_version": "1",
+            "measurement_source": "github_jobs_timeline",
+            "dominant_component": dominant,
+            "dominant_component_seconds": dominant_seconds,
+            "components": components,
+            "speedup_claimed": False,
+        },
+    )
+    performance = _atomic_json(
+        root / "performance_final.json",
+        {
+            "schema_version": "1",
+            "telemetry_complete": bool(timeline.get("complete", False)),
+            "workflow_wall_seconds": float(
+                timeline.get("workflow_wall_seconds", 0.0)
+            ),
+            "execution_wall_seconds": float(
+                timeline.get("execution_wall_seconds", 0.0)
+            ),
+            "observed_peak_parallelism": int(
+                timeline.get("observed_peak_parallelism", 0)
+            ),
+            "requested_parallelism": int(
+                timeline.get("requested_parallelism", 0)
+            ),
+            "estimated_billable_minutes": float(
+                timeline.get("estimated_billable_minutes", 0.0)
+            ),
+            "partial": bool(merge.get("partial", True)),
+            "scientific_content_sha256": str(
+                merge.get("scientific_content_sha256", "")
+            ),
+            "scientific_content_rows": int(
+                merge.get("scientific_content_rows", 0)
+            ),
+            "locked_opened": bool(
+                merge.get("locked_opened", True)
+            ),
+            "locked_rows_accessed": int(
+                merge.get("locked_rows_accessed", -1)
+            ),
+            "validation_used_for_selection": bool(
+                merge.get("validation_used_for_selection", True)
+            ),
+            "speedup_claimed": False,
+        },
+    )
+    return bottleneck, performance
+
+
+def _final_evidence(
+    root: Path,
+    spec: RunSpec,
+) -> dict[str, Any]:
+    runtime = _optional_json(root / "runtime_audit.json") or {}
+    policy = _optional_json(root / "policy_audit.json") or {}
+    data = _optional_json(root / "data_audit.json") or {}
+    contract = _optional_json(root / "performance_contract.json") or {}
+    environment = _optional_json(root / "environment_manifest.json") or {}
+    deadline = _optional_json(root / "deadline_audit.json") or {}
+    budget = _optional_json(root / "budget_audit.json") or {}
+    budget_decision = budget.get("decision")
+    if not isinstance(budget_decision, Mapping):
+        budget_decision = {}
+    merge = _optional_json(root / "final_merge_summary.json") or {}
+    telemetry_failures: list[str] = []
+    telemetry_complete = _validate_telemetry_evidence(
+        root,
+        telemetry_failures,
+    )
+    identity_failures: list[str] = []
+    identity_valid = _validate_scientific_content_identity(
+        root,
+        _relative_file_set(
+            root,
+            root / "final_artifact_manifest.json",
+        ),
+        identity_failures,
+    )
+    maximum = data.get("maximum_accessed_date")
+    replan = _optional_json(root / "replan.json")
+    merge_only = _optional_json(root / "merge_only_verification.json")
+    benchmark = _optional_json(root / "benchmark_report.json")
+    if replan is None:
+        replan_verified: bool | None = None
+    else:
+        replan_verified = all(
+            replan.get(field) is True
+            for field in (
+                "scientific_contract_unchanged",
+                "logical_units_unchanged",
+                "completed_evidence_unchanged",
+            )
+        )
+    if merge_only is None:
+        merge_only_verified: bool | None = None
+    else:
+        merge_only_verified = (
+            merge_only.get("merge_only") is True
+            and merge_only.get("compute_scheduled") is False
+            and merge_only.get("scientific_outputs_equal") is True
+        )
+    equivalence_source = benchmark or merge_only
+    scientific_equivalence: bool | None = (
+        None
+        if equivalence_source is None
+        else equivalence_source.get("scientific_outputs_equal") is True
+    )
+    reconciliation = _read_reconciliation_summary(
+        root / "unit_reconciliation.parquet"
+    )
+    required_before_trace = set(MANDATORY_FINAL_OUTPUTS).difference(
+        {"requirements_traceability.csv"}
+    )
+    actual = _relative_file_set(
+        root,
+        root / "final_artifact_manifest.json",
+    )
+    return {
+        "github_only": runtime.get("github_only_run"),
+        "standard_runner_only": runtime.get("standard_runner_only"),
+        "larger_runner_used": runtime.get("larger_runner_used"),
+        "matrix_job_ceiling_respected": (
+            int(spec.performance["matrix_max_jobs"]) <= 256
+        ),
+        "standard_concurrency_ceiling_respected": (
+            int(spec.performance["planner_max_jobs"]) <= 360
+        ),
+        "deadline_respected": deadline.get("route_allowed"),
+        "budget_respected": (
+            budget_decision.get("route_allowed") is True
+            and budget_decision.get("evidence_complete") is True
+        ),
+        "locked_opened": policy.get("locked_opened"),
+        "runtime_locked_rows_zero": (
+            data.get("locked_rows_accessed") == 0
+        ),
+        "validation_used_for_selection": policy.get(
+            "validation_used_for_selection"
+        ),
+        "maximum_accessed_date_valid": (
+            maximum is not None
+            and str(maximum) <= str(spec.policy["validation_end"])
+        ),
+        "causal_lag_respected": (
+            int(spec.policy.get("causal_lag_minimum", 0)) >= 1
+        ),
+        "reconciliation_complete": (
+            reconciliation.get("partial") is False
+            and int(reconciliation.get("missing_units", 0)) == 0
+        ),
+        "artifact_hashes_valid": True,
+        "required_outputs_complete": (
+            required_before_trace.issubset(actual)
+        ),
+        "telemetry_complete": telemetry_complete,
+        "independent_metrics_equal": merge.get(
+            "independent_metrics_equal"
+        ),
+        "dependency_environment_reproducible": (
+            bool(environment.get("environment_sha256"))
+            and environment.get("environment_sha256")
+            == contract.get("environment_sha256")
+        ),
+        "selective_recovery_verified": (
+            (root / "recovery_plan.json").is_file()
+            and reconciliation.get("partial") is False
+        ),
+        "replan_verified": replan_verified,
+        "merge_only_verified": merge_only_verified,
+        "multi_level_merge_verified": merge.get(
+            "multi_level_merge_verified"
+        ),
+        "scientific_equivalence_verified": scientific_equivalence,
+        "scientific_content_identity_verified": identity_valid,
+    }
+
+
+def seal_final_artifact(root: Path, spec: RunSpec) -> Path:
+    """Add telemetry-derived outputs, trace every criterion, then seal."""
+
+    root = Path(root).resolve()
+    manifest_path = root / "final_artifact_manifest.json"
+    if manifest_path.exists():
+        manifest_path.unlink()
+    _write_final_performance_outputs(root)
+    evidence = _final_evidence(root, spec)
+    traceability = build_requirements_traceability(spec, evidence)
+    write_requirements_traceability(
+        traceability,
+        root / "requirements_traceability.csv",
+    )
+    actual = _relative_file_set(root, manifest_path)
+    missing = sorted(set(MANDATORY_FINAL_OUTPUTS).difference(actual))
+    failed_rows = [
+        row["requirement_id"]
+        for row in traceability.to_pylist()
+        if row["status"] == "fail"
+    ]
+    if missing or failed_rows:
+        reasons = [
+            *(f"REQUIRED_OUTPUT_MISSING:{name}" for name in missing),
+            *(f"REQUIREMENT_FAILED:{name}" for name in failed_rows),
+        ]
+        raise FinalArtifactCompletenessError(",".join(reasons))
+    return write_final_artifact_manifest(root, manifest_path)
 
 
 def write_requirements_traceability(

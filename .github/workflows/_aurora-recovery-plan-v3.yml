@@ -1,0 +1,195 @@
+name: Aurora Recovery Plan v3
+
+on:
+  workflow_call:
+    inputs:
+      run_label:
+        required: true
+        type: string
+      retention_days:
+        required: true
+        type: number
+      wheelhouse_artifact_name:
+        required: true
+        type: string
+      contract_artifact_name:
+        required: true
+        type: string
+      plan_artifact_name:
+        required: true
+        type: string
+      campaign_state_artifact_name:
+        required: true
+        type: string
+      current_wave:
+        required: true
+        type: number
+      max_waves:
+        required: true
+        type: number
+    outputs:
+      matrix_a:
+        value: ${{ jobs.reconcile.outputs.matrix_a }}
+      matrix_b:
+        value: ${{ jobs.reconcile.outputs.matrix_b }}
+      has_matrix_a:
+        value: ${{ jobs.reconcile.outputs.has_matrix_a }}
+      has_matrix_b:
+        value: ${{ jobs.reconcile.outputs.has_matrix_b }}
+      status:
+        value: ${{ jobs.reconcile.outputs.status }}
+      state_artifact_name:
+        value: ${{ jobs.reconcile.outputs.state_artifact_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      matrix_a: ${{ steps.outputs.outputs.matrix_a }}
+      matrix_b: ${{ steps.outputs.outputs.matrix_b }}
+      has_matrix_a: ${{ steps.outputs.outputs.has_matrix_a }}
+      has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
+      status: ${{ steps.outputs.outputs.status }}
+      state_artifact_name: ${{ steps.outputs.outputs.state_artifact_name }}
+    env:
+      STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-after-recovery-{1}-{2}-{3}', inputs.run_label, inputs.current_wave, github.run_id, github.run_attempt) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.wheelhouse_artifact_name }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.contract_artifact_name }}
+          path: ${{ runner.temp }}/contract
+      - name: Download execution plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/plan
+      - name: Download previous immutable campaign state
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.campaign_state_artifact_name }}
+          path: ${{ runner.temp }}/state
+      - name: Require verified latest-state pointer
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/state/campaign_state_latest.json"
+      - name: Download all attempt manifests
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-shard-*
+          path: ${{ runner.temp }}/attempts
+      - name: Download all valid checkpoints
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: run-checkpoint-*
+          path: ${{ runner.temp }}/checkpoints
+      - name: Reconcile immutable evidence and advance campaign
+        run: |
+          set -euo pipefail
+          mapfile -t attempts < <(
+            find "$RUNNER_TEMP/attempts" \
+              -name shard_attempt_manifest.json -type f 2>/dev/null |
+              sort
+          )
+          mapfile -t checkpoints < <(
+            find "$RUNNER_TEMP/checkpoints" \
+              -name checkpoint_manifest.json -type f 2>/dev/null |
+              sort
+          )
+          mapfile -t unit_attempts < <(
+            find "$RUNNER_TEMP/attempts" \
+              -name unit_attempts.parquet -type f 2>/dev/null |
+              sort
+          )
+          args=(
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
+            --state-root "$RUNNER_TEMP/state"
+            --output-dir "$RUNNER_TEMP/recovery"
+            --current-wave "${{ inputs.current_wave }}"
+            --max-waves "${{ inputs.max_waves }}"
+          )
+          for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
+          for path in "${unit_attempts[@]}"; do
+            args+=(--unit-attempt "$path")
+          done
+          for path in "${checkpoints[@]}"; do
+            args+=(--checkpoint "$path")
+          done
+          aurora github recovery-loop "${args[@]}"
+      - name: Emit compact recovery outputs
+        id: outputs
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "recovery"
+          loop = json.loads(
+              (root / "recovery_loop.json").read_text(encoding="utf-8")
+          )
+          plan = json.loads(
+              (root / "recovery_plan.json").read_text(encoding="utf-8")
+          )
+          values = {
+              "matrix_a": (
+                  root / "retry_matrix_a.json"
+              ).read_text(encoding="utf-8").strip(),
+              "matrix_b": (
+                  root / "retry_matrix_b.json"
+              ).read_text(encoding="utf-8").strip(),
+              "has_matrix_a": str(
+                  plan["has_retry_matrix_a"]
+              ).lower(),
+              "has_matrix_b": str(
+                  plan["has_retry_matrix_b"]
+              ).lower(),
+              "status": loop["status"],
+              "state_artifact_name": os.environ["STATE_ARTIFACT_NAME"],
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for name, value in values.items():
+                  out.write(f"{name}={value}\n")
+          PY
+      - name: Upload recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-recovery-wave-${{ inputs.current_wave }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Upload next immutable campaign state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}

@@ -8,6 +8,7 @@ import math
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +18,22 @@ from aurora.infra.github_performance.contracts import (
     JobCountDecision,
     PerformanceContract,
     PilotResult,
+    PlanningPilotResolution,
     RunSpec,
     ShardPlan,
     WorkUnitManifest,
     canonical_sha256,
     deep_thaw_json,
+)
+from aurora.infra.github_performance.profiles import (
+    PerformanceProfile,
+    PerformanceProfileKey,
+    assess_profile_reuse,
+)
+from aurora.infra.github_performance.guardrails import (
+    enforce_plan_guardrails,
+    write_budget_audit,
+    write_deadline_audit,
 )
 from aurora.infra.github_performance.shard_planner import (
     equal_count,
@@ -37,6 +49,52 @@ LptBuilder = Callable[[WorkUnitManifest, int, Path], ShardPlan]
 
 class AssignmentTransportBudgetExceeded(RuntimeError):
     """Raised before wasteful repeated artifact downloads can begin."""
+
+
+class PilotRequired(RuntimeError):
+    """Raised when no exact reusable profile or fresh pilot is available."""
+
+
+def resolve_planning_pilot(
+    *,
+    profile: PerformanceProfile | None,
+    requested_key: PerformanceProfileKey,
+    fresh_pilot: PilotResult | None,
+    observed_seconds: Mapping[str, float] | None = None,
+) -> PlanningPilotResolution:
+    """Select exact historical evidence or require a current pilot."""
+
+    if profile is not None:
+        decision = assess_profile_reuse(
+            profile,
+            requested_key,
+            observed_seconds=observed_seconds,
+        )
+        if decision.reuse_allowed:
+            return PlanningPilotResolution(
+                pilot_result=profile.pilot_result,
+                source="historical_profile",
+                profile_reused=True,
+                reason_codes=(),
+                performance_profile_sha256=profile.profile_sha256,
+            )
+        reason_codes = decision.reason_codes
+        profile_sha256 = profile.profile_sha256
+    else:
+        reason_codes = ("PERFORMANCE_PROFILE_MISSING",)
+        profile_sha256 = None
+    if fresh_pilot is None:
+        raise PilotRequired(
+            "fresh representative pilot required: "
+            + ",".join(reason_codes)
+        )
+    return PlanningPilotResolution(
+        pilot_result=fresh_pilot,
+        source="fresh_pilot",
+        profile_reused=False,
+        reason_codes=reason_codes,
+        performance_profile_sha256=profile_sha256,
+    )
 
 
 @dataclass(frozen=True)
@@ -351,6 +409,11 @@ def build_execution_plan(
     *,
     mode: str = "optimized",
     forced_job_count: int | None = None,
+    now: datetime | None = None,
+    cost_per_billable_minute: float | None = None,
+    consumed_billable_minutes: float = 0.0,
+    committed_billable_minutes: float = 0.0,
+    checkpoint_margin_seconds: float = 60.0,
 ) -> ExecutionPlan:
     """Build the only immutable execution plan accepted by fan-out jobs."""
 
@@ -503,6 +566,43 @@ def build_execution_plan(
             "jobs": decision.selected_jobs,
             "predicted_seconds": decision.predicted_seconds,
         }
+    )
+    work_units = read_work_units(manifest)
+    projected_billable_seconds = (
+        sum(unit.estimated_seconds for unit in work_units)
+        + decision.selected_jobs
+        * (
+            pilot.setup_seconds
+            + pilot.transfer_fixed_seconds
+            + pilot.transfer_per_wave_seconds
+            + pilot.checkpoint_seconds
+        )
+        + pilot.merge_fixed_seconds
+        + pilot.merge_per_shard_seconds * decision.selected_jobs
+        + pilot.verify_seconds
+    )
+    deadline_decision, budget_ledger, budget_decision = (
+        enforce_plan_guardrails(
+            spec,
+            now=now or datetime.now(timezone.utc),
+            projected_wall_seconds=decision.predicted_seconds,
+            projected_billable_minutes=(
+                projected_billable_seconds / 60.0
+            ),
+            cost_per_billable_minute=cost_per_billable_minute,
+            checkpoint_margin_seconds=checkpoint_margin_seconds,
+            consumed_billable_minutes=consumed_billable_minutes,
+            committed_billable_minutes=committed_billable_minutes,
+        )
+    )
+    write_deadline_audit(
+        deadline_decision,
+        root / "deadline_audit.json",
+    )
+    write_budget_audit(
+        budget_ledger,
+        budget_decision,
+        root / "budget_audit.json",
     )
     return ExecutionPlan(
         job_count=decision,

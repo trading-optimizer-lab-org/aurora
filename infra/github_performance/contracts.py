@@ -274,6 +274,41 @@ class WorkUnitManifest(FrozenModel):
     total_estimated_seconds: NonNegativeFloat
 
 
+class WorkloadContract(FrozenModel):
+    """Stable scientific and execution interface for one workload."""
+
+    schema_version: Literal["1"] = "1"
+    interface_kind: Literal["phase2_native", "phase1_compatibility"]
+    adapter_version: str
+    workload_name: str
+    scientific_contract: Mapping[str, Any]
+    original_candidate_id_preserved: bool
+    candidate_identity_mode: Literal["preserve_original"] = (
+        "preserve_original"
+    )
+    deduplication_mode: Literal["exact_content_hash_only"] = (
+        "exact_content_hash_only"
+    )
+    methods: tuple[str, ...]
+
+    @field_validator("scientific_contract", mode="after")
+    @classmethod
+    def _freeze_scientific_contract(
+        cls,
+        value: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        return deep_freeze_json(value)
+
+
+class UnitVerification(FrozenModel):
+    """Exact verification result for one logical workload unit."""
+
+    unit_key: str
+    passed: bool
+    output_sha256: Sha256 | None
+    failure_codes: tuple[str, ...]
+
+
 class ShardDefinition(FrozenModel):
     shard_id: str
     assignment_artifact: str
@@ -333,12 +368,25 @@ class ExecutionPlan(FrozenModel):
     checkpoint_interval_seconds: NonNegativeFloat
     artifact_compression_level: Annotated[int, Field(ge=0, le=9)]
     fallback_plan_sha256: Sha256
+    performance_profile_sha256: Sha256 | None = None
+    engine_decision_sha256: Sha256 | None = None
+
+
+class PlanningPilotResolution(FrozenModel):
+    """Pilot evidence selected without reading scientific outcomes."""
+
+    pilot_result: PilotResult
+    source: Literal["historical_profile", "fresh_pilot"]
+    profile_reused: bool
+    reason_codes: tuple[str, ...]
+    performance_profile_sha256: Sha256 | None
 
 
 class MergeGroup(FrozenModel):
     group_id: str
     level: NonNegativeInt
     input_artifacts: tuple[str, ...]
+    input_artifact_pattern: str = ""
     projected_input_bytes: NonNegativeInt
     projected_output_bytes: NonNegativeInt
     output_artifact: str
@@ -346,8 +394,74 @@ class MergeGroup(FrozenModel):
 
 class MergePlan(FrozenModel):
     fan_in: Annotated[int, Field(ge=2)]
+    partition_target_bytes: Annotated[int, Field(ge=4096)] = 536_870_912
+    max_groups_per_level: Annotated[int, Field(ge=1, le=256)] = 256
+    max_levels: Annotated[int, Field(ge=1)] = 4
     groups: tuple[MergeGroup, ...]
+    root_artifact: str = ""
+    root_level: NonNegativeInt = 0
     plan_sha256: Sha256
+
+
+class TransportPart(FrozenModel):
+    relative_path: str
+    sha256: Sha256
+    byte_count: NonNegativeInt
+    row_count: NonNegativeInt
+    first_key: str
+    last_key: str
+
+
+class PartitionedTransport(FrozenModel):
+    logical_name: str
+    source_file_name: str
+    format: Literal["parquet", "binary"]
+    key_columns: tuple[str, ...]
+    schema_sha256: Sha256
+    logical_sha256: Sha256
+    row_count: NonNegativeInt
+    target_bytes: Annotated[int, Field(ge=4096)]
+    parts: tuple[TransportPart, ...]
+
+    @model_validator(mode="after")
+    def _validate_parts(self) -> PartitionedTransport:
+        if self.format == "parquet" and not self.key_columns:
+            raise ValueError("partitioned transport requires logical keys")
+        if self.format == "binary" and self.key_columns:
+            raise ValueError("binary transport cannot declare logical keys")
+        if not self.parts:
+            raise ValueError("partitioned transport requires at least one part")
+        if sum(part.row_count for part in self.parts) != self.row_count:
+            raise ValueError("partition row counts do not match")
+        paths = tuple(part.relative_path for part in self.parts)
+        if len(paths) != len(set(paths)):
+            raise ValueError("partition paths must be unique")
+        if any(part.byte_count > self.target_bytes for part in self.parts):
+            raise ValueError("partition exceeds configured byte target")
+        return self
+
+
+class MergeNodeManifest(FrozenModel):
+    schema_version: Literal["2"] = "2"
+    group_id: str
+    level: NonNegativeInt
+    output_artifact: str
+    merge_plan_sha256: Sha256
+    input_artifacts: tuple[str, ...]
+    child_manifest_sha256s: Mapping[str, Sha256]
+    source_shard_ids: tuple[str, ...]
+    expected_inputs: NonNegativeInt
+    selected_inputs: NonNegativeInt
+    completed_shards: NonNegativeInt
+    files: tuple[PartitionedTransport, ...]
+
+    @field_validator("child_manifest_sha256s", mode="after")
+    @classmethod
+    def _freeze_child_hashes(
+        cls,
+        value: Mapping[str, Sha256],
+    ) -> Mapping[str, Sha256]:
+        return deep_freeze_json(value)
 
 
 class AttemptManifest(FrozenModel):
@@ -369,6 +483,10 @@ class AttemptManifest(FrozenModel):
     completed_unit_count: NonNegativeInt
     output_rows: NonNegativeInt
     output_bytes: NonNegativeInt
+    runtime_access_ledger_path: str | None = None
+    runtime_access_ledger_sha256: Sha256 | None = None
+    metric_inputs_path: str | None = None
+    metric_inputs_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def _validate_terminal_evidence(self) -> AttemptManifest:
@@ -378,9 +496,16 @@ class AttemptManifest(FrozenModel):
                 self.artifact_name,
                 self.unit_attempts_path,
                 self.unit_attempts_sha256,
+                self.runtime_access_ledger_path,
+                self.runtime_access_ledger_sha256,
+                self.metric_inputs_path,
+                self.metric_inputs_sha256,
             )
             if any(value is None for value in required):
-                raise ValueError("completed attempt requires output and unit-attempt evidence")
+                raise ValueError(
+                    "completed attempt requires output, unit, runtime, "
+                    "and metric evidence"
+                )
         elif not self.reason_code:
             raise ValueError("non-completed attempt requires reason_code")
         return self

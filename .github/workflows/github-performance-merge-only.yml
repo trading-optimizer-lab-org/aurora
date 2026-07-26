@@ -1,0 +1,367 @@
+name: GitHub Performance Merge Only
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Completed source run containing verified partial artifacts
+        required: true
+        type: string
+      source_state_artifact_name:
+        description: Source campaign state at phase merging
+        required: true
+        type: string
+      run_label:
+        description: Stable artifact prefix used by the source run
+        required: true
+        type: string
+      workload:
+        description: Aurora workload reference, aurora.module:OBJECT
+        required: true
+        type: string
+      comparison_artifact_name:
+        description: Optional source final artifact for exact output comparison
+        required: false
+        default: ""
+        type: string
+      retention_days:
+        description: Retention for merge-only evidence
+        required: false
+        default: 7
+        type: number
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed source run containing verified partial artifacts
+        required: true
+        type: string
+      source_state_artifact_name:
+        description: Source campaign state at phase merging
+        required: true
+        type: string
+      run_label:
+        description: Stable artifact prefix used by the source run
+        required: true
+        type: string
+      workload:
+        description: Aurora workload reference, aurora.module:OBJECT
+        required: true
+        type: string
+      comparison_artifact_name:
+        description: Optional source final artifact for exact output comparison
+        required: false
+        default: ""
+        type: string
+      retention_days:
+        description: Retention for merge-only evidence
+        required: false
+        default: 7
+        type: number
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONHASHSEED: "0"
+  TZ: UTC
+  LC_ALL: C.UTF-8
+  LANG: C.UTF-8
+
+jobs:
+  merge_only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve and verify source identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RUN_LABEL: ${{ inputs.run_label }}
+        run: |
+          set -euo pipefail
+          source_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$SOURCE_RUN_ID" \
+              --jq '.head_sha'
+          )"
+          source_attempt="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$SOURCE_RUN_ID" \
+              --jq '.run_attempt'
+          )"
+          if [[ "$source_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::SOURCE_CODE_SHA_MISMATCH"
+            exit 1
+          fi
+          {
+            echo "SOURCE_SHA=$source_sha"
+            echo "SOURCE_ATTEMPT=$source_attempt"
+            echo "WHEELHOUSE_ARTIFACT=$RUN_LABEL-wheelhouse-$SOURCE_RUN_ID-$source_attempt"
+            echo "CONTRACT_ARTIFACT=$RUN_LABEL-contract-$SOURCE_RUN_ID-$source_attempt"
+            echo "PLAN_ARTIFACT=$RUN_LABEL-plan-$SOURCE_RUN_ID-$source_attempt"
+            echo "PREFLIGHT_ARTIFACT=$RUN_LABEL-preflight-$SOURCE_RUN_ID-$source_attempt"
+          } >> "$GITHUB_ENV"
+      - name: Download exact source infrastructure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_STATE_ARTIFACT: ${{ inputs.source_state_artifact_name }}
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" --name "$WHEELHOUSE_ARTIFACT" \
+            --dir "$RUNNER_TEMP/wheelhouse"
+          gh run download "$SOURCE_RUN_ID" --name "$CONTRACT_ARTIFACT" \
+            --dir "$RUNNER_TEMP/contract"
+          gh run download "$SOURCE_RUN_ID" --name "$PLAN_ARTIFACT" \
+            --dir "$RUNNER_TEMP/plan"
+          gh run download "$SOURCE_RUN_ID" --name "$PREFLIGHT_ARTIFACT" \
+            --dir "$RUNNER_TEMP/preflight"
+          gh run download "$SOURCE_RUN_ID" --name "$SOURCE_STATE_ARTIFACT" \
+            --dir "$RUNNER_TEMP/state"
+          gh run download "$SOURCE_RUN_ID" \
+            --pattern "${{ inputs.run_label }}-recovery-wave-*-$SOURCE_RUN_ID-$SOURCE_ATTEMPT" \
+            --dir "$RUNNER_TEMP/recovery-waves"
+      - name: Restore exact source Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Require verified latest campaign state
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/state/campaign_state_latest.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "state"
+          pointer = json.loads(
+              (root / "campaign_state_latest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          state = json.loads(
+              (root / pointer["state_file"]).read_text(encoding="utf-8")
+          )
+          if state["pending_unit_count"] != 0:
+              raise SystemExit("MERGE_ONLY_HAS_PENDING_UNITS")
+          if not state["verified_source_artifacts"]:
+              raise SystemExit("MERGE_ONLY_HAS_NO_VERIFIED_SOURCES")
+          PY
+      - name: Enter merge-only mode from immutable state
+        run: |
+          set -euo pipefail
+          mapfile -t sources < <(
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "state"
+          pointer = json.loads(
+              (root / "campaign_state_latest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          state = json.loads(
+              (root / pointer["state_file"]).read_text(encoding="utf-8")
+          )
+          for artifact in state["verified_source_artifacts"]:
+              print(artifact)
+          PY
+          )
+          args=(
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+            --state-root "$RUNNER_TEMP/state"
+            --output-dir "$RUNNER_TEMP/merge-only"
+          )
+          for artifact in "${sources[@]}"; do
+            args+=(--source-artifact "$artifact")
+          done
+          aurora github merge-only "${args[@]}"
+      - name: Download exactly the verified source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' > "$RUNNER_TEMP/verified_sources.txt"
+          import json
+          import os
+          from pathlib import Path
+
+          plan = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("merge-only", "merge_only_plan.json")
+              .read_text(encoding="utf-8")
+          )
+          for artifact in plan["source_artifacts"]:
+              print(artifact)
+          PY
+          while IFS= read -r artifact; do
+            gh run download "$SOURCE_RUN_ID" --name "$artifact" \
+              --dir "$RUNNER_TEMP/partials/$artifact"
+          done < "$RUNNER_TEMP/verified_sources.txt"
+      - name: Select latest immutable recovery evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "recovery-waves"
+          candidates = []
+          for loop_path in source.rglob("recovery_loop.json"):
+              payload = json.loads(loop_path.read_text(encoding="utf-8"))
+              candidates.append((int(payload["current_wave"]), loop_path))
+          if not candidates:
+              raise SystemExit("RECOVERY_EVIDENCE_MISSING")
+          _, selected = max(candidates)
+          target = Path(os.environ["RUNNER_TEMP"]) / "recovery"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in selected.parent.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          PY
+      - name: Rebuild final artifact without shard computation
+        run: |
+          set -euo pipefail
+          aurora github final-merge \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "${{ inputs.workload }}" \
+            --partials-root "$RUNNER_TEMP/partials" \
+            --plan-root "$RUNNER_TEMP/plan" \
+            --contract-root "$RUNNER_TEMP/contract" \
+            --preflight-root "$RUNNER_TEMP/preflight" \
+            --recovery-root "$RUNNER_TEMP/recovery" \
+            --output-dir "$RUNNER_TEMP/final"
+      - name: Record terminal merge-only reconciliation
+        run: |
+          set -euo pipefail
+          readarray -t reconciliation < <(
+            python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import pyarrow.parquet as pq
+
+          path = (
+              Path(os.environ["RUNNER_TEMP"])
+              / "final"
+              / "unit_reconciliation.parquet"
+          )
+          print(hashlib.sha256(path.read_bytes()).hexdigest())
+          print(pq.read_metadata(path).num_rows)
+          PY
+          )
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase merging \
+            --completed-unit-manifest-sha256 "${reconciliation[0]}" \
+            --completed-unit-count "${reconciliation[1]}" \
+            --pending-unit-count 0
+      - name: Independently verify merge-only artifact
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase verifying
+          aurora github verify \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --root "$RUNNER_TEMP/final"
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase completed
+      - name: Compare optional source scientific output
+        if: inputs.comparison_artifact_name != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          COMPARISON_ARTIFACT: ${{ inputs.comparison_artifact_name }}
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" --name "$COMPARISON_ARTIFACT" \
+            --dir "$RUNNER_TEMP/comparison"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          current_summary = json.loads(
+              (root / "final" / "final_merge_summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          previous_summary = json.loads(
+              (
+                  root
+                  / "comparison"
+                  / "final_merge_summary.json"
+              ).read_text(encoding="utf-8")
+          )
+          current = (
+              root / "final" / str(current_summary["scientific_output"])
+          )
+          previous = (
+              root
+              / "comparison"
+              / str(previous_summary["scientific_output"])
+          )
+          current_sha = hashlib.sha256(current.read_bytes()).hexdigest()
+          previous_sha = hashlib.sha256(previous.read_bytes()).hexdigest()
+          payload = {
+              "schema_version": "1",
+              "source_run_id": os.environ["SOURCE_RUN_ID"],
+              "compute_scheduled": False,
+              "merge_only": True,
+              "scientific_outputs_equal": current_sha == previous_sha,
+              "scientific_output_sha256": current_sha,
+              "source_scientific_output_sha256": previous_sha,
+          }
+          if not payload["scientific_outputs_equal"]:
+              raise SystemExit("MERGE_ONLY_SCIENTIFIC_OUTPUT_MISMATCH")
+          target = root / "merge-only" / "merge_only_verification.json"
+          target.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Upload merge-only campaign state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-merge-only-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Upload merge-only verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-merge-only-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/merge-only
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Publish merge-only final artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-merge-only-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}

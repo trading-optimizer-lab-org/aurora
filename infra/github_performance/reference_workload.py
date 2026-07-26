@@ -19,6 +19,11 @@ import pyarrow.parquet as pq
 from aurora.core.costs import CostModel
 from aurora.core.engine import run_backtest
 from aurora.infra.github_performance.checkpoint import CheckpointManager
+from aurora.infra.github_performance.audits import (
+    DataAccessRecord,
+    RuntimeAccessLedger,
+    write_runtime_access_ledger,
+)
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointManifest,
@@ -35,6 +40,10 @@ from aurora.infra.github_performance.contracts import (
 )
 from aurora.infra.github_performance.merge_planner import (
     write_unit_attempt_manifest,
+)
+from aurora.infra.github_performance.metric_verifier import (
+    MetricInputRecord,
+    write_metric_inputs,
 )
 from aurora.infra.github_performance.shard_planner import (
     sha256_file,
@@ -195,6 +204,7 @@ def _evaluate(
     fast: int,
     slow: int,
     attempt_id: str,
+    metric_records: list[MetricInputRecord] | None = None,
 ) -> dict[str, Any]:
     outputs: dict[str, Any] = {}
     for period in ("train", "validation"):
@@ -216,6 +226,61 @@ def _evaluate(
         outputs[f"{period}_sharpe"] = _finite(result.metrics.sharpe)
         outputs[f"{period}_calmar"] = _finite(result.metrics.calmar)
         outputs[f"{period}_max_drawdown"] = _finite(result.metrics.mdd)
+        if metric_records is not None:
+            raw_returns = np.asarray(result.rets[1:], dtype=np.float64)
+            finite_returns = raw_returns[~np.isnan(raw_returns)]
+            metric_records.append(
+                MetricInputRecord(
+                    unit_key=unit_key,
+                    split=period,
+                    returns=tuple(float(value) for value in raw_returns),
+                    periods_per_year=252,
+                    undefined_policy="null",
+                    reported={
+                        "total_return_pct": (
+                            (float(result.metrics.final_nav) - 1.0) * 100.0
+                            if math.isfinite(
+                                float(result.metrics.final_nav)
+                            )
+                            else None
+                        ),
+                        "cagr_pct": _finite(result.metrics.cagr),
+                        "annualized_return_pct": _finite(
+                            result.metrics.cagr
+                        ),
+                        "annualized_volatility_pct": (
+                            float(np.std(finite_returns, ddof=0))
+                            * math.sqrt(252.0)
+                            * 100.0
+                            if len(finite_returns) >= 2
+                            else None
+                        ),
+                        "sharpe": _finite(result.metrics.sharpe),
+                        "sortino": _finite(result.metrics.sortino),
+                        "max_drawdown_pct": _finite(result.metrics.mdd),
+                        "calmar": _finite(result.metrics.calmar),
+                        "profit_factor": _finite(
+                            result.metrics.profit_factor
+                        ),
+                        "win_rate": _finite(result.metrics.win_rate),
+                        "average_return_pct": (
+                            float(np.mean(finite_returns)) * 100.0
+                            if len(finite_returns) >= 2
+                            else None
+                        ),
+                        "median_return_pct": (
+                            float(np.median(finite_returns)) * 100.0
+                            if len(finite_returns) >= 2
+                            else None
+                        ),
+                        "period_count_raw": int(
+                            result.metrics.n_periods_raw
+                        ),
+                        "period_count": int(result.metrics.n_periods),
+                        "final_nav": _finite(result.metrics.final_nav),
+                    },
+                )
+            )
     row: dict[str, Any] = {
         "unit_key": unit_key,
         "source_attempt_id": attempt_id,
@@ -399,6 +464,20 @@ class ReferenceWorkload:
         assignments = _assignment_rows(shard)
         rows = _checkpoint_rows(checkpoint, shard)
         completed = {row["unit_key"] for row in rows}
+        metric_records: list[MetricInputRecord] = []
+        for row in rows:
+            replay = _evaluate(
+                frame,
+                str(row["unit_key"]),
+                int(row["fast_window"]),
+                int(row["slow_window"]),
+                attempt_id,
+                metric_records,
+            )
+            if replay["unit_output_sha256"] != row["unit_output_sha256"]:
+                raise ValueError(
+                    "checkpoint scientific output changed during metric replay"
+                )
         checkpoint_manager = CheckpointManager(root / "checkpoint")
         latest_checkpoint: CheckpointManifest | None = None
         for assignment in assignments:
@@ -419,6 +498,7 @@ class ReferenceWorkload:
                     int(parameters["fast_window"]),
                     int(parameters["slow_window"]),
                     attempt_id,
+                    metric_records,
                 )
             )
             completed.add(unit_key)
@@ -452,6 +532,43 @@ class ReferenceWorkload:
             ),
             root / "unit_attempts.parquet",
         )
+        train = frame.loc[frame["period"] == "train", "date"]
+        validation = frame.loc[frame["period"] == "validation", "date"]
+        access_path = write_runtime_access_ledger(
+            root / "runtime_access_ledger.parquet",
+            RuntimeAccessLedger(
+                records=(
+                    DataAccessRecord(
+                        source="snapshot:deterministic_spy_reference",
+                        partition="train",
+                        minimum_date=train.min().date(),
+                        maximum_date=train.max().date(),
+                        row_count=len(train),
+                        split="train",
+                        purpose="selection",
+                        locked=False,
+                        shard_id=shard.shard_id,
+                        attempt_id=attempt_id,
+                    ),
+                    DataAccessRecord(
+                        source="snapshot:deterministic_spy_reference",
+                        partition="validation",
+                        minimum_date=validation.min().date(),
+                        maximum_date=validation.max().date(),
+                        row_count=len(validation),
+                        split="validation",
+                        purpose="report",
+                        locked=False,
+                        shard_id=shard.shard_id,
+                        attempt_id=attempt_id,
+                    ),
+                )
+            ),
+        )
+        metric_inputs_path = write_metric_inputs(
+            root / "metric_verification_inputs.parquet",
+            metric_records,
+        )
         return AttemptManifest(
             shard_id=shard.shard_id,
             attempt_id=attempt_id,
@@ -479,6 +596,10 @@ class ReferenceWorkload:
             completed_unit_count=len(rows),
             output_rows=len(rows),
             output_bytes=output_path.stat().st_size,
+            runtime_access_ledger_path=access_path.name,
+            runtime_access_ledger_sha256=sha256_file(access_path),
+            metric_inputs_path=metric_inputs_path.name,
+            metric_inputs_sha256=sha256_file(metric_inputs_path),
         )
 
     def merge_group(

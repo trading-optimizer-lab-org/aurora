@@ -1,0 +1,93 @@
+name: Aurora Merge Level V3
+
+on:
+  workflow_call:
+    inputs:
+      matrix_json:
+        required: true
+        type: string
+      run_label:
+        required: true
+        type: string
+      workload:
+        required: true
+        type: string
+      retention_days:
+        required: true
+        type: number
+      wheelhouse_artifact_name:
+        required: true
+        type: string
+      contract_artifact_name:
+        required: true
+        type: string
+      plan_artifact_name:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(inputs.matrix_json) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.wheelhouse_artifact_name }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download frozen contract
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.contract_artifact_name }}
+          path: ${{ runner.temp }}/contract
+      - name: Download immutable merge plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/plan
+      - name: Download direct children only
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ matrix.input_artifact_pattern }}
+          path: ${{ runner.temp }}/children
+          merge-multiple: false
+      - name: Merge immutable bounded node
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github merge-plan-group \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --workload "$WORKLOAD" \
+            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json" \
+            --merge-plan "$RUNNER_TEMP/plan/merge_plan.json" \
+            --group-id "${{ matrix.group_id }}" \
+            --inputs-root "$RUNNER_TEMP/children" \
+            --output-dir "$RUNNER_TEMP/node"
+      - name: Upload immutable merge node
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.output_artifact }}
+          path: ${{ runner.temp }}/node
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}

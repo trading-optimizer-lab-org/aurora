@@ -35,6 +35,11 @@ on:
         required: false
         default: ""
         type: string
+      wheelhouse_artifact_name:
+        description: Existing immutable wheelhouse artifact to reuse
+        required: false
+        default: ""
+        type: string
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
@@ -49,9 +54,11 @@ env:
   LC_ALL: C.UTF-8
   LANG: C.UTF-8
   AURORA_PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+  AURORA_WHEELHOUSE_ARTIFACT_NAME: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
 jobs:
   validate:
+    needs: prepare_environment
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -60,13 +67,18 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
+        id: runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Validate requested contract
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
@@ -96,33 +108,73 @@ jobs:
           path: ${{ runner.temp }}/preflight
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}
-
-  prepare_environment:
-    needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    outputs:
-      environment_sha256: ${{ steps.runtime.outputs.environment-sha256 }}
-    steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Build canonical Aurora runtime
-        id: runtime
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: writer
       - name: Upload immutable environment
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-environment-${{ github.run_id }}-${{ github.run_attempt }}
           path: environment_manifest.json
           if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  prepare_environment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      wheelhouse_sha256: ${{ steps.identity.outputs.wheelhouse_sha256 }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download shared immutable wheelhouse
+        if: inputs.wheelhouse_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Set up build Python
+        if: inputs.wheelhouse_artifact_name == ''
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Build immutable wheelhouse once
+        if: inputs.wheelhouse_artifact_name == ''
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python scripts/build_github_performance_wheelhouse.py build \
+            --requirements-lock requirements/github-performance.lock \
+            --wheelhouse "$RUNNER_TEMP/wheelhouse" \
+            --code-sha "$GITHUB_SHA" \
+            --source-date-epoch "$source_date_epoch"
+      - name: Read wheelhouse identity
+        id: identity
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "wheelhouse"
+               / "wheelhouse_manifest.json").read_text(encoding="utf-8")
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(
+                  f"wheelhouse_sha256={manifest['wheelhouse_sha256']}\n"
+              )
+          PY
+      - name: Upload immutable wheelhouse
+        if: inputs.wheelhouse_artifact_name == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+          if-no-files-found: error
+          compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
   prepare_data:
@@ -135,13 +187,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download shared immutable inputs
         if: inputs.prepared_artifact_name != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -179,13 +235,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download environment
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -236,13 +296,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -281,13 +345,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -325,6 +393,16 @@ jobs:
       matrix_b: ${{ steps.outputs.outputs.matrix_b }}
       has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
       merge_matrix: ${{ steps.outputs.outputs.merge_matrix }}
+      merge_level_0_matrix: ${{ steps.outputs.outputs.merge_level_0_matrix }}
+      merge_level_0_count: ${{ steps.outputs.outputs.merge_level_0_count }}
+      merge_level_1_matrix: ${{ steps.outputs.outputs.merge_level_1_matrix }}
+      merge_level_1_count: ${{ steps.outputs.outputs.merge_level_1_count }}
+      merge_level_2_matrix: ${{ steps.outputs.outputs.merge_level_2_matrix }}
+      merge_level_2_count: ${{ steps.outputs.outputs.merge_level_2_count }}
+      merge_level_3_matrix: ${{ steps.outputs.outputs.merge_level_3_matrix }}
+      merge_level_3_count: ${{ steps.outputs.outputs.merge_level_3_count }}
+      merge_root_artifact: ${{ steps.outputs.outputs.merge_root_artifact }}
+      merge_root_level: ${{ steps.outputs.outputs.merge_root_level }}
       selected_jobs: ${{ steps.outputs.outputs.selected_jobs }}
     steps:
       - name: Checkout exact revision
@@ -332,13 +410,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -359,6 +441,7 @@ jobs:
           WORKLOAD: ${{ inputs.workload }}
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           FORCED_JOB_COUNT: ${{ inputs.forced_job_count }}
+          ARTIFACT_PREFIX: ${{ inputs.run_label }}
         run: |
           set -euo pipefail
           aurora github plan \
@@ -368,6 +451,7 @@ jobs:
             --pilot "$RUNNER_TEMP/pilot/performance_pilot.json" \
             --execution-mode "$EXECUTION_MODE" \
             --forced-job-count "$FORCED_JOB_COUNT" \
+            --artifact-prefix "$ARTIFACT_PREFIX" \
             --output-dir "$RUNNER_TEMP/plan"
       - name: Emit compact GitHub matrices
         id: outputs
@@ -388,6 +472,16 @@ jobs:
               "matrix_b": "matrix_b_json",
               "has_matrix_b": "has_matrix_b",
               "merge_matrix": "merge_matrix_json",
+              "merge_level_0_matrix": "merge_level_0_matrix_json",
+              "merge_level_0_count": "merge_level_0_count",
+              "merge_level_1_matrix": "merge_level_1_matrix_json",
+              "merge_level_1_count": "merge_level_1_count",
+              "merge_level_2_matrix": "merge_level_2_matrix_json",
+              "merge_level_2_count": "merge_level_2_count",
+              "merge_level_3_matrix": "merge_level_3_matrix_json",
+              "merge_level_3_count": "merge_level_3_count",
+              "merge_root_artifact": "merge_root_artifact",
+              "merge_root_level": "merge_root_level",
               "selected_jobs": "selected_jobs",
           }
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
@@ -417,13 +511,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -522,13 +620,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -612,29 +714,31 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
-  recovery_plan:
-    needs: [plan, fanout_a, fanout_b]
-    if: always() && needs.plan.result == 'success'
+  campaign_initialize:
+    needs: [plan, freeze_contract]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     outputs:
-      matrix_a: ${{ steps.outputs.outputs.matrix_a }}
-      matrix_b: ${{ steps.outputs.outputs.matrix_b }}
-      has_matrix_a: ${{ steps.outputs.outputs.has_matrix_a }}
-      has_matrix_b: ${{ steps.outputs.outputs.has_matrix_b }}
+      state_artifact_name: ${{ steps.identity.outputs.state_artifact_name }}
+    env:
+      STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-initial-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -645,77 +749,65 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/plan
-      - name: Download attempt manifests
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: ${{ inputs.run_label }}-shard-*
-          path: ${{ runner.temp }}/attempts
-      - name: Download checkpoints
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: run-checkpoint-*
-          path: ${{ runner.temp }}/checkpoints
-      - name: Build selective recovery plan
+      - name: Create immutable campaign state
         run: |
           set -euo pipefail
-          mapfile -t attempts < <(
-            find "$RUNNER_TEMP/attempts" \
-              -name shard_attempt_manifest.json -type f 2>/dev/null |
-              sort
-          )
-          mapfile -t checkpoints < <(
-            find "$RUNNER_TEMP/checkpoints" \
-              -name checkpoint_manifest.json -type f 2>/dev/null |
-              sort
-          )
-          args=(
-            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
-            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json"
-            --output-dir "$RUNNER_TEMP/recovery"
-          )
-          for path in "${attempts[@]}"; do args+=(--attempt "$path"); done
-          for path in "${checkpoints[@]}"; do
-            args+=(--checkpoint "$path")
-          done
-          aurora github recover-plan "${args[@]}"
-      - name: Emit compact retry matrices
-        id: outputs
-        run: |
-          set -euo pipefail
-          python - <<'PY'
+          readarray -t identities < <(
+            python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          root = Path(os.environ["RUNNER_TEMP"]) / "recovery"
-          plan = json.loads((root / "recovery_plan.json").read_text())
-          matrix_a = (root / "retry_matrix_a.json").read_text().strip()
-          matrix_b = (root / "retry_matrix_b.json").read_text().strip()
-          values = {
-              "matrix_a": matrix_a,
-              "matrix_b": matrix_b,
-              "has_matrix_a": str(plan["has_retry_matrix_a"]).lower(),
-              "has_matrix_b": str(plan["has_retry_matrix_b"]).lower(),
-          }
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              for name, value in values.items():
-                  out.write(f"{name}={value}\n")
+          root = Path(os.environ["RUNNER_TEMP"]) / "plan"
+          units = json.loads(
+              (root / "work_unit_manifest.json").read_text(encoding="utf-8")
+          )
+          plan = json.loads(
+              (root / "balanced_shard_plan.json").read_text(encoding="utf-8")
+          )
+          print(units["sha256"])
+          print(units["unit_count"])
+          print(plan["plan_sha256"])
           PY
-      - name: Upload recovery evidence
-        if: always()
+          )
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase executing \
+            --logical-unit-manifest-sha256 "${identities[0]}" \
+            --logical-unit-count "${identities[1]}" \
+            --active-plan-sha256 "${identities[2]}" \
+            --wave 0
+      - name: Emit campaign artifact identity
+        id: identity
+        run: |
+          echo "state_artifact_name=$STATE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable campaign state
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.run_label }}-recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/recovery
+          name: ${{ env.STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
+  recovery_plan:
+    needs: [plan, fanout_a, fanout_b, campaign_initialize]
+    if: always() && needs.plan.result == 'success' && needs.campaign_initialize.result == 'success'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.campaign_initialize.outputs.state_artifact_name }}
+      current_wave: 0
+      max_waves: 6
+
   retry_a:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan.outputs.status == 'retry' && needs.recovery_plan.outputs.has_matrix_a == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -728,13 +820,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -827,7 +923,7 @@ jobs:
 
   retry_b:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan.outputs.status == 'retry' && needs.recovery_plan.outputs.has_matrix_b == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -840,13 +936,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -937,84 +1037,341 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
-  merge_partials:
-    needs: [plan, fanout_a, fanout_b, retry_a, retry_b]
-    if: always() && needs.plan.result == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
+  recovery_plan_1:
+    needs: [plan, recovery_plan, retry_a, retry_b]
+    if: always() && needs.recovery_plan.result == 'success' && needs.recovery_plan.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan.outputs.state_artifact_name }}
+      current_wave: 1
+      max_waves: 6
+
+  retry_2_a:
+    needs: [plan, recovery_plan_1]
+    if: needs.recovery_plan_1.outputs.status == 'retry' && needs.recovery_plan_1.outputs.has_matrix_a == 'true'
     strategy:
       fail-fast: false
-      max-parallel: 12
-      matrix: ${{ fromJSON(needs.plan.outputs.merge_matrix) }}
-    steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Restore Aurora runtime
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
-      - name: Download frozen contract
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/contract
-      - name: Download execution plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/plan
-      - name: Download this group's attempts
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          pattern: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-*
-          path: ${{ runner.temp }}/attempts
-      - name: Merge bounded group
-        env:
-          WORKLOAD: ${{ inputs.workload }}
-        run: |
-          set -euo pipefail
-          aurora github merge-group \
-            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
-            --workload "$WORKLOAD" \
-            --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json" \
-            --merge-group "${{ matrix.merge_group }}" \
-            --inputs-root "$RUNNER_TEMP/attempts" \
-            --output-dir "$RUNNER_TEMP/partial/${{ matrix.merge_group }}"
-      - name: Upload partial merge
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.run_label }}-partial-${{ matrix.merge_group }}
-          path: ${{ runner.temp }}/partial
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: ${{ inputs.retention_days }}
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_1.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_2_b:
+    needs: [plan, recovery_plan_1]
+    if: needs.recovery_plan_1.outputs.status == 'retry' && needs.recovery_plan_1.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_1.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_2:
+    needs: [plan, recovery_plan_1, retry_2_a, retry_2_b]
+    if: always() && needs.recovery_plan_1.result == 'success' && needs.recovery_plan_1.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_1.outputs.state_artifact_name }}
+      current_wave: 2
+      max_waves: 6
+
+  retry_3_a:
+    needs: [plan, recovery_plan_2]
+    if: needs.recovery_plan_2.outputs.status == 'retry' && needs.recovery_plan_2.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_2.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_3_b:
+    needs: [plan, recovery_plan_2]
+    if: needs.recovery_plan_2.outputs.status == 'retry' && needs.recovery_plan_2.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_2.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_3:
+    needs: [plan, recovery_plan_2, retry_3_a, retry_3_b]
+    if: always() && needs.recovery_plan_2.result == 'success' && needs.recovery_plan_2.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_2.outputs.state_artifact_name }}
+      current_wave: 3
+      max_waves: 6
+
+  retry_4_a:
+    needs: [plan, recovery_plan_3]
+    if: needs.recovery_plan_3.outputs.status == 'retry' && needs.recovery_plan_3.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_3.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_4_b:
+    needs: [plan, recovery_plan_3]
+    if: needs.recovery_plan_3.outputs.status == 'retry' && needs.recovery_plan_3.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_3.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_4:
+    needs: [plan, recovery_plan_3, retry_4_a, retry_4_b]
+    if: always() && needs.recovery_plan_3.result == 'success' && needs.recovery_plan_3.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_3.outputs.state_artifact_name }}
+      current_wave: 4
+      max_waves: 6
+
+  retry_5_a:
+    needs: [plan, recovery_plan_4]
+    if: needs.recovery_plan_4.outputs.status == 'retry' && needs.recovery_plan_4.outputs.has_matrix_a == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.recovery_plan_4.outputs.matrix_a) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  retry_5_b:
+    needs: [plan, recovery_plan_4]
+    if: needs.recovery_plan_4.outputs.status == 'retry' && needs.recovery_plan_4.outputs.has_matrix_b == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 104
+      matrix: ${{ fromJSON(needs.recovery_plan_4.outputs.matrix_b) }}
+    uses: ./.github/workflows/_aurora-retry-shard-v3.yml
+    with:
+      descriptor_json: ${{ toJSON(matrix) }}
+      workload: ${{ inputs.workload }}
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      prepared_artifact_name: ${{ inputs.prepared_artifact_name || format('{0}-prepared-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  recovery_plan_5:
+    needs: [plan, recovery_plan_4, retry_5_a, retry_5_b]
+    if: always() && needs.recovery_plan_4.result == 'success' && needs.recovery_plan_4.outputs.status == 'retry'
+    uses: ./.github/workflows/_aurora-recovery-plan-v3.yml
+    with:
+      run_label: ${{ inputs.run_label }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      campaign_state_artifact_name: ${{ needs.recovery_plan_4.outputs.state_artifact_name }}
+      current_wave: 5
+      max_waves: 6
+
+  merge_level_0:
+    needs: [plan, fanout_a, fanout_b, recovery_plan, retry_a, retry_b, recovery_plan_1, retry_2_a, retry_2_b, recovery_plan_2, retry_3_a, retry_3_b, recovery_plan_3, retry_4_a, retry_4_b, recovery_plan_4, retry_5_a, retry_5_b, recovery_plan_5]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.merge_level_0_count != '0' &&
+      (
+        needs.recovery_plan_5.outputs.status == 'complete' ||
+        needs.recovery_plan_4.outputs.status == 'complete' ||
+        needs.recovery_plan_3.outputs.status == 'complete' ||
+        needs.recovery_plan_2.outputs.status == 'complete' ||
+        needs.recovery_plan_1.outputs.status == 'complete' ||
+        needs.recovery_plan.outputs.status == 'complete'
+      )
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_0_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  merge_level_1:
+    needs: [plan, merge_level_0]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.merge_level_0.result == 'success' &&
+      needs.plan.outputs.merge_level_1_count != '0'
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_1_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  merge_level_2:
+    needs: [plan, merge_level_1]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.merge_level_1.result == 'success' &&
+      needs.plan.outputs.merge_level_2_count != '0'
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_2_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+
+  merge_level_3:
+    needs: [plan, merge_level_2]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.merge_level_2.result == 'success' &&
+      needs.plan.outputs.merge_level_3_count != '0'
+    uses: ./.github/workflows/_aurora-merge-level-v3.yml
+    with:
+      matrix_json: ${{ needs.plan.outputs.merge_level_3_matrix }}
+      run_label: ${{ inputs.run_label }}
+      workload: ${{ inputs.workload }}
+      retention_days: ${{ inputs.retention_days }}
+      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
 
   final_merge:
-    needs: [plan, freeze_contract, merge_partials]
-    if: always() && needs.plan.result == 'success'
+    needs: [plan, freeze_contract, merge_level_0, merge_level_1, merge_level_2, merge_level_3]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      (
+        (
+          needs.plan.outputs.merge_root_level == '0' &&
+          needs.merge_level_0.result == 'success'
+        ) ||
+        (
+          needs.plan.outputs.merge_root_level == '1' &&
+          needs.merge_level_1.result == 'success'
+        ) ||
+        (
+          needs.plan.outputs.merge_root_level == '2' &&
+          needs.merge_level_2.result == 'success'
+        ) ||
+        (
+          needs.plan.outputs.merge_root_level == '3' &&
+          needs.merge_level_3.result == 'success'
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    outputs:
+      state_artifact_name: ${{ steps.state_identity.outputs.state_artifact_name }}
+    env:
+      MERGED_STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-merged-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download frozen contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1025,21 +1382,72 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/plan
-      - name: Download partial merges only
+      - name: Download merge root only
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          pattern: ${{ inputs.run_label }}-partial-*
+          name: ${{ needs.plan.outputs.merge_root_artifact }}
           path: ${{ runner.temp }}/partials
       - name: Download preflight evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.run_label }}-preflight-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/preflight
-      - name: Download recovery evidence
+      - name: Download all recovery evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/recovery
+          pattern: ${{ inputs.run_label }}-recovery-wave-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/recovery-waves
+      - name: Select latest successful recovery evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "recovery-waves"
+          candidates = []
+          for loop_path in source.rglob("recovery_loop.json"):
+              payload = json.loads(loop_path.read_text(encoding="utf-8"))
+              candidates.append((int(payload["current_wave"]), loop_path))
+          if not candidates:
+              raise SystemExit("RECOVERY_EVIDENCE_MISSING")
+          _, selected = max(candidates)
+          target = Path(os.environ["RUNNER_TEMP"]) / "recovery"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in selected.parent.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          PY
+      - name: Download immutable campaign states
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-campaign-state-after-recovery-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/state-waves
+      - name: Select latest immutable campaign state
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "state-waves"
+          candidates = []
+          for pointer in source.rglob("campaign_state_latest.json"):
+              payload = json.loads(pointer.read_text(encoding="utf-8"))
+              candidates.append((int(payload["version"]), pointer))
+          if not candidates:
+              raise SystemExit("CAMPAIGN_STATE_MISSING")
+          _, selected = max(candidates)
+          target = Path(os.environ["RUNNER_TEMP"]) / "state"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in selected.parent.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          PY
       - name: Build final artifact and reconciliation
         env:
           WORKLOAD: ${{ inputs.workload }}
@@ -1054,50 +1462,62 @@ jobs:
             --preflight-root "$RUNNER_TEMP/preflight" \
             --recovery-root "$RUNNER_TEMP/recovery" \
             --output-dir "$RUNNER_TEMP/final"
-      - name: Upload sealed pre-verification artifact
+      - name: Record verified merge sources and terminal units
+        run: |
+          set -euo pipefail
+          readarray -t reconciliation < <(
+            python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          import pyarrow.parquet as pq
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          path = root / "final" / "unit_reconciliation.parquet"
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          rows = pq.read_metadata(path).num_rows
+          plan = json.loads(
+              (root / "plan" / "merge_plan.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          print(digest)
+          print(rows)
+          print(plan["root_artifact"])
+          PY
+          )
+          args=(
+            --spec "$RUNNER_TEMP/contract/resolved_run_spec.json"
+            --state-root "$RUNNER_TEMP/state"
+            --phase merging
+            --completed-unit-manifest-sha256 "${reconciliation[0]}"
+            --completed-unit-count "${reconciliation[1]}"
+            --pending-unit-count 0
+          )
+          for artifact in "${reconciliation[@]:2}"; do
+            args+=(--verified-source-artifact "$artifact")
+          done
+          aurora github campaign-update "${args[@]}"
+      - name: Emit merged campaign artifact identity
+        id: state_identity
+        run: |
+          echo "state_artifact_name=$MERGED_STATE_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - name: Upload merged immutable campaign state
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/final
+          name: ${{ env.MERGED_STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
-
-  verify:
-    needs: final_merge
-    if: always() && needs.final_merge.result == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Restore Aurora runtime
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
-      - name: Download sealed artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/final
-      - name: Independently reopen and verify every file
-        run: |
-          set -euo pipefail
-          aurora github verify \
-            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
-            --root "$RUNNER_TEMP/final"
-      - name: Upload verified stage
+      - name: Upload unsealed scientific stage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.run_label }}-unsealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/final
           if-no-files-found: error
           compression-level: 0
@@ -1105,8 +1525,8 @@ jobs:
 
   collect_timeline:
     name: Collect GitHub timeline
-    needs: verify
-    if: always()
+    needs: final_merge
+    if: always() && needs.final_merge.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1118,13 +1538,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Collect read-only GitHub timing
         continue-on-error: true
         env:
@@ -1144,9 +1568,148 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
+  seal_final_artifact:
+    name: Seal complete final artifact
+    needs: [final_merge, collect_timeline]
+    if: >-
+      always() &&
+      needs.final_merge.result == 'success' &&
+      needs.collect_timeline.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download unsealed scientific stage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-unsealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+      - name: Download timing evidence before seal
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+      - name: Seal telemetry, traceability, and scientific identity
+        run: |
+          set -euo pipefail
+          aurora github seal-final-artifact \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --root "$RUNNER_TEMP/final"
+      - name: Upload sealed stage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-sealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  verify:
+    needs: [final_merge, seal_final_artifact]
+    if: >-
+      always() &&
+      needs.final_merge.result == 'success' &&
+      needs.seal_final_artifact.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VERIFIED_STATE_ARTIFACT_NAME: ${{ format('{0}-campaign-state-verified-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download sealed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-sealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+      - name: Download merged campaign state
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.final_merge.outputs.state_artifact_name }}
+          path: ${{ runner.temp }}/state
+      - name: Record verification start
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase verifying
+      - name: Independently reopen and verify every file
+        id: scientific_verify
+        run: |
+          set -euo pipefail
+          aurora github verify \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --root "$RUNNER_TEMP/final"
+      - name: Record completed campaign
+        if: steps.scientific_verify.outcome == 'success'
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase completed
+      - name: Record blocked verification
+        if: failure() && steps.scientific_verify.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          aurora github campaign-update \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --state-root "$RUNNER_TEMP/state" \
+            --phase blocked_hard_failure \
+            --hard-failure-reason FINAL_VERIFICATION_FAILED
+      - name: Upload verified immutable campaign state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.VERIFIED_STATE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+      - name: Upload verified stage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
   publish:
     name: Publish final artifact
-    needs: [verify, collect_timeline]
+    needs: verify
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -1157,23 +1720,6 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/publish
-      - name: Download timing evidence
-        if: needs.verify.result == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/publish
-      - name: Record incomplete timing without touching scientific files
-        if: needs.verify.result == 'success'
-        run: |
-          set -euo pipefail
-          status="$RUNNER_TEMP/publish/performance_telemetry_status.json"
-          if [[ ! -f "$status" ]]; then
-            printf '%s\n' \
-              '{"complete":false,"schema_version":"1","token_serialized":false}' \
-              > "$status"
-          fi
       - name: Publish final reader artifact
         if: needs.verify.result == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

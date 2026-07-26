@@ -244,6 +244,102 @@ def weighted_lpt(
     )
 
 
+def replan_pending_units(
+    manifest: WorkUnitManifest,
+    terminal_unit_keys: Iterable[str],
+    jobs: int,
+    output_dir: Path,
+    *,
+    wave: int,
+) -> ShardPlan:
+    """Repartition only pending units while preserving the logical manifest."""
+
+    if wave < 1:
+        raise ValueError("replan wave must be positive")
+    units = read_work_units(manifest)
+    known_keys = {unit.unit_key for unit in units}
+    terminal = set(terminal_unit_keys)
+    unknown = terminal - known_keys
+    if unknown:
+        raise ValueError(
+            "terminal evidence contains unknown work units: "
+            + ",".join(sorted(unknown)[:10])
+        )
+    pending = tuple(unit for unit in units if unit.unit_key not in terminal)
+    if not pending:
+        raise ValueError("replan has no pending work units")
+    if jobs < 1 or jobs > min(len(pending), 360):
+        raise ValueError(
+            "jobs must be between 1 and min(pending_unit_count, 360)"
+        )
+
+    prefix = f"r{wave:03d}"
+    artifact_name = f"run-replan-assignment-bundle-{wave:03d}"
+    shard_ids = tuple(f"{prefix}-s{index:03d}" for index in range(jobs))
+    assignments: list[list[WorkUnit]] = [[] for _ in range(jobs)]
+    heap: list[tuple[float, str, int]] = [
+        (0.0, shard_id, index)
+        for index, shard_id in enumerate(shard_ids)
+    ]
+    heapq.heapify(heap)
+    for unit in sorted(
+        pending,
+        key=lambda item: (-item.estimated_seconds, item.unit_key),
+    ):
+        current_seconds, shard_id, index = heapq.heappop(heap)
+        assignments[index].append(unit)
+        heapq.heappush(
+            heap,
+            (current_seconds + unit.estimated_seconds, shard_id, index),
+        )
+
+    root = Path(output_dir)
+    all_tables: list[pa.Table] = []
+    shards: list[ShardDefinition] = []
+    for index, shard_id in enumerate(shard_ids):
+        shard_units = assignments[index]
+        if not shard_units:
+            raise AssertionError("replan produced an empty shard")
+        table = _assignment_table(shard_id, shard_units)
+        member = Path("replan_assignments") / f"{shard_id}.parquet"
+        member_path = root / member
+        _atomic_write_parquet(table, member_path)
+        all_tables.append(table)
+        shards.append(
+            ShardDefinition(
+                shard_id=shard_id,
+                assignment_artifact=artifact_name,
+                assignment_member=member.as_posix(),
+                assignment_sha256=sha256_file(member_path),
+                unit_count=len(shard_units),
+                estimated_seconds=sum(
+                    unit.estimated_seconds for unit in shard_units
+                ),
+                merge_group=f"{prefix}-g{index // 30:03d}",
+            )
+        )
+
+    catalog = pa.concat_tables(all_tables)
+    sort_indices = pc.sort_indices(
+        catalog,
+        sort_keys=[("shard_id", "ascending"), ("unit_key", "ascending")],
+    )
+    catalog = pc.take(catalog, sort_indices)
+    catalog_path = root / "replanned_unit_assignments.parquet"
+    _atomic_write_parquet(catalog, catalog_path)
+    payload = {
+        "selected_jobs": jobs,
+        "work_unit_manifest_sha256": manifest.sha256,
+        "assignment_artifact": artifact_name,
+        "assignment_manifest_sha256": sha256_file(catalog_path),
+        "shards": [deep_thaw_json(shard) for shard in shards],
+    }
+    return ShardPlan(
+        **payload,
+        plan_sha256=canonical_sha256(payload),
+    )
+
+
 def equal_count(
     manifest: WorkUnitManifest,
     jobs: int,

@@ -597,6 +597,17 @@ def _calls_future_framework(workflow: Mapping[str, Any]) -> bool:
     )
 
 
+FRAMEWORK_INTERNAL_WORKFLOW_PATHS = frozenset(
+    {
+        ".github/workflows/_aurora-merge-level-v3.yml",
+        ".github/workflows/_aurora-recovery-plan-v3.yml",
+        ".github/workflows/_aurora-retry-shard-v3.yml",
+        ".github/workflows/github-performance-merge-only.yml",
+        ".github/workflows/github-performance-replan.yml",
+    }
+)
+
+
 def _is_heavy_workflow(
     workflow: Mapping[str, Any],
     path: Path,
@@ -655,6 +666,7 @@ def validate_workflow_policy(
     ).as_posix()
     if (
         relative != FRAMEWORK_WORKFLOW_PATH
+        and relative not in FRAMEWORK_INTERNAL_WORKFLOW_PATHS
         and _is_heavy_workflow(workflow, path)
         and not _calls_future_framework(workflow)
     ):

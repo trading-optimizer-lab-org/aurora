@@ -80,6 +80,7 @@ packages = [
     "aurora.governance",
     "aurora.infra",
     "aurora.infra.github_performance",
+    "aurora.infra.github_performance.workloads",
     "aurora.marketdata",
     "aurora.markets",
     "aurora.ml",
@@ -128,6 +129,7 @@ packages = [
 "aurora.governance" = "governance"
 "aurora.infra" = "infra"
 "aurora.infra.github_performance" = "infra/github_performance"
+"aurora.infra.github_performance.workloads" = "infra/github_performance/workloads"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
 "aurora.ml" = "ml"

@@ -267,6 +267,49 @@ def test_new_framework_caller_passes_policy(tmp_path: Path) -> None:
     assert validate_workflow_policy(caller, tmp_path, {}) == []
 
 
+def test_exact_internal_framework_helper_passes_policy(tmp_path: Path) -> None:
+    helper = write_yaml(
+        tmp_path / ".github/workflows/_aurora-merge-level-v3.yml",
+        {
+            "name": "bounded internal merge",
+            "on": {"workflow_call": {}},
+            "permissions": {"contents": "read"},
+            "jobs": {
+                "merge": {
+                    "runs-on": "ubuntu-24.04",
+                    "strategy": {"matrix": {"partition": [0, 1]}},
+                    "steps": [{"run": "python scripts/merge.py"}],
+                }
+            },
+        },
+    )
+
+    assert validate_workflow_policy(helper, tmp_path, {}) == []
+
+
+def test_internal_helper_exception_is_path_scoped(tmp_path: Path) -> None:
+    lookalike = write_yaml(
+        tmp_path / ".github/workflows/unregistered-helper.yml",
+        {
+            "name": "unregistered merge helper",
+            "on": {"workflow_call": {}},
+            "permissions": {"contents": "read"},
+            "jobs": {
+                "merge": {
+                    "runs-on": "ubuntu-24.04",
+                    "strategy": {"matrix": {"partition": [0, 1]}},
+                    "steps": [{"run": "python scripts/merge.py"}],
+                }
+            },
+        },
+    )
+
+    assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
+        violation.code
+        for violation in validate_workflow_policy(lookalike, tmp_path, {})
+    }
+
+
 def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
     allowlist = load_legacy_workflow_allowlist()
     assert len(allowlist) == 99

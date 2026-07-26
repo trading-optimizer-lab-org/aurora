@@ -2,6 +2,57 @@ name: GitHub Performance Reference
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Full reference, merge-only, or pending-unit replan
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - merge_only
+          - replan
+          - replan_fixture
+      source_run_id:
+        description: Source run for merge-only or replan
+        required: false
+        default: ""
+        type: string
+      source_state_artifact_name:
+        description: Immutable source campaign-state artifact
+        required: false
+        default: ""
+        type: string
+      source_run_label:
+        description: Source shard/state artifact prefix
+        required: false
+        default: github-performance-reference
+        type: string
+      source_infrastructure_label:
+        description: Optional distinct source infrastructure artifact prefix
+        required: false
+        default: ""
+        type: string
+      comparison_artifact_name:
+        description: Optional source final artifact for merge-only comparison
+        required: false
+        default: ""
+        type: string
+      requested_jobs:
+        description: Pending-only shard count for replan
+        required: false
+        default: 1
+        type: number
+      full_forced_job_count:
+        description: Exact full-run shard count; zero uses adaptive planning
+        required: false
+        default: 0
+        type: number
+      operational_overrides:
+        description: Operational-only replan overrides as JSON
+        required: false
+        default: "{}"
+        type: string
 
 permissions:
   contents: read
@@ -9,9 +60,138 @@ permissions:
 
 jobs:
   reference:
+    if: inputs.operation == 'full'
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
       workload: aurora.infra.github_performance.reference_workload:WORKLOAD
       run_label: github-performance-reference
       retention_days: 7
+      forced_job_count: >-
+        ${{ fromJSON(format('{0}', inputs.full_forced_job_count)) }}
+
+  merge_only:
+    if: inputs.operation == 'merge_only'
+    uses: ./.github/workflows/github-performance-merge-only.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+      source_state_artifact_name: ${{ inputs.source_state_artifact_name }}
+      run_label: ${{ inputs.source_run_label }}
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      comparison_artifact_name: ${{ inputs.comparison_artifact_name }}
+      retention_days: 7
+
+  replan:
+    if: inputs.operation == 'replan'
+    uses: ./.github/workflows/github-performance-replan.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+      source_state_artifact_name: ${{ inputs.source_state_artifact_name }}
+      run_label: ${{ inputs.source_run_label }}
+      source_infrastructure_label: ${{ inputs.source_infrastructure_label }}
+      requested_jobs: >-
+        ${{ fromJSON(format('{0}', inputs.requested_jobs)) }}
+      operational_overrides: ${{ inputs.operational_overrides }}
+      retention_days: 7
+
+  replan_fixture_source:
+    if: inputs.operation == 'replan_fixture'
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: github-performance-reference
+      retention_days: 7
+      forced_job_count: 2
+
+  build_replan_fixture:
+    needs: replan_fixture_source
+    if: inputs.operation == 'replan_fixture'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download source wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: >-
+            github-performance-reference-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: >-
+            ${{ runner.temp }}/source/github-performance-reference-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Download source plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: >-
+            github-performance-reference-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: >-
+            ${{ runner.temp }}/source/github-performance-reference-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Download source campaign state
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: >-
+            github-performance-reference-campaign-state-initial-${{ github.run_id }}-${{ github.run_attempt }}
+          path: >-
+            ${{ runner.temp }}/source/github-performance-reference-campaign-state-initial-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Download source shard attempts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: github-performance-reference-shard-*
+          path: ${{ runner.temp }}/source
+      - name: Restore exact source Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: >-
+            ${{ runner.temp }}/source/github-performance-reference-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Build bound OOM and disk evidence
+        run: |
+          set -euo pipefail
+          python scripts/build_github_performance_replan_fixture.py \
+            --source-plan-root \
+              "$RUNNER_TEMP/source/github-performance-reference-plan-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --source-state-root \
+              "$RUNNER_TEMP/source/github-performance-reference-campaign-state-initial-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --source-attempts-root "$RUNNER_TEMP/source" \
+            --output-root "$RUNNER_TEMP/fixture" \
+            --artifact-prefix github-performance-replan-fixture
+      - name: Upload OOM fixture shard
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-replan-fixture-shard-s000-a-fixture-000
+          path: >-
+            ${{ runner.temp }}/fixture/artifacts/github-performance-replan-fixture-shard-s000-a-fixture-000
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload disk fixture shard
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-replan-fixture-shard-s001-a-fixture-001
+          path: >-
+            ${{ runner.temp }}/fixture/artifacts/github-performance-replan-fixture-shard-s001-a-fixture-001
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload replanning campaign state
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: >-
+            github-performance-replan-fixture-campaign-state-replanning-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fixture/state
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload fixture verification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: >-
+            github-performance-replan-fixture-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fixture/replan_fixture.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

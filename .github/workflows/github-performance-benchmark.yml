@@ -17,13 +17,34 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Prime exact Aurora runtime cache
+      - name: Set up build Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Build one shared immutable wheelhouse
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python scripts/build_github_performance_wheelhouse.py build \
+            --requirements-lock requirements/github-performance.lock \
+            --wheelhouse "$RUNNER_TEMP/wheelhouse" \
+            --code-sha "$GITHUB_SHA" \
+            --source-date-epoch "$source_date_epoch"
+      - name: Upload shared immutable wheelhouse
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wheelhouse
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Restore exact Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: writer
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Prepare one shared immutable benchmark snapshot
         run: |
           set -euo pipefail
@@ -40,6 +61,44 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+  setup_benchmark:
+    needs: prime_runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up benchmark Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Download shared immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Compare locked and wheelhouse setup cold and warm
+        run: |
+          set -euo pipefail
+          python scripts/benchmark_github_performance_environment.py \
+            --requirements-lock requirements/github-performance.lock \
+            --wheelhouse "$RUNNER_TEMP/wheelhouse" \
+            --warm-repetitions 3 \
+            --output "$RUNNER_TEMP/setup-benchmark/environment_setup_benchmark.json"
+      - name: Upload environment setup benchmark
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: github-performance-environment-setup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/setup-benchmark
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   optimized:
     needs: prime_runtime
     uses: ./.github/workflows/_aurora-future-run-v3.yml
@@ -51,6 +110,7 @@ jobs:
       execution_mode: optimized
       forced_job_count: 0
       prepared_artifact_name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+      wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
 
   baseline:
     needs: optimized
@@ -63,9 +123,10 @@ jobs:
       execution_mode: baseline
       forced_job_count: ${{ fromJSON(needs.optimized.outputs.selected_jobs) }}
       prepared_artifact_name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+      wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
 
   compare:
-    needs: [optimized, baseline]
+    needs: [optimized, baseline, setup_benchmark]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -74,13 +135,17 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Download shared immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wheelhouse
       - name: Restore Aurora runtime
         uses: ./.github/actions/aurora-runtime-setup
         with:
           python-version: "3.12"
-          extras: ""
-          cache-key: aurora-v3
-          cache-mode: restore-only
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
       - name: Download optimized result
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -91,12 +156,19 @@ jobs:
         with:
           name: github-performance-benchmark-baseline-results
           path: ${{ runner.temp }}/benchmark/baseline
+      - name: Download environment setup benchmark
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: github-performance-environment-setup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/benchmark/setup
       - name: Compare only equivalent scientific outputs
         run: |
           set -euo pipefail
           python scripts/compare_github_performance_runs.py \
             --baseline-dir "$RUNNER_TEMP/benchmark/baseline" \
             --optimized-dir "$RUNNER_TEMP/benchmark/optimized" \
+            --environment-setup-benchmark \
+              "$RUNNER_TEMP/benchmark/setup/environment_setup_benchmark.json" \
             --output-dir "$RUNNER_TEMP/benchmark/comparison"
       - name: Publish benchmark and phase closure
         if: always()

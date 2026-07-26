@@ -19,6 +19,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline-dir", required=True, type=Path)
     parser.add_argument("--optimized-dir", required=True, type=Path)
+    parser.add_argument(
+        "--environment-setup-benchmark",
+        type=Path,
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
     return parser
 
@@ -31,6 +35,11 @@ def main() -> int:
         report = compare_runs(
             args.baseline_dir.resolve(),
             args.optimized_dir.resolve(),
+            (
+                args.environment_setup_benchmark.resolve()
+                if args.environment_setup_benchmark is not None
+                else None
+            ),
         )
     except ScientificOutputMismatch as error:
         failure = {
@@ -69,6 +78,11 @@ def main() -> int:
     for source in sorted(args.optimized_dir.resolve().iterdir()):
         if source.is_file():
             shutil.copy2(source, output_dir / source.name)
+    if args.environment_setup_benchmark is not None:
+        shutil.copy2(
+            args.environment_setup_benchmark.resolve(),
+            output_dir / "environment_setup_benchmark.json",
+        )
     paths = write_benchmark_outputs(report, output_dir)
     print(
         json.dumps(

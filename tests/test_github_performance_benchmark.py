@@ -10,6 +10,7 @@ import pytest
 from aurora.infra.github_performance.benchmark import (
     ScientificOutputMismatch,
     compare_runs,
+    scientific_content_identity_from_output,
     write_benchmark_outputs,
 )
 from aurora.infra.github_performance.preflight import (
@@ -127,6 +128,40 @@ def test_compare_requires_identical_scientific_outputs(
         compare_runs(baseline, optimized)
 
 
+def test_scientific_content_identity_ignores_operational_provenance(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.parquet"
+    second = tmp_path / "second.parquet"
+    changed = tmp_path / "changed.parquet"
+    for path, attempt_id, unit_hash in (
+        (first, "attempt-a", "a" * 64),
+        (second, "attempt-b", "a" * 64),
+        (changed, "attempt-a", "b" * 64),
+    ):
+        pq.write_table(
+            pa.table(
+                {
+                    "unit_key": ["u001"],
+                    "unit_output_sha256": [unit_hash],
+                    "source_attempt_id": [attempt_id],
+                }
+            ),
+            path,
+        )
+
+    first_identity = scientific_content_identity_from_output(first)
+    second_identity = scientific_content_identity_from_output(second)
+    changed_identity = scientific_content_identity_from_output(changed)
+
+    assert first.read_bytes() != second.read_bytes()
+    assert first_identity == second_identity
+    assert (
+        first_identity["scientific_content_sha256"]
+        != changed_identity["scientific_content_sha256"]
+    )
+
+
 def test_compare_reports_speed_only_after_equivalence(
     tmp_path: Path,
 ) -> None:
@@ -198,8 +233,14 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         "actions": "read",
     }
     jobs = workflow["jobs"]
+    assert "setup_benchmark" in jobs
+    assert jobs["setup_benchmark"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["with"]["execution_mode"] == "optimized"
+    shared_wheelhouse = jobs["optimized"]["with"][
+        "wheelhouse_artifact_name"
+    ]
+    assert "shared-wheelhouse" in str(shared_wheelhouse)
     shared_snapshot = jobs["optimized"]["with"]["prepared_artifact_name"]
     assert "shared-prepared" in str(shared_snapshot)
     assert jobs["baseline"]["needs"] == "optimized"
@@ -208,9 +249,19 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         jobs["baseline"]["with"]["prepared_artifact_name"]
         == shared_snapshot
     )
+    assert (
+        jobs["baseline"]["with"]["wheelhouse_artifact_name"]
+        == shared_wheelhouse
+    )
     forced = jobs["baseline"]["with"]["forced_job_count"]
     assert "needs.optimized.outputs.selected_jobs" in str(forced)
-    assert jobs["compare"]["needs"] == ["optimized", "baseline"]
+    assert jobs["compare"]["needs"] == [
+        "optimized",
+        "baseline",
+        "setup_benchmark",
+    ]
+    compare_text = str(jobs["compare"])
+    assert "environment_setup_benchmark.json" in compare_text
     upload = jobs["compare"]["steps"][-1]
     assert upload["if"] == "always()"
     assert str(upload["with"]["path"]).endswith(
