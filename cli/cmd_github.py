@@ -15,6 +15,15 @@ from typing import Any
 
 from aurora.core.execution_policy import require_github_execution
 from aurora.infra.github_performance.checkpoint import load_checkpoint
+from aurora.infra.github_performance.campaign import (
+    CampaignPhase,
+    begin_merge_only,
+    initialize_campaign_state,
+    replan_campaign_state,
+    resume_campaign_state,
+    transition_campaign_state,
+    write_campaign_state,
+)
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointManifest,
@@ -47,6 +56,11 @@ from aurora.infra.github_performance.merge_planner import (
 from aurora.infra.github_performance.merge_runtime import (
     final_merge,
     merge_attempt_group,
+)
+from aurora.infra.github_performance.recovery import (
+    RecoveryLoopStatus,
+    build_recovery_loop_from_paths,
+    write_recovery_loop,
 )
 from aurora.infra.github_performance.preflight import (
     freeze_resolved_contract,
@@ -718,6 +732,229 @@ def cmd_github_guardrail_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_now(args: argparse.Namespace) -> datetime:
+    raw = str(getattr(args, "created_at", "") or "")
+    if not raw:
+        return datetime.now(timezone.utc)
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("created_at must be timezone-aware")
+    return parsed
+
+
+def cmd_github_campaign_update(args: argparse.Namespace) -> int:
+    require_github_execution("github campaign-update")
+    spec = _load_spec(args.spec)
+    root = Path(args.state_root)
+    campaign_id = str(spec.identity["campaign_id"])
+    now = _command_now(args)
+    pointer = root / "campaign_state_latest.json"
+    if pointer.is_file():
+        previous = resume_campaign_state(root, campaign_id=campaign_id)
+    else:
+        if not args.logical_unit_manifest_sha256:
+            raise ValueError(
+                "initial campaign state requires logical unit manifest sha256"
+            )
+        if not args.active_plan_sha256:
+            raise ValueError(
+                "initial campaign state requires active plan sha256"
+            )
+        previous = initialize_campaign_state(
+            campaign_id=campaign_id,
+            scientific_contract_sha256=canonical_sha256(spec),
+            logical_unit_manifest_sha256=(
+                args.logical_unit_manifest_sha256
+            ),
+            logical_unit_count=args.logical_unit_count,
+            active_plan_sha256=args.active_plan_sha256,
+            created_at=now,
+        )
+        path = write_campaign_state(previous, root)
+        if args.phase == CampaignPhase.PLANNED.value:
+            _print({"campaign_state": str(path), "version": 0})
+            return 0
+    phase = CampaignPhase(args.phase)
+    completed_sha = args.completed_unit_manifest_sha256 or None
+    state = transition_campaign_state(
+        previous,
+        phase=phase,
+        completed_unit_count=args.completed_unit_count,
+        completed_unit_manifest_sha256=completed_sha,
+        pending_unit_count=args.pending_unit_count,
+        active_plan_sha256=args.active_plan_sha256 or None,
+        verified_source_artifacts=tuple(args.verified_source_artifact),
+        active_attempt_ids=tuple(args.active_attempt_id),
+        wave=args.wave,
+        hard_failure_reason=args.hard_failure_reason or None,
+        created_at=now,
+    )
+    path = write_campaign_state(state, root)
+    _print(
+        {
+            "campaign_state": str(path),
+            "phase": state.phase.value,
+            "version": state.version,
+        }
+    )
+    return 0
+
+
+def cmd_github_recovery_loop(args: argparse.Namespace) -> int:
+    require_github_execution("github recovery-loop")
+    spec = _load_spec(args.spec)
+    result = build_recovery_loop_from_paths(
+        Path(args.shard_plan),
+        tuple(Path(path) for path in args.attempt),
+        tuple(Path(path) for path in args.checkpoint),
+        Path(args.spec),
+        current_wave=args.current_wave,
+        max_waves=args.max_waves,
+    )
+    paths = write_recovery_loop(result, Path(args.output_dir))
+    state_root = Path(args.state_root)
+    previous = resume_campaign_state(
+        state_root,
+        campaign_id=str(spec.identity["campaign_id"]),
+    )
+    phase_by_status = {
+        RecoveryLoopStatus.RETRY: CampaignPhase.RECOVERING,
+        RecoveryLoopStatus.REPLAN: CampaignPhase.REPLANNING,
+        RecoveryLoopStatus.COMPLETE: CampaignPhase.READY_TO_MERGE,
+        RecoveryLoopStatus.BLOCKED_HARD_FAILURE: (
+            CampaignPhase.BLOCKED_HARD_FAILURE
+        ),
+        RecoveryLoopStatus.BUDGET_EXHAUSTED: (
+            CampaignPhase.BLOCKED_HARD_FAILURE
+        ),
+    }
+    next_state = transition_campaign_state(
+        previous,
+        phase=phase_by_status[result.status],
+        active_attempt_ids=tuple(
+            item.next_attempt_id
+            for item in result.plan.decisions
+            if item.next_attempt_id is not None
+        ),
+        wave=(
+            result.current_wave
+            if result.next_wave is None
+            else result.next_wave
+        ),
+        hard_failure_reason=(
+            ",".join(result.reason_codes)
+            if result.reason_codes
+            else None
+        ),
+        created_at=_command_now(args),
+    )
+    state_path = write_campaign_state(next_state, state_root)
+    _print(
+        {
+            "paths": [str(path) for path in paths],
+            "campaign_state": str(state_path),
+            "status": result.status.value,
+            "next_wave": result.next_wave,
+            "retry_count": result.retry_count,
+        }
+    )
+    return 0
+
+
+def _load_operational_overrides(raw: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    path = Path(raw)
+    payload = (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.is_file()
+        else json.loads(raw)
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("operational overrides must be a JSON object")
+    return payload
+
+
+def cmd_github_replan(args: argparse.Namespace) -> int:
+    require_github_execution("github replan")
+    spec = _load_spec(args.spec)
+    root = Path(args.state_root)
+    previous = resume_campaign_state(
+        root,
+        campaign_id=str(spec.identity["campaign_id"]),
+    )
+    state = replan_campaign_state(
+        previous,
+        new_plan_sha256=args.new_plan_sha256,
+        logical_unit_manifest_sha256=(
+            args.logical_unit_manifest_sha256
+        ),
+        completed_unit_manifest_sha256=(
+            args.completed_unit_manifest_sha256 or None
+        ),
+        operational_overrides=_load_operational_overrides(
+            args.operational_overrides
+        ),
+        created_at=_command_now(args),
+    )
+    state_path = write_campaign_state(state, root)
+    descriptor = _write_json(
+        Path(args.output_dir) / "replan.json",
+        {
+            "campaign_state_sha256": state.state_sha256,
+            "compute_scheduled": state.compute_scheduled,
+            "logical_unit_manifest_sha256": (
+                state.logical_unit_manifest_sha256
+            ),
+            "completed_unit_manifest_sha256": (
+                state.completed_unit_manifest_sha256
+            ),
+            "new_plan_sha256": state.active_plan_sha256,
+            "operational_overrides": state.operational_overrides,
+        },
+    )
+    _print(
+        {
+            "campaign_state": str(state_path),
+            "replan": str(descriptor),
+        }
+    )
+    return 0
+
+
+def cmd_github_merge_only(args: argparse.Namespace) -> int:
+    require_github_execution("github merge-only")
+    spec = _load_spec(args.spec)
+    root = Path(args.state_root)
+    previous = resume_campaign_state(
+        root,
+        campaign_id=str(spec.identity["campaign_id"]),
+    )
+    sources = tuple(args.source_artifact)
+    state = begin_merge_only(
+        previous,
+        source_artifacts=sources,
+        created_at=_command_now(args),
+    )
+    state_path = write_campaign_state(state, root)
+    descriptor = _write_json(
+        Path(args.output_dir) / "merge_only_plan.json",
+        {
+            "campaign_state_sha256": state.state_sha256,
+            "source_artifacts": state.verified_source_artifacts,
+            "compute_scheduled": False,
+            "merge_only": True,
+        },
+    )
+    _print(
+        {
+            "campaign_state": str(state_path),
+            "merge_only_plan": str(descriptor),
+        }
+    )
+    return 0
+
+
 def register(subparsers, parent_parser=None) -> None:
     parser = subparsers.add_parser(
         "github",
@@ -859,6 +1096,76 @@ def register(subparsers, parent_parser=None) -> None:
     )
     guardrail.add_argument("--now", default="")
     guardrail.set_defaults(func=cmd_github_guardrail_check)
+
+    campaign = commands.add_parser("campaign-update")
+    campaign.add_argument("--spec", required=True)
+    campaign.add_argument("--state-root", required=True)
+    campaign.add_argument(
+        "--phase",
+        choices=tuple(item.value for item in CampaignPhase),
+        required=True,
+    )
+    campaign.add_argument("--logical-unit-manifest-sha256", default="")
+    campaign.add_argument("--logical-unit-count", type=int, default=0)
+    campaign.add_argument("--active-plan-sha256", default="")
+    campaign.add_argument("--completed-unit-manifest-sha256", default="")
+    campaign.add_argument("--completed-unit-count", type=int)
+    campaign.add_argument("--pending-unit-count", type=int)
+    campaign.add_argument(
+        "--verified-source-artifact",
+        action="append",
+        default=[],
+    )
+    campaign.add_argument(
+        "--active-attempt-id",
+        action="append",
+        default=[],
+    )
+    campaign.add_argument("--wave", type=int)
+    campaign.add_argument("--hard-failure-reason", default="")
+    campaign.add_argument("--created-at", default="")
+    campaign.set_defaults(func=cmd_github_campaign_update)
+
+    recovery_loop = commands.add_parser("recovery-loop")
+    recovery_loop.add_argument("--spec", required=True)
+    recovery_loop.add_argument("--shard-plan", required=True)
+    recovery_loop.add_argument("--attempt", action="append", default=[])
+    recovery_loop.add_argument("--checkpoint", action="append", default=[])
+    recovery_loop.add_argument("--state-root", required=True)
+    recovery_loop.add_argument("--output-dir", required=True)
+    recovery_loop.add_argument("--current-wave", type=int, default=0)
+    recovery_loop.add_argument("--max-waves", type=int, default=4)
+    recovery_loop.add_argument("--created-at", default="")
+    recovery_loop.set_defaults(func=cmd_github_recovery_loop)
+
+    replan = commands.add_parser("replan")
+    replan.add_argument("--spec", required=True)
+    replan.add_argument("--state-root", required=True)
+    replan.add_argument("--new-plan-sha256", required=True)
+    replan.add_argument(
+        "--logical-unit-manifest-sha256",
+        required=True,
+    )
+    replan.add_argument(
+        "--completed-unit-manifest-sha256",
+        default="",
+    )
+    replan.add_argument("--operational-overrides", default="{}")
+    replan.add_argument("--output-dir", required=True)
+    replan.add_argument("--created-at", default="")
+    replan.set_defaults(func=cmd_github_replan)
+
+    merge_only = commands.add_parser("merge-only")
+    merge_only.add_argument("--spec", required=True)
+    merge_only.add_argument("--state-root", required=True)
+    merge_only.add_argument(
+        "--source-artifact",
+        action="append",
+        required=True,
+    )
+    merge_only.add_argument("--output-dir", required=True)
+    merge_only.add_argument("--created-at", default="")
+    merge_only.set_defaults(func=cmd_github_merge_only)
 
 
 def script_main(command: str, argv: list[str] | None = None) -> int:

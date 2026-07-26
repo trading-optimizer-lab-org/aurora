@@ -26,6 +26,7 @@ from aurora.infra.github_performance.contracts import (
     ShardDefinition,
     ShardPlan,
     TerminalState,
+    FrozenModel,
     canonical_sha256,
     deep_thaw_json,
 )
@@ -47,6 +48,25 @@ class FailureClass(str, Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+class RecoveryLoopStatus(str, Enum):
+    RETRY = "retry"
+    REPLAN = "replan"
+    COMPLETE = "complete"
+    BLOCKED_HARD_FAILURE = "blocked_hard_failure"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+
+
+class RecoveryLoopResult(FrozenModel):
+    status: RecoveryLoopStatus
+    current_wave: int
+    next_wave: int | None
+    retry_count: int
+    terminal_shard_count: int
+    replan_shard_ids: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+    plan: RecoveryPlan
 
 
 TRANSIENT_CLASSES = frozenset(
@@ -310,6 +330,115 @@ def build_recovery_plan(
     )
 
 
+def build_recovery_loop(
+    shards: Iterable[ShardDefinition],
+    attempts: Sequence[AttemptManifest],
+    checkpoints: Sequence[CheckpointManifest],
+    retry_policy: Mapping[str, int],
+    *,
+    current_wave: int,
+    max_waves: int,
+    checkpoint_audit: Sequence[CheckpointAuditRecord] = (),
+) -> RecoveryLoopResult:
+    """Plan the next bounded recovery wave from all immutable evidence."""
+
+    if current_wave < 0:
+        raise ValueError("current_wave must be non-negative")
+    if max_waves < 1:
+        raise ValueError("max_waves must be positive")
+    ordered_shards = tuple(sorted(shards, key=lambda item: item.shard_id))
+    plan = build_recovery_plan(
+        ordered_shards,
+        attempts,
+        checkpoints,
+        retry_policy,
+        checkpoint_audit,
+    )
+    terminal_states = {
+        TerminalState.COMPLETED,
+        TerminalState.RIGHT_CENSORED,
+        TerminalState.UNSUPPORTED,
+    }
+    terminal_shards = {
+        attempt.shard_id
+        for attempt in attempts
+        if attempt.state in terminal_states
+    }
+    retry_count = len(plan.retry_matrix_a) + len(plan.retry_matrix_b)
+    replans = tuple(
+        decision.shard_id
+        for decision in plan.decisions
+        if decision.action == "replan"
+    )
+    do_not_retry = tuple(
+        decision
+        for decision in plan.decisions
+        if decision.action == "do_not_retry"
+    )
+    if len(terminal_shards) == len(ordered_shards):
+        status = RecoveryLoopStatus.COMPLETE
+        next_wave = None
+        reasons: tuple[str, ...] = ()
+    elif replans:
+        status = RecoveryLoopStatus.REPLAN
+        next_wave = None
+        reasons = tuple(
+            dict.fromkeys(
+                decision.reason_code
+                for decision in plan.decisions
+                if decision.action == "replan"
+            )
+        )
+    elif retry_count and current_wave + 1 < max_waves:
+        status = RecoveryLoopStatus.RETRY
+        next_wave = current_wave + 1
+        reasons = ()
+    elif retry_count:
+        status = RecoveryLoopStatus.BUDGET_EXHAUSTED
+        next_wave = None
+        retry_count = 0
+        reasons = ("RECOVERY_WAVE_BUDGET_EXHAUSTED",)
+        payload = deep_thaw_json(plan)
+        payload.pop("plan_sha256", None)
+        payload["retry_matrix_a"] = []
+        payload["retry_matrix_b"] = []
+        payload["has_retry_matrix_a"] = False
+        payload["has_retry_matrix_b"] = False
+        plan = RecoveryPlan(
+            **payload,
+            plan_sha256=canonical_sha256(payload),
+        )
+    elif do_not_retry and all(
+        decision.reason_code == "RETRY_BUDGET_EXHAUSTED"
+        for decision in do_not_retry
+    ):
+        status = RecoveryLoopStatus.BUDGET_EXHAUSTED
+        next_wave = None
+        reasons = ("RETRY_BUDGET_EXHAUSTED",)
+    elif do_not_retry:
+        status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+        next_wave = None
+        reasons = tuple(
+            dict.fromkeys(
+                decision.reason_code for decision in do_not_retry
+            )
+        )
+    else:
+        status = RecoveryLoopStatus.BLOCKED_HARD_FAILURE
+        next_wave = None
+        reasons = ("RECOVERY_EVIDENCE_INCOMPLETE",)
+    return RecoveryLoopResult(
+        status=status,
+        current_wave=current_wave,
+        next_wave=next_wave,
+        retry_count=retry_count,
+        terminal_shard_count=len(terminal_shards),
+        replan_shard_ids=replans,
+        reason_codes=reasons,
+        plan=plan,
+    )
+
+
 def _atomic_json(path: Path, payload: Any) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -480,3 +609,74 @@ def build_recovery_plan_from_paths(
         retry_policy,
         checkpoint_audit,
     )
+
+
+def build_recovery_loop_from_paths(
+    shard_plan_path: Path,
+    attempt_paths: Sequence[Path],
+    checkpoint_paths: Sequence[Path],
+    spec_path: Path,
+    *,
+    current_wave: int,
+    max_waves: int,
+) -> RecoveryLoopResult:
+    shard_plan = ShardPlan.model_validate_json(
+        Path(shard_plan_path).read_text(encoding="utf-8")
+    )
+    attempts = tuple(
+        attempt
+        for path in attempt_paths
+        for attempt in _load_attempt(Path(path))
+    )
+    checkpoints_list: list[CheckpointManifest] = []
+    checkpoint_audit: list[CheckpointAuditRecord] = []
+    for raw_path in checkpoint_paths:
+        path = Path(raw_path)
+        try:
+            checkpoint = load_checkpoint(path)
+        except CheckpointIntegrityError:
+            checkpoint_audit.append(
+                CheckpointAuditRecord(
+                    checkpoint_ref=path.name,
+                    shard_id=None,
+                    attempt_id=None,
+                    artifact_name=None,
+                    status="rejected",
+                    completed_unit_count=None,
+                    payload_sha256=None,
+                    reason_code="CHECKPOINT_INTEGRITY_ERROR",
+                )
+            )
+        else:
+            checkpoints_list.append(checkpoint)
+    spec = load_github_yaml(Path(spec_path))
+    retry_policy = spec.get("retries", {})
+    if not isinstance(retry_policy, Mapping):
+        raise ValueError("spec.retries must be a mapping")
+    return build_recovery_loop(
+        shard_plan.shards,
+        attempts,
+        tuple(checkpoints_list),
+        retry_policy,
+        current_wave=current_wave,
+        max_waves=max_waves,
+        checkpoint_audit=tuple(checkpoint_audit),
+    )
+
+
+def write_recovery_loop(
+    result: RecoveryLoopResult,
+    output_dir: Path,
+    *,
+    max_output_bytes: int = 262_144,
+) -> tuple[Path, ...]:
+    paths = write_recovery_plan(
+        result.plan,
+        output_dir,
+        max_output_bytes=max_output_bytes,
+    )
+    loop_path = _atomic_json(
+        Path(output_dir) / "recovery_loop.json",
+        result,
+    )
+    return (*paths, loop_path)
