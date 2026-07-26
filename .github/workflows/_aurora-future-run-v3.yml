@@ -1513,19 +1513,119 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
-      - name: Upload sealed pre-verification artifact
+      - name: Upload unsealed scientific stage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.run_label }}-unsealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  collect_timeline:
+    name: Collect GitHub timeline
+    needs: final_merge
+    if: always() && needs.final_merge.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Collect read-only GitHub timing
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/collect_github_run_timeline.py \
+            --spec "${{ inputs.spec_path }}" \
+            --output-dir "$RUNNER_TEMP/timeline"
+      - name: Upload bounded timing evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/timeline
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  seal_final_artifact:
+    name: Seal complete final artifact
+    needs: [final_merge, collect_timeline]
+    if: >-
+      always() &&
+      needs.final_merge.result == 'success' &&
+      needs.collect_timeline.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download unsealed scientific stage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-unsealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+      - name: Download timing evidence before seal
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/final
+      - name: Seal telemetry, traceability, and scientific identity
+        run: |
+          set -euo pipefail
+          aurora github seal-final-artifact \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --root "$RUNNER_TEMP/final"
+      - name: Upload sealed stage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-sealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/final
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
   verify:
-    needs: final_merge
-    if: always() && needs.final_merge.result == 'success'
+    needs: [final_merge, seal_final_artifact]
+    if: >-
+      always() &&
+      needs.final_merge.result == 'success' &&
+      needs.seal_final_artifact.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -1550,7 +1650,7 @@ jobs:
       - name: Download sealed artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.run_label }}-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.run_label }}-sealed-final-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/final
       - name: Download merged campaign state
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1607,54 +1707,9 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
-  collect_timeline:
-    name: Collect GitHub timeline
-    needs: verify
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Download immutable wheelhouse
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
-          path: ${{ runner.temp }}/wheelhouse
-      - name: Restore Aurora runtime
-        uses: ./.github/actions/aurora-runtime-setup
-        with:
-          python-version: "3.12"
-          wheelhouse-path: ${{ runner.temp }}/wheelhouse
-          dependency-lock-path: requirements/github-performance.lock
-      - name: Collect read-only GitHub timing
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python scripts/collect_github_run_timeline.py \
-            --spec "${{ inputs.spec_path }}" \
-            --output-dir "$RUNNER_TEMP/timeline"
-      - name: Upload bounded timing evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/timeline
-          if-no-files-found: warn
-          compression-level: 0
-          retention-days: ${{ inputs.retention_days }}
-
   publish:
     name: Publish final artifact
-    needs: [verify, collect_timeline]
+    needs: verify
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -1665,23 +1720,6 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-verified-stage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/publish
-      - name: Download timing evidence
-        if: needs.verify.result == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ${{ inputs.run_label }}-timeline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/publish
-      - name: Record incomplete timing without touching scientific files
-        if: needs.verify.result == 'success'
-        run: |
-          set -euo pipefail
-          status="$RUNNER_TEMP/publish/performance_telemetry_status.json"
-          if [[ ! -f "$status" ]]; then
-            printf '%s\n' \
-              '{"complete":false,"schema_version":"1","token_serialized":false}' \
-              > "$status"
-          fi
       - name: Publish final reader artifact
         if: needs.verify.result == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

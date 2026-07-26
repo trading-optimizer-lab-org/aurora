@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -22,6 +23,9 @@ from aurora.infra.github_performance.metric_verifier import (
     verify_metric_inputs,
     write_independent_metric_verification,
     write_metric_inputs,
+)
+from aurora.infra.github_performance.benchmark import (
+    scientific_content_identity_from_output,
 )
 from aurora.infra.github_performance.merge_planner import (
     reconcile_attempts,
@@ -216,6 +220,148 @@ def _write_placeholder(path: Path) -> None:
         path.write_bytes(b"placeholder\n")
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _add_mandatory_fixture_outputs(root: Path, spec: RunSpec) -> None:
+    for name in verifier_module.MANDATORY_FINAL_OUTPUTS:
+        path = root / name
+        if not path.exists():
+            _write_placeholder(path)
+    contract = json.loads(
+        (root / "performance_contract.json").read_text(encoding="utf-8")
+    )
+    (root / "environment_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "environment_sha256": contract["environment_sha256"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "deadline_audit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "route_allowed": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "budget_audit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "decision": {
+                    "route_allowed": True,
+                    "evidence_complete": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    timeline = {
+        "schema_version": "1",
+        "complete": True,
+        "workflow_wall_seconds": 10.0,
+        "execution_wall_seconds": 8.0,
+        "observed_peak_parallelism": 1,
+        "requested_parallelism": 1,
+        "estimated_billable_minutes": 1.0,
+    }
+    (root / "timeline_summary.json").write_text(
+        json.dumps(timeline) + "\n",
+        encoding="utf-8",
+    )
+    (root / "performance_telemetry_status.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "complete": True,
+                "token_serialized": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    telemetry_names = (
+        "github_jobs_timeline.parquet",
+        "runtime_breakdown.parquet",
+        "parallelism_timeline.csv",
+        "timeline_summary.json",
+        "performance_telemetry_status.json",
+    )
+    (root / "performance_telemetry_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "files": [
+                    {
+                        "path": name,
+                        "bytes": (root / name).stat().st_size,
+                        "sha256": _sha256(root / name),
+                    }
+                    for name in telemetry_names
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    scientific = root / "result.parquet"
+    scientific_schema = pa.schema(
+        [
+            pa.field("unit_key", pa.string(), nullable=False),
+            pa.field(
+                "unit_output_sha256",
+                pa.string(),
+                nullable=False,
+            ),
+        ],
+        metadata={b"schema_version": b"1"},
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "unit_key": "u1",
+                    "unit_output_sha256": "1" * 64,
+                }
+            ],
+            schema=scientific_schema,
+        ),
+        scientific,
+    )
+    identity = scientific_content_identity_from_output(scientific)
+    (root / "final_merge_summary.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "partial": False,
+                "scientific_output": scientific.name,
+                "scientific_output_partitioned": False,
+                "scientific_output_sha256": _sha256(scientific),
+                "scientific_content_sha256": identity[
+                    "scientific_content_sha256"
+                ],
+                "scientific_content_rows": identity["unit_count"],
+                "independent_metrics_equal": True,
+                "multi_level_merge_verified": True,
+                "locked_opened": False,
+                "locked_rows_accessed": 0,
+                "validation_used_for_selection": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_complete_final_fixture(root: Path) -> RunSpec:
     spec = _resolved_fixture(root)
     reconciliation = reconcile_attempts(
@@ -232,10 +378,7 @@ def _write_complete_final_fixture(root: Path) -> RunSpec:
     )
     _write_safe_runtime_audits(root, spec)
     _write_safe_metric_evidence(root)
-    for name in verifier_module.MANDATORY_FINAL_OUTPUTS:
-        path = root / name
-        if not path.exists():
-            _write_placeholder(path)
+    _add_mandatory_fixture_outputs(root, spec)
     return spec
 
 
@@ -329,29 +472,7 @@ def test_final_verifier_detects_post_manifest_tampering(
 def test_final_verifier_accepts_complete_untampered_artifact(
     tmp_path: Path,
 ) -> None:
-    spec = _resolved_fixture(tmp_path)
-    reconciliation = reconcile_attempts(
-        {"u1"},
-        [completed_unit("u1", "a1", "1" * 64)],
-    )
-    write_reconciliation(
-        reconciliation,
-        tmp_path / "unit_reconciliation.parquet",
-    )
-    traceability = build_requirements_traceability(
-        spec,
-        _complete_evidence(),
-    )
-    write_requirements_traceability(
-        traceability,
-        tmp_path / "requirements_traceability.csv",
-    )
-    (tmp_path / "result.json").write_text(
-        '{"schema_version":"1","value":1}\n',
-        encoding="utf-8",
-    )
-    _write_safe_runtime_audits(tmp_path, spec)
-    _write_safe_metric_evidence(tmp_path)
+    spec = _write_complete_final_fixture(tmp_path)
     write_final_artifact_manifest(
         tmp_path,
         tmp_path / "final_artifact_manifest.json",
@@ -400,6 +521,7 @@ def test_final_verifier_reads_streaming_reconciliation_footer(
     )
     _write_safe_runtime_audits(tmp_path, spec)
     _write_safe_metric_evidence(tmp_path)
+    _add_mandatory_fixture_outputs(tmp_path, spec)
     write_final_artifact_manifest(
         tmp_path,
         tmp_path / "final_artifact_manifest.json",

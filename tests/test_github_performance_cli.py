@@ -129,6 +129,10 @@ def test_phase_commands_are_registered() -> None:
             "--plan-root r --contract-root c --output-dir o",
         ),
         (
+            "seal-final-artifact",
+            "--spec x --root o",
+        ),
+        (
             "guardrail-check",
             "--spec x --projected-wall-seconds 10 "
             "--projected-billable-minutes 20 --output-dir o",
@@ -256,6 +260,10 @@ def test_campaign_update_preserves_verified_sources_when_omitted(
             {"spec": "missing", "shard_plan": "missing"},
         ),
         (cmd_github.cmd_github_final_merge, {"spec": "missing"}),
+        (
+            cmd_github.cmd_github_seal_final_artifact,
+            {"spec": "missing"},
+        ),
         (cmd_github.cmd_github_verify, {"spec": "missing"}),
         (cmd_github.cmd_github_guardrail_check, {"spec": "missing"}),
         (cmd_github.cmd_github_campaign_update, {"spec": "missing"}),

@@ -32,6 +32,8 @@ from aurora.infra.github_performance.profiles import (
 )
 from aurora.infra.github_performance.guardrails import (
     enforce_plan_guardrails,
+    write_budget_audit,
+    write_deadline_audit,
 )
 from aurora.infra.github_performance.shard_planner import (
     equal_count,
@@ -579,15 +581,28 @@ def build_execution_plan(
         + pilot.merge_per_shard_seconds * decision.selected_jobs
         + pilot.verify_seconds
     )
-    enforce_plan_guardrails(
-        spec,
-        now=now or datetime.now(timezone.utc),
-        projected_wall_seconds=decision.predicted_seconds,
-        projected_billable_minutes=projected_billable_seconds / 60.0,
-        cost_per_billable_minute=cost_per_billable_minute,
-        checkpoint_margin_seconds=checkpoint_margin_seconds,
-        consumed_billable_minutes=consumed_billable_minutes,
-        committed_billable_minutes=committed_billable_minutes,
+    deadline_decision, budget_ledger, budget_decision = (
+        enforce_plan_guardrails(
+            spec,
+            now=now or datetime.now(timezone.utc),
+            projected_wall_seconds=decision.predicted_seconds,
+            projected_billable_minutes=(
+                projected_billable_seconds / 60.0
+            ),
+            cost_per_billable_minute=cost_per_billable_minute,
+            checkpoint_margin_seconds=checkpoint_margin_seconds,
+            consumed_billable_minutes=consumed_billable_minutes,
+            committed_billable_minutes=committed_billable_minutes,
+        )
+    )
+    write_deadline_audit(
+        deadline_decision,
+        root / "deadline_audit.json",
+    )
+    write_budget_audit(
+        budget_ledger,
+        budget_decision,
+        root / "budget_audit.json",
     )
     return ExecutionPlan(
         job_count=decision,

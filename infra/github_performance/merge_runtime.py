@@ -34,6 +34,9 @@ from aurora.infra.github_performance.audits import (
     write_required_audits,
     write_runtime_access_ledger,
 )
+from aurora.infra.github_performance.benchmark import (
+    scientific_content_identity_from_output,
+)
 from aurora.infra.github_performance.merge_planner import (
     SHARD_ATTEMPT_SCHEMA,
     UNIT_ATTEMPT_SCHEMA,
@@ -48,11 +51,6 @@ from aurora.infra.github_performance.metric_verifier import (
     write_metric_inputs,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
-from aurora.infra.github_performance.verifier import (
-    build_requirements_traceability,
-    write_final_artifact_manifest,
-    write_requirements_traceability,
-)
 from aurora.infra.github_performance.workload import GithubWorkload
 
 
@@ -1069,6 +1067,8 @@ def _copy_contract_files(
         "merge_plan.json",
         "recovery_plan.json",
         "checkpoint_audit.parquet",
+        "budget_audit.json",
+        "deadline_audit.json",
     )
     for name in names:
         matches = [
@@ -1182,6 +1182,9 @@ def final_merge(
         raise PhysicalMergeError("final scientific merge output is invalid")
     scientific_output_name = scientific_output.name
     scientific_output_sha256 = sha256_file(scientific_output)
+    scientific_content_identity = (
+        scientific_content_identity_from_output(scientific_output)
+    )
     scientific_output_partitioned = False
     if scientific_output.stat().st_size > merge_plan.partition_target_bytes:
         scientific_transport = _write_transport(
@@ -1269,26 +1272,7 @@ def final_merge(
         },
     )
     write_required_audits(root, audits)
-    evidence: Mapping[str, Any] = {
-        "github_only": audits.runtime.github_only_run,
-        "standard_runner_only": audits.runtime.standard_runner_only,
-        "matrix_job_ceiling_respected": (
-            int(spec.performance["matrix_max_jobs"]) <= 256
-            and int(spec.performance["planner_max_jobs"]) <= 360
-        ),
-        "locked_opened": audits.policy.locked_opened,
-        "validation_used_for_selection": (
-            audits.policy.validation_used_for_selection
-        ),
-        "reconciliation_complete": not reconciliation.partial,
-        "artifact_hashes_valid": True,
-        "independent_metrics_equal": metric_verification.passed,
-    }
-    write_requirements_traceability(
-        build_requirements_traceability(spec, evidence),
-        root / "requirements_traceability.csv",
-    )
-    _atomic_json(
+    return _atomic_json(
         root / "final_merge_summary.json",
         {
             "schema_version": "1",
@@ -1300,6 +1284,14 @@ def final_merge(
             "failed_technical": reconciliation.failed_technical,
             "scientific_output": scientific_output_name,
             "scientific_output_sha256": scientific_output_sha256,
+            "scientific_content_sha256": (
+                scientific_content_identity[
+                    "scientific_content_sha256"
+                ]
+            ),
+            "scientific_content_rows": (
+                scientific_content_identity["unit_count"]
+            ),
             "scientific_output_partitioned": (
                 scientific_output_partitioned
             ),
@@ -1329,8 +1321,4 @@ def final_merge(
                 == merge_plan.plan_sha256
             ),
         },
-    )
-    return write_final_artifact_manifest(
-        root,
-        root / "final_artifact_manifest.json",
     )

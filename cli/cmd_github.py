@@ -80,6 +80,7 @@ from aurora.infra.github_performance.shard_planner import (
 )
 from aurora.infra.github_performance.telemetry import ResourceMonitor
 from aurora.infra.github_performance.verifier import (
+    seal_final_artifact,
     verify_final_artifact,
     write_campaign_closure,
     write_verification_report,
@@ -716,7 +717,17 @@ def cmd_github_final_merge(args: argparse.Namespace) -> int:
             else None
         ),
     )
-    _print({"final_artifact_manifest": str(path)})
+    _print({"final_merge_summary": str(path), "sealed": False})
+    return 0
+
+
+def cmd_github_seal_final_artifact(
+    args: argparse.Namespace,
+) -> int:
+    require_github_execution("github seal-final-artifact")
+    spec = _load_spec(args.spec)
+    path = seal_final_artifact(Path(args.root), spec)
+    _print({"final_artifact_manifest": str(path), "sealed": True})
     return 0
 
 
@@ -1258,6 +1269,11 @@ def register(subparsers, parent_parser=None) -> None:
     final_merge_command.add_argument("--recovery-root")
     final_merge_command.add_argument("--output-dir", required=True)
     final_merge_command.set_defaults(func=cmd_github_final_merge)
+
+    seal_final = commands.add_parser("seal-final-artifact")
+    seal_final.add_argument("--spec", required=True)
+    seal_final.add_argument("--root", required=True)
+    seal_final.set_defaults(func=cmd_github_seal_final_artifact)
 
     verify = commands.add_parser("verify")
     verify.add_argument("--spec", required=True)

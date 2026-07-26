@@ -69,14 +69,33 @@ def _json(path: Path) -> dict[str, Any]:
 def _scientific_hashes(root: Path) -> dict[str, str]:
     summary = _json(root / "final_merge_summary.json")
     output = root / str(summary["scientific_output"])
-    if bool(summary.get("scientific_output_partitioned", False)):
+    return scientific_hashes_from_output(
+        output,
+        root=root,
+        partitioned=bool(
+            summary.get("scientific_output_partitioned", False)
+        ),
+    )
+
+
+def scientific_hashes_from_output(
+    output: Path,
+    *,
+    root: Path | None = None,
+    partitioned: bool = False,
+) -> dict[str, str]:
+    """Read canonical per-unit scientific identities from one output."""
+
+    output = Path(output)
+    artifact_root = Path(root) if root is not None else output.parent
+    if partitioned:
         transport = PartitionedTransport.model_validate_json(
             output.read_text(encoding="utf-8")
         )
         table = pa.concat_tables(
             [
                 pq.read_table(
-                    root / part.relative_path,
+                    artifact_root / part.relative_path,
                     columns=["unit_key", "unit_output_sha256"],
                 )
                 for part in transport.parts
@@ -97,6 +116,52 @@ def _scientific_hashes(root: Path) -> dict[str, str]:
             "scientific output contains duplicate unit keys"
         )
     return hashes
+
+
+def scientific_content_identity_from_output(
+    output: Path,
+    *,
+    root: Path | None = None,
+    partitioned: bool = False,
+) -> dict[str, Any]:
+    """Hash only canonical unit identities, never operational provenance."""
+
+    hashes = scientific_hashes_from_output(
+        output,
+        root=root,
+        partitioned=partitioned,
+    )
+    units = [
+        {
+            "unit_key": unit_key,
+            "unit_output_sha256": hashes[unit_key],
+        }
+        for unit_key in sorted(hashes)
+    ]
+    return {
+        "schema_version": "1",
+        "unit_count": len(units),
+        "scientific_content_sha256": canonical_sha256(
+            {
+                "schema_version": "1",
+                "units": units,
+            }
+        ),
+    }
+
+
+def scientific_content_identity(root: Path) -> dict[str, Any]:
+    """Recompute the logical identity declared by a final artifact."""
+
+    artifact_root = Path(root)
+    summary = _json(artifact_root / "final_merge_summary.json")
+    return scientific_content_identity_from_output(
+        artifact_root / str(summary["scientific_output"]),
+        root=artifact_root,
+        partitioned=bool(
+            summary.get("scientific_output_partitioned", False)
+        ),
+    )
 
 
 def _ratio(numerator: float, denominator: float) -> float:

@@ -10,6 +10,7 @@ import pytest
 from aurora.infra.github_performance.benchmark import (
     ScientificOutputMismatch,
     compare_runs,
+    scientific_content_identity_from_output,
     write_benchmark_outputs,
 )
 from aurora.infra.github_performance.preflight import (
@@ -125,6 +126,40 @@ def test_compare_requires_identical_scientific_outputs(
     )
     with pytest.raises(ScientificOutputMismatch):
         compare_runs(baseline, optimized)
+
+
+def test_scientific_content_identity_ignores_operational_provenance(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.parquet"
+    second = tmp_path / "second.parquet"
+    changed = tmp_path / "changed.parquet"
+    for path, attempt_id, unit_hash in (
+        (first, "attempt-a", "a" * 64),
+        (second, "attempt-b", "a" * 64),
+        (changed, "attempt-a", "b" * 64),
+    ):
+        pq.write_table(
+            pa.table(
+                {
+                    "unit_key": ["u001"],
+                    "unit_output_sha256": [unit_hash],
+                    "source_attempt_id": [attempt_id],
+                }
+            ),
+            path,
+        )
+
+    first_identity = scientific_content_identity_from_output(first)
+    second_identity = scientific_content_identity_from_output(second)
+    changed_identity = scientific_content_identity_from_output(changed)
+
+    assert first.read_bytes() != second.read_bytes()
+    assert first_identity == second_identity
+    assert (
+        first_identity["scientific_content_sha256"]
+        != changed_identity["scientific_content_sha256"]
+    )
 
 
 def test_compare_reports_speed_only_after_equivalence(
