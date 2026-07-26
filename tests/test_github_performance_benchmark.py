@@ -228,6 +228,13 @@ def test_compare_does_not_claim_speed_for_different_environment(
 def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     workflow = load_github_yaml(WORKFLOW)
     assert set(workflow["on"]) == {"workflow_dispatch"}
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert inputs["workload_family"]["options"] == [
+        "candidate_sweep",
+        "event_study",
+        "robustness",
+    ]
+    assert inputs["forced_job_count"]["default"] == 0
     assert workflow["permissions"] == {
         "contents": "read",
         "actions": "read",
@@ -237,6 +244,12 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     assert jobs["setup_benchmark"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["needs"] == "prime_runtime"
     assert jobs["optimized"]["with"]["execution_mode"] == "optimized"
+    optimized_text = str(jobs["optimized"]["with"])
+    for family in ("candidate_sweep", "event_study", "robustness"):
+        assert family in optimized_text
+    assert "inputs.forced_job_count" in str(
+        jobs["optimized"]["with"]["forced_job_count"]
+    )
     shared_wheelhouse = jobs["optimized"]["with"][
         "wheelhouse_artifact_name"
     ]
@@ -255,6 +268,7 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     )
     forced = jobs["baseline"]["with"]["forced_job_count"]
     assert "needs.optimized.outputs.selected_jobs" in str(forced)
+    assert "inputs.forced_job_count" in str(forced)
     assert jobs["compare"]["needs"] == [
         "optimized",
         "baseline",
