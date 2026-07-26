@@ -649,6 +649,12 @@ def build_terminal_unit_evidence_from_paths(
     }
     for raw_path in unit_attempt_paths:
         path = Path(raw_path)
+        observed_sha256 = sha256_file(path)
+        if not any(
+            attempt.unit_attempts_sha256 == observed_sha256
+            for attempt in attempts
+        ):
+            raise ValueError("unit attempt manifest hash mismatch")
         rows = tuple(
             UnitAttemptRecord.model_validate(row)
             for row in pq.read_table(path).to_pylist()
@@ -669,7 +675,7 @@ def build_terminal_unit_evidence_from_paths(
             )
         if manifest.unit_attempts_sha256 is None:
             raise ValueError("shard manifest does not bind unit attempts")
-        if sha256_file(path) != manifest.unit_attempts_sha256:
+        if observed_sha256 != manifest.unit_attempts_sha256:
             raise ValueError("unit attempt manifest hash mismatch")
         for row in rows:
             if row.state in terminal_states:
