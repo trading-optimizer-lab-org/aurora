@@ -1,0 +1,83 @@
+name: Aurora bounded merge level
+description: Merge one immutable bounded node without nested workflows
+
+inputs:
+  group-id:
+    description: Exact merge-plan group identifier
+    required: true
+  input-artifact-pattern:
+    description: Artifact pattern for direct children only
+    required: true
+  output-artifact:
+    description: Immutable output artifact for this node
+    required: true
+  workload:
+    description: Registered Aurora workload family
+    required: true
+  retention-days:
+    description: Artifact retention period
+    required: true
+  wheelhouse-artifact-name:
+    description: Immutable wheelhouse artifact
+    required: true
+  contract-artifact-name:
+    description: Frozen scientific contract artifact
+    required: true
+  plan-artifact-name:
+    description: Immutable execution and merge plan artifact
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download immutable wheelhouse
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.wheelhouse-artifact-name }}
+        path: ${{ runner.temp }}/wheelhouse
+    - name: Restore Aurora runtime
+      uses: ./.github/actions/aurora-runtime-setup
+      with:
+        python-version: "3.12"
+        wheelhouse-path: ${{ runner.temp }}/wheelhouse
+        dependency-lock-path: requirements/github-performance.lock
+    - name: Download frozen contract
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.contract-artifact-name }}
+        path: ${{ runner.temp }}/contract
+    - name: Download immutable merge plan
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: ${{ inputs.plan-artifact-name }}
+        path: ${{ runner.temp }}/plan
+    - name: Download direct children only
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: ${{ inputs.input-artifact-pattern }}
+        path: ${{ runner.temp }}/children
+        merge-multiple: false
+    - name: Merge immutable bounded node
+      shell: bash
+      env:
+        WORKLOAD: ${{ inputs.workload }}
+        GROUP_ID: ${{ inputs.group-id }}
+      run: |
+        set -euo pipefail
+        aurora github merge-plan-group \
+          --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
+          --workload "$WORKLOAD" \
+          --shard-plan "$RUNNER_TEMP/plan/balanced_shard_plan.json" \
+          --merge-plan "$RUNNER_TEMP/plan/merge_plan.json" \
+          --group-id "$GROUP_ID" \
+          --inputs-root "$RUNNER_TEMP/children" \
+          --output-dir "$RUNNER_TEMP/node"
+    - name: Upload immutable merge node
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ inputs.output-artifact }}
+        path: ${{ runner.temp }}/node
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: ${{ inputs.retention-days }}

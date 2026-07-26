@@ -1680,15 +1680,29 @@ jobs:
         needs.recovery_plan_1.outputs.status == 'complete' ||
         needs.recovery_plan.outputs.status == 'complete'
       )
-    uses: ./.github/workflows/_aurora-merge-level-v3.yml
-    with:
-      matrix_json: ${{ needs.plan.outputs.merge_level_0_matrix }}
-      run_label: ${{ inputs.run_label }}
-      workload: ${{ inputs.workload }}
-      retention_days: ${{ inputs.retention_days }}
-      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.plan.outputs.merge_level_0_matrix) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Merge level 0 node
+        uses: ./.github/actions/aurora-merge-level
+        with:
+          group-id: ${{ matrix.group_id }}
+          input-artifact-pattern: ${{ matrix.input_artifact_pattern }}
+          output-artifact: ${{ matrix.output_artifact }}
+          workload: ${{ inputs.workload }}
+          retention-days: ${{ inputs.retention_days }}
+          wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
 
   merge_level_1:
     needs: [plan, merge_level_0]
@@ -1697,15 +1711,29 @@ jobs:
       needs.plan.result == 'success' &&
       needs.merge_level_0.result == 'success' &&
       needs.plan.outputs.merge_level_1_count != '0'
-    uses: ./.github/workflows/_aurora-merge-level-v3.yml
-    with:
-      matrix_json: ${{ needs.plan.outputs.merge_level_1_matrix }}
-      run_label: ${{ inputs.run_label }}
-      workload: ${{ inputs.workload }}
-      retention_days: ${{ inputs.retention_days }}
-      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.plan.outputs.merge_level_1_matrix) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Merge level 1 node
+        uses: ./.github/actions/aurora-merge-level
+        with:
+          group-id: ${{ matrix.group_id }}
+          input-artifact-pattern: ${{ matrix.input_artifact_pattern }}
+          output-artifact: ${{ matrix.output_artifact }}
+          workload: ${{ inputs.workload }}
+          retention-days: ${{ inputs.retention_days }}
+          wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
 
   merge_level_2:
     needs: [plan, merge_level_1]
@@ -1714,15 +1742,29 @@ jobs:
       needs.plan.result == 'success' &&
       needs.merge_level_1.result == 'success' &&
       needs.plan.outputs.merge_level_2_count != '0'
-    uses: ./.github/workflows/_aurora-merge-level-v3.yml
-    with:
-      matrix_json: ${{ needs.plan.outputs.merge_level_2_matrix }}
-      run_label: ${{ inputs.run_label }}
-      workload: ${{ inputs.workload }}
-      retention_days: ${{ inputs.retention_days }}
-      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.plan.outputs.merge_level_2_matrix) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Merge level 2 node
+        uses: ./.github/actions/aurora-merge-level
+        with:
+          group-id: ${{ matrix.group_id }}
+          input-artifact-pattern: ${{ matrix.input_artifact_pattern }}
+          output-artifact: ${{ matrix.output_artifact }}
+          workload: ${{ inputs.workload }}
+          retention-days: ${{ inputs.retention_days }}
+          wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
 
   merge_level_3:
     needs: [plan, merge_level_2]
@@ -1731,15 +1773,29 @@ jobs:
       needs.plan.result == 'success' &&
       needs.merge_level_2.result == 'success' &&
       needs.plan.outputs.merge_level_3_count != '0'
-    uses: ./.github/workflows/_aurora-merge-level-v3.yml
-    with:
-      matrix_json: ${{ needs.plan.outputs.merge_level_3_matrix }}
-      run_label: ${{ inputs.run_label }}
-      workload: ${{ inputs.workload }}
-      retention_days: ${{ inputs.retention_days }}
-      wheelhouse_artifact_name: ${{ inputs.wheelhouse_artifact_name || format('{0}-wheelhouse-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      contract_artifact_name: ${{ format('{0}-contract-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
-      plan_artifact_name: ${{ format('{0}-plan-{1}-{2}', inputs.run_label, github.run_id, github.run_attempt) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix: ${{ fromJSON(needs.plan.outputs.merge_level_3_matrix) }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Merge level 3 node
+        uses: ./.github/actions/aurora-merge-level
+        with:
+          group-id: ${{ matrix.group_id }}
+          input-artifact-pattern: ${{ matrix.input_artifact_pattern }}
+          output-artifact: ${{ matrix.output_artifact }}
+          workload: ${{ inputs.workload }}
+          retention-days: ${{ inputs.retention_days }}
+          wheelhouse-artifact-name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          contract-artifact-name: ${{ inputs.run_label }}-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          plan-artifact-name: ${{ inputs.run_label }}-plan-${{ github.run_id }}-${{ github.run_attempt }}
 
   final_merge:
     needs: [plan, freeze_contract, merge_level_0, merge_level_1, merge_level_2, merge_level_3]
