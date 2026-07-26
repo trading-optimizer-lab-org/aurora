@@ -17,6 +17,16 @@ on:
         required: false
         default: 0
         type: number
+      performance_profile_run_id:
+        description: Prior benchmark run containing an exact profile
+        required: false
+        default: ""
+        type: string
+      performance_profile_artifact_name:
+        description: Prior benchmark artifact containing the profile
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -122,6 +132,7 @@ jobs:
           python scripts/benchmark_github_performance_environment.py \
             --requirements-lock requirements/github-performance.lock \
             --wheelhouse "$RUNNER_TEMP/wheelhouse" \
+            --cold-repetitions 3 \
             --warm-repetitions 3 \
             --output "$RUNNER_TEMP/setup-benchmark/environment_setup_benchmark.json"
       - name: Upload environment setup benchmark
@@ -157,6 +168,8 @@ jobs:
         ${{ fromJSON(format('{0}', inputs.forced_job_count)) }}
       prepared_artifact_name: github-performance-benchmark-${{ inputs.workload_family }}-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
       wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+      performance_profile_run_id: ${{ inputs.performance_profile_run_id }}
+      performance_profile_artifact_name: ${{ inputs.performance_profile_artifact_name }}
 
   baseline:
     needs: optimized
@@ -183,6 +196,8 @@ jobs:
         fromJSON(needs.optimized.outputs.selected_jobs) }}
       prepared_artifact_name: github-performance-benchmark-${{ inputs.workload_family }}-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
       wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
+      performance_profile_run_id: ${{ inputs.performance_profile_run_id }}
+      performance_profile_artifact_name: ${{ inputs.performance_profile_artifact_name }}
 
   compare:
     needs: [optimized, baseline, setup_benchmark]
@@ -229,6 +244,50 @@ jobs:
             --environment-setup-benchmark \
               "$RUNNER_TEMP/benchmark/setup/environment_setup_benchmark.json" \
             --output-dir "$RUNNER_TEMP/benchmark/comparison"
+      - name: Build exact reusable performance profile
+        env:
+          SOURCE_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if ! python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              (
+                  Path(os.environ["RUNNER_TEMP"])
+                  / "benchmark"
+                  / "setup"
+                  / "environment_setup_benchmark.json"
+              ).read_text(encoding="utf-8")
+          )
+          raise SystemExit(
+              0
+              if (
+                  report.get("fast_path_selected") is True
+                  and report.get("dependency_environment_reproducible")
+                  is True
+              )
+              else 1
+          )
+          PY
+          then
+            printf '%s\n' \
+              '{"profile_created":false,"reason":"FAST_PATH_NOT_SELECTED"}' \
+              > "$RUNNER_TEMP/benchmark/comparison/performance_profile_status.json"
+            exit 0
+          fi
+          aurora github build-performance-profile \
+            --contract \
+              "$RUNNER_TEMP/benchmark/optimized/performance_contract.json" \
+            --pilot \
+              "$RUNNER_TEMP/benchmark/optimized/performance_pilot.json" \
+            --environment-setup-benchmark \
+              "$RUNNER_TEMP/benchmark/setup/environment_setup_benchmark.json" \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --output \
+              "$RUNNER_TEMP/benchmark/comparison/performance_profile.json"
       - name: Publish benchmark and phase closure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

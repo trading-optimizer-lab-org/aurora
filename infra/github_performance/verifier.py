@@ -46,6 +46,7 @@ MANDATORY_FINAL_OUTPUTS = (
     "preflight_report.json",
     "performance_contract.json",
     "performance_pilot.json",
+    "planning_pilot_resolution.json",
     "performance_plan.json",
     "environment_manifest.json",
     "resolved_run_spec.json",

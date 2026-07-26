@@ -1181,6 +1181,7 @@ def _copy_contract_files(
         "metric_contract.json",
         "capacity_profile.json",
         "performance_pilot.json",
+        "planning_pilot_resolution.json",
         "performance_plan.json",
         "execution_plan.json",
         "balanced_shard_plan.json",

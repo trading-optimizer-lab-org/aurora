@@ -40,13 +40,27 @@ on:
         required: false
         default: ""
         type: string
+      performance_profile_run_id:
+        description: Prior compatible run containing a performance profile
+        required: false
+        default: ""
+        type: string
+      performance_profile_artifact_name:
+        description: Artifact containing performance_profile.json
+        required: false
+        default: ""
+        type: string
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
         value: ${{ jobs.plan.outputs.selected_jobs }}
+      profile_reused:
+        description: Whether planning reused an exact compatible profile
+        value: ${{ jobs.plan.outputs.profile_reused }}
 
 permissions:
   contents: read
+  actions: read
 
 env:
   PYTHONHASHSEED: "0"
@@ -366,16 +380,44 @@ jobs:
         with:
           name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
-      - name: Measure real pilot
+      - name: Download prior immutable performance profile
+        if: >-
+          inputs.performance_profile_run_id != '' &&
+          inputs.performance_profile_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.performance_profile_artifact_name }}
+          path: ${{ runner.temp }}/performance-profile
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.performance_profile_run_id }}
+      - name: Resolve exact profile or measure fresh pilot
         env:
           WORKLOAD: ${{ inputs.workload }}
         run: |
           set -euo pipefail
-          aurora github pilot \
+          profile_args=()
+          if [[ -d "$RUNNER_TEMP/performance-profile" ]]; then
+            mapfile -t profiles < <(
+              find "$RUNNER_TEMP/performance-profile" \
+                -type f -name performance_profile.json -print
+            )
+            if [[ "${#profiles[@]}" -ne 1 ]]; then
+              echo "Expected exactly one performance_profile.json" >&2
+              exit 2
+            fi
+            profile_args=(
+              --performance-profile "${profiles[0]}"
+            )
+          fi
+          aurora github resolve-pilot \
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --workload "$WORKLOAD" \
             --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
-            --output "$RUNNER_TEMP/pilot/performance_pilot.json"
+            --contract "$RUNNER_TEMP/contract/performance_contract.json" \
+            "${profile_args[@]}" \
+            --output "$RUNNER_TEMP/pilot/performance_pilot.json" \
+            --resolution-output \
+              "$RUNNER_TEMP/pilot/planning_pilot_resolution.json"
       - name: Upload pilot evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -404,6 +446,7 @@ jobs:
       merge_root_artifact: ${{ steps.outputs.outputs.merge_root_artifact }}
       merge_root_level: ${{ steps.outputs.outputs.merge_root_level }}
       selected_jobs: ${{ steps.outputs.outputs.selected_jobs }}
+      profile_reused: ${{ steps.profile.outputs.profile_reused }}
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -436,6 +479,30 @@ jobs:
         with:
           name: ${{ inputs.run_label }}-pilot-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pilot
+      - name: Expose pilot provenance
+        id: profile
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(
+              (
+                  Path(os.environ["RUNNER_TEMP"])
+                  / "pilot"
+                  / "planning_pilot_resolution.json"
+              ).read_text(encoding="utf-8")
+          )
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write(
+                  "profile_reused="
+                  + str(bool(payload["profile_reused"])).lower()
+                  + "\n"
+              )
+          PY
       - name: Build adaptive balanced plan
         env:
           WORKLOAD: ${{ inputs.workload }}
@@ -449,6 +516,8 @@ jobs:
             --workload "$WORKLOAD" \
             --prepared "$RUNNER_TEMP/prepared/prepared_inputs.json" \
             --pilot "$RUNNER_TEMP/pilot/performance_pilot.json" \
+            --pilot-resolution \
+              "$RUNNER_TEMP/pilot/planning_pilot_resolution.json" \
             --execution-mode "$EXECUTION_MODE" \
             --forced-job-count "$FORCED_JOB_COUNT" \
             --artifact-prefix "$ARTIFACT_PREFIX" \

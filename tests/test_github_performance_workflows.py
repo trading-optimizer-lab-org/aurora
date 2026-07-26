@@ -502,12 +502,17 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "forced_job_count",
         "prepared_artifact_name",
         "wheelhouse_artifact_name",
+        "performance_profile_run_id",
+        "performance_profile_artifact_name",
         "spec_path",
         "workload",
         "run_label",
         "retention_days",
     }
-    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
     assert "push" not in workflow["on"]
     assert "pull_request" not in workflow["on"]
 
@@ -623,6 +628,41 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
     )
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    )
+
+
+def test_reusable_workflow_reuses_only_exact_prior_performance_profile() -> None:
+    workflow = _workflow()
+    pilot = workflow["jobs"]["pilot"]
+    download = next(
+        step
+        for step in pilot["steps"]
+        if step["name"] == "Download prior immutable performance profile"
+    )
+    resolve = next(
+        step
+        for step in pilot["steps"]
+        if step["name"] == "Resolve exact profile or measure fresh pilot"
+    )
+    plan = workflow["jobs"]["plan"]
+    build = next(
+        step
+        for step in plan["steps"]
+        if step["name"] == "Build adaptive balanced plan"
+    )
+
+    assert "performance_profile_run_id" in str(download["if"])
+    assert "performance_profile_artifact_name" in str(download["if"])
+    assert download["with"]["run-id"] == (
+        "${{ inputs.performance_profile_run_id }}"
+    )
+    assert download["with"]["github-token"] == "${{ github.token }}"
+    assert "aurora github resolve-pilot" in resolve["run"]
+    assert "--performance-profile" in resolve["run"]
+    assert "planning_pilot_resolution.json" in resolve["run"]
+    assert "--pilot-resolution" in build["run"]
+    assert plan["outputs"]["profile_reused"] == (
+        "${{ steps.profile.outputs.profile_reused }}"
     )
 
 

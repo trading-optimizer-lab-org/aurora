@@ -211,12 +211,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--requirements-lock", required=True, type=Path)
     parser.add_argument("--wheelhouse", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--cold-repetitions", type=int, default=3)
     parser.add_argument("--warm-repetitions", type=int, default=3)
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.cold_repetitions < 2:
+        raise ValueError("cold-repetitions must be at least 2")
     if args.warm_repetitions < 2:
         raise ValueError("warm-repetitions must be at least 2")
     lock = args.requirements_lock.resolve()
@@ -234,37 +237,31 @@ def main() -> int:
         prefix="aurora-environment-benchmark-"
     ) as temporary:
         root = Path(temporary)
-        pip_cache = root / "pip-cache"
-        baseline.append(
-            _install_sample(
-                benchmark=benchmark,
-                mode="locked_network",
-                temperature="cold",
-                repetition=0,
-                root=root,
-                lock=lock,
-                wheelhouse=wheelhouse,
-                aurora_wheel=aurora_wheel,
-                pip_cache=pip_cache,
-                lock_sha256=_sha256_file(lock),
-                aurora_wheel_sha256=_sha256_file(aurora_wheel),
+        for repetition in range(args.cold_repetitions):
+            pip_cache = root / f"cold-pip-cache-{repetition}"
+            order: tuple[tuple[str, list[Any]], ...] = (
+                ("locked_network", baseline),
+                ("wheelhouse", optimized),
             )
-        )
-        optimized.append(
-            _install_sample(
-                benchmark=benchmark,
-                mode="wheelhouse",
-                temperature="cold",
-                repetition=0,
-                root=root,
-                lock=lock,
-                wheelhouse=wheelhouse,
-                aurora_wheel=aurora_wheel,
-                pip_cache=pip_cache,
-                lock_sha256=_sha256_file(lock),
-                aurora_wheel_sha256=_sha256_file(aurora_wheel),
-            )
-        )
+            if repetition % 2:
+                order = tuple(reversed(order))
+            for mode, destination in order:
+                destination.append(
+                    _install_sample(
+                        benchmark=benchmark,
+                        mode=mode,
+                        temperature="cold",
+                        repetition=repetition,
+                        root=root,
+                        lock=lock,
+                        wheelhouse=wheelhouse,
+                        aurora_wheel=aurora_wheel,
+                        pip_cache=pip_cache,
+                        lock_sha256=_sha256_file(lock),
+                        aurora_wheel_sha256=_sha256_file(aurora_wheel),
+                    )
+                )
+        pip_cache = root / "warm-pip-cache"
         for repetition in range(1, args.warm_repetitions + 1):
             order: tuple[tuple[str, list[Any]], ...] = (
                 ("wheelhouse", optimized),

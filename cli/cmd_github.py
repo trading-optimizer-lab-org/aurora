@@ -27,7 +27,9 @@ from aurora.infra.github_performance.campaign import (
 from aurora.infra.github_performance.contracts import (
     AttemptManifest,
     CheckpointManifest,
+    PerformanceContract,
     PilotResult,
+    PlanningPilotResolution,
     PreparedInputs,
     RunSpec,
     RuntimeEvidence,
@@ -39,7 +41,9 @@ from aurora.infra.github_performance.contracts import (
     deep_thaw_json,
 )
 from aurora.infra.github_performance.execution_planner import (
+    PilotRequired,
     build_execution_plan,
+    resolve_planning_pilot,
     write_execution_plan,
     write_pilot_result,
 )
@@ -71,6 +75,12 @@ from aurora.infra.github_performance.preflight import (
     load_github_yaml,
     validate_run_spec,
     write_preflight_report,
+)
+from aurora.infra.github_performance.profiles import (
+    build_performance_profile,
+    load_performance_profile,
+    performance_profile_key,
+    write_performance_profile,
 )
 from aurora.infra.github_performance.shard_planner import (
     encode_matrix_outputs,
@@ -346,6 +356,98 @@ def cmd_github_pilot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_github_resolve_pilot(args: argparse.Namespace) -> int:
+    """Reuse one exact profile or measure a fresh representative pilot."""
+
+    require_github_execution("github resolve-pilot")
+    spec = _load_spec(args.spec)
+    prepared = _load_prepared(args.prepared)
+    workload = load_workload(args.workload)
+    contract = PerformanceContract.model_validate_json(
+        Path(args.contract).read_text(encoding="utf-8")
+    )
+    profile = (
+        load_performance_profile(Path(args.performance_profile))
+        if args.performance_profile
+        else None
+    )
+    observed_seconds = {
+        key: value
+        for key, value in (
+            ("cold", args.observed_cold_seconds),
+            ("warm", args.observed_warm_seconds),
+        )
+        if value is not None
+    }
+    requested_key = performance_profile_key(contract)
+    try:
+        resolution = resolve_planning_pilot(
+            profile=profile,
+            requested_key=requested_key,
+            fresh_pilot=None,
+            observed_seconds=observed_seconds,
+        )
+    except PilotRequired:
+        fresh = workload.pilot(spec, prepared)
+        resolution = resolve_planning_pilot(
+            profile=profile,
+            requested_key=requested_key,
+            fresh_pilot=fresh,
+            observed_seconds=observed_seconds,
+        )
+    pilot_path = write_pilot_result(
+        resolution.pilot_result,
+        Path(args.output),
+    )
+    resolution_path = _write_json(
+        Path(args.resolution_output),
+        resolution,
+    )
+    _print(
+        {
+            "performance_pilot": str(pilot_path),
+            "planning_pilot_resolution": str(resolution_path),
+            "profile_reused": resolution.profile_reused,
+            "source": resolution.source,
+            "reason_codes": list(resolution.reason_codes),
+        }
+    )
+    return 0
+
+
+def cmd_github_build_performance_profile(
+    args: argparse.Namespace,
+) -> int:
+    """Publish an immutable exact-key profile from measured GitHub evidence."""
+
+    require_github_execution("github build-performance-profile")
+    contract = PerformanceContract.model_validate_json(
+        Path(args.contract).read_text(encoding="utf-8")
+    )
+    pilot = PilotResult.model_validate_json(
+        Path(args.pilot).read_text(encoding="utf-8")
+    )
+    setup_benchmark = json.loads(
+        Path(args.environment_setup_benchmark).read_text(encoding="utf-8")
+    )
+    profile = build_performance_profile(
+        contract=contract,
+        pilot_result=pilot,
+        environment_setup_benchmark=setup_benchmark,
+        source_run_id=args.source_run_id,
+        created_at=datetime.now(timezone.utc),
+    )
+    path = write_performance_profile(profile, Path(args.output))
+    _print(
+        {
+            "performance_profile": str(path),
+            "performance_profile_sha256": profile.profile_sha256,
+            "source_run_id": profile.source_run_id,
+        }
+    )
+    return 0
+
+
 def _matrix_descriptor(shard: ShardDefinition) -> dict[str, Any]:
     return {
         "shard_id": shard.shard_id,
@@ -440,6 +542,26 @@ def cmd_github_plan(args: argparse.Namespace) -> int:
         )
     else:
         pilot = workload.pilot(spec, prepared)
+    if args.pilot_resolution:
+        pilot_resolution = PlanningPilotResolution.model_validate_json(
+            Path(args.pilot_resolution).read_text(encoding="utf-8")
+        )
+        if pilot_resolution.pilot_result != pilot:
+            raise ValueError(
+                "pilot resolution does not match performance pilot"
+            )
+    else:
+        pilot_resolution = PlanningPilotResolution(
+            pilot_result=pilot,
+            source="fresh_pilot",
+            profile_reused=False,
+            reason_codes=("PLANNING_PILOT_RESOLUTION_NOT_SUPPLIED",),
+            performance_profile_sha256=None,
+        )
+    _write_json(
+        output_dir / "planning_pilot_resolution.json",
+        pilot_resolution,
+    )
     manifest = workload.enumerate_units(
         spec,
         prepared,
@@ -461,6 +583,11 @@ def cmd_github_plan(args: argparse.Namespace) -> int:
         forced_job_count=(
             args.forced_job_count
             if args.forced_job_count > 0
+            else None
+        ),
+        performance_profile_sha256=(
+            pilot_resolution.performance_profile_sha256
+            if pilot_resolution.profile_reused
             else None
         ),
     )
@@ -1195,12 +1322,38 @@ def register(subparsers, parent_parser=None) -> None:
     pilot_command.add_argument("--output", required=True)
     pilot_command.set_defaults(func=cmd_github_pilot)
 
+    resolve_pilot = commands.add_parser("resolve-pilot")
+    resolve_pilot.add_argument("--spec", required=True)
+    resolve_pilot.add_argument("--workload", required=True)
+    resolve_pilot.add_argument("--prepared", required=True)
+    resolve_pilot.add_argument("--contract", required=True)
+    resolve_pilot.add_argument("--performance-profile")
+    resolve_pilot.add_argument("--observed-cold-seconds", type=float)
+    resolve_pilot.add_argument("--observed-warm-seconds", type=float)
+    resolve_pilot.add_argument("--output", required=True)
+    resolve_pilot.add_argument("--resolution-output", required=True)
+    resolve_pilot.set_defaults(func=cmd_github_resolve_pilot)
+
+    build_profile = commands.add_parser("build-performance-profile")
+    build_profile.add_argument("--contract", required=True)
+    build_profile.add_argument("--pilot", required=True)
+    build_profile.add_argument(
+        "--environment-setup-benchmark",
+        required=True,
+    )
+    build_profile.add_argument("--source-run-id", required=True)
+    build_profile.add_argument("--output", required=True)
+    build_profile.set_defaults(
+        func=cmd_github_build_performance_profile
+    )
+
     plan = commands.add_parser("plan")
     plan.add_argument("--spec", required=True)
     plan.add_argument("--workload", required=True)
     plan.add_argument("--output-dir", required=True)
     plan.add_argument("--prepared")
     plan.add_argument("--pilot")
+    plan.add_argument("--pilot-resolution")
     plan.add_argument(
         "--execution-mode",
         choices=("optimized", "baseline"),

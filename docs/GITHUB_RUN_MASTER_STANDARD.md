@@ -2635,6 +2635,33 @@ manteniendo ambas identidades en los outputs.
 La adaptación entre olas sólo puede leer telemetría operativa. Prohibido usar
 calidad de candidatas, métricas, validación o locked.
 
+### 91.1 Perfil histórico del planificador
+
+El piloto puede reutilizarse desde un run anterior únicamente mediante
+`performance_profile.json`. La clave exacta incluye:
+
+```text
+code_sha
+workflow_sha256
+resolved_spec_sha256
+snapshot_sha256
+dependency_lock_sha256
+runner_contract_sha256
+```
+
+El contrato del runner incorpora el perfil de capacidad, identidad del entorno,
+etiqueta de runner, límites de matriz y concurrencia, memoria y disco. Una sola
+diferencia obliga a ejecutar un piloto fresco.
+
+El perfil se construye sólo en GitHub a partir de al menos dos muestras frías y
+dos calientes. Conserva muestras, distribución, intervalo de confianza e
+intervalo de predicción. Nunca contiene IDs, scores ni métricas de candidatas.
+
+`planning_pilot_resolution.json` registra si el plan usó el perfil o un piloto
+fresco, los motivos del rechazo y el hash del perfil. Si se reutiliza, ese hash
+debe aparecer también en `execution_plan.json`. Los artifacts sin esta evidencia
+no cumplen el estándar.
+
 ## 92. Aceleración nativa
 
 Orden obligatorio:
