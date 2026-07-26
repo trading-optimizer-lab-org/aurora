@@ -2,6 +2,21 @@ name: GitHub Performance Benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      workload_family:
+        description: Equivalent workload family to benchmark
+        required: true
+        default: candidate_sweep
+        type: choice
+        options:
+          - candidate_sweep
+          - event_study
+          - robustness
+      forced_job_count:
+        description: Exact jobs for both modes; zero lets optimized choose
+        required: false
+        default: 0
+        type: number
 
 permissions:
   contents: read
@@ -46,16 +61,36 @@ jobs:
           wheelhouse-path: ${{ runner.temp }}/wheelhouse
           dependency-lock-path: requirements/github-performance.lock
       - name: Prepare one shared immutable benchmark snapshot
+        env:
+          WORKLOAD_FAMILY: ${{ inputs.workload_family }}
         run: |
           set -euo pipefail
+          case "$WORKLOAD_FAMILY" in
+            candidate_sweep)
+              spec="config/github_performance_candidate_sweep.yaml"
+              workload="aurora.infra.github_performance.workloads.candidate_sweep:WORKLOAD"
+              ;;
+            event_study)
+              spec="config/github_performance_event_study.yaml"
+              workload="aurora.infra.github_performance.workloads.event_study:WORKLOAD"
+              ;;
+            robustness)
+              spec="config/github_performance_robustness.yaml"
+              workload="aurora.infra.github_performance.workloads.robustness:WORKLOAD"
+              ;;
+            *)
+              echo "Unsupported workload family: $WORKLOAD_FAMILY" >&2
+              exit 2
+              ;;
+          esac
           aurora github prepare \
-            --spec "config/github_performance_reference.yaml" \
-            --workload "aurora.infra.github_performance.reference_workload:WORKLOAD" \
+            --spec "$spec" \
+            --workload "$workload" \
             --output-dir "$RUNNER_TEMP/prepared"
       - name: Upload shared immutable benchmark snapshot
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: github-performance-benchmark-${{ inputs.workload_family }}-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/prepared
           if-no-files-found: error
           compression-level: 0
@@ -103,26 +138,50 @@ jobs:
     needs: prime_runtime
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
-      spec_path: config/github_performance_reference.yaml
-      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
-      run_label: github-performance-benchmark-optimized
+      spec_path: >-
+        ${{ inputs.workload_family == 'candidate_sweep' &&
+        'config/github_performance_candidate_sweep.yaml' ||
+        inputs.workload_family == 'event_study' &&
+        'config/github_performance_event_study.yaml' ||
+        'config/github_performance_robustness.yaml' }}
+      workload: >-
+        ${{ inputs.workload_family == 'candidate_sweep' &&
+        'aurora.infra.github_performance.workloads.candidate_sweep:WORKLOAD' ||
+        inputs.workload_family == 'event_study' &&
+        'aurora.infra.github_performance.workloads.event_study:WORKLOAD' ||
+        'aurora.infra.github_performance.workloads.robustness:WORKLOAD' }}
+      run_label: github-performance-benchmark-${{ inputs.workload_family }}-optimized
       retention_days: 30
       execution_mode: optimized
-      forced_job_count: 0
-      prepared_artifact_name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+      forced_job_count: >-
+        ${{ fromJSON(format('{0}', inputs.forced_job_count)) }}
+      prepared_artifact_name: github-performance-benchmark-${{ inputs.workload_family }}-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
       wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
 
   baseline:
     needs: optimized
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
-      spec_path: config/github_performance_reference.yaml
-      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
-      run_label: github-performance-benchmark-baseline
+      spec_path: >-
+        ${{ inputs.workload_family == 'candidate_sweep' &&
+        'config/github_performance_candidate_sweep.yaml' ||
+        inputs.workload_family == 'event_study' &&
+        'config/github_performance_event_study.yaml' ||
+        'config/github_performance_robustness.yaml' }}
+      workload: >-
+        ${{ inputs.workload_family == 'candidate_sweep' &&
+        'aurora.infra.github_performance.workloads.candidate_sweep:WORKLOAD' ||
+        inputs.workload_family == 'event_study' &&
+        'aurora.infra.github_performance.workloads.event_study:WORKLOAD' ||
+        'aurora.infra.github_performance.workloads.robustness:WORKLOAD' }}
+      run_label: github-performance-benchmark-${{ inputs.workload_family }}-baseline
       retention_days: 30
       execution_mode: baseline
-      forced_job_count: ${{ fromJSON(needs.optimized.outputs.selected_jobs) }}
-      prepared_artifact_name: github-performance-benchmark-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+      forced_job_count: >-
+        ${{ inputs.forced_job_count > 0 &&
+        fromJSON(format('{0}', inputs.forced_job_count)) ||
+        fromJSON(needs.optimized.outputs.selected_jobs) }}
+      prepared_artifact_name: github-performance-benchmark-${{ inputs.workload_family }}-shared-prepared-${{ github.run_id }}-${{ github.run_attempt }}
       wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
 
   compare:
@@ -149,12 +208,12 @@ jobs:
       - name: Download optimized result
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: github-performance-benchmark-optimized-results
+          name: github-performance-benchmark-${{ inputs.workload_family }}-optimized-results
           path: ${{ runner.temp }}/benchmark/optimized
       - name: Download equivalent baseline result
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: github-performance-benchmark-baseline-results
+          name: github-performance-benchmark-${{ inputs.workload_family }}-baseline-results
           path: ${{ runner.temp }}/benchmark/baseline
       - name: Download environment setup benchmark
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -174,7 +233,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: github-performance-benchmark-results
+          name: github-performance-benchmark-${{ inputs.workload_family }}-results
           path: ${{ runner.temp }}/benchmark/comparison
           if-no-files-found: error
           compression-level: 0
