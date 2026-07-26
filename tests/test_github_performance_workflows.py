@@ -19,11 +19,11 @@ WORKFLOW_PATH = (
 POLICY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-policy.yml"
 )
-RECOVERY_WAVE_WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "_aurora-recovery-plan-v3.yml"
+RECOVERY_PLAN_ACTION_PATH = (
+    ROOT / ".github" / "actions" / "aurora-recovery-plan" / "action.yml"
 )
-RETRY_SHARD_WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "_aurora-retry-shard-v3.yml"
+RETRY_SHARD_ACTION_PATH = (
+    ROOT / ".github" / "actions" / "aurora-retry-shard" / "action.yml"
 )
 MERGE_LEVEL_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "_aurora-merge-level-v3.yml"
@@ -327,18 +327,34 @@ def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
     )
     for wave, name in enumerate(recovery_jobs):
         job = jobs[name]
-        assert job["uses"] == (
-            "./.github/workflows/_aurora-recovery-plan-v3.yml"
+        assert job["runs-on"] == "ubuntu-24.04"
+        recovery = next(
+            step
+            for step in job["steps"]
+            if step.get("uses")
+            == "./.github/actions/aurora-recovery-plan"
         )
-        assert job["with"]["current_wave"] == wave
-        assert job["with"]["max_waves"] == 6
+        assert recovery["with"]["current-wave"] == wave
+        assert recovery["with"]["max-waves"] == 6
     assert "campaign-update" in WORKFLOW_PATH.read_text(encoding="utf-8")
-    recovery_text = RECOVERY_WAVE_WORKFLOW_PATH.read_text(encoding="utf-8")
+    recovery_text = RECOVERY_PLAN_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github recovery-loop" in recovery_text
     assert "campaign_state_latest.json" in recovery_text
-    retry_text = RETRY_SHARD_WORKFLOW_PATH.read_text(encoding="utf-8")
+    retry_text = RETRY_SHARD_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github run-shard" in retry_text
     assert "matrix" not in retry_text
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "_aurora-recovery-plan-v3.yml" not in workflow_text
+    assert "_aurora-retry-shard-v3.yml" not in workflow_text
+    for wave in range(2, 6):
+        for suffix in ("a", "b"):
+            job = jobs[f"retry_{wave}_{suffix}"]
+            assert job["runs-on"] == "ubuntu-24.04"
+            assert any(
+                step.get("uses")
+                == "./.github/actions/aurora-retry-shard"
+                for step in job["steps"]
+            )
 
 
 def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
@@ -527,7 +543,7 @@ def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
 def test_checkpoint_salvage_detects_files_outside_github_workspace() -> None:
     workflows = (
         WORKFLOW_PATH.read_text(encoding="utf-8"),
-        RETRY_SHARD_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        RETRY_SHARD_ACTION_PATH.read_text(encoding="utf-8"),
     )
     for text in workflows:
         assert "find \"$RUNNER_TEMP/attempt\"" in text
@@ -783,11 +799,11 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
         )
         assert salvage["continue-on-error"] is True
 
-    retry_path = ROOT / ".github/workflows/_aurora-retry-shard-v3.yml"
+    retry_path = RETRY_SHARD_ACTION_PATH
     retry_text = retry_path.read_text(encoding="utf-8")
     assert "AURORA_FAULT_INJECTION_SHARD_ID" not in retry_text
     assert "AURORA_FAULT_INJECTION_AFTER_UNITS" not in retry_text
-    retry = load_github_yaml(retry_path)["jobs"]["execute"]
+    retry = load_github_yaml(retry_path)["runs"]
     execute_retry = next(
         step
         for step in retry["steps"]
