@@ -198,6 +198,25 @@ def test_traceability_has_exact_required_columns() -> None:
     assert set(table.column("status").to_pylist()) == {"pass"}
 
 
+def test_traceability_marks_inapplicable_merge_depth_honestly() -> None:
+    spec = RunSpec.model_validate(minimal_valid_spec())
+    evidence = _complete_evidence()
+    evidence["multi_level_merge_verified"] = None
+    rows = {
+        row["requirement_id"]: row
+        for row in build_requirements_traceability(
+            spec,
+            evidence,
+        ).to_pylist()
+    }
+
+    assert rows["multi_level_merge"]["status"] == "not_applicable"
+    assert (
+        rows["multi_level_merge"]["observed_value"]
+        == "not_applicable"
+    )
+
+
 def _write_placeholder(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.suffix == ".json":

@@ -488,25 +488,41 @@ Evidence:
 - Final artifact includes every phase-1, phase-2, and applicable phase-3 output.
 - Produces a requirement row for every explicit acceptance criterion.
 
-- [ ] **Step 1: Write failing completeness tests**
+- [x] **Step 1: Write failing completeness tests**
 
 Delete each mandatory output one at a time and require verification failure. Require telemetry to be sealed before final manifest creation.
 
-- [ ] **Step 2: Expand traceability**
+- [x] **Step 2: Expand traceability**
 
 Add evidence for deadlines, budget, runtime locked rows, validation separation, independent metrics, dependency environment, recovery, replan, merge-only, multi-level merge, standard runners, matrix limits, equivalence, and required output completeness.
 
-- [ ] **Step 3: Move telemetry before artifact seal**
+- [x] **Step 3: Move telemetry before artifact seal**
 
 The final manifest is created only after runtime and GitHub timeline telemetry are present. Missing telemetry keeps scientific outputs but fails campaign completion.
 
-- [ ] **Step 4: Run GitHub tests and commit**
+- [x] **Step 4: Run GitHub tests and commit**
 
 Commit:
 
 ```text
 feat: require complete GitHub campaign evidence
 ```
+
+Evidence: RED run `30198024397` failed on the intentionally absent mandatory
+output contract, 24-row traceability contract, pre-seal telemetry dependency,
+and explicit seal command. GREEN run `30198667956` used commit `3bab97ce2`;
+the dependency lock reproduced exactly, all GitHub-performance contract tests
+passed, and the four-shard real-engine smoke passed. End-to-end run
+`30198731331` completed `1024/1024` logical units with no technical failures,
+zero metric mismatches across `30720` independently recomputed fields,
+`locked_opened=false`, `locked_rows_accessed=0`, and
+`validation_used_for_selection=false`. Its final artifact contains 40 sealed
+pre-verification files, 38 mandatory output contracts, and exactly 24
+traceability rows: 21 passed, three honestly not applicable, and none failed.
+GitHub timeline telemetry was collected before the artifact seal; verification
+then reopened every sealed file without any failure code. The canonical
+scientific identity covers all `1024` unit keys and excludes operational
+`source_attempt_id` provenance.
 
 ---
 

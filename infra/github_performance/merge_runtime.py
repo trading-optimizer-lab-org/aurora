@@ -1315,10 +1315,17 @@ def final_merge(
                 if root_manifest is not None
                 else len(shard_paths)
             ),
+            "multi_level_merge_applicable": (
+                merge_plan.root_level >= 1
+            ),
             "multi_level_merge_verified": (
-                root_manifest is not None
-                and root_manifest.merge_plan_sha256
-                == merge_plan.plan_sha256
+                (
+                    root_manifest is not None
+                    and root_manifest.merge_plan_sha256
+                    == merge_plan.plan_sha256
+                )
+                if merge_plan.root_level >= 1
+                else None
             ),
         },
     )
