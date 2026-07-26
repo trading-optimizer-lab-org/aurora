@@ -89,6 +89,10 @@ jobs:
         with:
           name: ${{ inputs.campaign_state_artifact_name }}
           path: ${{ runner.temp }}/state
+      - name: Require verified latest-state pointer
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/state/campaign_state_latest.json"
       - name: Download all attempt manifests
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
