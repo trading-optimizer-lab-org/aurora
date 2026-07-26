@@ -150,17 +150,11 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     }
     assert _needs(jobs["retry_a"]) == {"plan", "recovery_plan"}
     assert _needs(jobs["retry_b"]) == {"plan", "recovery_plan"}
-    assert (
-        "contains(needs.recovery_plan.outputs.matrix_a, "
-        "'\"shard_id\"')"
-    ) in str(
-        jobs["retry_a"]["if"]
+    assert jobs["retry_a"]["if"] == (
+        "needs.recovery_plan.outputs.status == 'retry'"
     )
-    assert (
-        "contains(needs.recovery_plan.outputs.matrix_b, "
-        "'\"shard_id\"')"
-    ) in str(
-        jobs["retry_b"]["if"]
+    assert jobs["retry_b"]["if"] == (
+        "needs.recovery_plan.outputs.status == 'retry'"
     )
     previous_a = "retry_a"
     previous_b = "retry_b"
@@ -179,6 +173,12 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             next_b = f"retry_{wave + 1}_b"
             assert _needs(jobs[next_a]) == {"plan", recovery}
             assert _needs(jobs[next_b]) == {"plan", recovery}
+            assert jobs[next_a]["if"] == (
+                f"needs.{recovery}.outputs.status == 'retry'"
+            )
+            assert jobs[next_b]["if"] == (
+                f"needs.{recovery}.outputs.status == 'retry'"
+            )
             assert (
                 f"contains(needs.{recovery}.outputs.matrix_a, "
                 "'\"shard_id\"')"
