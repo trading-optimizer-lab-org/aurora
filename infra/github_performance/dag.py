@@ -337,7 +337,7 @@ class SharedIntermediateStore:
                 ):
                     raise SharedIntermediateConflict(
                         "concurrent shared intermediate conflicts"
-                    )
+                    ) from None
                 self.resolve(existing)
                 return existing
             return manifest

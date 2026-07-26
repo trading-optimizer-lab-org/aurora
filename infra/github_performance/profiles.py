@@ -283,7 +283,7 @@ def write_performance_profile(
             if target.read_bytes() != payload:
                 raise ProfileConflict(
                     f"immutable performance profile conflicts: {target}"
-                )
+                ) from None
     finally:
         if temporary.exists():
             temporary.unlink()
