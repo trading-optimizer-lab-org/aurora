@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, StrictBool, model_validator
 
 from aurora.infra.github_performance.contracts import (
     FrozenModel,
@@ -47,6 +47,17 @@ _OPTIMIZATION_ORDER: tuple[OptimizationStage, ...] = (
     "numba",
     "rust",
 )
+
+
+class HotPathQualificationContract(FrozenModel):
+    """Strict safety properties supplied by the measured workload owner."""
+
+    schema_version: Literal["1"] = "1"
+    pure_bounded_io: StrictBool
+    network_access: StrictBool
+    mutable_external_state: StrictBool
+    python_reference_available: StrictBool
+    frequently_changing_experimental_code: StrictBool = False
 
 
 class OptimizationStageEvidence(FrozenModel):

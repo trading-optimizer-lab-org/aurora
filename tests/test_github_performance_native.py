@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from aurora.infra.github_performance.engines import EngineTrial
 from aurora.infra.github_performance.native import (
+    HotPathQualificationContract,
     HotPathProfile,
     OptimizationStageEvidence,
     build_hot_path_profile,
@@ -346,3 +350,15 @@ def test_runtime_rows_build_exact_hot_path_share() -> None:
     assert profile.node_seconds == 40.0
     assert profile.workflow_seconds == 100.0
     assert profile.measured_fraction == 0.4
+
+
+def test_hot_path_qualification_contract_rejects_string_booleans() -> None:
+    with pytest.raises(ValidationError):
+        HotPathQualificationContract.model_validate(
+            {
+                "pure_bounded_io": "false",
+                "network_access": False,
+                "mutable_external_state": False,
+                "python_reference_available": True,
+            }
+        )

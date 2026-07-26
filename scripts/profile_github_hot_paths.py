@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 from aurora.infra.github_performance.contracts import deep_thaw_json
 from aurora.infra.github_performance.engines import EngineTrial
 from aurora.infra.github_performance.native import (
+    HotPathQualificationContract,
     HotPathProfile,
     OptimizationStageEvidence,
     build_hot_path_profile,
@@ -43,7 +44,9 @@ def _write_json(path: Path, payload: object) -> Path:
 
 
 def _profile(args: argparse.Namespace) -> int:
-    contract = _read_json(args.qualification_contract)
+    contract = HotPathQualificationContract.model_validate(
+        _read_json(args.qualification_contract)
+    )
     table = pq.read_table(
         args.runtime_breakdown,
         columns=["phase", "duration_seconds"],
@@ -53,14 +56,12 @@ def _profile(args: argparse.Namespace) -> int:
         node_name=args.node_name,
         phase_names=args.phase,
         invocation_count=args.invocation_count,
-        pure_bounded_io=bool(contract["pure_bounded_io"]),
-        network_access=bool(contract["network_access"]),
-        mutable_external_state=bool(contract["mutable_external_state"]),
-        python_reference_available=bool(
-            contract["python_reference_available"]
-        ),
-        frequently_changing_experimental_code=bool(
-            contract.get("frequently_changing_experimental_code", False)
+        pure_bounded_io=contract.pure_bounded_io,
+        network_access=contract.network_access,
+        mutable_external_state=contract.mutable_external_state,
+        python_reference_available=contract.python_reference_available,
+        frequently_changing_experimental_code=(
+            contract.frequently_changing_experimental_code
         ),
     )
     _write_json(args.output, profile)
