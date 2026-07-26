@@ -35,6 +35,9 @@ from aurora.infra.github_performance.shard_planner import (
 from aurora.infra.github_performance.workloads.candidate_sweep import (
     WORKLOAD as CANDIDATE_SWEEP,
 )
+from aurora.infra.github_performance.workloads.common import (
+    logical_table_sha256,
+)
 from aurora.infra.github_performance.workloads.event_study import (
     WORKLOAD as EVENT_STUDY,
 )
@@ -263,6 +266,33 @@ def test_workload_units_and_science_are_deterministic(
     assert manifest["max_date"] == "2020-12-31"
     assert manifest["locked_opened"] is False
     assert manifest["validation_used_for_selection"] is False
+
+
+@pytest.mark.parametrize("workload", WORKLOADS)
+def test_prepared_snapshot_identity_tracks_logical_content(
+    workload,
+    tmp_path: Path,
+) -> None:
+    spec = _spec()
+    first = workload.prepare_shared_inputs(spec, tmp_path / "prepared-a")
+    second = workload.prepare_shared_inputs(spec, tmp_path / "prepared-b")
+
+    assert first.snapshot_hash == second.snapshot_hash
+    assert first.manifest_sha256 == second.manifest_sha256
+    assert first.artifact_names == second.artifact_names
+
+
+def test_logical_table_hash_ignores_chunks_and_schema_metadata() -> None:
+    values = pa.array([1, 2, 3, 4], type=pa.int64())
+    plain = pa.table({"value": values})
+    chunked = pa.Table.from_arrays(
+        [pa.chunked_array([values.slice(0, 2), values.slice(2)])],
+        schema=plain.schema.with_metadata({b"transport": b"parquet"}),
+    )
+    changed = pa.table({"value": pa.array([1, 2, 3, 5], type=pa.int64())})
+
+    assert logical_table_sha256(plain) == logical_table_sha256(chunked)
+    assert logical_table_sha256(plain) != logical_table_sha256(changed)
 
 
 @pytest.mark.parametrize("workload", WORKLOADS)

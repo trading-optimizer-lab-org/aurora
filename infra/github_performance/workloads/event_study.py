@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -18,6 +17,7 @@ from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.github_performance.metric_verifier import MetricInputRecord
 from aurora.infra.github_performance.workloads.common import (
     FrozenScientificWorkload,
+    logical_table_sha256,
     metrics_for_row,
     primary_metric_record,
 )
@@ -128,13 +128,10 @@ class EventStudyWorkload(FrozenScientificWorkload):
             existing_data_behavior="delete_matching",
         )
         files = tuple(sorted(dataset_root.rglob("*.parquet")))
-        identities = {
-            str(path.relative_to(root)).replace("\\", "/"): hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
-            for path in files
-        }
-        return tuple(identities), canonical_sha256(identities)
+        artifact_names = tuple(
+            str(path.relative_to(root)).replace("\\", "/") for path in files
+        )
+        return artifact_names, logical_table_sha256(table)
 
     def _load_dataset(self, root: Path) -> pd.DataFrame:
         dataset = ds.dataset(

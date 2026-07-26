@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
 from aurora.core.metrics import compute_metrics
@@ -67,6 +68,16 @@ def atomic_json(path: Path, payload: Mapping[str, Any]) -> Path:
 
 def finite(value: float) -> float | None:
     return float(value) if math.isfinite(float(value)) else None
+
+
+def logical_table_sha256(table: pa.Table) -> str:
+    """Hash scientific table content independently of Parquet transport bytes."""
+
+    normalized = table.combine_chunks().replace_schema_metadata(None)
+    sink = pa.BufferOutputStream()
+    with ipc.new_stream(sink, normalized.schema) as writer:
+        writer.write_table(normalized)
+    return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
 
 
 def primary_metric_record(
