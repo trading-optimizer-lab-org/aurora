@@ -266,7 +266,7 @@ def main() -> int:
             )
         )
         for repetition in range(1, args.warm_repetitions + 1):
-            order = (
+            order: tuple[tuple[str, list[Any]], ...] = (
                 ("wheelhouse", optimized),
                 ("locked_network", baseline),
             )

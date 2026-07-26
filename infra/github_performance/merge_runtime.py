@@ -709,7 +709,7 @@ def _verified_merge_nodes(
                 "duplicate merge node artifact: "
                 f"{manifest.output_artifact}"
             )
-        transports = {
+        transports: Mapping[str, tuple[Path, ...]] = {
             item.logical_name: _verify_transport(path.parent, item)
             for item in manifest.files
         }

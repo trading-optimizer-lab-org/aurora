@@ -392,7 +392,13 @@ def build_hot_path_profile(
     workflow_seconds = 0.0
     node_seconds = 0.0
     for row in runtime_rows:
-        seconds = float(row["duration_seconds"])
+        raw_seconds = row["duration_seconds"]
+        if (
+            isinstance(raw_seconds, bool)
+            or not isinstance(raw_seconds, (int, float))
+        ):
+            raise ValueError("runtime duration must be numeric")
+        seconds = float(raw_seconds)
         if not math.isfinite(seconds) or seconds < 0:
             raise ValueError("runtime duration must be finite and nonnegative")
         workflow_seconds += seconds

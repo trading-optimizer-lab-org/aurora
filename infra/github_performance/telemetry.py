@@ -111,10 +111,10 @@ def aggregate_process_tree(
         if pid in seen:
             continue
         seen.add(pid)
-        record = by_pid.get(pid)
-        if record is None:
+        current_record = by_pid.get(pid)
+        if current_record is None:
             continue
-        selected.append(record)
+        selected.append(current_record)
         pending.extend(children.get(pid, ()))
     return ProcessTreeAggregate(
         process_count=len(selected),

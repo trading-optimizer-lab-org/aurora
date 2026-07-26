@@ -22,7 +22,7 @@ from aurora.infra.github_performance.contracts import (
 from aurora.infra.github_performance.shard_planner import sha256_file
 
 
-AUDIT_SCHEMA_VERSION = "1"
+AUDIT_SCHEMA_VERSION: Literal["1"] = "1"
 
 
 class RuntimePolicyViolation(RuntimeError):

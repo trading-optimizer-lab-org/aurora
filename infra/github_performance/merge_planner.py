@@ -236,8 +236,8 @@ def build_merge_plan(
             )
         next_level: list[tuple[str, int]] = []
         for group_index, start in enumerate(range(0, len(current), fan_in)):
-            members = current[start : start + fan_in]
-            input_bytes = sum(size for _, size in members)
+            current_members = current[start : start + fan_in]
+            input_bytes = sum(size for _, size in current_members)
             output_bytes = max(1024, math.ceil(input_bytes * 0.80))
             if input_bytes + output_bytes > int(disk_budget_bytes * 0.80):
                 raise MergePlanError(
@@ -254,7 +254,9 @@ def build_merge_plan(
                 MergeGroup(
                     group_id=group_id,
                     level=level,
-                    input_artifacts=tuple(name for name, _ in members),
+                    input_artifacts=tuple(
+                        name for name, _ in current_members
+                    ),
                     input_artifact_pattern=(
                         f"{run_id}-merge-l{level - 1:02d}-"
                         f"p{group_index:03d}-*"

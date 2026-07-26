@@ -178,6 +178,12 @@ def _outcome(
     )
 
 
+def _total_measured_seconds(trial: EngineTrial) -> float:
+    if trial.cold is None or trial.warm is None:
+        raise ValueError("engine candidate lacks timing evidence")
+    return trial.cold.mean_seconds + trial.warm.mean_seconds
+
+
 def select_fastest_equivalent_engine(
     trials: Sequence[EngineTrial],
 ) -> EngineDecision:
@@ -236,7 +242,7 @@ def select_fastest_equivalent_engine(
     selected = min(
         candidates,
         key=lambda trial: (
-            trial.cold.mean_seconds + trial.warm.mean_seconds,
+            _total_measured_seconds(trial),
             trial.engine,
         ),
         default=reference,

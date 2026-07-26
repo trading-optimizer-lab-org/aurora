@@ -78,7 +78,7 @@ def test_environment_identity_v2_separates_observations_from_identity(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    payload = {
+    payload: dict[str, Any] = {
         "schema_version": "2",
         "identity": identity,
         "observations": {

@@ -51,7 +51,7 @@ from github_performance_helpers import (
 )
 
 
-def _complete_evidence() -> dict[str, bool]:
+def _complete_evidence() -> dict[str, bool | None]:
     return {
         "github_only": True,
         "standard_runner_only": True,
