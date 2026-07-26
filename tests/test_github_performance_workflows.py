@@ -734,9 +734,7 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
             "${{ inputs.fault_injection_after_units }}"
         )
         assert "continue-on-error" not in execute
-        assert "attempt_exit_code=$?" in execute["run"]
-        assert "exit 0" in execute["run"]
-        assert "Shard attempt recorded for recovery" in execute["run"]
+        assert "--defer-technical-failure-to-recovery" in execute["run"]
         salvage = next(
             step
             for step in jobs[name]["steps"]
@@ -760,9 +758,7 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
         if step["name"] == "Salvage retry evidence"
     )
     assert "continue-on-error" not in execute_retry
-    assert "attempt_exit_code=$?" in execute_retry["run"]
-    assert "exit 0" in execute_retry["run"]
-    assert "Retry attempt recorded for recovery" in execute_retry["run"]
+    assert "--defer-technical-failure-to-recovery" in execute_retry["run"]
     assert salvage_retry["continue-on-error"] is True
 
 
@@ -775,9 +771,7 @@ def test_inline_retries_record_failure_without_poisoning_reusable_workflow() -> 
             if step["name"] == "Execute retry"
         )
         assert "continue-on-error" not in execute
-        assert "attempt_exit_code=$?" in execute["run"]
-        assert "exit 0" in execute["run"]
-        assert "Retry attempt recorded for recovery" in execute["run"]
+        assert "--defer-technical-failure-to-recovery" in execute["run"]
 
 
 def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:

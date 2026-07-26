@@ -657,8 +657,7 @@ jobs:
           AURORA_FAULT_INJECTION_SHARD_ID: ${{ inputs.fault_injection_shard_id }}
           AURORA_FAULT_INJECTION_AFTER_UNITS: ${{ inputs.fault_injection_after_units }}
         run: |
-          set -uo pipefail
-          set +e
+          set -euo pipefail
           aurora github run-shard \
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --workload "$WORKLOAD" \
@@ -667,13 +666,8 @@ jobs:
             --artifact-name "$ARTIFACT_NAME" \
             --assignment-root "$RUNNER_TEMP/plan" \
             --prepared-root "$RUNNER_TEMP/prepared" \
-            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
-          attempt_exit_code=$?
-          set -e
-          if (( attempt_exit_code != 0 )); then
-            echo "::notice title=Shard attempt recorded for recovery::run-shard exited ${attempt_exit_code}; immutable attempt evidence and any checkpoint will determine selective recovery"
-          fi
-          exit 0
+            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
+            --defer-technical-failure-to-recovery
       - name: Salvage attempt evidence
         if: always()
         continue-on-error: true
@@ -792,8 +786,7 @@ jobs:
           AURORA_FAULT_INJECTION_SHARD_ID: ${{ inputs.fault_injection_shard_id }}
           AURORA_FAULT_INJECTION_AFTER_UNITS: ${{ inputs.fault_injection_after_units }}
         run: |
-          set -uo pipefail
-          set +e
+          set -euo pipefail
           aurora github run-shard \
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --workload "$WORKLOAD" \
@@ -802,13 +795,8 @@ jobs:
             --artifact-name "$ARTIFACT_NAME" \
             --assignment-root "$RUNNER_TEMP/plan" \
             --prepared-root "$RUNNER_TEMP/prepared" \
-            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
-          attempt_exit_code=$?
-          set -e
-          if (( attempt_exit_code != 0 )); then
-            echo "::notice title=Shard attempt recorded for recovery::run-shard exited ${attempt_exit_code}; immutable attempt evidence and any checkpoint will determine selective recovery"
-          fi
-          exit 0
+            --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
+            --defer-technical-failure-to-recovery
       - name: Salvage attempt evidence
         if: always()
         continue-on-error: true
@@ -1022,7 +1010,7 @@ jobs:
           WORKLOAD: ${{ inputs.workload }}
           ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           checkpoint_args=()
           if [[ -n "${{ matrix.checkpoint_artifact }}" ]]; then
             checkpoint_path="$(
@@ -1032,7 +1020,6 @@ jobs:
             )"
             checkpoint_args=(--checkpoint "$checkpoint_path")
           fi
-          set +e
           aurora github run-shard \
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --workload "$WORKLOAD" \
@@ -1042,13 +1029,8 @@ jobs:
             --assignment-root "$RUNNER_TEMP/plan" \
             --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
-            "${checkpoint_args[@]}"
-          attempt_exit_code=$?
-          set -e
-          if (( attempt_exit_code != 0 )); then
-            echo "::notice title=Retry attempt recorded for recovery::run-shard exited ${attempt_exit_code}; immutable attempt evidence and any checkpoint will determine the next selective recovery wave"
-          fi
-          exit 0
+            "${checkpoint_args[@]}" \
+            --defer-technical-failure-to-recovery
       - name: Salvage retry evidence
         if: always()
         continue-on-error: true
@@ -1171,7 +1153,7 @@ jobs:
           WORKLOAD: ${{ inputs.workload }}
           ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           checkpoint_args=()
           if [[ -n "${{ matrix.checkpoint_artifact }}" ]]; then
             checkpoint_path="$(
@@ -1181,7 +1163,6 @@ jobs:
             )"
             checkpoint_args=(--checkpoint "$checkpoint_path")
           fi
-          set +e
           aurora github run-shard \
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --workload "$WORKLOAD" \
@@ -1191,13 +1172,8 @@ jobs:
             --assignment-root "$RUNNER_TEMP/plan" \
             --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}" \
-            "${checkpoint_args[@]}"
-          attempt_exit_code=$?
-          set -e
-          if (( attempt_exit_code != 0 )); then
-            echo "::notice title=Retry attempt recorded for recovery::run-shard exited ${attempt_exit_code}; immutable attempt evidence and any checkpoint will determine the next selective recovery wave"
-          fi
-          exit 0
+            "${checkpoint_args[@]}" \
+            --defer-technical-failure-to-recovery
       - name: Salvage retry evidence
         if: always()
         continue-on-error: true

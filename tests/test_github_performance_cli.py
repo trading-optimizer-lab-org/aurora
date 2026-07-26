@@ -28,6 +28,31 @@ def test_validate_parser_binds_expected_command() -> None:
     assert args.func is cmd_github.cmd_github_validate
 
 
+def test_run_shard_parser_can_defer_recorded_failure_to_recovery() -> None:
+    args = build_parser().parse_args(
+        [
+            "github",
+            "run-shard",
+            "--spec",
+            "spec.json",
+            "--workload",
+            "aurora.example:WORKLOAD",
+            "--shard",
+            "shard.json",
+            "--output-dir",
+            "out",
+            "--attempt-id",
+            "attempt",
+            "--artifact-name",
+            "artifact",
+            "--defer-technical-failure-to-recovery",
+        ]
+    )
+
+    assert args.func is cmd_github.cmd_github_run_shard
+    assert args.defer_technical_failure_to_recovery is True
+
+
 def test_environment_identity_ignores_cache_hit_but_detects_tampering(
     tmp_path: Path,
 ) -> None:
