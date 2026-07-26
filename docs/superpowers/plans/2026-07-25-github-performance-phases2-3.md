@@ -348,33 +348,65 @@ latched and can request a stop only at a declared durable unit boundary.
 - Produces CLI commands: `campaign-update`, `recovery-loop`, `replan`, and `merge-only`.
 - Replan may change only operational partitioning and preserves logical unit keys.
 
-- [ ] **Step 1: Write failing state-machine tests**
+- [x] **Step 1: Write failing state-machine tests**
 
 Cover version monotonicity, pointer hash verification, resume after interruption, repeated transient retries, OOM/disk replan, no identical deterministic retry, and merge-only reuse.
 
-- [ ] **Step 2: Record RED in GitHub**
+- [x] **Step 2: Record RED in GitHub**
 
 Require failure because only one recovery pass exists.
 
-- [ ] **Step 3: Implement durable campaign state**
+- [x] **Step 3: Implement durable campaign state**
 
 Every wave, recovery, replan, merge, and verification transition writes a new immutable state version.
 
-- [ ] **Step 4: Implement bounded iterative recovery**
+- [x] **Step 4: Implement bounded iterative recovery**
 
 Loop until all units are terminal, a hard policy failure occurs, or retry budgets are exhausted. Reuse verified checkpoints and source artifacts.
 
-- [ ] **Step 5: Implement replan and merge-only paths**
+- [x] **Step 5: Implement replan and merge-only paths**
 
 Replan preserves completed units and changes only operational fields. Merge-only reads verified state and repeats no shard computation.
 
-- [ ] **Step 6: Run GitHub failure simulations and commit**
+- [x] **Step 6: Run GitHub failure simulations and commit**
 
 Commit:
 
 ```text
 feat: make GitHub campaigns durably recoverable
 ```
+
+**Evidence:** RED run `30192834219` required immutable state preservation,
+terminal unit evidence, and universal replan/merge-only workflows. GREEN runs
+`30193486553`, `30194068395`, and `30194974558` passed the reproducible
+dependency lock, `225` focused contracts, and all four real-engine smoke
+shards. The complete reference run `30193528008` produced `1024/1024`
+scientific units with zero metric mismatches. Merge-only run `30193838870`
+scheduled no compute, reused only its verified source artifact, and reproduced
+the exact scientific output SHA-256
+`da6714280f5b1ec1925e5bc454d24ca6257d4647964b3af469fe6750453a415c`.
+
+Failure-fixture run `30194113698` preserved `512` completed units and bound the
+remaining `512` to real `OUT_OF_MEMORY` and `DISK_EXHAUSTED` terminal
+evidence. The first reusable calls, `30194398332` and `30194526692`, correctly
+failed before compute because GitHub passed the dispatch number as a string;
+their workflow annotations reported `Unexpected value '4'`. Commit
+`d313e11e4` added explicit numeric conversion and restored the source
+wheelhouse by its own verified scientific SHA instead of coupling recovery to
+the newer orchestration SHA.
+
+Final replan run `30195022749` completed in `31` seconds. Its source run,
+contract, and wheelhouse all verified SHA
+`68605d726f37bb8c03425d1a5f355e2f411dbb03`, while the orchestration fix ran
+at `d313e11e4ceaecc3c98fbba997a5ab0327034554`. It changed only
+`requested_parallelism` from two to four, preserved the scientific contract,
+logical-unit manifest, and completed-unit evidence hashes, and produced four
+new shards of `128` units. Independent inspection proved that the `512`
+replanned keys equal the `512` pending keys exactly, overlap the `512`
+completed keys by zero, contain no duplicates, and omit no pending unit.
+Therefore `campaign_state_recoverable=true`,
+`selective_recovery_verified=true`, `replan_verified=true`, and
+`merge_only_verified=true` have direct GitHub evidence.
 
 ---
 
