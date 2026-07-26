@@ -292,9 +292,18 @@ def _sha256(path: Path) -> str:
 
 def _add_mandatory_fixture_outputs(root: Path, spec: RunSpec) -> None:
     for name in verifier_module.MANDATORY_FINAL_OUTPUTS:
+        if name in verifier_module.NATIVE_QUALIFICATION_OUTPUTS:
+            continue
         path = root / name
         if not path.exists():
             _write_placeholder(path)
+    verifier_module.ensure_runtime_native_fallback_artifacts(
+        (
+            {"phase": "execute_shard", "duration_seconds": 8.0},
+            {"phase": "restore_runtime", "duration_seconds": 2.0},
+        ),
+        root,
+    )
     _write_resource_sample_fixture(root / "resource_samples.parquet")
     contract = json.loads(
         (root / "performance_contract.json").read_text(encoding="utf-8")
@@ -552,6 +561,25 @@ def test_final_verifier_accepts_complete_untampered_artifact(
     report = verify_final_artifact(tmp_path, spec)
     assert report.passed is True
     assert report.partial is False
+
+
+def test_final_verifier_rejects_inconsistent_native_decision(
+    tmp_path: Path,
+) -> None:
+    spec = _write_complete_final_fixture(tmp_path)
+    fallback_path = tmp_path / "native_fallback_audit.json"
+    fallback = json.loads(fallback_path.read_text())
+    fallback["selected_engine"] = "numba"
+    fallback_path.write_text(json.dumps(fallback))
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is False
+    assert "NATIVE_REJECTED_CANDIDATE_SELECTED" in report.failure_codes
 
 
 def test_final_verifier_rejects_non_child_aware_resource_samples(

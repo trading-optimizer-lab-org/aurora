@@ -8,11 +8,14 @@ from pydantic import ValidationError
 
 from aurora.infra.github_performance.engines import EngineTrial
 from aurora.infra.github_performance.native import (
+    NATIVE_QUALIFICATION_OUTPUTS,
     HotPathQualificationContract,
     HotPathProfile,
     OptimizationStageEvidence,
     build_hot_path_profile,
+    ensure_runtime_native_fallback_artifacts,
     qualify_native_candidate,
+    validate_native_qualification_artifacts,
     write_native_qualification_artifacts,
 )
 from aurora.infra.github_performance.profiles import (
@@ -362,3 +365,108 @@ def test_hot_path_qualification_contract_rejects_string_booleans() -> None:
                 "python_reference_available": True,
             }
         )
+
+
+def test_runtime_fallback_publishes_complete_honest_native_surface(
+    tmp_path: Path,
+) -> None:
+    paths = ensure_runtime_native_fallback_artifacts(
+        (
+            {"phase": "execute_shard", "duration_seconds": 20.0},
+            {"phase": "execute_shard", "duration_seconds": 10.0},
+            {"phase": "restore_runtime", "duration_seconds": 70.0},
+        ),
+        tmp_path,
+    )
+
+    assert {path.name for path in paths} == set(
+        NATIVE_QUALIFICATION_OUTPUTS
+    )
+    profile = json.loads(
+        (tmp_path / "hot_path_profile.json").read_text()
+    )
+    candidate = json.loads(
+        (tmp_path / "native_candidate_report.json").read_text()
+    )
+    fallback = json.loads(
+        (tmp_path / "native_fallback_audit.json").read_text()
+    )
+    assert profile["measured_fraction"] == 0.3
+    assert candidate["qualified"] is False
+    assert candidate["candidate_engine"] is None
+    assert "NO_EQUIVALENT_ENGINE_TRIAL_SUPPLIED" in candidate[
+        "reason_codes"
+    ]
+    assert fallback["selected_engine"] == "python_reference"
+    assert fallback["python_fallback_preserved"] is True
+
+
+def test_runtime_fallback_never_overwrites_measured_qualification(
+    tmp_path: Path,
+) -> None:
+    trials = (_reference(), _fast_candidate())
+    profile = _profile()
+    qualification = qualify_native_candidate(
+        profile,
+        trials,
+        candidate_engine="numpy",
+        optimization_evidence=_numpy_evidence(),
+    )
+    expected = write_native_qualification_artifacts(
+        profile,
+        qualification,
+        trials,
+        tmp_path,
+    )
+
+    actual = ensure_runtime_native_fallback_artifacts(
+        ({"phase": "execute_shard", "duration_seconds": 10.0},),
+        tmp_path,
+    )
+
+    assert actual == expected
+    fallback = json.loads(
+        (tmp_path / "native_fallback_audit.json").read_text()
+    )
+    assert fallback["selected_engine"] == "numpy"
+
+
+def test_runtime_fallback_rejects_partial_native_artifact_set(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "hot_path_profile.json").write_text("{}")
+
+    with pytest.raises(ValueError, match="artifact set is incomplete"):
+        ensure_runtime_native_fallback_artifacts(
+            ({"phase": "execute_shard", "duration_seconds": 10.0},),
+            tmp_path,
+        )
+
+
+def test_native_artifact_validation_accepts_runtime_fallback(
+    tmp_path: Path,
+) -> None:
+    ensure_runtime_native_fallback_artifacts(
+        ({"phase": "execute_shard", "duration_seconds": 10.0},),
+        tmp_path,
+    )
+
+    assert validate_native_qualification_artifacts(tmp_path) == ()
+
+
+def test_native_artifact_validation_rejects_inconsistent_selection(
+    tmp_path: Path,
+) -> None:
+    ensure_runtime_native_fallback_artifacts(
+        ({"phase": "execute_shard", "duration_seconds": 10.0},),
+        tmp_path,
+    )
+    fallback_path = tmp_path / "native_fallback_audit.json"
+    fallback = json.loads(fallback_path.read_text())
+    fallback["selected_engine"] = "numpy"
+    fallback_path.write_text(json.dumps(fallback))
+
+    failures = validate_native_qualification_artifacts(tmp_path)
+
+    assert "NATIVE_REJECTED_CANDIDATE_SELECTED" in failures
+    assert "NATIVE_SELECTED_ENGINE_MISMATCH" in failures
