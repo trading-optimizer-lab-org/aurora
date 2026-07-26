@@ -119,6 +119,16 @@ def test_phase_commands_are_registered() -> None:
         ("smoke", "--spec x --workload aurora.x:W --prepared p --output o"),
         ("pilot", "--spec x --workload aurora.x:W --prepared p --output o"),
         (
+            "resolve-pilot",
+            "--spec x --workload aurora.x:W --prepared p --contract c "
+            "--output o --resolution-output r",
+        ),
+        (
+            "build-performance-profile",
+            "--contract c --pilot p --environment-setup-benchmark e "
+            "--source-run-id 1 --output o",
+        ),
+        (
             "merge-group",
             "--spec s --workload aurora.x:W --shard-plan p --merge-group g "
             "--inputs-root i --output-dir o",
@@ -235,6 +245,11 @@ def test_campaign_update_preserves_verified_sources_when_omitted(
         (cmd_github.cmd_github_freeze_contract, {"spec": "missing"}),
         (cmd_github.cmd_github_smoke, {"spec": "missing"}),
         (cmd_github.cmd_github_pilot, {"spec": "missing"}),
+        (cmd_github.cmd_github_resolve_pilot, {"spec": "missing"}),
+        (
+            cmd_github.cmd_github_build_performance_profile,
+            {"contract": "missing"},
+        ),
         (cmd_github.cmd_github_plan, {"spec": "missing"}),
         (cmd_github.cmd_github_run_shard, {"spec": "missing"}),
         (

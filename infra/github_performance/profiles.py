@@ -9,13 +9,14 @@ import statistics
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
 from aurora.infra.github_performance.contracts import (
     CodeSha,
     FrozenModel,
+    PerformanceContract,
     PilotResult,
     Sha256,
     canonical_sha256,
@@ -24,6 +25,18 @@ from aurora.infra.github_performance.contracts import (
 
 
 _CONFIDENCE_Z = 1.959963984540054
+
+_RUNNER_CONTRACT_FIELDS = (
+    "capacity_profile_sha256",
+    "environment_sha256",
+    "standard_runner_only",
+    "larger_runners_allowed",
+    "matrix_job_ceiling",
+    "standard_concurrency_ceiling",
+    "runner_label",
+    "max_memory_pct",
+    "min_free_disk_gb",
+)
 
 
 class ProfileConflict(RuntimeError):
@@ -39,6 +52,25 @@ class PerformanceProfileKey(FrozenModel):
     snapshot_sha256: Sha256
     dependency_lock_sha256: Sha256
     runner_contract_sha256: Sha256
+
+
+def performance_profile_key(
+    contract: PerformanceContract,
+) -> PerformanceProfileKey:
+    """Build the exact historical-reuse key from one frozen contract."""
+
+    runner_contract = {
+        field: getattr(contract, field)
+        for field in _RUNNER_CONTRACT_FIELDS
+    }
+    return PerformanceProfileKey(
+        code_sha=contract.code_sha,
+        workflow_sha256=contract.workflow_sha256,
+        spec_sha256=contract.resolved_spec_sha256,
+        snapshot_sha256=contract.snapshot_hash,
+        dependency_lock_sha256=contract.dependency_lock_sha256,
+        runner_contract_sha256=canonical_sha256(runner_contract),
+    )
 
 
 class TimingDistribution(FrozenModel):
@@ -186,6 +218,48 @@ class PerformanceProfile(FrozenModel):
             **identity,
             profile_sha256=canonical_sha256(identity),
         )
+
+
+def build_performance_profile(
+    *,
+    contract: PerformanceContract,
+    pilot_result: PilotResult,
+    environment_setup_benchmark: Mapping[str, Any],
+    source_run_id: str,
+    created_at: datetime,
+) -> PerformanceProfile:
+    """Build a reusable profile only from reproducible measured evidence."""
+
+    report = dict(environment_setup_benchmark)
+    if not bool(report.get("dependency_environment_reproducible", False)):
+        raise ValueError("setup benchmark environment is not reproducible")
+    if not bool(report.get("fast_path_selected", False)):
+        raise ValueError("setup benchmark did not select the optimized path")
+    failures = tuple(str(item) for item in report.get("failure_codes", ()))
+    if failures:
+        raise ValueError(
+            "setup benchmark contains failures: " + ",".join(failures)
+        )
+    cold = tuple(
+        float(value) for value in report.get("optimized_cold_seconds", ())
+    )
+    warm = tuple(
+        float(value) for value in report.get("optimized_warm_seconds", ())
+    )
+    return PerformanceProfile.create(
+        key=performance_profile_key(contract),
+        cold=build_timing_distribution(
+            condition="cold",
+            samples_seconds=cold,
+        ),
+        warm=build_timing_distribution(
+            condition="warm",
+            samples_seconds=warm,
+        ),
+        pilot_result=pilot_result,
+        source_run_id=source_run_id,
+        created_at=created_at,
+    )
 
 
 class ProfileReuseDecision(FrozenModel):

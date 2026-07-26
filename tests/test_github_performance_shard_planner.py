@@ -186,17 +186,20 @@ def test_execution_plan_is_complete_and_hash_stable(
         first_manifest,
         pilot(),
         tmp_path / "first-plan",
+        performance_profile_sha256="9" * 64,
     )
     second = build_execution_plan(
         run_spec,
         second_manifest,
         pilot(),
         tmp_path / "second-plan",
+        performance_profile_sha256="9" * 64,
     )
     assert canonical_sha256(first) == canonical_sha256(second)
     assert first.matrix_split.has_matrix_b == (
         first.job_count.selected_jobs > 256
     )
+    assert first.performance_profile_sha256 == "9" * 64
     paths = write_execution_plan(first, tmp_path)
     pilot_path = write_pilot_result(
         pilot(),

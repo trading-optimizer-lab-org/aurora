@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - full
+          - transient_recovery
           - merge_only
           - replan
           - replan_fixture
@@ -60,7 +61,7 @@ permissions:
 
 jobs:
   reference:
-    if: inputs.operation == 'full'
+    if: inputs.operation == 'full' || inputs.operation == 'transient_recovery'
     uses: ./.github/workflows/_aurora-future-run-v3.yml
     with:
       spec_path: config/github_performance_reference.yaml
@@ -68,7 +69,12 @@ jobs:
       run_label: github-performance-reference
       retention_days: 7
       forced_job_count: >-
-        ${{ fromJSON(format('{0}', inputs.full_forced_job_count)) }}
+        ${{ inputs.operation == 'transient_recovery' && 4 ||
+        fromJSON(format('{0}', inputs.full_forced_job_count)) }}
+      fault_injection_shard_id: >-
+        ${{ inputs.operation == 'transient_recovery' && 's000' || '' }}
+      fault_injection_after_units: >-
+        ${{ inputs.operation == 'transient_recovery' && 32 || 0 }}
 
   merge_only:
     if: inputs.operation == 'merge_only'

@@ -14,11 +14,13 @@ from aurora.infra.github_performance.profiles import (
     PerformanceProfileKey,
     ProfileConflict,
     assess_profile_reuse,
+    build_performance_profile,
     build_timing_distribution,
     load_performance_profile,
+    performance_profile_key,
     write_performance_profile,
 )
-from github_performance_helpers import pilot
+from github_performance_helpers import contract, pilot
 
 
 def _key() -> PerformanceProfileKey:
@@ -205,4 +207,58 @@ def test_profile_rejects_nonfinite_sample() -> None:
         build_timing_distribution(
             condition="warm",
             samples_seconds=(1.0, float("nan")),
+        )
+
+
+def test_profile_key_is_derived_from_every_frozen_runtime_identity() -> None:
+    original = contract()
+    key = performance_profile_key(original)
+
+    assert key.code_sha == original.code_sha
+    assert key.workflow_sha256 == original.workflow_sha256
+    assert key.spec_sha256 == original.resolved_spec_sha256
+    assert key.snapshot_sha256 == original.snapshot_hash
+    assert (
+        key.dependency_lock_sha256
+        == original.dependency_lock_sha256
+    )
+    changed = original.model_copy(
+        update={"environment_sha256": "9" * 64}
+    )
+    assert (
+        performance_profile_key(changed).runner_contract_sha256
+        != key.runner_contract_sha256
+    )
+
+
+def test_profile_builder_requires_repeated_cold_and_warm_evidence() -> None:
+    report = {
+        "dependency_environment_reproducible": True,
+        "fast_path_selected": True,
+        "failure_codes": [],
+        "optimized_cold_seconds": [10.0, 10.5, 9.8],
+        "optimized_warm_seconds": [7.0, 7.2, 6.9],
+    }
+    profile = build_performance_profile(
+        contract=contract(),
+        pilot_result=pilot(),
+        environment_setup_benchmark=report,
+        source_run_id="123",
+        created_at=datetime(2026, 7, 26, tzinfo=timezone.utc),
+    )
+
+    assert profile.key == performance_profile_key(contract())
+    assert profile.cold.sample_count == 3
+    assert profile.warm.sample_count == 3
+    assert profile.source_run_id == "123"
+    with pytest.raises(ValueError, match="at least two"):
+        build_performance_profile(
+            contract=contract(),
+            pilot_result=pilot(),
+            environment_setup_benchmark={
+                **report,
+                "optimized_cold_seconds": [10.0],
+            },
+            source_run_id="123",
+            created_at=datetime(2026, 7, 26, tzinfo=timezone.utc),
         )

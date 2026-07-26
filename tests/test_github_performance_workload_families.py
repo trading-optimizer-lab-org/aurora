@@ -13,6 +13,7 @@ from aurora.infra.github_performance.adapter import adapt_workload
 from aurora.infra.github_performance.audits import (
     read_runtime_access_ledger,
 )
+from aurora.infra.github_performance.checkpoint import load_checkpoint
 from aurora.infra.github_performance.contracts import (
     RunSpec,
     ShardDefinition,
@@ -129,6 +130,44 @@ def _one_unit_shard(
         assignment_sha256=sha256_file(assignment),
         unit_count=1,
         estimated_seconds=unit.estimated_seconds,
+        merge_group="g000",
+    )
+
+
+def _multi_unit_shard(
+    units: list[WorkUnit],
+    root: Path,
+) -> ShardDefinition:
+    assignment = root / "assignment.parquet"
+    metadata = {
+        b"schema_version": ASSIGNMENT_SCHEMA_VERSION.encode("ascii"),
+        b"sorted_by": b"shard_id,unit_key",
+    }
+    rows = [
+        {
+            "shard_id": "s000",
+            "unit_key": unit.unit_key,
+            "estimated_seconds": unit.estimated_seconds,
+            "payload_ref": unit.payload_ref,
+            "payload_sha256": unit.payload_sha256,
+        }
+        for unit in sorted(units, key=lambda item: item.unit_key)
+    ]
+    pq.write_table(
+        pa.Table.from_pylist(
+            rows,
+            schema=ASSIGNMENT_SCHEMA.with_metadata(metadata),
+        ),
+        assignment,
+        compression="zstd",
+    )
+    return ShardDefinition(
+        shard_id="s000",
+        assignment_artifact="workload-family-test",
+        assignment_member=str(assignment),
+        assignment_sha256=sha256_file(assignment),
+        unit_count=len(rows),
+        estimated_seconds=sum(unit.estimated_seconds for unit in units),
         merge_group="g000",
     )
 
@@ -286,3 +325,100 @@ def test_one_unit_shard_emits_runtime_and_independent_metric_evidence(
     merged_table = pq.read_table(merged)
     assert merged_table.num_rows == 1
     assert merged_table.column("unit_key").to_pylist() == [unit.unit_key]
+
+
+def test_controlled_transient_failure_resumes_exact_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workload = CANDIDATE_SWEEP
+    spec = _spec()
+    prepared_root = tmp_path / "prepared"
+    prepared = workload.prepare(spec, prepared_root)
+    manifest = workload.enumerate_units(
+        spec,
+        prepared,
+        tmp_path / "work_units.parquet",
+    )
+    unit_rows = pq.read_table(Path(manifest.path)).slice(0, 40).to_pylist()
+    units = [
+        WorkUnit(
+            unit_key=str(row["unit_key"]),
+            estimated_seconds=float(row["estimated_seconds"]),
+            payload_ref=str(row["payload_ref"]),
+            payload_sha256=str(row["payload_sha256"]),
+        )
+        for row in unit_rows
+    ]
+    shard = _multi_unit_shard(units, tmp_path)
+    monkeypatch.setenv("AURORA_PREPARED_ROOT", str(prepared_root))
+    monkeypatch.setenv("AURORA_ATTEMPT_ID", "a-fault")
+    monkeypatch.setenv("AURORA_ARTIFACT_NAME", "fault-artifact")
+    monkeypatch.setenv("AURORA_FAULT_INJECTION_SHARD_ID", "s000")
+    monkeypatch.setenv("AURORA_FAULT_INJECTION_AFTER_UNITS", "32")
+
+    with pytest.raises(
+        ConnectionError,
+        match="CONTROLLED_TRANSIENT_NETWORK_AFTER_CHECKPOINT",
+    ):
+        workload.run_shard(
+            spec,
+            shard,
+            tmp_path / "fault-attempt",
+            None,
+        )
+
+    checkpoint = load_checkpoint(
+        tmp_path
+        / "fault-attempt"
+        / "checkpoint"
+        / "checkpoint_manifest.json"
+    )
+    assert checkpoint.completed_unit_count == 32
+    checkpoint = checkpoint.model_copy(
+        update={
+            "payload_path": str(
+                (
+                    tmp_path
+                    / "fault-attempt"
+                    / "checkpoint"
+                    / checkpoint.payload_path
+                ).resolve()
+            )
+        }
+    )
+
+    monkeypatch.delenv("AURORA_FAULT_INJECTION_SHARD_ID")
+    monkeypatch.delenv("AURORA_FAULT_INJECTION_AFTER_UNITS")
+    monkeypatch.setenv("AURORA_ATTEMPT_ID", "a-recovery")
+    monkeypatch.setenv("AURORA_ARTIFACT_NAME", "recovery-artifact")
+    recovered = workload.run_shard(
+        spec,
+        shard,
+        tmp_path / "recovered",
+        checkpoint,
+    )
+
+    monkeypatch.setenv("AURORA_ATTEMPT_ID", "a-clean")
+    monkeypatch.setenv("AURORA_ARTIFACT_NAME", "clean-artifact")
+    clean = workload.run_shard(
+        spec,
+        shard,
+        tmp_path / "clean",
+        None,
+    )
+
+    assert recovered.completed_unit_count == clean.completed_unit_count == 40
+    recovered_rows = pq.read_table(
+        tmp_path / "recovered" / workload.result_filename
+    ).to_pylist()
+    clean_rows = pq.read_table(
+        tmp_path / "clean" / workload.result_filename
+    ).to_pylist()
+    assert [
+        {key: value for key, value in row.items() if key != "source_attempt_id"}
+        for row in recovered_rows
+    ] == [
+        {key: value for key, value in row.items() if key != "source_attempt_id"}
+        for row in clean_rows
+    ]

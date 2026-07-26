@@ -108,6 +108,7 @@ jobs:
           )
           PY
       - name: Execute exact retry
+        continue-on-error: true
         env:
           WORKLOAD: ${{ inputs.workload }}
           DESCRIPTOR_JSON: ${{ inputs.descriptor_json }}
@@ -176,6 +177,7 @@ jobs:
           PY
       - name: Salvage retry evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.identity.outputs.attempt_artifact }}
@@ -185,6 +187,7 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
       - name: Salvage valid checkpoint
         if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.identity.outputs.checkpoint_artifact }}

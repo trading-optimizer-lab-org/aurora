@@ -414,6 +414,7 @@ def build_execution_plan(
     consumed_billable_minutes: float = 0.0,
     committed_billable_minutes: float = 0.0,
     checkpoint_margin_seconds: float = 60.0,
+    performance_profile_sha256: str | None = None,
 ) -> ExecutionPlan:
     """Build the only immutable execution plan accepted by fan-out jobs."""
 
@@ -615,6 +616,7 @@ def build_execution_plan(
             spec.performance["artifact_compression_precompressed"]
         ),
         fallback_plan_sha256=canonical_sha256(fallback_payload),
+        performance_profile_sha256=performance_profile_sha256,
     )
 
 

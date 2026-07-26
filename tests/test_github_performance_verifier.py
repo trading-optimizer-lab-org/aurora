@@ -297,6 +297,40 @@ def _add_mandatory_fixture_outputs(root: Path, spec: RunSpec) -> None:
         path = root / name
         if not path.exists():
             _write_placeholder(path)
+    pilot = {
+        "checkpoint_seconds": 0.01,
+        "merge_fixed_seconds": 0.5,
+        "merge_per_shard_seconds": 0.005,
+        "queue_seconds": 0.0,
+        "setup_seconds": 2.0,
+        "transfer_fixed_seconds": 1.0,
+        "transfer_per_wave_seconds": 0.05,
+        "unit_seconds_p50": 0.01,
+        "unit_seconds_p95": 0.02,
+        "usable_parallelism": 1,
+        "verify_seconds": 0.25,
+    }
+    (root / "performance_pilot.json").write_text(
+        json.dumps(pilot) + "\n",
+        encoding="utf-8",
+    )
+    (root / "planning_pilot_resolution.json").write_text(
+        json.dumps(
+            {
+                "pilot_result": pilot,
+                "source": "fresh_pilot",
+                "profile_reused": False,
+                "reason_codes": ["PERFORMANCE_PROFILE_MISSING"],
+                "performance_profile_sha256": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "execution_plan.json").write_text(
+        json.dumps({"performance_profile_sha256": None}) + "\n",
+        encoding="utf-8",
+    )
     verifier_module.ensure_runtime_native_fallback_artifacts(
         (
             {"phase": "execute_shard", "duration_seconds": 8.0},
@@ -561,6 +595,56 @@ def test_final_verifier_accepts_complete_untampered_artifact(
     report = verify_final_artifact(tmp_path, spec)
     assert report.passed is True
     assert report.partial is False
+
+
+def test_final_verifier_rejects_pilot_resolution_mismatch(
+    tmp_path: Path,
+) -> None:
+    spec = _write_complete_final_fixture(tmp_path)
+    resolution_path = tmp_path / "planning_pilot_resolution.json"
+    resolution = json.loads(resolution_path.read_text())
+    resolution["pilot_result"]["setup_seconds"] = 99.0
+    resolution_path.write_text(json.dumps(resolution))
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is False
+    assert "PLANNING_PILOT_RESULT_MISMATCH" in report.failure_codes
+
+
+def test_final_verifier_rejects_unpropagated_historical_profile(
+    tmp_path: Path,
+) -> None:
+    spec = _write_complete_final_fixture(tmp_path)
+    resolution_path = tmp_path / "planning_pilot_resolution.json"
+    resolution = json.loads(resolution_path.read_text())
+    resolution.update(
+        {
+            "source": "historical_profile",
+            "profile_reused": True,
+            "reason_codes": [],
+            "performance_profile_sha256": "a" * 64,
+        }
+    )
+    resolution_path.write_text(json.dumps(resolution))
+    (tmp_path / "execution_plan.json").write_text(
+        json.dumps({"performance_profile_sha256": "b" * 64})
+    )
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is False
+    assert "HISTORICAL_PROFILE_HASH_NOT_PROPAGATED" in (
+        report.failure_codes
+    )
 
 
 def test_final_verifier_rejects_inconsistent_native_decision(

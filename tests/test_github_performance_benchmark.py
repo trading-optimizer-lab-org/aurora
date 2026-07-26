@@ -294,6 +294,10 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         "robustness",
     ]
     assert inputs["forced_job_count"]["default"] == 0
+    assert inputs["performance_profile_run_id"]["default"] == ""
+    assert inputs["performance_profile_artifact_name"]["default"] == ""
+    assert inputs["fault_injection_shard_id"]["default"] == ""
+    assert inputs["fault_injection_after_units"]["default"] == 0
     assert workflow["permissions"] == {
         "contents": "read",
         "actions": "read",
@@ -335,6 +339,21 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     ]
     compare_text = str(jobs["compare"])
     assert "environment_setup_benchmark.json" in compare_text
+    assert "--cold-repetitions 3" in str(jobs["setup_benchmark"])
+    assert "aurora github build-performance-profile" in compare_text
+    assert "performance_profile.json" in compare_text
+    assert (
+        jobs["optimized"]["with"]["performance_profile_run_id"]
+        == "${{ inputs.performance_profile_run_id }}"
+    )
+    assert (
+        jobs["baseline"]["with"]["performance_profile_artifact_name"]
+        == "${{ inputs.performance_profile_artifact_name }}"
+    )
+    for name in ("optimized", "baseline"):
+        assert jobs[name]["with"]["fault_injection_shard_id"] == (
+            "${{ inputs.fault_injection_shard_id }}"
+        )
     upload = jobs["compare"]["steps"][-1]
     assert upload["if"] == "always()"
     assert str(upload["with"]["path"]).endswith(

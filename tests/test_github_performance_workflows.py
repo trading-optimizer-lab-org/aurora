@@ -337,6 +337,7 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert inputs["operation"]["options"] == [
         "full",
+        "transient_recovery",
         "merge_only",
         "replan",
         "replan_fixture",
@@ -502,12 +503,21 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "forced_job_count",
         "prepared_artifact_name",
         "wheelhouse_artifact_name",
+        "performance_profile_run_id",
+        "performance_profile_artifact_name",
+        "fault_injection_shard_id",
+        "fault_injection_after_units",
         "spec_path",
         "workload",
         "run_label",
         "retention_days",
     }
-    assert workflow["permissions"] == {"contents": "read"}
+    assert inputs["fault_injection_shard_id"]["default"] == ""
+    assert inputs["fault_injection_after_units"]["default"] == 0
+    assert workflow["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
     assert "push" not in workflow["on"]
     assert "pull_request" not in workflow["on"]
 
@@ -624,6 +634,84 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
     )
+
+
+def test_reusable_workflow_reuses_only_exact_prior_performance_profile() -> None:
+    workflow = _workflow()
+    pilot = workflow["jobs"]["pilot"]
+    download = next(
+        step
+        for step in pilot["steps"]
+        if step["name"] == "Download prior immutable performance profile"
+    )
+    resolve = next(
+        step
+        for step in pilot["steps"]
+        if step["name"] == "Resolve exact profile or measure fresh pilot"
+    )
+    plan = workflow["jobs"]["plan"]
+    build = next(
+        step
+        for step in plan["steps"]
+        if step["name"] == "Build adaptive balanced plan"
+    )
+
+    assert "performance_profile_run_id" in str(download["if"])
+    assert "performance_profile_artifact_name" in str(download["if"])
+    assert download["with"]["run-id"] == (
+        "${{ inputs.performance_profile_run_id }}"
+    )
+    assert download["with"]["github-token"] == "${{ github.token }}"
+    assert "aurora github resolve-pilot" in resolve["run"]
+    assert "--performance-profile" in resolve["run"]
+    assert "planning_pilot_resolution.json" in resolve["run"]
+    assert "--pilot-resolution" in build["run"]
+    assert plan["outputs"]["profile_reused"] == (
+        "${{ steps.profile.outputs.profile_reused }}"
+    )
+
+
+def test_transient_fault_is_limited_to_initial_fanout() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+
+    for name in ("fanout_a", "fanout_b"):
+        execute = next(
+            step
+            for step in jobs[name]["steps"]
+            if step["name"] == "Execute shard"
+        )
+        assert execute["env"]["AURORA_FAULT_INJECTION_SHARD_ID"] == (
+            "${{ inputs.fault_injection_shard_id }}"
+        )
+        assert execute["env"]["AURORA_FAULT_INJECTION_AFTER_UNITS"] == (
+            "${{ inputs.fault_injection_after_units }}"
+        )
+        assert execute["continue-on-error"] is True
+        salvage = next(
+            step
+            for step in jobs[name]["steps"]
+            if step["name"] == "Salvage attempt evidence"
+        )
+        assert salvage["continue-on-error"] is True
+
+    retry_path = ROOT / ".github/workflows/_aurora-retry-shard-v3.yml"
+    retry_text = retry_path.read_text(encoding="utf-8")
+    assert "AURORA_FAULT_INJECTION_SHARD_ID" not in retry_text
+    assert "AURORA_FAULT_INJECTION_AFTER_UNITS" not in retry_text
+    retry = load_github_yaml(retry_path)["jobs"]["execute"]
+    execute_retry = next(
+        step
+        for step in retry["steps"]
+        if step["name"] == "Execute exact retry"
+    )
+    salvage_retry = next(
+        step
+        for step in retry["steps"]
+        if step["name"] == "Salvage retry evidence"
+    )
+    assert execute_retry["continue-on-error"] is True
+    assert salvage_retry["continue-on-error"] is True
 
 
 def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:
