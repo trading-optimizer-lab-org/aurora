@@ -332,9 +332,13 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
         "replan_fixture",
     ]
     jobs = workflow["jobs"]
+    assert "full_forced_job_count" in inputs
     assert jobs["reference"]["uses"] == (
         "./.github/workflows/_aurora-future-run-v3.yml"
     )
+    full_jobs = jobs["reference"]["with"]["forced_job_count"]
+    assert "fromJSON" in full_jobs
+    assert "inputs.full_forced_job_count" in full_jobs
     assert jobs["merge_only"]["uses"] == (
         "./.github/workflows/github-performance-merge-only.yml"
     )

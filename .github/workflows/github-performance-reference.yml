@@ -43,6 +43,11 @@ on:
         required: false
         default: 1
         type: number
+      full_forced_job_count:
+        description: Exact full-run shard count; zero uses adaptive planning
+        required: false
+        default: 0
+        type: number
       operational_overrides:
         description: Operational-only replan overrides as JSON
         required: false
@@ -62,6 +67,8 @@ jobs:
       workload: aurora.infra.github_performance.reference_workload:WORKLOAD
       run_label: github-performance-reference
       retention_days: 7
+      forced_job_count: >-
+        ${{ fromJSON(format('{0}', inputs.full_forced_job_count)) }}
 
   merge_only:
     if: inputs.operation == 'merge_only'
