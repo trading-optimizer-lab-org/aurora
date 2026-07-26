@@ -1,7 +1,7 @@
 schema_version: "3.0"
 
 identity:
-  campaign_id: "github-performance-event-study-256"
+  campaign_id: "github-performance-event-study-512"
   run_type: "event_study_io"
   repo: "trading-optimizer-lab-org/aurora"
   code_ref: "codex/github-performance-phases2-3"
@@ -13,7 +13,7 @@ identity:
 objective:
   description: "Validate partitioned I/O and event aggregation through the universal GitHub spine"
   success_criteria:
-    - "all 256 logical event definitions reconcile exactly"
+    - "all 512 logical event definitions reconcile exactly"
     - "locked_opened=false"
     - "validation_used_for_selection=false"
   negative_result_criteria:
@@ -188,7 +188,7 @@ statistics:
   hypothesis_family: "event_study_performance_fixture"
   null_hypothesis: "event outcomes have zero expected return"
   alternative_hypothesis: "not evaluated in framework validation"
-  n_trials_global: 256
+  n_trials_global: 512
   alpha: 0.05
   multiple_testing_correction: "none_no_scientific_claim"
   bootstrap_method: "none_fixture_only"

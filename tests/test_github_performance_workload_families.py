@@ -148,6 +148,15 @@ def test_three_distinct_native_workload_contracts() -> None:
     assert all(item.original_candidate_id_preserved for item in contracts)
 
 
+def test_event_study_has_enough_unique_units_for_both_matrices() -> None:
+    definitions = EVENT_STUDY._unit_definitions()
+    unit_keys = {unit_key for unit_key, _, _ in definitions}
+
+    assert len(definitions) == 512
+    assert len(unit_keys) == 512
+    assert len(definitions) > 256
+
+
 @pytest.mark.parametrize("config_path", CONFIGS)
 def test_representative_workload_specs_are_valid_and_locked(
     config_path: Path,
