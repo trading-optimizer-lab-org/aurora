@@ -2757,6 +2757,368 @@ matrix_job_ceiling_respected=true
 larger_runner_used=false
 ```
 
+## 96. Evidencia de cierre del sistema universal
+
+Esta sección registra pruebas ejecutadas en GitHub Actions. No sustituye los
+contratos anteriores ni rebaja sus requisitos. Los paths locales indicados son
+copias descargadas de artifacts; no son el origen de ninguna ejecución.
+
+Rama verificada:
+
+```text
+codex/github-performance-reference-fault
+```
+
+SHA funcional verificado por los runs:
+
+```text
+ad2cb01944c66d5da61f58ef2a041b6827e03202
+```
+
+Pull request:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/pull/20
+```
+
+El workflow universal puede ejecutarse directamente mediante
+`workflow_dispatch`. La planificación de recovery, los retries selectivos y
+los niveles de merge son jobs regulares con acciones compuestas locales. La
+ruta directa no crea workflows reutilizables anidados, por lo que el resultado
+del run padre depende de jobs visibles y auditables en el mismo run.
+
+El CI específico de rendimiento para este SHA pasó en:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30215843465
+```
+
+Ese CI verificó el lock de dependencias, los contratos del sistema de
+rendimiento y un smoke de cuatro shards con el motor real. No se ejecutaron
+tests, smokes, benchmarks ni merges pesados en el PC local.
+
+### 96.1 Recovery directo completo
+
+Run:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30215906618
+```
+
+Artifact final:
+
+```text
+github-performance-direct-recovery-v2-results
+```
+
+Copia auditada:
+
+```text
+E:\aurora_artifacts\direct_recovery_success_30215906618
+```
+
+Estado GitHub:
+
+```text
+status=completed
+conclusion=success
+jobs_success=22
+jobs_skipped=17
+jobs_failure=0
+jobs_cancelled=0
+referenced_workflows=[]
+```
+
+La inyección controlada detuvo `s000` después de 32 unidades. La recuperación
+conservó esas 32 salidas y calculó únicamente las 224 pendientes:
+
+```text
+s000 intento inicial seleccionado=32 unidades
+s000 intento de recovery seleccionado=224 unidades
+s001 sin retry=256 unidades
+s002 sin retry=256 unidades
+s003 sin retry=256 unidades
+```
+
+La reconciliación final seleccionó 1.024 unidades de 1.024. No faltó ninguna,
+no hubo duplicados científicos y no se repitieron los shards sanos.
+
+Evidencia científica y de política:
+
+```text
+final_verification_report.passed=true
+failure_codes=[]
+partial=false
+independent_metrics_equal=true
+metric_records_verified=2048
+metric_fields_compared=30720
+metric_mismatches=0
+scientific_content_rows=1024
+scientific_content_sha256=e22d50c3177cefcfac37f164b7611d01eeb8997dea17b764398a5b2b07f19509
+locked_opened=false
+locked_rows_accessed=0
+maximum_accessed_date=2020-12-31
+maximum_selection_date=2010-12-31
+validation_used_for_selection=false
+github_only_run=true
+standard_runner_only=true
+larger_runner_used=false
+runner_label=ubuntu-24.04
+```
+
+El bug de cierre que dejaba rojo un run científicamente correcto quedó
+identificado y corregido. Cuando una mitad de la matriz de retry está vacía, el
+job correspondiente se omite mediante `has_matrix_a` o `has_matrix_b`; GitHub
+ya no recibe una matriz invisible de cero filas.
+
+### 96.2 Capacidad literal de 360 jobs
+
+Tercera familia real:
+
+```text
+workload_family=robustness
+forced_job_count=360
+```
+
+Run:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30216359856
+```
+
+Artifact comparativo:
+
+```text
+github-performance-benchmark-robustness-results
+```
+
+Copia auditada:
+
+```text
+E:\aurora_artifacts\literal_360_robustness_30216359856
+```
+
+Estado GitHub:
+
+```text
+status=completed
+conclusion=success
+jobs_total=802
+jobs_success=767
+jobs_skipped=35
+jobs_failure=0
+jobs_cancelled=0
+```
+
+Cada modo creó exactamente dos matrices:
+
+```text
+fanout_a=256
+fanout_b=104
+total=360
+```
+
+El modo optimizado alcanzó un pico observado de 360 jobs concurrentes. El
+baseline alcanzó 358. Ambos utilizaron sólo `ubuntu-24.04` estándar.
+
+Resultado científico:
+
+```text
+compared_units=512
+optimized_scientific_rows=512
+baseline_scientific_rows=512
+scientific_outputs_equal=true
+scientific_content_sha256=153fc0f0d6ccc59df7aadd7a18e5e2829233d3f4cd392efea3a22ef88dff6ade
+independent_metrics_equal=true
+metric_fields_compared=15360
+metric_mismatches=0
+partial=false
+locked_opened=false
+locked_rows_accessed=0
+maximum_accessed_date=2020-12-31
+maximum_selection_date=2010-12-31
+validation_used_for_selection=false
+multi_level_merge_verified=true
+merge_source_shards=360
+merge_levels_executed=2
+matrix_job_ceiling_respected=true
+dependency_environment_reproducible=true
+```
+
+Rendimiento:
+
+```text
+optimized_workflow_wall_seconds=478
+baseline_workflow_wall_seconds=444
+speedup=0.9288702929
+optimization_disposition=rejected_slower
+optimization_selected=false
+```
+
+La carga era demasiado pequeña para que el reparto ponderado y el merge
+jerárquico compensasen su coste. El sistema no afirmó una aceleración:
+rechazó automáticamente la opción más lenta y conservó el baseline.
+
+## 97. Tres familias reales y decisión automática
+
+Las tres formas exigidas se ejecutaron con el framework completo y con
+comparaciones científicamente equivalentes:
+
+| Familia | Run | Jobs por modo | Pico observado | Filas | Hash científico | Decisión |
+|---|---:|---:|---:|---:|---|---|
+| candidate sweep CPU-heavy | 30208734256 | 4 | 5 | 512 | `5ead4b5f9b8cc498ca2c8268e7c7eb0e459e42b37b5db9334bf92c0eaae79734` | optimización seleccionada |
+| event study I/O-heavy | 30205450575 | 300 | 301 | 512 | `5b6e866af9a0b218cdc3f0878f86aaf534eb80a32c520158f14ac9854bd4666f` | optimización rechazada |
+| robustness/merge-heavy | 30216359856 | 360 | 360 | 512 | `153fc0f0d6ccc59df7aadd7a18e5e2829233d3f4cd392efea3a22ef88dff6ade` | optimización rechazada |
+
+La carga candidate sweep demostró una mejora material equivalente:
+
+```text
+optimized_workflow_wall_seconds=360
+baseline_workflow_wall_seconds=406
+speedup=1.1277777778
+speedup_uncertainty.lower_bound=1.1218836565
+speedup_uncertainty.upper_bound=1.1337047354
+minimum_material_speedup=1.05
+material_speedup_achieved=true
+optimization_disposition=selected
+```
+
+El intervalo publicado cubre la resolución temporal observada. El propio
+artifact aclara que una sola repetición no permite cuantificar toda la
+variabilidad entre runs. Esta limitación se conserva; no se presenta como un
+intervalo estocástico.
+
+Las cargas event study y robustness demostraron la ruta contraria: cuando la
+optimización no supera el mínimo de 1,05, se rechaza aunque sea
+científicamente correcta.
+
+## 98. Pruebas operativas complementarias
+
+### 98.1 Replan sin cambiar ciencia
+
+Run:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30207130587
+```
+
+Evidencia:
+
+```text
+E:\aurora_artifacts\replan_proof_30207130587\replan\replan.json
+```
+
+Resultado:
+
+```text
+scientific_contract_unchanged=true
+logical_units_unchanged=true
+completed_evidence_unchanged=true
+completed_unit_count=512
+pending_unit_count=512
+operational_overrides.requested_parallelism=4
+```
+
+### 98.2 Merge-only sin recomputar
+
+Run fuente:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30208814697
+```
+
+Run merge-only:
+
+```text
+https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30209242779
+```
+
+Evidencia:
+
+```text
+E:\aurora_artifacts\merge_only_success_30209242779\evidence\merge_only_verification.json
+```
+
+Resultado:
+
+```text
+merge_only=true
+compute_scheduled=false
+scientific_outputs_equal=true
+scientific_output_sha256=ed02d19d5a1f3174466b7f859231f181a0760a119f3b35a10830f32444867c23
+```
+
+### 98.3 Dependencias reproducibles
+
+Los jobs restauran un wheelhouse inmutable construido una vez por SHA. El
+manifest de entorno verificado para los cierres finales usa:
+
+```text
+environment_sha256=ae915ddc485ec1d5d6e52acfb8f8eb9934fbb1c01644bc5157be7577364dc72e
+dependency_lock=requirements/github-performance.lock
+dependency_lock_sha256=f05d8bad95f313c9b8632419bc81e4792f8ca6054d615f59592ae0b13c32f08e
+```
+
+El benchmark de instalación del run 30216359856 midió:
+
+```text
+locked_network_cold_median_seconds=17.4981
+wheelhouse_cold_median_seconds=12.4788
+cold_speedup=1.4022
+locked_network_warm_median_seconds=15.6482
+wheelhouse_warm_median_seconds=12.3037
+warm_speedup=1.2718
+dependency_environment_reproducible=true
+```
+
+## 99. Matriz final de requisitos
+
+| Requisito | Estado | Evidencia autoritativa |
+|---|---|---|
+| `locked_opened=false` por runtime | Cumplido | `policy_audit.json` y `runtime_access_ledger.parquet` de 30215906618 y 30216359856 |
+| `locked_rows_accessed=0` | Cumplido | `data_audit.json` de 30215906618 y 30216359856 |
+| validación sólo para reporte | Cumplido | `maximum_selection_date=2010-12-31` y `validation_used_for_selection=false` |
+| resultado no parcial | Cumplido | `partial=false`, reconciliación 1.024/1.024 y 512/512 |
+| outputs obligatorios completos | Cumplido | `requirements_traceability.csv: required_outputs=pass` |
+| métricas independientes iguales | Cumplido | 30.720 campos sin mismatch en recovery y 15.360 en robustness |
+| entorno reproducible | Cumplido | lock completo, wheelhouse inmutable y `dependency_environment_reproducible=true` |
+| deadline respetado | Cumplido | `deadline_audit.json: route_allowed=true` |
+| presupuesto respetado | Cumplido | `budget_audit.json: route_allowed=true` |
+| campaña recuperable | Cumplido | estados versionados y recovery directo 30215906618 |
+| recovery selectivo | Cumplido | sólo 224 unidades pendientes de `s000`; shards sanos conservados |
+| replan | Cumplido | run 30207130587 |
+| merge-only | Cumplido | run 30209242779, `compute_scheduled=false` |
+| merge multinivel | Cumplido | run 30216359856, 360 fuentes y dos niveles verificados |
+| igualdad científica | Cumplido | hashes canónicos iguales en cada benchmark |
+| máximo 256 por matriz | Cumplido | matrices 256 + 104 para 360 |
+| runner estándar | Cumplido | `runner_label=ubuntu-24.04`, `standard_runner_only=true` |
+| larger runners prohibidos | Cumplido | `larger_runner_used=false` |
+| tres workloads reales | Cumplido | runs 30208734256, 30205450575 y 30216359856 |
+| mejora material real | Cumplido | candidate sweep, speedup 1,1278 con límite inferior 1,1219 |
+| incertidumbre publicada | Cumplido | `speedup_uncertainty` en 30208734256 |
+| capacidad alta real | Cumplido | pico observado 360 en 30216359856 |
+| explicación de selección | Cumplido | disposition y reason codes en `performance_final.json` |
+| rechazo automático de ruta lenta | Cumplido | event study y robustness: `rejected_slower` |
+
+## 100. Estado de integración y límites honestos
+
+La implementación y sus pruebas están en el pull request 20. Hasta que ese PR
+se fusione, `main` no contiene estos últimos arreglos de recovery directo.
+
+Los checks específicos de rendimiento están verdes. El repositorio conserva
+deuda general previa en lint, documentación, mypy y tests no relacionados; no
+se afirma que todo Aurora esté verde.
+
+La capacidad literal de 360 quedó demostrada, pero no debe forzarse para cada
+carga. En robustness, 360 jobs consumieron más setup y merge que cálculo útil.
+El selector debe seguir eligiendo menos jobs cuando el piloto y un perfil
+exactamente compatible lo justifiquen.
+
+El sistema queda cerrado respecto de los criterios de este estándar. Cualquier
+nuevo workload científico debe aportar su adapter, contrato, outputs y prueba
+de equivalencia; no hereda automáticamente la validez científica de estos tres
+workloads de referencia.
+
 ---
 
 # REGLA FINAL
