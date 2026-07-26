@@ -11,21 +11,26 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from aurora.infra.github_performance.benchmark import (
+    scientific_content_identity,
+)
 from aurora.infra.github_performance.contracts import (
     RunSpec,
     VerificationReport,
     canonical_sha256,
     deep_thaw_json,
 )
-from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.github_performance.metric_verifier import (
     independent_metric_verification_payload,
     read_metric_inputs,
     verify_metric_inputs,
 )
-from aurora.infra.github_performance.benchmark import (
-    scientific_content_identity,
+from aurora.infra.github_performance.native import (
+    NATIVE_QUALIFICATION_OUTPUTS,
+    ensure_runtime_native_fallback_artifacts,
+    validate_native_qualification_artifacts,
 )
+from aurora.infra.github_performance.shard_planner import sha256_file
 
 
 TRACEABILITY_COLUMNS = (
@@ -62,6 +67,7 @@ MANDATORY_FINAL_OUTPUTS = (
     "performance_telemetry_manifest.json",
     "bottleneck_report.json",
     "performance_final.json",
+    *NATIVE_QUALIFICATION_OUTPUTS,
     "recovery_plan.json",
     "checkpoint_audit.parquet",
     "shard_attempt_manifest.parquet",
@@ -525,6 +531,7 @@ def verify_final_artifact(
     telemetry_complete = (
         timeline_telemetry_complete and resource_telemetry_complete
     )
+    failures.extend(validate_native_qualification_artifacts(root))
     scientific_identity_valid = (
         _validate_scientific_content_identity(
             root,
@@ -1239,6 +1246,11 @@ def seal_final_artifact(root: Path, spec: RunSpec) -> Path:
     if manifest_path.exists():
         manifest_path.unlink()
     _write_final_performance_outputs(root)
+    runtime_rows = pq.read_table(
+        root / "runtime_breakdown.parquet",
+        columns=["phase", "duration_seconds"],
+    ).to_pylist()
+    ensure_runtime_native_fallback_artifacts(runtime_rows, root)
     evidence = _final_evidence(root, spec)
     traceability = build_requirements_traceability(spec, evidence)
     write_requirements_traceability(

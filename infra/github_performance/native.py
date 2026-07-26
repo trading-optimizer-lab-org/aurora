@@ -23,6 +23,15 @@ from aurora.infra.github_performance.engines import (
     select_fastest_equivalent_engine,
 )
 
+NATIVE_QUALIFICATION_OUTPUTS: tuple[str, ...] = (
+    "hot_path_profile.json",
+    "native_candidate_report.json",
+    "native_equivalence_report.json",
+    "native_benchmark.json",
+    "native_wheel_manifest.json",
+    "native_fallback_audit.json",
+)
+
 
 OptimizationStage = Literal[
     "algorithm",
@@ -452,6 +461,13 @@ def _atomic_json(path: Path, payload: object) -> Path:
     return target
 
 
+def _finite_nonnegative_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
 def write_native_qualification_artifacts(
     profile: HotPathProfile,
     qualification: NativeQualification,
@@ -540,3 +556,260 @@ def write_native_qualification_artifacts(
         _atomic_json(root / name, payload)
         for name, payload in payloads.items()
     )
+
+
+def ensure_runtime_native_fallback_artifacts(
+    runtime_rows: Sequence[Mapping[str, object]],
+    output_dir: Path,
+    *,
+    hot_path_min_fraction: float = 0.10,
+) -> tuple[Path, ...]:
+    """Publish an honest Python fallback when no engine trial was supplied."""
+
+    if not 0 <= hot_path_min_fraction <= 1:
+        raise ValueError("hot_path_min_fraction must be between zero and one")
+    root = Path(output_dir)
+    existing = tuple(
+        root / name
+        for name in NATIVE_QUALIFICATION_OUTPUTS
+        if (root / name).is_file()
+    )
+    if existing:
+        if len(existing) != len(NATIVE_QUALIFICATION_OUTPUTS):
+            missing = sorted(
+                set(NATIVE_QUALIFICATION_OUTPUTS).difference(
+                    path.name for path in existing
+                )
+            )
+            raise ValueError(
+                "native qualification artifact set is incomplete: "
+                + ",".join(missing)
+            )
+        return existing
+
+    rows = tuple(runtime_rows)
+    if not rows:
+        raise ValueError("runtime rows are required for native fallback")
+    by_phase: dict[str, list[float]] = {}
+    for row in rows:
+        phase = str(row.get("phase", "")).strip()
+        duration = _finite_nonnegative_number(
+            row.get("duration_seconds", 0.0)
+        )
+        if phase and duration is not None:
+            by_phase.setdefault(phase, []).append(duration)
+    if not by_phase:
+        raise ValueError("runtime rows contain no measurable phases")
+
+    preferred = by_phase.get("execute_shard", [])
+    preferred_seconds = sum(preferred)
+    if preferred and preferred_seconds > 0:
+        phase_names = ("execute_shard",)
+        node_name = "scientific_shard_execution"
+        invocation_count = len(preferred)
+        pure_bounded_io = True
+        network_access = False
+    else:
+        phase_name, phase_durations = max(
+            by_phase.items(),
+            key=lambda item: (
+                sum(item[1]),
+                item[0],
+            ),
+        )
+        phase_names = (phase_name,)
+        node_name = f"observed_phase:{phase_name}"
+        invocation_count = len(phase_durations)
+        pure_bounded_io = False
+        network_access = True
+
+    profile = build_hot_path_profile(
+        rows,
+        node_name=node_name,
+        phase_names=phase_names,
+        invocation_count=invocation_count,
+        pure_bounded_io=pure_bounded_io,
+        network_access=network_access,
+        mutable_external_state=False,
+        python_reference_available=True,
+    )
+    reason_codes = ["NO_EQUIVALENT_ENGINE_TRIAL_SUPPLIED"]
+    if profile.measured_fraction < hot_path_min_fraction:
+        reason_codes.append("HOT_PATH_BELOW_MINIMUM_FRACTION")
+    if not profile.pure_bounded_io:
+        reason_codes.append("HOT_PATH_NOT_PURE_BOUNDED_IO")
+    if profile.network_access:
+        reason_codes.append("HOT_PATH_USES_NETWORK")
+
+    payloads = {
+        "hot_path_profile.json": profile,
+        "native_candidate_report.json": {
+            "schema_version": "1",
+            "node_name": profile.node_name,
+            "candidate_engine": None,
+            "hot_path_fraction": profile.measured_fraction,
+            "hot_path_min_fraction": hot_path_min_fraction,
+            "projected_end_to_end_gain": 0.0,
+            "projected_gain_minimum": 0.05,
+            "invocation_count": profile.invocation_count,
+            "qualified": False,
+            "reason_codes": reason_codes,
+            "optimization_evidence": [],
+        },
+        "native_equivalence_report.json": {
+            "schema_version": "1",
+            "scientific_outputs_equal": None,
+            "reference_engine": "python_reference",
+            "candidate_engine": None,
+            "comparison_performed": False,
+            "reason_codes": reason_codes,
+        },
+        "native_benchmark.json": {
+            "schema_version": "1",
+            "trials": [],
+            "decision": None,
+            "qualification": {
+                "qualified": False,
+                "selected_engine": "python_reference",
+                "reason_codes": reason_codes,
+            },
+        },
+        "native_wheel_manifest.json": {
+            "schema_version": "1",
+            "wheel_built": False,
+            "wheel_required": False,
+            "reason": "no_native_candidate_qualified",
+            "wheel_sha256": None,
+        },
+        "native_fallback_audit.json": {
+            "schema_version": "1",
+            "python_fallback_preserved": True,
+            "selected_engine": "python_reference",
+            "fallback_engine": "python_reference",
+            "reason_codes": reason_codes,
+        },
+    }
+    return tuple(
+        _atomic_json(root / name, payloads[name])
+        for name in NATIVE_QUALIFICATION_OUTPUTS
+    )
+
+
+def validate_native_qualification_artifacts(
+    output_dir: Path,
+) -> tuple[str, ...]:
+    """Cross-check the complete native decision surface."""
+
+    root = Path(output_dir)
+    failures: list[str] = []
+    payloads: dict[str, Mapping[str, object]] = {}
+    for name in NATIVE_QUALIFICATION_OUTPUTS:
+        path = root / name
+        if not path.is_file():
+            failures.append(f"NATIVE_OUTPUT_MISSING:{name}")
+            continue
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            failures.append(f"NATIVE_OUTPUT_INVALID_JSON:{name}")
+            continue
+        if not isinstance(raw, Mapping):
+            failures.append(f"NATIVE_OUTPUT_INVALID_PAYLOAD:{name}")
+            continue
+        if raw.get("schema_version") != "1":
+            failures.append(f"NATIVE_OUTPUT_SCHEMA_INVALID:{name}")
+        payloads[name] = raw
+    if len(payloads) != len(NATIVE_QUALIFICATION_OUTPUTS):
+        return tuple(sorted(set(failures)))
+
+    try:
+        profile = HotPathProfile.model_validate(
+            payloads["hot_path_profile.json"]
+        )
+    except (TypeError, ValueError):
+        failures.append("NATIVE_HOT_PATH_PROFILE_INVALID")
+        profile = None
+
+    candidate = payloads["native_candidate_report.json"]
+    equivalence = payloads["native_equivalence_report.json"]
+    benchmark = payloads["native_benchmark.json"]
+    wheel = payloads["native_wheel_manifest.json"]
+    fallback = payloads["native_fallback_audit.json"]
+
+    qualified = candidate.get("qualified")
+    if not isinstance(qualified, bool):
+        failures.append("NATIVE_CANDIDATE_QUALIFIED_INVALID")
+        qualified = False
+    candidate_engine = candidate.get("candidate_engine")
+    if candidate_engine is not None and not isinstance(
+        candidate_engine, str
+    ):
+        failures.append("NATIVE_CANDIDATE_ENGINE_INVALID")
+    if profile is not None:
+        candidate_fraction = _finite_nonnegative_number(
+            candidate.get("hot_path_fraction")
+        )
+        fraction_matches = (
+            candidate_fraction is not None
+            and math.isclose(
+                candidate_fraction,
+                profile.measured_fraction,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            )
+        )
+        if not fraction_matches:
+            failures.append("NATIVE_HOT_PATH_FRACTION_MISMATCH")
+        if candidate.get("invocation_count") != profile.invocation_count:
+            failures.append("NATIVE_INVOCATION_COUNT_MISMATCH")
+
+    benchmark_qualification = benchmark.get("qualification")
+    if not isinstance(benchmark_qualification, Mapping):
+        failures.append("NATIVE_BENCHMARK_QUALIFICATION_INVALID")
+        benchmark_qualification = {}
+    if benchmark_qualification.get("qualified") is not qualified:
+        failures.append("NATIVE_QUALIFICATION_DECISION_MISMATCH")
+
+    selected_engine = fallback.get("selected_engine")
+    if fallback.get("python_fallback_preserved") is not True:
+        failures.append("NATIVE_PYTHON_FALLBACK_NOT_PRESERVED")
+    if fallback.get("fallback_engine") != "python_reference":
+        failures.append("NATIVE_FALLBACK_ENGINE_INVALID")
+    if benchmark_qualification.get("selected_engine") != selected_engine:
+        failures.append("NATIVE_SELECTED_ENGINE_MISMATCH")
+
+    scientific_equal = equivalence.get("scientific_outputs_equal")
+    wheel_required = wheel.get("wheel_required")
+    wheel_built = wheel.get("wheel_built")
+    if not isinstance(wheel_required, bool) or not isinstance(
+        wheel_built, bool
+    ):
+        failures.append("NATIVE_WHEEL_DECISION_INVALID")
+
+    if qualified:
+        if not candidate_engine:
+            failures.append("NATIVE_QUALIFIED_ENGINE_MISSING")
+        if selected_engine != candidate_engine:
+            failures.append("NATIVE_QUALIFIED_ENGINE_NOT_SELECTED")
+        if equivalence.get("candidate_engine") != candidate_engine:
+            failures.append("NATIVE_EQUIVALENCE_ENGINE_MISMATCH")
+        if scientific_equal is not True:
+            failures.append("NATIVE_SCIENTIFIC_EQUIVALENCE_FAILED")
+        if not isinstance(benchmark.get("decision"), Mapping):
+            failures.append("NATIVE_BENCHMARK_DECISION_MISSING")
+        if candidate_engine == "rust":
+            if wheel_required is not True or wheel_built is not True:
+                failures.append("NATIVE_RUST_WHEEL_NOT_BUILT")
+            wheel_sha256 = wheel.get("wheel_sha256")
+            if (
+                not isinstance(wheel_sha256, str)
+                or len(wheel_sha256) != 64
+            ):
+                failures.append("NATIVE_RUST_WHEEL_HASH_INVALID")
+    else:
+        if selected_engine != "python_reference":
+            failures.append("NATIVE_REJECTED_CANDIDATE_SELECTED")
+        if wheel_required is not False:
+            failures.append("NATIVE_REJECTED_CANDIDATE_REQUIRES_WHEEL")
+
+    return tuple(sorted(set(failures)))
