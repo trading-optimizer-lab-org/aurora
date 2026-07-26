@@ -320,13 +320,31 @@ def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
     text = MERGE_ONLY_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-only" in text
     assert "aurora github final-merge" in text
+    assert "aurora github seal-final-artifact" in text
     assert "aurora github verify" in text
     assert "campaign_state_latest.json" in text
     assert "verified_source_artifacts" in text
     assert "gh run download" in text
+    assert "MERGE_ONLY_SOURCE_TELEMETRY_MISSING" in text
+    assert "merge_only_verification.json" in text
+    assert "scientific_outputs_equal" in text
     assert "aurora github run-shard" not in text
     assert '["scientific_output"]' in text
     assert "reference_results.parquet" not in text
+    steps = workflow["jobs"]["merge_only"]["steps"]
+    names = [step["name"] for step in steps]
+    assert names.index(
+        "Rehydrate telemetry and prove scientific equivalence"
+    ) < names.index("Seal complete rebuilt artifact")
+    assert names.index(
+        "Seal complete rebuilt artifact"
+    ) < names.index("Independently verify merge-only artifact")
+    publish = next(
+        step
+        for step in steps
+        if step["name"] == "Publish merge-only final artifact"
+    )
+    assert "always()" in publish["if"]
     for job in workflow["jobs"].values():
         assert job["runs-on"] == "ubuntu-24.04"
 
