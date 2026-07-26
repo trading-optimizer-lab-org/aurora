@@ -558,10 +558,10 @@ def test_checkpoint_salvage_detects_files_outside_github_workspace() -> None:
 
 def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
     jobs = _workflow()["jobs"]
-    levels = [f"merge_level_{level}" for level in range(4)]
-    assert all(level in jobs for level in levels)
-    for level in levels:
-        job = jobs[level]
+    level_names = [f"merge_level_{level_index}" for level_index in range(4)]
+    assert all(level_name in jobs for level_name in level_names)
+    for level_name in level_names:
+        job = jobs[level_name]
         assert job["runs-on"] == "ubuntu-24.04"
         assert job["strategy"]["fail-fast"] is False
         assert job["strategy"]["max-parallel"] <= 256
@@ -570,15 +570,15 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
             == "./.github/actions/aurora-merge-level"
             for step in job["steps"]
         )
-    for level in range(1, 4):
-        assert _needs(jobs[f"merge_level_{level}"]) == {
+    for level_index in range(1, 4):
+        assert _needs(jobs[f"merge_level_{level_index}"]) == {
             "plan",
-            f"merge_level_{level - 1}",
+            f"merge_level_{level_index - 1}",
         }
     assert _needs(jobs["final_merge"]) == {
         "plan",
         "freeze_contract",
-        *levels,
+        *level_names,
     }
     merge_text = MERGE_LEVEL_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-plan-group" in merge_text
