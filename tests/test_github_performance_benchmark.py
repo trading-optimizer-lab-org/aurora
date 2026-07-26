@@ -296,6 +296,8 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     assert inputs["forced_job_count"]["default"] == 0
     assert inputs["performance_profile_run_id"]["default"] == ""
     assert inputs["performance_profile_artifact_name"]["default"] == ""
+    assert inputs["fault_injection_shard_id"]["default"] == ""
+    assert inputs["fault_injection_after_units"]["default"] == 0
     assert workflow["permissions"] == {
         "contents": "read",
         "actions": "read",
@@ -348,6 +350,10 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         jobs["baseline"]["with"]["performance_profile_artifact_name"]
         == "${{ inputs.performance_profile_artifact_name }}"
     )
+    for name in ("optimized", "baseline"):
+        assert jobs[name]["with"]["fault_injection_shard_id"] == (
+            "${{ inputs.fault_injection_shard_id }}"
+        )
     upload = jobs["compare"]["steps"][-1]
     assert upload["if"] == "always()"
     assert str(upload["with"]["path"]).endswith(

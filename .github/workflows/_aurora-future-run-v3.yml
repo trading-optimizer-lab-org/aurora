@@ -50,6 +50,16 @@ on:
         required: false
         default: ""
         type: string
+      fault_injection_shard_id:
+        description: Test-only initial shard to fail after a valid checkpoint
+        required: false
+        default: ""
+        type: string
+      fault_injection_after_units:
+        description: Test-only exact checkpoint boundary; zero disables it
+        required: false
+        default: 0
+        type: number
     outputs:
       selected_jobs:
         description: Exact standard-runner shard count selected by the plan
@@ -641,9 +651,12 @@ jobs:
           )
           PY
       - name: Execute shard
+        continue-on-error: true
         env:
           WORKLOAD: ${{ inputs.workload }}
           ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          AURORA_FAULT_INJECTION_SHARD_ID: ${{ inputs.fault_injection_shard_id }}
+          AURORA_FAULT_INJECTION_AFTER_UNITS: ${{ inputs.fault_injection_after_units }}
         run: |
           set -euo pipefail
           aurora github run-shard \
@@ -657,6 +670,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
       - name: Salvage attempt evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -666,6 +680,7 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
       - name: Salvage valid checkpoint
         if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: run-checkpoint-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -750,9 +765,12 @@ jobs:
           )
           PY
       - name: Execute shard
+        continue-on-error: true
         env:
           WORKLOAD: ${{ inputs.workload }}
           ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
+          AURORA_FAULT_INJECTION_SHARD_ID: ${{ inputs.fault_injection_shard_id }}
+          AURORA_FAULT_INJECTION_AFTER_UNITS: ${{ inputs.fault_injection_after_units }}
         run: |
           set -euo pipefail
           aurora github run-shard \
@@ -766,6 +784,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/attempt/${{ matrix.shard_id }}/${{ matrix.attempt_id }}"
       - name: Salvage attempt evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -775,6 +794,7 @@ jobs:
           retention-days: ${{ inputs.retention_days }}
       - name: Salvage valid checkpoint
         if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: run-checkpoint-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -956,6 +976,7 @@ jobs:
           )
           PY
       - name: Execute retry
+        continue-on-error: true
         env:
           WORKLOAD: ${{ inputs.workload }}
           ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -982,6 +1003,7 @@ jobs:
             "${checkpoint_args[@]}"
       - name: Salvage retry evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -1072,6 +1094,7 @@ jobs:
           )
           PY
       - name: Execute retry
+        continue-on-error: true
         env:
           WORKLOAD: ${{ inputs.workload }}
           ARTIFACT_NAME: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}
@@ -1098,6 +1121,7 @@ jobs:
             "${checkpoint_args[@]}"
       - name: Salvage retry evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-shard-${{ matrix.merge_group }}-${{ matrix.shard_id }}-${{ matrix.attempt_id }}

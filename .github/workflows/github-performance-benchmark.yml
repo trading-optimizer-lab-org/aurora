@@ -27,6 +27,16 @@ on:
         required: false
         default: ""
         type: string
+      fault_injection_shard_id:
+        description: Test-only initial shard to fail after a valid checkpoint
+        required: false
+        default: ""
+        type: string
+      fault_injection_after_units:
+        description: Test-only exact checkpoint boundary; zero disables it
+        required: false
+        default: 0
+        type: number
 
 permissions:
   contents: read
@@ -170,6 +180,9 @@ jobs:
       wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
       performance_profile_run_id: ${{ inputs.performance_profile_run_id }}
       performance_profile_artifact_name: ${{ inputs.performance_profile_artifact_name }}
+      fault_injection_shard_id: ${{ inputs.fault_injection_shard_id }}
+      fault_injection_after_units: >-
+        ${{ fromJSON(format('{0}', inputs.fault_injection_after_units)) }}
 
   baseline:
     needs: optimized
@@ -198,6 +211,9 @@ jobs:
       wheelhouse_artifact_name: github-performance-benchmark-shared-wheelhouse-${{ github.run_id }}-${{ github.run_attempt }}
       performance_profile_run_id: ${{ inputs.performance_profile_run_id }}
       performance_profile_artifact_name: ${{ inputs.performance_profile_artifact_name }}
+      fault_injection_shard_id: ${{ inputs.fault_injection_shard_id }}
+      fault_injection_after_units: >-
+        ${{ fromJSON(format('{0}', inputs.fault_injection_after_units)) }}
 
   compare:
     needs: [optimized, baseline, setup_benchmark]

@@ -504,11 +504,15 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "wheelhouse_artifact_name",
         "performance_profile_run_id",
         "performance_profile_artifact_name",
+        "fault_injection_shard_id",
+        "fault_injection_after_units",
         "spec_path",
         "workload",
         "run_label",
         "retention_days",
     }
+    assert inputs["fault_injection_shard_id"]["default"] == ""
+    assert inputs["fault_injection_after_units"]["default"] == 0
     assert workflow["permissions"] == {
         "actions": "read",
         "contents": "read",
@@ -664,6 +668,49 @@ def test_reusable_workflow_reuses_only_exact_prior_performance_profile() -> None
     assert plan["outputs"]["profile_reused"] == (
         "${{ steps.profile.outputs.profile_reused }}"
     )
+
+
+def test_transient_fault_is_limited_to_initial_fanout() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+
+    for name in ("fanout_a", "fanout_b"):
+        execute = next(
+            step
+            for step in jobs[name]["steps"]
+            if step["name"] == "Execute shard"
+        )
+        assert execute["env"]["AURORA_FAULT_INJECTION_SHARD_ID"] == (
+            "${{ inputs.fault_injection_shard_id }}"
+        )
+        assert execute["env"]["AURORA_FAULT_INJECTION_AFTER_UNITS"] == (
+            "${{ inputs.fault_injection_after_units }}"
+        )
+        assert execute["continue-on-error"] is True
+        salvage = next(
+            step
+            for step in jobs[name]["steps"]
+            if step["name"] == "Salvage attempt evidence"
+        )
+        assert salvage["continue-on-error"] is True
+
+    retry_path = ROOT / ".github/workflows/_aurora-retry-shard-v3.yml"
+    retry_text = retry_path.read_text(encoding="utf-8")
+    assert "AURORA_FAULT_INJECTION_SHARD_ID" not in retry_text
+    assert "AURORA_FAULT_INJECTION_AFTER_UNITS" not in retry_text
+    retry = load_github_yaml(retry_path)["jobs"]["retry"]
+    execute_retry = next(
+        step
+        for step in retry["steps"]
+        if step["name"] == "Execute exact retry"
+    )
+    salvage_retry = next(
+        step
+        for step in retry["steps"]
+        if step["name"] == "Salvage retry evidence"
+    )
+    assert execute_retry["continue-on-error"] is True
+    assert salvage_retry["continue-on-error"] is True
 
 
 def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:
