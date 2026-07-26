@@ -361,6 +361,11 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     assert jobs["replan_fixture_source"]["uses"] == (
         "./.github/workflows/_aurora-future-run-v3.yml"
     )
+    fixture = jobs["build_replan_fixture"]
+    assert fixture["runs-on"] == "ubuntu-24.04"
+    fixture_text = REFERENCE_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "OUT_OF_MEMORY" not in fixture_text
+    assert "build_github_performance_replan_fixture.py" in fixture_text
 
 
 def test_registered_validation_workflow_routes_three_real_families() -> None:
@@ -408,11 +413,6 @@ def test_registered_validation_workflow_routes_three_real_families() -> None:
     assert "self-hosted" not in text
     assert "ubuntu-latest" not in text
     assert "C:\\" not in text
-    fixture = jobs["build_replan_fixture"]
-    assert fixture["runs-on"] == "ubuntu-24.04"
-    fixture_text = REFERENCE_WORKFLOW_PATH.read_text(encoding="utf-8")
-    assert "OUT_OF_MEMORY" not in fixture_text
-    assert "build_github_performance_replan_fixture.py" in fixture_text
 
 
 def test_replan_restores_verified_source_runtime_across_orchestration_fixes() -> None:
