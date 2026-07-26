@@ -375,6 +375,18 @@ def test_controlled_transient_failure_resumes_exact_checkpoint(
         / "checkpoint_manifest.json"
     )
     assert checkpoint.completed_unit_count == 32
+    checkpoint = checkpoint.model_copy(
+        update={
+            "payload_path": str(
+                (
+                    tmp_path
+                    / "fault-attempt"
+                    / "checkpoint"
+                    / checkpoint.payload_path
+                ).resolve()
+            )
+        }
+    )
 
     monkeypatch.delenv("AURORA_FAULT_INJECTION_SHARD_ID")
     monkeypatch.delenv("AURORA_FAULT_INJECTION_AFTER_UNITS")

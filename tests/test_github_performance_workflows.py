@@ -337,6 +337,7 @@ def test_registered_reference_workflow_routes_recovery_operations() -> None:
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
     assert inputs["operation"]["options"] == [
         "full",
+        "transient_recovery",
         "merge_only",
         "replan",
         "replan_fixture",
@@ -698,7 +699,7 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
     retry_text = retry_path.read_text(encoding="utf-8")
     assert "AURORA_FAULT_INJECTION_SHARD_ID" not in retry_text
     assert "AURORA_FAULT_INJECTION_AFTER_UNITS" not in retry_text
-    retry = load_github_yaml(retry_path)["jobs"]["retry"]
+    retry = load_github_yaml(retry_path)["jobs"]["execute"]
     execute_retry = next(
         step
         for step in retry["steps"]
