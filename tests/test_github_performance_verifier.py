@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pyarrow as pa
@@ -43,6 +44,7 @@ from aurora.infra.github_performance.preflight import (
     freeze_resolved_contract,
     resolve_run_spec,
 )
+from aurora.infra.github_performance.telemetry import ResourceMonitor
 from github_performance_helpers import (
     complete_runtime_evidence,
     completed_unit,
@@ -239,6 +241,51 @@ def _write_placeholder(path: Path) -> None:
         path.write_bytes(b"placeholder\n")
 
 
+def _write_resource_sample_fixture(
+    path: Path,
+    *,
+    child_aware: bool = True,
+) -> None:
+    schema = pa.schema(
+        [
+            pa.field("shard_id", pa.string(), nullable=False),
+            pa.field("attempt_id", pa.string(), nullable=False),
+            *ResourceMonitor.ARROW_SCHEMA,
+        ],
+        metadata={b"schema_version": b"1"},
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "shard_id": "s000",
+                    "attempt_id": "a000",
+                    "observed_at": datetime(
+                        2026,
+                        7,
+                        26,
+                        tzinfo=timezone.utc,
+                    ),
+                    "root_pid": 100,
+                    "process_count": 1,
+                    "child_aware": child_aware,
+                    "rss_mb": 128.0,
+                    "peak_memory_mb": 256.0,
+                    "total_memory_mb": 16_384.0,
+                    "free_disk_mb": 20_000.0,
+                    "cpu_seconds": 1.0,
+                    "io_read_bytes": 1_024,
+                    "io_write_bytes": 2_048,
+                    "io_wait_seconds": 0.0,
+                    "load_1m": 0.5,
+                }
+            ],
+            schema=schema,
+        ),
+        path,
+    )
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -248,6 +295,7 @@ def _add_mandatory_fixture_outputs(root: Path, spec: RunSpec) -> None:
         path = root / name
         if not path.exists():
             _write_placeholder(path)
+    _write_resource_sample_fixture(root / "resource_samples.parquet")
     contract = json.loads(
         (root / "performance_contract.json").read_text(encoding="utf-8")
     )
@@ -374,6 +422,11 @@ def _add_mandatory_fixture_outputs(root: Path, spec: RunSpec) -> None:
                 "locked_opened": False,
                 "locked_rows_accessed": 0,
                 "validation_used_for_selection": False,
+                "resource_samples": "resource_samples.parquet",
+                "resource_samples_sha256": _sha256(
+                    root / "resource_samples.parquet"
+                ),
+                "resource_sample_count": 1,
             }
         )
         + "\n",
@@ -499,6 +552,25 @@ def test_final_verifier_accepts_complete_untampered_artifact(
     report = verify_final_artifact(tmp_path, spec)
     assert report.passed is True
     assert report.partial is False
+
+
+def test_final_verifier_rejects_non_child_aware_resource_samples(
+    tmp_path: Path,
+) -> None:
+    spec = _write_complete_final_fixture(tmp_path)
+    _write_resource_sample_fixture(
+        tmp_path / "resource_samples.parquet",
+        child_aware=False,
+    )
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is False
+    assert "RESOURCE_SAMPLES_NOT_CHILD_AWARE" in report.failure_codes
 
 
 def test_final_verifier_reads_streaming_reconciliation_footer(
