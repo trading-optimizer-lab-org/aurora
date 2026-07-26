@@ -25,6 +25,7 @@ EngineName = Literal[
     "numba",
     "arrow",
     "duckdb",
+    "rust",
     "processes",
     "threads",
 ]
@@ -310,6 +311,7 @@ def detect_engine_capabilities() -> Mapping[EngineName, bool]:
         "numba": importlib.util.find_spec("numba") is not None,
         "arrow": importlib.util.find_spec("pyarrow") is not None,
         "duckdb": importlib.util.find_spec("duckdb") is not None,
+        "rust": importlib.util.find_spec("aurora_native") is not None,
         "processes": True,
         "threads": True,
     }

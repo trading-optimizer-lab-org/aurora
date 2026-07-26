@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import tomllib
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -36,6 +37,21 @@ from aurora.infra.github_performance.workloads.event_study import (
 from aurora.infra.github_performance.workloads.robustness import (
     WORKLOAD as ROBUSTNESS,
 )
+
+
+def test_representative_workloads_are_packaged_in_aurora_wheel() -> None:
+    pyproject = tomllib.loads(
+        (Path(__file__).parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    packages = pyproject["tool"]["setuptools"]["packages"]
+    package_dirs = pyproject["tool"]["setuptools"]["package-dir"]
+
+    assert "aurora.infra.github_performance.workloads" in packages
+    assert package_dirs[
+        "aurora.infra.github_performance.workloads"
+    ] == "infra/github_performance/workloads"
 from github_performance_helpers import minimal_valid_spec
 
 
