@@ -267,6 +267,18 @@ def test_reusable_workflow_conclusion_is_bound_to_verified_publication() -> None
     assert "verification_passed=true" in verdict["run"]
 
 
+def test_universal_workflow_supports_direct_dispatch_without_a_caller() -> None:
+    workflow = _workflow()
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    call_inputs = workflow["on"]["workflow_call"]["inputs"]
+
+    assert dispatch_inputs == call_inputs
+    assert {"spec_path", "workload", "run_label"} <= set(dispatch_inputs)
+    assert dispatch_inputs["spec_path"]["required"] is True
+    assert dispatch_inputs["workload"]["required"] is True
+    assert dispatch_inputs["run_label"]["required"] is True
+
+
 def test_reusable_workflow_respects_standard_runner_limits() -> None:
     jobs = _workflow()["jobs"]
     for job in jobs.values():

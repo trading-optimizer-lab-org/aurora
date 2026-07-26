@@ -1,6 +1,65 @@
 name: Aurora Future Run v3
 
 on:
+  workflow_dispatch:
+    inputs:
+      spec_path:
+        description: Repository-relative version-3 run spec
+        required: true
+        type: string
+      workload:
+        description: Aurora workload reference, aurora.module:OBJECT
+        required: true
+        type: string
+      run_label:
+        description: Stable artifact prefix
+        required: true
+        type: string
+      retention_days:
+        description: Retention for intermediate and final artifacts
+        required: false
+        default: 7
+        type: number
+      execution_mode:
+        description: Optimized weighted plan or equivalent baseline
+        required: false
+        default: optimized
+        type: string
+      forced_job_count:
+        description: Exact baseline job count; zero lets the planner decide
+        required: false
+        default: 0
+        type: number
+      prepared_artifact_name:
+        description: Existing immutable prepared-input artifact to reuse
+        required: false
+        default: ""
+        type: string
+      wheelhouse_artifact_name:
+        description: Existing immutable wheelhouse artifact to reuse
+        required: false
+        default: ""
+        type: string
+      performance_profile_run_id:
+        description: Prior compatible run containing a performance profile
+        required: false
+        default: ""
+        type: string
+      performance_profile_artifact_name:
+        description: Artifact containing performance_profile.json
+        required: false
+        default: ""
+        type: string
+      fault_injection_shard_id:
+        description: Test-only initial shard to fail after a valid checkpoint
+        required: false
+        default: ""
+        type: string
+      fault_injection_after_units:
+        description: Test-only exact checkpoint boundary; zero disables it
+        required: false
+        default: 0
+        type: number
   workflow_call:
     inputs:
       spec_path:
