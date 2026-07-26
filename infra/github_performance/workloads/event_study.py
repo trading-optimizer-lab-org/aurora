@@ -164,7 +164,16 @@ class EventStudyWorkload(FrozenScientificWorkload):
         definitions = []
         thresholds = (0.008, 0.012, 0.016, 0.020)
         horizons = (2, 5, 10, 20)
-        volume_multipliers = (0.8, 1.0, 1.2, 1.5)
+        volume_multipliers = (
+            0.70,
+            0.80,
+            0.90,
+            1.00,
+            1.10,
+            1.20,
+            1.35,
+            1.50,
+        )
         for direction in ("down", "up"):
             for threshold in thresholds:
                 for horizon in horizons:
@@ -172,7 +181,7 @@ class EventStudyWorkload(FrozenScientificWorkload):
                         for bucket in (0, 1):
                             token = (
                                 f"{direction}-t{threshold:.3f}-h{horizon:02d}-"
-                                f"v{volume_multiplier:.1f}-b{bucket}"
+                                f"v{volume_multiplier:.2f}-b{bucket}"
                             )
                             definitions.append(
                                 (
@@ -187,8 +196,8 @@ class EventStudyWorkload(FrozenScientificWorkload):
                                     0.02 + horizon / 10_000.0,
                                 )
                             )
-        if len(definitions) != 256:
-            raise AssertionError("event study must have 256 units")
+        if len(definitions) != 512:
+            raise AssertionError("event study must have 512 units")
         return tuple(definitions)
 
     @staticmethod
