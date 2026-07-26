@@ -896,7 +896,7 @@ jobs:
 
   retry_a:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.status == 'retry' && needs.recovery_plan.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan.outputs.status == 'retry' && fromJSON(needs.recovery_plan.outputs.has_matrix_a)
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -1014,7 +1014,7 @@ jobs:
 
   retry_b:
     needs: [plan, recovery_plan]
-    if: needs.recovery_plan.outputs.status == 'retry' && needs.recovery_plan.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan.outputs.status == 'retry' && fromJSON(needs.recovery_plan.outputs.has_matrix_b)
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -1146,7 +1146,7 @@ jobs:
 
   retry_2_a:
     needs: [plan, recovery_plan_1]
-    if: needs.recovery_plan_1.outputs.status == 'retry' && needs.recovery_plan_1.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan_1.outputs.status == 'retry' && fromJSON(needs.recovery_plan_1.outputs.has_matrix_a)
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1164,7 +1164,7 @@ jobs:
 
   retry_2_b:
     needs: [plan, recovery_plan_1]
-    if: needs.recovery_plan_1.outputs.status == 'retry' && needs.recovery_plan_1.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan_1.outputs.status == 'retry' && fromJSON(needs.recovery_plan_1.outputs.has_matrix_b)
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -1196,7 +1196,7 @@ jobs:
 
   retry_3_a:
     needs: [plan, recovery_plan_2]
-    if: needs.recovery_plan_2.outputs.status == 'retry' && needs.recovery_plan_2.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan_2.outputs.status == 'retry' && fromJSON(needs.recovery_plan_2.outputs.has_matrix_a)
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1214,7 +1214,7 @@ jobs:
 
   retry_3_b:
     needs: [plan, recovery_plan_2]
-    if: needs.recovery_plan_2.outputs.status == 'retry' && needs.recovery_plan_2.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan_2.outputs.status == 'retry' && fromJSON(needs.recovery_plan_2.outputs.has_matrix_b)
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -1246,7 +1246,7 @@ jobs:
 
   retry_4_a:
     needs: [plan, recovery_plan_3]
-    if: needs.recovery_plan_3.outputs.status == 'retry' && needs.recovery_plan_3.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan_3.outputs.status == 'retry' && fromJSON(needs.recovery_plan_3.outputs.has_matrix_a)
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1264,7 +1264,7 @@ jobs:
 
   retry_4_b:
     needs: [plan, recovery_plan_3]
-    if: needs.recovery_plan_3.outputs.status == 'retry' && needs.recovery_plan_3.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan_3.outputs.status == 'retry' && fromJSON(needs.recovery_plan_3.outputs.has_matrix_b)
     strategy:
       fail-fast: false
       max-parallel: 104
@@ -1296,7 +1296,7 @@ jobs:
 
   retry_5_a:
     needs: [plan, recovery_plan_4]
-    if: needs.recovery_plan_4.outputs.status == 'retry' && needs.recovery_plan_4.outputs.has_matrix_a == 'true'
+    if: needs.recovery_plan_4.outputs.status == 'retry' && fromJSON(needs.recovery_plan_4.outputs.has_matrix_a)
     strategy:
       fail-fast: false
       max-parallel: 256
@@ -1314,7 +1314,7 @@ jobs:
 
   retry_5_b:
     needs: [plan, recovery_plan_4]
-    if: needs.recovery_plan_4.outputs.status == 'retry' && needs.recovery_plan_4.outputs.has_matrix_b == 'true'
+    if: needs.recovery_plan_4.outputs.status == 'retry' && fromJSON(needs.recovery_plan_4.outputs.has_matrix_b)
     strategy:
       fail-fast: false
       max-parallel: 104

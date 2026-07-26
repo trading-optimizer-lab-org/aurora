@@ -372,6 +372,21 @@ def begin_merge_only(
         raise CampaignTransitionError(
             "merge-only source artifacts are not exactly verified"
         )
+    if previous.phase is CampaignPhase.COMPLETED:
+        return _build_state(
+            {
+                **_state_payload(previous),
+                "version": previous.version + 1,
+                "previous_state_sha256": previous.state_sha256,
+                "phase": CampaignPhase.MERGING,
+                "verified_source_artifacts": sources,
+                "active_attempt_ids": (),
+                "merge_only": True,
+                "compute_scheduled": False,
+                "hard_failure_reason": None,
+                "created_at": created_at,
+            }
+        )
     return transition_campaign_state(
         previous,
         phase=CampaignPhase.MERGING,

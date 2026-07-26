@@ -150,6 +150,12 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     }
     assert _needs(jobs["retry_a"]) == {"plan", "recovery_plan"}
     assert _needs(jobs["retry_b"]) == {"plan", "recovery_plan"}
+    assert "fromJSON(needs.recovery_plan.outputs.has_matrix_a)" in str(
+        jobs["retry_a"]["if"]
+    )
+    assert "fromJSON(needs.recovery_plan.outputs.has_matrix_b)" in str(
+        jobs["retry_b"]["if"]
+    )
     previous_a = "retry_a"
     previous_b = "retry_b"
     previous_recovery = "recovery_plan"
@@ -167,6 +173,14 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             next_b = f"retry_{wave + 1}_b"
             assert _needs(jobs[next_a]) == {"plan", recovery}
             assert _needs(jobs[next_b]) == {"plan", recovery}
+            assert (
+                f"fromJSON(needs.{recovery}.outputs.has_matrix_a)"
+                in str(jobs[next_a]["if"])
+            )
+            assert (
+                f"fromJSON(needs.{recovery}.outputs.has_matrix_b)"
+                in str(jobs[next_b]["if"])
+            )
             previous_a = next_a
             previous_b = next_b
     assert _needs(jobs["merge_level_0"]) == {
