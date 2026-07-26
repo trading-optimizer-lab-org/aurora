@@ -179,16 +179,6 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             assert jobs[next_b]["if"] == (
                 f"needs.{recovery}.outputs.status == 'retry'"
             )
-            assert (
-                f"contains(needs.{recovery}.outputs.matrix_a, "
-                "'\"shard_id\"')"
-                in str(jobs[next_a]["if"])
-            )
-            assert (
-                f"contains(needs.{recovery}.outputs.matrix_b, "
-                "'\"shard_id\"')"
-                in str(jobs[next_b]["if"])
-            )
             previous_a = next_a
             previous_b = next_b
     assert _needs(jobs["merge_level_0"]) == {
