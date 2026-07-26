@@ -41,6 +41,13 @@ class BenchmarkReport(FrozenModel):
     baseline_assignment_strategy: str
     optimized_assignment_strategy: str
     speedup: float
+    speedup_uncertainty: Mapping[str, Any]
+    minimum_material_speedup: float
+    material_speedup_achieved: bool
+    optimization_selected: bool
+    selected_execution_mode: str
+    optimization_disposition: str
+    optimization_selection_reason_codes: tuple[str, ...]
     setup_cold_speedup: float
     setup_warm_speedup: float
     estimated_billable_minutes_ratio: float
@@ -57,6 +64,87 @@ class BenchmarkReport(FrozenModel):
     bottleneck: Mapping[str, Any]
     environment_setup_benchmark: Mapping[str, Any]
     failure_codes: tuple[str, ...]
+
+
+MINIMUM_MATERIAL_SPEEDUP = 1.05
+WALL_CLOCK_RESOLUTION_SECONDS = 1.0
+
+
+def _speedup_selection(
+    *,
+    baseline_wall_seconds: float,
+    optimized_wall_seconds: float,
+    timing_comparable: bool,
+) -> dict[str, Any]:
+    """Select optimized execution only after a conservative timing gate."""
+
+    if not timing_comparable:
+        return {
+            "uncertainty": {
+                "method": "not_available_non_comparable_runs",
+                "point_estimate": 0.0,
+                "lower_bound": 0.0,
+                "upper_bound": 0.0,
+                "wall_clock_resolution_seconds": (
+                    WALL_CLOCK_RESOLUTION_SECONDS
+                ),
+                "repetitions": 1,
+                "stochastic_confidence_interval_available": False,
+            },
+            "material": False,
+            "selected": False,
+            "mode": "none",
+            "disposition": "not_comparable",
+            "reason_codes": ("TIMING_NOT_COMPARABLE",),
+        }
+
+    resolution = WALL_CLOCK_RESOLUTION_SECONDS
+    point = _ratio(baseline_wall_seconds, optimized_wall_seconds)
+    lower = _ratio(
+        max(0.0, baseline_wall_seconds - resolution),
+        optimized_wall_seconds + resolution,
+    )
+    upper = _ratio(
+        baseline_wall_seconds + resolution,
+        max(resolution, optimized_wall_seconds - resolution),
+    )
+    uncertainty = {
+        "method": "conservative_wall_clock_resolution_bounds",
+        "point_estimate": point,
+        "lower_bound": lower,
+        "upper_bound": upper,
+        "wall_clock_resolution_seconds": resolution,
+        "repetitions": 1,
+        "stochastic_confidence_interval_available": False,
+        "note": (
+            "Bounds cover timestamp resolution only; repeated equivalent "
+            "runs are required to quantify run-to-run variance."
+        ),
+    }
+    material = lower >= MINIMUM_MATERIAL_SPEEDUP
+    if material:
+        return {
+            "uncertainty": uncertainty,
+            "material": True,
+            "selected": True,
+            "mode": "optimized",
+            "disposition": "selected",
+            "reason_codes": ("MATERIAL_SPEEDUP_AFTER_RESOLUTION_BOUND",),
+        }
+    if point < 1.0:
+        disposition = "rejected_slower"
+        reasons = ("OPTIMIZED_SLOWER_THAN_BASELINE",)
+    else:
+        disposition = "rejected_not_material"
+        reasons = ("SPEEDUP_NOT_MATERIAL_AFTER_RESOLUTION_BOUND",)
+    return {
+        "uncertainty": uncertainty,
+        "material": False,
+        "selected": False,
+        "mode": "baseline",
+        "disposition": disposition,
+        "reason_codes": reasons,
+    }
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -477,6 +565,15 @@ def compare_runs(
         if timing_comparable
         else 0.0
     )
+    selection = _speedup_selection(
+        baseline_wall_seconds=float(
+            baseline["workflow_wall_seconds"]
+        ),
+        optimized_wall_seconds=float(
+            optimized["workflow_wall_seconds"]
+        ),
+        timing_comparable=timing_comparable,
+    )
     billable_ratio = (
         _ratio(
             float(optimized["estimated_billable_minutes"]),
@@ -508,6 +605,15 @@ def compare_runs(
             optimized["assignment_strategy"]
         ),
         speedup=speedup,
+        speedup_uncertainty=selection["uncertainty"],
+        minimum_material_speedup=MINIMUM_MATERIAL_SPEEDUP,
+        material_speedup_achieved=selection["material"],
+        optimization_selected=selection["selected"],
+        selected_execution_mode=selection["mode"],
+        optimization_disposition=selection["disposition"],
+        optimization_selection_reason_codes=selection[
+            "reason_codes"
+        ],
         setup_cold_speedup=float(
             setup_benchmark.get("cold_speedup", 0.0)
         ),
@@ -589,6 +695,24 @@ def write_benchmark_outputs(
             ),
             "setup_fast_path_selected": (
                 report.setup_fast_path_selected
+            ),
+            "speedup": report.speedup,
+            "speedup_uncertainty": report.speedup_uncertainty,
+            "minimum_material_speedup": (
+                report.minimum_material_speedup
+            ),
+            "material_speedup_achieved": (
+                report.material_speedup_achieved
+            ),
+            "optimization_selected": report.optimization_selected,
+            "selected_execution_mode": (
+                report.selected_execution_mode
+            ),
+            "optimization_disposition": (
+                report.optimization_disposition
+            ),
+            "optimization_selection_reason_codes": list(
+                report.optimization_selection_reason_codes
             ),
             "compared_units": report.compared_units,
             "locked_opened": report.locked_opened,

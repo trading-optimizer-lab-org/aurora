@@ -179,6 +179,11 @@ def test_compare_reports_speed_only_after_equivalence(
     assert report.scientific_outputs_equal is True
     assert report.timing_comparable is True
     assert report.speedup == 2.0
+    assert report.material_speedup_achieved is True
+    assert report.optimization_selected is True
+    assert report.selected_execution_mode == "optimized"
+    assert report.optimization_disposition == "selected"
+    assert report.speedup_uncertainty["lower_bound"] > 1.05
     assert report.same_code_sha is True
     assert report.same_snapshot_hash is True
     assert report.same_cache_state is True
@@ -199,6 +204,60 @@ def test_compare_reports_speed_only_after_equivalence(
         ).read_text()
     )
     assert closure["status"] == "success"
+    assert closure["optimization_selected"] is True
+    assert closure["selected_execution_mode"] == "optimized"
+
+
+def test_compare_rejects_slower_optimization_automatically(
+    tmp_path: Path,
+) -> None:
+    baseline = _artifact(
+        tmp_path / "baseline",
+        mode="equal_count_flat",
+        wall_seconds=120.0,
+    )
+    optimized = _artifact(
+        tmp_path / "optimized",
+        mode="weighted_lpt_hierarchical",
+        wall_seconds=140.0,
+    )
+
+    report = compare_runs(baseline, optimized)
+
+    assert report.status == "success"
+    assert report.speedup < 1.0
+    assert report.material_speedup_achieved is False
+    assert report.optimization_selected is False
+    assert report.selected_execution_mode == "baseline"
+    assert report.optimization_disposition == "rejected_slower"
+    assert report.optimization_selection_reason_codes == (
+        "OPTIMIZED_SLOWER_THAN_BASELINE",
+    )
+
+
+def test_compare_rejects_non_material_speedup(
+    tmp_path: Path,
+) -> None:
+    baseline = _artifact(
+        tmp_path / "baseline",
+        mode="equal_count_flat",
+        wall_seconds=101.0,
+    )
+    optimized = _artifact(
+        tmp_path / "optimized",
+        mode="weighted_lpt_hierarchical",
+        wall_seconds=100.0,
+    )
+
+    report = compare_runs(baseline, optimized)
+
+    assert report.speedup == 1.01
+    assert report.optimization_selected is False
+    assert report.selected_execution_mode == "baseline"
+    assert report.optimization_disposition == "rejected_not_material"
+    assert report.optimization_selection_reason_codes == (
+        "SPEEDUP_NOT_MATERIAL_AFTER_RESOLUTION_BOUND",
+    )
 
 
 def test_compare_does_not_claim_speed_for_different_environment(
