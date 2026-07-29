@@ -9,6 +9,30 @@ ROOT = Path(__file__).resolve().parents[1]
 READINESS = ROOT / "docs/readiness/gtbi-v7"
 
 
+def test_owner_decisions_match_explicit_instruction() -> None:
+    record = json.loads(
+        (READINESS / "owner_decisions.json").read_text(encoding="utf-8")
+    )
+    decisions = record["decisions"]
+    assert decisions["personal_action_items_1_and_2"] == {
+        "formal_gate_effect": "none",
+        "status": "removed_from_immediate_owner_queue",
+    }
+    assert (
+        decisions["budget"]["authorization"]
+        == "no_increase_from_current_baseline"
+    )
+    assert decisions["licences"]["owner_acceptance"] == "accepted_explicitly"
+    assert (
+        decisions["private_resources"]["owner_authorization"]
+        == "authorized_explicitly"
+    )
+    assert (
+        decisions["remaining_owner_decisions"]["status"]
+        == "deferred_until_actionable"
+    )
+
+
 def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     status, cancellation = generate()
     assert status["execution_status"] == "NO-GO"
