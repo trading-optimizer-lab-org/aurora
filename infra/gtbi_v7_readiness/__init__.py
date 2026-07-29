@@ -13,6 +13,7 @@ from .roles import (
     CANONICAL_ROLES,
     RoleRegistryError,
     build_blocked_role_registry,
+    build_owner_controlled_role_registry,
     validate_role_registry,
 )
 from .structure import StructuralValidationResult, validate_master_plan_structure
@@ -33,6 +34,7 @@ __all__ = [
     "InventoryError",
     "RoleRegistryError",
     "build_blocked_role_registry",
+    "build_owner_controlled_role_registry",
     "canonical_bytes",
     "canonical_text",
     "domain_digest",

@@ -8,6 +8,7 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/v7/**"
       - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
       - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
@@ -53,6 +54,7 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/v7/**"
       - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
       - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
@@ -135,7 +137,7 @@ jobs:
             config/gtbi/schemas/readiness \
             config/gtbi/schemas/v7/operational/v6_preservation_manifest_v1.schema.json \
             config/gtbi/schemas/v7/scientific/scientific_asset_manifest_v1.schema.json \
-            config/gtbi/fixtures/v7/governance/role_registry_v1.blocked.json \
+            config/gtbi/fixtures/v7/governance/role_registry_v1.owner_controlled.json \
             config/gtbi/fixtures/v7/scientific_asset_manifest_v1.wrapper_only.json \
             docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
             docs/readiness/gtbi-v7/master_plan_quality_status.json \
@@ -161,8 +163,8 @@ jobs:
             tests/test_gtbi_v6_archive_preservation.py \
             -q
 
-  signed-quality-receipts:
-    name: Three independent signed quality rounds
+  owner-authorized-quality:
+    name: Owner directive and deterministic quality
     needs: structural
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -179,7 +181,7 @@ jobs:
           cache: pip
 
       - name: Install quality validator dependencies
-        run: python -m pip install "cryptography==48.0.0" "jsonschema==4.26.0"
+        run: python -m pip install "jsonschema==4.26.0"
 
-      - name: Verify exact signed quality package
+      - name: Verify exact owner-authorized quality package
         run: python scripts/validate_gtbi_v7_master_plan.py

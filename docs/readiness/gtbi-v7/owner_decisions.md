@@ -1,16 +1,15 @@
 # GTBI V7 Owner Decisions
 
-Recorded at: `2026-07-29T13:16:02.259Z`
+Recorded at: `2026-07-29`
 
 Source: direct instruction from the repository owner in the Codex task.
 
 ## Decisions
 
 1. The first two items from the owner's personal action list are removed.
-   They are not actions the owner is expected to perform now. This does not
-   fabricate or waive any formal evidence that the master plan still requires;
-   affected gates remain pending until valid evidence exists or the plan is
-   explicitly amended.
+   Three independent audits, different reviewers, external custodians and
+   dual-person approvals are not required. The owner-controlled model replaces
+   them.
 
 2. The maximum spending level is the current spending level. No increase is
    authorized. The public-safe billing projection observed on 29 July 2026
@@ -20,12 +19,10 @@ Source: direct instruction from the repository owner in the Codex task.
    Taxes, foreign exchange and the private gross-usage response are not
    represented by this public projection.
 
-3. The repository owner explicitly accepts the licences presented so far.
-   This records explicit owner acceptance. It does not replace the exact,
-   versioned provider-terms inventory or any independent licence-review receipt
-   required by the master plan. The current terms inventory identifies no
-   evidence of Yahoo permission for automated collection, so acceptance does
-   not authorize that data source for V7.
+3. The repository owner explicitly accepts the licences presented so far. No
+   independent licence reviewer is required. Yahoo is retained only as the
+   provenance of historical evidence; future V7 snapshots use the existing
+   `tiingo_daily` connector under Tiingo's free Starter terms.
 
 4. The repository owner authorizes creation and use of the private resources
    covered by the preparation plan. This authorization is explicit. The
@@ -46,8 +43,16 @@ Source: direct instruction from the repository owner in the Codex task.
 - Actions net amount at the observed billing snapshot: `0 USD`.
 - Discount or price drift: `STOP_AND_REAUTHORIZE`.
 - Licence owner acceptance: `ACCEPTED_EXPLICITLY`.
-- Yahoo-derived V7 input: `BLOCKED_PERMISSION_OR_REPLACEMENT_REQUIRED`.
+- Independent audits required: `0`.
+- Distinct reviewers/custodians required: `NO`.
+- GitHub V6 preservation lease: `ACCEPTED_AS_SUFFICIENT`.
+- Yahoo-derived future V7 input: `PROHIBITED`.
+- Future V7 provider: `TIINGO_DAILY`.
+- Tiingo activation: `TOKEN_REQUIRED`; free-tier capacity is `500` unique
+  symbols per month.
+- GitHub `read:packages`: owner-authorized but awaiting the interactive OAuth
+  approval GitHub requires; it does not block technical preparation.
 - Private-resource owner authorization: `AUTHORIZED_EXPLICITLY`.
 - Other decisions: `DEFERRED_UNTIL_ACTIONABLE`.
-- Execution status: still `NO-GO` until every applicable formal gate has
-  verifiable evidence.
+- Execution status: `TECHNICAL_PREPARATION_AUTHORIZED`; scientific execution
+  still requires its normal data, locked and reproducibility gates.

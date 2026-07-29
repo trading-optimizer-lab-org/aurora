@@ -1,7 +1,8 @@
 """Tiingo daily EOD provider (R156 OPTIONAL_PRICE_FALLBACK).
 
-Tiingo is a paid-API-key vendor with a free tier (50 req/hour, ~1000
-daily symbols). It serves adjusted EOD bars for equities, ETFs, mutual
+Tiingo is an API-key vendor with a free Starter tier (50 requests/hour,
+1000 requests/day and 500 unique symbols/month at the reviewed 2026-07-29
+pricing snapshot). It serves adjusted EOD bars for equities, ETFs, mutual
 funds and crypto. We treat it strictly as an *optional* fallback that
 the operator must enable by exporting :data:`TOKEN_ENV_VAR`.
 
@@ -44,7 +45,10 @@ TIINGO_DESCRIPTOR = ProviderDescriptor(
     name=PROVIDER_NAME,
     role=ProviderRole.OPTIONAL_PRICE_FALLBACK,
     licence_terms_url="https://www.tiingo.com/about/terms",
-    rate_limits="50 req/hour free / 1000 daily symbols max",
+    rate_limits=(
+        "Starter: 50 req/hour, 1000 req/day, 500 unique symbols/month, "
+        "1 GB/month"
+    ),
     auth_required=True,
     asset_classes=("equity", "etf", "mutual_fund", "crypto"),
     intervals=("daily",),

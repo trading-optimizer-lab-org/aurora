@@ -1,4 +1,4 @@
-"""Generate the explicitly blocked GTBI V7 role-registry template."""
+"""Generate the owner-controlled GTBI V7 role registry."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from infra.gtbi_v7_readiness.roles import (  # noqa: E402
-    build_blocked_role_registry,
+    build_owner_controlled_role_registry,
     validate_role_registry,
 )
 
@@ -24,7 +24,7 @@ DEFAULT_SCHEMA = (
 )
 DEFAULT_OUTPUT = (
     ROOT
-    / "config/gtbi/fixtures/v7/governance/role_registry_v1.blocked.json"
+    / "config/gtbi/fixtures/v7/governance/role_registry_v1.owner_controlled.json"
 )
 
 
@@ -40,11 +40,11 @@ def generate(
     )
     admins = [row for row in rows if row.get("role_name") == "admin"]
     if len(admins) != 1:
-        raise ValueError("blocked template requires exactly one inventoried owner")
+        raise ValueError("owner-controlled registry requires exactly one owner")
 
     metadata = json.loads(audit_metadata_path.read_text(encoding="utf-8"))
     owner = admins[0]
-    registry = build_blocked_role_registry(
+    registry = build_owner_controlled_role_registry(
         repository=metadata["repository"],
         owner_github_actor_id=int(owner["id"]),
         owner_github_login=owner["login"],

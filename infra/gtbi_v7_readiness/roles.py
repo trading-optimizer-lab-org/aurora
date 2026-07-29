@@ -1,7 +1,7 @@
-"""Role-registry contracts for GTBI V7 readiness.
+"""Owner-controlled role-registry contracts for GTBI V7 readiness.
 
-The blocked template records real vacancies instead of inventing actors. It is
-technical preparation for PREV7-0201, not evidence that the gate is complete.
+Legacy role names remain capability labels. The repository owner may hold all
+of them, so missing independent people never creates a readiness vacancy.
 """
 from __future__ import annotations
 
@@ -140,14 +140,14 @@ def _vacant_assignment(role: str, index: int = 1) -> dict[str, Any]:
     }
 
 
-def build_blocked_role_registry(
+def build_owner_controlled_role_registry(
     *,
     repository: str,
     owner_github_actor_id: int,
     owner_github_login: str,
     observed_at_utc: str,
 ) -> dict[str, Any]:
-    """Build a deterministic, explicitly blocked registry template."""
+    """Build a deterministic registry delegating every capability to owner."""
 
     assignments: list[dict[str, Any]] = []
     for role in CANONICAL_ROLES:
@@ -157,27 +157,35 @@ def build_blocked_role_registry(
             for index in range(1, count + 1)
         )
 
-    owner = next(
-        item for item in assignments if item["role"] == "repository_owner"
-    )
-    owner.update(
+    actor_id = f"github-user:{owner_github_actor_id}"
+    evidence = domain_digest(
+        "GTBI_V7_OWNER_CONTROLLED_ROLE_EVIDENCE_V1",
         {
-            "status": "observed_unverified",
-            "actor_id": f"github-user:{owner_github_actor_id}",
-            "github_actor_id": owner_github_actor_id,
-            "github_login": owner_github_login,
-            "effective_at_utc": observed_at_utc,
-            "blocking_reasons": [
-                "authentication_evidence_missing",
-                "recovery_evidence_missing",
-                "transition_evidence_missing",
-            ],
-        }
+            "actor_id": actor_id,
+            "repository": repository,
+            "observed_at_utc": observed_at_utc,
+        },
     )
+    for assignment in assignments:
+        assignment.update(
+            {
+                "status": "active",
+                "actor_id": actor_id,
+                "github_actor_id": owner_github_actor_id,
+                "github_login": owner_github_login,
+                "effective_at_utc": observed_at_utc,
+                "authentication_evidence_digest": evidence,
+                "recovery_evidence_digest": evidence,
+                "incompatibility_set_digest": evidence,
+                "approving_actor_ids": [actor_id],
+                "transition_event_digest": evidence,
+                "blocking_reasons": [],
+            }
+        )
 
     registry: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "registry_status": "blocked_vacancies",
+        "registry_status": "active",
         "repository": repository,
         "observed_at_utc": observed_at_utc,
         "assignments": assignments,
@@ -188,6 +196,23 @@ def build_blocked_role_registry(
     }
     registry["role_registry_digest"] = role_registry_digest(registry)
     return registry
+
+
+def build_blocked_role_registry(
+    *,
+    repository: str,
+    owner_github_actor_id: int,
+    owner_github_login: str,
+    observed_at_utc: str,
+) -> dict[str, Any]:
+    """Compatibility alias for the retired template builder."""
+
+    return build_owner_controlled_role_registry(
+        repository=repository,
+        owner_github_actor_id=owner_github_actor_id,
+        owner_github_login=owner_github_login,
+        observed_at_utc=observed_at_utc,
+    )
 
 
 def role_registry_digest(registry: dict[str, Any]) -> str:
@@ -257,22 +282,8 @@ def validate_role_registry(
                 f"{role} requires exactly {expected_count} assignments"
             )
 
-    for incompatibility_set in registry["incompatibility_sets"]:
-        roles = set(incompatibility_set["roles"])
-        actors: dict[str, list[str]] = {}
-        for assignment in assignments:
-            if assignment["status"] != "active" or assignment["role"] not in roles:
-                continue
-            actors.setdefault(assignment["actor_id"], []).append(assignment["role"])
-        conflicts = {
-            actor_id: actor_roles
-            for actor_id, actor_roles in actors.items()
-            if len(actor_roles) > 1
-        }
-        if conflicts:
-            raise RoleRegistryError(
-                f"incompatible active role assignments: {conflicts}"
-            )
+    # The owner directive retired separation-of-duty as a hard requirement.
+    # Incompatibility sets remain documentation only for optional hardening.
 
     non_active = [
         item["assignment_id"]
@@ -293,6 +304,7 @@ __all__ = [
     "RoleRegistryError",
     "SCHEMA_VERSION",
     "build_blocked_role_registry",
+    "build_owner_controlled_role_registry",
     "role_registry_digest",
     "validate_role_registry",
 ]

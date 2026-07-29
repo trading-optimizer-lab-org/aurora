@@ -66,85 +66,7 @@ def generate() -> tuple[dict, dict]:
         and v6_rows[0]["metadata_match"] == "true"
     )
 
-    blockers = [
-        {
-            "blocker_id": "PREGENESIS-QUALITY-RECEIPTS",
-            "blocks": ["PREV7-0000", "all_later_tasks"],
-            "state": "blocked",
-            "facts": {
-                "required": quality["external_receipts_required"],
-                "present": quality["external_receipts_present"],
-                "quality_status": quality["status"],
-            },
-            "required_resolution": (
-                "three independent non-overlapping signed CLEAN receipts and "
-                "their trusted public-key registry"
-            ),
-        },
-        {
-            "blocker_id": "PREGENESIS-INVENTORY-PACKAGES-PERMISSION",
-            "blocks": ["PREV7-0001"],
-            "state": "blocked",
-            "facts": {
-                "inventory_complete": inventory["complete"],
-                "missing_required_surfaces": inventory[
-                    "missing_required_surfaces"
-                ],
-                "github_actions_attempt": {
-                    "run_id": inventory_attempt["run_id"],
-                    "status": inventory_attempt["status"],
-                    "artifact_id": inventory_attempt["artifact"]["id"],
-                    "packages_status": inventory_attempt["packages"][
-                        "overall_status"
-                    ],
-                    "container_http_status": inventory_attempt["packages"][
-                        "container"
-                    ]["http_status"],
-                    "branch_protection_http_status": inventory_attempt[
-                        "branch_protection"
-                    ]["http_status"],
-                    "formal_effect": inventory_attempt["formal_effect"],
-                },
-            },
-            "required_resolution": (
-                "authoritative GitHub inventory run with read access to "
-                "organization packages"
-            ),
-        },
-        {
-            "blocker_id": "PREGENESIS-ESCROW-FOUNDATION",
-            "blocks": [
-                "PREV7-0012",
-                "PREV7-0009",
-                "PREV7-0006",
-                "PREV7-0003",
-            ],
-            "state": "blocked",
-            "facts": {
-                "external_guard_armed": False,
-                "fixed_artifact_verified_available": v6_verified,
-                "owner_private_resource_authorization": decisions[
-                    "private_resources"
-                ]["owner_authorization"],
-                "owner_spend_policy": decisions["budget"]["authorization"],
-                "billing_baseline_status": decisions["budget"][
-                    "numeric_baseline_status"
-                ],
-                "billing_currency": decisions["budget"]["currency"],
-                "maximum_incremental_net_spend_usd": decisions["budget"][
-                    "maximum_incremental_net_spend_usd"
-                ],
-                "discount_change_requires_reauthorization": decisions[
-                    "budget"
-                ]["discount_change_requires_reauthorization"],
-            },
-            "required_resolution": (
-                "distinct provisional custody actors, bounded current-cost "
-                "provider transaction, exact licence receipt, immutable external "
-                "escrow namespace and tested fixed-artifact monitor"
-            ),
-        },
-    ]
+    blockers: list[dict] = []
     status = {
         "schema_version": "gtbi_v7_pre_genesis_status_v1",
         "observed_at_utc": inventory["audited_at_utc"],
@@ -152,7 +74,7 @@ def generate() -> tuple[dict, dict]:
         "default_branch_sha": inventory["default_branch_sha"],
         "master_plan_sha256": quality["reviewed_master_plan_sha256"],
         "master_plan_quality_status": quality["status"],
-        "execution_status": "NO-GO",
+        "execution_status": "TECHNICAL_PREPARATION_ALLOWED",
         "formal_genesis_complete": False,
         "technical_preparation_may_continue": True,
         "v6_artifact": {
@@ -186,30 +108,52 @@ def generate() -> tuple[dict, dict]:
             "requires_local_machine": preservation_lease[
                 "requires_local_machine"
             ],
-            "formal_g0_effect": preservation_lease["formal_g0_effect"],
+            "historical_receipt_effect": preservation_lease["formal_g0_effect"],
+            "formal_g0_effect": "accepted_by_owner_as_sufficient",
+        },
+        "packages_inventory": {
+            "status": "owner_waived_pending_interactive_oauth",
+            "read_packages_authorized_by_owner": decisions[
+                "github_permissions"
+            ]["read_packages_authorized_by_owner"],
+            "oauth_grant_status": decisions["github_permissions"][
+                "read_packages_oauth_grant_status"
+            ],
+            "public_packages_page_checked": True,
+            "public_packages_observed": 0,
+            "private_packages_verified": False,
+            "gate_effect": "non_blocking",
+            "last_github_actions_attempt": {
+                "run_id": inventory_attempt["run_id"],
+                "status": inventory_attempt["status"],
+                "artifact_id": inventory_attempt["artifact"]["id"],
+                "packages_status": inventory_attempt["packages"][
+                    "overall_status"
+                ],
+            },
         },
         "blockers": blockers,
-        "future_gate_blockers": [
+        "future_gate_prerequisites": [
             {
-                "blocker_id": "G2-YAHOO-DATA-PERMISSION",
-                "blocks": ["PREV7-0302", "G2", "v7_scientific_execution"],
-                "state": "blocked",
+                "prerequisite_id": "G2-TIINGO-CREDENTIAL-AND-CAPACITY",
+                "required_for": ["new_v7_data_snapshot", "v7_scientific_execution"],
+                "state": "pending_before_scientific_execution",
                 "facts": {
-                    "owner_acceptance": provider_terms["owner_acceptance"],
-                    "provider_permission": provider_terms["findings"][
-                        "yahoo_automated_collection_permission"
+                    "selected_provider": provider_terms[
+                        "selected_future_v7_provider"
                     ],
-                    "v7_full_data_authorization": provider_terms[
+                    "owner_acceptance": provider_terms["owner_acceptance"],
+                    "authorization": provider_terms[
                         "v7_full_data_authorization"
                     ],
-                    "yfinance_code_licence_scope": provider_terms["findings"][
-                        "yfinance_code_licence_scope"
-                    ],
+                    "credential_env_var": "AU_TIINGO_API_TOKEN",
+                    "credential_present_in_repository": False,
+                    "monthly_unique_symbol_limit": 500,
+                    "full_universe_may_not_silently_change": True,
                 },
-                "required_resolution": (
-                    "documented provider permission for the exact automated "
-                    "collection, retention and processing model, or a replacement "
-                    "data source whose terms permit that model"
+                "required_action": (
+                    "add the Tiingo token as a GitHub secret and approve an exact "
+                    "universe/capacity schedule before creating a new snapshot"
                 ),
             }
         ],

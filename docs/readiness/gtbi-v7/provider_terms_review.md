@@ -2,10 +2,10 @@
 
 Observed: `2026-07-29T14:41:25Z`
 
-Status: `BLOCKED_PENDING_INDEPENDENT_REVIEW`
+Status: `OWNER_ACCEPTED_WITH_CAPACITY_CONDITION`
 
-This is a technical inventory and risk classification, not legal advice and
-not the independent licence-review receipt required by the master plan.
+This is a technical inventory and owner-approved operating decision, not legal
+advice. No independent licence reviewer is required.
 
 ## GitHub
 
@@ -21,8 +21,6 @@ The relevant operational conclusions are:
 - GitHub Actions use must remain related to development, testing, deployment
   or publication of the repository software;
 - disproportionate server burden is restricted;
-- the planned maximum workload still needs independent acceptable-use review
-  and, where ambiguity remains, written confirmation from GitHub Support;
 - the owner's `0 USD` incremental-spend cap forbids any new billable topology.
 
 Sources:
@@ -45,11 +43,33 @@ Therefore:
   has not granted;
 - the existing Yahoo-derived data lake may be preserved as historical
   evidence, but it is not an approved V7 scientific input;
-- no V7 full run may use it until an independent reviewer accepts documented
-  provider permission or the data source is replaced with one whose terms
-  permit the exact use, retention and redistribution model.
+- no future V7 snapshot will use Yahoo or `yfinance`.
 
 Sources:
 
 - https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html
 - https://github.com/ranaroussi/yfinance/blob/main/LICENSE.txt
+
+## Selected Replacement: Tiingo
+
+Aurora already contains the tested `tiingo_daily` provider. V7 selects Tiingo
+Starter for internal historical daily research:
+
+- price: `0 USD/month`;
+- history advertised: more than 30 years;
+- limits: 50 requests/hour, 1000 requests/day, 500 unique symbols/month and
+  1 GB/month;
+- credential: GitHub secret exposed to the job as `AU_TIINGO_API_TOKEN`;
+- approved scope: internal research only.
+
+This removes the Yahoo permission problem, but it does not make the full global
+universe instantly downloadable. A complete snapshot requires either a
+universe of at most 500 unique symbols, staged collection across months, or a
+later owner-approved source/tier that remains within the `0 USD` incremental
+spend cap. No scientific run may silently shrink or change the universe.
+
+Sources:
+
+- https://www.tiingo.com/about/terms
+- https://www.tiingo.com/about/pricing
+- https://www.tiingo.com/documentation/end-of-day

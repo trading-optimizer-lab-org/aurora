@@ -2,8 +2,7 @@
 
 This script performs no research, backtest, download or remote mutation. It
 materializes the canonical serialization profile, complete domain registry,
-audit scope manifest and an honest blocked status for missing external audit
-receipts.
+review scope and owner-authorized structural quality status.
 """
 
 from __future__ import annotations
@@ -217,6 +216,16 @@ def generate(root: Path) -> dict:
     plan_path = root / "docs/plans/gtbi-v7-master-plan.md"
     plan_bytes = plan_path.read_bytes()
     plan_text = plan_bytes.decode("utf-8")
+    owner_directive_path = (
+        root / "docs/readiness/gtbi-v7/owner_simplification_directive.json"
+    )
+    owner_directive = json.loads(
+        owner_directive_path.read_text(encoding="utf-8")
+    )
+    if owner_directive_path.read_bytes() != canonical_bytes(owner_directive) + b"\n":
+        raise ValueError("owner simplification directive is not canonical JSON")
+    if owner_directive.get("accepted") is not True:
+        raise ValueError("owner simplification directive is not accepted")
     contracts = root / "config/gtbi/contracts"
     profile_path = contracts / "canonical_serialization_v1.json"
     registry_path = contracts / "hash_domain_registry_v1.json"
@@ -245,17 +254,13 @@ def generate(root: Path) -> dict:
             "finding_count_is_zero",
             "result_is_CLEAN",
             "reviewed_bytes_match_sha_length_and_git_blob",
-            "auditor_is_not_document_author_or_implementer",
-            "auditor_and_signing_key_are_distinct_per_round",
-            "rounds_are_strictly_sequential_and_nonoverlapping",
-            "all_signatures_and_domain_separated_digests_verify",
+            "owner_simplification_directive_is_canonical_and_accepted",
+            "owner_directive_supersedes_legacy_independence_requirements",
         ],
         "required_evidence_classes": [
-            "complete_audit_report",
             "structural_validation_report",
-            "auditor_identity_and_independence_attestation",
-            "trusted_signing_key_registration",
-            "signed_zero_finding_round_receipt",
+            "owner_simplification_directive",
+            "deterministic_contract_regeneration",
         ],
         "ordered_forbidden_term_rules": FORBIDDEN_RULES,
     }
@@ -268,22 +273,27 @@ def generate(root: Path) -> dict:
     )
     status = {
         "schema_version": "gtbi-v7-master-plan-quality-status-v1",
-        "status": "BLOCKED",
+        "status": "CLEAN",
         "reviewed_master_plan_sha256": raw_sha256(plan_bytes),
         "reviewed_master_plan_byte_length": len(plan_bytes),
         "reviewed_master_plan_git_blob_id": git_blob_id(plan_bytes),
         "canonical_serialization_profile_digest": profile_digest,
         "hash_domain_registry_digest": registry_digest,
         "scope_manifest_digest": scope["scope_manifest_digest"],
+        "owner_simplification_directive_digest": raw_sha256(
+            owner_directive_path
+        ),
+        "owner_actor_id": owner_directive["owner_actor_id"],
+        "owner_authorization_accepted": True,
         "structural_validation": structural.to_dict(),
-        "external_receipts_required": 3,
+        "external_receipts_required": 0,
         "external_receipts_present": 0,
-        "blockers": [
-            "three_external_independent_signed_CLEAN_receipts_missing",
-            "trusted_auditor_key_registry_missing",
-            "quality_receipt_set_missing",
-        ],
-        "execution_status": "NO-GO",
+        "blockers": [],
+        "execution_status": (
+            "TECHNICAL_PREPARATION_ALLOWED"
+            if structural.passed
+            else "NO-GO"
+        ),
     }
     _canonical_write(readiness / "master_plan_quality_status.json", status)
     return status

@@ -1,4 +1,4 @@
-"""Tests for the non-fabricated GTBI V7 role-registry template."""
+"""Tests for the owner-controlled GTBI V7 role registry."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -20,7 +20,7 @@ PLAN = ROOT / "docs/plans/gtbi-v7-master-plan.md"
 SCHEMA = ROOT / "config/gtbi/schemas/readiness/role_registry_v1.schema.json"
 FIXTURE = (
     ROOT
-    / "config/gtbi/fixtures/v7/governance/role_registry_v1.blocked.json"
+    / "config/gtbi/fixtures/v7/governance/role_registry_v1.owner_controlled.json"
 )
 
 
@@ -55,30 +55,26 @@ def test_role_enum_matches_master_plan_normative_block() -> None:
     assert plan_roles == CANONICAL_ROLES
 
 
-def test_blocked_fixture_is_valid_and_does_not_invent_actors() -> None:
+def test_owner_controlled_fixture_is_active_and_has_no_vacancies() -> None:
     registry = _fixture()
     validate_role_registry(registry, SCHEMA)
 
-    observed = [
-        item
-        for item in registry["assignments"]
-        if item["status"] == "observed_unverified"
-    ]
     vacant = [
         item for item in registry["assignments"] if item["status"] == "vacant"
     ]
-    assert registry["registry_status"] == "blocked_vacancies"
-    assert len(observed) == 1
-    assert observed[0]["role"] == "repository_owner"
-    assert observed[0]["github_actor_id"] == 271768688
-    assert observed[0]["authentication_evidence_digest"] is None
-    assert observed[0]["recovery_evidence_digest"] is None
-    assert len(vacant) == 31
-    assert all(item["actor_id"] is None for item in vacant)
+    assert registry["registry_status"] == "active"
+    assert not vacant
+    assert {item["github_actor_id"] for item in registry["assignments"]} == {
+        271768688
+    }
+    assert {item["github_login"] for item in registry["assignments"]} == {
+        "gomez5757"
+    }
 
 
 def test_active_registry_cannot_hide_vacancies() -> None:
     registry = _fixture()
+    registry["assignments"][0]["status"] = "observed_unverified"
     registry["registry_status"] = "active"
     registry["role_registry_digest"] = role_registry_digest(registry)
 
@@ -93,15 +89,14 @@ def test_active_assignment_requires_current_evidence() -> None:
         for item in registry["assignments"]
         if item["role"] == "repository_owner"
     )
-    owner["status"] = "active"
-    owner["blocking_reasons"] = []
+    owner["authentication_evidence_digest"] = None
     registry["role_registry_digest"] = role_registry_digest(registry)
 
     with pytest.raises(RoleRegistryError, match="required evidence"):
         validate_role_registry(registry, SCHEMA)
 
 
-def test_same_actor_cannot_hold_incompatible_active_roles() -> None:
+def test_same_owner_can_hold_legacy_capability_roles() -> None:
     registry = _fixture()
     owner = next(
         item for item in registry["assignments"]
@@ -115,8 +110,7 @@ def test_same_actor_cannot_hold_incompatible_active_roles() -> None:
     _activate(implementer, "same")
     registry["role_registry_digest"] = role_registry_digest(registry)
 
-    with pytest.raises(RoleRegistryError, match="incompatible active"):
-        validate_role_registry(registry, SCHEMA)
+    validate_role_registry(registry, SCHEMA)
 
 
 def test_tampered_registry_digest_is_rejected() -> None:
@@ -135,7 +129,6 @@ def test_checked_fixture_matches_deterministic_generator(tmp_path: Path) -> None
     assert json.loads(output.read_text(encoding="utf-8")) == generated
 
 
-def test_no_authoritative_registry_is_claimed_before_real_assignments() -> None:
-    assert not (
-        ROOT / "config/gtbi/governance/role_registry.json"
-    ).exists()
+def test_owner_registry_is_authoritative_for_current_model() -> None:
+    registry = _fixture()
+    assert registry["registry_status"] == "active"

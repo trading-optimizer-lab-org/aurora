@@ -77,6 +77,7 @@ def test_descriptor_role_and_reliability() -> None:
     assert TIINGO_DESCRIPTOR.reliability == "COMMUNITY"
     assert TIINGO_DESCRIPTOR.auth_required is True
     assert "equity" in TIINGO_DESCRIPTOR.asset_classes
+    assert "500 unique symbols/month" in TIINGO_DESCRIPTOR.rate_limits
 
 
 def test_adjusted_posture_recorded() -> None:

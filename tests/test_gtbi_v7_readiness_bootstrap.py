@@ -37,6 +37,7 @@ def _copy_bootstrap_tree(target: Path) -> None:
     files = [
         "docs/plans/gtbi-v7-master-plan.md",
         "docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json",
+        "docs/readiness/gtbi-v7/owner_simplification_directive.json",
         "config/gtbi/contracts/canonical_serialization_v1.json",
         "config/gtbi/contracts/hash_domain_registry_v1.json",
         (
@@ -252,21 +253,22 @@ def test_duplicate_task_id_is_rejected(tmp_path: Path) -> None:
     assert not check.passed
 
 
-def test_missing_external_receipts_is_blocked_not_clean() -> None:
+def test_owner_directive_replaces_external_receipts() -> None:
     result = validate_quality_evidence(repository_root=ROOT)
-    assert result.status == "BLOCKED"
-    assert not result.passed
-    assert any("quality evidence" in error for error in result.errors)
+    assert result.status == "CLEAN", result.errors
+    assert result.passed
+    assert result.owner_simplification_directive_digest
 
 
-def test_three_valid_independent_signed_rounds_pass(tmp_path: Path) -> None:
+def test_legacy_signed_rounds_do_not_override_owner_directive(tmp_path: Path) -> None:
     key_registry = _signed_quality_package(tmp_path)
     result = validate_quality_evidence(
         repository_root=tmp_path,
         trusted_key_registry_path=key_registry,
     )
     assert result.status == "CLEAN", result.errors
-    assert result.master_plan_quality_receipt_set_digest
+    assert result.master_plan_quality_receipt_set_digest is None
+    assert result.owner_simplification_directive_digest
 
 
 def test_plan_byte_change_invalidates_signed_rounds(tmp_path: Path) -> None:
@@ -410,6 +412,7 @@ def test_bootstrap_schemas_and_generated_json_are_canonical() -> None:
         ROOT / "config/gtbi/contracts/hash_domain_registry_v1.json",
         READINESS / "master_plan_audit_scope_manifest.json",
         READINESS / "master_plan_quality_status.json",
+        READINESS / "owner_simplification_directive.json",
     ]
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))

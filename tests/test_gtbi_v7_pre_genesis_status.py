@@ -27,6 +27,12 @@ def test_owner_decisions_match_explicit_instruction() -> None:
     assert decisions["budget"]["maximum_incremental_net_spend_usd"] == 0
     assert decisions["budget"]["discount_change_requires_reauthorization"] is True
     assert decisions["licences"]["owner_acceptance"] == "accepted_explicitly"
+    assert decisions["licences"]["selected_future_v7_provider"] == "tiingo_daily"
+    assert decisions["audits_and_people"]["external_audits_required"] == 0
+    assert decisions["audits_and_people"]["distinct_people_required"] is False
+    assert decisions["preservation"]["github_v6_preservation_lease"] == (
+        "accepted_as_sufficient"
+    )
     assert (
         decisions["private_resources"]["owner_authorization"]
         == "authorized_explicitly"
@@ -60,47 +66,63 @@ def test_public_billing_baseline_is_bounded_and_canonical() -> None:
     assert "gross_amount" not in receipt
 
 
-def test_provider_terms_inventory_is_canonical_and_does_not_invent_permission() -> None:
+def test_provider_terms_inventory_selects_tiingo_and_retires_yahoo() -> None:
     path = READINESS / "provider_terms_inventory.json"
     inventory = json.loads(path.read_text(encoding="utf-8"))
 
     assert path.read_bytes() == canonical_bytes(inventory) + b"\n"
-    assert inventory["owner_acceptance"] == (
-        "accepted_explicitly_subject_to_actual_provider_permission"
+    assert inventory["owner_acceptance"] == "accepted_explicitly"
+    assert inventory["inventory_status"] == "owner_reviewed"
+    assert inventory["v7_full_data_authorization"] == (
+        "conditional_on_token_and_capacity_plan"
     )
-    assert inventory["inventory_status"] == (
-        "prepared_pending_independent_review"
-    )
-    assert inventory["v7_full_data_authorization"] == "blocked"
+    assert inventory["selected_future_v7_provider"] == "tiingo_daily"
 
     providers = {
         provider["provider_id"]: provider for provider in inventory["providers"]
     }
+    assert providers["tiingo"]["review_status"] == (
+        "selected_zero_cost_internal_research_source"
+    )
     assert providers["yahoo_finance"]["review_status"] == (
-        "blocked_permission_or_replacement_required"
+        "historical_evidence_only_not_future_v7_input"
     )
     assert providers["yfinance"]["terms"][0]["spdx_id"] == "Apache-2.0"
     assert providers["yfinance"]["review_status"] == (
-        "code_licence_identified_data_rights_not_granted"
+        "legacy_client_not_selected_for_future_v7"
     )
     assert inventory["findings"]["yfinance_code_licence_scope"] == (
         "client_code_only_not_underlying_yahoo_market_data"
     )
 
 
-def test_owner_acceptance_does_not_claim_yahoo_data_permission() -> None:
+def test_v7_data_source_selection_is_canonical_and_preserves_boundaries() -> None:
+    path = ROOT / "config/gtbi/v7/data_source_selection.json"
+    selection = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.read_bytes() == canonical_bytes(selection) + b"\n"
+    assert selection["primary_provider"] == "tiingo_daily"
+    assert selection["pricing_tier"] == "Starter_0_USD_per_month"
+    assert selection["monthly_unique_symbol_limit"] == 500
+    assert selection["zero_incremental_spend_cap_preserved"] is True
+    assert selection["train_end"] == "2010-12-31"
+    assert selection["validation_start"] == "2011-01-01"
+    assert selection["validation_end"] == "2020-12-31"
+    assert selection["locked_start"] == "2021-01-01"
+
+
+def test_owner_acceptance_selects_replacement_without_claiming_yahoo_permission() -> None:
     record = json.loads(
         (READINESS / "owner_decisions.json").read_text(encoding="utf-8")
     )
     licences = record["decisions"]["licences"]
 
     assert licences["owner_acceptance"] == "accepted_explicitly"
-    assert licences["exact_provider_terms_inventory"] == (
-        "prepared_pending_independent_review"
-    )
-    assert licences["independent_review_receipt"] == "pending"
+    assert licences["exact_provider_terms_inventory"] == "owner_reviewed"
+    assert licences["independent_review_receipt"] == "not_required"
+    assert licences["selected_future_v7_provider"] == "tiingo_daily"
     assert licences["yahoo_data_permission"] == (
-        "blocked_permission_or_replacement_required"
+        "historical_evidence_only_not_future_v7_input"
     )
 
 
@@ -151,61 +173,36 @@ def test_inventory_github_actions_attempt_is_canonical_and_fail_closed() -> None
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
-def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
+def test_pre_genesis_status_allows_preparation_and_v6_is_verified() -> None:
     status, cancellation = generate()
-    assert status["execution_status"] == "NO-GO"
+    assert status["execution_status"] == "TECHNICAL_PREPARATION_ALLOWED"
     assert status["formal_genesis_complete"] is False
     assert status["v6_artifact"]["artifact_id"] == 8251391531
     assert status["v6_artifact"]["verified_available"] is True
-    blocker_ids = {row["blocker_id"] for row in status["blockers"]}
-    assert "PREGENESIS-QUALITY-RECEIPTS" in blocker_ids
-    assert "PREGENESIS-INVENTORY-PACKAGES-PERMISSION" in blocker_ids
-    assert "PREGENESIS-ESCROW-FOUNDATION" in blocker_ids
-    escrow = next(
-        row
-        for row in status["blockers"]
-        if row["blocker_id"] == "PREGENESIS-ESCROW-FOUNDATION"
-    )
-    assert escrow["facts"]["billing_baseline_status"] == (
-        "measured_public_projection"
-    )
-    assert escrow["facts"]["billing_currency"] == "USD"
-    assert escrow["facts"]["maximum_incremental_net_spend_usd"] == 0
-    assert escrow["facts"]["discount_change_requires_reauthorization"] is True
+    assert status["blockers"] == []
     assert cancellation["approval_state"] == "pending_exact_manifest_approval"
     assert cancellation["cancellation_executed"] is False
     assert 29162930823 not in {
         row["run_id"] for row in cancellation["candidates"]
     }
-    future_blockers = {
-        row["blocker_id"]: row for row in status["future_gate_blockers"]
+    future_prerequisites = {
+        row["prerequisite_id"]: row
+        for row in status["future_gate_prerequisites"]
     }
-    yahoo = future_blockers["G2-YAHOO-DATA-PERMISSION"]
-    assert yahoo["state"] == "blocked"
-    assert yahoo["facts"]["v7_full_data_authorization"] == "blocked"
-    assert yahoo["facts"]["owner_acceptance"] == (
-        "accepted_explicitly_subject_to_actual_provider_permission"
-    )
+    tiingo = future_prerequisites["G2-TIINGO-CREDENTIAL-AND-CAPACITY"]
+    assert tiingo["state"] == "pending_before_scientific_execution"
+    assert tiingo["facts"]["selected_provider"] == "tiingo_daily"
+    assert tiingo["facts"]["monthly_unique_symbol_limit"] == 500
     lease = status["v6_preservation_lease"]
     assert lease["status"] == "verified"
     assert lease["artifact_id"] == 8728621585
     assert lease["github_only"] is True
     assert lease["requires_local_machine"] is False
-    assert lease["formal_g0_effect"] == (
-        "none_same_provider_non_independent_lease"
-    )
-    inventory_blocker = next(
-        row
-        for row in status["blockers"]
-        if row["blocker_id"] == "PREGENESIS-INVENTORY-PACKAGES-PERMISSION"
-    )
-    attempt = inventory_blocker["facts"]["github_actions_attempt"]
-    assert attempt["run_id"] == 30464201570
-    assert attempt["status"] == "blocked_missing_permissions"
-    assert attempt["packages_status"] == "unavailable"
-    assert attempt["container_http_status"] == 400
-    assert attempt["branch_protection_http_status"] == 403
-    assert attempt["formal_effect"] == "none_inventory_still_incomplete"
+    assert lease["formal_g0_effect"] == "accepted_by_owner_as_sufficient"
+    packages = status["packages_inventory"]
+    assert packages["status"] == "owner_waived_pending_interactive_oauth"
+    assert packages["read_packages_authorized_by_owner"] is True
+    assert packages["gate_effect"] == "non_blocking"
 
 
 def test_pre_genesis_generated_files_match_generator() -> None:

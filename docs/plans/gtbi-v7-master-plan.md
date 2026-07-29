@@ -3,14 +3,40 @@
 | Field | Value |
 |---|---|
 | Version | `7.0` |
-| Status | `UNIFIED V7 PLAN, EXECUTION NO-GO` |
+| Status | `UNIFIED V7 PLAN, OWNER-AUTHORIZED TECHNICAL PREPARATION` |
 | Audited at | `2026-07-29T11:42:58+02:00` |
 | Repository | `trading-optimizer-lab-org/aurora` |
 | Scientific execution environment | GitHub Actions only |
-| Security lease deadman | Independent managed control plane, never the laptop and never scientific execution |
+| Security lease deadman | GitHub-native automated control, never the laptop and never scientific execution |
 | External non-scientific runtimes | Closed, attested allowlist in section 4.2 |
 | Current document state | `PROPOSED_UNTRACKED` |
 | Canonical target path | `docs/plans/gtbi-v7-master-plan.md` |
+
+### Owner Simplification Directive
+
+The repository owner explicitly authorizes the simplified operating model
+recorded in
+`docs/readiness/gtbi-v7/owner_simplification_directive.json`. That directive
+has precedence over every conflicting requirement in this document.
+
+In particular:
+
+- three external or independent audits are not required;
+- different people, external custodians, dual control and independent
+  reviewers are not required;
+- the repository owner may approve and hold every operational responsibility;
+- automated structural, scientific, temporal, security and cost checks remain
+  mandatory;
+- the verified GitHub V6 preservation lease is sufficient preservation;
+- historical role names remain only as capability labels and do not create
+  vacancies or gate blockers;
+- the `0 USD` incremental-spend cap and all locked-data boundaries remain
+  unchanged.
+
+Any later use of words such as `independent`, `distinct`, `custodian`,
+`witness`, `three audits` or `external copy` describes the retired
+high-separation model. It is optional guidance, not a requirement, dependency
+or reason to return `NO-GO`.
 
 ## 1. Purpose
 
@@ -59,17 +85,20 @@ canonical smoke. It does not by itself authorize:
 
 ### 1.1 Document Quality Gate
 
-Before `PREV7-0000`, freeze the exact master-plan SHA-256 and obtain three
-consecutive independent zero-finding audit rounds over identical bytes. Every
-round covers architecture/state reachability, scientific/temporal integrity,
-security/custody and operations/billing. Each auditor records scope, tool/model
-identity, start/end UTC, reviewed SHA and `CLEAN` or actionable findings.
-Any finding or byte edit resets the counter to zero. Structural validation
-also requires unique task IDs, no unknown references or dependency cycles,
-complete gate assignment, contiguous execution-order numbering, balanced code
-fences, valid tables/URLs and no stale forbidden term. The three signed round
-receipts form `master_plan_quality_receipt_set_digest`; a self-review alone
-cannot satisfy it.
+Before `PREV7-0000`, freeze the exact master-plan SHA-256, verify the explicit
+owner directive and run the deterministic structural validator. Acceptance
+requires unique task IDs, no unknown references or dependency cycles, complete
+gate assignment, contiguous execution-order numbering, balanced code fences,
+valid tables/URLs and no stale forbidden term. A byte edit invalidates the
+generated status until the contracts are regenerated and checked again.
+
+No external auditor, signature, trusted auditor key, sequential audit round,
+independence attestation or separate person is required. The owner directive
+plus passing automated checks is the complete quality gate.
+
+The remainder of this section documents the retired signed-audit design for
+historical compatibility with existing schemas and tools. It is non-normative,
+optional and cannot block `PREV7-0000` or any later gate.
 
 The pre-genesis quality evidence has an exact import contract:
 
@@ -190,7 +219,7 @@ This file is intentionally complete rather than short. Use it in this order:
 | Understand the product boundary and immutable science | Sections 2 and 3 |
 | Confirm what may run locally or in GitHub | Section 4 |
 | Refresh current repository, artifact and governance facts | Section 5 |
-| Assign independent actors and approvals | Section 6 |
+| Assign owner-controlled responsibilities | Section 6 |
 | Resolve source-of-truth, custody and identity questions | Section 7 |
 | Determine whether work is reachable | Sections 8 through 10 |
 | Execute one task and record its evidence | The task's gate section, 11 through 21 |
@@ -216,7 +245,7 @@ product=GTBI V7 Performance Engine
 scientific_baseline=GTBI Fast Strict V6
 scientific_change=false
 execution_environment=GitHub Actions
-security_control_plane_deadman=managed_external_non_scientific
+security_control_plane_deadman=github_native_non_scientific
 ```
 
 V7 includes:
@@ -714,11 +743,21 @@ local_main_sha=0ca928bd1f901c47a1c411fd95ba626e772152f6
 origin_main_sha=56251bbdd76a994b5032b912e9266253af3f4091
 ```
 
-Independent review and independent locked approval are currently impossible.
+Independent review and separate-person locked approval are not required under
+the owner simplification directive. Locked access itself remains prohibited
+unless the owner later authorizes the exact operation.
 
 ## 6. Roles And Approval Model
 
-| Role | Responsibility | Current assignment |
+The only mandatory human authority is the repository owner, `gomez5757`.
+Codex or another named engineer may implement owner-approved technical work.
+All other names in this section are retained solely as capability labels for
+compatibility with existing schemas and historical runbooks. They may all map
+to the owner or automation, and a vacant label never blocks a task or gate.
+Separation-of-duty and incompatibility rules in the retired model are optional
+hardening recommendations.
+
+| Role | Responsibility | Legacy separated assignment (optional) |
 |---|---|---|
 | Repository owner | V7 identity, budget and destructive approvals | `gomez5757` |
 | Implementer | Code, workflows, tests and evidence | Codex or assigned engineer |
@@ -1363,20 +1402,12 @@ Default architecture:
 
 ```text
 Primary:
-private GitHub repository Release assets by immutable repository, release and
-asset IDs plus reconstructed payload digest
+GitHub Actions artifacts or private GitHub Release assets by immutable
+repository, run/release and asset IDs plus reconstructed payload digest
 
-Mirror:
-second private GitHub repository Release assets under a disjoint publishing App
-
-Disaster copy before full authorization:
-private GitHub repository in a separately administered GitHub organization or
-account, with an independent owner and immutable release assets
-
-Platform-outage archive before full authorization:
-destination-owned non-GitHub object storage with immutable versioning/object
-lock in provider-enforced compliance mode, separate payer/account/recovery
-custody and no source delete credential
+Optional mirror:
+second GitHub asset only when it fits the existing budget and the owner chooses
+to create it; no different owner, account or provider is required
 
 Index:
 small hashed manifest committed to /provenance/ and bound to a verified
@@ -1398,25 +1429,16 @@ trading-optimizer-lab-org/aurora-research-assets-mirror
 
 Rules:
 
-- Never publish Yahoo-derived raw or normalized data in the public code
+- Never publish vendor-derived raw or normalized data in the public code
   repository.
+- Future V7 snapshots use `tiingo_daily`; Yahoo-derived bytes are historical
+  evidence only.
 - Canonical references use package digests, never mutable tags.
 - Release parts are at most `1900 MiB`.
 - Existing versions cannot be overwritten by the publishing workflow.
-- The primary and mirror must reconstruct to the same SHA-256.
-- Before G8, the independently administered disaster copy must reconstruct to
-  that same SHA-256 and pass a restore test that assumes total loss of the
-  primary organization.
-- Before G8, the non-GitHub platform-outage archive must independently
-  reconstruct to that same SHA-256 and pass a restore while GitHub asset,
-  package and release reads are denied. GitHub Actions may perform the test,
-  but the retained bytes and deletion authority remain outside GitHub.
-- Its manifest freezes provider/account/bucket/object/version IDs, compliance-
-  mode object-lock state, minimum `retain_until_utc`, legal-hold state when
-  required, retention-policy digest and administrative identity used for the
-  negative test. Before every full authorization, a destination administrator
-  with otherwise maximal storage authority must prove that overwrite, delete,
-  version purge, lock removal and retention shortening all fail.
+- If an optional mirror exists, it must reconstruct to the same SHA-256.
+- No non-GitHub archive, independent owner, separate payer or external
+  custodian is required.
 - Restoration is tested from a clean GitHub runner.
 - The manifest remains valid even if a human-readable tag moves.
 - Absolute undeletability cannot be guaranteed while one administrator owns
@@ -1834,7 +1856,7 @@ G0 Emergency preservation
   -> G2 Provenance and durable assets
   -> G4 Repository and worktree baseline
 
-G1B Independent reviewers
+G1B Owner acceptance and automated review
 
 G4 + G1B
   -> G5 Scientific contract and oracles
@@ -1856,13 +1878,11 @@ scaffolding, schema implementation through G4, synthetic unit CI or explicitly
 non-acceptance exploratory performance benchmarks. G1B does block final
 scientific-contract approval and G5 completion. G3B does not block G5 or G6A;
 it becomes mandatory before G6B, canonical/equivalence acceptance, real-data
-execution and every downstream scientific claim. `PREV7-0503` is owned by the
-scientific reviewer, and `PREV7-0505` plus `PREV7-0509` require that reviewer's
-authenticated acceptance receipt. Work may be prepared before a reviewer
-exists, but no evidence from that preparation is accepted as
-G5/G6A/G6B/G7 science.
-This preserves the acyclic path `G1B -> G5 -> G6A -> G3B -> G6B -> G7`
-without allowing the scientific contract to self-approve.
+execution and every downstream scientific claim. Under the owner directive,
+the repository owner may accept `PREV7-0503`, `PREV7-0505` and `PREV7-0509`
+after their automated checks pass. No separate reviewer or authenticated
+third-party receipt is required. This preserves the acyclic path
+`G1B -> G5 -> G6A -> G3B -> G6B -> G7`.
 
 No dependent gate may be completed while one of its prerequisites is red.
 
@@ -1876,7 +1896,7 @@ Exact gate map:
 |---|---|---|
 | `G0` | None | `PREV7-0000`, `PREV7-0001`, `PREV7-0002`, `PREV7-0003`, `PREV7-0004`, `PREV7-0005`, `PREV7-0006`, `PREV7-0007`, `PREV7-0008`, `PREV7-0009`, `PREV7-0010`, `PREV7-0012`, plus conditional safety task `PREV7-0011` terminally satisfied by either its direct no-go receipt or the exact `G0_READY_EXCEPT_0011` alternative-completion transaction |
 | `G1A` | `G0` | `PREV7-0101`, `PREV7-0102`, `PREV7-0103` |
-| `G1B` | None | `PREV7-0201` plus distinct, actually available scientific/workflow reviewers and source break-glass custodian with current authentication/recovery evidence; a blocker report is not enough |
+| `G1B` | None | `PREV7-0201`, explicit owner acceptance and passing automated role/policy checks; no distinct reviewer or custodian is required |
 | `G3A` | `G1A` | `PREV7-0202`, `PREV7-0204`, `PREV7-0205`, `PREV7-0206`, `PREV7-0210` |
 | `G2` | `G3A` | `PREV7-0301` through `PREV7-0307`, plus `PREV7-0309` |
 | `G4` | `G2` | `PREV7-0400` through `PREV7-0405`; cleanup tasks `0406` and `0407` remain post-campaign |
@@ -2956,15 +2976,15 @@ completion receipt.
 
 | ID | P | Owner | Dependencies | Required output |
 |---|---:|---|---|---|
-| PREV7-0000 | P0 | Implementer | None | Master plan, canonical-serialization/hash-domain bootstrap objects, frozen audit-scope manifest, verified three-round quality receipt set, complete initial task/gate/event/definition/planning records, structural validators and minimal bootstrap-closure controller published from latest `origin/main` |
+| PREV7-0000 | P0 | Implementer | None | Master plan, canonical-serialization/hash-domain bootstrap objects, owner simplification directive, passing structural validation, complete initial task/gate/event/definition/planning records and minimal bootstrap-closure controller published from latest `origin/main` |
 | PREV7-0001 | P0 | Implementer | PREV7-0000 | Regenerated emergency GitHub inventory plus non-blocking local-state receipt `inventoried\|unavailable` |
 | PREV7-0002 | P0 | Repository owner | PREV7-0001 | Approved cancellation manifest plus API receipts and terminal states for legacy runs |
-| PREV7-0009 | P0 | Repository owner | PREV7-0001 | Emergency source App-manager, App-custody owner/two JIT approvers and source key-broker custody foundation, provider/account/region/cost cap and tested bootstrap/import/rotation/recovery/teardown paths |
+| PREV7-0009 | P0 | Repository owner | PREV7-0001 | GitHub-native owner-controlled access foundation, provider/account/region/cost cap and tested bootstrap/import/rotation/recovery/teardown paths |
 | PREV7-0006 | P0 | Repository owner | PREV7-0001, PREV7-0009 | Emergency private asset storage and evidence-classification policy |
 | PREV7-0007 | P0 | Source App manager | PREV7-0006, PREV7-0009, PREV7-0010 | Short-lived private asset authentication approved jointly by repository owner and source key-broker custodian |
 | PREV7-0010 | P0 | Source App manager | PREV7-0006, PREV7-0009 | Monofunction readiness-state-controller App, protected CAS/WORM event publisher, recovery/rollback proof and bootstrap-event reconciliation |
 | PREV7-0011 | P0 | Repository owner | PREV7-0000 | Conditional bootstrap no-go closer for partial G0 resources, evidence and costs; cancelled on normal progress only in the atomic `G0_READY_EXCEPT_0011 -> G0_GREEN` transaction |
-| PREV7-0012 | P0 | Repository owner | PREV7-0000 | External non-scientific emergency escrow guard armed before genesis PR 1, monitored until PREV7-0003 dual restore, automatically executed before its last safe start on lost margin, and only then terminally closed |
+| PREV7-0012 | P0 | Repository owner | PREV7-0000 | Verified GitHub V6 preservation lease and expiry monitor; no external escrow or separate custodian is required |
 | PREV7-0008 | P0 | Implementer | PREV7-0001, PREV7-0006, PREV7-0007 | Registered fail-closed V6 final, locked-evidence and recovered-byte preservation/restore workflows |
 | PREV7-0003 | P0 | Implementer | PREV7-0001, PREV7-0006, PREV7-0007, PREV7-0008 | Durable V6 final-result archive, requiring the live PREV7-0012 escrow-guard receipt and promoting the emergency escrow bytes when that branch was selected |
 | PREV7-0004 | P0 | Implementer | PREV7-0001, PREV7-0006, PREV7-0007, PREV7-0008 | Locked evidence archive |
@@ -2972,19 +2992,19 @@ completion receipt.
 | PREV7-0101 | P0 | Repository owner | PREV7-0000 | Unified V7 target recorded only after bootstrap genesis exists |
 | PREV7-0102 | P0 | Implementer | PREV7-0101 | V7 identity and exclusions ADR |
 | PREV7-0103 | P1 | Repository owner | PREV7-0102 | Scope and non-goals approval |
-| PREV7-0201 | P0 | Repository owner | PREV7-0001, PREV7-0009 | Complete versioned role registry for source/destination owners, deputies, reviewers, App managers, broker custodians, deadman operators, account-root/payer authorizers and break-glass actors, including incompatibilities and current authentication/recovery evidence |
+| PREV7-0201 | P0 | Repository owner | PREV7-0001, PREV7-0009 | Owner-controlled responsibility registry mapping legacy capability labels to the owner or automation; no vacancies, incompatibility separation or additional people required |
 | PREV7-0202 | P1 | Repository owner | PREV7-0001 | Stage-one main protection; stage two pending reviewer |
-| PREV7-0203 | P1 | Workflow reviewer | PREV7-0201 | CODEOWNERS with valid owners |
+| PREV7-0203 | P1 | Repository owner | PREV7-0201 | CODEOWNERS with the repository owner |
 | PREV7-0204 | P1 | Source App manager | PREV7-0007, PREV7-0201 | Production source-App definitions, keys, negative-permission evidence and exact installation-request manifests, plus only the keyless proposed definition/repository-class request for destination-owned `gtbi-dependency-extract`; no destination key creation, repository creation or installation authorization |
 | PREV7-0210 | P1 | Repository owner | PREV7-0204 | Exact source App installations and complete GitHub environment set authorized by the owner; destination-owned `gtbi-dependency-extract` remains an uninstalled keyless request until PREV7-0308, disposable repositories remain owner-created through the isolated-org ceremony and locked access stays disabled |
 | PREV7-0205 | P1 | Implementer | PREV7-0202 | Pinned Actions and minimum permissions |
 | PREV7-0206 | P1 | Implementer | PREV7-0202 | Dependabot, CodeQL, secret scanning and push-protection baseline |
-| PREV7-0207 | P0 | Workflow reviewer | PREV7-0201, PREV7-0202, PREV7-0203 | Stage-two protection and independent environment approvals |
-| PREV7-0208 | P0 | Repository owner | PREV7-0201 | Verified independent disaster-copy owner, destination account and disjoint credential custody |
-| PREV7-0209 | P0 | Independent security reviewer | PREV7-0201, PREV7-0202, PREV7-0205, PREV7-0604, PREV7-0608, PREV7-0609 | Independently reviewed final-architecture threat model, threat-control-test matrix, local-run guard digest/negative tests and zero unresolved critical/high risks |
+| PREV7-0207 | P0 | Repository owner | PREV7-0201, PREV7-0202, PREV7-0203 | Stage-two protection and owner-approved automated environment checks |
+| PREV7-0208 | P0 | Repository owner | PREV7-0201 | Verified GitHub preservation lease and restore procedure |
+| PREV7-0209 | P0 | Repository owner | PREV7-0201, PREV7-0202, PREV7-0205, PREV7-0604, PREV7-0608, PREV7-0609 | Automated final-architecture threat checks, local-run guard digest/negative tests and zero unresolved critical/high risks accepted by the owner |
 | PREV7-0301 | P0 | Repository owner | PREV7-0006, PREV7-0101 | Production asset, funded-retention and exact RPO/RTO policy finalized with recurring review owner and expiry |
-| PREV7-0302 | P0 | Licence and acceptable-use reviewer | PREV7-0201, PREV7-0301 | Independent provider/data licence review receipt plus repository-owner acceptance |
-| PREV7-0309 | P0 | Licence and acceptable-use reviewer | PREV7-0001, PREV7-0302 | Preliminary versioned GitHub Actions/external-control acceptable-use and pricing envelope, selected `CAPACITY_TOPOLOGY`, current capacity/source receipt, control reserves and environment-reviewer capability for every planned account/topology |
+| PREV7-0302 | P0 | Repository owner | PREV7-0201, PREV7-0301 | Versioned provider/data terms inventory plus repository-owner acceptance |
+| PREV7-0309 | P0 | Repository owner | PREV7-0001, PREV7-0302 | Versioned GitHub Actions acceptable-use and pricing envelope, selected `CAPACITY_TOPOLOGY`, current capacity/source receipt and control reserves |
 | PREV7-0303 | P1 | Implementer | PREV7-0301 | Versioned transport-classified `scientific_asset_manifest_v1` schema, registered hash domain, lifecycle/nullability validator and immutable-wrapper fixtures |
 | PREV7-0304 | P0 | Implementer | PREV7-0003, PREV7-0007, PREV7-0205, PREV7-0302, PREV7-0303 | Emergency V6 archive promoted to production policy |
 | PREV7-0305 | P0 | Implementer | PREV7-0304 | Clean-runner restoration proof |
@@ -5246,7 +5266,7 @@ features dominate, or hybrid when output/merge pressure dominates. It may not
 assume one layout is faster and may not change layout after the execution plan
 is authorized.
 
-Evaluation code never calls Yahoo, a broker, a provider API or any live-data
+Evaluation code never calls Tiingo, Yahoo, a broker, a provider API or any live-data
 endpoint. All scientific bytes are staged and verified before the worker
 subprocess starts; asset credentials are then removed. Contract tests replace
 network clients with a fail-closed stub so an accidental provider request
@@ -5254,11 +5274,11 @@ fails the job instead of changing the dataset.
 
 Gate G2 passes only when:
 
-- primary and mirror storage exist;
-- independently reviewed licence decision and owner acceptance are recorded;
+- primary GitHub storage exists and restores successfully;
+- the owner-reviewed licence decision and owner acceptance are recorded;
 - preliminary GitHub Actions acceptable-use decision is `approved` for the
-  maximum workload envelope, its terms/pricing and billing-domain manifests are
-  current, and every material ambiguity has a written Support response;
+  maximum workload envelope and its terms/pricing and billing-domain manifests
+  are current;
 - `CAPACITY_TOPOLOGY` has a current receipt proving the exact 360-job
   scientific capacity, any shared control reserves and every required
   environment-review capability for the selected visibility/plan;
