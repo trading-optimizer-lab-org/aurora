@@ -9,7 +9,7 @@
       "blocking_reasons": [],
       "custody_domain": "repository",
       "deputy_actor_id": null,
-      "effective_at_utc": "2026-07-29T13:31:00Z",
+      "effective_at_utc": "2026-07-29T14:16:58Z",
       "expires_at_utc": null,
       "github_actor_id": 271768688,
       "github_login": "gomez5757",
@@ -717,9 +717,9 @@
       "set_id": "destination_custody_separation"
     }
   ],
-  "observed_at_utc": "2026-07-29T13:31:00Z",
+  "observed_at_utc": "2026-07-29T14:16:58Z",
   "registry_status": "blocked_vacancies",
   "repository": "trading-optimizer-lab-org/aurora",
-  "role_registry_digest": "sha256:c879cbe20d57612d90876addb04cfb63750b0012b4c505a55234d8c6eeea08f3",
+  "role_registry_digest": "sha256:832c3bbd7f06eda118287c31f00cb6ebdf8d7d6f306d291f4070f1d22efa5364",
   "schema_version": "gtbi_v7_role_registry_v1"
 }
