@@ -42,6 +42,9 @@ def generate() -> tuple[dict, dict]:
     inventory = _read_json(INVENTORY / "audit_metadata.json")
     owner_decisions = _read_json(READINESS / "owner_decisions.json")
     provider_terms = _read_json(READINESS / "provider_terms_inventory.json")
+    preservation_lease = _read_json(
+        READINESS / "v6_preservation_lease_public_receipt.json"
+    )
     decisions = owner_decisions["decisions"]
     audited_at = _parse_utc(inventory["audited_at_utc"])
     expires_at = _parse_utc(V6_EXPIRES_AT)
@@ -148,6 +151,24 @@ def generate() -> tuple[dict, dict]:
             "seconds_until_normal_safety_deadline_at_observation": max(
                 0, int((safety_deadline - audited_at).total_seconds())
             ),
+        },
+        "v6_preservation_lease": {
+            "status": preservation_lease["status"],
+            "artifact_id": preservation_lease["lease_artifact"]["id"],
+            "expires_at_utc": preservation_lease["lease_artifact"][
+                "expires_at_utc"
+            ],
+            "source_archive_digest": preservation_lease[
+                "preservation_result"
+            ]["source_archive_digest"],
+            "source_size_bytes": preservation_lease["preservation_result"][
+                "source_size_bytes"
+            ],
+            "github_only": preservation_lease["github_only"],
+            "requires_local_machine": preservation_lease[
+                "requires_local_machine"
+            ],
+            "formal_g0_effect": preservation_lease["formal_g0_effect"],
         },
         "blockers": blockers,
         "future_gate_blockers": [

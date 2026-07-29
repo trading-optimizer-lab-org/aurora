@@ -104,6 +104,34 @@ def test_owner_acceptance_does_not_claim_yahoo_data_permission() -> None:
     )
 
 
+def test_v6_preservation_lease_is_canonical_verified_and_non_independent() -> None:
+    path = READINESS / "v6_preservation_lease_public_receipt.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.read_bytes() == canonical_bytes(receipt) + b"\n"
+    assert receipt["status"] == "verified"
+    assert receipt["github_only"] is True
+    assert receipt["requires_local_machine"] is False
+    assert receipt["locked_or_scientific_processing_performed"] is False
+    assert receipt["preservation_result"] == {
+        "member_count": 47,
+        "part_count": 1,
+        "source_archive_digest": (
+            "sha256:"
+            "870ab8a0ded260b7761b7c706c239c4fce712d2fd7f7c8fb1d41dc1dffedda5b"
+        ),
+        "source_size_bytes": 1962204087,
+    }
+    assert receipt["lease_artifact"]["id"] == 8728621585
+    assert receipt["lease_artifact"]["expires_at_utc"] == (
+        "2026-10-27T14:57:48Z"
+    )
+    assert receipt["formal_g0_effect"] == (
+        "none_same_provider_non_independent_lease"
+    )
+    assert set(receipt["scientific_jobs"].values()) == {"skipped"}
+
+
 def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     status, cancellation = generate()
     assert status["execution_status"] == "NO-GO"
@@ -138,6 +166,14 @@ def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     assert yahoo["facts"]["v7_full_data_authorization"] == "blocked"
     assert yahoo["facts"]["owner_acceptance"] == (
         "accepted_explicitly_subject_to_actual_provider_permission"
+    )
+    lease = status["v6_preservation_lease"]
+    assert lease["status"] == "verified"
+    assert lease["artifact_id"] == 8728621585
+    assert lease["github_only"] is True
+    assert lease["requires_local_machine"] is False
+    assert lease["formal_g0_effect"] == (
+        "none_same_provider_non_independent_lease"
     )
 
 
