@@ -1,5 +1,9 @@
 name: Global Technical Buy Indicator Final Recheck Parallel
 
+permissions:
+  actions: read
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

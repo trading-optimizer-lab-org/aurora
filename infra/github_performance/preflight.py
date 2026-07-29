@@ -555,7 +555,12 @@ def classify_workflow(
     allowlist: Mapping[str, str],
     repo_root: Path | None = None,
 ) -> str:
-    """Classify a workflow by its adoption-time path and exact bytes."""
+    """Classify a workflow by path and canonical repository bytes.
+
+    Git stores text workflows with LF line endings, while a Windows checkout
+    may materialize the same file with CRLF. Normalize line endings only; every
+    other byte remains covered by the adoption digest.
+    """
 
     workflow_path = Path(path).resolve()
     root = (
@@ -570,7 +575,9 @@ def classify_workflow(
     expected = allowlist.get(relative)
     if expected is None:
         return "future"
-    observed = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
+    workflow_bytes = workflow_path.read_bytes()
+    canonical_bytes = workflow_bytes.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    observed = hashlib.sha256(canonical_bytes).hexdigest()
     return "legacy" if observed == expected else "modified_legacy"
 
 

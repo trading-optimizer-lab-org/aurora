@@ -212,6 +212,21 @@ def test_legacy_workflow_is_identified_by_path_and_hash(
     assert classify_workflow(workflow, allowlist, tmp_path) == "legacy"
 
 
+def test_legacy_workflow_crlf_checkout_matches_lf_digest(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / ".github/workflows/legacy.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_bytes(b"name: legacy\r\n")
+    allowlist = {
+        ".github/workflows/legacy.yml": (
+            "e94863e008af0ffe480b5078baf6681b8ac8b9944eacf5eae59ac4046623da02"
+        )
+    }
+
+    assert classify_workflow(workflow, allowlist, tmp_path) == "legacy"
+
+
 def test_one_byte_legacy_change_is_modified_legacy(
     tmp_path: Path,
 ) -> None:

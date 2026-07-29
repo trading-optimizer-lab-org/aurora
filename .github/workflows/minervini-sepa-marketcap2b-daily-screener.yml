@@ -1,5 +1,8 @@
 name: Minervini SEPA MarketCap 2B Daily Screener
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

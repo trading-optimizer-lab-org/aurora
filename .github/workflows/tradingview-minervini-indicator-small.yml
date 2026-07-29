@@ -1,5 +1,9 @@
 name: TradingView Minervini Indicator Small
 
+permissions:
+  actions: read
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

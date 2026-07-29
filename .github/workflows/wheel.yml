@@ -1,4 +1,7 @@
 ﻿name: wheel
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
