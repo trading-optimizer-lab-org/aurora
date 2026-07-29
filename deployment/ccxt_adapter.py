@@ -188,13 +188,12 @@ class CCXTBrokerAdapter(Broker):
         self.max_position_concentration = float(max_position_concentration)
         self._seen_client_order_ids: OrderedDict[str, dict] = OrderedDict()
         self._local_positions: dict[str, float] = {}
-        # Construction-time audit: NEVER include the API key. Just the env
-        # var name + sandbox flag + exchange.
+        # Construction-time audit deliberately omits credential values and
+        # credential-variable names. The latter can still reveal deployment
+        # details and are not needed to diagnose adapter construction.
         log_event(_log, "ccxt_adapter_init",
-                  exchange=self.exchange_id,
-                  sandbox=self.sandbox,
-                  api_key_env=self.api_key_env,
-                  secret_env=self.secret_env)
+                   exchange=self.exchange_id,
+                   sandbox=self.sandbox)
 
     # -- Compatibility shim so create_broker(BrokerConfig) can construct us.
     @classmethod

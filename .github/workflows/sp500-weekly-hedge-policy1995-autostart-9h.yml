@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   launch_9h:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       github.event.workflow_run.id == 26721369552 &&
       github.event.workflow_run.conclusion == 'success' &&
@@ -70,15 +70,19 @@ jobs:
           echo "Launched SP500 policy1995 downside 6waves 80jobs 9h from completed run 26721369552."
 
   skipped:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: >-
       github.event.workflow_run.id != 26721369552 ||
       github.event.workflow_run.conclusion != 'success' ||
       github.event.workflow_run.head_branch != 'codex/universal-robustness'
     steps:
       - name: Explain skip
+        env:
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           echo "Not launching 9h workflow."
-          echo "run_id=${{ github.event.workflow_run.id }}"
-          echo "conclusion=${{ github.event.workflow_run.conclusion }}"
-          echo "head_branch=${{ github.event.workflow_run.head_branch }}"
+          echo "run_id=$SOURCE_RUN_ID"
+          echo "conclusion=$SOURCE_CONCLUSION"
+          echo "head_branch=$SOURCE_HEAD_BRANCH"

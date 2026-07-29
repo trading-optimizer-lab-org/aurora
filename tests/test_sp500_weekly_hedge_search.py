@@ -700,6 +700,9 @@ def test_policy1995_autostart_9h_workflow_filters_current_run_and_success_only()
     assert "max_parallel_requested=500" in text
     assert "status=in_progress" in text
     assert "status=queued" in text
+    for job in data["jobs"].values():
+        for step in job.get("steps", []):
+            assert "${{ github.event.workflow_run." not in step.get("run", "")
 
 
 def test_policy1995_data_download_does_not_request_pre_binance_crypto_months() -> None:

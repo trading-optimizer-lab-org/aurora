@@ -180,7 +180,7 @@
     },
     {
       "path": ".github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml",
-      "sha256": "28310924a60c0e331279572eb4be2de6151f1642066061ba54e590a4b1b5be5b"
+      "sha256": "747f6e892e3fa8769de94e3cba6a3e966e8f3144136e0d99d5433ffbc949929e"
     },
     {
       "path": ".github/workflows/spy-15m-support-resistance-2015-retest.yml",
