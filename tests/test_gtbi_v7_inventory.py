@@ -206,3 +206,40 @@ def test_checked_in_query_manifest_is_canonical() -> None:
 
     payload = _manifest()
     assert QUERY_MANIFEST_PATH.read_bytes() == canonical_bytes(payload) + b"\n"
+
+
+def test_checked_in_inventory_records_stage_one_main_protection() -> None:
+    inventory_path = ROOT / "docs/project_inventory/privileged_surfaces.csv"
+    with inventory_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    protection_rows = [
+        row for row in rows if row["surface"] == "branch_protection"
+    ]
+    assert len(protection_rows) == 1
+    assert protection_rows[0]["status"] == "present"
+
+    protection = json.loads(protection_rows[0]["details_json"])
+    assert protection["required_status_checks"] == {
+        "checks": [],
+        "contexts": [],
+        "contexts_url": (
+            "https://api.github.com/repos/trading-optimizer-lab-org/aurora/"
+            "branches/main/protection/required_status_checks/contexts"
+        ),
+        "strict": True,
+        "url": (
+            "https://api.github.com/repos/trading-optimizer-lab-org/aurora/"
+            "branches/main/protection/required_status_checks"
+        ),
+    }
+    assert protection["required_pull_request_reviews"][
+        "required_approving_review_count"
+    ] == 0
+    assert protection["required_pull_request_reviews"][
+        "require_code_owner_reviews"
+    ] is False
+    assert protection["enforce_admins"]["enabled"] is True
+    assert protection["allow_force_pushes"]["enabled"] is False
+    assert protection["allow_deletions"]["enabled"] is False
+    assert protection["required_conversation_resolution"]["enabled"] is True
