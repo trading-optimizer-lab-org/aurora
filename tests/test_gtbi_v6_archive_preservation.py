@@ -138,6 +138,13 @@ def test_registered_workflow_has_isolated_fixed_preservation_mode() -> None:
         )
         for step in preservation["steps"]
     )
+    dependency_step = next(
+        step
+        for step in preservation["steps"]
+        if step.get("name") == "Install preservation validator dependencies"
+    )
+    assert '"cryptography==48.0.0"' in dependency_step["run"]
+    assert '"jsonschema==4.26.0"' in dependency_step["run"]
     upload = next(
         step
         for step in preservation["steps"]

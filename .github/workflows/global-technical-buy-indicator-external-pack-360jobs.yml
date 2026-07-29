@@ -79,6 +79,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install preservation validator dependencies
+        run: python -m pip install "cryptography==48.0.0" "jsonschema==4.26.0"
+
       - name: Preserve and verify fixed V6 artifact
         run: |
           python scripts/preserve_gtbi_v6_artifact.py \
