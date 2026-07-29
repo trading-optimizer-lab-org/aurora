@@ -177,7 +177,7 @@ def test_checked_in_inventory_workflow_is_pinned_and_read_only() -> None:
         ROOT / ".github/workflows/gtbi-v7-inventory.yml"
     ).read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow
-    assert "runs-on: ubuntu-latest" in workflow
+    assert "runs-on: ubuntu-24.04" in workflow
     assert "contents: read" in workflow
     assert "actions: read" in workflow
     assert "contents: write" not in workflow
