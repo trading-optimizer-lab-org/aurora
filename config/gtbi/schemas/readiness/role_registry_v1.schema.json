@@ -1,0 +1,231 @@
+{
+  "$id": "https://aurora.invalid/schemas/readiness/role_registry_v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "gtbi_v7_role_registry_v1"
+    },
+    "registry_status": {
+      "enum": [
+        "blocked_vacancies",
+        "active",
+        "expired",
+        "revoked"
+      ]
+    },
+    "repository": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "observed_at_utc": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "type": "string"
+    },
+    "assignments": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "repository_owner",
+              "implementer",
+              "workflow_reviewer",
+              "scientific_reviewer",
+              "independent_security_reviewer",
+              "licence_and_acceptable_use_reviewer",
+              "independent_redaction_reviewer",
+              "source_app_manager",
+              "destination_app_manager",
+              "source_deadman_operator",
+              "source_deadman_deputy",
+              "destination_deadman_operator",
+              "destination_deadman_deputy",
+              "source_key_broker_custodian",
+              "destination_key_broker_custodian",
+              "workflow_initiator",
+              "locked_approver",
+              "independent_disaster_copy_owner",
+              "source_break_glass_custodian",
+              "destination_break_glass_custodian",
+              "source_account_root_custodian",
+              "destination_account_root_custodian",
+              "source_billing_payer_authorizer",
+              "destination_billing_payer_authorizer",
+              "source_app_custody_organization_owner",
+              "destination_app_custody_organization_owner",
+              "source_app_manager_jit_approver",
+              "destination_app_manager_jit_approver",
+              "source_dual_control_witness",
+              "destination_dual_control_witness"
+            ]
+          },
+          "assignment_index": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "custody_domain": {
+            "enum": [
+              "repository",
+              "independent_review",
+              "source",
+              "destination"
+            ]
+          },
+          "status": {
+            "enum": [
+              "active",
+              "vacant",
+              "expired",
+              "revoked"
+            ]
+          },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "github_actor_id": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "github_login": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effective_at_utc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at_utc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deputy_actor_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "authentication_evidence_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recovery_evidence_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "incompatibility_set_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "approving_actor_ids": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "transition_event_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blocking_reasons": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "assignment_id",
+          "role",
+          "assignment_index",
+          "custody_domain",
+          "status",
+          "actor_id",
+          "github_actor_id",
+          "github_login",
+          "effective_at_utc",
+          "expires_at_utc",
+          "deputy_actor_id",
+          "authentication_evidence_digest",
+          "recovery_evidence_digest",
+          "incompatibility_set_digest",
+          "approving_actor_ids",
+          "transition_event_digest",
+          "blocking_reasons"
+        ],
+        "type": "object"
+      },
+      "minItems": 32,
+      "type": "array"
+    },
+    "incompatibility_sets": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "set_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "roles": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 2,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "set_id",
+          "roles"
+        ],
+        "type": "object"
+      },
+      "minItems": 3,
+      "type": "array"
+    },
+    "role_registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "registry_status",
+    "repository",
+    "observed_at_utc",
+    "assignments",
+    "incompatibility_sets",
+    "role_registry_digest"
+  ],
+  "title": "GTBI V7 role registry",
+  "type": "object"
+}
