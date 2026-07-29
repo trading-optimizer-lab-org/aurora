@@ -45,6 +45,9 @@ def generate() -> tuple[dict, dict]:
     preservation_lease = _read_json(
         READINESS / "v6_preservation_lease_public_receipt.json"
     )
+    inventory_attempt = _read_json(
+        READINESS / "inventory_github_actions_attempt_receipt.json"
+    )
     decisions = owner_decisions["decisions"]
     audited_at = _parse_utc(inventory["audited_at_utc"])
     expires_at = _parse_utc(V6_EXPIRES_AT)
@@ -87,6 +90,21 @@ def generate() -> tuple[dict, dict]:
                 "missing_required_surfaces": inventory[
                     "missing_required_surfaces"
                 ],
+                "github_actions_attempt": {
+                    "run_id": inventory_attempt["run_id"],
+                    "status": inventory_attempt["status"],
+                    "artifact_id": inventory_attempt["artifact"]["id"],
+                    "packages_status": inventory_attempt["packages"][
+                        "overall_status"
+                    ],
+                    "container_http_status": inventory_attempt["packages"][
+                        "container"
+                    ]["http_status"],
+                    "branch_protection_http_status": inventory_attempt[
+                        "branch_protection"
+                    ]["http_status"],
+                    "formal_effect": inventory_attempt["formal_effect"],
+                },
             },
             "required_resolution": (
                 "authoritative GitHub inventory run with read access to "

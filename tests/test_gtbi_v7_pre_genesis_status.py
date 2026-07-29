@@ -132,6 +132,25 @@ def test_v6_preservation_lease_is_canonical_verified_and_non_independent() -> No
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
+def test_inventory_github_actions_attempt_is_canonical_and_fail_closed() -> None:
+    path = READINESS / "inventory_github_actions_attempt_receipt.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.read_bytes() == canonical_bytes(receipt) + b"\n"
+    assert receipt["run_id"] == 30464201570
+    assert receipt["commit_sha"] == (
+        "0a1046a805f2ce3c817f1d3f0bb16c60fd6fc4e6"
+    )
+    assert receipt["github_only"] is True
+    assert receipt["requires_local_machine"] is False
+    assert receipt["status"] == "blocked_missing_permissions"
+    assert receipt["packages"]["overall_status"] == "unavailable"
+    assert receipt["packages"]["container"]["http_status"] == 400
+    assert receipt["branch_protection"]["http_status"] == 403
+    assert receipt["formal_effect"] == "none_inventory_still_incomplete"
+    assert set(receipt["scientific_jobs"].values()) == {"skipped"}
+
+
 def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     status, cancellation = generate()
     assert status["execution_status"] == "NO-GO"
@@ -175,6 +194,18 @@ def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     assert lease["formal_g0_effect"] == (
         "none_same_provider_non_independent_lease"
     )
+    inventory_blocker = next(
+        row
+        for row in status["blockers"]
+        if row["blocker_id"] == "PREGENESIS-INVENTORY-PACKAGES-PERMISSION"
+    )
+    attempt = inventory_blocker["facts"]["github_actions_attempt"]
+    assert attempt["run_id"] == 30464201570
+    assert attempt["status"] == "blocked_missing_permissions"
+    assert attempt["packages_status"] == "unavailable"
+    assert attempt["container_http_status"] == 400
+    assert attempt["branch_protection_http_status"] == 403
+    assert attempt["formal_effect"] == "none_inventory_still_incomplete"
 
 
 def test_pre_genesis_generated_files_match_generator() -> None:
