@@ -6,7 +6,11 @@
       "assignment_id": "repository_owner:1",
       "assignment_index": 1,
       "authentication_evidence_digest": null,
-      "blocking_reasons": [],
+      "blocking_reasons": [
+        "authentication_evidence_missing",
+        "recovery_evidence_missing",
+        "transition_evidence_missing"
+      ],
       "custody_domain": "repository",
       "deputy_actor_id": null,
       "effective_at_utc": "2026-07-29T14:16:58Z",
@@ -16,7 +20,7 @@
       "incompatibility_set_digest": null,
       "recovery_evidence_digest": null,
       "role": "repository_owner",
-      "status": "active",
+      "status": "observed_unverified",
       "transition_event_digest": null
     },
     {
@@ -720,6 +724,6 @@
   "observed_at_utc": "2026-07-29T14:16:58Z",
   "registry_status": "blocked_vacancies",
   "repository": "trading-optimizer-lab-org/aurora",
-  "role_registry_digest": "sha256:832c3bbd7f06eda118287c31f00cb6ebdf8d7d6f306d291f4070f1d22efa5364",
+  "role_registry_digest": "sha256:c59bf8ebc20b0bd162fb62f81750d616702820e010d3a84ad61fd7ced69895da",
   "schema_version": "gtbi_v7_role_registry_v1"
 }

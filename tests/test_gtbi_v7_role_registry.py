@@ -28,6 +28,24 @@ def _fixture() -> dict:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+def _activate(assignment: dict, actor_suffix: str) -> None:
+    assignment.update(
+        {
+            "status": "active",
+            "actor_id": f"test-actor:{actor_suffix}",
+            "github_actor_id": None,
+            "github_login": None,
+            "effective_at_utc": "2026-07-29T00:00:00Z",
+            "authentication_evidence_digest": "sha256:" + ("1" * 64),
+            "recovery_evidence_digest": "sha256:" + ("2" * 64),
+            "incompatibility_set_digest": "sha256:" + ("3" * 64),
+            "approving_actor_ids": ["test-approver:1"],
+            "transition_event_digest": "sha256:" + ("4" * 64),
+            "blocking_reasons": [],
+        }
+    )
+
+
 def test_role_enum_matches_master_plan_normative_block() -> None:
     text = PLAN.read_text(encoding="utf-8")
     start = text.index("repository_owner\n", text.index("The canonical role enum"))
@@ -41,16 +59,20 @@ def test_blocked_fixture_is_valid_and_does_not_invent_actors() -> None:
     registry = _fixture()
     validate_role_registry(registry, SCHEMA)
 
-    active = [
-        item for item in registry["assignments"] if item["status"] == "active"
+    observed = [
+        item
+        for item in registry["assignments"]
+        if item["status"] == "observed_unverified"
     ]
     vacant = [
         item for item in registry["assignments"] if item["status"] == "vacant"
     ]
     assert registry["registry_status"] == "blocked_vacancies"
-    assert len(active) == 1
-    assert active[0]["role"] == "repository_owner"
-    assert active[0]["github_actor_id"] == 271768688
+    assert len(observed) == 1
+    assert observed[0]["role"] == "repository_owner"
+    assert observed[0]["github_actor_id"] == 271768688
+    assert observed[0]["authentication_evidence_digest"] is None
+    assert observed[0]["recovery_evidence_digest"] is None
     assert len(vacant) == 31
     assert all(item["actor_id"] is None for item in vacant)
 
@@ -60,7 +82,22 @@ def test_active_registry_cannot_hide_vacancies() -> None:
     registry["registry_status"] = "active"
     registry["role_registry_digest"] = role_registry_digest(registry)
 
-    with pytest.raises(RoleRegistryError, match="cannot contain vacancies"):
+    with pytest.raises(RoleRegistryError, match="non-active assignments"):
+        validate_role_registry(registry, SCHEMA)
+
+
+def test_active_assignment_requires_current_evidence() -> None:
+    registry = _fixture()
+    owner = next(
+        item
+        for item in registry["assignments"]
+        if item["role"] == "repository_owner"
+    )
+    owner["status"] = "active"
+    owner["blocking_reasons"] = []
+    registry["role_registry_digest"] = role_registry_digest(registry)
+
+    with pytest.raises(RoleRegistryError, match="required evidence"):
         validate_role_registry(registry, SCHEMA)
 
 
@@ -74,16 +111,8 @@ def test_same_actor_cannot_hold_incompatible_active_roles() -> None:
         item for item in registry["assignments"]
         if item["role"] == "implementer"
     )
-    implementer.update(
-        {
-            "status": "active",
-            "actor_id": owner["actor_id"],
-            "github_actor_id": owner["github_actor_id"],
-            "github_login": owner["github_login"],
-            "effective_at_utc": owner["effective_at_utc"],
-            "blocking_reasons": [],
-        }
-    )
+    _activate(owner, "same")
+    _activate(implementer, "same")
     registry["role_registry_digest"] = role_registry_digest(registry)
 
     with pytest.raises(RoleRegistryError, match="incompatible active"):

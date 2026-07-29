@@ -162,12 +162,16 @@ def build_blocked_role_registry(
     )
     owner.update(
         {
-            "status": "active",
+            "status": "observed_unverified",
             "actor_id": f"github-user:{owner_github_actor_id}",
             "github_actor_id": owner_github_actor_id,
             "github_login": owner_github_login,
             "effective_at_utc": observed_at_utc,
-            "blocking_reasons": [],
+            "blocking_reasons": [
+                "authentication_evidence_missing",
+                "recovery_evidence_missing",
+                "transition_evidence_missing",
+            ],
         }
     )
 
@@ -213,11 +217,36 @@ def validate_role_registry(
     by_role: dict[str, list[dict[str, Any]]] = {}
     for assignment in assignments:
         by_role.setdefault(assignment["role"], []).append(assignment)
-        active = assignment["status"] == "active"
-        if active and not assignment["actor_id"]:
-            raise RoleRegistryError("active assignment requires actor_id")
-        if not active and assignment["actor_id"] is not None:
-            raise RoleRegistryError("non-active assignment cannot claim actor_id")
+        status = assignment["status"]
+        if status == "vacant" and assignment["actor_id"] is not None:
+            raise RoleRegistryError("vacant assignment cannot claim actor_id")
+        if status != "vacant" and not assignment["actor_id"]:
+            raise RoleRegistryError(
+                f"{status} assignment requires immutable actor_id"
+            )
+        if status == "active":
+            required_evidence = (
+                "effective_at_utc",
+                "authentication_evidence_digest",
+                "recovery_evidence_digest",
+                "incompatibility_set_digest",
+                "transition_event_digest",
+            )
+            missing = [
+                field for field in required_evidence if not assignment[field]
+            ]
+            if missing:
+                raise RoleRegistryError(
+                    f"active assignment lacks required evidence: {missing}"
+                )
+            if not assignment["approving_actor_ids"]:
+                raise RoleRegistryError(
+                    "active assignment requires approving_actor_ids"
+                )
+            if assignment["blocking_reasons"]:
+                raise RoleRegistryError(
+                    "active assignment cannot retain blocking_reasons"
+                )
 
     if set(by_role) != set(CANONICAL_ROLES):
         raise RoleRegistryError("registry must cover the complete canonical role enum")
@@ -245,9 +274,15 @@ def validate_role_registry(
                 f"incompatible active role assignments: {conflicts}"
             )
 
-    has_vacancy = any(item["status"] == "vacant" for item in assignments)
-    if registry["registry_status"] == "active" and has_vacancy:
-        raise RoleRegistryError("active registry cannot contain vacancies")
+    non_active = [
+        item["assignment_id"]
+        for item in assignments
+        if item["status"] != "active"
+    ]
+    if registry["registry_status"] == "active" and non_active:
+        raise RoleRegistryError(
+            "active registry cannot contain non-active assignments"
+        )
 
 
 __all__ = [

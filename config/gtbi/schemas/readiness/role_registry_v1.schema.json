@@ -79,6 +79,7 @@
           "status": {
             "enum": [
               "active",
+              "observed_unverified",
               "vacant",
               "expired",
               "revoked"
