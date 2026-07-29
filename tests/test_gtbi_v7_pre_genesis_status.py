@@ -227,6 +227,16 @@ def test_pre_genesis_status_allows_preparation_and_v6_is_verified() -> None:
     assert status["v6_artifact"]["artifact_id"] == 8251391531
     assert status["v6_artifact"]["verified_available"] is True
     assert status["blockers"] == []
+    assert status["initial_readiness_records"] == {
+        "status": "provisional_fail_closed",
+        "formal_genesis_effect": "none_until_merged_and_reconciled",
+        "task_rows": 110,
+        "gate_rows": 15,
+        "task_attempt_rows": 0,
+        "all_tasks_blocked": True,
+        "all_gates_red": True,
+        "validated": True,
+    }
     assert cancellation["approval_state"] == "pending_exact_manifest_approval"
     assert cancellation["cancellation_executed"] is False
     assert 29162930823 not in {

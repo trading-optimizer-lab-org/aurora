@@ -13,6 +13,7 @@ from aurora.infra.github_performance.preflight import (
     freeze_resolved_contract,
     load_github_yaml,
     load_legacy_workflow_allowlist,
+    load_legacy_workflow_migrations,
     resolve_run_spec,
     validate_future_workflow,
     validate_run_spec,
@@ -242,6 +243,113 @@ def test_one_byte_legacy_change_is_modified_legacy(
     assert "LEGACY_WORKFLOW_MODIFIED" in {
         item.code for item in violations
     }
+
+
+def test_receipt_bound_legacy_migration_is_accepted(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / ".github/workflows/legacy.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: repaired\n", encoding="utf-8")
+    previous_digest = "0" * 64
+    replacement_digest = (
+        "d0cf80ff4af4795964fcd40075abf995c2d114ffbc4826ad428234c205a5b2f9"
+    )
+    allowlist = {".github/workflows/legacy.yml": previous_digest}
+    migrations = {
+        ".github/workflows/legacy.yml": {
+            "previous_sha256": previous_digest,
+            "replacement_sha256": replacement_digest,
+            "reason": "repair",
+        }
+    }
+
+    assert (
+        classify_workflow(workflow, allowlist, tmp_path, migrations)
+        == "migrated_legacy"
+    )
+    assert (
+        validate_workflow_policy(
+            workflow,
+            tmp_path,
+            allowlist,
+            migrations,
+        )
+        == []
+    )
+
+
+def test_legacy_migration_does_not_accept_unregistered_bytes(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / ".github/workflows/legacy.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: tampered\n", encoding="utf-8")
+    allowlist = {".github/workflows/legacy.yml": "0" * 64}
+    migrations = {
+        ".github/workflows/legacy.yml": {
+            "previous_sha256": "0" * 64,
+            "replacement_sha256": "1" * 64,
+            "reason": "repair",
+        }
+    }
+
+    assert (
+        classify_workflow(workflow, allowlist, tmp_path, migrations)
+        == "modified_legacy"
+    )
+    violations = validate_workflow_policy(
+        workflow,
+        tmp_path,
+        allowlist,
+        migrations,
+    )
+    assert {item.code for item in violations} == {
+        "LEGACY_WORKFLOW_MODIFIED"
+    }
+
+
+def test_legacy_migration_loader_verifies_authorization_receipt(
+    tmp_path: Path,
+) -> None:
+    receipt = tmp_path / "docs/readiness/owner.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"accepted":true}\n', encoding="utf-8")
+    migration = tmp_path / "config/migrations.json"
+    migration.parent.mkdir(parents=True)
+    migration.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "authorization_receipt": {
+                    "path": "docs/readiness/owner.json",
+                    "sha256": (
+                        "b1b367dc6a7d077581f77f16169a6696bac3d68ffd5c93189ac6"
+                        "0fac027e57a3"
+                    ),
+                    "actor_id": "github-user:1",
+                    "scope": "workflow_repair",
+                },
+                "migrations": [
+                    {
+                        "path": ".github/workflows/legacy.yml",
+                        "previous_sha256": "0" * 64,
+                        "replacement_sha256": "1" * 64,
+                        "reason": "repair",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_legacy_workflow_migrations(migration, tmp_path)
+    assert loaded[".github/workflows/legacy.yml"][
+        "authorization_actor_id"
+    ] == "github-user:1"
+    receipt.write_text('{"accepted":false}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="receipt digest mismatches"):
+        load_legacy_workflow_migrations(migration, tmp_path)
 
 
 def test_new_heavy_workflow_must_call_framework(tmp_path: Path) -> None:

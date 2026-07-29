@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, raw_sha256  # noqa: E402
+from infra.gtbi_v7_readiness.genesis import validate_initial_records  # noqa: E402
 
 READINESS = ROOT / "docs/readiness/gtbi-v7"
 INVENTORY = ROOT / "docs/project_inventory"
@@ -38,6 +39,7 @@ def _parse_utc(value: str) -> datetime:
 
 
 def generate() -> tuple[dict, dict]:
+    validate_initial_records(ROOT)
     quality = _read_json(READINESS / "master_plan_quality_status.json")
     inventory = _read_json(INVENTORY / "audit_metadata.json")
     owner_decisions = _read_json(READINESS / "owner_decisions.json")
@@ -83,6 +85,16 @@ def generate() -> tuple[dict, dict]:
         "execution_status": "TECHNICAL_PREPARATION_ALLOWED",
         "formal_genesis_complete": False,
         "technical_preparation_may_continue": True,
+        "initial_readiness_records": {
+            "status": "provisional_fail_closed",
+            "formal_genesis_effect": "none_until_merged_and_reconciled",
+            "task_rows": 110,
+            "gate_rows": 15,
+            "task_attempt_rows": 0,
+            "all_tasks_blocked": True,
+            "all_gates_red": True,
+            "validated": True,
+        },
         "v6_artifact": {
             "run_id": V6_RUN_ID,
             "artifact_id": V6_ARTIFACT_ID,

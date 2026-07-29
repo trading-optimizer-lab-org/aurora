@@ -26,13 +26,15 @@ _PATH = str(_WORKTREE)
 try:
     import __editable___aurora_1_5_0_finder as _finder
     _finder.MAPPING['aurora'] = _PATH
-    # Evict any aurora modules that were loaded with the old MAPPING so the
-    # next import re-resolves through the corrected path.
-    for _name in list(sys.modules):
-        if _name != __name__ and (
-            _name == 'aurora' or _name.startswith('aurora.')
-        ):
-            del sys.modules[_name]
+    # Pytest can import this file either as ``conftest`` or as
+    # ``aurora.conftest``. Evicting the parent package while the latter is
+    # still importing causes importlib to fail with KeyError. Only the
+    # top-level form is safe to repair in place; CI's editable install already
+    # points at the active checkout for the package-qualified form.
+    if __name__ == "conftest":
+        for _name in list(sys.modules):
+            if _name == "aurora" or _name.startswith("aurora."):
+                del sys.modules[_name]
 except ImportError:
     # Editable finder not present (e.g. running from a wheel install). Fall
     # back to plain sys.path injection — harmless if aurora is already

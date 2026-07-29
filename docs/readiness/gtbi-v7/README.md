@@ -24,6 +24,21 @@ No independent review is required. The owner has explicitly accepted an
 owner-controlled model while retaining automated checks, cost limits and
 scientific boundaries.
 
+## Provisional Operational Records
+
+The ten files required by the task matrix now exist in this directory. They
+are deterministic candidate projections, not proof that `PREV7-0000` is done:
+
+- all 110 tasks are `blocked`;
+- all 15 gates are `red`;
+- no task attempt, approval, completion, cost or schedule is fabricated;
+- the 45 mandatory conditional rows are frozen but not selected;
+- CI regenerates the files and rejects byte drift.
+
+After the bootstrap pull request is merged, a separate append-only
+reconciliation must bind the merge SHA and successful CI run before any task
+or gate can advance.
+
 ## Retired External Audit Package
 
 The following historical files are optional compatibility artifacts:
@@ -67,6 +82,8 @@ Regenerate deterministic candidate files:
 
 ```powershell
 C:/Python314/python.exe scripts/generate_gtbi_v7_bootstrap_contracts.py
+C:/Python314/python.exe scripts/generate_gtbi_v7_initial_readiness_records.py
+C:/Python314/python.exe scripts/generate_gtbi_v7_pre_genesis_status.py
 ```
 
 Run focused tests:

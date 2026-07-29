@@ -10,6 +10,7 @@ from pathlib import Path
 from aurora.infra.github_performance.preflight import (
     classify_workflow,
     load_legacy_workflow_allowlist,
+    load_legacy_workflow_migrations,
     validate_workflow_policy,
 )
 
@@ -21,6 +22,10 @@ def _parser() -> argparse.ArgumentParser:
         "--allowlist",
         default="config/legacy_workflow_allowlist.json",
     )
+    parser.add_argument(
+        "--migrations",
+        default="config/legacy_workflow_migrations.json",
+    )
     return parser
 
 
@@ -29,6 +34,10 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.repo_root).resolve()
     allowlist = load_legacy_workflow_allowlist(
         root / args.allowlist
+    )
+    migrations = load_legacy_workflow_migrations(
+        root / args.migrations,
+        root,
     )
     rows: list[dict[str, object]] = []
     invalid = False
@@ -39,8 +48,18 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
     for path in workflows:
-        classification = classify_workflow(path, allowlist, root)
-        violations = validate_workflow_policy(path, root, allowlist)
+        classification = classify_workflow(
+            path,
+            allowlist,
+            root,
+            migrations,
+        )
+        violations = validate_workflow_policy(
+            path,
+            root,
+            allowlist,
+            migrations,
+        )
         invalid = invalid or bool(violations)
         rows.append(
             {
