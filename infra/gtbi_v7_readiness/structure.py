@@ -52,6 +52,30 @@ class StructuralValidationResult:
         }
 
 
+@dataclass(frozen=True)
+class MasterTask:
+    task_id: str
+    priority: str
+    owner_role: str
+    dependencies: tuple[str, ...]
+    required_output: str
+
+
+@dataclass(frozen=True)
+class MasterGate:
+    gate_id: str
+    prerequisite_gate_ids: tuple[str, ...]
+    required_task_ids: tuple[str, ...]
+    required_condition: str
+
+
+@dataclass(frozen=True)
+class MasterPlanModel:
+    tasks: tuple[MasterTask, ...]
+    gates: tuple[MasterGate, ...]
+    primary_gate_by_task: dict[str, str]
+
+
 def _table_cells(line: str) -> list[str]:
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
@@ -138,6 +162,84 @@ def _gate_map(
         prerequisites[gate_id] = set(GATE_RE.findall(row[1]))
         required_tasks[gate_id] = _expand_gate_tasks(row[2], known_tasks)
     return required_tasks, prerequisites
+
+
+def load_master_plan_model(plan_path: str | Path) -> MasterPlanModel:
+    """Parse the canonical task matrix and exact gate map from the plan."""
+    path = Path(plan_path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    task_rows = _find_table(
+        lines, ["ID", "P", "Owner", "Dependencies", "Required output"]
+    )
+    tasks: list[MasterTask] = []
+    seen_tasks: set[str] = set()
+    for row in task_rows:
+        if len(row) != 5 or not TASK_RE.fullmatch(row[0]):
+            continue
+        task_id = row[0]
+        if task_id in seen_tasks:
+            raise ValueError(f"duplicate task ID {task_id}")
+        seen_tasks.add(task_id)
+        dependencies = tuple(TASK_RE.findall(row[3]) + GATE_RE.findall(row[3]))
+        tasks.append(
+            MasterTask(
+                task_id=task_id,
+                priority=row[1],
+                owner_role=row[2],
+                dependencies=dependencies,
+                required_output=row[4],
+            )
+        )
+    if not tasks:
+        raise ValueError("master task matrix is empty")
+
+    gate_rows = _find_table(
+        lines, ["Gate", "Gate prerequisites", "Required tasks or condition"]
+    )
+    known_tasks = {task.task_id for task in tasks}
+    gates: list[MasterGate] = []
+    for row in gate_rows:
+        if len(row) != 3:
+            continue
+        gate_ids = GATE_RE.findall(row[0])
+        if len(gate_ids) != 1:
+            continue
+        required_task_ids = tuple(sorted(_expand_gate_tasks(row[2], known_tasks)))
+        gates.append(
+            MasterGate(
+                gate_id=gate_ids[0],
+                prerequisite_gate_ids=tuple(GATE_RE.findall(row[1])),
+                required_task_ids=required_task_ids,
+                required_condition=row[2],
+            )
+        )
+    if not gates:
+        raise ValueError("master gate map is empty")
+
+    primary_gate_by_task: dict[str, str] = {}
+    for gate in gates:
+        for task_id in gate.required_task_ids:
+            primary_gate_by_task.setdefault(task_id, gate.gate_id)
+    primary_gate_by_task.update(
+        {
+            "PREV7-0308": "G3B",
+            "PREV7-0610": "G6B",
+            "PREV7-0611": "G6B",
+            "PREV7-0910": "G9X",
+            "PREV7-0914": "G9X",
+            "PREV7-0911": "G9X",
+            "PREV7-0912": "G9X",
+            "PREV7-0913": "G9",
+        }
+    )
+    missing = sorted(known_tasks - set(primary_gate_by_task))
+    if missing:
+        raise ValueError(f"tasks missing primary gate: {missing}")
+    return MasterPlanModel(
+        tasks=tuple(tasks),
+        gates=tuple(gates),
+        primary_gate_by_task=primary_gate_by_task,
+    )
 
 
 def _cycle_errors(graph: dict[str, set[str]]) -> list[str]:

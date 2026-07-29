@@ -8,6 +8,7 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
@@ -18,10 +19,12 @@ on:
       - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
+      - "scripts/generate_gtbi_v7_readiness_schemas.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
+      - "tests/test_gtbi_v7_readiness_records.py"
   push:
     branches:
       - main
@@ -30,6 +33,7 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
@@ -40,10 +44,12 @@ on:
       - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
+      - "scripts/generate_gtbi_v7_readiness_schemas.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
+      - "tests/test_gtbi_v7_readiness_records.py"
 
 permissions:
   contents: read
@@ -75,12 +81,14 @@ jobs:
       - name: Regenerate deterministic bootstrap contracts
         run: |
           python scripts/generate_gtbi_v7_bootstrap_contracts.py
+          python scripts/generate_gtbi_v7_readiness_schemas.py
           python scripts/generate_gtbi_v7_pre_genesis_status.py
 
       - name: Reject generated drift
         run: |
           git diff --exit-code -- \
             config/gtbi/contracts \
+            config/gtbi/schemas/readiness \
             docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
             docs/readiness/gtbi-v7/master_plan_quality_status.json \
             docs/readiness/gtbi-v7/pre_genesis_status.json \
@@ -98,6 +106,7 @@ jobs:
             tests/test_gtbi_v7_readiness_bootstrap.py \
             tests/test_gtbi_v7_inventory.py \
             tests/test_gtbi_v7_pre_genesis_status.py \
+            tests/test_gtbi_v7_readiness_records.py \
             -q
 
   signed-quality-receipts:
