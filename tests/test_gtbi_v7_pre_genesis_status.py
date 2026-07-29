@@ -27,7 +27,10 @@ def test_owner_decisions_match_explicit_instruction() -> None:
     assert decisions["budget"]["maximum_incremental_net_spend_usd"] == 0
     assert decisions["budget"]["discount_change_requires_reauthorization"] is True
     assert decisions["licences"]["owner_acceptance"] == "accepted_explicitly"
-    assert decisions["licences"]["selected_future_v7_provider"] == "tiingo_daily"
+    assert decisions["licences"]["current_v7_data_input"] == (
+        "owner_supplied_frozen_local_data_lake"
+    )
+    assert decisions["licences"]["future_refresh_provider"] == "tiingo_daily"
     assert decisions["audits_and_people"]["external_audits_required"] == 0
     assert decisions["audits_and_people"]["distinct_people_required"] is False
     assert decisions["preservation"]["github_v6_preservation_lease"] == (
@@ -66,44 +69,88 @@ def test_public_billing_baseline_is_bounded_and_canonical() -> None:
     assert "gross_amount" not in receipt
 
 
-def test_provider_terms_inventory_selects_tiingo_and_retires_yahoo() -> None:
+def test_provider_terms_inventory_keeps_tiingo_as_optional_refresh() -> None:
     path = READINESS / "provider_terms_inventory.json"
     inventory = json.loads(path.read_text(encoding="utf-8"))
 
     assert path.read_bytes() == canonical_bytes(inventory) + b"\n"
     assert inventory["owner_acceptance"] == "accepted_explicitly"
     assert inventory["inventory_status"] == "owner_reviewed"
-    assert inventory["v7_full_data_authorization"] == (
-        "conditional_on_token_and_capacity_plan"
+    assert inventory["current_v7_data_input"] == (
+        "owner_supplied_frozen_local_data_lake"
+    )
+    assert inventory["future_refresh_authorization"] == (
+        "deferred_until_owner_requests_refresh"
     )
     assert inventory["selected_future_v7_provider"] == "tiingo_daily"
 
     providers = {
         provider["provider_id"]: provider for provider in inventory["providers"]
     }
-    assert providers["tiingo"]["review_status"] == (
-        "selected_zero_cost_internal_research_source"
-    )
+    assert providers["tiingo"]["review_status"] == "optional_future_refresh_source"
     assert providers["yahoo_finance"]["review_status"] == (
-        "historical_evidence_only_not_future_v7_input"
+        "frozen_existing_dataset_no_new_collection"
     )
     assert providers["yfinance"]["terms"][0]["spdx_id"] == "Apache-2.0"
     assert providers["yfinance"]["review_status"] == (
-        "legacy_client_not_selected_for_future_v7"
+        "legacy_provenance_no_new_collection"
     )
     assert inventory["findings"]["yfinance_code_licence_scope"] == (
         "client_code_only_not_underlying_yahoo_market_data"
     )
 
 
-def test_v7_data_source_selection_is_canonical_and_preserves_boundaries() -> None:
+def test_local_data_lake_receipt_is_canonical_and_requires_only_github_transfer() -> None:
+    path = READINESS / "local_data_lake_receipt.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.read_bytes() == canonical_bytes(receipt) + b"\n"
+    assert receipt["universe_symbols"] == 4693
+    assert receipt["downloaded_ok"] == 4400
+    assert receipt["normalized_parquet_files"] == 5332
+    assert receipt["provider_download_required_now"] is False
+    assert receipt["github_transfer_required_before_execution"] is True
+    assert receipt["scientific_cutoff_required"] == "2020-12-31"
+    assert receipt["locked_start"] == "2021-01-01"
+    assert receipt["locked_rows_present"] is True
+    assert receipt["original_github_artifact"]["expired"] is True
+
+
+def test_github_packages_inventory_receipt_is_canonical_and_empty() -> None:
+    path = READINESS / "github_packages_inventory_receipt.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.read_bytes() == canonical_bytes(receipt) + b"\n"
+    assert receipt["account"] == "gomez5757"
+    assert receipt["active_account"] is True
+    assert receipt["read_packages_scope_present"] is True
+    assert "read:packages" in receipt["token_scopes"]
+    assert receipt["organization"] == "trading-optimizer-lab-org"
+    assert receipt["package_types_checked"] == [
+        "container",
+        "maven",
+        "npm",
+        "nuget",
+        "rubygems",
+    ]
+    assert receipt["package_counts"] == {
+        "container": 0,
+        "maven": 0,
+        "npm": 0,
+        "nuget": 0,
+        "rubygems": 0,
+    }
+
+
+def test_v7_data_source_selection_uses_frozen_local_data_and_preserves_boundaries() -> None:
     path = ROOT / "config/gtbi/v7/data_source_selection.json"
     selection = json.loads(path.read_text(encoding="utf-8"))
 
     assert path.read_bytes() == canonical_bytes(selection) + b"\n"
-    assert selection["primary_provider"] == "tiingo_daily"
-    assert selection["pricing_tier"] == "Starter_0_USD_per_month"
-    assert selection["monthly_unique_symbol_limit"] == 500
+    assert selection["current_input"] == "owner_supplied_frozen_local_data_lake"
+    assert selection["provider_download_required_now"] is False
+    assert selection["github_transfer_required_before_execution"] is True
+    assert selection["optional_future_refresh_provider"] == "tiingo_daily"
     assert selection["zero_incremental_spend_cap_preserved"] is True
     assert selection["train_end"] == "2010-12-31"
     assert selection["validation_start"] == "2011-01-01"
@@ -120,10 +167,10 @@ def test_owner_acceptance_selects_replacement_without_claiming_yahoo_permission(
     assert licences["owner_acceptance"] == "accepted_explicitly"
     assert licences["exact_provider_terms_inventory"] == "owner_reviewed"
     assert licences["independent_review_receipt"] == "not_required"
-    assert licences["selected_future_v7_provider"] == "tiingo_daily"
-    assert licences["yahoo_data_permission"] == (
-        "historical_evidence_only_not_future_v7_input"
+    assert licences["current_v7_data_input"] == (
+        "owner_supplied_frozen_local_data_lake"
     )
+    assert licences["future_refresh_provider"] == "tiingo_daily"
 
 
 def test_v6_preservation_lease_is_canonical_verified_and_non_independent() -> None:
@@ -189,10 +236,14 @@ def test_pre_genesis_status_allows_preparation_and_v6_is_verified() -> None:
         row["prerequisite_id"]: row
         for row in status["future_gate_prerequisites"]
     }
-    tiingo = future_prerequisites["G2-TIINGO-CREDENTIAL-AND-CAPACITY"]
-    assert tiingo["state"] == "pending_before_scientific_execution"
-    assert tiingo["facts"]["selected_provider"] == "tiingo_daily"
-    assert tiingo["facts"]["monthly_unique_symbol_limit"] == 500
+    frozen = future_prerequisites["G2-FROZEN-DATA-LAKE-GITHUB-TRANSFER"]
+    assert frozen["state"] == "pending_before_github_only_execution"
+    assert frozen["facts"]["provider_token_required_now"] is False
+    assert frozen["facts"]["universe_symbols"] == 4693
+    tiingo = future_prerequisites["G2-TIINGO-OPTIONAL-FUTURE-REFRESH"]
+    assert tiingo["state"] == (
+        "deferred_not_required_for_current_frozen_dataset"
+    )
     lease = status["v6_preservation_lease"]
     assert lease["status"] == "verified"
     assert lease["artifact_id"] == 8728621585
@@ -200,8 +251,14 @@ def test_pre_genesis_status_allows_preparation_and_v6_is_verified() -> None:
     assert lease["requires_local_machine"] is False
     assert lease["formal_g0_effect"] == "accepted_by_owner_as_sufficient"
     packages = status["packages_inventory"]
-    assert packages["status"] == "owner_waived_pending_interactive_oauth"
+    assert packages["status"] == "complete_verified_empty"
     assert packages["read_packages_authorized_by_owner"] is True
+    assert packages["oauth_grant_status"] == "granted_verified"
+    assert packages["private_packages_verified"] is True
+    assert packages["organization_packages_observed"] == 0
+    assert packages["verification_receipt"] == (
+        "docs/readiness/gtbi-v7/github_packages_inventory_receipt.json"
+    )
     assert packages["gate_effect"] == "non_blocking"
 
 

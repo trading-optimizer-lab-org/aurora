@@ -19,10 +19,12 @@ Source: direct instruction from the repository owner in the Codex task.
    Taxes, foreign exchange and the private gross-usage response are not
    represented by this public projection.
 
-3. The repository owner explicitly accepts the licences presented so far. No
-   independent licence reviewer is required. Yahoo is retained only as the
-   provenance of historical evidence; future V7 snapshots use the existing
-   `tiingo_daily` connector under Tiingo's free Starter terms.
+3. The repository owner explicitly accepts the existing frozen local data lake
+   as the current V7 input. It does not need to be downloaded again. Before a
+   GitHub-only scientific run it must be transferred once to immutable GitHub
+   storage and restricted to observations no later than `2020-12-31`.
+   `tiingo_daily` is only an optional provider for a future owner-requested
+   refresh.
 
 4. The repository owner authorizes creation and use of the private resources
    covered by the preparation plan. This authorization is explicit. The
@@ -46,12 +48,14 @@ Source: direct instruction from the repository owner in the Codex task.
 - Independent audits required: `0`.
 - Distinct reviewers/custodians required: `NO`.
 - GitHub V6 preservation lease: `ACCEPTED_AS_SUFFICIENT`.
-- Yahoo-derived future V7 input: `PROHIBITED`.
-- Future V7 provider: `TIINGO_DAILY`.
-- Tiingo activation: `TOKEN_REQUIRED`; free-tier capacity is `500` unique
-  symbols per month.
-- GitHub `read:packages`: owner-authorized but awaiting the interactive OAuth
-  approval GitHub requires; it does not block technical preparation.
+- Current V7 input: `OWNER_SUPPLIED_FROZEN_LOCAL_DATA_LAKE`.
+- Local data: `4,693` symbols, `4,400` downloaded successfully, `3.02 GiB`.
+- GitHub transfer: required once before a GitHub-only V7 scientific run because
+  the original Actions artifact expired on `2026-07-06`.
+- Tiingo: optional future refresh only; no token is required now.
+- GitHub `read:packages`: `GRANTED_VERIFIED`.
+- Organization packages found: `0` across container, Maven, npm, NuGet and
+  RubyGems.
 - Private-resource owner authorization: `AUTHORIZED_EXPLICITLY`.
 - Other decisions: `DEFERRED_UNTIL_ACTIONABLE`.
 - Execution status: `TECHNICAL_PREPARATION_AUTHORIZED`; scientific execution

@@ -1431,8 +1431,12 @@ Rules:
 
 - Never publish vendor-derived raw or normalized data in the public code
   repository.
-- Future V7 snapshots use `tiingo_daily`; Yahoo-derived bytes are historical
-  evidence only.
+- The current V7 input is the owner-supplied frozen local data lake recorded in
+  `docs/readiness/gtbi-v7/local_data_lake_receipt.json`; it does not require a
+  provider download. Before scientific execution, the exact frozen bytes are
+  transferred once to immutable GitHub storage and the worker receives only
+  the scientific view ending on `2020-12-31`. `tiingo_daily` is optional and
+  used only if the owner later requests a fresh snapshot.
 - Canonical references use package digests, never mutable tags.
 - Release parts are at most `1900 MiB`.
 - Existing versions cannot be overwritten by the publishing workflow.

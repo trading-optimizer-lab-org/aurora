@@ -50,10 +50,19 @@ Sources:
 - https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html
 - https://github.com/ranaroussi/yfinance/blob/main/LICENSE.txt
 
-## Selected Replacement: Tiingo
+## Current Frozen Input And Optional Future Refresh
 
-Aurora already contains the tested `tiingo_daily` provider. V7 selects Tiingo
-Starter for internal historical daily research:
+The owner already has the complete working data lake locally. V7 therefore
+does not require a provider download or a Tiingo token now. The current input
+is the frozen local data lake recorded in `local_data_lake_receipt.json`.
+
+The original GitHub Actions data artifact expired on `2026-07-06`. Before a
+GitHub-only V7 scientific run, the exact local bytes must be transferred once
+to immutable GitHub storage. The scientific view must exclude every
+observation from `2021-01-01` onward.
+
+Aurora retains the tested `tiingo_daily` provider only for a future refresh
+explicitly requested by the owner. Tiingo Starter has these limits:
 
 - price: `0 USD/month`;
 - history advertised: more than 30 years;
@@ -62,11 +71,9 @@ Starter for internal historical daily research:
 - credential: GitHub secret exposed to the job as `AU_TIINGO_API_TOKEN`;
 - approved scope: internal research only.
 
-This removes the Yahoo permission problem, but it does not make the full global
-universe instantly downloadable. A complete snapshot requires either a
-universe of at most 500 unique symbols, staged collection across months, or a
-later owner-approved source/tier that remains within the `0 USD` incremental
-spend cap. No scientific run may silently shrink or change the universe.
+Tiingo is not a prerequisite for the current frozen dataset. If a fresh
+snapshot is requested later, its 500-symbol monthly limit must be handled
+without silently shrinking or changing the universe.
 
 Sources:
 

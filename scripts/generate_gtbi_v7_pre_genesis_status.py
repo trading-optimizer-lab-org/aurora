@@ -48,6 +48,12 @@ def generate() -> tuple[dict, dict]:
     inventory_attempt = _read_json(
         READINESS / "inventory_github_actions_attempt_receipt.json"
     )
+    packages_receipt = _read_json(
+        READINESS / "github_packages_inventory_receipt.json"
+    )
+    data_lake_receipt = _read_json(
+        READINESS / "local_data_lake_receipt.json"
+    )
     decisions = owner_decisions["decisions"]
     audited_at = _parse_utc(inventory["audited_at_utc"])
     expires_at = _parse_utc(V6_EXPIRES_AT)
@@ -112,7 +118,7 @@ def generate() -> tuple[dict, dict]:
             "formal_g0_effect": "accepted_by_owner_as_sufficient",
         },
         "packages_inventory": {
-            "status": "owner_waived_pending_interactive_oauth",
+            "status": "complete_verified_empty",
             "read_packages_authorized_by_owner": decisions[
                 "github_permissions"
             ]["read_packages_authorized_by_owner"],
@@ -120,8 +126,21 @@ def generate() -> tuple[dict, dict]:
                 "read_packages_oauth_grant_status"
             ],
             "public_packages_page_checked": True,
-            "public_packages_observed": 0,
-            "private_packages_verified": False,
+            "public_packages_observed": sum(
+                packages_receipt["package_counts"].values()
+            ),
+            "private_packages_verified": True,
+            "organization_packages_observed": sum(
+                packages_receipt["package_counts"].values()
+            ),
+            "package_types_checked": packages_receipt[
+                "package_types_checked"
+            ],
+            "verification_receipt": (
+                "docs/readiness/gtbi-v7/"
+                "github_packages_inventory_receipt.json"
+            ),
+            "verified_at_utc": packages_receipt["verified_at_utc"],
             "gate_effect": "non_blocking",
             "last_github_actions_attempt": {
                 "run_id": inventory_attempt["run_id"],
@@ -135,25 +154,58 @@ def generate() -> tuple[dict, dict]:
         "blockers": blockers,
         "future_gate_prerequisites": [
             {
-                "prerequisite_id": "G2-TIINGO-CREDENTIAL-AND-CAPACITY",
-                "required_for": ["new_v7_data_snapshot", "v7_scientific_execution"],
-                "state": "pending_before_scientific_execution",
+                "prerequisite_id": "G2-FROZEN-DATA-LAKE-GITHUB-TRANSFER",
+                "required_for": ["v7_github_only_scientific_execution"],
+                "state": "pending_before_github_only_execution",
                 "facts": {
-                    "selected_provider": provider_terms[
-                        "selected_future_v7_provider"
+                    "current_input": "owner_supplied_frozen_local_data_lake",
+                    "local_dataset_exists": True,
+                    "local_size_bytes": data_lake_receipt["local_size_bytes"],
+                    "local_file_count": data_lake_receipt["file_count"],
+                    "parquet_file_count": data_lake_receipt[
+                        "parquet_file_count"
                     ],
-                    "owner_acceptance": provider_terms["owner_acceptance"],
-                    "authorization": provider_terms[
-                        "v7_full_data_authorization"
+                    "universe_symbols": data_lake_receipt["universe_symbols"],
+                    "downloaded_ok": data_lake_receipt["downloaded_ok"],
+                    "source_github_run_id": data_lake_receipt[
+                        "original_github_artifact"
+                    ]["run_id"],
+                    "source_github_artifact_id": data_lake_receipt[
+                        "original_github_artifact"
+                    ]["id"],
+                    "source_github_artifact_expired": data_lake_receipt[
+                        "original_github_artifact"
+                    ]["expired"],
+                    "provider_token_required_now": False,
+                    "locked_rows_present_in_source": data_lake_receipt[
+                        "locked_rows_present"
+                    ],
+                    "locked_start": data_lake_receipt["locked_start"],
+                    "validation_end": data_lake_receipt[
+                        "scientific_cutoff_required"
+                    ],
+                },
+                "required_action": (
+                    "transfer the frozen local data lake to immutable GitHub "
+                    "storage and enforce a pre-2021 scientific view before any "
+                    "GitHub-only V7 run"
+                ),
+            },
+            {
+                "prerequisite_id": "G2-TIINGO-OPTIONAL-FUTURE-REFRESH",
+                "required_for": ["future_market_data_refresh_only"],
+                "state": "deferred_not_required_for_current_frozen_dataset",
+                "facts": {
+                    "selected_optional_provider": provider_terms[
+                        "selected_future_v7_provider"
                     ],
                     "credential_env_var": "AU_TIINGO_API_TOKEN",
                     "credential_present_in_repository": False,
                     "monthly_unique_symbol_limit": 500,
-                    "full_universe_may_not_silently_change": True,
+                    "provider_token_required_now": False,
                 },
                 "required_action": (
-                    "add the Tiingo token as a GitHub secret and approve an exact "
-                    "universe/capacity schedule before creating a new snapshot"
+                    "none until the owner requests a fresh market-data snapshot"
                 ),
             }
         ],
