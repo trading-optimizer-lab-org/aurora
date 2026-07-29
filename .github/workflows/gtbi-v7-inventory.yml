@@ -17,7 +17,7 @@ concurrency:
 jobs:
   inventory:
     name: Read-only bounded remote inventory
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GTBI_INVENTORY_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}

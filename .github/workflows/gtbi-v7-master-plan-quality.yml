@@ -97,7 +97,7 @@ concurrency:
 jobs:
   structural:
     name: Structural and bootstrap contracts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout exact candidate
@@ -157,7 +157,7 @@ jobs:
   signed-quality-receipts:
     name: Three independent signed quality rounds
     needs: structural
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout exact candidate
