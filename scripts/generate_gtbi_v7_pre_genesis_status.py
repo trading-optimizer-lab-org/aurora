@@ -105,6 +105,16 @@ def generate() -> tuple[dict, dict]:
                     "private_resources"
                 ]["owner_authorization"],
                 "owner_spend_policy": decisions["budget"]["authorization"],
+                "billing_baseline_status": decisions["budget"][
+                    "numeric_baseline_status"
+                ],
+                "billing_currency": decisions["budget"]["currency"],
+                "maximum_incremental_net_spend_usd": decisions["budget"][
+                    "maximum_incremental_net_spend_usd"
+                ],
+                "discount_change_requires_reauthorization": decisions[
+                    "budget"
+                ]["discount_change_requires_reauthorization"],
             },
             "required_resolution": (
                 "distinct provisional custody actors, bounded current-cost "

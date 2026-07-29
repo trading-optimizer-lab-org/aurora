@@ -13,8 +13,12 @@ Source: direct instruction from the repository owner in the Codex task.
    explicitly amended.
 
 2. The maximum spending level is the current spending level. No increase is
-   authorized. Until the current numeric baseline and billing currency are
-   measured and frozen, creation of any new billable resource fails closed.
+   authorized. The public-safe billing projection observed on 29 July 2026
+   records `0 USD` net Actions cost in the current period and the existing
+   Enterprise Cloud unit at `21 USD` per full month. Incremental net spending
+   is capped at `0 USD`. A discount or price change requires new authorization.
+   Taxes, foreign exchange and the private gross-usage response are not
+   represented by this public projection.
 
 3. The repository owner explicitly accepts the licences presented so far.
    This records explicit owner acceptance. It does not replace the exact,
@@ -35,6 +39,10 @@ Source: direct instruction from the repository owner in the Codex task.
 
 - Owner action items 1 and 2: removed from the immediate owner queue.
 - Budget: `NO_INCREASE_FROM_CURRENT_BASELINE`.
+- Incremental net-spend cap: `0 USD`.
+- Existing Enterprise Cloud unit: `21 USD` per full month, before tax and FX.
+- Actions net amount at the observed billing snapshot: `0 USD`.
+- Discount or price drift: `STOP_AND_REAUTHORIZE`.
 - Licence owner acceptance: `ACCEPTED_EXPLICITLY`.
 - Private-resource owner authorization: `AUTHORIZED_EXPLICITLY`.
 - Other decisions: `DEFERRED_UNTIL_ACTIONABLE`.
