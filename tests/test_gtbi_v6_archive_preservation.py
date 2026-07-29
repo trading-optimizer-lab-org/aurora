@@ -8,6 +8,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from core.execution_policy import LocalRunBlocked
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from scripts.preserve_gtbi_v6_artifact import (
     DOMAIN,
@@ -109,5 +110,5 @@ def test_heavy_preservation_is_rejected_outside_github_actions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    with pytest.raises(PreservationError, match="GitHub Actions-only"):
+    with pytest.raises(LocalRunBlocked, match="GitHub-only"):
         preserve(tmp_path / "output", "unused-token")

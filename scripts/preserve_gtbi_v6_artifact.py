@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest  # noqa: E402
+from core.execution_policy import require_github_only_execution  # noqa: E402
 
 DOMAIN = "GTBI_V6_PRESERVATION_MANIFEST_V1"
 MANIFEST_PATH = (
@@ -297,8 +298,7 @@ def split_archive(path: Path, destination: Path, part_size: int) -> list[dict]:
 
 
 def preserve(output_dir: Path, token: str) -> dict:
-    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
-        raise PreservationError("heavy preservation is GitHub Actions-only")
+    require_github_only_execution("fixed GTBI V6 artifact preservation")
     manifest = load_and_verify_manifest()
     metadata_url = (
         "https://api.github.com/repos/"

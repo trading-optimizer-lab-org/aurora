@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -14,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes  # noqa: E402
+from core.execution_policy import require_github_only_execution  # noqa: E402
 from scripts.preserve_gtbi_v6_artifact import (  # noqa: E402
     CHUNK_BYTES,
     PreservationError,
@@ -36,8 +36,7 @@ def _hash_file(path: Path) -> tuple[int, str]:
 
 
 def restore(parts_dir: Path, receipt_path: Path, output_dir: Path) -> dict:
-    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
-        raise PreservationError("heavy restoration is GitHub Actions-only")
+    require_github_only_execution("fixed GTBI V6 artifact restoration")
     manifest = load_and_verify_manifest()
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     if receipt["preservation_manifest_digest"] != (

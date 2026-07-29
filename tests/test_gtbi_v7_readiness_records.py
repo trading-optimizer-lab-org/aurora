@@ -6,6 +6,11 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from core.execution_policy import (
+    EXPLICIT_LOCAL_TOKEN,
+    LocalRunBlocked,
+    require_github_only_execution,
+)
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from infra.gtbi_v7_readiness.controller import (
     BootstrapOperation,
@@ -135,3 +140,29 @@ def test_terminal_task_event_cannot_reopen() -> None:
     )
     with pytest.raises(ReadinessValidationError, match="illegal transition"):
         validate_task_event_chain([genesis, reopened])
+
+
+def test_gtbi_v7_github_only_guard_has_no_local_override() -> None:
+    require_github_only_execution("fixture", {"GITHUB_ACTIONS": "TRUE"})
+    with pytest.raises(LocalRunBlocked, match="GitHub-only"):
+        require_github_only_execution(
+            "fixture",
+            {"AURORA_ALLOW_LOCAL_RUNS_EXPLICIT": EXPLICIT_LOCAL_TOKEN},
+        )
+
+
+def test_all_current_gtbi_entrypoints_use_the_central_strict_guard() -> None:
+    paths = [
+        "scripts/build_global_technical_buy_indicator_pack.py",
+        "scripts/run_global_technical_buy_indicator_stage.py",
+        "scripts/run_global_technical_buy_indicator_external_pack_shard.py",
+        "scripts/reevaluate_global_technical_buy_indicator_results.py",
+        "scripts/merge_global_technical_buy_indicator_results.py",
+        "scripts/merge_global_technical_buy_indicator_external_pack.py",
+        "scripts/preserve_gtbi_v6_artifact.py",
+        "scripts/restore_gtbi_v6_artifact.py",
+    ]
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "require_github_only_execution" in text, relative
+        assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text, relative
