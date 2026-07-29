@@ -1,0 +1,99 @@
+name: GTBI V7 Master Plan Quality
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".gitattributes"
+      - ".github/workflows/gtbi-v7-master-plan-quality.yml"
+      - "config/gtbi/contracts/**"
+      - "config/gtbi/schemas/v7/operational/**"
+      - "docs/plans/gtbi-v7-master-plan.md"
+      - "docs/readiness/gtbi-v7/**"
+      - "infra/gtbi_v7_readiness/**"
+      - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
+      - "scripts/validate_gtbi_v7_master_plan.py"
+      - "tests/test_gtbi_v7_readiness_bootstrap.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".gitattributes"
+      - ".github/workflows/gtbi-v7-master-plan-quality.yml"
+      - "config/gtbi/contracts/**"
+      - "config/gtbi/schemas/v7/operational/**"
+      - "docs/plans/gtbi-v7-master-plan.md"
+      - "docs/readiness/gtbi-v7/**"
+      - "infra/gtbi_v7_readiness/**"
+      - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
+      - "scripts/validate_gtbi_v7_master_plan.py"
+      - "tests/test_gtbi_v7_readiness_bootstrap.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gtbi-v7-master-plan-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  structural:
+    name: Structural and bootstrap contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install bootstrap validator dependencies
+        run: python -m pip install "cryptography==48.0.0" "jsonschema==4.26.0" "pytest==9.0.3"
+
+      - name: Regenerate deterministic bootstrap contracts
+        run: python scripts/generate_gtbi_v7_bootstrap_contracts.py
+
+      - name: Reject generated drift
+        run: |
+          git diff --exit-code -- \
+            config/gtbi/contracts \
+            docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
+            docs/readiness/gtbi-v7/master_plan_quality_status.json
+
+      - name: Verify frozen text attributes
+        run: |
+          test "$(git check-attr eol -- docs/plans/gtbi-v7-master-plan.md | awk '{print $3}')" = "lf"
+          test "$(git check-attr eol -- config/gtbi/contracts/canonical_serialization_v1.json | awk '{print $3}')" = "lf"
+          test "$(git check-attr eol -- docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json | awk '{print $3}')" = "lf"
+
+      - name: Run bootstrap tests
+        run: python -m pytest tests/test_gtbi_v7_readiness_bootstrap.py -q
+
+  signed-quality-receipts:
+    name: Three independent signed quality rounds
+    needs: structural
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install quality validator dependencies
+        run: python -m pip install "cryptography==48.0.0" "jsonschema==4.26.0"
+
+      - name: Verify exact signed quality package
+        run: python scripts/validate_gtbi_v7_master_plan.py
