@@ -2278,6 +2278,7 @@ Every self-authenticating object uses a registered typed hash domain:
 ```text
 GTBI_TASK_DEFINITION_V1
 GTBI_GATE_DEFINITION_V1
+GTBI_V6_PRESERVATION_MANIFEST_V1
 GTBI_READINESS_TASK_EVENT_V1
 GTBI_READINESS_GATE_EVENT_V1
 GTBI_READINESS_ATTEMPT_EVENT_V1
@@ -2397,6 +2398,7 @@ refer to the computed value:
 logical_schema_id | hash_domain_id | digest_result_name
 task_definition_v1 | GTBI_TASK_DEFINITION_V1 | task_definition_digest
 gate_definition_v1 | GTBI_GATE_DEFINITION_V1 | gate_definition_digest
+v6_preservation_manifest_v1 | GTBI_V6_PRESERVATION_MANIFEST_V1 | preservation_manifest_digest
 readiness_task_event_v1 | GTBI_READINESS_TASK_EVENT_V1 | event_digest
 readiness_gate_event_v1 | GTBI_READINESS_GATE_EVENT_V1 | event_digest
 readiness_attempt_event_v1 | GTBI_READINESS_ATTEMPT_EVENT_V1 | event_digest
@@ -3895,6 +3897,31 @@ Actions:
    private-key-import route.
 
 ### PREV7-0008: Register Emergency Preservation Workflows
+
+The fixed final-result path consumes canonical
+`v6_preservation_manifest_v1` with exactly:
+
+```text
+schema_version
+source_repository
+source_run_id
+source_artifact_id
+source_artifact_name
+source_size_bytes
+source_archive_digest
+source_expires_at_utc
+maximum_archive_bytes
+maximum_member_count
+maximum_total_uncompressed_bytes
+maximum_compression_ratio
+part_size_bytes
+preservation_manifest_digest
+```
+
+`preservation_manifest_digest` is a `self_field` digest under
+`GTBI_V6_PRESERVATION_MANIFEST_V1`; its preimage omits only that field. The
+workflow accepts this reviewed object by exact digest and never accepts
+individual source coordinates or limits as dispatch inputs.
 
 Create on a branch from the latest `origin/main`:
 

@@ -8,6 +8,7 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
       - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "docs/plans/gtbi-v7-master-plan.md"
@@ -20,11 +21,15 @@ on:
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
       - "scripts/generate_gtbi_v7_readiness_schemas.py"
+      - "scripts/generate_gtbi_v6_preservation_contract.py"
+      - "scripts/preserve_gtbi_v6_artifact.py"
+      - "scripts/restore_gtbi_v6_artifact.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
       - "tests/test_gtbi_v7_readiness_records.py"
+      - "tests/test_gtbi_v6_archive_preservation.py"
   push:
     branches:
       - main
@@ -33,6 +38,7 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
       - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "docs/plans/gtbi-v7-master-plan.md"
@@ -45,11 +51,15 @@ on:
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
       - "scripts/generate_gtbi_v7_readiness_schemas.py"
+      - "scripts/generate_gtbi_v6_preservation_contract.py"
+      - "scripts/preserve_gtbi_v6_artifact.py"
+      - "scripts/restore_gtbi_v6_artifact.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
       - "tests/test_gtbi_v7_readiness_records.py"
+      - "tests/test_gtbi_v6_archive_preservation.py"
 
 permissions:
   contents: read
@@ -82,13 +92,16 @@ jobs:
         run: |
           python scripts/generate_gtbi_v7_bootstrap_contracts.py
           python scripts/generate_gtbi_v7_readiness_schemas.py
+          python scripts/generate_gtbi_v6_preservation_contract.py
           python scripts/generate_gtbi_v7_pre_genesis_status.py
 
       - name: Reject generated drift
         run: |
           git diff --exit-code -- \
             config/gtbi/contracts \
+            config/gtbi/manifests/v6_fast_strict_preservation_manifest.json \
             config/gtbi/schemas/readiness \
+            config/gtbi/schemas/v7/operational/v6_preservation_manifest_v1.schema.json \
             docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
             docs/readiness/gtbi-v7/master_plan_quality_status.json \
             docs/readiness/gtbi-v7/pre_genesis_status.json \
@@ -107,6 +120,7 @@ jobs:
             tests/test_gtbi_v7_inventory.py \
             tests/test_gtbi_v7_pre_genesis_status.py \
             tests/test_gtbi_v7_readiness_records.py \
+            tests/test_gtbi_v6_archive_preservation.py \
             -q
 
   signed-quality-receipts:
