@@ -7,6 +7,7 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+import yaml
 
 from core.execution_policy import LocalRunBlocked
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
@@ -112,3 +113,44 @@ def test_heavy_preservation_is_rejected_outside_github_actions(
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with pytest.raises(LocalRunBlocked, match="GitHub-only"):
         preserve(tmp_path / "output", "unused-token")
+
+
+def test_registered_workflow_has_isolated_fixed_preservation_mode() -> None:
+    workflow_path = (
+        ROOT
+        / ".github/workflows/"
+        "global-technical-buy-indicator-external-pack-360jobs.yml"
+    )
+    text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(text)
+    jobs = workflow["jobs"]
+    preservation = jobs["preserve_v6_artifact"]
+
+    assert preservation["runs-on"] == "ubuntu-24.04"
+    assert preservation["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
+    assert "__preserve_v6_artifact__" in preservation["if"]
+    assert any(
+        step.get("run", "").startswith(
+            "python scripts/preserve_gtbi_v6_artifact.py"
+        )
+        for step in preservation["steps"]
+    )
+    upload = next(
+        step
+        for step in preservation["steps"]
+        if step.get("name") == "Upload verified preservation lease"
+    )
+    assert upload["with"]["retention-days"] == 90
+    assert upload["with"]["compression-level"] == 0
+    assert upload["with"]["path"] == "preserved-v6"
+
+    for job_id in ("plan", "build_external_pack", "run_shard", "merge"):
+        condition = jobs[job_id]["if"]
+        assert "__preserve_v6_artifact__" in condition
+        assert "!=" in condition
+
+    assert "self-hosted" not in text
+    assert "C:\\" not in text

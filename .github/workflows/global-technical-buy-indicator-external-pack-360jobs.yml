@@ -57,7 +57,44 @@ on:
         default: "10"
 
 jobs:
+  preserve_v6_artifact:
+    name: Preserve fixed V6 artifact for 90 days
+    if: ${{ inputs.external_strategy_pack_path == '__preserve_v6_artifact__' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout exact preservation code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Preserve and verify fixed V6 artifact
+        run: |
+          python scripts/preserve_gtbi_v6_artifact.py \
+            --output-dir preserved-v6
+
+      - name: Upload verified preservation lease
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v6-preservation-lease-${{ github.run_id }}
+          path: preserved-v6
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
   plan:
+    if: ${{ inputs.external_strategy_pack_path != '__preserve_v6_artifact__' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -92,6 +129,7 @@ jobs:
           PY
 
   build_external_pack:
+    if: ${{ inputs.external_strategy_pack_path != '__preserve_v6_artifact__' }}
     needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -195,6 +233,7 @@ jobs:
           retention-days: 3
 
   run_shard:
+    if: ${{ inputs.external_strategy_pack_path != '__preserve_v6_artifact__' }}
     needs: [plan, build_external_pack]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -255,7 +294,7 @@ jobs:
 
   merge:
     needs: [plan, run_shard]
-    if: always()
+    if: ${{ always() && inputs.external_strategy_pack_path != '__preserve_v6_artifact__' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:

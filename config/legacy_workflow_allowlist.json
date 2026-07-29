@@ -56,7 +56,7 @@
     },
     {
       "path": ".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml",
-      "sha256": "fba70fe15e20903ae47c41c9d0a14d6f13bbaa389ba63362c0d6c65c37cf78b7"
+      "sha256": "75b5caeb1a9893e4324be69451e382050b423e9570fdf838371dc1e99e5f608b"
     },
     {
       "path": ".github/workflows/global-technical-buy-indicator-final-recheck-parallel.yml",
