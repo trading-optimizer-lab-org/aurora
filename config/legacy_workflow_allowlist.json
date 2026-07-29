@@ -148,7 +148,7 @@
     },
     {
       "path": ".github/workflows/security.yml",
-      "sha256": "f5835dee15ca36cc671e01a6273545194fa8d12b3c644ac8ff7b4d08c3164747"
+      "sha256": "1adfa87e7b08fcb7b13c1a0a701a2559d3c1daaf8b280caeddc6d2c657687696"
     },
     {
       "path": ".github/workflows/sp500-26-paper-locked-strategy-report.yml",
