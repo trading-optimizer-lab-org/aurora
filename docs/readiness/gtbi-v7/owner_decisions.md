@@ -23,7 +23,9 @@ Source: direct instruction from the repository owner in the Codex task.
 3. The repository owner explicitly accepts the licences presented so far.
    This records explicit owner acceptance. It does not replace the exact,
    versioned provider-terms inventory or any independent licence-review receipt
-   required by the master plan.
+   required by the master plan. The current terms inventory identifies no
+   evidence of Yahoo permission for automated collection, so acceptance does
+   not authorize that data source for V7.
 
 4. The repository owner authorizes creation and use of the private resources
    covered by the preparation plan. This authorization is explicit. The
@@ -44,6 +46,7 @@ Source: direct instruction from the repository owner in the Codex task.
 - Actions net amount at the observed billing snapshot: `0 USD`.
 - Discount or price drift: `STOP_AND_REAUTHORIZE`.
 - Licence owner acceptance: `ACCEPTED_EXPLICITLY`.
+- Yahoo-derived V7 input: `BLOCKED_PERMISSION_OR_REPLACEMENT_REQUIRED`.
 - Private-resource owner authorization: `AUTHORIZED_EXPLICITLY`.
 - Other decisions: `DEFERRED_UNTIL_ACTIONABLE`.
 - Execution status: still `NO-GO` until every applicable formal gate has

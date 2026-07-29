@@ -41,6 +41,7 @@ def generate() -> tuple[dict, dict]:
     quality = _read_json(READINESS / "master_plan_quality_status.json")
     inventory = _read_json(INVENTORY / "audit_metadata.json")
     owner_decisions = _read_json(READINESS / "owner_decisions.json")
+    provider_terms = _read_json(READINESS / "provider_terms_inventory.json")
     decisions = owner_decisions["decisions"]
     audited_at = _parse_utc(inventory["audited_at_utc"])
     expires_at = _parse_utc(V6_EXPIRES_AT)
@@ -149,6 +150,30 @@ def generate() -> tuple[dict, dict]:
             ),
         },
         "blockers": blockers,
+        "future_gate_blockers": [
+            {
+                "blocker_id": "G2-YAHOO-DATA-PERMISSION",
+                "blocks": ["PREV7-0302", "G2", "v7_scientific_execution"],
+                "state": "blocked",
+                "facts": {
+                    "owner_acceptance": provider_terms["owner_acceptance"],
+                    "provider_permission": provider_terms["findings"][
+                        "yahoo_automated_collection_permission"
+                    ],
+                    "v7_full_data_authorization": provider_terms[
+                        "v7_full_data_authorization"
+                    ],
+                    "yfinance_code_licence_scope": provider_terms["findings"][
+                        "yfinance_code_licence_scope"
+                    ],
+                },
+                "required_resolution": (
+                    "documented provider permission for the exact automated "
+                    "collection, retention and processing model, or a replacement "
+                    "data source whose terms permit that model"
+                ),
+            }
+        ],
     }
 
     with (INVENTORY / "runs_active.csv").open(

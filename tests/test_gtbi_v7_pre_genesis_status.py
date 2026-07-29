@@ -60,6 +60,50 @@ def test_public_billing_baseline_is_bounded_and_canonical() -> None:
     assert "gross_amount" not in receipt
 
 
+def test_provider_terms_inventory_is_canonical_and_does_not_invent_permission() -> None:
+    path = READINESS / "provider_terms_inventory.json"
+    inventory = json.loads(path.read_text(encoding="utf-8"))
+
+    assert path.read_bytes() == canonical_bytes(inventory) + b"\n"
+    assert inventory["owner_acceptance"] == (
+        "accepted_explicitly_subject_to_actual_provider_permission"
+    )
+    assert inventory["inventory_status"] == (
+        "prepared_pending_independent_review"
+    )
+    assert inventory["v7_full_data_authorization"] == "blocked"
+
+    providers = {
+        provider["provider_id"]: provider for provider in inventory["providers"]
+    }
+    assert providers["yahoo_finance"]["review_status"] == (
+        "blocked_permission_or_replacement_required"
+    )
+    assert providers["yfinance"]["terms"][0]["spdx_id"] == "Apache-2.0"
+    assert providers["yfinance"]["review_status"] == (
+        "code_licence_identified_data_rights_not_granted"
+    )
+    assert inventory["findings"]["yfinance_code_licence_scope"] == (
+        "client_code_only_not_underlying_yahoo_market_data"
+    )
+
+
+def test_owner_acceptance_does_not_claim_yahoo_data_permission() -> None:
+    record = json.loads(
+        (READINESS / "owner_decisions.json").read_text(encoding="utf-8")
+    )
+    licences = record["decisions"]["licences"]
+
+    assert licences["owner_acceptance"] == "accepted_explicitly"
+    assert licences["exact_provider_terms_inventory"] == (
+        "prepared_pending_independent_review"
+    )
+    assert licences["independent_review_receipt"] == "pending"
+    assert licences["yahoo_data_permission"] == (
+        "blocked_permission_or_replacement_required"
+    )
+
+
 def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     status, cancellation = generate()
     assert status["execution_status"] == "NO-GO"
@@ -86,6 +130,15 @@ def test_pre_genesis_status_is_no_go_and_v6_is_verified() -> None:
     assert 29162930823 not in {
         row["run_id"] for row in cancellation["candidates"]
     }
+    future_blockers = {
+        row["blocker_id"]: row for row in status["future_gate_blockers"]
+    }
+    yahoo = future_blockers["G2-YAHOO-DATA-PERMISSION"]
+    assert yahoo["state"] == "blocked"
+    assert yahoo["facts"]["v7_full_data_authorization"] == "blocked"
+    assert yahoo["facts"]["owner_acceptance"] == (
+        "accepted_explicitly_subject_to_actual_provider_permission"
+    )
 
 
 def test_pre_genesis_generated_files_match_generator() -> None:
