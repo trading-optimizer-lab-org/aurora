@@ -12,6 +12,7 @@ on:
       - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "core/execution_policy.py"
+      - "docs/adr/0003-gtbi-v7-identity.md"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
       - "docs/project_inventory/**"
@@ -34,6 +35,7 @@ on:
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
+      - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
       - "tests/test_gtbi_v7_readiness_records.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
@@ -49,6 +51,7 @@ on:
       - "config/gtbi/schemas/readiness/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "core/execution_policy.py"
+      - "docs/adr/0003-gtbi-v7-identity.md"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
       - "docs/project_inventory/**"
@@ -71,6 +74,7 @@ on:
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
+      - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
       - "tests/test_gtbi_v7_readiness_records.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
@@ -132,6 +136,7 @@ jobs:
           python -m pytest \
             tests/test_gtbi_v7_readiness_bootstrap.py \
             tests/test_gtbi_v7_inventory.py \
+            tests/test_gtbi_v7_identity_adr.py \
             tests/test_gtbi_v7_pre_genesis_status.py \
             tests/test_gtbi_v7_readiness_records.py \
             tests/test_gtbi_v6_archive_preservation.py \
