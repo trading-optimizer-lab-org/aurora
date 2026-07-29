@@ -2276,6 +2276,8 @@ nonterminal/terminal state have explicit fixtures.
 Every self-authenticating object uses a registered typed hash domain:
 
 ```text
+GTBI_TASK_DEFINITION_V1
+GTBI_GATE_DEFINITION_V1
 GTBI_READINESS_TASK_EVENT_V1
 GTBI_READINESS_GATE_EVENT_V1
 GTBI_READINESS_ATTEMPT_EVENT_V1
@@ -2393,6 +2395,8 @@ refer to the computed value:
 
 ```text
 logical_schema_id | hash_domain_id | digest_result_name
+task_definition_v1 | GTBI_TASK_DEFINITION_V1 | task_definition_digest
+gate_definition_v1 | GTBI_GATE_DEFINITION_V1 | gate_definition_digest
 readiness_task_event_v1 | GTBI_READINESS_TASK_EVENT_V1 | event_digest
 readiness_gate_event_v1 | GTBI_READINESS_GATE_EVENT_V1 | event_digest
 readiness_attempt_event_v1 | GTBI_READINESS_ATTEMPT_EVENT_V1 | event_digest
@@ -2621,6 +2625,7 @@ definition per matrix task:
 
 ```text
 task_id
+task_definition_digest
 title
 gate
 priority
@@ -2661,6 +2666,12 @@ provider_or_hiring_lead_time_hours
 budget_currency
 estimated_cost_entries_by_domain
 ```
+
+`task_definition_digest` and `gate_definition_digest` are `self_field`
+digests. Their typed preimages contain every field in their respective rows
+except the digest field itself. Consumers never substitute a raw CSV-row hash,
+the complete CSV blob hash or `task_version` for either immutable definition
+identity.
 
 The four participant fields in `task_definitions.csv` are copied canonically
 from the same task row in `task_planning_inputs.csv`. Publication fails unless
