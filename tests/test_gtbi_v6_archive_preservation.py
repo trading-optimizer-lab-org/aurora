@@ -175,3 +175,43 @@ def test_preservation_entrypoint_loads_without_quant_engine_dependencies() -> No
     )
     assert result.returncode == 0, result.stderr
     assert "--output-dir" in result.stdout
+
+
+def test_registered_workflow_has_isolated_strict_inventory_mode() -> None:
+    workflow_path = (
+        ROOT
+        / ".github/workflows/"
+        "global-technical-buy-indicator-external-pack-360jobs.yml"
+    )
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    inventory = jobs["inventory_gtbi_v7"]
+
+    assert inventory["runs-on"] == "ubuntu-24.04"
+    assert inventory["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "deployments": "read",
+        "packages": "read",
+        "security-events": "read",
+    }
+    assert "__gtbi_v7_inventory__" in inventory["if"]
+    command = next(
+        step["run"]
+        for step in inventory["steps"]
+        if step.get("name") == "Generate strict bounded remote inventory"
+    )
+    assert "--mode remote" in command
+    assert "--strict" in command
+    upload = next(
+        step
+        for step in inventory["steps"]
+        if step.get("name") == "Upload inventory evidence"
+    )
+    assert upload["if"] == "${{ always() }}"
+    assert upload["with"]["retention-days"] == 30
+
+    for job_id in ("plan", "build_external_pack", "run_shard", "merge"):
+        condition = jobs[job_id]["if"]
+        assert "__gtbi_v7_inventory__" in condition
+        assert "!=" in condition
