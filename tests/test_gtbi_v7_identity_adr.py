@@ -32,4 +32,3 @@ def test_gtbi_v7_identity_adr_does_not_claim_formal_approval() -> None:
     assert "Status: `PROPOSED_BLOCKED_BY_G0`" in text
     assert "it does not complete it" in text
     assert "full_run_authorized=true" not in text
-

@@ -98,4 +98,3 @@ full_run_authorized=false
 - Clean Portfolio work must use a separate identity, plan and authorization.
 - No workflow may infer full-run authority from this document.
 - Editing this ADR after approval requires a new digest and approval event.
-
