@@ -625,7 +625,7 @@ def test_preflight_ntp_uses_first_responsive(monkeypatch):
     chk = check_system_time(timeout=0.5, max_drift_sec=2.0)
     assert chk.passed is True
     assert "drift=" in chk.detail
-    assert "pool.ntp.org" in chk.detail
+    assert chk.detail.rsplit("server=", 1)[-1].removesuffix(")") == "pool.ntp.org"
     # Only the first server was contacted.
     assert asked == ["pool.ntp.org"]
 
@@ -649,7 +649,7 @@ def test_preflight_ntp_skips_bad_server_then_succeeds(monkeypatch):
 
     chk = check_system_time(timeout=0.5, max_drift_sec=2.0)
     assert chk.passed is True
-    assert "time.google.com" in chk.detail
+    assert chk.detail.rsplit("server=", 1)[-1].removesuffix(")") == "time.google.com"
     assert asked == ["pool.ntp.org", "time.google.com"]
 
 

@@ -91,7 +91,9 @@ def test_descriptor_role_fx_tick_research(monkeypatch):
     assert "fx" in desc.asset_classes
     assert desc.adjustment_posture == "RAW"
     assert desc.reliability == "COMMUNITY"
-    assert desc.licence_terms_url.startswith("https://www.dukascopy.com")
+    assert desc.licence_terms_url == (
+        "https://www.dukascopy.com/swiss/english/marketwatch/historical/"
+    )
 
 
 def test_intraday_intervals_supported(monkeypatch):

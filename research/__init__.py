@@ -126,12 +126,6 @@ from aurora.research.source_discovery import (
     discover_sources,
     source_report_to_markdown,
 )
-from aurora.research.sp500_research_agent import (
-    SP500ResearchAgentConfig,
-    SP500ResearchAgentReport,
-    run_sp500_research_agent,
-    sp500_agent_report_to_markdown,
-)
 from aurora.research.agent_loop import (
     AgentGoalSpec,
     AgentLoopResult,
@@ -182,7 +176,5 @@ __all__ = [
     "PeriodMetrics", "run_sp500_autosearch",
     "SourceCandidate", "SourceDiscoveryConfig", "SourceDiscoveryReport",
     "discover_sources", "source_report_to_markdown",
-    "SP500ResearchAgentConfig", "SP500ResearchAgentReport",
-    "run_sp500_research_agent", "sp500_agent_report_to_markdown",
     "AgentGoalSpec", "AgentLoopResult", "AgentRunState", "run_agent_loop",
 ]

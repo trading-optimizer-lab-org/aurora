@@ -130,6 +130,18 @@ def test_red_flag_survivorship_unaddressed_blocks_handled() -> None:
     assert score.survivorship_handled is False
 
 
+def test_code_available_does_not_accept_github_text_in_unrelated_url_path() -> None:
+    rec = _bare_record()
+    claims = [
+        _claim(
+            suffix="url",
+            text_body="Details: https://evil.example/github.com/fake/repository",
+        ),
+    ]
+
+    assert score_paper(rec, claims).code_available is False
+
+
 def test_full_fixture_produces_meaningful_score() -> None:
     record, text = ingest_text_fixture(FIXTURES / "sample_paper.txt")
     claims = extract_claims_from_text(record, text)
