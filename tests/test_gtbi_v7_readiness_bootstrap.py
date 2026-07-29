@@ -422,7 +422,7 @@ def test_quality_workflow_is_read_only_pinned_and_github_hosted() -> None:
     workflow = ROOT / ".github/workflows/gtbi-v7-master-plan-quality.yml"
     text = workflow.read_text(encoding="utf-8")
     yaml.safe_load(text)
-    assert "runs-on: ubuntu-latest" in text
+    assert "runs-on: ubuntu-24.04" in text
     assert "self-hosted" not in text
     assert "C:\\" not in text
     assert "contents: read" in text
