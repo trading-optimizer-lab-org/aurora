@@ -8,23 +8,23 @@ on: [push, pull_request]
 # both clean today. Make the same checks blocking in CI.
 jobs:
   ruff-full:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff==0.15.12
       - run: ruff check . --output-format=github
 
   ruff-strict:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff==0.15.12
       - run: |
           ruff check --output-format=github \
             agents/auditor/llm_augmenter.py \
@@ -41,11 +41,11 @@ jobs:
             tests/test_lean_live.py
 
   precommit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
-      - run: pip install pre-commit
+      - run: pip install pre-commit==4.6.0
       - run: pre-commit run --all-files

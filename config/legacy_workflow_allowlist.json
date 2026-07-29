@@ -68,7 +68,7 @@
     },
     {
       "path": ".github/workflows/lint.yml",
-      "sha256": "36bbb091e19f0c2041003c0b6065fd471943447900ccea842151305ce3e8d127"
+      "sha256": "5d5dc7bca97497a2ff79964c532a3ff0a2c260b18cc958f811194c6242fc4fdc"
     },
     {
       "path": ".github/workflows/literature-campaign-to-backtest.yml",
