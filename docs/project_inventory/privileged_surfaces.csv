@@ -1,0 +1,4 @@
+surface,status,http_status,details_json
+branch_protection,absent,,{}
+repository_visibility,public,,"{""archived"":false,""private"":false}"
+rulesets,absent,,[]

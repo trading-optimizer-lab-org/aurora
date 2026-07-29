@@ -6,32 +6,40 @@ on:
     paths:
       - ".gitattributes"
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
+      - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
+      - "docs/project_inventory/**"
       - "infra/gtbi_v7_readiness/**"
       - "scripts/assemble_gtbi_v7_master_plan_quality_set.py"
       - "scripts/create_gtbi_v7_master_plan_audit_receipt.py"
       - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
+      - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
+      - "tests/test_gtbi_v7_inventory.py"
   push:
     branches:
       - main
     paths:
       - ".gitattributes"
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
+      - ".github/workflows/gtbi-v7-inventory.yml"
       - "config/gtbi/contracts/**"
       - "config/gtbi/schemas/v7/operational/**"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
+      - "docs/project_inventory/**"
       - "infra/gtbi_v7_readiness/**"
       - "scripts/assemble_gtbi_v7_master_plan_quality_set.py"
       - "scripts/create_gtbi_v7_master_plan_audit_receipt.py"
       - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
+      - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
+      - "tests/test_gtbi_v7_inventory.py"
 
 permissions:
   contents: read
@@ -76,8 +84,12 @@ jobs:
           test "$(git check-attr eol -- config/gtbi/contracts/canonical_serialization_v1.json | awk '{print $3}')" = "lf"
           test "$(git check-attr eol -- docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json | awk '{print $3}')" = "lf"
 
-      - name: Run bootstrap tests
-        run: python -m pytest tests/test_gtbi_v7_readiness_bootstrap.py -q
+      - name: Run bootstrap and inventory tests
+        run: |
+          python -m pytest \
+            tests/test_gtbi_v7_readiness_bootstrap.py \
+            tests/test_gtbi_v7_inventory.py \
+            -q
 
   signed-quality-receipts:
     name: Three independent signed quality rounds

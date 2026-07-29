@@ -1,0 +1,57 @@
+name: GTBI V7 Emergency Preservation Inventory
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+  packages: read
+  security-events: read
+
+concurrency:
+  group: gtbi-v7-emergency-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    name: Read-only bounded remote inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GTBI_INVENTORY_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact dispatch ref
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Generate bounded remote inventory
+        id: generate
+        continue-on-error: true
+        run: |
+          python scripts/generate_gtbi_v7_inventory.py \
+            --mode remote \
+            --strict \
+            --output-dir docs/project_inventory
+
+      - name: Upload inventory evidence even when incomplete
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-emergency-preservation-inventory-${{ github.run_id }}
+          path: docs/project_inventory
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Fail closed on incomplete scope
+        if: steps.generate.outcome != 'success'
+        run: |
+          echo "The declared emergency-preservation inventory is incomplete."
+          exit 1

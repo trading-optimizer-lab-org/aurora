@@ -1,0 +1,2 @@
+login,id,type,site_admin,role_name,permissions_json
+gomez5757,271768688,User,false,admin,"{""admin"":true,""maintain"":true,""pull"":true,""push"":true,""triage"":true}"
