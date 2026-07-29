@@ -670,7 +670,15 @@ def _bucket_threshold(value: object) -> str:
 
 
 def _preferred_variants(seed: str) -> tuple[int, ...]:
-    start = int(sha1(seed.encode("utf-8")).hexdigest()[:2], 16) % _VARIANT_COUNT
+    start = (
+        int(
+            sha1(
+                seed.encode("utf-8"), usedforsecurity=False
+            ).hexdigest()[:2],
+            16,
+        )
+        % _VARIANT_COUNT
+    )
     return tuple(start + i for i in range(_VARIANT_COUNT))
 
 

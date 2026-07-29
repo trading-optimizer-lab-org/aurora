@@ -5,6 +5,7 @@ import json
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -81,13 +82,13 @@ def _signed_quality_package(root: Path) -> Path:
         .read_text(encoding="utf-8")
     )
     plan_bytes = plan_path.read_bytes()
-    identity = {
+    identity: dict[str, Any] = {
         "reviewed_master_plan_sha256": raw_sha256(plan_bytes),
         "reviewed_master_plan_byte_length": len(plan_bytes),
         "reviewed_master_plan_git_blob_id": git_blob_id(plan_bytes),
     }
-    keys = []
-    receipts = []
+    keys: list[dict[str, Any]] = []
+    receipts: list[dict[str, Any]] = []
     start = datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc)
     for sequence in range(1, 4):
         private_key = Ed25519PrivateKey.generate()

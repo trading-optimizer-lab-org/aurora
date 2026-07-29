@@ -42,7 +42,9 @@ _FACT_MARKET_COLS = (
 
 def _stable_key(value: str) -> int:
     """Stable 32-bit positive integer key for a string."""
-    h = hashlib.sha1(value.encode("utf-8")).hexdigest()
+    h = hashlib.sha1(
+        value.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()
     return int(h[:8], 16)
 
 

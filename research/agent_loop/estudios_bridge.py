@@ -544,7 +544,7 @@ def _run_paper_ai(prompt: str, timeout_seconds: int) -> str:
         cmd = command.format(prompt_file=str(prompt_path), timeout=int(timeout_seconds))
         proc = subprocess.run(
             cmd,
-            shell=True,
+            shell=True,  # nosec B602 - explicit operator-supplied command hook
             check=True,
             capture_output=True,
             text=True,
@@ -736,7 +736,9 @@ def _study_brief(study: dict[str, Any]) -> dict[str, Any]:
 def _study_to_idea(study: dict[str, Any], *, artifact_text: str = "") -> StrategyIdea:
     text = _study_text(study)
     enriched_text = f"{text} {artifact_text.lower()}"
-    digest = hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    digest = hashlib.sha1(
+        text.encode("utf-8", errors="ignore"), usedforsecurity=False
+    ).hexdigest()[:12]
     features = _features_from_text(enriched_text)
     family = _family_from_features(features, enriched_text)
     source = f"estudios:{_study_source(study)}"

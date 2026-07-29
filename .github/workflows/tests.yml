@@ -17,9 +17,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -32,8 +32,9 @@ jobs:
       - name: Run tests
         env:
           AU_DATA_DIR: ${{ runner.temp }}/aurora_data
-        run: |
-          pytest tests/ -m "not slow and not integration" \
-            --ignore=tests/test_config.py \
-            --ignore=tests/test_property.py \
-            --tb=short
+        run: >-
+          python -m pytest tests/
+          -m "not slow and not integration"
+          --ignore=tests/test_config.py
+          --ignore=tests/test_property.py
+          --tb=short

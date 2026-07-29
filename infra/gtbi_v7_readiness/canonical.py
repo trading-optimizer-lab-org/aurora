@@ -161,7 +161,7 @@ def raw_sha256(data_or_path: bytes | bytearray | memoryview | str | Path) -> str
 def git_blob_id(data: bytes) -> str:
     """Return the Git SHA-1 blob identity for exact bytes."""
     preimage = f"blob {len(data)}\0".encode("ascii") + data
-    return hashlib.sha1(preimage).hexdigest()
+    return hashlib.sha1(preimage, usedforsecurity=False).hexdigest()
 
 
 def domain_digest(
