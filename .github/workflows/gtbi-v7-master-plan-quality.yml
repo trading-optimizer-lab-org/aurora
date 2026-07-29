@@ -15,6 +15,7 @@ on:
       - "config/gtbi/schemas/v7/scientific/**"
       - "config/gtbi/fixtures/v7/**"
       - "core/execution_policy.py"
+      - "core/data_providers/tiingo_daily.py"
       - "docs/adr/0003-gtbi-v7-identity.md"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
@@ -46,6 +47,7 @@ on:
       - "tests/test_gtbi_v7_role_registry.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
+      - "tests/test_tiingo_daily.py"
   push:
     branches:
       - main
@@ -61,6 +63,7 @@ on:
       - "config/gtbi/schemas/v7/scientific/**"
       - "config/gtbi/fixtures/v7/**"
       - "core/execution_policy.py"
+      - "core/data_providers/tiingo_daily.py"
       - "docs/adr/0003-gtbi-v7-identity.md"
       - "docs/plans/gtbi-v7-master-plan.md"
       - "docs/readiness/gtbi-v7/**"
@@ -92,6 +95,7 @@ on:
       - "tests/test_gtbi_v7_role_registry.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
+      - "tests/test_tiingo_daily.py"
 
 permissions:
   contents: read
@@ -118,7 +122,13 @@ jobs:
           cache: pip
 
       - name: Install bootstrap validator dependencies
-        run: python -m pip install "cryptography==48.0.0" "jsonschema==4.26.0" "pytest==9.0.3"
+        run: >-
+          python -m pip install
+          "cryptography==48.0.0"
+          "jsonschema==4.26.0"
+          "numpy>=1.24"
+          "pandas>=2.0"
+          "pytest==9.0.3"
 
       - name: Regenerate deterministic bootstrap contracts
         run: |
@@ -161,6 +171,7 @@ jobs:
             tests/test_gtbi_v7_role_registry.py \
             tests/test_gtbi_v7_scientific_assets.py \
             tests/test_gtbi_v6_archive_preservation.py \
+            tests/test_tiingo_daily.py \
             -q
 
   owner-authorized-quality:
