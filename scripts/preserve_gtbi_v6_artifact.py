@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -26,7 +27,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest  # noqa: E402
-from core.execution_policy import require_github_only_execution  # noqa: E402
+
+
+def _load_execution_policy():
+    policy_path = ROOT / "core/execution_policy.py"
+    spec = importlib.util.spec_from_file_location(
+        "_gtbi_v7_execution_policy", policy_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load central GitHub-only execution policy")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_execution_policy = _load_execution_policy()
+LocalRunBlocked = _execution_policy.LocalRunBlocked
+require_github_only_execution = _execution_policy.require_github_only_execution
 
 DOMAIN = "GTBI_V6_PRESERVATION_MANIFEST_V1"
 MANIFEST_PATH = (

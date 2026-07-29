@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -9,10 +11,10 @@ import jsonschema
 import pytest
 import yaml
 
-from core.execution_policy import LocalRunBlocked
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from scripts.preserve_gtbi_v6_artifact import (
     DOMAIN,
+    LocalRunBlocked,
     MANIFEST_PATH,
     PreservationError,
     inspect_archive,
@@ -161,3 +163,15 @@ def test_registered_workflow_has_isolated_fixed_preservation_mode() -> None:
 
     assert "self-hosted" not in text
     assert "C:\\" not in text
+
+
+def test_preservation_entrypoint_loads_without_quant_engine_dependencies() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/preserve_gtbi_v6_artifact.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--output-dir" in result.stdout
