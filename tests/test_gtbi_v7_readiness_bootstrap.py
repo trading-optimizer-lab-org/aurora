@@ -21,6 +21,8 @@ from infra.gtbi_v7_readiness.canonical import (
 )
 from infra.gtbi_v7_readiness.quality import validate_quality_evidence
 from infra.gtbi_v7_readiness.structure import validate_master_plan_structure
+from scripts.assemble_gtbi_v7_master_plan_quality_set import assemble
+from scripts.create_gtbi_v7_master_plan_audit_receipt import create_receipt
 
 ROOT = Path(__file__).resolve().parents[1]
 READINESS = ROOT / "docs/readiness/gtbi-v7"
@@ -48,6 +50,14 @@ def _copy_bootstrap_tree(target: Path) -> None:
         (
             "config/gtbi/schemas/v7/operational/"
             "master_plan_quality_receipt_set_v1.schema.json"
+        ),
+        (
+            "config/gtbi/schemas/v7/operational/"
+            "master_plan_audit_trusted_keys_v1.schema.json"
+        ),
+        (
+            "config/gtbi/schemas/v7/operational/"
+            "master_plan_quality_audit_report_v1.schema.json"
         ),
     ]
     for relative in files:
@@ -92,6 +102,11 @@ def _signed_quality_package(root: Path) -> Path:
                 "auditor_actor_id": actor_id,
                 "algorithm": "ed25519",
                 "public_key_base64url": _b64url(public_key),
+                "identity_evidence_digest": raw_sha256(
+                    f"identity-evidence-{sequence}".encode("utf-8")
+                ),
+                "valid_from_utc": "2026-07-29T00:00:00Z",
+                "valid_until_utc": "2026-07-30T00:00:00Z",
             }
         )
         round_start = start + timedelta(hours=(sequence - 1) * 2)
@@ -178,7 +193,7 @@ def _signed_quality_package(root: Path) -> Path:
         receipt_set,
     )
     key_registry = {
-        "schema_version": "gtbi-v7-trusted-audit-key-registry-v1",
+        "schema_version": "master_plan_audit_trusted_keys_v1",
         "keys": keys,
     }
     key_path = root / "trusted-audit-keys.json"
@@ -264,6 +279,124 @@ def test_plan_byte_change_invalidates_signed_rounds(tmp_path: Path) -> None:
     )
     assert result.status == "INVALID"
     assert any("mismatch" in error for error in result.errors)
+
+
+def test_auditor_tool_binds_complete_report_identity_and_structure(
+    tmp_path: Path,
+) -> None:
+    _copy_bootstrap_tree(tmp_path)
+    scope = json.loads(
+        (
+            tmp_path
+            / "docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    structural = validate_master_plan_structure(
+        tmp_path / "docs/plans/gtbi-v7-master-plan.md",
+        forbidden_term_rules=scope["ordered_forbidden_term_rules"],
+    )
+    report = {
+        "schema_version": "master_plan_quality_audit_report_v1",
+        "round_sequence": 1,
+        "auditor_actor_id": "external-auditor-1",
+        "reviewed_master_plan_sha256": scope["reviewed_master_plan_sha256"],
+        "scope_manifest_digest": scope["scope_manifest_digest"],
+        "review_dimensions": [
+            {
+                "dimension_id": dimension,
+                "reviewed": True,
+                "finding_count": 0,
+                "result": "CLEAN",
+                "evidence_summary": f"Complete review of {dimension}.",
+            }
+            for dimension in scope["ordered_review_dimensions"]
+        ],
+        "structural_checks": [
+            {
+                "check_id": check.check_id,
+                "passed": check.passed,
+                "details": list(check.details),
+            }
+            for check in structural.checks
+        ],
+        "findings": [],
+        "finding_count": 0,
+        "result": "CLEAN",
+    }
+    report_path = tmp_path / "audit-report.json"
+    _canonical_write(report_path, report)
+    identity_path = tmp_path / "identity-evidence.bin"
+    identity_path.write_bytes(b"authenticated external identity evidence")
+    private_key = Ed25519PrivateKey.generate()
+    private_key_path = tmp_path / "auditor-private-key.pem"
+    private_key_path.write_bytes(
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    receipt, structural_report, key_record = create_receipt(
+        repository_root=tmp_path,
+        report_path=report_path,
+        identity_evidence_path=identity_path,
+        private_key_path=private_key_path,
+        round_sequence=1,
+        auditor_actor_id="external-auditor-1",
+        signing_key_id="external-audit-key-1",
+        tool_or_model_identity="external-audit-tool",
+        tool_or_model_version="1.0",
+        started_at_utc="2026-07-29T08:00:00Z",
+        ended_at_utc="2026-07-29T09:00:00Z",
+        key_valid_from_utc="2026-07-29T00:00:00Z",
+        key_valid_until_utc="2026-07-30T00:00:00Z",
+        attestation="Independent complete review of the frozen bytes.",
+    )
+    attestation = receipt["signed_payload"]["auditor_independence_attestation"]
+    assert attestation["audit_report_digest"] == raw_sha256(report_path)
+    assert attestation["identity_evidence_digest"] == raw_sha256(identity_path)
+    assert structural_report["passed"]
+    assert key_record["public_key_base64url"]
+
+
+def test_assembler_rebuilds_and_verifies_three_round_package(
+    tmp_path: Path,
+) -> None:
+    key_registry_path = _signed_quality_package(tmp_path)
+    readiness = tmp_path / "docs/readiness/gtbi-v7"
+    receipts = [
+        json.loads(line)
+        for line in (
+            readiness / "master_plan_quality_receipts.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    key_records = json.loads(
+        key_registry_path.read_text(encoding="utf-8")
+    )["keys"]
+    receipt_paths = []
+    key_paths = []
+    for index, (receipt, key_record) in enumerate(
+        zip(receipts, key_records, strict=True), 1
+    ):
+        receipt_path = tmp_path / f"round-{index}-receipt.json"
+        key_path = tmp_path / f"round-{index}-key.json"
+        _canonical_write(receipt_path, receipt)
+        _canonical_write(key_path, key_record)
+        receipt_paths.append(receipt_path)
+        key_paths.append(key_path)
+    for path in (
+        readiness / "master_plan_quality_receipts.jsonl",
+        readiness / "master_plan_quality_receipt_set.json",
+        key_registry_path,
+    ):
+        path.unlink()
+    result = assemble(
+        repository_root=tmp_path,
+        receipt_paths=receipt_paths,
+        public_key_record_paths=key_paths,
+        output_directory=readiness,
+    )
+    assert result["status"] == "CLEAN"
 
 
 def test_bootstrap_schemas_and_generated_json_are_canonical() -> None:

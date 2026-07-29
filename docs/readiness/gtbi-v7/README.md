@@ -48,6 +48,24 @@ master_plan_quality_status.json
 Changing one byte of the master plan, canonical profile, domain registry,
 scope manifest, report, identity evidence or receipt invalidates the package.
 
+Each auditor validates their report against:
+
+```text
+config/gtbi/schemas/v7/operational/master_plan_quality_audit_report_v1.schema.json
+```
+
+The auditor then runs
+`scripts/create_gtbi_v7_master_plan_audit_receipt.py` in their own controlled
+environment with their own Ed25519 key. The command emits one receipt, one
+structural report and one public-key record. It never creates an identity,
+finding result or key.
+
+After all three non-overlapping rounds exist, the implementer runs
+`scripts/assemble_gtbi_v7_master_plan_quality_set.py` with the three receipts
+and three public-key records. The assembler refuses duplicates, overlap,
+stale plan bytes, bad signatures or a non-clean result and removes a package
+that fails final validation.
+
 ## Commands
 
 Regenerate deterministic candidate files:

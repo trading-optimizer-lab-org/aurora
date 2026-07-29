@@ -192,14 +192,27 @@ def validate_quality_evidence(
         key_registry = _canonical_json_file(trusted_key_path)
     except Exception as exc:
         return QualityValidationResult("INVALID", (str(exc),), plan_digest)
+    try:
+        _schema_validate(
+            key_registry,
+            schemas / "master_plan_audit_trusted_keys_v1.schema.json",
+        )
+    except Exception as exc:
+        errors.append(f"trusted-key registry schema validation failed: {exc}")
     if len(receipts) != 3:
         errors.append(f"expected exactly 3 receipts, got {len(receipts)}")
 
-    keys = {
-        row["signing_key_id"]: row
+    key_rows = [
+        row
         for row in key_registry.get("keys", [])
         if isinstance(row, dict) and "signing_key_id" in row
-    }
+    ]
+    keys = {row["signing_key_id"]: row for row in key_rows}
+    if len(keys) != len(key_rows):
+        errors.append("trusted-key registry contains duplicate signing_key_id")
+    registered_actor_ids = [row.get("auditor_actor_id") for row in key_rows]
+    if len(registered_actor_ids) != len(set(registered_actor_ids)):
+        errors.append("trusted-key registry contains duplicate auditor_actor_id")
     actor_ids: list[str] = []
     signing_key_ids: list[str] = []
     receipt_digests: list[str] = []
@@ -256,6 +269,26 @@ def validate_quality_evidence(
             continue
         if key.get("auditor_actor_id") != payload["auditor_actor_id"]:
             errors.append(f"receipt {index} actor/key binding mismatch")
+        if key.get("algorithm") != receipt["signature_algorithm"]:
+            errors.append(f"receipt {index} signature algorithm mismatch")
+        if (
+            key.get("identity_evidence_digest")
+            != payload["auditor_independence_attestation"][
+                "identity_evidence_digest"
+            ]
+        ):
+            errors.append(f"receipt {index} identity evidence digest mismatch")
+        try:
+            key_valid_from = datetime.fromisoformat(
+                key["valid_from_utc"].replace("Z", "+00:00")
+            )
+            key_valid_until = datetime.fromisoformat(
+                key["valid_until_utc"].replace("Z", "+00:00")
+            )
+            if key_valid_from > started or key_valid_until < ended:
+                errors.append(f"receipt {index} falls outside key validity")
+        except Exception as exc:
+            errors.append(f"receipt {index} key validity is invalid: {exc}")
         try:
             digest_bytes = bytes.fromhex(expected_payload_digest.removeprefix("sha256:"))
             _verify_ed25519(
