@@ -146,13 +146,13 @@ class WitnessRecorder:
         self._output_hash: Optional[str] = None
         self._extras = dict(extras or {})
         self._run_id = run_id or uuid.uuid4().hex
-        self._t0: Optional[float] = None
+        self._t0_ns: Optional[int] = None
         self._started_at: Optional[str] = None
         self._finished_at: Optional[str] = None
         self.witness: Optional[Witness] = None
 
     def __enter__(self) -> "WitnessRecorder":
-        self._t0 = time.monotonic()
+        self._t0_ns = time.perf_counter_ns()
         self._started_at = datetime.utcnow().isoformat()
         return self
 
@@ -162,7 +162,9 @@ class WitnessRecorder:
 
     def __exit__(self, *exc) -> None:
         self._finished_at = datetime.utcnow().isoformat()
-        elapsed = (time.monotonic() - (self._t0 or time.monotonic()))
+        finished_ns = time.perf_counter_ns()
+        started_ns = self._t0_ns if self._t0_ns is not None else finished_ns
+        elapsed = max(0, finished_ns - started_ns) / 1_000_000_000
         self.witness = Witness(
             run_id=self._run_id,
             kind=self._kind,

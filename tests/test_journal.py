@@ -1,4 +1,4 @@
-﻿"""Tests for aurora.registry.journal.TradeJournal."""
+"""Tests for aurora.registry.journal.TradeJournal."""
 from __future__ import annotations
 
 import datetime as _dt

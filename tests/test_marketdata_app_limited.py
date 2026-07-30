@@ -158,7 +158,7 @@ def test_descriptor_options_limited_role(monkeypatch):
     assert desc.auth_required is True
     assert "options" in desc.asset_classes
     assert "100 daily credits" in desc.rate_limits
-    assert desc.licence_terms_url.startswith("https://www.marketdata.app")
+    assert desc.licence_terms_url == "https://www.marketdata.app/docs/api/"
 
 
 def test_credit_consumption_recorded_in_provenance(monkeypatch):

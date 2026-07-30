@@ -90,6 +90,12 @@ def test_no_unmarked_live_data_loads():
         # uploads the literal "data/2024/SPY.parquet" key to a fake S3
         # backend; never reads cached vendor data
         ("test_infra_cloud_sync.py", "test_list_keys_after_upload"),
+        # asserts that the GitHub-only workflow creates its SPY benchmark;
+        # it only inspects workflow text and never opens the parquet
+        (
+            "test_global_technical_buy_indicator.py",
+            "test_external_pack_workflow_is_github_only_manual_ubuntu_hosted",
+        ),
     }
 
     def _has_integration_marker(fn: ast.FunctionDef) -> bool:

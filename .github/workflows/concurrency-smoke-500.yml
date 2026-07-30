@@ -1,5 +1,7 @@
 name: Concurrency Smoke 500 Jobs
 
+permissions: {}
+
 on:
   workflow_dispatch:
     inputs:

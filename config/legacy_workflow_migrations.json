@@ -1,0 +1,29 @@
+{
+  "authorization_receipt": {
+    "actor_id": "github-user:271768688",
+    "path": "docs/readiness/gtbi-v7/owner_simplification_directive.json",
+    "scope": "retain_automated_structural_validation",
+    "sha256": "37ccc41b24222952924f7b2ced9a6d1ec2df13fc1cdc38b72df2f8de4894aa78"
+  },
+  "migrations": [
+    {
+      "path": ".github/workflows/security.yml",
+      "previous_sha256": "1adfa87e7b08fcb7b13c1a0a701a2559d3c1daaf8b280caeddc6d2c657687696",
+      "reason": "repair Bandit exclusions without weakening the security gate",
+      "replacement_sha256": "b490c2bc55f699c0ad464d6fc84945ad3b8516a4eb62fcb782fdb681aa868875"
+    },
+    {
+      "path": ".github/workflows/tests.yml",
+      "previous_sha256": "9d9a893c6504f7d24843913d9b668be790c60429b7d3cf149efe4a37db2d0836",
+      "reason": "make the test command cross-platform and pin official actions",
+      "replacement_sha256": "774e731045ecb32475dc91f78b8969de86a4038ee909fe12b59b076c9d6ef7cc"
+    },
+    {
+      "path": ".github/workflows/typecheck.yml",
+      "previous_sha256": "b8fedf60ca30643f72cf9d74e4699ea6e921c5c127a01f4a74935854bbde8316",
+      "reason": "freeze existing mypy debt and reject every new type error",
+      "replacement_sha256": "2446b8ac7c176ae1307648471bec5822573e83a2e2e48698144c64afd745fd09"
+    }
+  ],
+  "schema_version": "1"
+}

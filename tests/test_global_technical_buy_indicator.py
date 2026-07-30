@@ -1263,6 +1263,7 @@ def test_external_pack_wrappers_import_from_script_path() -> None:
     merge_help = subprocess.run(
         [sys.executable, "scripts/merge_global_technical_buy_indicator_external_pack.py", "--help"],
         cwd=Path.cwd(),
+        env=env,
         capture_output=True,
         text=True,
         check=False,

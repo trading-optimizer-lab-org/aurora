@@ -14,7 +14,9 @@ look at the individual flags rather than only the scalar.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from aurora.research.literature.extraction import PaperClaim
@@ -114,7 +116,13 @@ def _looks_code_available(claims: list["PaperClaim"]) -> bool:
     """True if any claim text mentions a code/repo URL token."""
     for claim in claims:
         body = claim.claim_text.lower()
-        if "github.com/" in body or "code is available" in body or \
+        urls = re.findall(r"https?://[^\s<>\"']+", body)
+        github_url = any(
+            (urlsplit(url.rstrip(".,;:!?)")).hostname or "").lower()
+            in {"github.com", "www.github.com"}
+            for url in urls
+        )
+        if github_url or "code is available" in body or \
                 "code available at" in body or "replication code" in body:
             return True
     return False

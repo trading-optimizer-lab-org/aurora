@@ -1,5 +1,9 @@
 name: Global Technical Buy Indicator 355 Jobs
 
+permissions:
+  actions: read
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

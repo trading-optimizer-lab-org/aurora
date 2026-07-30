@@ -1,5 +1,8 @@
 name: property-thorough
 
+permissions:
+  contents: read
+
 # R42: nightly thorough Hypothesis profile. Registered profile name is
 # `thorough` (max_examples=200, deadline=None). Runs once per day on
 # UTC-midnight; on failure, surfaces the same channel as the fast suite.

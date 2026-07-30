@@ -8,6 +8,8 @@ on:
       - "research/**"
       - "infra/github_performance/**"
       - "config/legacy_workflow_allowlist.json"
+      - "config/legacy_workflow_migrations.json"
+      - "docs/readiness/gtbi-v7/owner_simplification_directive.json"
   workflow_dispatch:
 
 permissions:
@@ -39,3 +41,4 @@ jobs:
           python scripts/validate_github_workflow_policy.py
           --repo-root .
           --allowlist config/legacy_workflow_allowlist.json
+          --migrations config/legacy_workflow_migrations.json

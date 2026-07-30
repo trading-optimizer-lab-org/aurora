@@ -1,0 +1,1410 @@
+{
+  "errors": [
+    {
+      "code": "attr-defined",
+      "count": 4,
+      "message": "\"EvidencePackView\" has no attribute \"_allowed\"",
+      "path": "agent_gateway/evidence_pack_view.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 11,
+      "message": "\"EvidencePackView\" has no attribute \"_pack\"",
+      "path": "agent_gateway/evidence_pack_view.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 4,
+      "message": "\"EvidencePackView\" has no attribute \"_pack_hash_at_bind\"",
+      "path": "agent_gateway/evidence_pack_view.py"
+    },
+    {
+      "code": "no-redef",
+      "count": 1,
+      "message": "Name \"njit\" already defined (possibly by an import)",
+      "path": "core/bars.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "core/data_providers/akshare_experimental_daily.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"Any | None\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "core/data_providers/dbnomics_macro.py"
+    },
+    {
+      "code": "call-arg",
+      "count": 1,
+      "message": "Too few arguments",
+      "path": "core/data_providers/fallback_chain.py"
+    },
+    {
+      "code": "return-value",
+      "count": 1,
+      "message": "Incompatible return value type (got \"list[dict[str, Any]]\", expected \"list[Mapping[str, Any]]\")",
+      "path": "core/data_providers/finance_database_universe.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"YFinanceDailyProvider\", variable has type \"StooqDailyProvider\")",
+      "path": "core/data_providers/first_dataset/_adapters.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"YahooQueryDailyProvider\", variable has type \"StooqDailyProvider\")",
+      "path": "core/data_providers/first_dataset/_adapters.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"Any | None\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "core/data_providers/sec_edgar_companyfacts.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"list[Any]\", variable has type \"dict_values[Any, Any]\")",
+      "path": "core/data_providers/sec_edgar_companyfacts.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"list[Never]\", variable has type \"dict_values[Any, Any]\")",
+      "path": "core/data_providers/sec_edgar_companyfacts.py"
+    },
+    {
+      "code": "no-redef",
+      "count": 1,
+      "message": "Name \"njit\" already defined (possibly by an import)",
+      "path": "core/engine_jit.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "deployment/live.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"get\" of \"dict\" has incompatible type \"OrderState | None\"; expected \"OrderState\"",
+      "path": "execution/events.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"str\", variable has type \"MismatchKind\")",
+      "path": "execution/reconciliation.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "experimental/federated_learning.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyRiskRecord\" has incompatible type \"**dict[str, tuple[StrategyOverride, ...] | dict[str, float] | str | date | None]\"; expected \"LifecycleStage\"",
+      "path": "governance/approvals.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyRiskRecord\" has incompatible type \"**dict[str, tuple[StrategyOverride, ...] | dict[str, float] | str | date | None]\"; expected \"date | None\"",
+      "path": "governance/approvals.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyRiskRecord\" has incompatible type \"**dict[str, tuple[StrategyOverride, ...] | dict[str, float] | str | date | None]\"; expected \"dict[str, float]\"",
+      "path": "governance/approvals.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyRiskRecord\" has incompatible type \"**dict[str, tuple[StrategyOverride, ...] | dict[str, float] | str | date | None]\"; expected \"str\"",
+      "path": "governance/approvals.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyRiskRecord\" has incompatible type \"**dict[str, tuple[StrategyOverride, ...] | dict[str, float] | str | date | None]\"; expected \"tuple[StrategyOverride, ...]\"",
+      "path": "governance/approvals.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "infra/postgres_backend.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/bayesian_nn.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/contrastive_strategy.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore[assignment, misc]\" comment",
+      "path": "ml/contrastive_strategy.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/diffusion_scenarios.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/few_shot_strategy.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/graph_neural_net.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/knowledge_distillation.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore[assignment, misc]\" comment",
+      "path": "ml/knowledge_distillation.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/lstm.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/mamba_ssm.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore[assignment, misc]\" comment",
+      "path": "ml/mamba_ssm.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/meta_learning.py"
+    },
+    {
+      "code": "no-redef",
+      "count": 1,
+      "message": "Name \"njit\" already defined (possibly by an import)",
+      "path": "ml/microstructure.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/moe.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore[assignment, misc]\" comment",
+      "path": "ml/moe.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/self_supervised_pretrain.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore[assignment, misc]\" comment",
+      "path": "ml/self_supervised_pretrain.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 3,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/transformer.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore[assignment, misc]\" comment",
+      "path": "ml/transformer.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 3,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "ml/transformer_multi_asset.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"IncidentKind\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"IncidentSeverity\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"IncidentStatus\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"str | None\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"str\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"tuple[IncidentNote, ...]\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"IncidentRecord\" has incompatible type \"**dict[str, tuple[IncidentNote, ...] | tuple[str, ...] | str | None]\"; expected \"tuple[str, ...]\"",
+      "path": "monitoring/incidents.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument \"contribution_to_return\" to \"PortfolioReport\" has incompatible type \"Any | dict[str | Any, object | Any]\"; expected \"dict[str, float | ndarray[tuple[Any, ...], dtype[Any]]]\"",
+      "path": "reporting/portfolio_report.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument \"contribution_to_risk\" to \"PortfolioReport\" has incompatible type \"Any | dict[str | Any, object | Any]\"; expected \"dict[str, float | ndarray[tuple[Any, ...], dtype[Any]]]\"",
+      "path": "reporting/portfolio_report.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"list\" has incompatible type \"Sequence[str | None]\"; expected \"Iterable[str]\"",
+      "path": "reporting/portfolio_report.py"
+    },
+    {
+      "code": "call-overload",
+      "count": 1,
+      "message": "No overload variant of \"int\" matches argument type \"object\"",
+      "path": "research/agent_loop/estudios_bridge.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument \"key\" to \"max\" has incompatible type \"Callable[[dict[str, Any]], float | None]\"; expected \"Callable[[dict[str, Any]], SupportsDunderLT[Any] | SupportsDunderGT[Any]]\"",
+      "path": "research/agent_loop/executor.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "research/agent_loop/executor.py"
+    },
+    {
+      "code": "call-overload",
+      "count": 3,
+      "message": "No overload variant of \"int\" matches argument type \"object\"",
+      "path": "research/agent_loop/executor.py"
+    },
+    {
+      "code": "return-value",
+      "count": 1,
+      "message": "Incompatible return value type (got \"float | None\", expected \"SupportsDunderLT[Any] | SupportsDunderGT[Any]\")",
+      "path": "research/agent_loop/executor.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"Any | None\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "research/agent_loop/goal.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "research/agent_loop/ideas.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 3,
+      "message": "\"object\" has no attribute \"__iter__\"; maybe \"__dir__\" or \"__str__\"? (not iterable)",
+      "path": "research/agent_loop/ideas.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"_linear_rule_specs\" has incompatible type \"list[str]\"; expected \"tuple[str, ...]\"",
+      "path": "research/btc_5m_trainonly_search.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"tuple[str, str, str]\", variable has type \"tuple[str, str, ... <18 more items>]\")",
+      "path": "research/crypto_direction_ml.py"
+    },
+    {
+      "code": "call-overload",
+      "count": 1,
+      "message": "No overload variant of \"int\" matches argument type \"object\"",
+      "path": "research/kronos_tool.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "research/literature/ingest.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument \"behavior_vector\" to \"MLSearchCandidate\" has incompatible type \"tuple[float, ...]\"; expected \"tuple[float, float, float]\"",
+      "path": "research/ml_search.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"float\", target has type \"int\")",
+      "path": "research/ml_search.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"tuple[Never, ...]\", variable has type \"tuple[float, float, float]\")",
+      "path": "research/ml_search.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument \"rules\" to \"_iter_training_batches\" has incompatible type \"list[dict[str, Any]]\"; expected \"list[Mapping[str, Any]]\"",
+      "path": "research/sp500_autosearch.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 3 to \"_peer_net_returns_for_rows\" has incompatible type \"list[dict[str, Any]]\"; expected \"list[Mapping[str, Any]]\"",
+      "path": "research/sp500_autosearch.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 4 to \"_robustness_many\" has incompatible type \"list[dict[str, Any]]\"; expected \"list[Mapping[str, Any]]\"",
+      "path": "research/sp500_autosearch.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"PeriodResult\", variable has type \"CandidateResult\")",
+      "path": "research/sp500_long_short.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"SensitivityResult\", variable has type \"CandidateResult\")",
+      "path": "research/sp500_long_short.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "\"CandidateResult\" has no attribute \"end\"",
+      "path": "research/sp500_long_short.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "\"CandidateResult\" has no attribute \"is_base\"",
+      "path": "research/sp500_long_short.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "\"CandidateResult\" has no attribute \"period\"",
+      "path": "research/sp500_long_short.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "\"CandidateResult\" has no attribute \"start\"",
+      "path": "research/sp500_long_short.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"dropped\"",
+      "path": "research/sp500_weekly_hedge_search.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "research/strategy_atlas.py"
+    },
+    {
+      "code": "no-redef",
+      "count": 1,
+      "message": "Name \"order\" already defined on line 242",
+      "path": "scripts/benchmark_github_performance_environment.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/download_free_15m_equity_universe.py"
+    },
+    {
+      "code": "index",
+      "count": 3,
+      "message": "Value of type \"object\" is not indexable",
+      "path": "scripts/generate_gtbi_v6_preservation_contract.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"str\", target has type \"None\")",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 0 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 1 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 10 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 11 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 12 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 13 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 14 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 15 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 16 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 17 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 18 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 19 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 2 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 20 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 21 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 22 has incompatible type \"str\": \"int\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 23 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 24 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 26 has incompatible type \"str\": \"int\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 27 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 28 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 29 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 3 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 30 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 31 has incompatible type \"str\": \"list[str]\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 32 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 33 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 34 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 36 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 37 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 38 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 39 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 4 has incompatible type \"str\": \"int\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 41 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 42 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 43 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 44 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 45 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 46 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 47 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 48 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 49 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 5 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 50 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 51 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 52 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 53 has incompatible type \"str\": \"bool\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 54 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 55 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 56 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 57 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 58 has incompatible type \"str\": \"int\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 59 has incompatible type \"str\": \"list[Never]\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 6 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 60 has incompatible type \"str\": \"int\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 61 has incompatible type \"str\": \"list[Never]\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 62 has incompatible type \"str\": \"int\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 63 has incompatible type \"str\": \"list[Never]\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 64 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 7 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 8 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "dict-item",
+      "count": 1,
+      "message": "Dict entry 9 has incompatible type \"str\": \"str\"; expected \"str\": \"None\"",
+      "path": "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "scripts/merge_btc_5m_all_features_5methods_trainonly.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"failures\"",
+      "path": "scripts/merge_btc_5m_pf105_statistical_robustness.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "scripts/merge_sp500_weekly_hedge_dehb.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 2,
+      "message": "\"object\" has no attribute \"__iter__\"; maybe \"__dir__\" or \"__str__\"? (not iterable)",
+      "path": "scripts/merge_sp500_weekly_hedge_dehb.py"
+    },
+    {
+      "code": "call-overload",
+      "count": 7,
+      "message": "No overload variant of \"int\" matches argument type \"object\"",
+      "path": "scripts/merge_sp500_weekly_hedge_dehb.py"
+    },
+    {
+      "code": "call-overload",
+      "count": 1,
+      "message": "No overload variant of \"set\" matches argument type \"object\"",
+      "path": "scripts/merge_sp500_weekly_hedge_dehb.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "scripts/prepare_btc_5m_pf105_candidates.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/report_spy_weekly_longshort_locked_strategy.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"scripts.run_spy_weekly_longshort_sharpe2\" has no attribute \"annual_excess_metrics\"",
+      "path": "scripts/report_spy_weekly_longshort_locked_strategy.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_body_wick_selected_prior_period.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "scripts/run_btc_5m_pf105_statistical_robustness.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"scripts\" has no attribute \"run_paper_cboe_sentiment_sharpe2\"",
+      "path": "scripts/run_paper_sharpe2_nightly_round.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"scripts\" has no attribute \"run_paper_operable_ensemble_sharpe2\"",
+      "path": "scripts/run_paper_sharpe2_nightly_round.py"
+    },
+    {
+      "code": "valid-type",
+      "count": 2,
+      "message": "Variable \"scripts.run_sp500_weekly_hedge_momentum_trend_stage.SearchQualityConfig\" is not valid as a type",
+      "path": "scripts/run_sp500_weekly_hedge_momentum_trend_stage.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_spy_15m_support_resistance.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"families\"",
+      "path": "scripts/run_spy_15m_support_resistance.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_spy_monthly_trend_following_paper21.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_spy_weekly_noleverage_50ideas.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_spy_weekly_noleverage_50ideas_v2.py"
+    },
+    {
+      "code": "attr-defined",
+      "count": 1,
+      "message": "Module \"core.execution_policy\" has no attribute \"require_github_actions_or_explicit_local_permission\"",
+      "path": "scripts/run_sr_15m_equity_universe.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_cashfloor_controller_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_cashfloor_controller_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_corr95_drawdown_guard_mdd25.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_corr95_drawdown_guard_mdd25.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_corr95_feature_sweep_mdd25.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_corr95_feature_sweep_mdd25.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_cppi_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_daily_tactical_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_daily_tactical_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_floor_controller_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_floor_controller_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_invvol_guard_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_invvol_guard_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_mdd15_trainonly_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_mdd15_trainonly_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_multiasset_corr95_mdd25.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_multiasset_corr95_mdd25.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_path_cppi_expanded_universe_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_path_cppi_expanded_universe_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_path_cppi_focused_cv_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_path_cppi_focused_cv_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_path_cppi_focused_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_path_cppi_focused_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_path_cppi_mdd15_trainonly_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_path_cppi_mdd15_trainonly_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_path_cppi_refined_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_path_cppi_refined_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_regime_timing_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_regime_timing_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_static_smooth_hardstress_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_static_smooth_hardstress_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_static_smooth_mdd15_corr95.py"
+    },
+    {
+      "code": "type-var",
+      "count": 3,
+      "message": "Value of type variable \"SupportsRichComparisonT\" of \"min\" cannot be \"object\"",
+      "path": "scripts/run_swr_static_smooth_mdd15_corr95.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for > (\"float\" and \"object\")",
+      "path": "scripts/run_swr_tsmom_corr95.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/conftest.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_agent_loop_estudios_bridge.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_agent_roles.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyVariant\" has incompatible type \"**dict[str, object]\"; expected \"float\"",
+      "path": "tests/test_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyVariant\" has incompatible type \"**dict[str, object]\"; expected \"int\"",
+      "path": "tests/test_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"StrategyVariant\" has incompatible type \"**dict[str, object]\"; expected \"str\"",
+      "path": "tests/test_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"make_bars\" has incompatible type \"list[tuple[str, int, int, int, int]]\"; expected \"list[tuple[str, float, float, float, float]]\"",
+      "path": "tests/test_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "list-item",
+      "count": 1,
+      "message": "List item 0 has incompatible type \"tuple[str, int, int, float, int]\"; expected \"tuple[str, int, int, int, int]\"",
+      "path": "tests/test_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "list-item",
+      "count": 1,
+      "message": "List item 1 has incompatible type \"tuple[str, int, int, float, int]\"; expected \"tuple[str, int, int, int, int]\"",
+      "path": "tests/test_body_wick_sr_15m_backtest.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_calendars.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_data_providers_free_bulk.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_data_quality.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_dukascopy_fx_history.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_evidence_pack_view.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"stamps\" (hint: \"stamps: list[<type>] = ...\")",
+      "path": "tests/test_free_15m_equity_universe_download.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_instrument_master.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_literature_extraction.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_literature_papers.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_reconciliation.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_research_agents.py"
+    },
+    {
+      "code": "union-attr",
+      "count": 1,
+      "message": "Item \"None\" of \"Any | None\" has no attribute \"empty\"",
+      "path": "tests/test_sp500_weekly_hedge_search.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"stamps\" (hint: \"stamps: list[<type>] = ...\")",
+      "path": "tests/test_spy_15m_support_resistance.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 4,
+      "message": "Argument 1 to \"__call__\" of \"_UFunc_Nin1_Nout1\" has incompatible type \"Sequence[object]\"; expected \"_Buffer | _SupportsArray[dtype[Any]] | _NestedSequence[_SupportsArray[dtype[Any]]] | complex | bytes | str | _NestedSequence[complex | bytes | str]\"",
+      "path": "tests/test_spy_weekly_longshort_sharpe2.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"len\" has incompatible type \"object\"; expected \"Sized\"",
+      "path": "tests/test_spy_weekly_longshort_sharpe2.py"
+    },
+    {
+      "code": "operator",
+      "count": 2,
+      "message": "Unsupported operand types for < (\"int\" and \"object\")",
+      "path": "tests/test_spy_weekly_longshort_sharpe2.py"
+    },
+    {
+      "code": "operator",
+      "count": 1,
+      "message": "Unsupported operand types for <= (\"int\" and \"Sequence[object]\")",
+      "path": "tests/test_spy_weekly_longshort_sharpe2.py"
+    },
+    {
+      "code": "index",
+      "count": 2,
+      "message": "Value of type \"list[str] | None\" is not indexable",
+      "path": "tests/test_sr_15m_equity_universe.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"stamps\" (hint: \"stamps: list[<type>] = ...\")",
+      "path": "tests/test_sr_15m_equity_universe.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 1,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "tests/test_timeseries_store.py"
+    },
+    {
+      "code": "no-redef",
+      "count": 1,
+      "message": "Name \"val\" already defined on line 209",
+      "path": "triage/variants.py"
+    },
+    {
+      "code": "unused-ignore",
+      "count": 2,
+      "message": "Unused \"type: ignore\" comment",
+      "path": "validation/gan_crisis.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"float\" has incompatible type \"object\"; expected \"str | Buffer | SupportsFloat | SupportsIndex\"",
+      "path": "validation/statistical_robustness.py"
+    }
+  ],
+  "policy": "legacy errors are visible and tolerated only by exact path/code/message multiplicity; any new error fails CI",
+  "schema_version": "1",
+  "source": {
+    "commit_sha": "9a53033f32e48328adf7cbef330fde5d0de0fae3",
+    "error_count": 331,
+    "file_count": 104,
+    "github_run_id": 30484372251
+  }
+}

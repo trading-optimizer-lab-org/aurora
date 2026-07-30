@@ -1,0 +1,216 @@
+name: GTBI V7 Master Plan Quality
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".gitattributes"
+      - ".github/workflows/gtbi-v7-master-plan-quality.yml"
+      - ".github/workflows/gtbi-v7-inventory.yml"
+      - "config/gtbi/contracts/**"
+      - "config/gtbi/v7/**"
+      - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
+      - "config/gtbi/schemas/readiness/**"
+      - "config/gtbi/schemas/v7/operational/**"
+      - "config/gtbi/schemas/v7/scientific/**"
+      - "config/gtbi/fixtures/v7/**"
+      - "core/execution_policy.py"
+      - "core/data_providers/tiingo_daily.py"
+      - "docs/adr/0003-gtbi-v7-identity.md"
+      - "docs/plans/gtbi-v7-master-plan.md"
+      - "docs/readiness/gtbi-v7/**"
+      - "docs/project_inventory/**"
+      - "infra/gtbi_v7_readiness/**"
+      - "scripts/assemble_gtbi_v7_master_plan_quality_set.py"
+      - "scripts/create_gtbi_v7_master_plan_audit_receipt.py"
+      - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
+      - "scripts/generate_gtbi_v7_inventory.py"
+      - "scripts/generate_gtbi_v7_initial_readiness_records.py"
+      - "scripts/generate_gtbi_v7_pre_genesis_status.py"
+      - "scripts/generate_gtbi_v7_readiness_schemas.py"
+      - "scripts/generate_gtbi_v7_role_registry_template.py"
+      - "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+      - "scripts/generate_gtbi_v6_preservation_contract.py"
+      - "scripts/build_global_technical_buy_indicator_pack.py"
+      - "scripts/merge_global_technical_buy_indicator_external_pack.py"
+      - "scripts/merge_global_technical_buy_indicator_results.py"
+      - "scripts/preserve_gtbi_v6_artifact.py"
+      - "scripts/reevaluate_global_technical_buy_indicator_results.py"
+      - "scripts/restore_gtbi_v6_artifact.py"
+      - "scripts/run_global_technical_buy_indicator_external_pack_shard.py"
+      - "scripts/run_global_technical_buy_indicator_stage.py"
+      - "scripts/validate_gtbi_v7_master_plan.py"
+      - "tests/test_gtbi_v7_readiness_bootstrap.py"
+      - "tests/test_gtbi_v7_inventory.py"
+      - "tests/test_gtbi_v7_initial_readiness_records.py"
+      - "tests/test_gtbi_v7_identity_adr.py"
+      - "tests/test_gtbi_v7_pre_genesis_status.py"
+      - "tests/test_gtbi_v7_readiness_records.py"
+      - "tests/test_gtbi_v7_role_registry.py"
+      - "tests/test_gtbi_v7_scientific_assets.py"
+      - "tests/test_gtbi_v6_archive_preservation.py"
+      - "tests/test_tiingo_daily.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".gitattributes"
+      - ".github/workflows/gtbi-v7-master-plan-quality.yml"
+      - ".github/workflows/gtbi-v7-inventory.yml"
+      - "config/gtbi/contracts/**"
+      - "config/gtbi/v7/**"
+      - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
+      - "config/gtbi/schemas/readiness/**"
+      - "config/gtbi/schemas/v7/operational/**"
+      - "config/gtbi/schemas/v7/scientific/**"
+      - "config/gtbi/fixtures/v7/**"
+      - "core/execution_policy.py"
+      - "core/data_providers/tiingo_daily.py"
+      - "docs/adr/0003-gtbi-v7-identity.md"
+      - "docs/plans/gtbi-v7-master-plan.md"
+      - "docs/readiness/gtbi-v7/**"
+      - "docs/project_inventory/**"
+      - "infra/gtbi_v7_readiness/**"
+      - "scripts/assemble_gtbi_v7_master_plan_quality_set.py"
+      - "scripts/create_gtbi_v7_master_plan_audit_receipt.py"
+      - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
+      - "scripts/generate_gtbi_v7_inventory.py"
+      - "scripts/generate_gtbi_v7_initial_readiness_records.py"
+      - "scripts/generate_gtbi_v7_pre_genesis_status.py"
+      - "scripts/generate_gtbi_v7_readiness_schemas.py"
+      - "scripts/generate_gtbi_v7_role_registry_template.py"
+      - "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+      - "scripts/generate_gtbi_v6_preservation_contract.py"
+      - "scripts/build_global_technical_buy_indicator_pack.py"
+      - "scripts/merge_global_technical_buy_indicator_external_pack.py"
+      - "scripts/merge_global_technical_buy_indicator_results.py"
+      - "scripts/preserve_gtbi_v6_artifact.py"
+      - "scripts/reevaluate_global_technical_buy_indicator_results.py"
+      - "scripts/restore_gtbi_v6_artifact.py"
+      - "scripts/run_global_technical_buy_indicator_external_pack_shard.py"
+      - "scripts/run_global_technical_buy_indicator_stage.py"
+      - "scripts/validate_gtbi_v7_master_plan.py"
+      - "tests/test_gtbi_v7_readiness_bootstrap.py"
+      - "tests/test_gtbi_v7_inventory.py"
+      - "tests/test_gtbi_v7_initial_readiness_records.py"
+      - "tests/test_gtbi_v7_identity_adr.py"
+      - "tests/test_gtbi_v7_pre_genesis_status.py"
+      - "tests/test_gtbi_v7_readiness_records.py"
+      - "tests/test_gtbi_v7_role_registry.py"
+      - "tests/test_gtbi_v7_scientific_assets.py"
+      - "tests/test_gtbi_v6_archive_preservation.py"
+      - "tests/test_tiingo_daily.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gtbi-v7-master-plan-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  structural:
+    name: Structural and bootstrap contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install bootstrap validator dependencies
+        run: >-
+          python -m pip install
+          "cryptography==48.0.0"
+          "jsonschema==4.26.0"
+          "numpy>=1.24"
+          "pandas>=2.0"
+          "PyYAML>=6"
+          "pytest==9.0.3"
+          "scipy>=1.10"
+
+      - name: Regenerate deterministic bootstrap contracts
+        run: |
+          python scripts/generate_gtbi_v7_bootstrap_contracts.py
+          python scripts/generate_gtbi_v7_readiness_schemas.py
+          python scripts/generate_gtbi_v7_role_registry_template.py
+          python scripts/generate_gtbi_v7_scientific_asset_contract.py
+          python scripts/generate_gtbi_v6_preservation_contract.py
+          python scripts/generate_gtbi_v7_initial_readiness_records.py
+          python scripts/generate_gtbi_v7_pre_genesis_status.py
+
+      - name: Reject generated drift
+        run: |
+          git diff --exit-code -- \
+            config/gtbi/contracts \
+            config/gtbi/manifests/v6_fast_strict_preservation_manifest.json \
+            config/gtbi/schemas/readiness \
+            config/gtbi/schemas/v7/operational/v6_preservation_manifest_v1.schema.json \
+            config/gtbi/schemas/v7/scientific/scientific_asset_manifest_v1.schema.json \
+            config/gtbi/fixtures/v7/governance/role_registry_v1.owner_controlled.json \
+            config/gtbi/fixtures/v7/scientific_asset_manifest_v1.wrapper_only.json \
+            docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
+            docs/readiness/gtbi-v7/master_plan_quality_status.json \
+            docs/readiness/gtbi-v7/pre_genesis_status.json \
+            docs/readiness/gtbi-v7/legacy_run_cancellation_candidates.json \
+            docs/readiness/gtbi-v7/task_status.csv \
+            docs/readiness/gtbi-v7/gate_status.csv \
+            docs/readiness/gtbi-v7/gate_definitions.csv \
+            docs/readiness/gtbi-v7/task_events.jsonl \
+            docs/readiness/gtbi-v7/task_attempts.jsonl \
+            docs/readiness/gtbi-v7/gate_events.jsonl \
+            docs/readiness/gtbi-v7/conditional_branch_registry.csv \
+            docs/readiness/gtbi-v7/task_definitions.csv \
+            docs/readiness/gtbi-v7/task_planning_inputs.csv \
+            docs/readiness/gtbi-v7/task_delivery_manifest.csv
+
+      - name: Verify frozen text attributes
+        run: |
+          test "$(git check-attr eol -- docs/plans/gtbi-v7-master-plan.md | awk '{print $3}')" = "lf"
+          test "$(git check-attr eol -- config/gtbi/contracts/canonical_serialization_v1.json | awk '{print $3}')" = "lf"
+          test "$(git check-attr eol -- docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json | awk '{print $3}')" = "lf"
+
+      - name: Run bootstrap and inventory tests
+        run: |
+          python -m pytest \
+            tests/test_gtbi_v7_readiness_bootstrap.py \
+            tests/test_gtbi_v7_inventory.py \
+            tests/test_gtbi_v7_initial_readiness_records.py \
+            tests/test_gtbi_v7_identity_adr.py \
+            tests/test_gtbi_v7_pre_genesis_status.py \
+            tests/test_gtbi_v7_readiness_records.py \
+            tests/test_gtbi_v7_role_registry.py \
+            tests/test_gtbi_v7_scientific_assets.py \
+            tests/test_gtbi_v6_archive_preservation.py \
+            tests/test_tiingo_daily.py \
+            -q
+
+  owner-authorized-quality:
+    name: Owner directive and deterministic quality
+    needs: structural
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install quality validator dependencies
+        run: python -m pip install "jsonschema==4.26.0"
+
+      - name: Verify exact owner-authorized quality package
+        run: python scripts/validate_gtbi_v7_master_plan.py

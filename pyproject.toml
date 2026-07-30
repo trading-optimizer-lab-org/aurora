@@ -23,6 +23,7 @@ dependencies = [
     "platformdirs>=4.0",
     "networkx>=3.0",
     "jsonschema>=4.23",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -43,7 +44,7 @@ monitoring = ["streamlit>=1.30"]
 llm = ["anthropic>=0.25"]
 portfolio = ["cvxpy>=1.4"]
 report = ["weasyprint"]
-dev = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6", "ruff>=0.5", "mypy>=1.7"]
+dev = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6", "ruff>=0.5", "mypy>=1.7", "statsmodels>=0.14"]
 all = ["aurora[ml,dl,kronos,rl,ga,live,crypto,monitoring,llm,portfolio,report]"]
 
 [project.scripts]
@@ -81,6 +82,7 @@ packages = [
     "aurora.infra",
     "aurora.infra.github_performance",
     "aurora.infra.github_performance.workloads",
+    "aurora.infra.gtbi_v7_readiness",
     "aurora.marketdata",
     "aurora.markets",
     "aurora.ml",
@@ -130,6 +132,7 @@ packages = [
 "aurora.infra" = "infra"
 "aurora.infra.github_performance" = "infra/github_performance"
 "aurora.infra.github_performance.workloads" = "infra/github_performance/workloads"
+"aurora.infra.gtbi_v7_readiness" = "infra/gtbi_v7_readiness"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
 "aurora.ml" = "ml"
@@ -160,6 +163,8 @@ packages = [
     "config/*.yml",
     "config/templates/*.yaml",
     "config/schemas/*.json",
+    "config/gtbi/contracts/*.json",
+    "config/gtbi/schemas/v7/operational/*.json",
 ]
 "aurora.exports.lean" = ["templates/*.template"]
 

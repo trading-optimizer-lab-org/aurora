@@ -41,6 +41,9 @@ env/
 *.sqlite
 *.sqlite3
 *.jsonl
+!docs/readiness/gtbi-v7/task_events.jsonl
+!docs/readiness/gtbi-v7/task_attempts.jsonl
+!docs/readiness/gtbi-v7/gate_events.jsonl
 audit_*.db
 audit_trail.jsonl
 research_archive.jsonl

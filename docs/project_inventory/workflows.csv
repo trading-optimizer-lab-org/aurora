@@ -1,0 +1,126 @@
+id,name,path,state,created_at,updated_at
+273081041,lint,.github/workflows/lint.yml,active,2026-05-08T08:16:41.000+02:00,2026-05-08T08:16:41.000+02:00
+273081042,tests,.github/workflows/tests.yml,active,2026-05-08T08:16:41.000+02:00,2026-05-08T08:16:41.000+02:00
+273081043,wheel,.github/workflows/wheel.yml,active,2026-05-08T08:16:42.000+02:00,2026-05-08T08:16:42.000+02:00
+285544613,Literature Strategy Idea Discovery 9h,.github/workflows/literature-strategy-idea-discovery-9h.yml,active,2026-05-29T14:50:22.000+02:00,2026-05-29T14:51:35.000+02:00
+285545152,docs,.github/workflows/docs.yml,active,2026-05-29T14:51:35.000+02:00,2026-05-29T14:51:35.000+02:00
+285545153,property-thorough,.github/workflows/property-thorough.yml,active,2026-05-29T14:51:36.000+02:00,2026-05-29T14:51:36.000+02:00
+285545154,security,.github/workflows/security.yml,active,2026-05-29T14:51:36.000+02:00,2026-05-29T14:51:36.000+02:00
+285545155,typecheck,.github/workflows/typecheck.yml,active,2026-05-29T14:51:36.000+02:00,2026-05-29T14:51:36.000+02:00
+286086870,BTC 5m All Features 5 Methods Train Only 1h 180 Jobs,.github/workflows/btc-5m-all-features-5methods-trainonly-1h-180jobs.yml,active,2026-05-30T18:28:04.000+02:00,2026-05-31T14:56:01.000+02:00
+286130260,CodeQL,dynamic/github-code-scanning/codeql,active,2026-05-30T20:57:33.000+02:00,2026-05-30T20:57:33.000+02:00
+286130268,Dependency Graph,dynamic/dependabot/update-graph,active,2026-05-30T20:57:36.000+02:00,2026-05-30T20:57:36.000+02:00
+286139756,BTC 5m All Features 5 Methods Train Only 9h Max500 Real180,.github/workflows/btc-5m-all-features-5methods-trainonly-9h-max500-real180.yml,active,2026-05-30T21:35:34.000+02:00,2026-05-31T14:56:01.000+02:00
+286298143,BTC 5m PF105 Statistical Robustness,.github/workflows/btc-5m-pf105-statistical-robustness.yml,active,2026-05-31T09:50:25.000+02:00,2026-05-31T14:56:01.000+02:00
+286379387,BTC 5m Train Only 9h Wave,.github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml,active,2026-05-31T14:56:01.000+02:00,2026-05-31T14:56:01.000+02:00
+286418958,SP500 Weekly Hedge DEHB 1 Wave 80 Jobs 1h,.github/workflows/sp500-weekly-hedge-dehb-1wave-80jobs-1h.yml,active,2026-05-31T17:04:54.000+02:00,2026-05-31T17:04:54.000+02:00
+286418959,SP500 Weekly Hedge DEHB 6 Waves 80 Jobs 1h,.github/workflows/sp500-weekly-hedge-dehb-6waves-80jobs-1h.yml,active,2026-05-31T17:04:54.000+02:00,2026-05-31T17:04:54.000+02:00
+286485726,SP500 Weekly Hedge DEHB Policy1995 Downside 1 Wave 80 Jobs 1h,.github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-1wave-80jobs-1h.yml,active,2026-05-31T20:34:06.000+02:00,2026-05-31T20:34:06.000+02:00
+286485728,SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 1h,.github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-1h.yml,active,2026-05-31T20:34:06.000+02:00,2026-05-31T20:34:06.000+02:00
+286496341,SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 9h,.github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml,active,2026-05-31T21:11:37.000+02:00,2026-05-31T21:11:37.000+02:00
+286496342,SP500 Weekly Hedge Policy1995 Autostart 9h,.github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml,active,2026-05-31T21:11:37.000+02:00,2026-05-31T21:11:37.000+02:00
+286749547,SP500 Weekly Hedge DEHB No Crypto No Stocks 6 Waves 80 Jobs 3h,.github/workflows/sp500-weekly-hedge-dehb-no-crypto-no-stocks-6waves-80jobs-3h.yml,active,2026-06-01T10:26:06.000+02:00,2026-06-01T10:26:06.000+02:00
+286784126,SP500 Weekly Hedge DEHB No Crypto No Stocks 2 Waves 500 Jobs 180 Parallel 1h,.github/workflows/sp500-weekly-hedge-dehb-no-crypto-no-stocks-2waves-500jobs-180parallel-1h.yml,active,2026-06-01T11:28:33.000+02:00,2026-06-01T11:28:33.000+02:00
+286851214,GitHub Parallel Smoke 500,.github/workflows/github-parallel-smoke-500.yml,active,2026-06-01T13:30:44.000+02:00,2026-06-01T13:30:44.000+02:00
+287002691,Literature PDF Text Extract 29855,.github/workflows/literature-pdf-text-extract-29855.yml,active,2026-06-01T17:27:53.000+02:00,2026-06-01T17:27:53.000+02:00
+287174176,Literature Strategy Backtest 9419 9h,.github/workflows/literature-strategy-backtest-9419-9h.yml,active,2026-06-01T22:18:18.000+02:00,2026-06-01T22:18:18.000+02:00
+287567028,Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Merge Now,.github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml,active,2026-06-02T10:02:24.000+02:00,2026-06-02T10:02:24.000+02:00
+287567029,Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Stop,.github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stop.yml,active,2026-06-02T10:02:24.000+02:00,2026-06-02T10:02:24.000+02:00
+287567030,Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend,.github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend.yml,active,2026-06-02T10:02:24.000+02:00,2026-06-02T10:02:24.000+02:00
+287784397,Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality Merge Now,.github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-merge-now.yml,active,2026-06-02T16:18:16.000+02:00,2026-06-02T16:18:16.000+02:00
+287784400,Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality Stop,.github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-stop.yml,active,2026-06-02T16:18:16.000+02:00,2026-06-02T16:18:16.000+02:00
+287784402,Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality,.github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality.yml,active,2026-06-02T16:18:16.000+02:00,2026-06-02T16:18:16.000+02:00
+287942995,Literature Campaign To Backtest,.github/workflows/literature-campaign-to-backtest.yml,active,2026-06-02T19:54:47.000+02:00,2026-06-02T19:54:47.000+02:00
+288260871,Concurrency Smoke 500 Jobs,.github/workflows/concurrency-smoke-500.yml,active,2026-06-03T07:11:48.000+02:00,2026-06-03T07:11:48.000+02:00
+288281132,SWR 20 ETF Proxy 2000 No Locked 360 Jobs,.github/workflows/swr-20-etf-proxy-2000-no-locked-360jobs.yml,active,2026-06-03T07:56:31.000+02:00,2026-06-03T07:56:31.000+02:00
+288427157,SWR Strict Final GT Initial 360 Jobs,.github/workflows/swr-strict-final-gt-initial-360jobs.yml,active,2026-06-03T11:43:26.000+02:00,2026-06-03T11:43:26.000+02:00
+288468232,SWR CPPI Corr95 360 Jobs,.github/workflows/swr-cppi-corr95-360jobs.yml,active,2026-06-03T12:39:14.000+02:00,2026-06-03T12:39:14.000+02:00
+288485964,SWR TSMOM Corr95 360 Jobs,.github/workflows/swr-tsmom-corr95-360jobs.yml,active,2026-06-03T13:07:55.000+02:00,2026-06-03T13:07:55.000+02:00
+288617403,SWR MultiAsset Corr95 MDD25 360 Jobs,.github/workflows/swr-multiasset-corr95-mdd25-360jobs.yml,active,2026-06-03T16:39:32.000+02:00,2026-06-03T16:39:32.000+02:00
+288692709,SWR Corr95 Feature Sweep MDD25 360 Jobs,.github/workflows/swr-corr95-feature-sweep-mdd25-360jobs.yml,active,2026-06-03T18:46:56.000+02:00,2026-06-03T18:46:56.000+02:00
+288738553,SWR Corr95 Drawdown Guard MDD25 360 Jobs,.github/workflows/swr-corr95-drawdown-guard-mdd25-360jobs.yml,active,2026-06-03T19:50:01.000+02:00,2026-06-03T19:50:01.000+02:00
+289013962,SWR MDD15 TrainOnly Corr95 360 Jobs,.github/workflows/swr-mdd15-trainonly-corr95-360jobs.yml,active,2026-06-04T07:28:22.000+02:00,2026-06-04T07:28:22.000+02:00
+289037140,SWR Path CPPI MDD15 TrainOnly Corr95 360 Jobs,.github/workflows/swr-path-cppi-mdd15-trainonly-corr95-360jobs.yml,active,2026-06-04T08:25:20.000+02:00,2026-06-04T08:25:20.000+02:00
+289129639,SWR Static Smooth MDD15 Corr95 360 Jobs,.github/workflows/swr-static-smooth-mdd15-corr95-360jobs.yml,active,2026-06-04T11:35:36.000+02:00,2026-06-04T11:35:36.000+02:00
+289139308,SWR Static Smooth HardStress MDD15 Corr95 360 Jobs,.github/workflows/swr-static-smooth-hardstress-mdd15-corr95-360jobs.yml,active,2026-06-04T11:54:55.000+02:00,2026-06-04T11:54:55.000+02:00
+289146742,SWR Regime Timing MDD15 Corr95 360 Jobs,.github/workflows/swr-regime-timing-mdd15-corr95-360jobs.yml,active,2026-06-04T12:10:07.000+02:00,2026-06-04T12:10:07.000+02:00
+289173394,SWR Floor Controller MDD15 Corr95 360 Jobs,.github/workflows/swr-floor-controller-mdd15-corr95-360jobs.yml,active,2026-06-04T13:07:06.000+02:00,2026-06-04T13:07:06.000+02:00
+289201256,SWR CashFloor Controller MDD15 Corr95 360 Jobs,.github/workflows/swr-cashfloor-controller-mdd15-corr95-360jobs.yml,active,2026-06-04T14:04:58.000+02:00,2026-06-04T14:04:58.000+02:00
+289232316,SWR Path CPPI Refined MDD15 Corr95 360 Jobs,.github/workflows/swr-path-cppi-refined-mdd15-corr95-360jobs.yml,active,2026-06-04T15:02:06.000+02:00,2026-06-04T15:02:06.000+02:00
+289275698,SWR Path CPPI Expanded Universe MDD15 Corr95 360 Jobs,.github/workflows/swr-path-cppi-expanded-universe-mdd15-corr95-360jobs.yml,active,2026-06-04T16:19:54.000+02:00,2026-06-04T16:19:54.000+02:00
+289320699,SWR InvVol Guard MDD15 Corr95 360 Jobs,.github/workflows/swr-invvol-guard-mdd15-corr95-360jobs.yml,active,2026-06-04T17:38:07.000+02:00,2026-06-04T17:38:07.000+02:00
+289354937,SWR Path CPPI Focused MDD15 Corr95 360 Jobs,.github/workflows/swr-path-cppi-focused-mdd15-corr95-360jobs.yml,active,2026-06-04T18:41:06.000+02:00,2026-06-04T18:41:06.000+02:00
+289385323,SWR Path CPPI Focused CV MDD15 Corr95 360 Jobs,.github/workflows/swr-path-cppi-focused-cv-mdd15-corr95-360jobs.yml,active,2026-06-04T19:45:41.000+02:00,2026-06-04T19:45:41.000+02:00
+289416335,SWR Daily Tactical MDD15 Corr95 360 Jobs,.github/workflows/swr-daily-tactical-mdd15-corr95-360jobs.yml,active,2026-06-04T20:52:03.000+02:00,2026-06-04T20:52:03.000+02:00
+289622756,SPY Weekly LongShort Sharpe2 355 Jobs,.github/workflows/spy-weekly-longshort-sharpe2-355jobs.yml,active,2026-06-05T07:13:22.000+02:00,2026-06-05T07:13:22.000+02:00
+290276574,SPY Daily Direction Accuracy 355 Jobs,.github/workflows/spy-daily-direction-accuracy-355jobs.yml,active,2026-06-06T11:20:29.000+02:00,2026-06-06T11:20:29.000+02:00
+290810523,Literature Sharpe2 Paper Variants 360 Jobs,.github/workflows/literature-sharpe2-paper-variants-360jobs.yml,active,2026-06-07T16:37:06.000+02:00,2026-06-07T16:37:06.000+02:00
+290830496,Paper SPY Weekly Sharpe2 360 Jobs,.github/workflows/paper-spy-weekly-sharpe2-360jobs.yml,active,2026-06-07T17:30:57.000+02:00,2026-06-07T17:30:57.000+02:00
+290847693,Paper SPY Daily Event Sharpe2 360 Jobs,.github/workflows/paper-spy-daily-event-sharpe2-360jobs.yml,active,2026-06-07T18:11:21.000+02:00,2026-06-07T18:11:21.000+02:00
+290866132,Paper AQR Factor Sharpe2 360 Stages,.github/workflows/paper-aqr-factor-sharpe2-360stages.yml,active,2026-06-07T19:08:36.000+02:00,2026-06-07T19:08:36.000+02:00
+290883386,Paper Operable Ensemble Sharpe2 360 Stages,.github/workflows/paper-operable-ensemble-sharpe2-360stages.yml,active,2026-06-07T20:07:05.000+02:00,2026-06-07T20:07:05.000+02:00
+290896235,Paper CBOE Sentiment Sharpe2 360 Jobs,.github/workflows/paper-cboe-sentiment-sharpe2-360jobs.yml,active,2026-06-07T20:51:57.000+02:00,2026-06-07T20:51:57.000+02:00
+290910798,Paper Sharpe2 Overnight 360 Jobs,.github/workflows/paper-sharpe2-overnight-360jobs.yml,active,2026-06-07T21:45:43.000+02:00,2026-06-07T21:45:43.000+02:00
+291182451,Paper SPY Weekly Sharpe2 Quick 360 Jobs,.github/workflows/paper-spy-weekly-sharpe2-quick-360jobs.yml,active,2026-06-08T10:41:16.000+02:00,2026-06-08T10:41:16.000+02:00
+291456200,Paper SPY Weekly Regime Sharpe2 Quick 360 Jobs,.github/workflows/paper-spy-weekly-regime-sharpe2-quick-360jobs.yml,active,2026-06-08T18:06:05.000+02:00,2026-06-08T18:06:05.000+02:00
+291507685,Paper SPY Monthly Sharpe2 Quick 360 Jobs,.github/workflows/paper-spy-monthly-sharpe2-quick-360jobs.yml,active,2026-06-08T19:37:38.000+02:00,2026-06-08T19:37:38.000+02:00
+291592222,Paper Sharpe2 Nightly 30min Until 0630,.github/workflows/paper-sharpe2-nightly-30min-until-0630.yml,active,2026-06-08T22:09:17.000+02:00,2026-06-08T22:09:17.000+02:00
+291815617,SPY Daily Direction Funnel Top All Features 4 Waves 1h,.github/workflows/spy-daily-direction-funnel-top-all-features-4waves-1h.yml,active,2026-06-09T07:51:16.000+02:00,2026-06-09T07:51:16.000+02:00
+292336646,Paper Sharpe2 Nightly Novel 30min Until 0630,.github/workflows/paper-sharpe2-nightly-novel-30min-until-0630.yml,active,2026-06-09T21:32:43.000+02:00,2026-06-09T21:32:43.000+02:00
+292950796,Calmar GT1 PValue Bootstrap 173495,.github/workflows/calmar-gt1-pvalue-bootstrap-173495.yml,active,2026-06-10T14:36:36.000+02:00,2026-06-10T14:36:36.000+02:00
+294915235,SPY monthly annual dominance 360 jobs,.github/workflows/spy-monthly-annual-dominance-360jobs.yml,active,2026-06-12T20:39:39.000+02:00,2026-06-12T20:39:39.000+02:00
+295685692,SPY 15m Support Resistance 355 Jobs,.github/workflows/spy-15m-support-resistance-355jobs.yml,active,2026-06-14T11:07:08.000+02:00,2026-06-14T11:07:08.000+02:00
+295705671,SPY 15m Support Resistance Free Max Retest,.github/workflows/spy-15m-support-resistance-2015-retest.yml,active,2026-06-14T12:14:45.000+02:00,2026-06-14T13:02:45.000+02:00
+295743329,Free 15m Equity Universe Download,.github/workflows/free-15m-equity-universe-download.yml,active,2026-06-14T13:56:14.000+02:00,2026-06-14T13:56:14.000+02:00
+295751454,Free 15m S/R Equity Universe Feature Search,.github/workflows/sr-15m-equity-universe-feature-search.yml,active,2026-06-14T14:21:01.000+02:00,2026-06-14T14:21:01.000+02:00
+295784440,SP500 Only Outperforming Study Finder,.github/workflows/sp500-only-outperforming-study-finder.yml,active,2026-06-14T15:54:19.000+02:00,2026-06-14T15:54:19.000+02:00
+295803532,Body Wick S/R 15m 20 Equities Plus SPY Backtest,.github/workflows/body-wick-sr-15m-21symbols-backtest.yml,active,2026-06-14T16:44:42.000+02:00,2026-06-14T16:44:42.000+02:00
+296525584,Body Wick S/R 15m Overnight Age Sweep,.github/workflows/body-wick-sr-15m-overnight-age-sweep.yml,active,2026-06-15T22:12:59.000+02:00,2026-06-15T22:12:59.000+02:00
+296724240,Body Wick Selected Prior Period,.github/workflows/body-wick-selected-prior-period.yml,active,2026-06-16T07:23:26.000+02:00,2026-06-16T07:23:26.000+02:00
+296732659,SP500 26 Paper Replication Backtest,.github/workflows/sp500-26-paper-replication-backtest.yml,active,2026-06-16T07:42:38.000+02:00,2026-06-16T07:42:38.000+02:00
+296913129,SP500 26 Paper Locked Strategy Report,.github/workflows/sp500-26-paper-locked-strategy-report.yml,active,2026-06-16T13:43:57.000+02:00,2026-06-16T13:43:57.000+02:00
+296976463,SPY Weekly LongShort Locked Strategy Report,.github/workflows/spy-weekly-longshort-locked-strategy-report.yml,active,2026-06-16T15:34:53.000+02:00,2026-06-16T15:34:53.000+02:00
+297159103,SP500 Event Study Factory Core 1950,.github/workflows/sp500-event-study-factory-core1950.yml,active,2026-06-16T21:08:20.000+02:00,2026-06-16T21:08:20.000+02:00
+297163543,SPY Weekly No-Leverage 50 Ideas Nightly Until 0700,.github/workflows/spy-weekly-noleverage-50ideas-nightly-until-0700.yml,active,2026-06-16T21:17:29.000+02:00,2026-06-16T21:17:29.000+02:00
+297179884,SPY Weekly No-Leverage 50 Ideas V2 Nightly Until 0700,.github/workflows/spy-weekly-noleverage-50ideas-v2-nightly-until-0700.yml,active,2026-06-16T21:50:45.000+02:00,2026-06-16T21:50:45.000+02:00
+298484021,SPY Weekly No-Leverage Global Random Nightly Until 0700,.github/workflows/spy-weekly-noleverage-global-random-nightly-until-0700.yml,active,2026-06-18T21:36:52.000+02:00,2026-06-18T21:36:52.000+02:00
+299331767,SPY Weekly Global Random Yearly Outperformance,.github/workflows/spy-weekly-global-random-yearly-outperformance.yml,active,2026-06-20T14:46:58.000+02:00,2026-06-20T14:46:58.000+02:00
+299350108,SPY Weekly Global Random Train Yearly Calmar,.github/workflows/spy-weekly-global-random-train-yearly-calmar.yml,active,2026-06-20T15:50:34.000+02:00,2026-06-20T15:50:34.000+02:00
+299361462,SPY Weekly Global Random Train Yearly Calmar Beat Counts,.github/workflows/spy-weekly-global-random-train-yearly-calmar-beat-counts.yml,active,2026-06-20T16:27:56.000+02:00,2026-06-20T16:27:56.000+02:00
+299423069,Minervini SEPA MarketCap 2B Daily Screener,.github/workflows/minervini-sepa-marketcap2b-daily-screener.yml,active,2026-06-20T19:42:57.000+02:00,2026-06-20T19:42:57.000+02:00
+299435895,Minervini SEPA USA Europe 50M Daily Screener,.github/workflows/minervini-sepa-usa-europe-50m-daily-screener.yml,active,2026-06-20T20:28:10.000+02:00,2026-06-20T20:28:10.000+02:00
+299653875,SPY Monthly Trend Following Paper21 355 Jobs,.github/workflows/spy-monthly-trend-following-paper21-355jobs.yml,active,2026-06-21T12:10:13.000+02:00,2026-06-21T12:10:13.000+02:00
+299665383,SPY Monthly TF21 MA10 Locked Table,.github/workflows/spy-monthly-tf21-ma10-locked-table.yml,active,2026-06-21T12:52:06.000+02:00,2026-06-21T12:52:06.000+02:00
+299820555,.github/workflows/free-global-yahoo-daily-data-lake.yml,.github/workflows/free-global-yahoo-daily-data-lake.yml,active,2026-06-21T21:32:31.000+02:00,2026-06-21T21:32:31.000+02:00
+300066557,Global Technical Buy Indicator 355 Jobs,.github/workflows/global-technical-buy-indicator-355jobs.yml,active,2026-06-22T11:18:48.000+02:00,2026-06-22T11:18:48.000+02:00
+300217510,TradingView Minervini Indicator Small,.github/workflows/tradingview-minervini-indicator-small.yml,active,2026-06-22T15:51:49.000+02:00,2026-06-22T15:51:49.000+02:00
+300433905,Global Technical Buy Indicator Final Recheck,.github/workflows/global-technical-buy-indicator-final-recheck.yml,active,2026-06-22T22:30:52.000+02:00,2026-06-22T22:30:52.000+02:00
+300460001,Global Technical Buy Indicator Final Recheck Parallel,.github/workflows/global-technical-buy-indicator-final-recheck-parallel.yml,active,2026-06-22T23:32:35.000+02:00,2026-06-22T23:32:35.000+02:00
+301040582,Global Technical Buy Indicator External Pack 360 Jobs,.github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml,active,2026-06-23T21:05:48.000+02:00,2026-06-23T21:05:48.000+02:00
+302572659,.github/workflows/global-technical-buy-indicator-external-pack-1800jobs.yml,.github/workflows/global-technical-buy-indicator-external-pack-1800jobs.yml,active,2026-06-26T09:24:24.000+02:00,2026-06-26T09:24:24.000+02:00
+303595841,Global Technical Buy Indicator V5 Event First Smoke,.github/workflows/global-technical-buy-indicator-v5-smoke.yml,active,2026-06-28T16:18:14.000+02:00,2026-06-28T16:18:14.000+02:00
+311819876,Stock Protocol 36 Tests 360 Jobs,.github/workflows/stock-protocol-36-tests-360jobs.yml,active,2026-07-12T20:14:49.000+02:00,2026-07-12T20:25:12.000+02:00
+313475704,Stock Protocol 36 Tests Finalize Recovery,.github/workflows/stock-protocol-36-tests-finalize-recovery.yml,active,2026-07-15T07:31:42.000+02:00,2026-07-15T07:31:42.000+02:00
+314400049,Stock Protocol Scientific Tests,.github/workflows/stock-protocol-scientific-tests.yml,active,2026-07-16T14:11:41.000+02:00,2026-07-16T14:11:41.000+02:00
+314481404,Stock Protocol Scientific Rebuild 360 Jobs,.github/workflows/stock-protocol-scientific-rebuild-360jobs.yml,active,2026-07-16T16:16:00.000+02:00,2026-07-16T16:16:00.000+02:00
+314493491,Stock Protocol Scientific Full Suite,.github/workflows/stock-protocol-scientific-full-suite.yml,active,2026-07-16T16:33:46.000+02:00,2026-07-16T16:33:46.000+02:00
+314524305,Stock Protocol Scientific Recovery 360 Jobs,.github/workflows/stock-protocol-scientific-recovery-360jobs.yml,active,2026-07-16T17:18:46.000+02:00,2026-07-16T17:18:46.000+02:00
+314623230,Stock Protocol Scientific Finalize Existing Run,.github/workflows/stock-protocol-scientific-finalize-existing-run.yml,active,2026-07-16T20:00:17.000+02:00,2026-07-16T20:00:17.000+02:00
+314687217,Stock Protocol Scientific Full Universe 360 Jobs,.github/workflows/stock-protocol-scientific-full-universe-360jobs.yml,active,2026-07-16T21:58:41.000+02:00,2026-07-16T21:58:41.000+02:00
+317461210,Stock Protocol Original 290 Event Study Core,.github/workflows/_stock-protocol-original-290-event-study.yml,active,2026-07-21T15:40:45.000+02:00,2026-07-21T15:40:45.000+02:00
+317461417,Stock Protocol Original 290 Opportunity Event Study,.github/workflows/stock-protocol-original-290-event-study.yml,active,2026-07-21T15:40:57.000+02:00,2026-07-21T15:40:57.000+02:00
+317703182,Stock Protocol Original 290 Opportunity Event Study Recovery,.github/workflows/stock-protocol-original-290-event-study-recovery.yml,active,2026-07-21T22:11:01.000+02:00,2026-07-21T22:11:01.000+02:00
+317985293,Stock Protocol Original 290 Opportunity Event Study Merge Only,.github/workflows/stock-protocol-original-290-event-study-merge-only.yml,active,2026-07-22T09:32:32.000+02:00,2026-07-22T09:32:32.000+02:00
+318127431,Stock Protocol Original 290 Event Study Checkpointed,.github/workflows/stock-protocol-original-290-event-study-checkpointed.yml,active,2026-07-22T13:53:37.000+02:00,2026-07-22T13:53:37.000+02:00
+320098103,Stock Protocol Original 290 Event Study Finalize Recovery,.github/workflows/stock-protocol-original-290-event-study-finalize-recovery.yml,active,2026-07-25T07:35:52.000+02:00,2026-07-25T07:35:52.000+02:00
+320205203,GitHub Performance CI,.github/workflows/github-performance-ci.yml,active,2026-07-25T12:35:14.000+02:00,2026-07-25T15:49:02.000+02:00
+320254506,GitHub Performance Policy,.github/workflows/github-performance-policy.yml,active,2026-07-25T14:16:23.000+02:00,2026-07-25T15:49:03.000+02:00
+320290657,Aurora Future Run v3,.github/workflows/_aurora-future-run-v3.yml,active,2026-07-25T15:49:02.000+02:00,2026-07-25T15:49:02.000+02:00
+320290659,GitHub Performance Benchmark,.github/workflows/github-performance-benchmark.yml,active,2026-07-25T15:49:02.000+02:00,2026-07-25T15:49:02.000+02:00
+320290661,GitHub Performance Reference,.github/workflows/github-performance-reference.yml,active,2026-07-25T15:49:03.000+02:00,2026-07-25T15:49:03.000+02:00
+320727704,Aurora Merge Level V3,.github/workflows/_aurora-merge-level-v3.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
+320727705,Aurora Recovery Plan v3,.github/workflows/_aurora-recovery-plan-v3.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
+320727707,Aurora Retry Shard v3,.github/workflows/_aurora-retry-shard-v3.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
+320727709,GitHub Performance Merge Only,.github/workflows/github-performance-merge-only.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
+320727710,GitHub Performance Replan,.github/workflows/github-performance-replan.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
+320727711,GitHub Performance Workload Validation,.github/workflows/github-performance-validation.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00

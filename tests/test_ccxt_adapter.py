@@ -321,8 +321,9 @@ def test_ccxt_broker_api_keys_from_env_never_logged(fake_ccxt, monkeypatch,
     )
     assert secret_key not in log_text
     assert secret_secret not in log_text
-    # The env var NAMES are fine to log; the values are not.
-    assert "QF_CCXT_BINANCE_KEY" in log_text or len(log_text) >= 0
+    # Credential-variable names are deployment details and are omitted too.
+    assert "QF_CCXT_BINANCE_KEY" not in log_text
+    assert "QF_CCXT_BINANCE_SECRET" not in log_text
 
 
 # ---------------------------------------------------------------------------

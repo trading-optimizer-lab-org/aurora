@@ -40,7 +40,7 @@
     },
     {
       "path": ".github/workflows/concurrency-smoke-500.yml",
-      "sha256": "25fe8efbe93da526c3edd0a3738aa74ccad2eda2807c8bcfea21a7397b239f1e"
+      "sha256": "bb63a9800336759341df870777dea185171faae72641a49e62e2ddbbe7bc4f90"
     },
     {
       "path": ".github/workflows/docs.yml",
@@ -52,15 +52,15 @@
     },
     {
       "path": ".github/workflows/global-technical-buy-indicator-355jobs.yml",
-      "sha256": "6910fb3ad03ce897926aa09fc95672cebbca168b05ff19bf5ee85c0a59238d18"
+      "sha256": "f08a69868ca047aa4af9a4905443b2edebcd76dbe5872803831f7a9a252774fc"
     },
     {
       "path": ".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml",
-      "sha256": "c6553406cf3a7752f0b86aefe59a12babba88ba4a2297806a4fbad52e02fbb46"
+      "sha256": "5a39e78ed92b03f3b7b844bc45f7294b9e076d8b5534518461a499c03a495eeb"
     },
     {
       "path": ".github/workflows/global-technical-buy-indicator-final-recheck-parallel.yml",
-      "sha256": "b011532246a3f332e1fb815c70524a4430ea692ed55b2e9b2744dd46e3e889ee"
+      "sha256": "a3d5ae2178da8d4cc510092ddb7b540cd71c6cc6e7dfaaafb608da3e369ebd90"
     },
     {
       "path": ".github/workflows/global-technical-buy-indicator-final-recheck.yml",
@@ -68,7 +68,7 @@
     },
     {
       "path": ".github/workflows/lint.yml",
-      "sha256": "dfcdd69aab2061bd59d783a0fde40a230c1689ab9a9dd979cfa0eb3e5b6d2507"
+      "sha256": "5d5dc7bca97497a2ff79964c532a3ff0a2c260b18cc958f811194c6242fc4fdc"
     },
     {
       "path": ".github/workflows/literature-campaign-to-backtest.yml",
@@ -92,11 +92,11 @@
     },
     {
       "path": ".github/workflows/minervini-sepa-marketcap2b-daily-screener.yml",
-      "sha256": "e6f22f1364c0d333c7cc2c77a7f73f71bcf58a95f55353ce087ecc8e88be69eb"
+      "sha256": "0b2a1d3a22be5a7705551fa72863f537fb041188b9d6e597f835e4e060d932e6"
     },
     {
       "path": ".github/workflows/minervini-sepa-usa-europe-50m-daily-screener.yml",
-      "sha256": "0dbee58a291ca161340514e436b33acee94f58b0a0b9bbdcdbad658a000b0e97"
+      "sha256": "5b23678b3388ca0ec83040acdb7f05eb57fded0f38563b3d0f893a497aabcdfe"
     },
     {
       "path": ".github/workflows/paper-aqr-factor-sharpe2-360stages.yml",
@@ -144,11 +144,11 @@
     },
     {
       "path": ".github/workflows/property-thorough.yml",
-      "sha256": "1c67a46e7854d690413fa3ac72a405b8e40f189511652fa049c228474154b837"
+      "sha256": "383659d8eaf898df0d264411b162e4047a94cb13ace31526c6dc5d4280640103"
     },
     {
       "path": ".github/workflows/security.yml",
-      "sha256": "365ec0a42dfd7ff92c005f8ddd86b06f74ae1cb4df34685800498217bcb5ff90"
+      "sha256": "1adfa87e7b08fcb7b13c1a0a701a2559d3c1daaf8b280caeddc6d2c657687696"
     },
     {
       "path": ".github/workflows/sp500-26-paper-locked-strategy-report.yml",
@@ -180,7 +180,7 @@
     },
     {
       "path": ".github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml",
-      "sha256": "28310924a60c0e331279572eb4be2de6151f1642066061ba54e590a4b1b5be5b"
+      "sha256": "747f6e892e3fa8769de94e3cba6a3e966e8f3144136e0d99d5433ffbc949929e"
     },
     {
       "path": ".github/workflows/spy-15m-support-resistance-2015-retest.yml",
@@ -236,7 +236,7 @@
     },
     {
       "path": ".github/workflows/spy-weekly-noleverage-50ideas-v2-nightly-until-0700.yml",
-      "sha256": "710dbea9d525990bb49c9a22389be3c29194df1fde11ab2fd3f4e3a847384a08"
+      "sha256": "ee3b58c39ee452a6bea23325064d4f67f09906d21a7e0637cb7c807be268c087"
     },
     {
       "path": ".github/workflows/spy-weekly-noleverage-global-random-nightly-until-0700.yml",
@@ -360,15 +360,15 @@
     },
     {
       "path": ".github/workflows/tests.yml",
-      "sha256": "f2922ef8844e84ee3140146ce38346e82143b619e06238597f80a8ba3f844c7c"
+      "sha256": "9d9a893c6504f7d24843913d9b668be790c60429b7d3cf149efe4a37db2d0836"
     },
     {
       "path": ".github/workflows/tradingview-minervini-indicator-small.yml",
-      "sha256": "40d595221e08b7d19b62325227e857a8f0ae10775c78462676f3540a8584043e"
+      "sha256": "4d81f6e740a1b3b13c5483b6170d8ff2494a8e55ed56a855699f10ef02d8d745"
     },
     {
       "path": ".github/workflows/typecheck.yml",
-      "sha256": "288643e2e1549a47747fcf1d5140041d61e230dc756c919b71e9257640f2da45"
+      "sha256": "b8fedf60ca30643f72cf9d74e4699ea6e921c5c127a01f4a74935854bbde8316"
     },
     {
       "path": ".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml",
@@ -396,7 +396,7 @@
     },
     {
       "path": ".github/workflows/wheel.yml",
-      "sha256": "e4c8a81f9503855748c772ca65b37c948fa8efc9d30b40b61e926e39ac82da77"
+      "sha256": "bf5fc89d8058a24ce395bcdb11b69372a4ea4ce6e045df6a61bef3a98b350ca4"
     }
   ]
 }

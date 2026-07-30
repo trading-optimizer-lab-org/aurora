@@ -1,5 +1,8 @@
 name: Minervini SEPA USA Europe 50M Daily Screener
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

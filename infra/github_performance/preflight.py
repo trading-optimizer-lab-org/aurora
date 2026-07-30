@@ -550,12 +550,102 @@ def load_legacy_workflow_allowlist(
     return allowlist
 
 
+def load_legacy_workflow_migrations(
+    path: Path | None = None,
+    repo_root: Path | None = None,
+) -> dict[str, dict[str, str]]:
+    """Load explicit, receipt-bound changes to frozen legacy workflows."""
+
+    if path is None:
+        payload = _package_json("config/legacy_workflow_migrations.json")
+        root = Path.cwd() if repo_root is None else Path(repo_root)
+    else:
+        migration_path = Path(path)
+        payload = json.loads(migration_path.read_text(encoding="utf-8"))
+        root = (
+            Path(repo_root)
+            if repo_root is not None
+            else migration_path.resolve().parents[1]
+        )
+    if payload.get("schema_version") != "1":
+        raise ValueError("legacy workflow migration schema is unsupported")
+    authorization = payload.get("authorization_receipt")
+    if not isinstance(authorization, Mapping):
+        raise ValueError("legacy workflow migration authorization is missing")
+    receipt_path = authorization.get("path")
+    receipt_digest = authorization.get("sha256")
+    actor_id = authorization.get("actor_id")
+    scope = authorization.get("scope")
+    if (
+        not isinstance(receipt_path, str)
+        or not receipt_path.startswith("docs/readiness/")
+        or not isinstance(receipt_digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", receipt_digest)
+        or not isinstance(actor_id, str)
+        or not actor_id
+        or not isinstance(scope, str)
+        or not scope
+    ):
+        raise ValueError("legacy workflow migration authorization is invalid")
+    receipt = (root.resolve() / receipt_path).resolve()
+    if not receipt.is_relative_to(root.resolve()) or not receipt.is_file():
+        raise ValueError("legacy workflow migration receipt is unavailable")
+    receipt_bytes = receipt.read_bytes()
+    canonical_receipt = receipt_bytes.replace(b"\r\n", b"\n").replace(
+        b"\r", b"\n"
+    )
+    if hashlib.sha256(canonical_receipt).hexdigest() != receipt_digest:
+        raise ValueError("legacy workflow migration receipt digest mismatches")
+
+    rows = payload.get("migrations")
+    if not isinstance(rows, list):
+        raise ValueError("legacy workflow migration rows are missing")
+    migrations: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("legacy workflow migration row is invalid")
+        workflow_path = row.get("path")
+        previous_digest = row.get("previous_sha256")
+        replacement_digest = row.get("replacement_sha256")
+        reason = row.get("reason")
+        if (
+            not isinstance(workflow_path, str)
+            or not workflow_path.startswith(".github/workflows/")
+            or not isinstance(previous_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", previous_digest)
+            or not isinstance(replacement_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", replacement_digest)
+            or previous_digest == replacement_digest
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            raise ValueError("legacy workflow migration entry is invalid")
+        if workflow_path in migrations:
+            raise ValueError("duplicate legacy workflow migration path")
+        migrations[workflow_path] = {
+            "previous_sha256": previous_digest,
+            "replacement_sha256": replacement_digest,
+            "reason": reason,
+            "authorization_actor_id": actor_id,
+            "authorization_scope": scope,
+            "authorization_receipt_path": receipt_path,
+            "authorization_receipt_sha256": receipt_digest,
+        }
+    return migrations
+
+
 def classify_workflow(
     path: Path,
     allowlist: Mapping[str, str],
     repo_root: Path | None = None,
+    migrations: Mapping[str, Mapping[str, str]] | None = None,
 ) -> str:
-    """Classify a workflow by its adoption-time path and exact bytes."""
+    """Classify a workflow by path and canonical repository bytes.
+
+    Git stores text workflows with LF line endings, while a Windows checkout
+    may materialize the same file with CRLF. Normalize line endings only; every
+    other byte remains covered by the adoption digest.
+    """
 
     workflow_path = Path(path).resolve()
     root = (
@@ -570,8 +660,19 @@ def classify_workflow(
     expected = allowlist.get(relative)
     if expected is None:
         return "future"
-    observed = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
-    return "legacy" if observed == expected else "modified_legacy"
+    workflow_bytes = workflow_path.read_bytes()
+    canonical_bytes = workflow_bytes.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    observed = hashlib.sha256(canonical_bytes).hexdigest()
+    if observed == expected:
+        return "legacy"
+    migration = (migrations or {}).get(relative)
+    if (
+        migration is not None
+        and migration.get("previous_sha256") == expected
+        and migration.get("replacement_sha256") == observed
+    ):
+        return "migrated_legacy"
+    return "modified_legacy"
 
 
 def _iter_scalar_strings(value: Any) -> list[str]:
@@ -637,6 +738,7 @@ def validate_workflow_policy(
     path: Path,
     repo_root: Path,
     allowlist: Mapping[str, str] | None = None,
+    migrations: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[Violation]:
     """Apply grandfathering and the future heavy-workflow framework rule."""
 
@@ -645,8 +747,13 @@ def validate_workflow_policy(
         if allowlist is not None
         else load_legacy_workflow_allowlist()
     )
-    classification = classify_workflow(path, active_allowlist, repo_root)
-    if classification == "legacy":
+    classification = classify_workflow(
+        path,
+        active_allowlist,
+        repo_root,
+        migrations,
+    )
+    if classification in {"legacy", "migrated_legacy"}:
         return []
     if classification == "modified_legacy":
         return [

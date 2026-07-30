@@ -1,18 +1,20 @@
 ﻿name: typecheck
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
   pull_request:
 
-# R63. mypy is in the [dev] extra but never ran in CI. Local verification
-# is clean across 410 source files; the same command runs here as a
-# blocking gate.
+# Full-project mypy debt is frozen from run 30484372251. The gate rejects any
+# new path/code/message fingerprint while allowing old errors to be reduced.
 jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -21,6 +23,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,ga]"
       - name: Run mypy
-        # No `aurora/` package subdir in this layout (Layout B); mypy
-        # walks the configured packages from `pyproject.toml`.
-        run: python -m mypy .
+        run: >-
+          python scripts/check_mypy_baseline.py
+          --baseline config/mypy_error_baseline.json
+          --report mypy_report.txt
+
+      - name: Upload full mypy debt report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mypy-debt-report
+          path: mypy_report.txt
+          if-no-files-found: error
+          retention-days: 30

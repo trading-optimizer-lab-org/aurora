@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path as _AuroraPolicyPath
+from typing import Mapping
 
 _AURORA_POLICY_ROOT = _AuroraPolicyPath(__file__).resolve().parents[1]
 if str(_AURORA_POLICY_ROOT) not in sys.path:
@@ -12,10 +13,17 @@ try:
 except ModuleNotFoundError:
     import os
 
-    def require_github_actions_or_explicit_local_permission() -> None:
-        if os.environ.get("GITHUB_ACTIONS") == "true":
+    def require_github_actions_or_explicit_local_permission(
+        run_kind: str | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> None:
+        active_environ = os.environ if environ is None else environ
+        if active_environ.get("GITHUB_ACTIONS") == "true":
             return
-        if os.environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT") == "USER_REQUESTED_LOCAL_RUN_THIS_TURN":
+        if (
+            active_environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT")
+            == "USER_REQUESTED_LOCAL_RUN_THIS_TURN"
+        ):
             return
         raise RuntimeError("Research runs must execute in GitHub Actions unless explicitly allowed this turn.")
 

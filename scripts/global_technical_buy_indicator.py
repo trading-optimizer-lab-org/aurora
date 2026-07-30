@@ -2023,7 +2023,10 @@ def recheck_batches(*, candidate_count: int, batch_size: int) -> list[dict[str, 
 
 def _candidate_id(config: IndicatorConfig, stage: int, sequence: int) -> str:
     payload = {"config": config.to_dict(), "stage": int(stage), "sequence": int(sequence)}
-    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha1(
+        json.dumps(payload, sort_keys=True).encode("utf-8"),
+        usedforsecurity=False,
+    ).hexdigest()[:16]
     return f"gtbi_s{stage:03d}_{digest}"
 
 
