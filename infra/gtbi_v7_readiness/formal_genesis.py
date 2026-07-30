@@ -9,9 +9,7 @@ from typing import Any
 
 from infra.gtbi_v7_readiness.canonical import domain_digest
 from infra.gtbi_v7_readiness.controller import (
-    validate_attempt_event_chain,
     validate_current_readiness_records,
-    validate_task_event_chain,
 )
 from infra.gtbi_v7_readiness.genesis import (
     build_initial_records,
@@ -374,7 +372,7 @@ def write_formal_genesis_records(repository_root: Path) -> list[Path]:
 def validate_formal_genesis_records(
     repository_root: Path,
 ) -> dict[str, Any]:
-    """Require exact current projections and valid append-only chains."""
+    """Require exact PR-1 evidence inside a valid append-only current state."""
     root = repository_root.resolve()
     receipt = validate_pr1_merge_receipt(root)
     expected = build_formal_genesis_records(root)
@@ -382,6 +380,17 @@ def validate_formal_genesis_records(
     schema_by_filename = {
         schema.filename: schema for schema in RECORD_SCHEMAS
     }
+    validate_current_readiness_records(root)
+
+    actual: dict[str, list[dict[str, Any]]] = {
+        filename: (
+            read_csv(readiness / filename, schema_by_filename[filename])
+            if schema_by_filename[filename].record_format == "csv"
+            else read_jsonl(readiness / filename, schema_by_filename[filename])
+        )
+        for filename in MUTABLE_FILENAMES
+    }
+    normalized_expected: dict[str, list[dict[str, Any]]] = {}
     with tempfile.TemporaryDirectory(prefix="gtbi-v7-formal-genesis-") as temp:
         temporary = Path(temp)
         for filename in MUTABLE_FILENAMES:
@@ -389,38 +398,50 @@ def validate_formal_genesis_records(
             generated = temporary / filename
             if schema.record_format == "csv":
                 write_csv(generated, schema.fields, expected[filename])
+                normalized_expected[filename] = read_csv(generated, schema)
             else:
                 write_jsonl(generated, expected[filename])
-            if (readiness / filename).read_bytes() != generated.read_bytes():
-                raise FormalGenesisValidationError(
-                    f"{filename}: formal-genesis projection drift"
-                )
+                normalized_expected[filename] = read_jsonl(generated, schema)
 
-    task_events = read_jsonl(
-        readiness / "task_events.jsonl",
-        schema_by_filename["task_events.jsonl"],
-    )
-    attempts = read_jsonl(
-        readiness / "task_attempts.jsonl",
-        schema_by_filename["task_attempts.jsonl"],
-    )
-    validate_task_event_chain(task_events)
-    validate_attempt_event_chain(attempts)
-    statuses = read_csv(
-        readiness / "task_status.csv",
-        schema_by_filename["task_status.csv"],
-    )
-    completed = [row["id"] for row in statuses if row["status"] == "done"]
-    if completed != [TASK_ID]:
+    for filename in ("task_events.jsonl", "task_attempts.jsonl"):
+        expected_rows = normalized_expected[filename]
+        if actual[filename][: len(expected_rows)] != expected_rows:
+            raise FormalGenesisValidationError(
+                f"{filename}: formal-genesis history prefix drift"
+            )
+
+    for filename, identity in (
+        ("task_status.csv", "id"),
+        ("task_planning_inputs.csv", "task_id"),
+        ("task_delivery_manifest.csv", "task_id"),
+    ):
+        expected_row = next(
+            row
+            for row in normalized_expected[filename]
+            if row[identity] == TASK_ID
+        )
+        actual_row = next(
+            row for row in actual[filename] if row[identity] == TASK_ID
+        )
+        if actual_row != expected_row:
+            raise FormalGenesisValidationError(
+                f"{filename}: {TASK_ID} projection drift"
+            )
+
+    task_events = actual["task_events.jsonl"]
+    attempts = actual["task_attempts.jsonl"]
+    statuses = actual["task_status.csv"]
+    foundation = next(row for row in statuses if row["id"] == TASK_ID)
+    if foundation["status"] != "done":
         raise FormalGenesisValidationError(
-            f"unexpected completed tasks: {completed}"
+            f"{TASK_ID}: formal-genesis task is not done"
         )
     return {
         "formal_genesis_complete": True,
-        "completed_task_ids": completed,
+        "completed_task_ids": [TASK_ID],
         "merge_sha": receipt["merge_sha"],
-        "task_event_rows": len(task_events),
-        "task_attempt_rows": len(attempts),
+        "task_event_rows": len(normalized_expected["task_events.jsonl"]),
+        "task_attempt_rows": len(normalized_expected["task_attempts.jsonl"]),
     }
 
 
