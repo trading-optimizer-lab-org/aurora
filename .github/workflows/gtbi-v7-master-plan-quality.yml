@@ -27,6 +27,7 @@ on:
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_initial_readiness_records.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
+      - "scripts/reconcile_gtbi_v7_pr1_merge.py"
       - "scripts/generate_gtbi_v7_readiness_schemas.py"
       - "scripts/generate_gtbi_v7_role_registry_template.py"
       - "scripts/generate_gtbi_v7_scientific_asset_contract.py"
@@ -40,11 +41,14 @@ on:
       - "scripts/run_global_technical_buy_indicator_external_pack_shard.py"
       - "scripts/run_global_technical_buy_indicator_stage.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
+      - "scripts/validate_gtbi_v7_pr1_merge_reconciliation.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_initial_readiness_records.py"
       - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
+      - "tests/test_gtbi_v7_formal_genesis.py"
+      - "tests/test_gtbi_v7_post_merge.py"
       - "tests/test_gtbi_v7_readiness_records.py"
       - "tests/test_gtbi_v7_role_registry.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
@@ -77,6 +81,7 @@ on:
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_initial_readiness_records.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
+      - "scripts/reconcile_gtbi_v7_pr1_merge.py"
       - "scripts/generate_gtbi_v7_readiness_schemas.py"
       - "scripts/generate_gtbi_v7_role_registry_template.py"
       - "scripts/generate_gtbi_v7_scientific_asset_contract.py"
@@ -90,11 +95,14 @@ on:
       - "scripts/run_global_technical_buy_indicator_external_pack_shard.py"
       - "scripts/run_global_technical_buy_indicator_stage.py"
       - "scripts/validate_gtbi_v7_master_plan.py"
+      - "scripts/validate_gtbi_v7_pr1_merge_reconciliation.py"
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_initial_readiness_records.py"
       - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
+      - "tests/test_gtbi_v7_formal_genesis.py"
+      - "tests/test_gtbi_v7_post_merge.py"
       - "tests/test_gtbi_v7_readiness_records.py"
       - "tests/test_gtbi_v7_role_registry.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
@@ -143,8 +151,9 @@ jobs:
           python scripts/generate_gtbi_v7_role_registry_template.py
           python scripts/generate_gtbi_v7_scientific_asset_contract.py
           python scripts/generate_gtbi_v6_preservation_contract.py
-          python scripts/generate_gtbi_v7_initial_readiness_records.py
+          python scripts/reconcile_gtbi_v7_pr1_merge.py
           python scripts/generate_gtbi_v7_pre_genesis_status.py
+          python scripts/validate_gtbi_v7_pr1_merge_reconciliation.py
 
       - name: Reject generated drift
         run: |
@@ -184,6 +193,8 @@ jobs:
             tests/test_gtbi_v7_inventory.py \
             tests/test_gtbi_v7_initial_readiness_records.py \
             tests/test_gtbi_v7_identity_adr.py \
+            tests/test_gtbi_v7_post_merge.py \
+            tests/test_gtbi_v7_formal_genesis.py \
             tests/test_gtbi_v7_pre_genesis_status.py \
             tests/test_gtbi_v7_readiness_records.py \
             tests/test_gtbi_v7_role_registry.py \

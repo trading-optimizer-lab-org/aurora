@@ -13,6 +13,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, raw_sha256  # noqa: E402
+from infra.gtbi_v7_readiness.formal_genesis import (  # noqa: E402
+    validate_formal_genesis_records,
+)
 from infra.gtbi_v7_readiness.genesis import validate_initial_records  # noqa: E402
 
 READINESS = ROOT / "docs/readiness/gtbi-v7"
@@ -39,7 +42,16 @@ def _parse_utc(value: str) -> datetime:
 
 
 def generate() -> tuple[dict, dict]:
-    validate_initial_records(ROOT)
+    try:
+        formal_genesis = validate_formal_genesis_records(ROOT)
+    except ValueError:
+        validate_initial_records(ROOT)
+        formal_genesis = {
+            "formal_genesis_complete": False,
+            "completed_task_ids": [],
+            "task_event_rows": 110,
+            "task_attempt_rows": 0,
+        }
     quality = _read_json(READINESS / "master_plan_quality_status.json")
     inventory = _read_json(INVENTORY / "audit_metadata.json")
     owner_decisions = _read_json(READINESS / "owner_decisions.json")
@@ -76,22 +88,40 @@ def generate() -> tuple[dict, dict]:
 
     blockers: list[dict] = []
     status = {
-        "schema_version": "gtbi_v7_pre_genesis_status_v1",
+        "schema_version": "gtbi_v7_readiness_status_v2",
         "observed_at_utc": inventory["audited_at_utc"],
         "repository": inventory["repository"],
         "default_branch_sha": inventory["default_branch_sha"],
         "master_plan_sha256": quality["reviewed_master_plan_sha256"],
         "master_plan_quality_status": quality["status"],
-        "execution_status": "TECHNICAL_PREPARATION_ALLOWED",
-        "formal_genesis_complete": False,
+        "execution_status": (
+            "G0_EXECUTION_ALLOWED"
+            if formal_genesis["formal_genesis_complete"]
+            else "TECHNICAL_PREPARATION_ALLOWED"
+        ),
+        "formal_genesis_complete": formal_genesis[
+            "formal_genesis_complete"
+        ],
         "technical_preparation_may_continue": True,
         "initial_readiness_records": {
-            "status": "provisional_fail_closed",
-            "formal_genesis_effect": "none_until_merged_and_reconciled",
+            "status": (
+                "pr1_merge_reconciled"
+                if formal_genesis["formal_genesis_complete"]
+                else "provisional_fail_closed"
+            ),
+            "formal_genesis_effect": (
+                "PREV7-0000_done"
+                if formal_genesis["formal_genesis_complete"]
+                else "none_until_merged_and_reconciled"
+            ),
             "task_rows": 110,
             "gate_rows": 15,
-            "task_attempt_rows": 0,
-            "all_tasks_blocked": True,
+            "task_event_rows": formal_genesis["task_event_rows"],
+            "task_attempt_rows": formal_genesis["task_attempt_rows"],
+            "completed_task_ids": formal_genesis["completed_task_ids"],
+            "all_tasks_blocked": not formal_genesis[
+                "formal_genesis_complete"
+            ],
             "all_gates_red": True,
             "validated": True,
         },

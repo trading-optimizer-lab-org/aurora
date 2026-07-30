@@ -222,20 +222,23 @@ def test_inventory_github_actions_attempt_is_canonical_and_complete() -> None:
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
-def test_pre_genesis_status_allows_preparation_and_v6_is_verified() -> None:
+def test_readiness_status_records_formal_genesis_and_v6_is_verified() -> None:
     status, cancellation = generate()
-    assert status["execution_status"] == "TECHNICAL_PREPARATION_ALLOWED"
-    assert status["formal_genesis_complete"] is False
+    assert status["schema_version"] == "gtbi_v7_readiness_status_v2"
+    assert status["execution_status"] == "G0_EXECUTION_ALLOWED"
+    assert status["formal_genesis_complete"] is True
     assert status["v6_artifact"]["artifact_id"] == 8251391531
     assert status["v6_artifact"]["verified_available"] is True
     assert status["blockers"] == []
     assert status["initial_readiness_records"] == {
-        "status": "provisional_fail_closed",
-        "formal_genesis_effect": "none_until_merged_and_reconciled",
+        "status": "pr1_merge_reconciled",
+        "formal_genesis_effect": "PREV7-0000_done",
         "task_rows": 110,
         "gate_rows": 15,
-        "task_attempt_rows": 0,
-        "all_tasks_blocked": True,
+        "task_event_rows": 114,
+        "task_attempt_rows": 4,
+        "completed_task_ids": ["PREV7-0000"],
+        "all_tasks_blocked": False,
         "all_gates_red": True,
         "validated": True,
     }
