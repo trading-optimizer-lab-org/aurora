@@ -40,6 +40,10 @@ from scripts.generate_gtbi_v7_state_controller_contract import (
 from scripts.generate_gtbi_v7_state_controller_recovery_receipt import (
     build_receipt as build_recovery_receipt,
 )
+from scripts.generate_gtbi_v7_g0_transition_manifest import (
+    TASK_ORDER as G0_TASK_ORDER,
+    build_manifest as build_g0_manifest,
+)
 
 
 def _manifest() -> dict:
@@ -370,3 +374,84 @@ def test_state_controller_github_smoke_receipt_is_exact() -> None:
         "repository_state_mutated": False,
         "scientific_work_performed": False,
     }
+
+
+def test_g0_transition_manifest_is_exact_and_dependency_ordered() -> None:
+    root = Path(__file__).resolve().parents[1]
+    expected = build_g0_manifest()
+    path = (
+        root
+        / "docs/readiness/gtbi-v7/transition_manifests/"
+        "g0-owner-close-v1.json"
+    )
+    assert path.read_bytes() == canonical_bytes(expected) + b"\n"
+    assert tuple(
+        action["task_id"] for action in expected["task_actions"]
+    ) == G0_TASK_ORDER
+    assert expected["task_actions"][-1]["task_id"] == "PREV7-0011"
+    assert expected["task_actions"][-1]["target_status"] == "cancelled"
+    assert expected["task_actions"][-1][
+        "alternative_completion_receipt_set_digest_or_null"
+    ].startswith("sha256:")
+    assert expected["gate_actions"] == [
+        {
+            "gate_id": "G0",
+            "target_status": "green",
+            "selected_branch_id_or_null": "G0_BOOTSTRAP_DISPOSITION",
+            "inventory_snapshot_digest": (
+                "sha256:"
+                "3a93d655520be90818b81df0179cdbde35ca82aea4229292806619758ed300be"
+            ),
+            "evidence_bundle_digest": expected["gate_actions"][0][
+                "evidence_bundle_digest"
+            ],
+        }
+    ]
+    validate_transition_manifest(expected)
+
+
+def test_g0_transition_projects_all_tasks_branches_and_gate(
+    tmp_path: Path,
+) -> None:
+    repository = _repository_fixture(tmp_path)
+    projection = build_transition_projection(
+        repository,
+        build_g0_manifest(),
+        base_sha="b" * 40,
+    )
+    statuses = {
+        row["id"]: row["status"]
+        for row in projection.records["task_status.csv"]
+    }
+    assert all(
+        statuses[task_id] == (
+            "cancelled" if task_id == "PREV7-0011" else "done"
+        )
+        for task_id in G0_TASK_ORDER
+    )
+    gate = next(
+        row
+        for row in projection.records["gate_status.csv"]
+        if row["gate_id"] == "G0"
+    )
+    assert gate["status"] == "green"
+    branches = {
+        row["branch_id"]: row["selected_successor"]
+        for row in projection.records["conditional_branch_registry.csv"]
+        if row["branch_id"]
+        in {
+            "V6_FINAL_SOURCE",
+            "EMERGENCY_ESCROW",
+            "G0_BOOTSTRAP_DISPOSITION",
+        }
+    }
+    assert branches == {
+        "V6_FINAL_SOURCE": "remote_original_preserved",
+        "EMERGENCY_ESCROW": "normal_preservation_complete",
+        "G0_BOOTSTRAP_DISPOSITION": (
+            "g0_ready_alternative_completion"
+        ),
+    }
+    write_transition_projection(repository, projection)
+    validated = validate_current_readiness_records(repository)
+    assert set(G0_TASK_ORDER).issubset(validated["terminal_task_ids"])
