@@ -52,6 +52,9 @@ from scripts.generate_gtbi_v7_g1a_apply_reconciliation_receipt import (
     build_receipt as build_g1a_apply_receipt,
     validate_application as validate_g1a_application,
 )
+from scripts.generate_gtbi_v7_g1b_role_contract import (
+    build_manifest as build_g1b_manifest,
+)
 from scripts.generate_gtbi_v7_g0_transition_manifest import (
     TASK_ORDER as G0_TASK_ORDER,
     build_manifest as build_g0_manifest,
@@ -197,6 +200,20 @@ def _repository_fixture(tmp_path: Path) -> Path:
     shutil.copyfile(source / role_registry, destination / role_registry)
     write_initial_records(destination)
     write_formal_genesis_records(destination)
+    return destination
+
+
+def _current_repository_fixture(tmp_path: Path) -> Path:
+    source = Path(__file__).resolve().parents[1]
+    destination = tmp_path / "repository"
+    shutil.copytree(
+        source / "docs/plans",
+        destination / "docs/plans",
+    )
+    shutil.copytree(
+        source / "docs/readiness/gtbi-v7",
+        destination / "docs/readiness/gtbi-v7",
+    )
     return destination
 
 
@@ -484,6 +501,33 @@ def test_g1a_apply_receipt_is_canonical_and_reconciled() -> None:
         "scientific_work_performed": False,
         "state_merged": True,
     }
+
+
+def test_g1b_transition_projects_only_role_task_and_gate(
+    tmp_path: Path,
+) -> None:
+    repository = _current_repository_fixture(tmp_path)
+    projection = build_transition_projection(
+        repository,
+        build_g1b_manifest(),
+        base_sha="c" * 40,
+    )
+    statuses = {
+        row["id"]: row["status"]
+        for row in projection.records["task_status.csv"]
+    }
+    assert statuses["PREV7-0201"] == "done"
+    assert statuses["PREV7-0202"] == "blocked"
+    gate = next(
+        row
+        for row in projection.records["gate_status.csv"]
+        if row["gate_id"] == "G1B"
+    )
+    assert gate["status"] == "green"
+    write_transition_projection(repository, projection)
+    validated = validate_current_readiness_records(repository)
+    assert "PREV7-0201" in validated["terminal_task_ids"]
+    assert "PREV7-0202" not in validated["terminal_task_ids"]
 
 
 def test_g0_transition_manifest_is_exact_and_dependency_ordered() -> None:

@@ -13,6 +13,16 @@ from infra.gtbi_v7_readiness.roles import (
     role_registry_digest,
     validate_role_registry,
 )
+from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
+from infra.readiness_state_controller.policy import validate_transition_manifest
+from scripts.generate_gtbi_v7_g1b_role_contract import (
+    MANIFEST,
+    RECEIPT,
+    REGISTRY,
+    build_manifest,
+    build_receipt,
+    build_registry,
+)
 from scripts.generate_gtbi_v7_role_registry_template import generate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,3 +143,64 @@ def test_checked_fixture_matches_deterministic_generator(tmp_path: Path) -> None
 def test_owner_registry_is_authoritative_for_current_model() -> None:
     registry = _fixture()
     assert registry["registry_status"] == "active"
+
+
+def test_operational_registry_matches_owner_controlled_fixture() -> None:
+    registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    assert REGISTRY.read_bytes() == canonical_bytes(registry) + b"\n"
+    assert registry == build_registry()
+    assert registry == _fixture()
+    validate_role_registry(registry, SCHEMA)
+    assert all(item["status"] == "active" for item in registry["assignments"])
+    assert {item["actor_id"] for item in registry["assignments"]} == {
+        "github-user:271768688"
+    }
+
+
+def test_g1b_role_registry_receipt_is_exact_and_owner_controlled() -> None:
+    registry = build_registry()
+    receipt = json.loads(RECEIPT.read_text(encoding="utf-8"))
+    assert RECEIPT.read_bytes() == canonical_bytes(receipt) + b"\n"
+    assert receipt == build_receipt(registry)
+    assert receipt["receipt_digest"] == domain_digest(
+        "GTBI_V7_G1B_ROLE_REGISTRY_RECEIPT_V1",
+        receipt,
+        omit_top_level_fields=("receipt_digest",),
+    )
+    assert receipt["registry"]["vacant_assignment_count"] == 0
+    assert receipt["registry"]["unique_actor_ids"] == [
+        "github-user:271768688"
+    ]
+    assert receipt["verified_properties"] == {
+        "all_legacy_capability_labels_assigned": True,
+        "all_assignments_active": True,
+        "additional_people_required": False,
+        "incompatibility_sets_enforced": False,
+        "incompatibility_sets_documentation_only": True,
+        "locked_data_accessed": False,
+        "owner_controlled": True,
+        "scientific_work_performed": False,
+    }
+
+
+def test_g1b_transition_manifest_closes_only_role_registry_task() -> None:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert MANIFEST.read_bytes() == canonical_bytes(manifest) + b"\n"
+    assert manifest == build_manifest()
+    validate_transition_manifest(manifest)
+    assert [action["task_id"] for action in manifest["task_actions"]] == [
+        "PREV7-0201"
+    ]
+    assert manifest["gate_actions"] == [
+        {
+            "gate_id": "G1B",
+            "target_status": "green",
+            "selected_branch_id_or_null": None,
+            "inventory_snapshot_digest": manifest["gate_actions"][0][
+                "inventory_snapshot_digest"
+            ],
+            "evidence_bundle_digest": manifest["gate_actions"][0][
+                "evidence_bundle_digest"
+            ],
+        }
+    ]
