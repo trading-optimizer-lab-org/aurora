@@ -37,6 +37,7 @@ on:
       - "scripts/generate_gtbi_v7_state_controller_recovery_receipt.py"
       - "scripts/generate_gtbi_v7_g0_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1a_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
@@ -105,6 +106,7 @@ on:
       - "scripts/generate_gtbi_v7_state_controller_recovery_receipt.py"
       - "scripts/generate_gtbi_v7_g0_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1a_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
@@ -185,6 +187,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_identity_scope_contract
           python -m scripts.generate_gtbi_v7_g0_transition_manifest
           python scripts/generate_gtbi_v7_role_registry_template.py
+          python -m scripts.generate_gtbi_v7_g1b_role_contract
           python scripts/generate_gtbi_v7_scientific_asset_contract.py
           python scripts/generate_gtbi_v6_preservation_contract.py
           python scripts/reconcile_gtbi_v7_pr1_merge.py
@@ -224,6 +227,9 @@ jobs:
             docs/readiness/gtbi-v7/g0_state_transition_reconciliation_receipt.json \
             docs/readiness/gtbi-v7/g1a_state_controller_apply_receipt.json \
             docs/readiness/gtbi-v7/g1a_state_transition_reconciliation_receipt.json \
+            config/gtbi/governance/role_registry.json \
+            docs/readiness/gtbi-v7/g1b_role_registry_receipt.json \
+            docs/readiness/gtbi-v7/transition_manifests/g1b-role-registry-close-v1.json \
             docs/readiness/gtbi-v7/v7_identity_scope_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g1a-identity-close-v1.json
 
