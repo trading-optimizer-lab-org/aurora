@@ -37,6 +37,7 @@ on:
       - "scripts/generate_gtbi_v7_state_controller_recovery_receipt.py"
       - "scripts/generate_gtbi_v7_g0_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1a_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
@@ -106,6 +107,7 @@ on:
       - "scripts/generate_gtbi_v7_state_controller_recovery_receipt.py"
       - "scripts/generate_gtbi_v7_g0_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1a_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
@@ -184,6 +186,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_state_controller_recovery_receipt
           python -m scripts.generate_gtbi_v7_g0_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_g1a_apply_reconciliation_receipt
+          python -m scripts.generate_gtbi_v7_g1b_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_identity_scope_contract
           python -m scripts.generate_gtbi_v7_g0_transition_manifest
           python scripts/generate_gtbi_v7_role_registry_template.py
@@ -227,6 +230,8 @@ jobs:
             docs/readiness/gtbi-v7/g0_state_transition_reconciliation_receipt.json \
             docs/readiness/gtbi-v7/g1a_state_controller_apply_receipt.json \
             docs/readiness/gtbi-v7/g1a_state_transition_reconciliation_receipt.json \
+            docs/readiness/gtbi-v7/g1b_state_controller_apply_receipt.json \
+            docs/readiness/gtbi-v7/g1b_state_transition_reconciliation_receipt.json \
             config/gtbi/governance/role_registry.json \
             docs/readiness/gtbi-v7/g1b_role_registry_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g1b-role-registry-close-v1.json \
