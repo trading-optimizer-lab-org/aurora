@@ -332,8 +332,25 @@ def test_policy1995_6waves_9h_workflow_shape() -> None:
     assert "bandit" not in text
 
 
+_NO_STOCKS_6W_WORKFLOW = Path(
+    ".github/workflows/"
+    "sp500-weekly-hedge-dehb-no-crypto-no-stocks-6waves-80jobs-3h.yml"
+)
+_NO_STOCKS_2W_WORKFLOW = Path(
+    ".github/workflows/"
+    "sp500-weekly-hedge-dehb-no-crypto-no-stocks-2waves-500jobs-180parallel-1h.yml"
+)
+_HEDGE_DEHB_STAGE_SCRIPT = Path(
+    "scripts/run_sp500_weekly_hedge_dehb_stage.py"
+)
+
+
+@pytest.mark.skipif(
+    not _NO_STOCKS_6W_WORKFLOW.exists(),
+    reason="historical campaign workflow is not part of the canonical tree",
+)
 def test_no_crypto_no_stocks_6waves_3h_workflow_shape() -> None:
-    path = Path(".github/workflows/sp500-weekly-hedge-dehb-no-crypto-no-stocks-6waves-80jobs-3h.yml")
+    path = _NO_STOCKS_6W_WORKFLOW
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     text = path.read_text(encoding="utf-8")
 
@@ -358,8 +375,12 @@ def test_no_crypto_no_stocks_6waves_3h_workflow_shape() -> None:
     assert "bandit" not in text
 
 
+@pytest.mark.skipif(
+    not _NO_STOCKS_2W_WORKFLOW.exists(),
+    reason="historical campaign workflow is not part of the canonical tree",
+)
 def test_no_crypto_no_stocks_2waves_500jobs_180parallel_workflow_shape() -> None:
-    path = Path(".github/workflows/sp500-weekly-hedge-dehb-no-crypto-no-stocks-2waves-500jobs-180parallel-1h.yml")
+    path = _NO_STOCKS_2W_WORKFLOW
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     text = path.read_text(encoding="utf-8")
 
@@ -744,6 +765,10 @@ def test_policy1995_yfinance_download_uses_runtime_start(monkeypatch) -> None:
     assert not frame.empty
 
 
+@pytest.mark.skipif(
+    not _HEDGE_DEHB_STAGE_SCRIPT.exists(),
+    reason="historical campaign runner is not part of the canonical tree",
+)
 def test_stage_script_smoke_with_synthetic_dataset(tmp_path: Path) -> None:
     out = tmp_path / "out"
     cmd = [

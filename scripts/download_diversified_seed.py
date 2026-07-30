@@ -71,9 +71,20 @@ def normalise_yfinance_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df[["open", "high", "low", "close", "adj_close", "volume"]]
 
 
-def fetch_yfinance(symbol: str, start: str = START) -> pd.DataFrame | None:
+def fetch_yfinance(
+    symbol: str,
+    start: str | None = None,
+) -> pd.DataFrame | None:
+    requested_start = START if start is None else start
     try:
-        df = yf.download(symbol, start=start, end=END, progress=False, auto_adjust=False, threads=False)
+        df = yf.download(
+            symbol,
+            start=requested_start,
+            end=END,
+            progress=False,
+            auto_adjust=False,
+            threads=False,
+        )
         if df is None or df.empty:
             return None
         return normalise_yfinance_df(df, symbol)
@@ -101,10 +112,14 @@ def binance_effective_start(pair: str, requested_start: str) -> str:
     return max(requested_start, floor)
 
 
-def fetch_binance_klines(pair: str, start: str = START) -> pd.DataFrame | None:
+def fetch_binance_klines(
+    pair: str,
+    start: str | None = None,
+) -> pd.DataFrame | None:
     """Aggregate Binance daily klines from monthly ZIPs."""
     sym = pair.upper()
-    start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+    requested_start = START if start is None else start
+    start_dt = datetime.strptime(requested_start, "%Y-%m-%d").date()
     today = date.today()
     frames: list[pd.DataFrame] = []
     cur = start_dt.replace(day=1)

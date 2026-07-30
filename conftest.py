@@ -26,14 +26,26 @@ _PATH = str(_WORKTREE)
 try:
     import __editable___aurora_1_5_0_finder as _finder
     _finder.MAPPING['aurora'] = _PATH
-    # Pytest can import this file either as ``conftest`` or as
-    # ``aurora.conftest``. Evicting the parent package while the latter is
-    # still importing causes importlib to fail with KeyError. Only the
-    # top-level form is safe to repair in place; CI's editable install already
-    # points at the active checkout for the package-qualified form.
-    if __name__ == "conftest":
-        for _name in list(sys.modules):
-            if _name == "aurora" or _name.startswith("aurora."):
+    _aurora = sys.modules.get("aurora")
+    if _aurora is not None:
+        # Pytest may import this file as ``aurora.conftest`` after another
+        # checkout's editable install has already loaded the parent package.
+        # Keep the parent object alive while its conftest is importing, but
+        # redirect its package search path and evict stale children. Future
+        # imports then resolve exclusively from this worktree.
+        _aurora.__path__ = [_PATH]
+        _aurora.__file__ = str(_WORKTREE / "__init__.py")
+        _current_conftest = __name__ if __name__.startswith("aurora.") else None
+        for _name, _module in list(sys.modules.items()):
+            if not _name.startswith("aurora.") or _name == _current_conftest:
+                continue
+            _module_file = getattr(_module, "__file__", None)
+            if _module_file is None:
+                continue
+            try:
+                _module_path = Path(_module_file).resolve()
+                _module_path.relative_to(_WORKTREE)
+            except (OSError, ValueError):
                 del sys.modules[_name]
 except ImportError:
     # Editable finder not present (e.g. running from a wheel install). Fall
