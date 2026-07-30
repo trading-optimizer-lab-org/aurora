@@ -16,8 +16,8 @@ from infra.gtbi_v7_readiness.canonical import (  # noqa: E402
     domain_digest,
     raw_sha256,
 )
-from infra.gtbi_v7_readiness.scientific_assets import (  # noqa: E402
-    seal_asset_manifest,
+from infra.gtbi_v7_readiness.v6_dependency_recovery import (  # noqa: E402
+    apply_recovery_to_scientific_manifest,
 )
 from scripts.generate_gtbi_v7_scientific_asset_contract import (  # noqa: E402
     wrapper_only_fixture,
@@ -347,7 +347,7 @@ def build_scientific_manifest(
             ),
         }
     )
-    return seal_asset_manifest(manifest)
+    return apply_recovery_to_scientific_manifest(manifest)
 
 
 def build_cleanup_receipt() -> dict[str, Any]:
