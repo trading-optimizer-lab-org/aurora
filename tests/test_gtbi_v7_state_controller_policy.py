@@ -47,6 +47,11 @@ from scripts.generate_gtbi_v7_g0_apply_reconciliation_receipt import (
     build_receipt as build_g0_apply_receipt,
     validate_application as validate_g0_application,
 )
+from scripts.generate_gtbi_v7_g1a_apply_reconciliation_receipt import (
+    SOURCE as G1A_APPLY_SOURCE,
+    build_receipt as build_g1a_apply_receipt,
+    validate_application as validate_g1a_application,
+)
 from scripts.generate_gtbi_v7_g0_transition_manifest import (
     TASK_ORDER as G0_TASK_ORDER,
     build_manifest as build_g0_manifest,
@@ -430,6 +435,49 @@ def test_g0_apply_receipt_is_canonical_and_reconciled() -> None:
     }
     assert expected["verified_properties"] == {
         "append_only_g0_history_preserved": True,
+        "arbitrary_command_execution_supported": False,
+        "locked_data_accessed": False,
+        "owner_controlled": True,
+        "scientific_work_performed": False,
+        "state_merged": True,
+    }
+
+
+def test_g1a_apply_receipt_is_canonical_and_reconciled() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = json.loads(G1A_APPLY_SOURCE.read_text(encoding="utf-8"))
+    assert G1A_APPLY_SOURCE.read_bytes() == canonical_bytes(source) + b"\n"
+    assert source["receipt_digest"] == domain_digest(
+        "GTBI_V7_STATE_CONTROLLER_RECEIPT_V1",
+        source,
+        omit_top_level_fields=("receipt_digest",),
+    )
+
+    validation = validate_g1a_application()
+    assert validation["append_only_g1a_history_preserved"] is True
+    assert isinstance(validation["exact_g1a_projection"], bool)
+
+    expected = build_g1a_apply_receipt()
+    destination = (
+        root
+        / "docs/readiness/gtbi-v7/"
+        "g1a_state_transition_reconciliation_receipt.json"
+    )
+    assert destination.read_bytes() == canonical_bytes(expected) + b"\n"
+    assert expected["post_apply_state"]["counts"] == {
+        "attempt_event_count": 62,
+        "gate_count": 15,
+        "gate_event_count": 17,
+        "task_count": 110,
+        "task_event_count": 171,
+    }
+    assert expected["post_apply_state"]["task_status_counts"] == {
+        "blocked": 94,
+        "cancelled": 1,
+        "done": 15,
+    }
+    assert expected["verified_properties"] == {
+        "append_only_g1a_history_preserved": True,
         "arbitrary_command_execution_supported": False,
         "locked_data_accessed": False,
         "owner_controlled": True,
