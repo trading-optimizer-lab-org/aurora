@@ -1,6 +1,6 @@
 # ADR 0003: GTBI V7 Identity
 
-Status: `PROPOSED_BLOCKED_BY_G0`
+Status: `ACCEPTED_OWNER_CONTROLLED`
 
 Decision owner: repository owner
 
@@ -72,22 +72,20 @@ execution_environment=GitHub Actions
 scientific_change=false
 ```
 
-## Authorization State
+## Acceptance
 
-This file prepares the output of `PREV7-0102`; it does not complete it.
+The repository owner explicitly requested one unified document and execution
+path for V7 readiness and performance work. That owner instruction accepts
+the product identity, scope and non-goals above.
 
-Formal acceptance is prohibited until:
-
-1. `PREV7-0000` and G0 have valid evidence;
-2. `PREV7-0101` has a valid readiness event;
-3. this exact ADR is reviewed through the required pull request;
-4. the repository owner records the separate `PREV7-0103` scope and
-   non-goals approval.
-
-Until then:
+The accepted identity is evidence for `PREV7-0101`, `PREV7-0102` and
+`PREV7-0103`. Their formal state and gate `G1A` still change only through the
+reviewed readiness state controller. This ADR grants no scientific execution
+or full-run authority.
 
 ```text
-g1a_status=blocked
+identity_approval=accepted_owner_controlled
+g1a_state_transition=state_controller_required
 full_run_authorized=false
 ```
 
