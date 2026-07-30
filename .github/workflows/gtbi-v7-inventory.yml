@@ -33,20 +33,25 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install inventory dependencies
+        run: python -m pip install "jsonschema==4.26.0"
+
       - name: Generate bounded remote inventory
         id: generate
         continue-on-error: true
         run: |
+          inventory_dir="$RUNNER_TEMP/gtbi-v7-inventory"
+          mkdir -p "$inventory_dir"
           python scripts/generate_gtbi_v7_inventory.py \
             --mode remote \
             --strict \
-            --output-dir docs/project_inventory
+            --output-dir "$inventory_dir"
 
       - name: Upload inventory evidence even when incomplete
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: gtbi-v7-emergency-preservation-inventory-${{ github.run_id }}
-          path: docs/project_inventory
+          path: ${{ runner.temp }}/gtbi-v7-inventory
           if-no-files-found: error
           retention-days: 30
 

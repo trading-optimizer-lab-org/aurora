@@ -124,3 +124,5 @@ id,name,path,state,created_at,updated_at
 320727709,GitHub Performance Merge Only,.github/workflows/github-performance-merge-only.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
 320727710,GitHub Performance Replan,.github/workflows/github-performance-replan.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
 320727711,GitHub Performance Workload Validation,.github/workflows/github-performance-validation.yml,active,2026-07-26T13:52:56.000+02:00,2026-07-26T13:52:56.000+02:00
+323189363,GTBI V7 Master Plan Quality,.github/workflows/gtbi-v7-master-plan-quality.yml,active,2026-07-29T20:28:40.000+02:00,2026-07-30T09:26:40.000+02:00
+323546210,GTBI V7 Emergency Preservation Inventory,.github/workflows/gtbi-v7-inventory.yml,active,2026-07-30T09:26:40.000+02:00,2026-07-30T09:26:40.000+02:00

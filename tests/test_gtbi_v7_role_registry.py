@@ -127,6 +127,7 @@ def test_checked_fixture_matches_deterministic_generator(tmp_path: Path) -> None
 
     assert generated == _fixture()
     assert json.loads(output.read_text(encoding="utf-8")) == generated
+    assert b"\r\n" not in output.read_bytes()
 
 
 def test_owner_registry_is_authoritative_for_current_model() -> None:

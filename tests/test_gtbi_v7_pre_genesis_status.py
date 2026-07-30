@@ -201,39 +201,44 @@ def test_v6_preservation_lease_is_canonical_verified_and_non_independent() -> No
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
-def test_inventory_github_actions_attempt_is_canonical_and_fail_closed() -> None:
+def test_inventory_github_actions_attempt_is_canonical_and_complete() -> None:
     path = READINESS / "inventory_github_actions_attempt_receipt.json"
     receipt = json.loads(path.read_text(encoding="utf-8"))
 
     assert path.read_bytes() == canonical_bytes(receipt) + b"\n"
-    assert receipt["run_id"] == 30464201570
+    assert receipt["run_id"] == 30523390257
     assert receipt["commit_sha"] == (
-        "0a1046a805f2ce3c817f1d3f0bb16c60fd6fc4e6"
+        "d7489dc64756274f981f2600b2e50de8404e44d0"
     )
     assert receipt["github_only"] is True
     assert receipt["requires_local_machine"] is False
-    assert receipt["status"] == "blocked_missing_permissions"
-    assert receipt["packages"]["overall_status"] == "unavailable"
-    assert receipt["packages"]["container"]["http_status"] == 400
-    assert receipt["branch_protection"]["http_status"] == 403
-    assert receipt["formal_effect"] == "none_inventory_still_incomplete"
+    assert receipt["status"] == "success"
+    assert receipt["packages"]["overall_status"] == "complete"
+    assert receipt["packages"]["container"]["row_count"] == 0
+    assert receipt["branch_protection"]["http_status"] == 200
+    assert receipt["formal_effect"] == (
+        "PREV7-0001_evidence_ready_dependency_PREV7-0000_pending"
+    )
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
-def test_pre_genesis_status_allows_preparation_and_v6_is_verified() -> None:
+def test_readiness_status_records_formal_genesis_and_v6_is_verified() -> None:
     status, cancellation = generate()
-    assert status["execution_status"] == "TECHNICAL_PREPARATION_ALLOWED"
-    assert status["formal_genesis_complete"] is False
+    assert status["schema_version"] == "gtbi_v7_readiness_status_v2"
+    assert status["execution_status"] == "G0_EXECUTION_ALLOWED"
+    assert status["formal_genesis_complete"] is True
     assert status["v6_artifact"]["artifact_id"] == 8251391531
     assert status["v6_artifact"]["verified_available"] is True
     assert status["blockers"] == []
     assert status["initial_readiness_records"] == {
-        "status": "provisional_fail_closed",
-        "formal_genesis_effect": "none_until_merged_and_reconciled",
+        "status": "pr1_merge_reconciled",
+        "formal_genesis_effect": "PREV7-0000_done",
         "task_rows": 110,
         "gate_rows": 15,
-        "task_attempt_rows": 0,
-        "all_tasks_blocked": True,
+        "task_event_rows": 114,
+        "task_attempt_rows": 4,
+        "completed_task_ids": ["PREV7-0000"],
+        "all_tasks_blocked": False,
         "all_gates_red": True,
         "validated": True,
     }
