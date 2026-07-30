@@ -10,6 +10,7 @@ from typing import Any
 from infra.gtbi_v7_readiness.canonical import domain_digest
 from infra.gtbi_v7_readiness.controller import (
     validate_attempt_event_chain,
+    validate_current_readiness_records,
     validate_task_event_chain,
 )
 from infra.gtbi_v7_readiness.genesis import (
@@ -346,6 +347,15 @@ def _write_mutable_records(
 def write_formal_genesis_records(repository_root: Path) -> list[Path]:
     """Apply the deterministic PR-1 transition, idempotently."""
     root = repository_root.resolve()
+    try:
+        current = validate_current_readiness_records(root)
+    except (ValueError, KeyError):
+        current = None
+    if current is not None and TASK_ID in current["terminal_task_ids"]:
+        return [
+            root / "docs/readiness/gtbi-v7" / filename
+            for filename in MUTABLE_FILENAMES
+        ]
     try:
         validate_formal_genesis_records(root)
     except (FormalGenesisValidationError, ValueError):

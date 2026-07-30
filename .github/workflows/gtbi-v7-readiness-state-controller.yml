@@ -1,0 +1,131 @@
+name: GTBI V7 Readiness State Controller
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_id:
+        description: Reviewed transition manifest identifier
+        required: true
+        type: string
+      mode:
+        description: Validate only or project a readiness-state branch
+        required: true
+        default: dry_run
+        type: choice
+        options:
+          - dry_run
+          - apply
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gtbi-v7-readiness-state-controller
+  cancel-in-progress: false
+
+jobs:
+  transition:
+    name: Closed readiness transition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact default-branch state
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Resolve checked-out default-branch commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate reviewed manifest and project transition
+        env:
+          MANIFEST_ID: ${{ inputs.manifest_id }}
+          MODE: ${{ inputs.mode }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          python -m scripts.run_gtbi_v7_readiness_state_controller \
+            --repository-root . \
+            --manifest-id "$MANIFEST_ID" \
+            --base-sha "$BASE_SHA" \
+            --mode "$MODE" \
+            --receipt-path "$RUNNER_TEMP/state-controller-receipt.json"
+
+      - name: Reject files outside the closed mutable allowlist
+        if: inputs.mode == 'apply'
+        run: |
+          git diff --name-only > "$RUNNER_TEMP/changed-files.txt"
+          test -s "$RUNNER_TEMP/changed-files.txt"
+          while IFS= read -r path; do
+            case "$path" in
+              docs/readiness/gtbi-v7/task_status.csv|\
+              docs/readiness/gtbi-v7/task_events.jsonl|\
+              docs/readiness/gtbi-v7/task_attempts.jsonl|\
+              docs/readiness/gtbi-v7/task_planning_inputs.csv|\
+              docs/readiness/gtbi-v7/task_delivery_manifest.csv|\
+              docs/readiness/gtbi-v7/conditional_branch_registry.csv|\
+              docs/readiness/gtbi-v7/gate_status.csv|\
+              docs/readiness/gtbi-v7/gate_events.jsonl)
+                ;;
+              *)
+                echo "Unexpected state-controller output: $path" >&2
+                exit 1
+                ;;
+            esac
+          done < "$RUNNER_TEMP/changed-files.txt"
+
+      - name: Push isolated state branch
+        if: inputs.mode == 'apply'
+        env:
+          MANIFEST_ID: ${{ inputs.manifest_id }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          branch="gtbi-readiness-state/${MANIFEST_ID}-${RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add \
+            docs/readiness/gtbi-v7/task_status.csv \
+            docs/readiness/gtbi-v7/task_events.jsonl \
+            docs/readiness/gtbi-v7/task_attempts.jsonl \
+            docs/readiness/gtbi-v7/task_planning_inputs.csv \
+            docs/readiness/gtbi-v7/task_delivery_manifest.csv \
+            docs/readiness/gtbi-v7/conditional_branch_registry.csv \
+            docs/readiness/gtbi-v7/gate_status.csv \
+            docs/readiness/gtbi-v7/gate_events.jsonl
+          git commit -m "Apply GTBI V7 readiness transition ${MANIFEST_ID}"
+          git push origin "HEAD:refs/heads/$branch"
+          echo "STATE_BRANCH=$branch" >> "$GITHUB_ENV"
+
+      - name: Record summary
+        env:
+          MODE: ${{ inputs.mode }}
+          MANIFEST_ID: ${{ inputs.manifest_id }}
+        run: |
+          {
+            echo "## GTBI V7 readiness controller"
+            echo
+            echo "- Manifest: \`$MANIFEST_ID\`"
+            echo "- Mode: \`$MODE\`"
+            echo "- Base SHA: \`${{ steps.base.outputs.sha }}\`"
+            if [ "$MODE" = "apply" ]; then
+              echo "- State branch: \`$STATE_BRANCH\`"
+            fi
+            echo "- Scientific work: \`false\`"
+            echo "- Locked data accessed: \`false\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable controller receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-state-controller-${{ inputs.manifest_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/state-controller-receipt.json
+          if-no-files-found: error
+          retention-days: 90
