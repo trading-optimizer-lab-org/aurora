@@ -53,6 +53,11 @@ from scripts.generate_gtbi_v7_g1a_apply_reconciliation_receipt import (
     build_receipt as build_g1a_apply_receipt,
     validate_application as validate_g1a_application,
 )
+from scripts.generate_gtbi_v7_g1b_apply_reconciliation_receipt import (
+    SOURCE as G1B_APPLY_SOURCE,
+    build_receipt as build_g1b_apply_receipt,
+    validate_application as validate_g1b_application,
+)
 from scripts.generate_gtbi_v7_g1b_role_contract import (
     build_manifest as build_g1b_manifest,
 )
@@ -496,6 +501,49 @@ def test_g1a_apply_receipt_is_canonical_and_reconciled() -> None:
     }
     assert expected["verified_properties"] == {
         "append_only_g1a_history_preserved": True,
+        "arbitrary_command_execution_supported": False,
+        "locked_data_accessed": False,
+        "owner_controlled": True,
+        "scientific_work_performed": False,
+        "state_merged": True,
+    }
+
+
+def test_g1b_apply_receipt_is_canonical_and_reconciled() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = json.loads(G1B_APPLY_SOURCE.read_text(encoding="utf-8"))
+    assert G1B_APPLY_SOURCE.read_bytes() == canonical_bytes(source) + b"\n"
+    assert source["receipt_digest"] == domain_digest(
+        "GTBI_V7_STATE_CONTROLLER_RECEIPT_V1",
+        source,
+        omit_top_level_fields=("receipt_digest",),
+    )
+
+    validation = validate_g1b_application()
+    assert validation["append_only_g1b_history_preserved"] is True
+    assert validation["exact_g1b_projection"] is True
+
+    expected = build_g1b_apply_receipt()
+    destination = (
+        root
+        / "docs/readiness/gtbi-v7/"
+        "g1b_state_transition_reconciliation_receipt.json"
+    )
+    assert destination.read_bytes() == canonical_bytes(expected) + b"\n"
+    assert expected["post_apply_state"]["counts"] == {
+        "attempt_event_count": 66,
+        "gate_count": 15,
+        "gate_event_count": 18,
+        "task_count": 110,
+        "task_event_count": 175,
+    }
+    assert expected["post_apply_state"]["task_status_counts"] == {
+        "blocked": 93,
+        "cancelled": 1,
+        "done": 16,
+    }
+    assert expected["verified_properties"] == {
+        "append_only_g1b_history_preserved": True,
         "arbitrary_command_execution_supported": False,
         "locked_data_accessed": False,
         "owner_controlled": True,
