@@ -23,6 +23,15 @@ def test_recorder_captures_kind_and_compute_seconds():
     assert w.compute_seconds >= 0.005
 
 
+def test_recorder_accepts_zero_perf_counter_origin(monkeypatch):
+    ticks = iter((0, 10_000_000))
+    monkeypatch.setattr(time, "perf_counter_ns", lambda: next(ticks))
+    with WitnessRecorder(kind="backtest") as rec:
+        pass
+    assert rec.witness is not None
+    assert rec.witness.compute_seconds == 0.01
+
+
 def test_recorder_hashes_input_and_output():
     with WitnessRecorder(
         kind="validation",
