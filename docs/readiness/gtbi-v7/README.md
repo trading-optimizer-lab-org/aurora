@@ -48,17 +48,28 @@ ruleset and preserved as a byte-identical Git bundle in the same two
 repositories. Both bundles were secret-scanned, restored into empty
 repositories and verified with `git fsck` on separate GitHub-hosted runners.
 The source manifest also binds the tree, workflow and dependency-file digests.
-The evidence is recorded in:
+The exact two-file V6 derived data pack is now preserved in both repositories.
+Two clean GitHub runners rebuilt its original identity
+`e0552ac354766a4af28fcb77a867f63f9da646fb4b89c8c11c36cd6071275c5e`
+without evaluating a strategy. Those same runs verified the calculation
+commit, all 368 strategy-pack files, the strategy-pack digest and the frozen
+dependency lock. The evidence is recorded in:
 
 ```text
 v6_durable_preservation_receipt.json
+v6_data_pack_primary_verification.json
+v6_data_pack_mirror_verification.json
+v6_dependency_recovery_report.json
 v6_final_result_scientific_asset_manifest.json
 ```
 
-This is archival preservation of the result and exact source closure, not a
-claim that missing V6 input-data or generated-pack layers were recovered or
-that V7 reproduces V6. The same-provider mirror limitation is explicit and
-accepted by the repository owner.
+The recovery report authenticates layers `C`, `D3`, `S` and `R`. It keeps
+`D0`, `D1` and `D2` explicitly missing because the surviving frozen lake does
+not prove the complete original point-in-time universe, raw-provider lineage
+and normalization lineage. Therefore V6 remains
+`result_preserved_inputs_incomplete`; no full-reproduction or V7-equivalence
+claim is made. The same-provider mirror limitation is explicit and accepted
+by the repository owner.
 
 Legacy-run cleanup evidence is recorded separately in:
 

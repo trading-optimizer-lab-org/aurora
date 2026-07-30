@@ -79,18 +79,29 @@ def test_v6_scientific_manifest_records_truthful_owner_controlled_custody() -> N
         "result_preserved_inputs_incomplete"
     )
     assert manifest["missing_v6_dependency_layers"] == [
-        "C",
         "D0",
         "D1",
         "D2",
-        "D3",
-        "S",
     ]
+    assert manifest["reference_engine_code_sha"] == (
+        "e8186189fe52e879471941acdadd94004a0662f6"
+    )
+    assert manifest["reference_dependency_lock_digest"] == (
+        "sha256:"
+        "e0ebac1931c2cb66686b8adbf9262d89c177ad1e75af822f83a323199fa763e6"
+    )
+    assert manifest["data_digest"] == (
+        "sha256:"
+        "e0552ac354766a4af28fcb77a867f63f9da646fb4b89c8c11c36cd6071275c5e"
+    )
     assert manifest["v6_historical_reproduction_confirmed"] is False
     assert manifest["engine_equivalence_confirmed"] is False
     assert manifest["validation_end"] == "2020-12-31"
     assert manifest["locked_start"] == "2021-01-01"
-    assert manifest["last_date"] is None
+    assert manifest["first_date"] == "1962-01-02"
+    assert manifest["last_date"] == "2020-12-31"
+    assert manifest["historical_post_validation_contaminated"] is False
+    assert manifest["pristine_locked"] is True
     assert manifest["primary_release_asset_count"] == 1
     assert manifest["mirror_release_asset_count"] == 1
     assert manifest["independent_github_disaster_asset_count"] == 0

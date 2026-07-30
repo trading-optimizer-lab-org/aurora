@@ -1,0 +1,85 @@
+{
+  "aurora_calculation_commit_sha": "e8186189fe52e879471941acdadd94004a0662f6",
+  "data_pack_manifest": {
+    "data_pack_identity": "e0552ac354766a4af28fcb77a867f63f9da646fb4b89c8c11c36cd6071275c5e",
+    "date_bounds": [
+      {
+        "column": "date",
+        "max": "2020-12-31T00:00:00+00:00",
+        "min": "1993-01-29T00:00:00+00:00",
+        "non_null_rows": 7033,
+        "path": "benchmark.parquet"
+      },
+      {
+        "column": "date",
+        "max": "2020-12-31T00:00:00+00:00",
+        "min": "1962-01-02T00:00:00+00:00",
+        "non_null_rows": 20357469,
+        "path": "prices.parquet"
+      }
+    ],
+    "files": [
+      {
+        "path": "benchmark.parquet",
+        "sha256": "eec0c4d26038af392d089396dd1493a724550c46b9707ceb9a540a2d67b86c97",
+        "size_bytes": 324364
+      },
+      {
+        "path": "prices.parquet",
+        "sha256": "0e226f53adeed4117cb95c50b831e640a7831dbc860323fe88c8dd50316b4e0e",
+        "size_bytes": 500169939
+      }
+    ],
+    "locked_start": "2021-01-01",
+    "min_market_cap": 2000000000.0,
+    "source_artifact_name": "gtbi-external-pack-data",
+    "source_data_run_id": "29148013009",
+    "train_end": "2010-12-31",
+    "universe_identity": "long-cash-next-session-open-min-market-cap-2000000000",
+    "validation_end": "2020-12-31",
+    "validation_start": "2011-01-01"
+  },
+  "expected_data_pack_identity": "e0552ac354766a4af28fcb77a867f63f9da646fb4b89c8c11c36cd6071275c5e",
+  "github_only": true,
+  "identity_verified": true,
+  "locked_data_opened": false,
+  "receipt_digest": "sha256:e5fa679b6044668747bcdaf0e4f56b64a1e30390b483e007e1099449a1020537",
+  "release_id": 362451828,
+  "release_tag": "gtbi-v6-data-pack-run-29148013009",
+  "requires_local_machine": false,
+  "schema_version": "gtbi_v6_data_pack_github_verification_v1",
+  "scientific_processing_performed": false,
+  "source_assets": [
+    {
+      "id": "RA_kwDOToEVz84dhxz3",
+      "name": "benchmark.parquet",
+      "sha256": "sha256:eec0c4d26038af392d089396dd1493a724550c46b9707ceb9a540a2d67b86c97",
+      "size_bytes": 324364
+    },
+    {
+      "id": "RA_kwDOToEVz84dhxz4",
+      "name": "gtbi-v6-data-pack-source-manifest.json",
+      "sha256": "sha256:f3422932bf9fa5e97aa5e6ed422cb06b9460ab70f9f4812a288889745351dfd2",
+      "size_bytes": 1386
+    },
+    {
+      "id": "RA_kwDOToEVz84dhxz5",
+      "name": "prices.parquet",
+      "sha256": "sha256:0e226f53adeed4117cb95c50b831e640a7831dbc860323fe88c8dd50316b4e0e",
+      "size_bytes": 500169939
+    }
+  ],
+  "source_identity": {
+    "calculation_commit_sha": "e8186189fe52e879471941acdadd94004a0662f6",
+    "dependency_lock_path": "requirements/gtbi-fast-strict.lock",
+    "dependency_lock_sha256": "e0ebac1931c2cb66686b8adbf9262d89c177ad1e75af822f83a323199fa763e6",
+    "strategy_pack_digest": "b50d167c56e7d15e0e839638c216a4d8a115235594423b18b18836e3894e6bd8",
+    "strategy_pack_file_count": 368,
+    "strategy_pack_path": "scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1"
+  },
+  "strategy_evaluation_performed": false,
+  "temporal_boundary_verified": true,
+  "workflow_commit_sha": "d3c13f91e7828c3732536a5e1828c177ca121da1",
+  "workflow_repository": "trading-optimizer-lab-org/aurora-v7-assets-mirror",
+  "workflow_run_id": 30547783869
+}
