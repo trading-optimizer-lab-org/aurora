@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import copy
 import json
 import shutil
@@ -507,6 +508,29 @@ def test_g1b_transition_projects_only_role_task_and_gate(
     tmp_path: Path,
 ) -> None:
     repository = _current_repository_fixture(tmp_path)
+    current = validate_current_readiness_records(repository)
+    if "PREV7-0201" in current["terminal_task_ids"]:
+        with pytest.raises(
+            StateControllerError,
+            match="PREV7-0201: task is already terminal",
+        ):
+            build_transition_projection(
+                repository,
+                build_g1b_manifest(),
+                base_sha="c" * 40,
+            )
+        with (
+            repository
+            / "docs/readiness/gtbi-v7/gate_status.csv"
+        ).open(encoding="utf-8", newline="") as handle:
+            gates = {
+                row["gate_id"]: row["status"]
+                for row in csv.DictReader(handle)
+            }
+        assert "PREV7-0202" not in current["terminal_task_ids"]
+        assert gates["G1B"] == "green"
+        return
+
     projection = build_transition_projection(
         repository,
         build_g1b_manifest(),
