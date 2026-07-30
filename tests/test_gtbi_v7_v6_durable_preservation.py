@@ -14,6 +14,8 @@ from scripts.generate_gtbi_v7_v6_durable_preservation import (
     DELETED_LEGACY_RUN_IDS,
     PRESERVATION_PATH,
     SCIENTIFIC_MANIFEST_PATH,
+    SOURCE_BUNDLE_SHA256,
+    SOURCE_BUNDLE_SIZE,
     ZOMBIE_RUN_ID,
     build_cleanup_receipt,
     build_preservation_receipt,
@@ -37,6 +39,24 @@ def test_durable_preservation_receipt_is_canonical_and_self_bound() -> None:
     assert receipt["mirror"]["asset_sha256"] == ARCHIVE_SHA256
     assert receipt["primary"]["verification_run_id"] == 30541859386
     assert receipt["mirror"]["verification_run_id"] == 30541861880
+    source = receipt["source_closure"]
+    assert source["source_commit_sha"] == receipt["source"]["commit_sha"]
+    assert source["bundle_sha256"] == SOURCE_BUNDLE_SHA256
+    assert source["bundle_size_bytes"] == SOURCE_BUNDLE_SIZE
+    assert source["primary"]["bundle_asset_sha256"] == SOURCE_BUNDLE_SHA256
+    assert source["mirror"]["bundle_asset_sha256"] == SOURCE_BUNDLE_SHA256
+    assert source["primary"]["verification_run_id"] == 30544068594
+    assert source["mirror"]["verification_run_id"] == 30544079501
+    assert source["byte_identical_primary_mirror"] is True
+    assert source["bundle_restore_verified"] is True
+    assert source["gitleaks_finding_count"] == 0
+    assert source["gitleaks_ignored_test_fixture_count"] == 4
+    assert source["submodules"] == []
+    assert source["lfs_pointers"] == []
+    assert [row["path"] for row in source["dependency_files"]] == [
+        "pyproject.toml",
+        "requirements/gtbi-fast-strict.lock",
+    ]
     assert receipt["github_only_restore_verification"] is True
     assert receipt["requires_local_machine"] is False
     assert receipt["scientific_processing_performed"] is False

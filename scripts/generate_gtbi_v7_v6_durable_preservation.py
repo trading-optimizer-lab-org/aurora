@@ -38,6 +38,113 @@ ARCHIVE_SHA256 = (
     "870ab8a0ded260b7761b7c706c239c4fce712d2fd7f7c8fb1d41dc1dffedda5b"
 )
 ARCHIVE_SIZE = 1_962_204_087
+SOURCE_BUNDLE_SHA256 = (
+    "sha256:"
+    "c0c3a4a7f27339667500dcdc267499c15ac3185992f492614a7587f2f0556417"
+)
+SOURCE_BUNDLE_SIZE = 11_842_293
+
+SOURCE_BUNDLE_COMMON = {
+    "source_repository": "trading-optimizer-lab-org/aurora",
+    "source_repository_id": 1_232_647_748,
+    "source_tag": "gtbi-v6-fast-strict-run-29162930823",
+    "source_tag_object_sha": (
+        "a458f1ce0a3d060cf359bfdb7537488771ffd6f7"
+    ),
+    "source_tag_ruleset_id": 20_042_385,
+    "source_commit_sha": "cb80c5065c127322a303d58aea0f6c05337a6c9e",
+    "source_tree_sha": "032bcda1035b5ea5f23e940ec5e33d2975ec319b",
+    "workflow_git_blob_sha": (
+        "5294397f0ce709f6a65c353389e5f40a5a2ca09f"
+    ),
+    "workflow_sha256": (
+        "sha256:"
+        "87e98bc51999eaa03aeb402bc98b0438860c224bf49937605a73a16901f0784f"
+    ),
+    "reachable_commit_count": 451,
+    "reachable_object_count": 6_489,
+    "submodules": [],
+    "lfs_pointers": [],
+    "bundle_name": "gtbi-v6-fast-strict-run-29162930823.source.bundle",
+    "bundle_size_bytes": SOURCE_BUNDLE_SIZE,
+    "bundle_sha256": SOURCE_BUNDLE_SHA256,
+    "bundle_restore_verified": True,
+    "gitleaks_version": "8.30.1",
+    "gitleaks_finding_count": 0,
+    "gitleaks_ignored_test_fixture_count": 4,
+    "dependency_files": [
+        {
+            "path": "pyproject.toml",
+            "git_blob_sha": "5e31308f4b1c0ba069ddfa1a99db4ed54828eecf",
+            "sha256": (
+                "sha256:"
+                "7e0de45d607ac02430df2e39aa158dffb25c378558cfdb66392bb4ab758a20e6"
+            ),
+            "size_bytes": 6_249,
+        },
+        {
+            "path": "requirements/gtbi-fast-strict.lock",
+            "git_blob_sha": "072e6ee052c14c224d1f4294853d773a4fb730f6",
+            "sha256": (
+                "sha256:"
+                "e0ebac1931c2cb66686b8adbf9262d89c177ad1e75af822f83a323199fa763e6"
+            ),
+            "size_bytes": 177,
+        },
+    ],
+}
+
+SOURCE_BUNDLE_PRIMARY = {
+    "repository": "trading-optimizer-lab-org/aurora-v7-assets",
+    "repository_id": 1_317_002_870,
+    "release_id": 362_325_816,
+    "bundle_asset_id": 495_358_528,
+    "bundle_asset_sha256": SOURCE_BUNDLE_SHA256,
+    "bundle_asset_size_bytes": SOURCE_BUNDLE_SIZE,
+    "manifest_asset_id": 495_358_531,
+    "manifest_asset_sha256": (
+        "sha256:"
+        "e618bc4a5a805bdbb2956d828c4ffb4c394b394d91fc4b5e369bdf88aeca8f56"
+    ),
+    "manifest_digest": (
+        "sha256:"
+        "f92070f4fd9ba988d2a930db5b241fe5da5dfe57b4a2f83542a6f38fe8dd1e3d"
+    ),
+    "verification_run_id": 30_544_068_594,
+    "verification_run_url": (
+        "https://github.com/trading-optimizer-lab-org/"
+        "aurora-v7-assets/actions/runs/30544068594"
+    ),
+    "verification_workflow_commit_sha": (
+        "534e486db17f862d6e8aeddf9a2ba70959297120"
+    ),
+}
+
+SOURCE_BUNDLE_MIRROR = {
+    "repository": "trading-optimizer-lab-org/aurora-v7-assets-mirror",
+    "repository_id": 1_317_082_575,
+    "release_id": 362_325_841,
+    "bundle_asset_id": 495_358_568,
+    "bundle_asset_sha256": SOURCE_BUNDLE_SHA256,
+    "bundle_asset_size_bytes": SOURCE_BUNDLE_SIZE,
+    "manifest_asset_id": 495_358_567,
+    "manifest_asset_sha256": (
+        "sha256:"
+        "9297d5d7880e08db15969c7ce207a93d6c9684a097471b099bc367877f9b8c42"
+    ),
+    "manifest_digest": (
+        "sha256:"
+        "699a01a7bfc39c8adbd1e1a0e3b0a1f65ee8dda765036d981be24660987cb3b6"
+    ),
+    "verification_run_id": 30_544_079_501,
+    "verification_run_url": (
+        "https://github.com/trading-optimizer-lab-org/"
+        "aurora-v7-assets-mirror/actions/runs/30544079501"
+    ),
+    "verification_workflow_commit_sha": (
+        "5b4914e93a499d2e411838170829fa71acb78d93"
+    ),
+}
 
 PRIMARY = {
     "repository": "trading-optimizer-lab-org/aurora-v7-assets",
@@ -155,6 +262,15 @@ def build_preservation_receipt() -> dict[str, Any]:
         },
         "primary": PRIMARY,
         "mirror": MIRROR,
+        "source_closure": {
+            **SOURCE_BUNDLE_COMMON,
+            "primary": SOURCE_BUNDLE_PRIMARY,
+            "mirror": SOURCE_BUNDLE_MIRROR,
+            "byte_identical_primary_mirror": True,
+            "restore_state": "verified_on_two_clean_github_runners",
+            "secret_scan_state": "no_actionable_findings",
+            "scientific_recalculation_performed": False,
+        },
         "custody_model": "owner_controlled_two_private_github_repositories",
         "owner_simplification_directive_sha256": raw_sha256(
             owner_directive_path.read_bytes()
