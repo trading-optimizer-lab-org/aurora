@@ -18,6 +18,7 @@ from infra.gtbi_v7_readiness.controller import (
     validate_current_readiness_records,
 )
 from infra.gtbi_v7_readiness.formal_genesis import (
+    validate_formal_genesis_records,
     write_formal_genesis_records,
 )
 from infra.readiness_state_controller.engine import (
@@ -169,6 +170,10 @@ def test_loader_accepts_only_canonical_reviewed_file(tmp_path: Path) -> None:
 def _repository_fixture(tmp_path: Path) -> Path:
     source = Path(__file__).resolve().parents[1]
     destination = tmp_path / "repository"
+    shutil.copytree(
+        source / "docs/plans",
+        destination / "docs/plans",
+    )
     shutil.copytree(
         source / "docs/readiness/gtbi-v7",
         destination / "docs/readiness/gtbi-v7",
@@ -455,3 +460,5 @@ def test_g0_transition_projects_all_tasks_branches_and_gate(
     write_transition_projection(repository, projection)
     validated = validate_current_readiness_records(repository)
     assert set(G0_TASK_ORDER).issubset(validated["terminal_task_ids"])
+    formal = validate_formal_genesis_records(repository)
+    assert formal["completed_task_ids"] == ["PREV7-0000"]

@@ -31,7 +31,7 @@ def _jsonl_rows(name: str) -> list[dict]:
     ]
 
 
-def test_formal_genesis_projection_is_exact_and_only_completes_prev7_0000() -> None:
+def test_formal_genesis_projection_is_exact_for_prev7_0000() -> None:
     result = validate_formal_genesis_records(ROOT)
     assert result == {
         "formal_genesis_complete": True,
@@ -45,9 +45,6 @@ def test_formal_genesis_projection_is_exact_and_only_completes_prev7_0000() -> N
     assert current["status"] == "done"
     assert current["current_attempt_id"] == ATTEMPT_ID
     assert current["planning_state"] == "complete"
-    assert {
-        row["status"] for row in statuses if row["id"] != TASK_ID
-    } == {"blocked"}
 
 
 def test_formal_genesis_preserves_initial_task_event_bytes_as_prefix() -> None:
@@ -59,7 +56,11 @@ def test_formal_genesis_preserves_initial_task_event_bytes_as_prefix() -> None:
 
 
 def test_formal_genesis_attempt_reaches_succeeded_without_rewriting_history() -> None:
-    attempts = _jsonl_rows("task_attempts.jsonl")
+    attempts = [
+        row
+        for row in _jsonl_rows("task_attempts.jsonl")
+        if row["task_id"] == TASK_ID
+    ]
     assert [row["attempt_status"] for row in attempts] == [
         "created",
         "in_progress",
@@ -72,5 +73,9 @@ def test_formal_genesis_attempt_reaches_succeeded_without_rewriting_history() ->
     )
 
 
-def test_formal_genesis_does_not_green_any_gate() -> None:
-    assert {row["status"] for row in _csv_rows("gate_status.csv")} == {"red"}
+def test_formal_genesis_preserves_initial_gate_history() -> None:
+    initial = build_initial_records(ROOT)["gate_events.jsonl"]
+    expected_prefix = b"".join(canonical_bytes(row) + b"\n" for row in initial)
+    assert (READINESS / "gate_events.jsonl").read_bytes().startswith(
+        expected_prefix
+    )
