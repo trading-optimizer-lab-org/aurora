@@ -35,6 +35,7 @@ def base_variant(**overrides: object) -> StrategyVariant:
         "touch_rule": "wick_intersects",
         "confirmation_rule": "color_and_close_beyond_touch_close",
         "invalidation_rule": "wick_break",
+        "min_zone_age_bars": 0,
         "max_zone_age_bars": 26,
         "exit_rule": "time",
         "hold_bars": 2,
@@ -148,7 +149,7 @@ def test_variant_catalog_contains_zone_entry_invalidation_and_exit_versions() ->
     assert {v.side for v in catalog} == {"long", "short"}
     assert {"body_wick", "deep_half", "atr_buffered"} <= {v.zone_method for v in catalog}
     assert {"wick_break", "close_break"} <= {v.invalidation_rule for v in catalog}
-    assert {26, 78} == {v.max_zone_age_bars for v in catalog}
+    assert {26, 78, 156} == {v.max_zone_age_bars for v in catalog}
     assert {"time", "zone_stop_target", "zone_stop_time"} <= {v.exit_rule for v in catalog}
 
 

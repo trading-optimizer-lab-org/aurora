@@ -102,6 +102,11 @@ def _payload_digest(value: Any) -> str:
     return raw_sha256(canonical_bytes(value))
 
 
+def _tracked_text_digest(path: Path) -> str:
+    data = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return raw_sha256(data)
+
+
 def _role(value: str) -> str:
     return value.strip().lower().replace(" ", "_").replace("-", "_")
 
@@ -179,8 +184,8 @@ def build_initial_records(repository_root: Path) -> dict[str, list[dict[str, Any
     )
     observed_at = str(directive["effective_at_utc"])
     base_sha = str(inventory["default_branch_sha"])
-    role_registry_digest = raw_sha256(role_registry_path)
-    estimate_basis_digest = raw_sha256(plan_path)
+    role_registry_digest = _tracked_text_digest(role_registry_path)
+    estimate_basis_digest = _tracked_text_digest(plan_path)
     actor_concurrency = {OWNER_ACTOR_ID: 1}
 
     gate_definitions: list[dict[str, Any]] = []

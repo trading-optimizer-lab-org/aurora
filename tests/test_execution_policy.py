@@ -5,6 +5,7 @@ import pytest
 from aurora.core.execution_policy import (
     EXPLICIT_LOCAL_TOKEN,
     LocalRunBlocked,
+    require_github_actions_or_explicit_local_permission,
     require_github_execution,
 )
 
@@ -15,6 +16,18 @@ def test_guard_allows_github() -> None:
 
 def test_guard_accepts_case_insensitive_github_flag() -> None:
     require_github_execution("candidate sweep", {"GITHUB_ACTIONS": "TRUE"})
+
+
+def test_legacy_guard_name_has_identical_behavior() -> None:
+    require_github_actions_or_explicit_local_permission(
+        "legacy sweep",
+        {"GITHUB_ACTIONS": "true"},
+    )
+    with pytest.raises(LocalRunBlocked, match="legacy sweep"):
+        require_github_actions_or_explicit_local_permission(
+            "legacy sweep",
+            {},
+        )
 
 
 def test_guard_blocks_local() -> None:

@@ -31,6 +31,15 @@ def require_github_execution(
     )
 
 
+def require_github_actions_or_explicit_local_permission(
+    run_kind: str = "research run",
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Compatibility name for legacy scripts using the same exact policy."""
+
+    require_github_execution(run_kind, environ)
+
+
 def require_github_only_execution(
     operation: str,
     environ: Mapping[str, str] | None = None,
