@@ -37,6 +37,9 @@ from scripts.generate_gtbi_v7_state_controller_smoke_manifest import (
 from scripts.generate_gtbi_v7_state_controller_contract import (
     build_manifest as build_controller_contract,
 )
+from scripts.generate_gtbi_v7_state_controller_recovery_receipt import (
+    build_receipt as build_recovery_receipt,
+)
 
 
 def _manifest() -> dict:
@@ -347,4 +350,23 @@ def test_state_controller_public_contract_is_exact() -> None:
         "scientific_work_performed": False,
         "self_hosted_runner_used": False,
         "windows_local_path_used": False,
+    }
+
+
+def test_state_controller_github_smoke_receipt_is_exact() -> None:
+    root = Path(__file__).resolve().parents[1]
+    expected = build_recovery_receipt()
+    path = (
+        root
+        / "docs/readiness/gtbi-v7/state_controller_recovery_receipt.json"
+    )
+    assert path.read_bytes() == canonical_bytes(expected) + b"\n"
+    assert expected["run_conclusion"] == "success"
+    assert expected["run_id"] == 30556296057
+    assert expected["verified_properties"] == {
+        "arbitrary_command_execution_supported": False,
+        "base_sha_matches_default_branch": True,
+        "locked_data_accessed": False,
+        "repository_state_mutated": False,
+        "scientific_work_performed": False,
     }
