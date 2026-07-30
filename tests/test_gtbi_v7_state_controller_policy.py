@@ -21,6 +21,7 @@ from infra.gtbi_v7_readiness.formal_genesis import (
     validate_formal_genesis_records,
     write_formal_genesis_records,
 )
+from infra.gtbi_v7_readiness.genesis import write_initial_records
 from infra.readiness_state_controller.engine import (
     MUTABLE_FILENAMES,
     build_transition_projection,
@@ -178,6 +179,14 @@ def _repository_fixture(tmp_path: Path) -> Path:
         source / "docs/readiness/gtbi-v7",
         destination / "docs/readiness/gtbi-v7",
     )
+    role_registry = (
+        "config/gtbi/fixtures/v7/governance/"
+        "role_registry_v1.owner_controlled.json"
+    )
+    (destination / role_registry).parent.mkdir(parents=True)
+    shutil.copyfile(source / role_registry, destination / role_registry)
+    write_initial_records(destination)
+    write_formal_genesis_records(destination)
     return destination
 
 

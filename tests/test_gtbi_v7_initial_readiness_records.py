@@ -87,7 +87,7 @@ def test_initial_events_cover_every_projection_and_validate() -> None:
 
 
 def test_branch_registry_covers_all_declared_initial_branch_tasks() -> None:
-    rows = _csv_rows(READINESS / "conditional_branch_registry.csv")
+    rows = build_initial_records(ROOT)["conditional_branch_registry.csv"]
     keys = {(row["branch_id"], row["task_id"]) for row in rows}
     expected = {
         (branch_id, task_id)
