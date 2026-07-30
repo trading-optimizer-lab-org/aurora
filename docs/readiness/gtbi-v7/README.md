@@ -43,16 +43,22 @@ or gate can advance.
 
 The V6 final result is preserved byte-for-byte in two owner-controlled private
 GitHub repositories. Each copy was downloaded and SHA-256 verified by a clean
-GitHub-hosted runner. The evidence is recorded in:
+GitHub-hosted runner. The exact source commit is protected by an immutable tag
+ruleset and preserved as a byte-identical Git bundle in the same two
+repositories. Both bundles were secret-scanned, restored into empty
+repositories and verified with `git fsck` on separate GitHub-hosted runners.
+The source manifest also binds the tree, workflow and dependency-file digests.
+The evidence is recorded in:
 
 ```text
 v6_durable_preservation_receipt.json
 v6_final_result_scientific_asset_manifest.json
 ```
 
-This is archival preservation, not a claim that missing V6 input layers were
-recovered or that V7 reproduces V6. The same-provider mirror limitation is
-explicit and accepted by the repository owner.
+This is archival preservation of the result and exact source closure, not a
+claim that missing V6 input-data or generated-pack layers were recovered or
+that V7 reproduces V6. The same-provider mirror limitation is explicit and
+accepted by the repository owner.
 
 Legacy-run cleanup evidence is recorded separately in:
 
