@@ -36,6 +36,7 @@ on:
       - "scripts/merge_global_technical_buy_indicator_external_pack.py"
       - "scripts/merge_global_technical_buy_indicator_results.py"
       - "scripts/preserve_gtbi_v6_artifact.py"
+      - "scripts/package_gtbi_v7_frozen_data_lake.py"
       - "scripts/reevaluate_global_technical_buy_indicator_results.py"
       - "scripts/restore_gtbi_v6_artifact.py"
       - "scripts/run_global_technical_buy_indicator_external_pack_shard.py"
@@ -53,6 +54,7 @@ on:
       - "tests/test_gtbi_v7_role_registry.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
+      - "tests/test_gtbi_v7_frozen_data_lake.py"
       - "tests/test_tiingo_daily.py"
   push:
     branches:
@@ -90,6 +92,7 @@ on:
       - "scripts/merge_global_technical_buy_indicator_external_pack.py"
       - "scripts/merge_global_technical_buy_indicator_results.py"
       - "scripts/preserve_gtbi_v6_artifact.py"
+      - "scripts/package_gtbi_v7_frozen_data_lake.py"
       - "scripts/reevaluate_global_technical_buy_indicator_results.py"
       - "scripts/restore_gtbi_v6_artifact.py"
       - "scripts/run_global_technical_buy_indicator_external_pack_shard.py"
@@ -107,6 +110,7 @@ on:
       - "tests/test_gtbi_v7_role_registry.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
+      - "tests/test_gtbi_v7_frozen_data_lake.py"
       - "tests/test_tiingo_daily.py"
 
 permissions:
@@ -200,6 +204,7 @@ jobs:
             tests/test_gtbi_v7_role_registry.py \
             tests/test_gtbi_v7_scientific_assets.py \
             tests/test_gtbi_v6_archive_preservation.py \
+            tests/test_gtbi_v7_frozen_data_lake.py \
             tests/test_tiingo_daily.py \
             -q
 
