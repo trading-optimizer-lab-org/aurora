@@ -252,9 +252,21 @@ def test_readiness_status_records_formal_genesis_and_v6_is_verified() -> None:
         for row in status["future_gate_prerequisites"]
     }
     frozen = future_prerequisites["G2-FROZEN-DATA-LAKE-GITHUB-TRANSFER"]
-    assert frozen["state"] == "pending_before_github_only_execution"
+    assert frozen["state"] == "complete_verified_published_private"
     assert frozen["facts"]["provider_token_required_now"] is False
     assert frozen["facts"]["universe_symbols"] == 4693
+    assert frozen["facts"]["private_release_repository"] == (
+        "trading-optimizer-lab-org/aurora-v7-assets"
+    )
+    assert frozen["facts"]["verification_run_id"] == 30528738857
+    assert frozen["facts"]["github_only_verification"] is True
+    assert frozen["facts"]["requires_local_machine"] is False
+    assert frozen["facts"]["verified_source_file_count"] == 10678
+    assert frozen["facts"]["verified_source_total_bytes"] == 3242614328
+    assert frozen["required_action"] == (
+        "enforce the recorded pre-2021 scientific view in every "
+        "GitHub-only V7 run"
+    )
     tiingo = future_prerequisites["G2-TIINGO-OPTIONAL-FUTURE-REFRESH"]
     assert tiingo["state"] == (
         "deferred_not_required_for_current_frozen_dataset"

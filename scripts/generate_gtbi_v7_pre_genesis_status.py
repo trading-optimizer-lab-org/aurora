@@ -68,6 +68,9 @@ def generate() -> tuple[dict, dict]:
     data_lake_receipt = _read_json(
         READINESS / "local_data_lake_receipt.json"
     )
+    frozen_release = _read_json(
+        READINESS / "frozen_data_lake_github_release_receipt.json"
+    )
     decisions = owner_decisions["decisions"]
     audited_at = _parse_utc(inventory["audited_at_utc"])
     expires_at = _parse_utc(V6_EXPIRES_AT)
@@ -198,7 +201,7 @@ def generate() -> tuple[dict, dict]:
             {
                 "prerequisite_id": "G2-FROZEN-DATA-LAKE-GITHUB-TRANSFER",
                 "required_for": ["v7_github_only_scientific_execution"],
-                "state": "pending_before_github_only_execution",
+                "state": "complete_verified_published_private",
                 "facts": {
                     "current_input": "owner_supplied_frozen_local_data_lake",
                     "local_dataset_exists": True,
@@ -226,10 +229,27 @@ def generate() -> tuple[dict, dict]:
                     "validation_end": data_lake_receipt[
                         "scientific_cutoff_required"
                     ],
+                    "private_release_repository": frozen_release["repository"],
+                    "private_release_tag": frozen_release["release_tag"],
+                    "verification_run_id": frozen_release[
+                        "verification_run_id"
+                    ],
+                    "github_only_verification": frozen_release[
+                        "github_only_verification"
+                    ],
+                    "requires_local_machine": frozen_release[
+                        "requires_local_machine"
+                    ],
+                    "archive_sha256": frozen_release["archive_sha256"],
+                    "verified_source_file_count": frozen_release[
+                        "source_file_count"
+                    ],
+                    "verified_source_total_bytes": frozen_release[
+                        "source_total_bytes"
+                    ],
                 },
                 "required_action": (
-                    "transfer the frozen local data lake to immutable GitHub "
-                    "storage and enforce a pre-2021 scientific view before any "
+                    "enforce the recorded pre-2021 scientific view in every "
                     "GitHub-only V7 run"
                 ),
             },
