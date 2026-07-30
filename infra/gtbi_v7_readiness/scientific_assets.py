@@ -605,18 +605,18 @@ def lifecycle_state(manifest: dict[str, Any]) -> str:
     """Return an informational lifecycle state without changing the wrapper."""
 
     validate_scientific_asset_manifest(manifest)
-    github_copies = (
-        manifest["primary_release_asset_count"],
-        manifest["mirror_release_asset_count"],
-        manifest["independent_github_disaster_asset_count"],
-    )
-    if github_copies == (0, 0, 0):
+    primary = manifest["primary_release_asset_count"]
+    mirror = manifest["mirror_release_asset_count"]
+    disaster = manifest["independent_github_disaster_asset_count"]
+    if (primary, mirror, disaster) == (0, 0, 0):
         return "wrapper_only"
-    if 0 in github_copies:
+    if primary == 0 or mirror == 0:
         return "custody_incomplete"
     if manifest["latest_restore_receipt_digest"] is None:
         return "stored_not_restore_verified"
-    return "restore_verified"
+    if disaster == 0:
+        return "restore_verified_owner_controlled"
+    return "restore_verified_with_disaster_copy"
 
 
 def seal_asset_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
