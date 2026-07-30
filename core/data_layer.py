@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import json
 import threading
+import time
 import datetime as _dt
 from typing import Optional, Union, TYPE_CHECKING
 import numpy as np
@@ -63,7 +64,17 @@ def _atomic_write_json(path: str, payload: dict) -> None:
             json.dump(payload, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        deadline = time.monotonic() + 2.0
+        backoff = 0.01
+        while True:
+            try:
+                os.replace(tmp_path, path)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(backoff)
+                backoff = min(backoff * 2.0, 0.2)
     finally:
         try:
             if os.path.exists(tmp_path):

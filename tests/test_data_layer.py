@@ -5,6 +5,7 @@ Run: uv run pytest aurora/tests/test_data_layer.py -v
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,29 @@ def test_is_end_constant_value():
     so downstream lockbox logic still matches."""
     assert IS_END == "2012-12-31"
     assert OOS_START == "2013-01-01"
+
+
+def test_atomic_json_write_retries_transient_permission_error(
+    tmp_path: Path, monkeypatch
+):
+    import aurora.core.data_layer as dl
+
+    target = tmp_path / "lock.json"
+    real_replace = os.replace
+    attempts = 0
+
+    def flaky_replace(src, dst):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("transient Windows file lock")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(dl.os, "replace", flaky_replace)
+    dl._atomic_write_json(str(target), {"clean": True})
+
+    assert attempts == 3
+    assert json.loads(target.read_text(encoding="utf-8")) == {"clean": True}
 
 
 # ---------------------------------------------------------------------------

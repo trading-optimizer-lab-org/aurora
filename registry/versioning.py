@@ -113,7 +113,10 @@ def _exclusive_file_lock(path: str):
     fp = None
     locked = False
     try:
-        fp = open(lock_path, "ab")
+        fp = open(lock_path, "a+b")
+        if fp.tell() == 0:
+            fp.write(b"\0")
+            fp.flush()
         _lock_file(fp)
         locked = True
         yield
