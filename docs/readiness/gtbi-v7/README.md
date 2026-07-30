@@ -39,6 +39,32 @@ After the bootstrap pull request is merged, a separate append-only
 reconciliation must bind the merge SHA and successful CI run before any task
 or gate can advance.
 
+## Durable V6 Preservation
+
+The V6 final result is preserved byte-for-byte in two owner-controlled private
+GitHub repositories. Each copy was downloaded and SHA-256 verified by a clean
+GitHub-hosted runner. The evidence is recorded in:
+
+```text
+v6_durable_preservation_receipt.json
+v6_final_result_scientific_asset_manifest.json
+```
+
+This is archival preservation, not a claim that missing V6 input layers were
+recovered or that V7 reproduces V6. The same-provider mirror limitation is
+explicit and accepted by the repository owner.
+
+Legacy-run cleanup evidence is recorded separately in:
+
+```text
+legacy_run_cleanup_receipt.json
+```
+
+Eleven duplicate runs are absent from the API. One GitHub-side zombie remains
+`queued` with zero jobs and zero artifacts after cancel, force-cancel and
+delete API failures; it is truthfully quarantined rather than reported as a
+GitHub-terminal run.
+
 ## Retired External Audit Package
 
 The following historical files are optional compatibility artifacts:

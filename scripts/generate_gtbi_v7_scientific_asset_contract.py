@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -31,10 +32,12 @@ FIXTURE_PATH = (
 ZERO_DIGEST = "sha256:" + ("0" * 64)
 
 
-def wrapper_only_fixture() -> dict:
+def wrapper_only_fixture() -> dict[str, Any]:
     """Build a truthful pre-publication V6 compatibility wrapper."""
 
-    value = {field: None for field in SCIENTIFIC_ASSET_FIELDS}
+    value: dict[str, Any] = {
+        field: None for field in SCIENTIFIC_ASSET_FIELDS
+    }
     value.update(
         {
             "schema_version": "scientific_asset_manifest_v1",
