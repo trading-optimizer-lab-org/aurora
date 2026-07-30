@@ -151,7 +151,7 @@ class _SplitWriter(io.RawIOBase):
         self._part_digest = None
         self._part_bytes = 0
 
-    def write(self, data: bytes | bytearray) -> int:
+    def write(self, data: Any) -> int:
         if self._closed_for_writes:
             raise FrozenDataLakeError("cannot write after archive finalization")
         view = memoryview(data)
@@ -446,7 +446,7 @@ class _ConcatenatedReader(io.RawIOBase):
     def readable(self) -> bool:
         return True
 
-    def readinto(self, buffer: bytearray) -> int:
+    def readinto(self, buffer: Any) -> int:
         view = memoryview(buffer)
         while True:
             if self._current is None:
@@ -454,9 +454,10 @@ class _ConcatenatedReader(io.RawIOBase):
                     self._current = next(self._paths).open("rb")
                 except StopIteration:
                     return 0
-            count = self._current.readinto(view)
-            if count:
-                return count
+            data = self._current.read(len(view))
+            if data:
+                view[: len(data)] = data
+                return len(data)
             self._current.close()
             self._current = None
 
@@ -492,9 +493,9 @@ def verify_frozen_data_lake_archive(
     embedded_manifest: dict[str, Any] | None = None
     raw_stream = _ConcatenatedReader(part_paths)
     with (
-        io.BufferedReader(raw_stream, buffer_size=COPY_CHUNK_SIZE) as stream,
+        raw_stream,
         tarfile.open(
-            fileobj=stream,
+            fileobj=raw_stream,
             mode="r|",
             bufsize=COPY_CHUNK_SIZE,
         ) as archive,
