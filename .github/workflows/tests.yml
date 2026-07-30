@@ -32,13 +32,9 @@ jobs:
       - name: Run tests
         env:
           AU_DATA_DIR: ${{ runner.temp }}/aurora_data
-          PYTHONFAULTHANDLER: "1"
         run: >-
           python -m pytest tests/
           -m "not slow and not integration"
           --ignore=tests/test_config.py
           --ignore=tests/test_property.py
-          --timeout=180
-          --durations=25
-          -vv
           --tb=short
