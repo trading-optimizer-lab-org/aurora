@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
 from infra.gtbi_v7_readiness.canonical import domain_digest, require_digest
+from infra.gtbi_v7_readiness.records import (
+    RECORD_SCHEMAS,
+    read_csv,
+    read_jsonl,
+)
 
 BOOTSTRAP_TASK_ALLOWLIST = frozenset(
     {
@@ -193,3 +200,124 @@ def validate_attempt_event_chain(rows: Iterable[dict[str, Any]]) -> None:
         domain="GTBI_READINESS_ATTEMPT_EVENT_V1",
         transitions=ATTEMPT_TRANSITIONS,
     )
+
+
+def validate_current_readiness_records(
+    repository_root: Path,
+) -> dict[str, Any]:
+    """Validate append-only chains and their current CSV projections."""
+    root = repository_root.resolve()
+    readiness = root / "docs/readiness/gtbi-v7"
+    schemas = {schema.filename: schema for schema in RECORD_SCHEMAS}
+    task_rows = read_csv(
+        readiness / "task_status.csv",
+        schemas["task_status.csv"],
+    )
+    gate_rows = read_csv(
+        readiness / "gate_status.csv",
+        schemas["gate_status.csv"],
+    )
+    task_events = read_jsonl(
+        readiness / "task_events.jsonl",
+        schemas["task_events.jsonl"],
+    )
+    attempt_events = read_jsonl(
+        readiness / "task_attempts.jsonl",
+        schemas["task_attempts.jsonl"],
+    )
+    gate_events = read_jsonl(
+        readiness / "gate_events.jsonl",
+        schemas["gate_events.jsonl"],
+    )
+    validate_task_event_chain(task_events)
+    validate_attempt_event_chain(attempt_events)
+    validate_gate_event_chain(gate_events)
+
+    task_events_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in task_events:
+        task_events_by_id[str(event["task_id"])].append(event)
+    attempts_by_task: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in attempt_events:
+        attempts_by_task[str(event["task_id"])].append(event)
+    status_by_id = {str(row["id"]): row for row in task_rows}
+    for task_id, task in status_by_id.items():
+        events = task_events_by_id.get(task_id, [])
+        if not events:
+            raise ReadinessValidationError(
+                f"{task_id}: missing task event chain"
+            )
+        if task["status"] != events[-1]["new_status"]:
+            raise ReadinessValidationError(
+                f"{task_id}: status projection mismatch"
+            )
+        if int(task["task_version"]) != len(events):
+            raise ReadinessValidationError(
+                f"{task_id}: task version projection mismatch"
+            )
+        task_attempts = attempts_by_task.get(task_id, [])
+        sequences = {
+            int(event["attempt_sequence"]) for event in task_attempts
+        }
+        expected_next = max(sequences, default=0) + 1
+        if int(task["next_attempt_sequence"]) != expected_next:
+            raise ReadinessValidationError(
+                f"{task_id}: next attempt sequence mismatch"
+            )
+        if task_attempts:
+            if task["current_attempt_id"] != task_attempts[-1][
+                "task_attempt_id"
+            ]:
+                raise ReadinessValidationError(
+                    f"{task_id}: current attempt projection mismatch"
+                )
+        elif task["current_attempt_id"]:
+            raise ReadinessValidationError(
+                f"{task_id}: projected attempt has no event chain"
+            )
+
+    gate_events_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in gate_events:
+        gate_events_by_id[str(event["gate_id"])].append(event)
+    for gate in gate_rows:
+        gate_id = str(gate["gate_id"])
+        events = gate_events_by_id.get(gate_id, [])
+        if not events:
+            raise ReadinessValidationError(
+                f"{gate_id}: missing gate event chain"
+            )
+        if gate["status"] != events[-1]["new_status"]:
+            raise ReadinessValidationError(
+                f"{gate_id}: gate status projection mismatch"
+            )
+        if int(gate["gate_version"]) != len(events):
+            raise ReadinessValidationError(
+                f"{gate_id}: gate version projection mismatch"
+            )
+        if gate["gate_attempt_id"] != events[-1]["gate_attempt_id"]:
+            raise ReadinessValidationError(
+                f"{gate_id}: gate attempt projection mismatch"
+            )
+
+    for task in task_rows:
+        if task["status"] not in {"done", "cancelled"}:
+            continue
+        for dependency in json.loads(task["dependencies"]):
+            dependency_row = status_by_id[str(dependency)]
+            if dependency_row["status"] not in {"done", "cancelled"}:
+                raise ReadinessValidationError(
+                    f"{task['id']}: terminal task has open dependency "
+                    f"{dependency}"
+                )
+
+    return {
+        "task_count": len(task_rows),
+        "task_event_count": len(task_events),
+        "attempt_event_count": len(attempt_events),
+        "gate_count": len(gate_rows),
+        "gate_event_count": len(gate_events),
+        "terminal_task_ids": [
+            row["id"]
+            for row in task_rows
+            if row["status"] in {"done", "cancelled"}
+        ],
+    }
