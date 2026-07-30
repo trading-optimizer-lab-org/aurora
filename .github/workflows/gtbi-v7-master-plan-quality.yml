@@ -36,6 +36,7 @@ on:
       - "scripts/generate_gtbi_v7_state_controller_contract.py"
       - "scripts/generate_gtbi_v7_state_controller_recovery_receipt.py"
       - "scripts/generate_gtbi_v7_g0_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
       - "scripts/generate_gtbi_v7_role_registry_template.py"
@@ -102,6 +103,7 @@ on:
       - "scripts/generate_gtbi_v7_state_controller_contract.py"
       - "scripts/generate_gtbi_v7_state_controller_recovery_receipt.py"
       - "scripts/generate_gtbi_v7_g0_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
       - "scripts/generate_gtbi_v7_role_registry_template.py"
@@ -177,6 +179,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_state_controller_contract
           python -m scripts.generate_gtbi_v7_state_controller_recovery_receipt
           python -m scripts.generate_gtbi_v7_g0_apply_reconciliation_receipt
+          python -m scripts.generate_gtbi_v7_identity_scope_contract
           python -m scripts.generate_gtbi_v7_g0_transition_manifest
           python scripts/generate_gtbi_v7_role_registry_template.py
           python scripts/generate_gtbi_v7_scientific_asset_contract.py
@@ -215,7 +218,9 @@ jobs:
             docs/readiness/gtbi-v7/state_controller_manifest.json \
             docs/readiness/gtbi-v7/state_controller_recovery_receipt.json \
             docs/readiness/gtbi-v7/g0_state_controller_apply_receipt.json \
-            docs/readiness/gtbi-v7/g0_state_transition_reconciliation_receipt.json
+            docs/readiness/gtbi-v7/g0_state_transition_reconciliation_receipt.json \
+            docs/readiness/gtbi-v7/v7_identity_scope_receipt.json \
+            docs/readiness/gtbi-v7/transition_manifests/g1a-identity-close-v1.json
 
       - name: Verify frozen text attributes
         run: |
