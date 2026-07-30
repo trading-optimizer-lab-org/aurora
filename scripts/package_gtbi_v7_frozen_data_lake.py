@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from aurora.core.runtime_paths import base_data_dir  # noqa: E402
 from infra.gtbi_v7_readiness.frozen_data_lake import (  # noqa: E402
     DEFAULT_PART_SIZE,
     MANIFEST_FILENAME,
@@ -21,12 +20,18 @@ from infra.gtbi_v7_readiness.frozen_data_lake import (  # noqa: E402
 )
 
 
+def _base_data_dir() -> Path:
+    from aurora.core.runtime_paths import base_data_dir
+
+    return base_data_dir()
+
+
 def _default_source() -> Path:
-    return base_data_dir() / "prices" / "free_us_daily"
+    return _base_data_dir() / "prices" / "free_us_daily"
 
 
 def _default_output() -> Path:
-    return base_data_dir() / "exports" / "gtbi_v7_frozen_data_lake_v1"
+    return _base_data_dir() / "exports" / "gtbi_v7_frozen_data_lake_v1"
 
 
 def main() -> int:
@@ -34,7 +39,7 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     package = subparsers.add_parser("package")
-    package.add_argument("--source-root", type=Path, default=_default_source())
+    package.add_argument("--source-root", type=Path)
     package.add_argument(
         "--source-receipt",
         type=Path,
@@ -42,7 +47,7 @@ def main() -> int:
             ROOT / "docs/readiness/gtbi-v7/local_data_lake_receipt.json"
         ),
     )
-    package.add_argument("--output-dir", type=Path, default=_default_output())
+    package.add_argument("--output-dir", type=Path)
     package.add_argument(
         "--part-size-bytes",
         type=int,
@@ -50,31 +55,32 @@ def main() -> int:
     )
 
     verify = subparsers.add_parser("verify")
-    verify.add_argument("--parts-dir", type=Path, default=_default_output())
+    verify.add_argument("--parts-dir", type=Path)
     verify.add_argument(
         "--manifest",
         type=Path,
-        default=_default_output() / MANIFEST_FILENAME,
     )
     verify.add_argument(
         "--receipt",
         type=Path,
-        default=_default_output() / RECEIPT_FILENAME,
     )
 
     args = parser.parse_args()
     if args.command == "package":
+        source_root = args.source_root or _default_source()
+        output_dir = args.output_dir or _default_output()
         result = package_frozen_data_lake(
-            source_root=args.source_root,
+            source_root=source_root,
             source_receipt_path=args.source_receipt,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
             part_size=args.part_size_bytes,
         )
     else:
+        parts_dir = args.parts_dir or _default_output()
         result = verify_frozen_data_lake_archive(
-            parts_dir=args.parts_dir,
-            manifest_path=args.manifest,
-            receipt_path=args.receipt,
+            parts_dir=parts_dir,
+            manifest_path=args.manifest or parts_dir / MANIFEST_FILENAME,
+            receipt_path=args.receipt or parts_dir / RECEIPT_FILENAME,
         )
     print(json.dumps(result, indent=2))
     return 0
