@@ -71,6 +71,35 @@ and normalization lineage. Therefore V6 remains
 claim is made. The same-provider mirror limitation is explicit and accepted
 by the repository owner.
 
+## Preserved Locked Evidence
+
+Seventeen historical locked or post-validation runs are preserved as evidence
+only. The archive contains exact run, job and artifact metadata; raw run logs;
+workflow bytes at each run commit; 15 exact artifact ZIPs; and 247 files from
+ten read-only local survivor roots. It was copied and hashed without parsing
+locked results, recalculating metrics or evaluating a strategy.
+
+The same archive is stored in two owner-controlled private GitHub repositories.
+Independent clean GitHub-hosted runs verified every one of its 343 payload
+members byte-for-byte. The public, non-scientific receipts are:
+
+```text
+locked_evidence_primary_verification.json
+locked_evidence_mirror_verification.json
+locked_evidence_preservation_report.json
+```
+
+All of this evidence is deliberately classified:
+
+```text
+historical_post_validation_contaminated=true
+pristine_locked=false
+```
+
+The report makes `PREV7-0004` evidence-ready. It does not mark the formal task
+complete, does not publish local paths or result metrics, and does not authorize
+scientific reuse of the preserved locked evidence.
+
 Legacy-run cleanup evidence is recorded separately in:
 
 ```text
@@ -127,6 +156,7 @@ Regenerate deterministic candidate files:
 C:/Python314/python.exe scripts/generate_gtbi_v7_bootstrap_contracts.py
 C:/Python314/python.exe scripts/generate_gtbi_v7_initial_readiness_records.py
 C:/Python314/python.exe scripts/generate_gtbi_v7_pre_genesis_status.py
+C:/Python314/python.exe scripts/generate_gtbi_v7_locked_evidence_report.py
 ```
 
 Run focused tests:
