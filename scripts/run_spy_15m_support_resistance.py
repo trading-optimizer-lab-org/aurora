@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -29,10 +29,17 @@ import yfinance as yf
 try:
     from core.execution_policy import require_github_actions_or_explicit_local_permission
 except ModuleNotFoundError:
-    def require_github_actions_or_explicit_local_permission(run_kind: str = "research run") -> None:
-        if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+    def require_github_actions_or_explicit_local_permission(
+        run_kind: str | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> None:
+        active_environ = os.environ if environ is None else environ
+        if active_environ.get("GITHUB_ACTIONS", "").lower() == "true":
             return
-        if os.environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT") == "USER_REQUESTED_LOCAL_RUN_THIS_TURN":
+        if (
+            active_environ.get("AURORA_ALLOW_LOCAL_RUNS_EXPLICIT")
+            == "USER_REQUESTED_LOCAL_RUN_THIS_TURN"
+        ):
             return
         raise RuntimeError(
             "Run local bloqueado por politica Aurora. "
