@@ -100,6 +100,20 @@ The report makes `PREV7-0004` evidence-ready. It does not mark the formal task
 complete, does not publish local paths or result metrics, and does not authorize
 scientific reuse of the preserved locked evidence.
 
+## Owner-Controlled G0 Foundation
+
+`g0_owner_controlled_foundation_report.json` consolidates the current G0
+evidence under the repository owner's accepted simplified model. In
+particular, it proves that `read:packages` is already present and that the
+current V7 input is the existing frozen local lake, so no provider download is
+required now. It also binds the zero-incremental-spend cap, inventory, legacy
+cleanup, two private stores, clean restores, V6 preservation, locked evidence
+and honest dependency classification.
+
+The report leaves `PREV7-0010` and `PREV7-0011` pending and does not claim G0
+green. The readiness state controller must be deployed and tested before the
+normal-path safety task can be cancelled atomically with the G0 transition.
+
 Legacy-run cleanup evidence is recorded separately in:
 
 ```text
@@ -157,6 +171,7 @@ C:/Python314/python.exe scripts/generate_gtbi_v7_bootstrap_contracts.py
 C:/Python314/python.exe scripts/generate_gtbi_v7_initial_readiness_records.py
 C:/Python314/python.exe scripts/generate_gtbi_v7_pre_genesis_status.py
 C:/Python314/python.exe scripts/generate_gtbi_v7_locked_evidence_report.py
+C:/Python314/python.exe scripts/generate_gtbi_v7_g0_foundation_report.py
 ```
 
 Run focused tests:
