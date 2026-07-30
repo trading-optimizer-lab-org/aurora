@@ -9,6 +9,7 @@ from infra.gtbi_v7_readiness.controller import (
     validate_gate_event_chain,
     validate_task_event_chain,
 )
+from infra.gtbi_v7_readiness.canonical import canonical_bytes
 from infra.gtbi_v7_readiness.genesis import (
     BRANCH_TASKS,
     FULL_DISPOSITION_SUCCESSORS,
@@ -48,6 +49,26 @@ def test_initial_records_have_exact_coverage_and_no_claimed_completion() -> None
     assert not (READINESS / "task_attempts.jsonl").read_bytes()
 
 
+def test_initial_projection_uses_immutable_inventory_binding() -> None:
+    path = READINESS / "initial_inventory_binding.json"
+    binding = json.loads(path.read_text(encoding="utf-8"))
+    current_inventory = json.loads(
+        (ROOT / "docs/project_inventory/audit_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert path.read_bytes() == canonical_bytes(binding) + b"\n"
+    assert binding["default_branch_sha"] == (
+        "56251bbdd76a994b5032b912e9266253af3f4091"
+    )
+    assert binding["snapshot_digest"] != current_inventory["snapshot_digest"]
+    built = build_initial_records(ROOT)
+    assert {
+        row["base_sha"] for row in built["task_status.csv"]
+    } == {binding["default_branch_sha"]}
+
+
 def test_initial_events_cover_every_projection_and_validate() -> None:
     task_events = _jsonl_rows(READINESS / "task_events.jsonl")
     gate_events = _jsonl_rows(READINESS / "gate_events.jsonl")
@@ -78,7 +99,7 @@ def test_generator_is_byte_deterministic(tmp_path: Path) -> None:
     for relative in (
         "docs/plans/gtbi-v7-master-plan.md",
         "docs/readiness/gtbi-v7/owner_simplification_directive.json",
-        "docs/project_inventory/audit_metadata.json",
+        "docs/readiness/gtbi-v7/initial_inventory_binding.json",
         (
             "config/gtbi/fixtures/v7/governance/"
             "role_registry_v1.owner_controlled.json"
@@ -101,7 +122,7 @@ def test_generator_is_independent_of_checkout_line_endings(
     for relative in (
         "docs/plans/gtbi-v7-master-plan.md",
         "docs/readiness/gtbi-v7/owner_simplification_directive.json",
-        "docs/project_inventory/audit_metadata.json",
+        "docs/readiness/gtbi-v7/initial_inventory_binding.json",
         (
             "config/gtbi/fixtures/v7/governance/"
             "role_registry_v1.owner_controlled.json"

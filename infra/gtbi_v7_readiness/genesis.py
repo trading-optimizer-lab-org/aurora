@@ -176,7 +176,9 @@ def build_initial_records(repository_root: Path) -> dict[str, list[dict[str, Any
     plan_path = root / "docs/plans/gtbi-v7-master-plan.md"
     model = load_master_plan_model(plan_path)
     directive = _read_json(readiness / "owner_simplification_directive.json")
-    inventory = _read_json(root / "docs/project_inventory/audit_metadata.json")
+    inventory = _read_json(
+        readiness / "initial_inventory_binding.json"
+    )
     role_registry_path = (
         root
         / "config/gtbi/fixtures/v7/governance/"

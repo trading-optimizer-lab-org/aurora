@@ -201,22 +201,24 @@ def test_v6_preservation_lease_is_canonical_verified_and_non_independent() -> No
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
-def test_inventory_github_actions_attempt_is_canonical_and_fail_closed() -> None:
+def test_inventory_github_actions_attempt_is_canonical_and_complete() -> None:
     path = READINESS / "inventory_github_actions_attempt_receipt.json"
     receipt = json.loads(path.read_text(encoding="utf-8"))
 
     assert path.read_bytes() == canonical_bytes(receipt) + b"\n"
-    assert receipt["run_id"] == 30464201570
+    assert receipt["run_id"] == 30523390257
     assert receipt["commit_sha"] == (
-        "0a1046a805f2ce3c817f1d3f0bb16c60fd6fc4e6"
+        "d7489dc64756274f981f2600b2e50de8404e44d0"
     )
     assert receipt["github_only"] is True
     assert receipt["requires_local_machine"] is False
-    assert receipt["status"] == "blocked_missing_permissions"
-    assert receipt["packages"]["overall_status"] == "unavailable"
-    assert receipt["packages"]["container"]["http_status"] == 400
-    assert receipt["branch_protection"]["http_status"] == 403
-    assert receipt["formal_effect"] == "none_inventory_still_incomplete"
+    assert receipt["status"] == "success"
+    assert receipt["packages"]["overall_status"] == "complete"
+    assert receipt["packages"]["container"]["row_count"] == 0
+    assert receipt["branch_protection"]["http_status"] == 200
+    assert receipt["formal_effect"] == (
+        "PREV7-0001_evidence_ready_dependency_PREV7-0000_pending"
+    )
     assert set(receipt["scientific_jobs"].values()) == {"skipped"}
 
 
