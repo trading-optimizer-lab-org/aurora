@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install test runner
+        run: python -m pip install pytest==8.4.1
+
       - name: Verify stage-two contract
         run: >-
           python -m pytest
