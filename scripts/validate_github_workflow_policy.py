@@ -23,7 +23,7 @@ if source_spec is None:
 source_package = importlib.util.module_from_spec(source_spec)
 sys.modules["aurora"] = source_package
 source_infra = ModuleType("aurora.infra")
-source_infra.__path__ = [str(ROOT / "infra")]  # type: ignore[attr-defined]
+source_infra.__path__ = [str(ROOT / "infra")]
 sys.modules["aurora.infra"] = source_infra
 
 from aurora.infra.github_performance.preflight import (  # noqa: E402
