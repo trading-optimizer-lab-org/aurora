@@ -125,6 +125,28 @@ Eleven duplicate runs are absent from the API. One GitHub-side zombie remains
 delete API failures; it is truthfully quarantined rather than reported as a
 GitHub-terminal run.
 
+## G3A Minimum GitHub Governance Baseline
+
+The live repository baseline is captured in:
+
+```text
+g3a_github_live_receipt.json
+transition_manifests/g3a-minimum-governance-close-v1.json
+```
+
+The receipt confirms the current `main` protection, minimum Actions
+permissions, pinned workflow policy, GitHub security controls and the fourteen
+owner-controlled source environments. It also confirms that `read:packages`
+is already available and does not request a new provider download. The current
+frozen data lake remains local until its one-time, hash-verified transfer to
+durable GitHub storage.
+
+The transition closes only `PREV7-0202`, `PREV7-0205` and `PREV7-0206`.
+`PREV7-0204` and `PREV7-0210` remain open because no source GitHub App is
+installed yet. App identities and installation IDs are never fabricated. This
+partial baseline performs no scientific work, reads no locked data and incurs
+no incremental spend.
+
 ## Retired External Audit Package
 
 The following historical files are optional compatibility artifacts:
