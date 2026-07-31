@@ -31,7 +31,12 @@ class StageTwoProtectionError(RuntimeError):
     """A stage-two GitHub operation failed."""
 
 
-def _run(args: list[str], *, input_bytes: bytes | None = None) -> str:
+def _run(
+    args: list[str],
+    *,
+    input_bytes: bytes | None = None,
+    allow_not_found: bool = False,
+) -> str:
     result = subprocess.run(
         args,
         cwd=ROOT,
@@ -40,7 +45,10 @@ def _run(args: list[str], *, input_bytes: bytes | None = None) -> str:
         check=False,
     )
     if result.returncode:
-        raise StageTwoProtectionError(result.stderr.decode("utf-8", errors="replace"))
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        if allow_not_found and "HTTP 404" in stderr:
+            return ""
+        raise StageTwoProtectionError(stderr)
     return result.stdout.decode("utf-8")
 
 
@@ -49,6 +57,7 @@ def _gh_json(
     *,
     method: str = "GET",
     body: Mapping[str, Any] | None = None,
+    allow_not_found: bool = False,
 ) -> Any:
     args = ["gh", "api"]
     if method != "GET":
@@ -58,7 +67,11 @@ def _gh_json(
     if body is not None:
         args.extend(["--input", "-"])
         payload = canonical_bytes(body)
-    raw = _run(args, input_bytes=payload)
+    raw = _run(
+        args,
+        input_bytes=payload,
+        allow_not_found=allow_not_found,
+    )
     return json.loads(raw) if raw else None
 
 
@@ -74,9 +87,13 @@ def capture_environment(name: str) -> dict[str, Any]:
     encoded = quote(name, safe="")
     environment = _gh_json(f"/repos/{REPOSITORY}/environments/{encoded}")
     branch_policies = _gh_json(
-        f"/repos/{REPOSITORY}/environments/{encoded}/deployment-branch-policies"
-    )
-    secrets = _gh_json(f"/repos/{REPOSITORY}/environments/{encoded}/secrets")
+        f"/repos/{REPOSITORY}/environments/{encoded}/deployment-branch-policies",
+        allow_not_found=True,
+    ) or {"total_count": 0}
+    secrets = _gh_json(
+        f"/repos/{REPOSITORY}/environments/{encoded}/secrets",
+        allow_not_found=True,
+    ) or {"total_count": 0}
     reviewers: list[dict[str, Any]] = []
     prevent_self_review = False
     for rule in environment.get("protection_rules", []):
