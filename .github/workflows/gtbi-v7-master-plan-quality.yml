@@ -9,7 +9,9 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - ".github/workflows/gtbi-v7-readiness-state-controller.yml"
+      - ".github/workflows/gtbi-v7-stage-two-required.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/governance/**"
       - "config/gtbi/v7/**"
       - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
       - "config/gtbi/schemas/readiness/**"
@@ -43,6 +45,7 @@ on:
       - "scripts/generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3b_codeowners_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_codeowners_contract.py"
+      - "scripts/configure_gtbi_v7_stage_two_protection.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_g3a_baseline.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_completion.py"
@@ -78,6 +81,7 @@ on:
       - "tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py"
       - "tests/test_gtbi_v7_g3b_codeowners_reconciliation.py"
       - "tests/test_gtbi_v7_codeowners_contract.py"
+      - "tests/test_gtbi_v7_stage_two_protection.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
@@ -91,7 +95,9 @@ on:
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - ".github/workflows/gtbi-v7-readiness-state-controller.yml"
+      - ".github/workflows/gtbi-v7-stage-two-required.yml"
       - "config/gtbi/contracts/**"
+      - "config/gtbi/governance/**"
       - "config/gtbi/v7/**"
       - "config/gtbi/manifests/v6_fast_strict_preservation_manifest.json"
       - "config/gtbi/schemas/readiness/**"
@@ -125,6 +131,7 @@ on:
       - "scripts/generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3b_codeowners_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_codeowners_contract.py"
+      - "scripts/configure_gtbi_v7_stage_two_protection.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_g3a_baseline.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_completion.py"
@@ -160,6 +167,7 @@ on:
       - "tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py"
       - "tests/test_gtbi_v7_g3b_codeowners_reconciliation.py"
       - "tests/test_gtbi_v7_codeowners_contract.py"
+      - "tests/test_gtbi_v7_stage_two_protection.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
@@ -305,6 +313,7 @@ jobs:
             tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py \
             tests/test_gtbi_v7_g3b_codeowners_reconciliation.py \
             tests/test_gtbi_v7_codeowners_contract.py \
+            tests/test_gtbi_v7_stage_two_protection.py \
             tests/test_gtbi_v7_scientific_assets.py \
             tests/test_gtbi_v6_archive_preservation.py \
             tests/test_gtbi_v7_frozen_data_lake.py \
