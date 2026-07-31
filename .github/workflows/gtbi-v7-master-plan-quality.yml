@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - ".gitattributes"
+      - ".github/CODEOWNERS"
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - ".github/workflows/gtbi-v7-readiness-state-controller.yml"
@@ -40,6 +41,7 @@ on:
       - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_codeowners_contract.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_g3a_baseline.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_completion.py"
@@ -73,6 +75,7 @@ on:
       - "tests/test_gtbi_v7_g3a_governance.py"
       - "tests/test_gtbi_v7_g3a_owner_auth.py"
       - "tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py"
+      - "tests/test_gtbi_v7_codeowners_contract.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
@@ -82,6 +85,7 @@ on:
       - main
     paths:
       - ".gitattributes"
+      - ".github/CODEOWNERS"
       - ".github/workflows/gtbi-v7-master-plan-quality.yml"
       - ".github/workflows/gtbi-v7-inventory.yml"
       - ".github/workflows/gtbi-v7-readiness-state-controller.yml"
@@ -117,6 +121,7 @@ on:
       - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_codeowners_contract.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_g3a_baseline.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_completion.py"
@@ -150,6 +155,7 @@ on:
       - "tests/test_gtbi_v7_g3a_governance.py"
       - "tests/test_gtbi_v7_g3a_owner_auth.py"
       - "tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py"
+      - "tests/test_gtbi_v7_codeowners_contract.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
@@ -203,6 +209,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_g1b_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_g3a_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt
+          python -m scripts.generate_gtbi_v7_codeowners_contract
           python -m scripts.generate_gtbi_v7_g3a_owner_auth_completion \
             --recorded-at-utc 2026-07-31T14:00:00Z
           python -m scripts.generate_gtbi_v7_identity_scope_contract
@@ -225,6 +232,8 @@ jobs:
             config/gtbi/schemas/v7/scientific/scientific_asset_manifest_v1.schema.json \
             config/gtbi/fixtures/v7/governance/role_registry_v1.owner_controlled.json \
             config/gtbi/fixtures/v7/scientific_asset_manifest_v1.wrapper_only.json \
+            .github/CODEOWNERS \
+            config/gtbi/governance/codeowners_owner_controlled.json \
             docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
             docs/readiness/gtbi-v7/master_plan_quality_status.json \
             docs/readiness/gtbi-v7/pre_genesis_status.json \
@@ -254,6 +263,8 @@ jobs:
             docs/readiness/gtbi-v7/g3a_state_transition_reconciliation_receipt.json \
             docs/readiness/gtbi-v7/g3a_owner_auth_state_controller_apply_receipt.json \
             docs/readiness/gtbi-v7/g3a_owner_auth_state_transition_reconciliation_receipt.json \
+            docs/readiness/gtbi-v7/g3b_codeowners_owner_receipt.json \
+            docs/readiness/gtbi-v7/transition_manifests/g3b-codeowners-owner-v1.json \
             docs/readiness/gtbi-v7/g3a_owner_auth_completion_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g3a-owner-auth-close-v1.json \
             config/gtbi/governance/role_registry.json \
@@ -267,6 +278,7 @@ jobs:
           test "$(git check-attr eol -- docs/plans/gtbi-v7-master-plan.md | awk '{print $3}')" = "lf"
           test "$(git check-attr eol -- config/gtbi/contracts/canonical_serialization_v1.json | awk '{print $3}')" = "lf"
           test "$(git check-attr eol -- docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json | awk '{print $3}')" = "lf"
+          test "$(git check-attr eol -- .github/CODEOWNERS | awk '{print $3}')" = "lf"
 
       - name: Run bootstrap and inventory tests
         run: |
@@ -284,6 +296,7 @@ jobs:
             tests/test_gtbi_v7_g3a_governance.py \
             tests/test_gtbi_v7_g3a_owner_auth.py \
             tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py \
+            tests/test_gtbi_v7_codeowners_contract.py \
             tests/test_gtbi_v7_scientific_assets.py \
             tests/test_gtbi_v6_archive_preservation.py \
             tests/test_gtbi_v7_frozen_data_lake.py \

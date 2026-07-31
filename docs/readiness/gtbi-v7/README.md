@@ -165,6 +165,23 @@ controller output from run `30636646934` and reconciles it with merged PR 51.
 It proves that `PREV7-0204` and `PREV7-0210` are terminal, G3A is green and the
 historical partial G3A receipt remains immutable.
 
+## Owner-Controlled CODEOWNERS
+
+The deterministic owner-routing contract is captured in:
+
+```text
+config/gtbi/governance/codeowners_owner_controlled.json
+.github/CODEOWNERS
+g3b_codeowners_owner_receipt.json
+transition_manifests/g3b-codeowners-owner-v1.json
+```
+
+Every protected path listed by the plan routes to the verified repository
+owner `@gomez5757`. The file is routing-only until stage-two protection is
+separately authorized and applied, so it cannot create an impossible
+self-approval requirement. The owner simplification directive remains
+authoritative: no external reviewer or additional person is invented.
+
 ## Retired External Audit Package
 
 The following historical files are optional compatibility artifacts:
