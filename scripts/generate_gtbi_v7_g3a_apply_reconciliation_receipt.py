@@ -36,11 +36,13 @@ G3A_STATUS_COUNTS = {
 }
 G3A_TASK_STATUSES = {
     "PREV7-0202": "done",
-    "PREV7-0204": "blocked",
     "PREV7-0205": "done",
     "PREV7-0206": "done",
-    "PREV7-0210": "blocked",
 }
+G3A_OWNER_AUTH_TASK_IDS = ("PREV7-0204", "PREV7-0210")
+G3A_OWNER_AUTH_RECEIPT = (
+    READINESS / "g3a_owner_auth_completion_receipt.json"
+)
 
 
 def _canonical_json(path: Path) -> dict[str, Any]:
@@ -96,10 +98,52 @@ def validate_application() -> dict[str, Any]:
         row["gate_id"]: row
         for row in _csv_rows(READINESS / "gate_status.csv")
     }
-    if gate_rows["G3A"]["status"] != "red":
-        raise ValueError("partial G3A baseline must not make the gate green")
-    if gate_rows["G3A"]["blocking_reason"] != "required_tasks_not_done":
-        raise ValueError("G3A blocker no longer identifies incomplete tasks")
+    owner_auth_statuses = {
+        task_id: task_rows[task_id]["status"]
+        for task_id in G3A_OWNER_AUTH_TASK_IDS
+    }
+    owner_auth_blocked = all(
+        status == "blocked" for status in owner_auth_statuses.values()
+    )
+    owner_auth_done = all(
+        status == "done" for status in owner_auth_statuses.values()
+    )
+    if not (owner_auth_blocked or owner_auth_done):
+        raise ValueError("G3A owner-auth tasks have inconsistent status")
+
+    g3a_gate = gate_rows["G3A"]
+    if owner_auth_blocked:
+        if g3a_gate["status"] != "red":
+            raise ValueError("partial G3A baseline must keep the gate red")
+        if g3a_gate["blocking_reason"] != "required_tasks_not_done":
+            raise ValueError(
+                "G3A blocker no longer identifies incomplete tasks"
+            )
+    else:
+        owner_auth_receipt = _canonical_json(G3A_OWNER_AUTH_RECEIPT)
+        alternative_digest = owner_auth_receipt["receipt_digest"]
+        if owner_auth_receipt["task_completion"] != {
+            task_id: True for task_id in G3A_OWNER_AUTH_TASK_IDS
+        }:
+            raise ValueError("G3A owner-auth receipt is incomplete")
+        for task_id in G3A_OWNER_AUTH_TASK_IDS:
+            if (
+                task_rows[task_id][
+                    "alternative_completion_receipt_set_digest"
+                ]
+                != alternative_digest
+            ):
+                raise ValueError(
+                    f"G3A alternative digest mismatch: {task_id}"
+                )
+        if g3a_gate["status"] != "green":
+            raise ValueError("completed G3A owner auth must make the gate green")
+        if g3a_gate["blocking_reason"]:
+            raise ValueError("completed G3A gate still has a blocker")
+        if g3a_gate["selected_branch_id_or_null"] != "APP_PRIVATE_KEY_IMPORT":
+            raise ValueError("G3A owner-auth branch selection mismatch")
+        if g3a_gate["evidence_bundle_digest"] != alternative_digest:
+            raise ValueError("G3A owner-auth gate evidence mismatch")
 
     task_events = _jsonl_rows(READINESS / "task_events.jsonl")
     applied_task_statuses = {
