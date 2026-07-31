@@ -41,6 +41,7 @@ on:
       - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_g3b_codeowners_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_codeowners_contract.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_g3a_baseline.py"
@@ -75,6 +76,7 @@ on:
       - "tests/test_gtbi_v7_g3a_governance.py"
       - "tests/test_gtbi_v7_g3a_owner_auth.py"
       - "tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py"
+      - "tests/test_gtbi_v7_g3b_codeowners_reconciliation.py"
       - "tests/test_gtbi_v7_codeowners_contract.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
@@ -121,6 +123,7 @@ on:
       - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt.py"
+      - "scripts/generate_gtbi_v7_g3b_codeowners_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_codeowners_contract.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
       - "scripts/generate_gtbi_v7_g3a_baseline.py"
@@ -155,6 +158,7 @@ on:
       - "tests/test_gtbi_v7_g3a_governance.py"
       - "tests/test_gtbi_v7_g3a_owner_auth.py"
       - "tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py"
+      - "tests/test_gtbi_v7_g3b_codeowners_reconciliation.py"
       - "tests/test_gtbi_v7_codeowners_contract.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
@@ -209,6 +213,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_g1b_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_g3a_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_g3a_owner_auth_apply_reconciliation_receipt
+          python -m scripts.generate_gtbi_v7_g3b_codeowners_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_codeowners_contract
           python -m scripts.generate_gtbi_v7_g3a_owner_auth_completion \
             --recorded-at-utc 2026-07-31T14:00:00Z
@@ -264,6 +269,8 @@ jobs:
             docs/readiness/gtbi-v7/g3a_owner_auth_state_controller_apply_receipt.json \
             docs/readiness/gtbi-v7/g3a_owner_auth_state_transition_reconciliation_receipt.json \
             docs/readiness/gtbi-v7/g3b_codeowners_owner_receipt.json \
+            docs/readiness/gtbi-v7/g3b_codeowners_state_controller_apply_receipt.json \
+            docs/readiness/gtbi-v7/g3b_codeowners_state_transition_reconciliation_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g3b-codeowners-owner-v1.json \
             docs/readiness/gtbi-v7/g3a_owner_auth_completion_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g3a-owner-auth-close-v1.json \
@@ -296,6 +303,7 @@ jobs:
             tests/test_gtbi_v7_g3a_governance.py \
             tests/test_gtbi_v7_g3a_owner_auth.py \
             tests/test_gtbi_v7_g3a_owner_auth_reconciliation.py \
+            tests/test_gtbi_v7_g3b_codeowners_reconciliation.py \
             tests/test_gtbi_v7_codeowners_contract.py \
             tests/test_gtbi_v7_scientific_assets.py \
             tests/test_gtbi_v6_archive_preservation.py \
