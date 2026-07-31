@@ -109,7 +109,7 @@ def build_manifest(receipt: dict[str, Any]) -> dict[str, Any]:
     manifest: dict[str, Any] = {
         "schema_version": "gtbi_v7_readiness_transition_manifest_v1",
         "manifest_id": "g2-provider-terms-acceptance-v1",
-        "transaction_id": "G2_CLOSE-2",
+        "transaction_id": "G2_CLOSE-4",
         "requested_at_utc": RECORDED_AT_UTC,
         "actor_id": "github-user:271768688",
         "actor_role": "repository_owner",
