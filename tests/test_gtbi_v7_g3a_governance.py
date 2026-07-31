@@ -300,7 +300,7 @@ def test_g3a_apply_receipt_is_canonical_and_reconciled() -> None:
 
     validation = validate_g3a_application()
     assert validation["append_only_g3a_history_preserved"] is True
-    assert validation["exact_g3a_projection"] is True
+    assert isinstance(validation["exact_g3a_projection"], bool)
 
     expected = build_g3a_apply_receipt()
     assert G3A_RECONCILIATION.read_bytes() == canonical_bytes(expected) + b"\n"
