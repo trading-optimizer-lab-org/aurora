@@ -180,3 +180,11 @@ def test_published_private_github_release_receipt_is_exact_and_canonical() -> No
     assert receipt["scientific_cutoff"] == "2020-12-31"
     assert receipt["locked_start"] == "2021-01-01"
     assert receipt["maximum_incremental_net_spend_usd"] == 0
+
+    readiness_readme = (
+        ROOT / "docs/readiness/gtbi-v7" / "README.md"
+    ).read_text(encoding="utf-8")
+    assert "has already completed its one-time, hash-verified transfer" in readiness_readme
+    assert receipt["repository"] in readiness_readme
+    assert str(receipt["verification_run_id"]) in readiness_readme
+    assert "remains local until its one-time" not in readiness_readme
