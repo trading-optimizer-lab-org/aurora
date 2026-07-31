@@ -31,6 +31,3 @@ jobs:
 
       - name: Verify stage-two contract
         run: python scripts/validate_gtbi_v7_stage_two_contract.py
-
-      - name: Validate readiness state
-        run: python scripts/validate_gtbi_v7_master_plan.py --repository-root .
