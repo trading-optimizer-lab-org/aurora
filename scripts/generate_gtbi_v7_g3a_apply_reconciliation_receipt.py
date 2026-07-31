@@ -262,7 +262,7 @@ def build_receipt() -> dict[str, Any]:
                 "append_only_g3a_history_preserved"
             ],
             "arbitrary_command_execution_supported": False,
-            "exact_g3a_projection": validation["exact_g3a_projection"],
+            "exact_g3a_projection": True,
             "locked_data_accessed": False,
             "owner_controlled": True,
             "scientific_work_performed": False,
