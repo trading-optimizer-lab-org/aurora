@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 import yaml
 
+from infra.readiness_state_controller.policy import validate_transition_manifest
 from scripts.generate_gtbi_v7_retention_policy import (
+    MANIFEST,
     MIGRATION_EVIDENCE,
     POLICY,
     validate_policy,
@@ -73,6 +75,16 @@ def test_committed_policy_verifies_and_expires_fail_closed() -> None:
     expired = verify_committed(now=datetime(2026, 9, 2, tzinfo=timezone.utc))
     assert valid["status"] == "valid"
     assert expired["status"] == "expired_fail_closed"
+
+
+def test_retention_transition_manifest_is_accepted_by_state_controller() -> None:
+    manifest = _load(MANIFEST)
+    validate_transition_manifest(manifest)
+    assert all(
+        path.startswith("docs/readiness/gtbi-v7/")
+        for action in manifest["task_actions"]
+        for path in action["evidence_paths"]
+    )
 
 
 def test_maintenance_workflow_is_pinned_github_only_and_non_scientific() -> None:

@@ -338,7 +338,6 @@ def build_receipt(policy: dict[str, Any], migration: dict[str, Any]) -> dict[str
 def build_manifest(receipt: dict[str, Any]) -> dict[str, Any]:
     evidence_paths = [
         RECEIPT.relative_to(ROOT).as_posix(),
-        POLICY.relative_to(ROOT).as_posix(),
         MIGRATION_EVIDENCE.relative_to(ROOT).as_posix(),
         OWNER_DECISIONS.relative_to(ROOT).as_posix(),
         BILLING_RECEIPT.relative_to(ROOT).as_posix(),
