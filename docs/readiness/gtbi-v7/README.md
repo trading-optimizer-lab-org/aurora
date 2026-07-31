@@ -133,7 +133,9 @@ The live repository baseline is captured in:
 g3a_github_live_receipt.json
 g3a_state_controller_apply_receipt.json
 g3a_state_transition_reconciliation_receipt.json
+g3a_owner_auth_completion_receipt.json
 transition_manifests/g3a-minimum-governance-close-v1.json
+transition_manifests/g3a-owner-auth-close-v1.json
 ```
 
 The receipt confirms the current `main` protection, minimum Actions
@@ -146,11 +148,15 @@ the private `trading-optimizer-lab-org/aurora-v7-assets` release recorded in
 3,252,295,680 archive bytes in run `30528738857`; no provider refresh or local
 scientific execution was performed.
 
-The transition closes only `PREV7-0202`, `PREV7-0205` and `PREV7-0206`.
-`PREV7-0204` and `PREV7-0210` remain open because no source GitHub App is
-installed yet. App identities and installation IDs are never fabricated. This
-partial baseline performs no scientific work, reads no locked data and incurs
-no incremental spend.
+The historical baseline transition closed `PREV7-0202`, `PREV7-0205` and
+`PREV7-0206`. The owner-authorized completion receipt replaces the legacy
+source-App/key-broker path for `PREV7-0204` and `PREV7-0210` with GitHub's
+repository-scoped ephemeral workflow token. It requires no GitHub App, no
+permanent private key and no external broker. The reviewed transition also
+selects this alternative explicitly in `APP_PRIVATE_KEY_IMPORT`; the checked
+task and gate records remain the authority for whether that transition has
+already been applied and merged. Neither path performs scientific work, reads
+locked data or incurs incremental spend.
 
 ## Retired External Audit Package
 
