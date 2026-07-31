@@ -39,6 +39,7 @@ on:
       - "scripts/generate_gtbi_v7_g1a_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
+      - "scripts/generate_gtbi_v7_g3a_baseline.py"
       - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
@@ -66,6 +67,7 @@ on:
       - "tests/test_gtbi_v7_readiness_records.py"
       - "tests/test_gtbi_v7_state_controller_policy.py"
       - "tests/test_gtbi_v7_role_registry.py"
+      - "tests/test_gtbi_v7_g3a_governance.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
@@ -109,6 +111,7 @@ on:
       - "scripts/generate_gtbi_v7_g1a_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1b_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_g1b_role_contract.py"
+      - "scripts/generate_gtbi_v7_g3a_baseline.py"
       - "scripts/generate_gtbi_v7_identity_scope_contract.py"
       - "scripts/generate_gtbi_v7_g0_transition_manifest.py"
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
@@ -136,6 +139,7 @@ on:
       - "tests/test_gtbi_v7_readiness_records.py"
       - "tests/test_gtbi_v7_state_controller_policy.py"
       - "tests/test_gtbi_v7_role_registry.py"
+      - "tests/test_gtbi_v7_g3a_governance.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
@@ -257,6 +261,7 @@ jobs:
             tests/test_gtbi_v7_readiness_records.py \
             tests/test_gtbi_v7_state_controller_policy.py \
             tests/test_gtbi_v7_role_registry.py \
+            tests/test_gtbi_v7_g3a_governance.py \
             tests/test_gtbi_v7_scientific_assets.py \
             tests/test_gtbi_v6_archive_preservation.py \
             tests/test_gtbi_v7_frozen_data_lake.py \

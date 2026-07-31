@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 
-from aurora.infra.github_performance.preflight import (
+ROOT = Path(__file__).resolve().parents[1]
+
+# Validate this exact checkout even when another Aurora worktree is the active
+# editable install. Layout B maps the repository root to the ``aurora`` package.
+source_spec = importlib.util.spec_from_file_location(
+    "aurora",
+    ROOT / "__init__.py",
+    submodule_search_locations=[str(ROOT)],
+)
+if source_spec is None:
+    raise RuntimeError("cannot construct the source Aurora package spec")
+source_package = importlib.util.module_from_spec(source_spec)
+sys.modules["aurora"] = source_package
+source_infra = ModuleType("aurora.infra")
+source_infra.__path__ = [str(ROOT / "infra")]
+sys.modules["aurora.infra"] = source_infra
+
+from aurora.infra.github_performance.preflight import (  # noqa: E402
     classify_workflow,
     load_legacy_workflow_allowlist,
     load_legacy_workflow_migrations,
