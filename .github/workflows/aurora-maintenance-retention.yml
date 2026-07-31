@@ -1,0 +1,40 @@
+name: Aurora Maintenance Retention
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aurora-maintenance-retention
+  cancel-in-progress: false
+
+jobs:
+  verify-retention-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the protected policy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Verify retention, funding and recovery objectives
+        run: >-
+          python -m scripts.generate_gtbi_v7_retention_policy
+          --verify
+          --review-output retention-review.json
+
+      - name: Publish immutable review evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-retention-review-${{ github.run_id }}
+          path: retention-review.json
+          if-no-files-found: error
+          retention-days: 90
