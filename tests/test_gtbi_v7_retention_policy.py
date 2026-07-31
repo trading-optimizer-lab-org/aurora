@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/aurora-maintenance-retention.yml"
 
 
-def _load(path: Path) -> dict[str, object]:
+def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 

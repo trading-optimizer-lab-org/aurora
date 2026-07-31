@@ -42,7 +42,7 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def build_migration_evidence() -> dict[str, Any]:
-    samples = [
+    samples: list[dict[str, Any]] = [
         {
             "run_id": 30541859386,
             "purpose": "primary_v6_clean_runner_restore",
