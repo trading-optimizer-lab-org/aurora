@@ -257,8 +257,16 @@ def test_owner_auth_rejects_incomplete_environment_set() -> None:
 
 def test_owner_auth_rejects_inconsistent_task_state() -> None:
     inputs = copy.deepcopy(_source_inputs())
+    statuses = {
+        row["id"]: row["status"]
+        for row in inputs["task_rows"]
+        if row["id"] in G3A_OWNER_AUTH_TASK_IDS
+    }
+    inconsistent_status = (
+        "done" if statuses["PREV7-0210"] == "blocked" else "blocked"
+    )
     for row in inputs["task_rows"]:
         if row["id"] == "PREV7-0204":
-            row["status"] = "done"
+            row["status"] = inconsistent_status
     with pytest.raises(G3AOwnerAuthError, match="consistently blocked or done"):
         build_owner_auth_receipt(**inputs)
