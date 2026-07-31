@@ -116,7 +116,7 @@ def build_transition_manifest(receipt: dict[str, Any]) -> dict[str, Any]:
         "transaction_id": "G2_CLOSE-1",
         "requested_at_utc": RECORDED_AT_UTC,
         "actor_id": "github-user:271768688",
-        "actor_role": "implementer",
+        "actor_role": "repository_owner",
         "expected_base_ref": "refs/heads/main",
         "expected_base_sha_mode": "runtime_default_branch_head",
         "task_actions": [
