@@ -36,8 +36,8 @@ jobs:
 
       - name: Download official Open Asset Pricing files
         run: |
-          gdown --id 10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI -O PredictorLSretWide.csv
-          gdown --id 1nLQWwt1023NLrfhdQiCvIRbFkiW2z3fG -O PredictorSummary.xlsx
+          gdown 10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI -O PredictorLSretWide.csv
+          gdown 1nLQWwt1023NLrfhdQiCvIRbFkiW2z3fG -O PredictorSummary.xlsx
           test -s PredictorLSretWide.csv
           test -s PredictorSummary.xlsx
 
