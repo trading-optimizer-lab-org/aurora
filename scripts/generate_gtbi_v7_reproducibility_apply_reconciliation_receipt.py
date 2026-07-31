@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,9 @@ EXPECTED_COUNTS = {
     "task_event_count": 211,
 }
 EXPECTED_STATUS_COUNTS = {"blocked": 84, "cancelled": 1, "done": 25}
+EXPECTED_FINAL_EVENT_DIGEST = (
+    "sha256:9735fafb8c6385fe8a888903e8d795f3a6d2efb881038bfdd3fe8b6747faba9f"
+)
 CLASSIFICATION_DIGEST = (
     "sha256:89855d0d629b5d0b975eb7a507a8070637c6715cd7d7c620444adaf922b474f0"
 )
@@ -75,16 +77,34 @@ def validate_application() -> dict[str, Any]:
     if task["base_sha"] != source["base_sha"]:
         raise ValueError("PREV7-0306 base SHA mismatch")
 
-    exact_projection = all(
-        int(current[key]) == value for key, value in EXPECTED_COUNTS.items()
-    )
-    if exact_projection:
-        for relative, expected in source["output_sha256"].items():
-            if raw_sha256(ROOT / relative) != expected:
-                raise ValueError(f"state output hash mismatch: {relative}")
-        if dict(Counter(row["status"] for row in tasks.values())) != EXPECTED_STATUS_COUNTS:
-            raise ValueError("task status counts mismatch")
-    return {"exact_projection": exact_projection, "task_status": task["status"]}
+    task_events = [
+        json.loads(line)
+        for line in (READINESS / "task_events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line
+    ]
+    transition_events = [
+        event
+        for event in task_events
+        if event["task_id"] == "PREV7-0306"
+        and event["transaction_id"] == source["transaction_id"]
+    ]
+    if [event["new_status"] for event in transition_events] != [
+        "ready",
+        "in_progress",
+        "review",
+        "done",
+    ]:
+        raise ValueError("PREV7-0306 transition event chain mismatch")
+    if transition_events[-1]["event_digest"] != EXPECTED_FINAL_EVENT_DIGEST:
+        raise ValueError("PREV7-0306 final event digest mismatch")
+    if transition_events[-1]["evaluated_commit_sha"] != source["base_sha"]:
+        raise ValueError("PREV7-0306 final event base SHA mismatch")
+    return {
+        "historical_projection_verified": True,
+        "task_status": task["status"],
+    }
 
 
 def build_receipt() -> dict[str, Any]:
@@ -134,7 +154,9 @@ def build_receipt() -> dict[str, Any]:
             "prev7_0306_status": validation["task_status"],
         },
         "verified_properties": {
-            "exact_projection_at_state_merge": validation["exact_projection"],
+            "exact_projection_at_state_merge": validation[
+                "historical_projection_verified"
+            ],
             "github_only": True,
             "locked_data_accessed": False,
             "scientific_work_performed": False,

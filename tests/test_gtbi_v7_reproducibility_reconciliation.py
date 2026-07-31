@@ -12,7 +12,10 @@ from scripts.generate_gtbi_v7_reproducibility_apply_reconciliation_receipt impor
 
 def test_reproducibility_apply_is_reconciled_with_canonical_state() -> None:
     validation = validate_application()
-    assert validation == {"exact_projection": True, "task_status": "done"}
+    assert validation == {
+        "historical_projection_verified": True,
+        "task_status": "done",
+    }
     expected = build_receipt()
     assert DESTINATION.read_bytes() == canonical_bytes(expected) + b"\n"
     assert expected["post_apply_state"]["counts"] == EXPECTED_COUNTS
