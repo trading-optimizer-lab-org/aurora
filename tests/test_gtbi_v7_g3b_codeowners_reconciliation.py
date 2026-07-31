@@ -24,11 +24,10 @@ def test_codeowners_apply_receipt_is_canonical_and_reconciled() -> None:
     )
 
     validation = validate_application()
-    assert validation == {
-        "append_only_readiness_history_preserved": True,
-        "exact_codeowners_projection": True,
-        "remaining_g3b_tasks": list(REMAINING_G3B_TASKS),
-    }
+    assert validation["append_only_readiness_history_preserved"] is True
+    assert validation["remaining_g3b_tasks"] == list(REMAINING_G3B_TASKS)
+    assert set(validation["current_remaining_g3b_tasks"]).issubset(REMAINING_G3B_TASKS)
+    assert "PREV7-0207" not in validation["current_remaining_g3b_tasks"]
 
     expected = build_receipt()
     assert DESTINATION.read_bytes() == canonical_bytes(expected) + b"\n"

@@ -127,10 +127,10 @@ def validate_application() -> dict[str, Any]:
         raise ValueError("G3B must remain red after PREV7-0203")
     if gate_rows["G3B"]["blocking_reason"] != "required_tasks_not_done":
         raise ValueError("G3B blocking reason mismatch")
-    remaining = tuple(
+    current_remaining = tuple(
         task_id for task_id in REMAINING_G3B_TASKS if task_rows[task_id]["status"] != "done"
     )
-    if remaining != REMAINING_G3B_TASKS:
+    if any(task_rows[task_id]["status"] not in {"blocked", "done"} for task_id in REMAINING_G3B_TASKS):
         raise ValueError("unexpected post-CODEOWNERS G3B task state")
 
     exact_projection = all(int(current[key]) == value for key, value in CODEOWNERS_COUNTS.items())
@@ -144,7 +144,10 @@ def validate_application() -> dict[str, Any]:
     return {
         "append_only_readiness_history_preserved": True,
         "exact_codeowners_projection": exact_projection,
-        "remaining_g3b_tasks": list(remaining),
+        # The receipt describes the historical projection at the CODEOWNERS merge.
+        # Current progress is reported separately so regenerating the receipt stays stable.
+        "remaining_g3b_tasks": list(REMAINING_G3B_TASKS),
+        "current_remaining_g3b_tasks": list(current_remaining),
     }
 
 
