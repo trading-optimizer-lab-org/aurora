@@ -173,6 +173,8 @@ The deterministic owner-routing contract is captured in:
 config/gtbi/governance/codeowners_owner_controlled.json
 .github/CODEOWNERS
 g3b_codeowners_owner_receipt.json
+g3b_codeowners_state_controller_apply_receipt.json
+g3b_codeowners_state_transition_reconciliation_receipt.json
 transition_manifests/g3b-codeowners-owner-v1.json
 ```
 
@@ -181,6 +183,9 @@ owner `@gomez5757`. The file is routing-only until stage-two protection is
 separately authorized and applied, so it cannot create an impossible
 self-approval requirement. The owner simplification directive remains
 authoritative: no external reviewer or additional person is invented.
+The two state receipts preserve controller run `30641650036` and reconcile the
+single `PREV7-0203` completion with merged PR 57. They also prove that G3B
+remains red until its four remaining required tasks are completed.
 
 ## Retired External Audit Package
 
