@@ -21,12 +21,12 @@ permissions:
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -57,7 +57,7 @@ jobs:
           test -s outputs/openassetpricing_correlation_audit/all_pairwise_correlations.csv
           test -s outputs/openassetpricing_correlation_audit/selected_185_predictors.csv
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openassetpricing-correlation-audit
           path: outputs/openassetpricing_correlation_audit/
