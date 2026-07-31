@@ -131,6 +131,8 @@ The live repository baseline is captured in:
 
 ```text
 g3a_github_live_receipt.json
+g3a_state_controller_apply_receipt.json
+g3a_state_transition_reconciliation_receipt.json
 transition_manifests/g3a-minimum-governance-close-v1.json
 ```
 

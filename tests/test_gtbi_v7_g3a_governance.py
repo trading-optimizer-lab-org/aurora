@@ -22,6 +22,12 @@ from scripts.generate_gtbi_v7_g3a_baseline import (
     RECEIPT,
     build_live_receipt,
 )
+from scripts.generate_gtbi_v7_g3a_apply_reconciliation_receipt import (
+    DESTINATION as G3A_RECONCILIATION,
+    SOURCE as G3A_APPLY_SOURCE,
+    build_receipt as build_g3a_apply_receipt,
+    validate_application as validate_g3a_application,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -281,3 +287,46 @@ def test_g3a_workflows_use_github_hosted_runners_only() -> None:
         text = path.read_text(encoding="utf-8")
         assert "self-hosted" not in text
         assert "runs-on: ubuntu-" in text
+
+
+def test_g3a_apply_receipt_is_canonical_and_reconciled() -> None:
+    source = json.loads(G3A_APPLY_SOURCE.read_text(encoding="utf-8"))
+    assert G3A_APPLY_SOURCE.read_bytes() == canonical_bytes(source) + b"\n"
+    assert source["receipt_digest"] == domain_digest(
+        "GTBI_V7_STATE_CONTROLLER_RECEIPT_V1",
+        source,
+        omit_top_level_fields=("receipt_digest",),
+    )
+
+    validation = validate_g3a_application()
+    assert validation["append_only_g3a_history_preserved"] is True
+    assert validation["exact_g3a_projection"] is True
+
+    expected = build_g3a_apply_receipt()
+    assert G3A_RECONCILIATION.read_bytes() == canonical_bytes(expected) + b"\n"
+    assert expected["post_apply_state"] == {
+        "counts": {
+            "attempt_event_count": 78,
+            "gate_count": 15,
+            "gate_event_count": 18,
+            "task_count": 110,
+            "task_event_count": 187,
+        },
+        "task_status_counts": {
+            "blocked": 90,
+            "cancelled": 1,
+            "done": 19,
+        },
+        "g3a_gate_status": "red",
+        "g3a_blocking_reason": "required_tasks_not_done",
+        "remaining_g3a_tasks": ["PREV7-0204", "PREV7-0210"],
+    }
+    assert expected["verified_properties"] == {
+        "append_only_g3a_history_preserved": True,
+        "arbitrary_command_execution_supported": False,
+        "exact_g3a_projection": True,
+        "locked_data_accessed": False,
+        "owner_controlled": True,
+        "scientific_work_performed": False,
+        "state_merged": True,
+    }
