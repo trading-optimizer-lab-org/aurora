@@ -64,6 +64,7 @@ on:
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
       - "scripts/generate_gtbi_v7_role_registry_template.py"
       - "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+      - "scripts/generate_gtbi_v7_scientific_asset_contract_receipt.py"
       - "scripts/generate_gtbi_v6_preservation_contract.py"
       - "scripts/build_global_technical_buy_indicator_pack.py"
       - "scripts/merge_global_technical_buy_indicator_external_pack.py"
@@ -101,6 +102,7 @@ on:
       - "tests/test_gtbi_v7_reproducibility_classification.py"
       - "tests/test_gtbi_v7_reproducibility_reconciliation.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
+      - "tests/test_gtbi_v7_scientific_asset_contract_receipt.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
       - "tests/test_tiingo_daily.py"
@@ -168,6 +170,7 @@ on:
       - "scripts/run_gtbi_v7_readiness_state_controller.py"
       - "scripts/generate_gtbi_v7_role_registry_template.py"
       - "scripts/generate_gtbi_v7_scientific_asset_contract.py"
+      - "scripts/generate_gtbi_v7_scientific_asset_contract_receipt.py"
       - "scripts/generate_gtbi_v6_preservation_contract.py"
       - "scripts/build_global_technical_buy_indicator_pack.py"
       - "scripts/merge_global_technical_buy_indicator_external_pack.py"
@@ -205,6 +208,7 @@ on:
       - "tests/test_gtbi_v7_reproducibility_classification.py"
       - "tests/test_gtbi_v7_reproducibility_reconciliation.py"
       - "tests/test_gtbi_v7_scientific_assets.py"
+      - "tests/test_gtbi_v7_scientific_asset_contract_receipt.py"
       - "tests/test_gtbi_v6_archive_preservation.py"
       - "tests/test_gtbi_v7_frozen_data_lake.py"
       - "tests/test_tiingo_daily.py"
@@ -272,6 +276,7 @@ jobs:
           python scripts/generate_gtbi_v7_role_registry_template.py
           python -m scripts.generate_gtbi_v7_g1b_role_contract
           python scripts/generate_gtbi_v7_scientific_asset_contract.py
+          python -m scripts.generate_gtbi_v7_scientific_asset_contract_receipt
           python scripts/generate_gtbi_v6_preservation_contract.py
           python scripts/reconcile_gtbi_v7_pr1_merge.py
           python scripts/generate_gtbi_v7_pre_genesis_status.py
@@ -293,6 +298,8 @@ jobs:
             docs/readiness/gtbi-v7/master_plan_quality_status.json \
             docs/readiness/gtbi-v7/g2_retention_policy_state_controller_apply_receipt.json \
             docs/readiness/gtbi-v7/g2_retention_policy_state_transition_reconciliation_receipt.json \
+            docs/readiness/gtbi-v7/g2_scientific_asset_contract_receipt.json \
+            docs/readiness/gtbi-v7/transition_manifests/g2-scientific-asset-contract-v1.json \
             docs/readiness/gtbi-v7/pre_genesis_status.json \
             docs/readiness/gtbi-v7/legacy_run_cancellation_candidates.json \
             docs/readiness/gtbi-v7/task_status.csv \
@@ -379,6 +386,7 @@ jobs:
             tests/test_gtbi_v7_reproducibility_classification.py \
             tests/test_gtbi_v7_reproducibility_reconciliation.py \
             tests/test_gtbi_v7_scientific_assets.py \
+            tests/test_gtbi_v7_scientific_asset_contract_receipt.py \
             tests/test_gtbi_v6_archive_preservation.py \
             tests/test_gtbi_v7_frozen_data_lake.py \
             tests/test_tiingo_daily.py \
