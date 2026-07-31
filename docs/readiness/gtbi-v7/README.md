@@ -134,6 +134,8 @@ g3a_github_live_receipt.json
 g3a_state_controller_apply_receipt.json
 g3a_state_transition_reconciliation_receipt.json
 g3a_owner_auth_completion_receipt.json
+g3a_owner_auth_state_controller_apply_receipt.json
+g3a_owner_auth_state_transition_reconciliation_receipt.json
 transition_manifests/g3a-minimum-governance-close-v1.json
 transition_manifests/g3a-owner-auth-close-v1.json
 ```
@@ -157,6 +159,11 @@ selects this alternative explicitly in `APP_PRIVATE_KEY_IMPORT`; the checked
 task and gate records remain the authority for whether that transition has
 already been applied and merged. Neither path performs scientific work, reads
 locked data or incurs incremental spend.
+
+The second pair of owner-auth state receipts preserves the exact GitHub-only
+controller output from run `30636646934` and reconciles it with merged PR 51.
+It proves that `PREV7-0204` and `PREV7-0210` are terminal, G3A is green and the
+historical partial G3A receipt remains immutable.
 
 ## Retired External Audit Package
 
