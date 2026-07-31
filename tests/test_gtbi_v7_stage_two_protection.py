@@ -17,6 +17,7 @@ from infra.gtbi_v7_readiness.stage_two_protection import (
     build_policy,
     evaluate_live_state,
 )
+from scripts.validate_gtbi_v7_stage_two_contract import validate
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "config/gtbi/governance/stage_two_owner_controlled_protection.json"
@@ -147,3 +148,9 @@ def test_required_workflow_is_unconditional_for_pull_requests() -> None:
     assert "runs-on: ubuntu-24.04" in text
     assert "self-hosted" not in text
     assert "C:\\" not in text
+
+
+def test_dependency_free_contract_validator_accepts_repository() -> None:
+    report = validate()
+    assert report["valid"] is True
+    assert report["errors"] == []
