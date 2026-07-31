@@ -140,8 +140,11 @@ The receipt confirms the current `main` protection, minimum Actions
 permissions, pinned workflow policy, GitHub security controls and the fourteen
 owner-controlled source environments. It also confirms that `read:packages`
 is already available and does not request a new provider download. The current
-frozen data lake remains local until its one-time, hash-verified transfer to
-durable GitHub storage.
+frozen data lake has already completed its one-time, hash-verified transfer to
+the private `trading-optimizer-lab-org/aurora-v7-assets` release recorded in
+`frozen_data_lake_github_release_receipt.json`. GitHub Actions verified all
+3,252,295,680 archive bytes in run `30528738857`; no provider refresh or local
+scientific execution was performed.
 
 The transition closes only `PREV7-0202`, `PREV7-0205` and `PREV7-0206`.
 `PREV7-0204` and `PREV7-0210` remain open because no source GitHub App is
