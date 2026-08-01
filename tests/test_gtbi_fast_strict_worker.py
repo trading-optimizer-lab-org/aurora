@@ -641,6 +641,36 @@ def test_data_manifest_is_content_bound_and_deterministic(tmp_path: Path) -> Non
     assert first["data_pack_identity"] != changed["data_pack_identity"]
 
 
+def test_data_manifest_identity_survives_integral_float_round_trip(tmp_path: Path) -> None:
+    from scripts import run_gtbi_fast_strict_worker as worker
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "prices.csv").write_text(
+        "date,close\n2020-12-31,100\n",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    created = worker.create_data_pack_manifest(
+        data_pack_root=data,
+        output_path=manifest_path,
+        source_data_run_id="run",
+        source_artifact_name="artifact",
+        universe_identity="universe",
+        train_end="2010-12-31",
+        validation_start="2011-01-01",
+        validation_end="2020-12-31",
+        locked_start="2021-01-01",
+        min_market_cap=2_000_000_000.0,
+    )
+
+    loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert loaded["min_market_cap"] == 2_000_000_000
+    assert isinstance(loaded["min_market_cap"], int)
+    assert loaded["data_pack_identity"] == created["data_pack_identity"]
+    assert worker._verify_data_manifest(loaded, data) == created["data_pack_identity"]
+
+
 def test_data_manifest_seals_date_bounds_once(tmp_path: Path) -> None:
     from scripts import run_gtbi_fast_strict_worker as worker
 

@@ -85,6 +85,12 @@ def create_data_pack_manifest(
     if not files:
         raise ValueError("data pack contains no files")
     date_bounds = _collect_date_bounds(root, locked_start=str(locked_start))
+    numeric_min_market_cap = float(min_market_cap)
+    normalized_min_market_cap: int | float = (
+        int(numeric_min_market_cap)
+        if numeric_min_market_cap.is_integer()
+        else numeric_min_market_cap
+    )
     identity_payload = {
         "source_data_run_id": str(source_data_run_id),
         "source_artifact_name": str(source_artifact_name),
@@ -93,7 +99,7 @@ def create_data_pack_manifest(
         "validation_start": str(validation_start),
         "validation_end": str(validation_end),
         "locked_start": str(locked_start),
-        "min_market_cap": min_market_cap,
+        "min_market_cap": normalized_min_market_cap,
         "files": files,
         "date_bounds": date_bounds,
     }
