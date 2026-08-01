@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 import numpy as np
 import pandas as pd
@@ -1377,7 +1377,7 @@ def _market_trend_ok_for_frame(frame: pd.DataFrame, benchmark_prices: pd.DataFra
     return cache[key]
 
 
-def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+def _entry_signal_legacy(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
     """Return same-day buy indicator. Execution happens next session."""
 
     frame = _prepare_ohlcv(prices)
@@ -3533,7 +3533,7 @@ class EarlyRejectedStrategy(Exception):
 
 
 @contextlib.contextmanager
-def _candidate_evaluation_heartbeat(label: str, interval_seconds: int = 60) -> Iterable[None]:
+def _candidate_evaluation_heartbeat(label: str, interval_seconds: int = 60) -> Iterator[None]:
     """Emit periodic progress so GitHub Actions does not kill long silent jobs."""
     stop_event = threading.Event()
 
@@ -3731,7 +3731,7 @@ def _balanced_external_signal_groups_for_job(
         if group
     }
     if use_event_first_balanced_schedule:
-        active_jobs = max(int(schedule_active_jobs), 1)
+        active_jobs = max(int(schedule_active_jobs or 0), 1)
 
         def group_base_cost(group: list[ExternalStrategyCandidate]) -> float:
             if not group:
@@ -3817,7 +3817,7 @@ def _balanced_external_signal_groups_for_job(
         start = int(job_index) * per_job
         return groups[start : start + per_job], total_jobs, total_signal_groups
 
-    def group_cost(group: list[ExternalStrategyCandidate]) -> float:
+    def fallback_group_cost(group: list[ExternalStrategyCandidate]) -> float:
         if not group:
             return 0.0
         max_cost = max(
@@ -3829,20 +3829,23 @@ def _balanced_external_signal_groups_for_job(
     ordered = sorted(
         groups,
         key=lambda group: (
-            -group_cost(group),
+            -fallback_group_cost(group),
             group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
             signal_external_strategy_hash(group[0]) if group else "",
         ),
     )
-    buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(total_jobs)]
-    bucket_costs = [0.0 for _ in range(total_jobs)]
+    fallback_buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(total_jobs)]
+    fallback_bucket_costs = [0.0 for _ in range(total_jobs)]
     for group in ordered:
-        available = [idx for idx, bucket in enumerate(buckets) if len(bucket) < per_job]
+        available = [idx for idx, bucket in enumerate(fallback_buckets) if len(bucket) < per_job]
         if not available:
             break
-        target = min(available, key=lambda idx: (bucket_costs[idx], len(buckets[idx]), idx))
-        buckets[target].append(group)
-        bucket_costs[target] += group_cost(group)
+        target = min(
+            available,
+            key=lambda idx: (fallback_bucket_costs[idx], len(fallback_buckets[idx]), idx),
+        )
+        fallback_buckets[target].append(group)
+        fallback_bucket_costs[target] += fallback_group_cost(group)
 
     if schedule_active_jobs is not None and int(schedule_active_jobs) > 0 and total_jobs > int(schedule_active_jobs):
         active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
@@ -3852,7 +3855,7 @@ def _balanced_external_signal_groups_for_job(
         if mapped_job_index >= total_jobs:
             return [], total_jobs, total_signal_groups
         job_index = mapped_job_index
-    return buckets[int(job_index)], total_jobs, total_signal_groups
+    return fallback_buckets[int(job_index)], total_jobs, total_signal_groups
 
 
 def _apply_schedule_subgroup(
@@ -5652,7 +5655,7 @@ def _build_signals_by_symbol(
     deadline: float | None = None,
     feature_store: FeatureStore | None = None,
     max_workers: int = 1,
-) -> tuple[dict[str, pd.Series], dict[str, Any]]:
+) -> tuple[SignalMap, dict[str, Any]]:
     signal_start = time.perf_counter()
     signals_by_symbol = SignalMap()
     symbols_processed = 0
@@ -5678,6 +5681,7 @@ def _build_signals_by_symbol(
 
     items = list(symbol_frames.items())
     worker_count = max(1, min(int(max_workers), 4))
+    built: Iterable[tuple[str, pd.Series, np.ndarray]]
     if worker_count == 1:
         built = map(build_one, items)
     else:
@@ -5951,8 +5955,8 @@ def evaluate_candidate_optimized(
         "symbols_processed": int(symbols_processed),
         "raw_signals_total": int(raw_signals_total),
         "trades_total": int(len(trades_df)),
-        "train_trades": int(row.get("train_trades", 0)),
-        "validation_trades": int(row.get("validation_trades", 0)),
+        "train_trades": int(_finite_float(row.get("train_trades"), default=0.0)),
+        "validation_trades": int(_finite_float(row.get("validation_trades"), default=0.0)),
     }
     return row, trades_df, yearly, diagnostic
 
@@ -7438,7 +7442,7 @@ def run_external_strategy_pack_shard(
     elif use_v3_global_schedule:
         selected_signal_groups, balanced_total_jobs, total_signal_groups_for_schedule = _balanced_external_signal_groups_for_job(
             external_strategy_pack_path,
-            job_index=int(job_index_for_balancing),
+            job_index=int(job_index_for_balancing or 0),
             signal_groups_per_job=external_strategy_limit,
             schedule_active_jobs=schedule_active_jobs if int(schedule_active_jobs) > 0 else None,
             max_signal_groups=test_max_signal_groups if int(test_max_signal_groups) > 0 else None,
@@ -7463,7 +7467,7 @@ def run_external_strategy_pack_shard(
     elif use_v2_global_schedule:
         candidates, balanced_total_jobs = _balanced_external_strategy_candidates_for_job(
             external_strategy_pack_path,
-            job_index=int(job_index_for_balancing),
+            job_index=int(job_index_for_balancing or 0),
             candidate_count_per_job=external_strategy_limit,
             schedule_active_jobs=schedule_active_jobs if int(schedule_active_jobs) > 0 else None,
             strategy_format=external_strategy_format,
@@ -8366,16 +8370,16 @@ def run_external_strategy_pack_shard(
                     "feature_store": feature_store,
                     "symbol_workers": symbol_workers,
                 }
-                candidate_deadlines: list[float] = []
+                strategy_deadlines: list[float] = []
                 if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
-                    candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
+                    strategy_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
                 if job_deadline is not None:
                     job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
                     if job_safe_deadline > time.perf_counter():
-                        candidate_deadlines.append(job_safe_deadline)
+                        strategy_deadlines.append(job_safe_deadline)
                     else:
-                        candidate_deadlines.append(time.perf_counter())
-                eval_kwargs["deadline"] = min(candidate_deadlines) if candidate_deadlines else None
+                        strategy_deadlines.append(time.perf_counter())
+                eval_kwargs["deadline"] = min(strategy_deadlines) if strategy_deadlines else None
                 if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES} and enable_dedupe:
                     cached_signal = signal_evaluation_cache.get(signal_hash)
                     if cached_signal is None:
@@ -8415,6 +8419,7 @@ def run_external_strategy_pack_shard(
                     )
                 canonical_strategy_id = candidate_id
             else:
+                assert cached is not None
                 canonical_strategy_id, row, trades, yearly, diagnostic = cached
                 row = row.copy()
                 trades = trades.copy()
@@ -9883,9 +9888,9 @@ def merge_external_strategy_pack_outputs(
         if frame.empty or column not in frame.columns:
             continue
         for strategy_id in frame[column].dropna().astype(str):
-            slot = terminal_id_to_slot.get(strategy_id)
-            if slot is not None:
-                terminal_slot_values.append(int(slot))
+            terminal_slot = terminal_id_to_slot.get(strategy_id)
+            if terminal_slot is not None:
+                terminal_slot_values.append(int(terminal_slot))
     expected_slots = set(range(max(int(total_strategies_requested), 0)))
     terminal_slot_set = set(terminal_slot_values)
     actual_missing_slots = sorted(expected_slots - terminal_slot_set)
@@ -10322,7 +10327,7 @@ def merge_external_strategy_pack_outputs(
     missing_count = int(len(actual_missing_slots))
     extra_count = int(len(actual_extra_slots))
     overlap_count = int(actual_overlap_count)
-    summary = {
+    summary: dict[str, Any] = {
         "total_strategies_requested": int(strategies_requested_for_summary),
         "strategy_slots_requested": int(strategy_slots_requested),
         "total_strategies_loaded": int(loaded_total),
@@ -10375,7 +10380,19 @@ def merge_external_strategy_pack_outputs(
         "total_jobs_completed": int(completed_jobs),
         "total_jobs_failed": int(0 if terminal_coverage_complete else max(jobs_requested - completed_jobs, 0)),
         "candidate_count_per_job": inferred_candidate_count,
-        "candidate_timeout_seconds": None if not summaries else int(next((item.get("candidate_timeout_seconds") for item in summaries if item.get("candidate_timeout_seconds") is not None), 0)),
+        "candidate_timeout_seconds": None
+        if not summaries
+        else int(
+            next(
+                (
+                    item.get("candidate_timeout_seconds")
+                    for item in summaries
+                    if item.get("candidate_timeout_seconds") is not None
+                ),
+                0,
+            )
+            or 0
+        ),
         "optimized_evaluation_mode": optimized_mode,
         "zero_timeout_mode": bool(zero_timeout_mode),
         "zero_slow_deferred_mode": bool(zero_slow_deferred_mode),

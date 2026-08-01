@@ -271,7 +271,7 @@ def _lpt_assign(
     assignments: dict[str, int] = {}
     bundle_capacity = len(bundles) // worker_count if len(bundles) % worker_count == 0 else None
     for bundle in sorted(bundles, key=lambda item: (-item.scheduling_cost, item.signal_hash)):
-        eligible_workers = range(worker_count)
+        eligible_workers: Iterable[int] = range(worker_count)
         if bundle_capacity is not None:
             eligible_workers = [
                 worker_id for worker_id in eligible_workers if len(worker_groups[worker_id]) < bundle_capacity
@@ -408,7 +408,7 @@ def create_campaign_plan(
     canonical_pack = output / "canonical_pack"
     canonical_pack.mkdir(parents=True, exist_ok=True)
     pack_digest = strategy_pack_digest(Path(pack_path))
-    inputs = {
+    inputs: dict[str, Any] = {
         "code_sha": str(code_sha),
         "strategy_pack_digest": pack_digest,
         "data_run_identity": str(data_run_identity),

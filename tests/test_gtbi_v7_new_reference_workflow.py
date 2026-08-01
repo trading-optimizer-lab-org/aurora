@@ -23,6 +23,9 @@ def test_workflow_is_manual_github_only_and_locked_has_no_input() -> None:
     assert "C:\\" not in text
     assert "AURORA_ALLOW_LOCAL_RUNS_EXPLICIT" not in text
     assert "runs-on: ubuntu-24.04" in text
+    assert "uses: ./.github/workflows/_aurora-future-run-v3.yml" in text
+    assert "needs: framework-gate" in text
+    assert "needs.framework-gate.result == 'success'" in text
 
 
 def test_workflow_keeps_exact_dates_and_requires_prior_gates() -> None:
