@@ -5,6 +5,7 @@ import json
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from scripts.generate_gtbi_v7_retention_policy_apply_reconciliation_receipt import (
     DESTINATION,
+    HISTORICAL_TASK_STATUS_COUNTS,
     SOURCE,
     build_receipt,
     validate_application,
@@ -25,6 +26,12 @@ def test_retention_policy_apply_is_reconciled_with_merged_state() -> None:
     assert DESTINATION.read_bytes() == canonical_bytes(expected) + b"\n"
     assert expected["post_apply_state"]["prev7_0301_status"] == "done"
     assert expected["post_apply_state"]["g2_gate_status"] == "red"
+    assert expected["post_apply_state"]["task_status_counts"] == (
+        HISTORICAL_TASK_STATUS_COUNTS
+    )
+    assert validation["current_task_status_counts"]["done"] >= (
+        HISTORICAL_TASK_STATUS_COUNTS["done"]
+    )
     assert expected["verified_properties"]["github_only"] is True
     assert expected["verified_properties"]["locked_data_accessed"] is False
     assert expected["verified_properties"]["scientific_work_performed"] is False

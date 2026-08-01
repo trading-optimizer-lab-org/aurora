@@ -34,6 +34,11 @@ MINIMUM_COUNTS = {
     "task_count": 110,
     "task_event_count": 215,
 }
+HISTORICAL_TASK_STATUS_COUNTS = {
+    "blocked": 83,
+    "cancelled": 1,
+    "done": 26,
+}
 
 
 def _canonical_json(path: Path) -> dict[str, Any]:
@@ -109,6 +114,14 @@ def validate_application() -> dict[str, Any]:
     ]:
         raise ValueError("PREV7-0301 task event sequence mismatch")
 
+    current_status_counts = dict(Counter(row["status"] for row in task_rows.values()))
+    if sum(current_status_counts.values()) != MINIMUM_COUNTS["task_count"]:
+        raise ValueError("readiness task population changed")
+    if current_status_counts.get("done", 0) < HISTORICAL_TASK_STATUS_COUNTS["done"]:
+        raise ValueError("current readiness state lost completed tasks")
+    if current_status_counts.get("cancelled", 0) < HISTORICAL_TASK_STATUS_COUNTS["cancelled"]:
+        raise ValueError("current readiness state lost cancelled tasks")
+
     exact_projection = all(int(current[key]) == value for key, value in MINIMUM_COUNTS.items())
     if exact_projection:
         for relative, expected in source["output_sha256"].items():
@@ -117,7 +130,7 @@ def validate_application() -> dict[str, Any]:
     return {
         "append_only_retention_history_preserved": True,
         "exact_retention_projection": exact_projection,
-        "task_status_counts": dict(Counter(row["status"] for row in task_rows.values())),
+        "current_task_status_counts": current_status_counts,
     }
 
 
@@ -158,7 +171,7 @@ def build_receipt() -> dict[str, Any]:
         },
         "post_apply_state": {
             "minimum_counts": MINIMUM_COUNTS,
-            "task_status_counts": validation["task_status_counts"],
+            "task_status_counts": HISTORICAL_TASK_STATUS_COUNTS,
             "prev7_0301_status": "done",
             "g2_gate_status": "red",
         },
