@@ -37,6 +37,11 @@ sec:
   ticker_exchange_fallback_commit: 7883b83389836f9bba9bdfe53031467235746334
   companyfacts_bulk_url: https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
   submissions_bulk_url: https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
+  companyfacts_api_template: https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json
+  submissions_api_template: https://data.sec.gov/submissions/CIK{cik}.json
+  companyfacts_fallback_template: https://r.jina.ai/http://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json
+  submissions_fallback_template: https://r.jina.ai/http://data.sec.gov/submissions/CIK{cik}.json
+  request_interval_seconds: 1.0
   user_agent_env: AU_SEC_EDGAR_USER_AGENT
   preserve_raw_archives: true
 score:
@@ -52,4 +57,6 @@ execution:
   requires_explicit_user_local_permission: true
   yfinance_chunks: 48
   yfinance_max_parallel: 16
+  sec_chunks: 48
+  sec_max_parallel: 8
   artifact_retention_days: 30

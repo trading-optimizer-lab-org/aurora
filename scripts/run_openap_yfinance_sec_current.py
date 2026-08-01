@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -24,6 +25,7 @@ from aurora.research.openap_current_score import (
     EXPECTED_PREDICTORS,
     FeatureValue,
     OpenAPDataError,
+    SEC_CONCEPT_ALIASES,
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
@@ -88,6 +90,22 @@ def _sec_headers(user_agent: str) -> dict[str, str]:
         "Accept": "application/json,text/plain,*/*",
         "Accept-Encoding": "gzip, deflate",
     }
+
+
+def _select_chunk_rows(
+    frame: pd.DataFrame,
+    chunk_index: int,
+    total_chunks: int,
+) -> pd.DataFrame:
+    """Return one stable round-robin DataFrame shard."""
+
+    if total_chunks <= 0:
+        raise OpenAPDataError("total_chunks must be positive")
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise OpenAPDataError(
+            f"Invalid chunk {chunk_index} for {total_chunks} chunks"
+        )
+    return frame.reset_index(drop=True).iloc[chunk_index::total_chunks].copy()
 
 
 def _parse_dates(series: pd.Series) -> pd.Series:
@@ -416,11 +434,8 @@ def yfinance_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     universe = pd.read_parquet(args.security_master)
-    chunks = np.array_split(universe.reset_index(drop=True), int(args.total_chunks))
     chunk_index = int(args.chunk_index)
-    if chunk_index < 0 or chunk_index >= len(chunks):
-        raise OpenAPDataError(f"Invalid chunk {chunk_index} for {len(chunks)} chunks")
-    selected = chunks[chunk_index].copy()
+    selected = _select_chunk_rows(universe, chunk_index, int(args.total_chunks))
     symbols = selected["symbol"].astype(str).tolist()
     retrieved_at = _utcnow()
     prices: list[pd.DataFrame] = []
@@ -551,6 +566,282 @@ def _write_parquet_batches(path: Path, batches: Iterable[pd.DataFrame]) -> int:
     if writer is None:
         pd.DataFrame().to_parquet(path, index=False)
     return rows
+
+
+def _canonical_json_bytes(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _json_from_jina_text(text: str) -> Mapping[str, Any]:
+    marker = "Markdown Content:"
+    if marker not in text:
+        raise OpenAPDataError("Jina SEC fallback response lacks JSON marker")
+    candidate = text.split(marker, 1)[1].strip()
+    if candidate.startswith("```json"):
+        candidate = candidate[7:]
+    if candidate.startswith("```"):
+        candidate = candidate[3:]
+    if candidate.endswith("```"):
+        candidate = candidate[:-3]
+    payload = json.loads(candidate.strip())
+    if not isinstance(payload, Mapping):
+        raise OpenAPDataError("Jina SEC fallback did not return a JSON object")
+    return payload
+
+
+def _request_sec_json(
+    direct_url: str,
+    fallback_url: str,
+    *,
+    headers: Mapping[str, str],
+    retries: int = 3,
+) -> tuple[Mapping[str, Any], str, str]:
+    """Fetch SEC JSON directly, then through a public read-through fallback."""
+
+    import requests
+
+    errors: list[str] = []
+    for source_mode, url in (("sec_official_api", direct_url), ("sec_via_jina_readthrough", fallback_url)):
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url,
+                    headers=dict(headers) if source_mode == "sec_official_api" else {"Accept": "text/plain"},
+                    timeout=(20, 120),
+                )
+                response.raise_for_status()
+                if source_mode == "sec_official_api":
+                    payload = response.json()
+                    if not isinstance(payload, Mapping):
+                        raise OpenAPDataError("SEC API did not return a JSON object")
+                else:
+                    payload = _json_from_jina_text(response.text)
+                return payload, source_mode, url
+            except Exception as exc:
+                errors.append(f"{source_mode}:{type(exc).__name__}:{exc}")
+                if attempt + 1 < retries:
+                    time.sleep(2 ** attempt)
+        if source_mode == "sec_official_api":
+            continue
+    raise OpenAPDataError("SEC JSON unavailable: " + " | ".join(errors[-4:]))
+
+
+def _companyfacts_rows(
+    payload: Mapping[str, Any],
+    cik: int,
+    *,
+    source_url: str,
+    source_mode: str,
+    observations_per_tag: int = 6,
+) -> list[dict[str, Any]]:
+    wanted_tags = {
+        alias
+        for aliases in SEC_CONCEPT_ALIASES.values()
+        for alias in aliases
+    }
+    entity_name = str(payload.get("entityName") or "")
+    facts = payload.get("facts", {})
+    if not isinstance(facts, Mapping):
+        return []
+    rows: list[dict[str, Any]] = []
+    for taxonomy, concepts in facts.items():
+        if not isinstance(concepts, Mapping):
+            continue
+        for tag, definition in concepts.items():
+            if str(tag) not in wanted_tags or not isinstance(definition, Mapping):
+                continue
+            units = definition.get("units", {})
+            if not isinstance(units, Mapping):
+                continue
+            for unit, observations in units.items():
+                if not isinstance(observations, list):
+                    continue
+                usable = [item for item in observations if isinstance(item, Mapping) and item.get("end")]
+                usable.sort(key=lambda item: (str(item.get("end") or ""), str(item.get("filed") or "")))
+                by_period: dict[str, Mapping[str, Any]] = {}
+                for observation in usable:
+                    by_period[str(observation.get("end"))] = observation
+                for observation in list(by_period.values())[-observations_per_tag:]:
+                    filed = pd.to_datetime(observation.get("filed"), errors="coerce", utc=True)
+                    if pd.isna(filed):
+                        continue
+                    rows.append(
+                        {
+                            "cik": cik,
+                            "entity_name": entity_name,
+                            "taxonomy": str(taxonomy),
+                            "tag": str(tag),
+                            "unit": str(unit),
+                            "value": observation.get("val"),
+                            "period_start": observation.get("start"),
+                            "period_end": observation.get("end"),
+                            "fy": observation.get("fy"),
+                            "fp": observation.get("fp"),
+                            "form": observation.get("form"),
+                            "filed": observation.get("filed"),
+                            "accession_number": observation.get("accn"),
+                            "frame": observation.get("frame"),
+                            "available_at": filed + pd.Timedelta(days=1),
+                            "available_at_quality": "conservative_filing_date_plus_one_day",
+                            "source": source_url,
+                            "source_mode": source_mode,
+                        }
+                    )
+    return rows
+
+
+def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
+    output = Path(args.output_dir)
+    raw_dir = output / "raw"
+    lake_dir = output / "lake"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    lake_dir.mkdir(parents=True, exist_ok=True)
+    universe = pd.read_parquet(args.security_master)
+    chunk_index = int(args.chunk_index)
+    total_chunks = int(args.total_chunks)
+    selected = _select_chunk_rows(universe, chunk_index, total_chunks)
+    selected = selected.drop_duplicates("cik")
+    headers = _sec_headers(args.sec_user_agent)
+    interval = float(config["sec"].get("request_interval_seconds", 1.0))
+    fact_rows: list[dict[str, Any]] = []
+    submission_rows: list[dict[str, Any]] = []
+    status_rows: list[dict[str, Any]] = []
+    source_counts: dict[str, int] = {}
+    raw_zip_path = raw_dir / f"sec_raw_{chunk_index:03d}.zip"
+
+    with zipfile.ZipFile(raw_zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        for row in selected.itertuples():
+            cik = int(row.cik)
+            cik_text = f"{cik:010d}"
+            companyfacts_direct = str(config["sec"]["companyfacts_api_template"]).format(cik=cik_text)
+            companyfacts_fallback = str(config["sec"]["companyfacts_fallback_template"]).format(cik=cik_text)
+            submissions_direct = str(config["sec"]["submissions_api_template"]).format(cik=cik_text)
+            submissions_fallback = str(config["sec"]["submissions_fallback_template"]).format(cik=cik_text)
+            companyfacts_payload: Mapping[str, Any] | None = None
+            try:
+                companyfacts_payload, source_mode, source_url = _request_sec_json(
+                    companyfacts_direct,
+                    companyfacts_fallback,
+                    headers=headers,
+                )
+                raw_bytes = _canonical_json_bytes(companyfacts_payload)
+                archive.writestr(f"companyfacts/CIK{cik_text}.json", raw_bytes)
+                rows = _companyfacts_rows(
+                    companyfacts_payload,
+                    cik,
+                    source_url=source_url,
+                    source_mode=source_mode,
+                )
+                fact_rows.extend(rows)
+                source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "companyfacts",
+                        "status": "ok",
+                        "rows": len(rows),
+                        "source_mode": source_mode,
+                        "source_url": source_url,
+                        "canonical_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                        "error": "",
+                    }
+                )
+            except Exception as exc:
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "companyfacts",
+                        "status": "error",
+                        "rows": 0,
+                        "source_mode": "unavailable",
+                        "source_url": companyfacts_direct,
+                        "canonical_json_sha256": "",
+                        "error": str(exc)[:1000],
+                    }
+                )
+
+            try:
+                submissions_payload, source_mode, source_url = _request_sec_json(
+                    submissions_direct,
+                    submissions_fallback,
+                    headers=headers,
+                )
+                raw_bytes = _canonical_json_bytes(submissions_payload)
+                archive.writestr(f"submissions/CIK{cik_text}.json", raw_bytes)
+                rows = _submission_rows(submissions_payload, cik)
+                for item in rows:
+                    item["source"] = source_url
+                    item["source_mode"] = source_mode
+                submission_rows.extend(rows)
+                source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "submissions",
+                        "status": "ok",
+                        "rows": len(rows),
+                        "source_mode": source_mode,
+                        "source_url": source_url,
+                        "canonical_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                        "error": "",
+                    }
+                )
+            except Exception as exc:
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "submissions",
+                        "status": "error",
+                        "rows": 0,
+                        "source_mode": "unavailable",
+                        "source_url": submissions_direct,
+                        "canonical_json_sha256": "",
+                        "error": str(exc)[:1000],
+                    }
+                )
+            time.sleep(interval)
+
+    facts = _normalise_fact_batch(pd.DataFrame(fact_rows)) if fact_rows else pd.DataFrame(
+        columns=["cik", "entity_name", "taxonomy", "tag", "unit", "value", "period_start", "period_end", "fy", "fp", "form", "filed", "accession_number", "frame", "available_at", "available_at_quality", "source", "source_mode"]
+    )
+    submissions = pd.DataFrame(submission_rows)
+    if submissions.empty:
+        submissions = pd.DataFrame(columns=["cik", "accession_number", "filing_date", "accepted_at", "report_date", "form", "primary_document", "is_xbrl", "source", "source_mode"])
+    else:
+        submissions["accepted_at"] = pd.to_datetime(submissions["accepted_at"], errors="coerce", utc=True)
+    facts_path = lake_dir / f"sec_companyfacts_{chunk_index:03d}.parquet"
+    submissions_path = lake_dir / f"sec_submissions_{chunk_index:03d}.parquet"
+    facts.to_parquet(facts_path, index=False, compression="zstd")
+    submissions.to_parquet(submissions_path, index=False, compression="zstd")
+    status = pd.DataFrame(status_rows)
+    status.to_csv(output / f"sec_status_{chunk_index:03d}.csv", index=False)
+    write_summary(
+        output / f"sec_summary_{chunk_index:03d}.json",
+        {
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "ciks_expected": int(selected["cik"].nunique()),
+            "companyfacts_ciks_ok": int(status.loc[(status["surface"] == "companyfacts") & (status["status"] == "ok"), "cik"].nunique()),
+            "submissions_ciks_ok": int(status.loc[(status["surface"] == "submissions") & (status["status"] == "ok"), "cik"].nunique()),
+            "companyfacts_rows": len(facts),
+            "submissions_rows": len(submissions),
+            "source_counts": source_counts,
+            "raw_zip_bytes": raw_zip_path.stat().st_size,
+            "raw_zip_sha256": sha256_file(raw_zip_path),
+            "all_facts_have_available_at": bool(not facts.empty and facts["available_at"].notna().all()),
+            "locked_opened": False,
+            "retrieved_at": _utcnow(),
+        },
+    )
 
 
 def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
@@ -706,13 +997,15 @@ def _normalise_fact_batch(frame: pd.DataFrame) -> pd.DataFrame:
     """Force a stable Arrow schema across all SEC fact batches."""
 
     out = frame.copy()
+    if "source_mode" not in out:
+        out["source_mode"] = "sec_bulk_archive"
     out["cik"] = pd.to_numeric(out["cik"], errors="coerce").astype("Int64")
     out["value"] = pd.to_numeric(out["value"], errors="coerce")
     out["fy"] = pd.to_numeric(out["fy"], errors="coerce").astype("Int64")
     for column in (
         "entity_name", "taxonomy", "tag", "unit", "period_start", "period_end",
         "fp", "form", "filed", "accession_number", "frame", "available_at_quality",
-        "source",
+        "source", "source_mode",
     ):
         out[column] = out[column].astype("string")
     out["available_at"] = pd.to_datetime(out["available_at"], errors="coerce", utc=True)
@@ -720,7 +1013,7 @@ def _normalise_fact_batch(frame: pd.DataFrame) -> pd.DataFrame:
         [
             "cik", "entity_name", "taxonomy", "tag", "unit", "value", "period_start",
             "period_end", "fy", "fp", "form", "filed", "accession_number", "frame",
-            "available_at", "available_at_quality", "source",
+            "available_at", "available_at_quality", "source", "source_mode",
         ]
     ]
 
@@ -816,8 +1109,19 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         connection.execute(f"CREATE OR REPLACE TABLE yahoo_options_current AS SELECT * FROM read_parquet([{quoted_options}], union_by_name=true)")
     else:
         connection.execute("CREATE OR REPLACE TABLE yahoo_options_current(symbol VARCHAR, option_type VARCHAR, expiration VARCHAR, retrieved_at VARCHAR)")
-    connection.execute(f"CREATE OR REPLACE TABLE sec_companyfacts AS SELECT * FROM read_parquet({repr(str(sec_dir / 'lake' / 'sec_companyfacts.parquet'))}, union_by_name=true)")
-    connection.execute(f"CREATE OR REPLACE TABLE sec_submissions AS SELECT * FROM read_parquet({repr(str(sec_dir / 'lake' / 'sec_submissions.parquet'))}, union_by_name=true)")
+    sec_fact_paths = sorted(sec_dir.rglob("sec_companyfacts_*.parquet"))
+    sec_submission_paths = sorted(sec_dir.rglob("sec_submissions_*.parquet"))
+    sec_summary_paths = sorted(sec_dir.rglob("sec_summary_*.json"))
+    expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
+    if len(sec_fact_paths) != expected_sec_chunks or len(sec_submission_paths) != expected_sec_chunks:
+        raise OpenAPDataError(
+            f"Expected {expected_sec_chunks} SEC chunks, found "
+            f"facts={len(sec_fact_paths)} submissions={len(sec_submission_paths)}"
+        )
+    quoted_sec_facts = ",".join(repr(str(path)) for path in sec_fact_paths)
+    quoted_sec_submissions = ",".join(repr(str(path)) for path in sec_submission_paths)
+    connection.execute(f"CREATE OR REPLACE TABLE sec_companyfacts AS SELECT * FROM read_parquet([{quoted_sec_facts}], union_by_name=true)")
+    connection.execute(f"CREATE OR REPLACE TABLE sec_submissions AS SELECT * FROM read_parquet([{quoted_sec_submissions}], union_by_name=true)")
 
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
     if not yahoo_meta.empty:
@@ -919,7 +1223,14 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     proxy_predictors = int((coverage["coverage_status"] == "proxy").sum())
     unavailable_predictors = int((coverage["coverage_status"] == "unavailable").sum())
     summaries = [json.loads(path.read_text(encoding="utf-8")) for path in summary_paths]
-    sec_summary = json.loads((sec_dir / "sec_bulk_summary.json").read_text(encoding="utf-8"))
+    if len(sec_summary_paths) != expected_sec_chunks:
+        raise OpenAPDataError(
+            f"Expected {expected_sec_chunks} SEC summaries, found {len(sec_summary_paths)}"
+        )
+    sec_summaries = [json.loads(path.read_text(encoding="utf-8")) for path in sec_summary_paths]
+    sec_companyfacts_rows = sum(int(item.get("companyfacts_rows", 0)) for item in sec_summaries)
+    sec_submissions_rows = sum(int(item.get("submissions_rows", 0)) for item in sec_summaries)
+    all_facts_have_available_at = all(bool(item.get("all_facts_have_available_at")) for item in sec_summaries)
     summary = {
         "dataset_id": config["dataset_id"],
         "completed_at": _utcnow(),
@@ -927,20 +1238,21 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "input_predictors": len(metadata),
         "eligible_symbols": len(values_by_symbol),
         "price_rows": int(sum(int(item.get("price_rows", 0)) for item in summaries)),
-        "sec_companyfacts_rows": int(sec_summary["companyfacts_rows"]),
-        "sec_submissions_rows": int(sec_summary["submissions_rows"]),
+        "sec_companyfacts_rows": sec_companyfacts_rows,
+        "sec_submissions_rows": sec_submissions_rows,
         "exact_predictors_with_any_value": exact_predictors,
         "proxy_predictors_with_any_value": proxy_predictors,
         "unavailable_predictors": unavailable_predictors,
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
         "features_rows": len(feature_frame),
-        "all_facts_have_available_at": bool(sec_summary["all_facts_have_available_at"]),
+        "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
         "backtest_enabled": False,
         "validation_used_for_selection": False,
         "partial": False,
         "raw_sec_archives_preserved_in_run": True,
+        "sec_chunks_found": len(sec_summary_paths),
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
         "facts_without_available_at": facts_without_available_at,
@@ -970,9 +1282,11 @@ def build_parser() -> argparse.ArgumentParser:
     yahoo_parser.add_argument("--chunk-index", type=int, required=True)
     yahoo_parser.add_argument("--total-chunks", type=int, required=True)
     yahoo_parser.add_argument("--output-dir", required=True)
-    sec_parser = subparsers.add_parser("sec-bulk")
+    sec_parser = subparsers.add_parser("sec-chunk")
     sec_parser.add_argument("--security-master", required=True)
     sec_parser.add_argument("--sec-user-agent", required=True)
+    sec_parser.add_argument("--chunk-index", type=int, required=True)
+    sec_parser.add_argument("--total-chunks", type=int, required=True)
     sec_parser.add_argument("--output-dir", required=True)
     merge_parser = subparsers.add_parser("merge")
     merge_parser.add_argument("--input-root", required=True)
@@ -990,8 +1304,8 @@ def main() -> int:
         prepare(config, args)
     elif args.mode == "yfinance-chunk":
         yfinance_chunk(config, args)
-    elif args.mode == "sec-bulk":
-        sec_bulk(config, args)
+    elif args.mode == "sec-chunk":
+        sec_chunk(config, args)
     elif args.mode == "merge":
         merge(config, args)
     else:

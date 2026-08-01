@@ -25,6 +25,7 @@ env:
   PYTHONUNBUFFERED: "1"
   OPENAP_CONFIG: config/openap_yfinance_sec_current.yaml
   YFINANCE_CHUNKS: "48"
+  SEC_CHUNKS: "48"
 
 jobs:
   framework_contract:
@@ -193,10 +194,63 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
-  sec_bulk:
+  sec:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        chunk:
+          - 0
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+          - 11
+          - 12
+          - 13
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+          - 19
+          - 20
+          - 21
+          - 22
+          - 23
+          - 24
+          - 25
+          - 26
+          - 27
+          - 28
+          - 29
+          - 30
+          - 31
+          - 32
+          - 33
+          - 34
+          - 35
+          - 36
+          - 37
+          - 38
+          - 39
+          - 40
+          - 41
+          - 42
+          - 43
+          - 44
+          - 45
+          - 46
+          - 47
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -209,34 +263,37 @@ jobs:
         with:
           name: openap-prepare
           path: inputs/prepare
-      - name: Download and filter SEC bulk archives
+      - name: Download SEC Company Facts and Submissions shard
         env:
           AU_SEC_EDGAR_USER_AGENT: ${{ inputs.sec_user_agent }}
         run: |
           python scripts/run_openap_yfinance_sec_current.py \
-            --config "$OPENAP_CONFIG" sec-bulk \
+            --config "$OPENAP_CONFIG" sec-chunk \
             --security-master inputs/prepare/security_master_seed.parquet \
             --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
-            --output-dir outputs/sec
+            --chunk-index "${{ matrix.chunk }}" \
+            --total-chunks "$SEC_CHUNKS" \
+            --output-dir "outputs/sec_${{ matrix.chunk }}"
       - name: Validate SEC output
         run: |
-          test -s outputs/sec/lake/sec_companyfacts.parquet
-          test -s outputs/sec/lake/sec_submissions.parquet
-          test -s outputs/sec/sec_bulk_summary.json
+          test -s "outputs/sec_${{ matrix.chunk }}/lake/sec_companyfacts_$(printf '%03d' '${{ matrix.chunk }}').parquet"
+          test -s "outputs/sec_${{ matrix.chunk }}/lake/sec_submissions_$(printf '%03d' '${{ matrix.chunk }}').parquet"
+          test -s "outputs/sec_${{ matrix.chunk }}/sec_summary_$(printf '%03d' '${{ matrix.chunk }}').json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: openap-sec-lake
+          name: openap-sec-lake-${{ matrix.chunk }}
           path: |
-            outputs/sec/lake/
-            outputs/sec/sec_bulk_summary.json
+            outputs/sec_${{ matrix.chunk }}/lake/
+            outputs/sec_${{ matrix.chunk }}/sec_status_*.csv
+            outputs/sec_${{ matrix.chunk }}/sec_summary_*.json
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
       - if: ${{ inputs.keep_sec_raw_archives }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: openap-sec-raw-archives
-          path: outputs/sec/raw/
+          name: openap-sec-raw-${{ matrix.chunk }}
+          path: outputs/sec_${{ matrix.chunk }}/raw/
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -245,7 +302,7 @@ jobs:
     needs:
       - prepare
       - yfinance
-      - sec_bulk
+      - sec
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -266,7 +323,7 @@ jobs:
           path: inputs/yfinance
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: openap-sec-lake
+          pattern: openap-sec-lake-*
           path: inputs/sec
       - name: Merge lake and calculate current scores
         run: |
