@@ -82,6 +82,14 @@ def _download(url: str, destination: Path, *, headers: Mapping[str, str] | None 
             time.sleep(2 ** attempt)
 
 
+def _sec_headers(user_agent: str) -> dict[str, str]:
+    return {
+        "User-Agent": user_agent,
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Encoding": "gzip, deflate",
+    }
+
+
 def _parse_dates(series: pd.Series) -> pd.Series:
     text = series.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     compact = text.str.fullmatch(r"\d{6}")
@@ -156,6 +164,51 @@ def _sec_exchange_rows(payload: Mapping[str, Any]) -> pd.DataFrame:
     return result.reset_index(drop=True)
 
 
+def _sec_exchange_csv_rows(path: Path) -> pd.DataFrame:
+    frame = pd.read_csv(path, dtype=str).fillna("")
+    columns = {str(column).lower(): str(column) for column in frame.columns}
+    required = {"cik", "ticker", "name", "exchange"}
+    if not required.issubset(columns):
+        raise OpenAPDataError(
+            "SEC CIK mapper fallback is missing required columns"
+        )
+    rows: list[dict[str, Any]] = []
+    for record in frame.to_dict(orient="records"):
+        raw_ticker = str(record[columns["ticker"]]).strip().upper()
+        symbol = raw_ticker.replace(".", "-")
+        name = str(record[columns["name"]]).strip()
+        exchange = str(record[columns["exchange"]]).strip()
+        if not symbol or not ALLOWED_EXCHANGE_RE.search(exchange):
+            continue
+        if EXCLUDE_SECURITY_RE.search(name) or "$" in symbol or "^" in symbol:
+            continue
+        try:
+            cik = int(str(record[columns["cik"]]).strip())
+        except ValueError:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "sec_ticker": raw_ticker,
+                "cik": cik,
+                "company_name_sec": name,
+                "exchange_sec": exchange,
+                "asset_type": "COMMON_STOCK_CANDIDATE",
+                "country": "United States",
+                "source": "sec_cik_mapper_pinned_sec_derived",
+                "retrieved_at": _utcnow(),
+            }
+        )
+    result = (
+        pd.DataFrame(rows)
+        .drop_duplicates(["symbol", "cik"])
+        .sort_values(["symbol", "cik"])
+    )
+    if result.empty:
+        raise OpenAPDataError("SEC fallback universe is empty after filters")
+    return result.reset_index(drop=True)
+
+
 def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -174,16 +227,37 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
     groups.to_csv(output / "redundancy_groups.csv", index=False)
 
     sec_payload_path = output / "company_tickers_exchange.json"
-    _download(config["sec"]["ticker_exchange_url"], sec_payload_path, headers={"User-Agent": args.sec_user_agent})
-    sec_payload = json.loads(sec_payload_path.read_text(encoding="utf-8"))
-    universe = _sec_exchange_rows(sec_payload)
+    sec_source_url = str(config["sec"]["ticker_exchange_url"])
+    sec_source_mode = "sec_official_live"
+    fallback_reason = ""
+    try:
+        _download(
+            sec_source_url,
+            sec_payload_path,
+            headers=_sec_headers(args.sec_user_agent),
+        )
+        sec_payload = json.loads(sec_payload_path.read_text(encoding="utf-8"))
+        universe = _sec_exchange_rows(sec_payload)
+    except Exception as exc:
+        fallback_reason = f"{type(exc).__name__}: {exc}"
+        sec_payload_path = output / "sec_cik_mapper_mappings.csv"
+        sec_source_url = str(config["sec"]["ticker_exchange_fallback_url"])
+        sec_source_mode = "pinned_sec_derived_fallback"
+        _download(sec_source_url, sec_payload_path)
+        universe = _sec_exchange_csv_rows(sec_payload_path)
     universe.to_csv(output / "security_master_seed.csv", index=False)
     universe.to_parquet(output / "security_master_seed.parquet", index=False)
 
     source_rows = [
         {"source": "PredictorSummary.xlsx", "sha256": sha256_file(args.predictor_summary), "role": "selection_and_evidence"},
         {"source": "PredictorLSretWide.csv", "sha256": sha256_file(args.predictor_returns), "role": "redundancy_groups"},
-        {"source": "company_tickers_exchange.json", "sha256": sha256_file(sec_payload_path), "role": "ticker_cik_universe"},
+        {
+            "source": sec_payload_path.name,
+            "source_url": sec_source_url,
+            "source_mode": sec_source_mode,
+            "sha256": sha256_file(sec_payload_path),
+            "role": "ticker_cik_universe",
+        },
     ]
     pd.DataFrame(source_rows).to_csv(output / "source_manifest.csv", index=False)
     write_summary(
@@ -197,6 +271,11 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
             "unique_ciks": int(universe["cik"].nunique()),
             "redundancy_groups": int(groups["redundancy_group"].nunique()),
             "openap_commit": config["openap"]["commit"],
+            "ticker_universe_source_mode": sec_source_mode,
+            "ticker_universe_fallback_reason": fallback_reason,
+            "ticker_universe_fallback_commit": config["sec"].get(
+                "ticker_exchange_fallback_commit", ""
+            ),
             "locked_opened": False,
             "backtest_enabled": False,
         },
@@ -482,7 +561,7 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     lake_dir.mkdir(parents=True, exist_ok=True)
     universe = pd.read_parquet(args.security_master)
     ciks = set(pd.to_numeric(universe["cik"], errors="coerce").dropna().astype(int).tolist())
-    headers = {"User-Agent": args.sec_user_agent}
+    headers = _sec_headers(args.sec_user_agent)
     companyfacts_zip = raw_dir / "companyfacts.zip"
     submissions_zip = raw_dir / "submissions.zip"
     _download(config["sec"]["companyfacts_bulk_url"], companyfacts_zip, headers=headers)
