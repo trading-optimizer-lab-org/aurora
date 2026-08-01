@@ -105,6 +105,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}
         run: |
           test -n "$GH_TOKEN"
+          test "$(gh api repos/trading-optimizer-lab-org/aurora-v7-assets --jq '.permissions.push // false')" = "true"
           mkdir -p release
           gh release download gtbi-v7-frozen-data-lake-v1 \
             --repo trading-optimizer-lab-org/aurora-v7-assets \
@@ -726,7 +727,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       actions: read
-      contents: write
+      contents: read
     steps:
       - name: Download sealed final artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -761,7 +762,8 @@ jobs:
               files.append({'name':path.name,'size_bytes':path.stat().st_size,'sha256':'sha256:'+digest})
           receipt={
               'schema_version':'gtbi_v7_new_reference_preservation_receipt_v1',
-              'repository':os.environ['GITHUB_REPOSITORY'],
+              'source_repository':os.environ['GITHUB_REPOSITORY'],
+              'release_repository':'trading-optimizer-lab-org/aurora-v7-assets',
               'run_id':int(os.environ['GITHUB_RUN_ID']),
               'commit_sha':os.environ['GITHUB_SHA'],
               'release_tag':f"gtbi-v7-new-reference-results-{os.environ['GITHUB_RUN_ID']}",
@@ -778,15 +780,17 @@ jobs:
           PY
       - name: Publish or repair private release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}
         run: |
+          release_repo="trading-optimizer-lab-org/aurora-v7-assets"
           tag="gtbi-v7-new-reference-results-${GITHUB_RUN_ID}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" preserved/* --clobber --repo "$GITHUB_REPOSITORY"
+          test -n "$GH_TOKEN"
+          if gh release view "$tag" --repo "$release_repo" >/dev/null 2>&1; then
+            gh release upload "$tag" preserved/* --clobber --repo "$release_repo"
           else
             gh release create "$tag" preserved/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
+              --repo "$release_repo" \
+              --target main \
               --title "GTBI V7 new-reference historical results ${GITHUB_RUN_ID}" \
               --notes "Independent survivorship-biased historical campaign. Locked remained closed; no data after 2020-12-31 was evaluated."
           fi

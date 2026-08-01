@@ -99,7 +99,13 @@ def test_workflow_materializes_compact_pack_and_preserves_final_release() -> Non
     assert text.count("materialize_gtbi_v7_strategy_pack extract") == 2
     assert "strategy_shards.zip" not in text
     assert "preserve-final:" in text
-    assert "contents: write" in text
+    assert "release_repo=\"trading-optimizer-lab-org/aurora-v7-assets\"" in text
+    assert "GH_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}" in text
+    assert "'.permissions.push // false'" in text
+    assert "gh release create \"$tag\" preserved/*" in text
+    assert '--repo "$release_repo"' in text
+    assert '--target main' in text
+    assert '--repo "$GITHUB_REPOSITORY"' not in text
     assert "gtbi-v7-new-reference-results-${GITHUB_RUN_ID}" in text
 
 
