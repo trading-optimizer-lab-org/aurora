@@ -703,6 +703,7 @@ FRAMEWORK_INTERNAL_WORKFLOW_PATHS = frozenset(
         ".github/workflows/_aurora-merge-level-v3.yml",
         ".github/workflows/_aurora-recovery-plan-v3.yml",
         ".github/workflows/_aurora-retry-shard-v3.yml",
+        ".github/workflows/gtbi-v7-new-reference-worker.yml",
         ".github/workflows/github-performance-merge-only.yml",
         ".github/workflows/github-performance-replan.yml",
     }

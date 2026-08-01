@@ -1,17 +1,33 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import math
+import os
+import faulthandler
+import re
+import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Any, Iterable
+from types import MappingProxyType
+from typing import Any, Iterable, Iterator, Mapping
 
 import numpy as np
 import pandas as pd
+
+_numba_njit: Any
+try:  # Optional; the evaluator must run without numba in CI.
+    from numba import njit
+
+    _numba_njit = njit
+except Exception:  # pragma: no cover - depends on optional local dependency.
+    _numba_njit = None
 
 from aurora.core.runtime_paths import base_data_dir
 
@@ -26,6 +42,7 @@ DEFAULT_TRAIN_END = "2010-12-31"
 DEFAULT_VALIDATION_START = "2011-01-01"
 DEFAULT_VALIDATION_END = "2020-12-31"
 DEFAULT_LOCKED_START = "2021-01-01"
+DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS = 1_200
 DEFAULT_SEARCH_METHOD = "surrogate_ml"
 SEARCH_METHODS = ("surrogate_ml", "dehb_real")
 EXTERNAL_SEARCH_METHOD = "external_strategy_pack"
@@ -64,6 +81,17 @@ ALL_FAMILIES = DEFAULT_FAMILIES + TRADINGVIEW_MINERVINI_FAMILIES + STABILITY_FAM
 FAMILY_SETS = ("default", "tradingview_minervini", "stability", "stability_rs", "all")
 
 PRICE_COLUMNS = ["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"]
+
+
+def _build_pack_verbose() -> bool:
+    return os.environ.get("GTBI_BUILD_PACK_VERBOSE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _build_pack_log(message: str, *, verbose: bool = False) -> None:
+    if verbose and not _build_pack_verbose():
+        return
+    print(f"[gtbi-pack] {message}", file=sys.stderr, flush=True)
+
 LEADERBOARD_COLUMNS = [
     "candidate_id",
     "stage",
@@ -86,6 +114,21 @@ LEADERBOARD_COLUMNS = [
     "validation_max_drawdown_pct",
     "train_avg_holding_days",
     "validation_avg_holding_days",
+    "train_holding_days_p50",
+    "train_holding_days_p75",
+    "train_holding_days_p90",
+    "validation_holding_days_p50",
+    "validation_holding_days_p75",
+    "validation_holding_days_p90",
+    "holding_days_p50",
+    "holding_days_p75",
+    "holding_days_p90",
+    "train_percent_exits_under_5_days",
+    "train_percent_exits_under_10_days",
+    "validation_percent_exits_under_5_days",
+    "validation_percent_exits_under_10_days",
+    "percent_exits_under_5_days",
+    "percent_exits_under_10_days",
     "train_trades_per_year",
     "validation_trades_per_year",
     "selection_split",
@@ -103,6 +146,12 @@ LEADERBOARD_COLUMNS = [
     "train_2003_2010_min_profit_factor",
     "train_2003_2010_min_avg_trade_return_pct",
     "adjusted_return_time_risk",
+    "long_hold_quality_score",
+    "fundamental_timing_score_no_drawdown",
+    "return_pf_score",
+    "total_return_proxy",
+    "is_ultra_frequent",
+    "score_bucket",
     "scoring_profile",
     "locked_opened",
     "strategy_id",
@@ -140,6 +189,262 @@ TRADE_COLUMNS = [
     "return_pct",
     "holding_days",
     "exit_reason",
+]
+SYMBOL_ENTRY_COUNTS_COLUMNS = [
+    "candidate_id",
+    "split",
+    "year",
+    "unique_entry_symbols",
+    "entries",
+]
+ANNUAL_TRADE_EQUITY_COLUMNS = [
+    "candidate_id",
+    "split",
+    "year",
+    "trades",
+    "annual_trade_return_sum_pct",
+    "annual_avg_trade_return_pct",
+    "annual_median_trade_return_pct",
+    "annual_win_rate",
+    "annual_profit_factor",
+    "cumulative_trade_return_sum_pct",
+]
+TRADE_DISTRIBUTION_COLUMNS = [
+    "candidate_id",
+    "split",
+    "return_bin",
+    "return_pct_min",
+    "return_pct_max",
+    "trades",
+    "share",
+]
+TICKER_TRADE_SUMMARY_COLUMNS = [
+    "candidate_id",
+    "split",
+    "symbol",
+    "trades",
+    "sum_return_pct",
+    "avg_return_pct",
+    "median_return_pct",
+    "win_rate",
+    "profit_factor",
+    "avg_holding_days",
+    "best_trade_pct",
+    "worst_trade_pct",
+]
+MAX_TICKER_TRADE_SUMMARY_ROWS = 100_000
+SELECTED_SYMBOL_TRADE_COLUMNS = TRADE_COLUMNS
+UNSUPPORTED_COLUMNS = ["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"]
+TIMEOUT_COLUMNS = [
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "reason",
+    "seconds_until_timeout",
+]
+SLOW_DEFERRED_COLUMNS = [
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "reason",
+    "seconds_until_deferred",
+    "suggested_timeout_seconds",
+    "suggested_strategies_per_job",
+    "signal_hash",
+    "estimated_cost",
+]
+EARLY_REJECT_COLUMNS = [
+    "strategy_id",
+    "reason",
+    "split",
+    "year",
+    "actual",
+    "threshold",
+    "stage",
+    "seconds_until_reject",
+    "symbols_processed",
+]
+RUNTIME_ERROR_COLUMNS = [
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "reason",
+]
+TIMING_DIAGNOSTIC_COLUMNS = [
+    "strategy_id",
+    "job_id",
+    "shard_id",
+    "slot_in_shard",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "exit_rule",
+    "aggressiveness",
+    "seconds_total",
+    "seconds_feature_build",
+    "seconds_signal",
+    "seconds_simulation",
+    "seconds_train",
+    "seconds_validation",
+    "symbols_total",
+    "symbols_processed",
+    "raw_signals_total",
+    "trades_total",
+    "train_trades",
+    "validation_trades",
+    "result_status",
+    "reject_reason",
+    "timeout",
+    "early_rejected",
+    "runtime_error",
+]
+DEDUPE_MAP_COLUMNS = [
+    "strategy_id",
+    "canonical_hash",
+    "canonical_strategy_id",
+    "deduped",
+    "signal_hash",
+    "signal_canonical_strategy_id",
+    "signal_deduped",
+]
+JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS = 60.0
+JOB_MANIFEST_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "canonical_hash",
+    "signal_hash",
+    "cost_score",
+    "estimated_cost_bucket",
+]
+SLOW_QUEUE_MANIFEST_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "strategy_ids",
+    "concept",
+    "family",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "estimated_cost",
+    "reason",
+    "suggested_timeout_seconds",
+    "suggested_strategies_per_job",
+]
+SIGNAL_GROUP_MANIFEST_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "canonical_strategy_id",
+    "strategy_count",
+    "strategy_ids",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "estimated_cost",
+    "number_of_reuses",
+    "result_status",
+    "reject_reason",
+    "seconds_signal",
+    "raw_signals_total",
+    "symbols_processed",
+]
+STRATEGY_TO_SIGNAL_MAP_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "signal_hash",
+    "canonical_strategy_id",
+    "shard_id",
+    "slot_in_shard",
+    "exit_rule",
+    "aggressiveness",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+]
+COMPILED_SIGNAL_PLAN_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "canonical_strategy_id",
+    "strategy_ids",
+    "strategy_count",
+    "family",
+    "concept",
+    "market_overlay",
+    "trend_filter",
+    "relative_strength_filter",
+    "aggressiveness",
+    "formula_tokens",
+    "uses_event_store",
+    "uses_bitset",
+    "uses_sparse_events",
+    "storage_kind",
+    "events_total",
+    "symbols_with_events",
+    "seconds_event_build",
+    "legacy_equivalence_status",
+]
+EVENT_STORE_MANIFEST_COLUMNS = [
+    "job_id",
+    "signal_hash",
+    "concept",
+    "family",
+    "events_total",
+    "symbols_with_events",
+    "store_format",
+    "locked_start_exclusive",
+    "validation_end",
+    "seconds_event_build",
+]
+CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "signal_hash",
+    "concept",
+    "precheck_name",
+    "max_events_by_year",
+    "max_avg_events_per_year",
+    "decision",
+    "reason",
+    "actual",
+    "threshold",
+]
+EXIT_GROUP_MANIFEST_COLUMNS = [
+    "job_id",
+    "strategy_id",
+    "signal_hash",
+    "exit_group_hash",
+    "exit_rule",
+    "stop_loss",
+    "take_profit",
+    "max_holding",
+    "market_exit",
+    "result_status",
 ]
 
 
@@ -191,6 +496,16 @@ class IndicatorConfig:
     exit_ma_days: int = 20
     market_ma_days: int = 200
     market_momentum_days: int = 21
+    entry_trigger_type: str = ""
+    entry_ma_days: int = 50
+    entry_ma_kind: str = "sma"
+    pullback_min_pct: float = 0.0
+    pullback_max_pct: float = 0.35
+    close_position_in_range_min: float = 0.0
+    trailing_stop_type: str = ""
+    take_profit_min_holding_days: int = 0
+    minimum_holding_days_before_soft_exit: int = 0
+    market_exit_confirmation_days: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -216,6 +531,108 @@ EXTERNAL_REQUIRED_FIELDS = (
     "source_quality_score",
     "codex_notes",
 )
+
+LONG_HOLD_SCHEMA_VERSION = "gtbi_external_strategy_long_hold_v1"
+
+LONG_HOLD_REQUIRED_FIELDS = (
+    "strategy_id",
+    "concept",
+    "family",
+    "entry_profile_id",
+    "market_profile_id",
+    "trend_profile_id",
+    "relative_strength_profile_id",
+    "exit_profile_id",
+    "entry_rules",
+    "market_regime_rules",
+    "stock_trend_rules",
+    "relative_strength_rules",
+    "exit_rules",
+    "execution",
+    "positioning",
+)
+
+LONG_HOLD_SUPPORTED_RULE_KEYS = {
+    "entry_rules": {
+        "atr_compression_required",
+        "base_min_days",
+        "breakout_confirmation_closes",
+        "breakout_lookback_days",
+        "close_above_base_high",
+        "close_above_sma150",
+        "close_position_in_range_min",
+        "contraction_lookback_days",
+        "entry_after_pullback_or_tightening",
+        "entry_on_reclaim_or_base_break",
+        "entry_on_stock_reclaim",
+        "entry_strictness",
+        "event_gap_min_pct",
+        "event_volume_min_adv20_mult",
+        "market_reclaim_required",
+        "oversold_indicator",
+        "oversold_threshold",
+        "post_event_window_days",
+        "prior_runup_min_pct",
+        "pullback_depth_max_pct",
+        "pullback_depth_min_pct",
+        "pullback_lookback_days",
+        "reclaim_level",
+        "reclaim_ma",
+        "release_confirmation",
+        "sma150_slope_30d_min_pct",
+        "stock_leadership_required",
+        "trend_required",
+        "trigger_type",
+        "undercut_lookback_days",
+        "volume_confirmation_min_adv20_mult",
+        "volume_expansion_min_adv20_mult",
+        "volume_on_signal_min_adv20_mult",
+    },
+    "market_regime_rules": {
+        "market_exit",
+        "spy_close_gt_sma200",
+        "spy_close_gt_sma50",
+        "spy_distribution_days_20_max",
+        "spy_heavy_down_days_10_max",
+        "spy_reclaim_ema20_or_sma50",
+        "spy_return_20d_min_pct",
+        "spy_return_63d_min_pct",
+        "spy_sma50_gt_sma200",
+    },
+    "stock_trend_rules": {
+        "close_gt_ema20",
+        "close_gt_ema50",
+        "close_gt_sma150",
+        "distance_from_52w_high_max_pct",
+        "ema20_gt_ema50",
+        "ema50_gt_sma100",
+        "ema50_slope_20d_min_pct",
+        "price_above_200d_low_pct_min",
+        "sma100_gt_sma200",
+        "sma150_gt_sma200",
+        "sma150_slope_30d_min_pct",
+        "sma50_gt_sma150",
+    },
+    "relative_strength_rules": {
+        "rs_63d_return_min_pct",
+        "rs_acceleration_required",
+        "rs_new_high_days",
+        "rs_ratio_above_ma",
+        "rs_ratio_vs_spy_ma_days",
+    },
+    "exit_rules": {
+        "allow_hard_stop_before_min_hold",
+        "atr_stop_mult",
+        "market_exit_confirmation_days",
+        "max_holding_days",
+        "minimum_holding_days_before_soft_exit",
+        "stop_loss_pct",
+        "take_profit_min_holding_days",
+        "take_profit_pct",
+        "target_avg_holding_days",
+        "trailing_stop_type",
+    },
+}
 
 
 EXTERNAL_SUPPORTED_RULE_KEYS = {
@@ -454,6 +871,15 @@ def _dt(value: str | pd.Timestamp) -> pd.Timestamp:
 def _prepare_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=PRICE_COLUMNS)
+    if (
+        isinstance(frame.index, pd.DatetimeIndex)
+        and "date" in frame.columns
+        and all(column in frame.columns for column in ("open", "high", "low", "close", "adj_close", "volume"))
+        and all(pd.api.types.is_numeric_dtype(frame[column]) for column in ("open", "high", "low", "close", "adj_close", "volume"))
+        and frame.index.is_monotonic_increasing
+        and getattr(frame.index, "tz", None) is None
+    ):
+        return frame
     out = frame.copy()
     if "date" in out.columns:
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
@@ -479,6 +905,75 @@ def _prepare_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _prepare_pack_prices_before_locked(frame: pd.DataFrame, *, symbol: str, locked_start: str) -> pd.DataFrame:
+    """Normalize one symbol for pack building without pandas boolean frame slicing."""
+    if frame.empty:
+        return pd.DataFrame(columns=PRICE_COLUMNS)
+
+    raw_dates: Any
+    if "date" in frame.columns:
+        raw_dates = frame["date"]
+    elif isinstance(frame.index, pd.DatetimeIndex):
+        raw_dates = pd.Series(frame.index, index=frame.index)
+    else:
+        raise ValueError("price frame must have a date column or DatetimeIndex")
+
+    parsed_dates = pd.to_datetime(raw_dates, errors="coerce", utc=True)
+    if isinstance(parsed_dates, pd.Series):
+        date_values = parsed_dates.dt.tz_convert(None).to_numpy(dtype="datetime64[ns]")
+    else:
+        date_values = parsed_dates.tz_convert(None).to_numpy(dtype="datetime64[ns]")
+
+    def numeric_values(column: str) -> np.ndarray:
+        if column in frame.columns:
+            source = frame[column]
+        elif column in {"open", "high", "low", "adj_close"} and "close" in frame.columns:
+            source = frame["close"]
+        elif column == "volume":
+            source = pd.Series(np.zeros(len(frame), dtype=float))
+        else:
+            raise ValueError(f"missing price column {column!r}")
+        return pd.to_numeric(source, errors="coerce").astype("float64").to_numpy()
+
+    open_values = numeric_values("open")
+    high_values = numeric_values("high")
+    low_values = numeric_values("low")
+    close_values = numeric_values("close")
+    adj_close_values = numeric_values("adj_close")
+    volume_values = numeric_values("volume")
+
+    cutoff = np.datetime64(_dt(locked_start).to_datetime64(), "ns")
+    mask = (
+        ~np.isnat(date_values)
+        & (date_values < cutoff)
+        & np.isfinite(open_values)
+        & np.isfinite(high_values)
+        & np.isfinite(low_values)
+        & np.isfinite(close_values)
+        & (open_values > 0)
+        & (high_values > 0)
+        & (low_values > 0)
+        & (close_values > 0)
+    )
+    positions = np.flatnonzero(mask)
+    if positions.size == 0:
+        return pd.DataFrame(columns=PRICE_COLUMNS)
+    positions = positions[np.argsort(date_values[positions], kind="mergesort")]
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(date_values[positions]),
+            "open": open_values[positions],
+            "high": high_values[positions],
+            "low": low_values[positions],
+            "close": close_values[positions],
+            "adj_close": adj_close_values[positions],
+            "volume": volume_values[positions],
+            "symbol": str(symbol),
+        },
+        columns=PRICE_COLUMNS,
+    )
+
+
 def _rsi(close: pd.Series, period: int) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0.0)
@@ -491,6 +986,339 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
 
 def _safe_bool_series(value: bool, index: pd.Index) -> pd.Series:
     return pd.Series(bool(value), index=index, dtype=bool)
+
+
+def _frame_series_cache(frame: pd.DataFrame, namespace: str) -> dict[tuple[Any, ...], pd.Series]:
+    cache = frame.attrs.get(namespace)
+    if not isinstance(cache, dict):
+        cache = {}
+        frame.attrs[namespace] = cache
+    return cache
+
+
+def _exact_float_cache_token(value: float) -> str:
+    """Represent an effective float exactly instead of merging nearby values."""
+    return float(value).hex()
+
+
+def _frame_content_identity(frame: pd.DataFrame, columns: Iterable[str] | None = None) -> str:
+    """Return an identity derived from current content without mutating the frame."""
+    selected_columns = [column for column in (columns or frame.columns) if column in frame.columns]
+    selected = frame.loc[:, selected_columns] if selected_columns else frame
+    digest = hashlib.sha256()
+    digest.update(json.dumps(selected_columns, separators=(",", ":")).encode("utf-8"))
+    digest.update(
+        pd.util.hash_pandas_object(selected, index=True, categorize=False)
+        .to_numpy(dtype=np.uint64, copy=False)
+        .tobytes()
+    )
+    return digest.hexdigest()
+
+
+def _benchmark_cache_identity(frame: pd.DataFrame) -> str:
+    """Return a fresh content identity so in-place edits cannot reuse stale features."""
+    return _frame_content_identity(frame, ("date", "close"))
+
+
+def _normalize_timing_diagnostic(diagnostic: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep wall timing while ensuring total covers independently timed phases."""
+    normalized = dict(diagnostic)
+    wall_seconds = max(_finite_float(normalized.get("seconds_total"), default=0.0), 0.0)
+    phase_seconds = sum(
+        max(_finite_float(normalized.get(key), default=0.0), 0.0)
+        for key in ("seconds_feature_build", "seconds_signal", "seconds_simulation")
+    )
+    normalized["seconds_wall_candidate"] = wall_seconds
+    normalized["seconds_total"] = max(wall_seconds, phase_seconds)
+    return normalized
+
+
+@dataclass(frozen=True)
+class FeatureStore:
+    """Immutable per-job index of content-bound per-symbol primitive stores."""
+
+    symbol_frames: Mapping[str, pd.DataFrame]
+    benchmark_prices: pd.DataFrame
+    primitive_stores: Mapping[str, SignalPrimitiveStore]
+    seconds_build: float = 0.0
+    enabled: bool = True
+
+    def primitives_for(
+        self,
+        symbol: str,
+        frame: pd.DataFrame,
+        benchmark_prices: pd.DataFrame,
+    ) -> SignalPrimitiveStore:
+        prepared = _prepare_ohlcv(frame)
+        benchmark = _prepare_ohlcv(benchmark_prices)
+        frame_identity = _frame_content_identity(prepared, PRICE_COLUMNS)
+        benchmark_identity = _benchmark_cache_identity(benchmark)
+        existing = self.primitive_stores.get(str(symbol)) if self.enabled else None
+        if (
+            existing is not None
+            and existing.frame_identity == frame_identity
+            and existing.benchmark_identity == benchmark_identity
+        ):
+            return existing
+        return SignalPrimitiveStore(prepared, benchmark)
+
+
+class SignalPrimitiveStore:
+    """Lazy boolean/numeric primitive cache for one prepared symbol frame."""
+
+    def __init__(self, frame: pd.DataFrame, benchmark_prices: pd.DataFrame) -> None:
+        self.frame = _prepare_ohlcv(frame)
+        self.benchmark = _prepare_ohlcv(benchmark_prices)
+        self.close = self.frame["close"] if not self.frame.empty else pd.Series(dtype=float)
+        self.high = self.frame["high"] if not self.frame.empty else pd.Series(dtype=float)
+        self.low = self.frame["low"] if not self.frame.empty else pd.Series(dtype=float)
+        self.volume = self.frame["volume"].fillna(0.0) if not self.frame.empty else pd.Series(dtype=float)
+        self.index = self.frame.index
+        self.frame_identity = _frame_content_identity(self.frame, PRICE_COLUMNS)
+        self.benchmark_identity = _benchmark_cache_identity(self.benchmark)
+        self.cache: dict[tuple[Any, ...], pd.Series] = {}
+        self.entry_cache: dict[tuple[Any, ...], pd.Series] = {}
+        self.market_cache: dict[tuple[Any, ...], pd.Series] = {}
+
+    def const(self, value: bool) -> pd.Series:
+        return _safe_bool_series(value, self.index)
+
+    def sma(self, window: int) -> pd.Series:
+        key = ("sma", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close.rolling(int(window), min_periods=int(window)).mean()
+        return self.cache[key]
+
+    def ema(self, window: int) -> pd.Series:
+        key = ("ema", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close.ewm(span=int(window), adjust=False, min_periods=int(window)).mean()
+        return self.cache[key]
+
+    def adv(self, window: int, *, min_periods: int | None = None) -> pd.Series:
+        key = ("adv", int(window), min_periods)
+        if key not in self.cache:
+            self.cache[key] = self.volume.rolling(
+                int(window),
+                min_periods=min_periods or min(int(window), len(self.frame)),
+            ).mean()
+        return self.cache[key]
+
+    def rolling_high(self, window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
+        key = ("rolling_high", int(window), int(shift), min_periods)
+        if key not in self.cache:
+            source = self.high.shift(int(shift)) if shift else self.high
+            self.cache[key] = source.rolling(
+                int(window),
+                min_periods=min_periods or min(int(window), len(self.frame)),
+            ).max()
+        return self.cache[key]
+
+    def rolling_low(self, window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
+        key = ("rolling_low", int(window), int(shift), min_periods)
+        if key not in self.cache:
+            source = self.low.shift(int(shift)) if shift else self.low
+            self.cache[key] = source.rolling(
+                int(window),
+                min_periods=min_periods or min(int(window), len(self.frame)),
+            ).min()
+        return self.cache[key]
+
+    def rsi(self, period: int) -> pd.Series:
+        key = ("rsi", int(period))
+        if key not in self.cache:
+            self.cache[key] = _rsi(self.close, int(period)).fillna(50.0)
+        return self.cache[key]
+
+    def pct_return(self, lookback: int) -> pd.Series:
+        key = ("pct_return", int(lookback))
+        if key not in self.cache:
+            self.cache[key] = (self.close / self.close.shift(int(lookback)) - 1.0)
+        return self.cache[key]
+
+    def adr(self, window: int) -> pd.Series:
+        key = ("adr", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close.pct_change().abs().rolling(
+                int(window),
+                min_periods=int(window),
+            ).mean()
+        return self.cache[key]
+
+    def spy_close(self) -> pd.Series:
+        key = ("spy_close", self.benchmark_identity)
+        if key not in self.cache:
+            self.cache[key] = (
+                self.benchmark["close"].reindex(self.index).ffill()
+                if not self.benchmark.empty
+                else pd.Series(np.nan, index=self.index)
+            )
+        return self.cache[key]
+
+    def rs_line(self) -> pd.Series:
+        key = ("rs_line", self.benchmark_identity)
+        if key not in self.cache:
+            if self.benchmark.empty:
+                self.cache[key] = pd.Series(np.nan, index=self.index)
+            else:
+                self.cache[key] = self.close / self.spy_close().replace(0.0, np.nan)
+        return self.cache[key]
+
+    def rs_avg(self, window: int) -> pd.Series:
+        key = ("rs_avg", int(window), self.benchmark_identity)
+        if key not in self.cache:
+            rs_line = self.rs_line()
+            self.cache[key] = rs_line.rolling(
+                int(window),
+                min_periods=min(int(window), len(self.frame)),
+            ).mean()
+        return self.cache[key]
+
+    def rs_high(self, window: int) -> pd.Series:
+        key = ("rs_high", int(window), self.benchmark_identity)
+        if key not in self.cache:
+            rs_line = self.rs_line()
+            self.cache[key] = rs_line.rolling(
+                int(window),
+                min_periods=min(int(window), len(self.frame)),
+            ).max()
+        return self.cache[key]
+
+    def close_gt_ema(self, window: int) -> pd.Series:
+        key = ("close_gt_ema", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close > self.ema(int(window))
+        return self.cache[key]
+
+    def ema_gt_ema(self, fast: int, slow: int) -> pd.Series:
+        key = ("ema_gt_ema", int(fast), int(slow))
+        if key not in self.cache:
+            self.cache[key] = self.ema(int(fast)) > self.ema(int(slow))
+        return self.cache[key]
+
+    def close_breaks_high(self, window: int) -> pd.Series:
+        key = ("close_breaks_high", int(window))
+        if key not in self.cache:
+            self.cache[key] = self.close > self.rolling_high(int(window), shift=1, min_periods=int(window))
+        return self.cache[key]
+
+    def volume_gt_adv(self, window: int, multiple: float) -> pd.Series:
+        key = ("volume_gt_adv", int(window), _exact_float_cache_token(multiple))
+        if key not in self.cache:
+            self.cache[key] = self.volume > self.adv(int(window)) * float(multiple)
+        return self.cache[key]
+
+    def rs_ratio_gt_ma(self, window: int) -> pd.Series:
+        key = ("rs_ratio_gt_ma", int(window), self.benchmark_identity)
+        if key not in self.cache:
+            if self.benchmark.empty:
+                self.cache[key] = self.const(True)
+            else:
+                self.cache[key] = self.rs_line() > self.rs_avg(int(window))
+        return self.cache[key]
+
+    def market_trend(self, config: IndicatorConfig) -> pd.Series:
+        key = (
+            "market_trend",
+            self.frame_identity,
+            self.benchmark_identity,
+            int(config.market_ma_days),
+            int(config.market_momentum_days),
+            bool(config.strict_market_filter),
+        )
+        if key not in self.market_cache:
+            self.market_cache[key] = _market_trend_ok(self.index, self.benchmark, config)
+        return self.market_cache[key]
+
+
+def _prewarm_common_features(frame: pd.DataFrame, benchmark_prices: pd.DataFrame) -> None:
+    prepared = _prepare_ohlcv(frame)
+    if prepared.empty:
+        return
+    benchmark = _prepare_ohlcv(benchmark_prices)
+    close = prepared["close"]
+    high = prepared["high"]
+    low = prepared["low"]
+    volume = prepared["volume"].fillna(0.0)
+    entry_cache = _frame_series_cache(prepared, "_gtbi_entry_signal_series_cache")
+    primitive_cache = _frame_series_cache(prepared, "_gtbi_signal_primitive_cache")
+    exit_cache = _frame_series_cache(prepared, "_gtbi_exit_series_cache")
+    market_cache = _frame_series_cache(prepared, "_gtbi_market_trend_cache")
+
+    for window in (10, 20, 21, 40, 42, 50, 55, 63, 80, 100, 126, 150, 180, 200, 220, 252):
+        if window <= 0:
+            continue
+        entry_cache.setdefault(("sma", window), close.rolling(window, min_periods=window).mean())
+        entry_cache.setdefault(("ema", window), close.ewm(span=window, adjust=False, min_periods=window).mean())
+        min_periods = min(window, len(prepared))
+        entry_cache.setdefault((f"high_0_{min_periods}", window), high.rolling(window, min_periods=min_periods).max())
+        entry_cache.setdefault((f"low_0_{min_periods}", window), low.rolling(window, min_periods=min_periods).min())
+        entry_cache.setdefault((f"high_1_{window}", window), high.shift(1).rolling(window, min_periods=window).max())
+        entry_cache.setdefault((f"low_1_{window}", window), low.shift(1).rolling(window, min_periods=window).min())
+        entry_cache.setdefault((f"vol_{min_periods}", window), volume.rolling(window, min_periods=min_periods).mean())
+    for window, min_periods in ((55, 30), (40, 30)):
+        entry_cache.setdefault((f"high_1_{min_periods}", window), high.shift(1).rolling(window, min_periods=min_periods).max())
+        entry_cache.setdefault((f"low_1_{min_periods}", window), low.shift(1).rolling(window, min_periods=min_periods).min())
+    entry_cache.setdefault(("vol_10", 20), volume.rolling(20, min_periods=10).mean())
+    entry_cache.setdefault(("rsi", 14), _rsi(close, 14).fillna(50.0))
+    for window in (10, 20, 21, 35, 50, 60):
+        exit_cache.setdefault(("exit_ma", window), close.rolling(window, min_periods=window).mean())
+
+    if not benchmark.empty:
+        benchmark_identity = (_benchmark_cache_identity(benchmark),)
+        spy_close = benchmark["close"].reindex(prepared.index).ffill()
+        entry_cache.setdefault(("spy_close", *benchmark_identity), spy_close)
+        primitive_cache.setdefault(("spy_close", *benchmark_identity), spy_close)
+        rs_line = close / spy_close.replace(0.0, np.nan)
+        primitive_cache.setdefault(("rs_line", *benchmark_identity), rs_line)
+        for window in (42, 63, 126):
+            rs_avg = rs_line.rolling(window, min_periods=min(window, len(prepared))).mean()
+            rs_high = rs_line.rolling(window, min_periods=min(window, len(prepared))).max()
+            primitive_cache.setdefault(("rs_avg", window, *benchmark_identity), rs_avg)
+            primitive_cache.setdefault(("rs_high", window, *benchmark_identity), rs_high)
+            for near_high_pct in (0.90, 0.95):
+                entry_cache.setdefault(
+                    ("rs_ok", window, _exact_float_cache_token(near_high_pct), *benchmark_identity),
+                    (rs_line > rs_avg) & (rs_line >= rs_high * float(near_high_pct)),
+                )
+        for market_ma_days in (50, 200):
+            for market_momentum_days in (20, 63):
+                market_config = IndicatorConfig(
+                    market_ma_days=market_ma_days,
+                    market_momentum_days=market_momentum_days,
+                    strict_market_filter=False,
+                )
+                market_cache.setdefault(
+                    ("market_trend", *benchmark_identity, market_ma_days, market_momentum_days, False),
+                    _market_trend_ok(prepared.index, benchmark, market_config),
+                )
+
+
+def build_feature_store(
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    *,
+    enabled: bool = True,
+    prewarm: bool = True,
+) -> FeatureStore:
+    start = time.perf_counter()
+    benchmark = _prepare_ohlcv(benchmark_prices)
+    prepared_frames = {str(symbol): _prepare_ohlcv(frame) for symbol, frame in symbol_frames.items()}
+    primitive_stores = (
+        {
+            symbol: SignalPrimitiveStore(frame, benchmark)
+            for symbol, frame in prepared_frames.items()
+        }
+        if enabled
+        else {}
+    )
+    return FeatureStore(
+        symbol_frames=MappingProxyType(prepared_frames),
+        benchmark_prices=benchmark,
+        primitive_stores=MappingProxyType(primitive_stores),
+        seconds_build=float(time.perf_counter() - start),
+        enabled=bool(enabled),
+    )
 
 
 def _families_for_set(family_set: str) -> tuple[str, ...]:
@@ -534,7 +1362,25 @@ def _market_trend_ok(index: pd.Index, benchmark_prices: pd.DataFrame, config: In
     return strict.fillna(False)
 
 
-def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+def _market_trend_ok_for_frame(frame: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+    prepared = _prepare_ohlcv(frame)
+    if prepared.empty:
+        return pd.Series(dtype=bool)
+    benchmark = _prepare_ohlcv(benchmark_prices)
+    key = (
+        "market_trend",
+        _benchmark_cache_identity(benchmark),
+        int(config.market_ma_days),
+        int(config.market_momentum_days),
+        bool(config.strict_market_filter),
+    )
+    cache = _frame_series_cache(prepared, "_gtbi_market_trend_cache")
+    if key not in cache:
+        cache[key] = _market_trend_ok(prepared.index, benchmark, config)
+    return cache[key]
+
+
+def _entry_signal_legacy(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
     """Return same-day buy indicator. Execution happens next session."""
 
     frame = _prepare_ohlcv(prices)
@@ -821,7 +1667,13 @@ def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: I
     return (signal & market_trend).fillna(False).astype(bool)
 
 
-def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+def _entry_signal_optimized(
+    prices: pd.DataFrame,
+    benchmark_prices: pd.DataFrame,
+    config: IndicatorConfig,
+    *,
+    primitive_store: SignalPrimitiveStore | None = None,
+) -> pd.Series:
     """Return same-day buy indicator with lazy per-family feature calculation."""
 
     frame = _prepare_ohlcv(prices)
@@ -833,47 +1685,46 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     low = frame["low"]
     volume = frame["volume"].fillna(0.0)
     index = frame.index
-    cache: dict[tuple[str, int], pd.Series] = {}
+    primitives = primitive_store or SignalPrimitiveStore(frame, benchmark)
+    cache = primitives.entry_cache
 
     def const(value: bool) -> pd.Series:
-        return _safe_bool_series(value, index)
+        return primitives.const(value)
 
     def sma(window: int) -> pd.Series:
         key = ("sma", int(window))
         if key not in cache:
-            cache[key] = close.rolling(int(window), min_periods=int(window)).mean()
+            cache[key] = primitives.sma(int(window))
         return cache[key]
 
     def ema(window: int) -> pd.Series:
         key = ("ema", int(window))
         if key not in cache:
-            cache[key] = close.ewm(span=int(window), adjust=False, min_periods=int(window)).mean()
+            cache[key] = primitives.ema(int(window))
         return cache[key]
 
     def high_roll(window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
         key = (f"high_{shift}_{min_periods}", int(window))
         if key not in cache:
-            source = high.shift(shift) if shift else high
-            cache[key] = source.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).max()
+            cache[key] = primitives.rolling_high(int(window), shift=shift, min_periods=min_periods)
         return cache[key]
 
     def low_roll(window: int, *, shift: int = 0, min_periods: int | None = None) -> pd.Series:
         key = (f"low_{shift}_{min_periods}", int(window))
         if key not in cache:
-            source = low.shift(shift) if shift else low
-            cache[key] = source.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).min()
+            cache[key] = primitives.rolling_low(int(window), shift=shift, min_periods=min_periods)
         return cache[key]
 
     def avg_volume(window: int, *, min_periods: int | None = None) -> pd.Series:
         key = (f"vol_{min_periods}", int(window))
         if key not in cache:
-            cache[key] = volume.rolling(int(window), min_periods=min_periods or min(int(window), len(frame))).mean()
+            cache[key] = primitives.adv(int(window), min_periods=min_periods)
         return cache[key]
 
     def rsi_line() -> pd.Series:
         key = ("rsi", int(config.rsi_period))
         if key not in cache:
-            cache[key] = _rsi(close, config.rsi_period).fillna(50.0)
+            cache[key] = primitives.rsi(config.rsi_period)
         return cache[key]
 
     def high_n() -> pd.Series:
@@ -886,23 +1737,28 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return rsi_line() <= config.rsi_max
 
     def spy_close() -> pd.Series:
-        key = ("spy_close", 0)
-        if key not in cache:
-            cache[key] = benchmark["close"].reindex(index).ffill() if not benchmark.empty else pd.Series(np.nan, index=index)
-        return cache[key]
+        return primitives.spy_close()
 
     def rs_ok() -> pd.Series:
         if not config.require_rs:
             return const(True)
         if benchmark.empty:
             return const(True)
-        rs_line = close / spy_close().replace(0.0, np.nan)
-        rs_avg = rs_line.rolling(config.rs_lookback, min_periods=min(config.rs_lookback, len(frame))).mean()
-        rs_high = rs_line.rolling(config.rs_lookback, min_periods=min(config.rs_lookback, len(frame))).max()
-        return (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
+        key = (
+            "rs_ok",
+            int(config.rs_lookback),
+            _exact_float_cache_token(config.rs_near_high_pct),
+            _benchmark_cache_identity(benchmark),
+        )
+        if key not in cache:
+            rs_line = primitives.rs_line()
+            rs_avg = primitives.rs_avg(config.rs_lookback)
+            rs_high = primitives.rs_high(config.rs_lookback)
+            cache[key] = (rs_line > rs_avg) & (rs_line >= rs_high * config.rs_near_high_pct)
+        return cache[key]
 
     def market_trend() -> pd.Series:
-        return _market_trend_ok(index, benchmark, config) if config.require_market_trend else const(True)
+        return primitives.market_trend(config) if config.require_market_trend else const(True)
 
     def trend_ok() -> pd.Series:
         if not config.minervini_trend:
@@ -933,11 +1789,15 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     def breakout() -> pd.Series:
         if not config.require_breakout:
             return const(True)
-        resistance = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
+        resistance = high_roll(
+            config.breakout_lookback,
+            shift=1,
+            min_periods=config.breakout_lookback,
+        )
         return (close > resistance) & (volume > avg_volume(config.volume_lookback) * config.volume_multiple) & base_tight()
 
     def prior_runup() -> pd.Series:
-        return const(True) if not config.require_prior_runup else (close / close.shift(config.prior_runup_lookback) - 1.0) >= config.prior_runup_min_pct
+        return const(True) if not config.require_prior_runup else primitives.pct_return(config.prior_runup_lookback) >= config.prior_runup_min_pct
 
     def dryup() -> pd.Series:
         if not config.require_volume_dryup:
@@ -947,8 +1807,7 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return recent_vol <= long_vol * config.volume_dryup_max_ratio
 
     def adr_ok() -> pd.Series:
-        adr = close.pct_change().abs().rolling(config.adr_lookback, min_periods=config.adr_lookback).mean()
-        return adr >= config.min_adr_pct
+        return primitives.adr(config.adr_lookback) >= config.min_adr_pct
 
     def episodic_gap() -> pd.Series:
         if not config.require_episodic_gap:
@@ -1006,7 +1865,59 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         return (close > long) & (short > long) & (long >= long.shift(21))
 
     family = config.family
-    if family == "oneil_canslim":
+    if family == "gtbi_long_hold":
+        entry_ma_days = max(int(config.entry_ma_days or config.ma_short), 2)
+        entry_ma = ema(entry_ma_days) if str(config.entry_ma_kind).lower() == "ema" else sma(entry_ma_days)
+        long_trend = (
+            (close > sma150())
+            & (close > sma200())
+            & (sma150() > sma200())
+            & (sma150() >= sma150().shift(30))
+            & (close >= low_n() * max(config.above_low_multiple, 1.05))
+            & (close >= high_n() * max(config.near_high_pct, 0.50))
+        )
+        recent_high = high_roll(
+            max(10, int(config.breakout_lookback)),
+            shift=1,
+            min_periods=max(5, min(int(config.breakout_lookback), 30)),
+        )
+        recent_low = low_roll(
+            max(10, int(config.base_lookback)),
+            shift=1,
+            min_periods=max(5, min(int(config.base_lookback), 30)),
+        )
+        pullback_depth = ((recent_high - close) / recent_high.replace(0.0, np.nan)).clip(lower=0.0)
+        range_span = (recent_high - recent_low).replace(0.0, np.nan)
+        close_position = ((close - recent_low) / range_span).clip(lower=0.0, upper=1.0)
+        pullback_ok = (pullback_depth >= config.pullback_min_pct) & (pullback_depth <= config.pullback_max_pct)
+        close_position_ok = close_position >= float(config.close_position_in_range_min or 0.0)
+        volume_ok = volume >= avg_volume(20, min_periods=10) * max(float(config.volume_multiple), 0.5)
+        reclaim = (
+            (close > entry_ma)
+            & ((close.shift(1) <= entry_ma.shift(1)) | (low.shift(1) <= entry_ma.shift(1)) | pullback_ok.shift(1).fillna(False))
+            & (close > close.shift(1))
+        )
+        base_breakout = (close > recent_high) & volume_ok
+        shakeout = (low.shift(1) < recent_low.shift(1)) & (close > entry_ma) & (close > close.shift(1))
+        event_gap = ((frame["open"] / close.shift(1) - 1.0) >= config.episodic_gap_pct) & volume_ok
+        contraction_release = base_tight() & (reclaim | base_breakout | volume_ok)
+        trigger_type = str(config.entry_trigger_type or "").lower()
+        if "event" in trigger_type or "gap" in trigger_type:
+            long_hold_trigger = event_gap | (reclaim & pullback_ok)
+        elif "shakeout" in trigger_type or "undercut" in trigger_type:
+            long_hold_trigger = shakeout | (reclaim & pullback_ok)
+        elif "mean" in trigger_type or "oversold" in trigger_type:
+            long_hold_trigger = pullback_ok & reclaim & (rsi_line() <= max(float(config.rsi_max), 55.0))
+        elif "volatility" in trigger_type or "contraction" in trigger_type or "tight" in trigger_type:
+            long_hold_trigger = contraction_release & (reclaim | base_breakout)
+        elif "reclaim" in trigger_type:
+            long_hold_trigger = reclaim | (base_breakout & pullback_ok.shift(1).fillna(False))
+        elif "breakout" in trigger_type or "base" in trigger_type:
+            long_hold_trigger = base_breakout | (reclaim & close_position_ok)
+        else:
+            long_hold_trigger = reclaim | base_breakout | event_gap
+        signal = long_trend & (rs_ok() if config.require_rs else const(True)) & long_hold_trigger & close_position_ok & rsi_ok()
+    elif family == "oneil_canslim":
         signal = oneil_stack() & rs_ok() & breakout() & rsi_ok()
     elif family == "quallamaggie":
         signal = (trend_ok() | (close > sma(config.ma_short))) & prior_runup() & dryup() & (breakout() | episodic_gap()) & adr_ok() & rsi_ok()
@@ -1060,8 +1971,16 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         stage2_minervini = stage2 & (close > sma50()) & (sma50() > sma150()) & (sma150() > sma200()) & (sma200() > sma200().shift(21))
         signal = (stage2_minervini if config.minervini_trend else stage2) & rsi_ok()
     elif family == "tv_breakout_finder":
-        short_high = high.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).max()
-        short_low = low.shift(1).rolling(config.breakout_lookback, min_periods=config.breakout_lookback).min()
+        short_high = high_roll(
+            config.breakout_lookback,
+            shift=1,
+            min_periods=config.breakout_lookback,
+        )
+        short_low = low_roll(
+            config.breakout_lookback,
+            shift=1,
+            min_periods=config.breakout_lookback,
+        )
         channel_width = ((short_high - short_low) / close).fillna(np.inf)
         tests = (high.shift(1) >= short_high * (1.0 - max(config.max_base_range_pct, 0.02))).rolling(
             config.base_lookback,
@@ -1105,11 +2024,8 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
         signal = market_dip & (rs_ok() if config.require_rs else const(True))
     elif family in {"stability_rs_momentum_pullback", "stability_rs_reclaim_frequent", "stability_rs_pullback_breakout"}:
         if not benchmark.empty:
-            rs_line_for_reclaim = close / spy_close().replace(0.0, np.nan)
-            rs_avg_for_reclaim = rs_line_for_reclaim.rolling(
-                config.rs_lookback,
-                min_periods=min(config.rs_lookback, len(frame)),
-            ).mean()
+            rs_line_for_reclaim = primitives.rs_line()
+            rs_avg_for_reclaim = primitives.rs_avg(config.rs_lookback)
             rs_reclaim_ok = (
                 (rs_line_for_reclaim > rs_avg_for_reclaim)
                 & (rs_line_for_reclaim > rs_line_for_reclaim.shift(max(5, min(config.rs_lookback // 4, 21))))
@@ -1118,8 +2034,9 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
             rs_reclaim_ok = const(True)
         pullback_touch = (low <= sma(config.ma_short)) | (low <= ma21_sma()) | (close <= ma21_sma())
         rsi_cap = max(35.0, min(70.0, float(config.rsi_max)))
-        long_momentum = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(config.prior_runup_min_pct, 0.08)
-        frequent_runup = (close / close.shift(config.prior_runup_lookback) - 1.0) >= max(min(config.prior_runup_min_pct, 0.10), 0.03)
+        runup_return = primitives.pct_return(config.prior_runup_lookback)
+        long_momentum = runup_return >= max(config.prior_runup_min_pct, 0.08)
+        frequent_runup = runup_return >= max(min(config.prior_runup_min_pct, 0.10), 0.03)
         if family == "stability_rs_momentum_pullback":
             signal = (
                 stock_uptrend()
@@ -1179,7 +2096,9 @@ def _entry_signal_optimized(prices: pd.DataFrame, benchmark_prices: pd.DataFrame
     return (signal & market_trend()).fillna(False).astype(bool)
 
 
-entry_signal = _entry_signal_optimized
+def entry_signal(prices: pd.DataFrame, benchmark_prices: pd.DataFrame, config: IndicatorConfig) -> pd.Series:
+    """Public reference path retained for differential compatibility checks."""
+    return _entry_signal_optimized(prices, benchmark_prices, config)
 
 
 def _open_or_close(frame: pd.DataFrame, idx: int) -> float:
@@ -1217,6 +2136,307 @@ def _record_trade(
     }
 
 
+EXIT_REASON_BY_CODE = {
+    1: "stop_loss",
+    2: "take_profit",
+    3: "trailing_stop",
+    4: "exit_ma",
+    5: "market_exit",
+    6: "max_holding",
+    7: "end_of_data",
+}
+_NUMBA_SIMULATION_REASON = "not_checked"
+_NUMBA_SIMULATION_ENABLED = False
+
+
+def _simulate_trade_arrays_core(
+    open_values: np.ndarray,
+    high_values: np.ndarray,
+    low_values: np.ndarray,
+    close_values: np.ndarray,
+    exit_ma_values: np.ndarray,
+    exit_signal_values: np.ndarray,
+    signal_positions: np.ndarray,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    trailing_stop_pct: float,
+    use_exit_ma: bool,
+    use_market_exit: bool,
+    max_holding_days: int,
+    take_profit_min_holding_days: int = 0,
+    minimum_holding_days_before_soft_exit: int = 0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    n = len(close_values)
+    max_trades = len(signal_positions) + 1
+    entry_indices = np.empty(max_trades, dtype=np.int64)
+    exit_indices = np.empty(max_trades, dtype=np.int64)
+    entry_prices = np.empty(max_trades, dtype=np.float64)
+    exit_prices = np.empty(max_trades, dtype=np.float64)
+    reason_codes = np.empty(max_trades, dtype=np.int64)
+    count = 0
+    in_position = False
+    entry_idx = -1
+    entry_price = 0.0
+    high_water = 0.0
+    i = 0
+    next_signal = 0
+    while i < n - 1:
+        if not in_position:
+            while next_signal < len(signal_positions) and int(signal_positions[next_signal]) < i:
+                next_signal += 1
+            if next_signal >= len(signal_positions):
+                break
+            i = int(signal_positions[next_signal])
+            next_signal += 1
+            entry_idx = i + 1
+            entry_price = float(open_values[entry_idx])
+            if not math.isfinite(entry_price) or entry_price <= 0.0:
+                entry_price = float(close_values[entry_idx])
+            high_water = float(high_values[entry_idx])
+            in_position = True
+            i = entry_idx
+            continue
+
+        high_water = max(high_water, float(high_values[i]))
+        reason_code = 0
+        holding_days = min(i + 1, n - 1) - entry_idx
+        soft_exit_allowed = holding_days >= minimum_holding_days_before_soft_exit
+        if float(low_values[i]) <= entry_price * (1.0 - stop_loss_pct):
+            reason_code = 1
+        elif (
+            take_profit_pct > 0.0
+            and holding_days >= take_profit_min_holding_days
+            and float(high_values[i]) >= entry_price * (1.0 + take_profit_pct)
+        ):
+            reason_code = 2
+        elif soft_exit_allowed and trailing_stop_pct > 0.0 and float(low_values[i]) <= high_water * (1.0 - trailing_stop_pct):
+            reason_code = 3
+        elif soft_exit_allowed and use_exit_ma and math.isfinite(float(exit_ma_values[i])) and float(close_values[i]) < float(exit_ma_values[i]):
+            reason_code = 4
+        elif soft_exit_allowed and use_market_exit and bool(exit_signal_values[i]):
+            reason_code = 5
+        elif min(i + 1, n - 1) - entry_idx >= max_holding_days:
+            reason_code = 6
+
+        if reason_code:
+            exit_idx = min(i + 1, n - 1)
+            exit_price = float(open_values[exit_idx]) if exit_idx > entry_idx else float(close_values[exit_idx])
+            if exit_idx > entry_idx and (not math.isfinite(exit_price) or exit_price <= 0.0):
+                exit_price = float(close_values[exit_idx])
+            entry_indices[count] = entry_idx
+            exit_indices[count] = exit_idx
+            entry_prices[count] = entry_price
+            exit_prices[count] = exit_price
+            reason_codes[count] = reason_code
+            count += 1
+            in_position = False
+            i = exit_idx
+            continue
+        i += 1
+
+    if in_position:
+        exit_idx = n - 1
+        exit_price = float(open_values[exit_idx]) if exit_idx > entry_idx else float(close_values[exit_idx])
+        if exit_idx > entry_idx and (not math.isfinite(exit_price) or exit_price <= 0.0):
+            exit_price = float(close_values[exit_idx])
+        entry_indices[count] = entry_idx
+        exit_indices[count] = exit_idx
+        entry_prices[count] = entry_price
+        exit_prices[count] = exit_price
+        reason_codes[count] = 7
+        count += 1
+    return entry_indices, exit_indices, entry_prices, exit_prices, reason_codes, count
+
+
+_simulate_trade_arrays_numba = None
+if _numba_njit is not None:  # pragma: no cover - optional accelerator.
+    try:
+        _simulate_trade_arrays_numba = _numba_njit(cache=True)(_simulate_trade_arrays_core)
+    except Exception:
+        _simulate_trade_arrays_numba = None
+
+
+def _numba_simulation_state() -> tuple[bool, str]:
+    global _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    requested = os.environ.get("GTBI_ENABLE_NUMBA_SIM", "auto").strip().lower()
+    if requested in {"0", "false", "no", "off"}:
+        _NUMBA_SIMULATION_ENABLED = False
+        _NUMBA_SIMULATION_REASON = "disabled_by_env"
+        return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    if _simulate_trade_arrays_numba is None:
+        _NUMBA_SIMULATION_ENABLED = False
+        _NUMBA_SIMULATION_REASON = "numba_unavailable"
+        return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    if requested in {"1", "true", "yes", "on"}:
+        _NUMBA_SIMULATION_ENABLED = True
+        _NUMBA_SIMULATION_REASON = "enabled_by_env"
+        return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    _NUMBA_SIMULATION_ENABLED = True
+    _NUMBA_SIMULATION_REASON = "auto_enabled_numba"
+    return _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+
+
+def _simulate_trade_arrays(
+    open_values: np.ndarray,
+    high_values: np.ndarray,
+    low_values: np.ndarray,
+    close_values: np.ndarray,
+    exit_ma_values: np.ndarray,
+    exit_signal_values: np.ndarray,
+    signal_positions: np.ndarray,
+    config: IndicatorConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    global _NUMBA_SIMULATION_ENABLED, _NUMBA_SIMULATION_REASON
+    use_numba, _ = _numba_simulation_state()
+    if use_numba and _simulate_trade_arrays_numba is not None:  # pragma: no cover - optional accelerator.
+        try:
+            return _simulate_trade_arrays_numba(
+                open_values,
+                high_values,
+                low_values,
+                close_values,
+                exit_ma_values,
+                exit_signal_values,
+                signal_positions,
+                float(config.stop_loss_pct),
+                float(config.take_profit_pct),
+                float(config.trailing_stop_pct),
+                bool(config.use_exit_ma),
+                bool(config.use_market_exit),
+                int(config.max_holding_days),
+                int(config.take_profit_min_holding_days),
+                int(config.minimum_holding_days_before_soft_exit),
+            )
+        except Exception:
+            _NUMBA_SIMULATION_ENABLED = False
+            _NUMBA_SIMULATION_REASON = "numba_runtime_fallback"
+            return _simulate_trade_arrays_core(
+                open_values,
+                high_values,
+                low_values,
+                close_values,
+                exit_ma_values,
+                exit_signal_values,
+                signal_positions,
+                float(config.stop_loss_pct),
+                float(config.take_profit_pct),
+                float(config.trailing_stop_pct),
+                bool(config.use_exit_ma),
+                bool(config.use_market_exit),
+                int(config.max_holding_days),
+                int(config.take_profit_min_holding_days),
+                int(config.minimum_holding_days_before_soft_exit),
+            )
+    return _simulate_trade_arrays_core(
+        open_values,
+        high_values,
+        low_values,
+        close_values,
+        exit_ma_values,
+        exit_signal_values,
+        signal_positions,
+        float(config.stop_loss_pct),
+        float(config.take_profit_pct),
+        float(config.trailing_stop_pct),
+        bool(config.use_exit_ma),
+        bool(config.use_market_exit),
+        int(config.max_holding_days),
+        int(config.take_profit_min_holding_days),
+        int(config.minimum_holding_days_before_soft_exit),
+    )
+
+
+def _simulate_trade_records(
+    symbol: str,
+    prices: pd.DataFrame,
+    signal: pd.Series,
+    config: IndicatorConfig,
+    *,
+    split: str,
+    candidate_id: str = "",
+    exit_signal: pd.Series | None = None,
+    signal_positions: np.ndarray | None = None,
+) -> list[dict[str, Any]]:
+    frame = _prepare_ohlcv(prices)
+    if frame.empty or len(frame) < 3:
+        return []
+    if signal_positions is None:
+        signal = signal.reindex(frame.index).fillna(False).astype(bool)
+        signal_values = signal.to_numpy(dtype=bool, copy=False)
+        positions = np.flatnonzero(signal_values[:-1]).astype(np.int32, copy=False)
+    else:
+        positions = np.asarray(signal_positions, dtype=np.int32)
+        if positions.ndim != 1:
+            raise ValueError("signal_positions must be a one-dimensional array")
+        positions = positions[(positions >= 0) & (positions < len(frame) - 1)]
+    exit_signal = (
+        exit_signal.reindex(frame.index).fillna(False).astype(bool)
+        if exit_signal is not None
+        else _safe_bool_series(False, frame.index)
+    )
+    confirmation_days = max(int(config.market_exit_confirmation_days or 1), 1)
+    if confirmation_days > 1:
+        exit_signal = (
+            exit_signal.astype(int)
+            .rolling(confirmation_days, min_periods=confirmation_days)
+            .sum()
+            .ge(confirmation_days)
+            .fillna(False)
+            .astype(bool)
+        )
+    exit_ma_key = ("exit_ma", int(config.exit_ma_days))
+    exit_ma_cache = _frame_series_cache(frame, "_gtbi_exit_series_cache")
+    if exit_ma_key not in exit_ma_cache:
+        exit_ma_cache[exit_ma_key] = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
+    exit_ma = exit_ma_cache[exit_ma_key]
+    if len(positions) == 0:
+        return []
+    open_values = frame["open"].to_numpy(dtype=float, copy=False)
+    high_values = frame["high"].to_numpy(dtype=float, copy=False)
+    low_values = frame["low"].to_numpy(dtype=float, copy=False)
+    close_values = frame["close"].to_numpy(dtype=float, copy=False)
+    exit_ma_values = exit_ma.to_numpy(dtype=float, copy=False)
+    exit_signal_values = exit_signal.to_numpy(dtype=bool, copy=False)
+    date_values = frame.index.to_numpy(dtype="datetime64[ns]", copy=False).astype("datetime64[D]", copy=False)
+    date_strings = np.datetime_as_string(date_values, unit="D")
+
+    entry_indices, exit_indices, entry_prices, exit_prices, reason_codes, count = _simulate_trade_arrays(
+        open_values,
+        high_values,
+        low_values,
+        close_values,
+        exit_ma_values,
+        exit_signal_values,
+        positions,
+        config,
+    )
+    if count <= 0:
+        return []
+
+    records: list[dict[str, Any]] = []
+    for pos in range(int(count)):
+        entry_idx = int(entry_indices[pos])
+        exit_idx = int(exit_indices[pos])
+        entry_price = float(entry_prices[pos])
+        exit_price = float(exit_prices[pos])
+        reason = EXIT_REASON_BY_CODE.get(int(reason_codes[pos]), "unknown")
+        records.append(
+            {
+                "candidate_id": candidate_id,
+                "symbol": symbol,
+                "split": split,
+                "entry_date": str(date_strings[entry_idx]),
+                "exit_date": str(date_strings[exit_idx]),
+                "entry_price": float(entry_price),
+                "exit_price": float(exit_price),
+                "return_pct": float((exit_price / entry_price - 1.0) * 100.0),
+                "holding_days": int(exit_idx - entry_idx),
+                "exit_reason": reason,
+            }
+        )
+    return records
+
+
 def simulate_trades(
     symbol: str,
     prices: pd.DataFrame,
@@ -1226,94 +2446,21 @@ def simulate_trades(
     split: str,
     candidate_id: str = "",
     exit_signal: pd.Series | None = None,
+    signal_positions: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Simulate long/cash trades from a buy indicator, executing next session."""
 
-    frame = _prepare_ohlcv(prices)
-    if frame.empty or len(frame) < 3:
-        return pd.DataFrame(columns=TRADE_COLUMNS)
-    signal = signal.reindex(frame.index).fillna(False).astype(bool)
-    exit_signal = (
-        exit_signal.reindex(frame.index).fillna(False).astype(bool)
-        if exit_signal is not None
-        else _safe_bool_series(False, frame.index)
+    records = _simulate_trade_records(
+        symbol,
+        prices,
+        signal,
+        config,
+        split=split,
+        candidate_id=candidate_id,
+        exit_signal=exit_signal,
+        signal_positions=signal_positions,
     )
-    exit_ma = frame["close"].rolling(config.exit_ma_days, min_periods=config.exit_ma_days).mean()
-    signal_values = signal.to_numpy(dtype=bool)
-    signal_positions = np.flatnonzero(signal_values[:-1])
-    if len(signal_positions) == 0:
-        return pd.DataFrame(columns=TRADE_COLUMNS)
-
-    trades: list[dict[str, Any]] = []
-    in_position = False
-    entry_idx = -1
-    entry_price = 0.0
-    high_water = 0.0
-    i = 0
-    next_signal = 0
-    while i < len(frame) - 1:
-        if not in_position:
-            while next_signal < len(signal_positions) and int(signal_positions[next_signal]) < i:
-                next_signal += 1
-            if next_signal >= len(signal_positions):
-                break
-            i = int(signal_positions[next_signal])
-            next_signal += 1
-            entry_idx = i + 1
-            entry_price = _open_or_close(frame, entry_idx)
-            high_water = float(frame["high"].iloc[entry_idx])
-            in_position = True
-            i = entry_idx
-            continue
-
-        high_water = max(high_water, float(frame["high"].iloc[i]))
-        reason: str | None = None
-        if float(frame["low"].iloc[i]) <= entry_price * (1.0 - config.stop_loss_pct):
-            reason = "stop_loss"
-        elif config.take_profit_pct > 0 and float(frame["high"].iloc[i]) >= entry_price * (1.0 + config.take_profit_pct):
-            reason = "take_profit"
-        elif config.trailing_stop_pct > 0 and float(frame["low"].iloc[i]) <= high_water * (1.0 - config.trailing_stop_pct):
-            reason = "trailing_stop"
-        elif config.use_exit_ma and pd.notna(exit_ma.iloc[i]) and float(frame["close"].iloc[i]) < float(exit_ma.iloc[i]):
-            reason = "exit_ma"
-        elif config.use_market_exit and bool(exit_signal.iloc[i]):
-            reason = "market_exit"
-        elif min(i + 1, len(frame) - 1) - entry_idx >= config.max_holding_days:
-            reason = "max_holding"
-
-        if reason is not None:
-            exit_idx = min(i + 1, len(frame) - 1)
-            trades.append(
-                _record_trade(
-                    candidate_id=candidate_id,
-                    symbol=symbol,
-                    split=split,
-                    frame=frame,
-                    entry_idx=entry_idx,
-                    exit_idx=exit_idx,
-                    entry_price=entry_price,
-                    exit_reason=reason,
-                )
-            )
-            in_position = False
-            i = exit_idx
-            continue
-        i += 1
-
-    if in_position:
-        trades.append(
-            _record_trade(
-                candidate_id=candidate_id,
-                symbol=symbol,
-                split=split,
-                frame=frame,
-                entry_idx=entry_idx,
-                exit_idx=len(frame) - 1,
-                entry_price=entry_price,
-                exit_reason="end_of_data",
-            )
-        )
-    return pd.DataFrame(trades, columns=TRADE_COLUMNS)
+    return pd.DataFrame(records, columns=TRADE_COLUMNS)
 
 
 def split_trade_frame(
@@ -1326,13 +2473,58 @@ def split_trade_frame(
     if trades.empty:
         return trades.copy()
     out = trades.copy()
-    exit_dates = pd.to_datetime(out["exit_date"], errors="coerce")
-    train_mask = exit_dates <= _dt(train_end)
-    valid_mask = (exit_dates >= _dt(validation_start)) & (exit_dates <= _dt(validation_end))
+    exit_values = out["exit_date"].to_numpy(dtype=object, copy=False)
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
+    parsed_days = np.empty(len(exit_values), dtype="datetime64[D]")
+    parsed_days[:] = np.datetime64("NaT", "D")
+    for idx, value in enumerate(exit_values):
+        parsed = _exit_date64_from_value(value)
+        if parsed is not None:
+            parsed_days[idx] = parsed
+    valid_date = ~np.isnat(parsed_days)
+    train_mask = valid_date & (parsed_days <= train_end_day)
+    valid_mask = valid_date & (parsed_days >= validation_start_day) & (parsed_days <= validation_end_day)
     out.loc[train_mask, "split"] = "train"
     out.loc[valid_mask, "split"] = "validation"
     out = out[train_mask | valid_mask].copy()
     return out
+
+
+def _exit_date64_from_value(value: Any) -> np.datetime64 | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    text = str(value)
+    if not text or text.lower() in {"nat", "nan", "none"}:
+        return None
+    try:
+        return np.datetime64(text[:10], "D")
+    except (TypeError, ValueError):
+        return None
+
+
+def _exit_year_from_value(value: Any) -> int | None:
+    date_value = _exit_date64_from_value(value)
+    if date_value is None:
+        return None
+    return int(str(date_value)[:4])
+
+
+def _date64_days_between(later: np.datetime64, earlier: np.datetime64) -> int:
+    return int((later - earlier) / np.timedelta64(1, "D"))
+
+
+def _exit_year_counts(exit_dates: Iterable[Any]) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for value in exit_dates:
+        year = _exit_year_from_value(value)
+        if year is None:
+            continue
+        counts[year] = counts.get(year, 0) + 1
+    return counts
 
 
 def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
@@ -1347,6 +2539,11 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
             "trade_sortino": float("nan"),
             "max_drawdown_pct": float("nan"),
             "avg_holding_days": float("nan"),
+            "holding_days_p50": float("nan"),
+            "holding_days_p75": float("nan"),
+            "holding_days_p90": float("nan"),
+            "percent_exits_under_5_days": float("nan"),
+            "percent_exits_under_10_days": float("nan"),
             "trades_per_year": 0.0,
             "return_concentration": float("nan"),
         }
@@ -1363,11 +2560,13 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
     downside = returns[returns < 0]
     dstd = float(downside.std(ddof=0)) if len(downside) > 1 else std
     sortino = float((returns.mean() / dstd) * scale) if dstd > 1e-12 else 0.0
-    nav = np.cumprod(1.0 + returns.to_numpy())
-    dd = nav / np.maximum.accumulate(nav) - 1.0
-    years_by_exit = pd.to_datetime(trades["exit_date"], errors="coerce").dt.year
-    per_year = trades.assign(_year=years_by_exit).groupby("_year")["return_pct"].count()
-    concentration = float(per_year.max() / len(trades)) if len(trades) else float("nan")
+    gross = np.maximum(1.0 + returns.to_numpy(dtype=float), 1e-12)
+    log_nav = np.cumsum(np.log(gross))
+    log_dd = log_nav - np.maximum.accumulate(log_nav)
+    dd = np.exp(np.clip(log_dd, -745.0, 0.0)) - 1.0
+    per_year = _exit_year_counts(trades["exit_date"].to_numpy(dtype=object, copy=False))
+    concentration = float(max(per_year.values()) / len(trades)) if len(trades) and per_year else float("nan")
+    holding_days = pd.to_numeric(trades["holding_days"], errors="coerce").dropna()
     return {
         "trades": float(len(returns)),
         "avg_trade_return_pct": float(returns.mean() * 100.0),
@@ -1377,7 +2576,12 @@ def summarize_trades(trades: pd.DataFrame, *, years: float) -> dict[str, float]:
         "trade_sharpe": sharpe,
         "trade_sortino": sortino,
         "max_drawdown_pct": float(dd.min() * 100.0),
-        "avg_holding_days": float(pd.to_numeric(trades["holding_days"], errors="coerce").mean()),
+        "avg_holding_days": float(holding_days.mean()) if not holding_days.empty else float("nan"),
+        "holding_days_p50": float(holding_days.quantile(0.50)) if not holding_days.empty else float("nan"),
+        "holding_days_p75": float(holding_days.quantile(0.75)) if not holding_days.empty else float("nan"),
+        "holding_days_p90": float(holding_days.quantile(0.90)) if not holding_days.empty else float("nan"),
+        "percent_exits_under_5_days": float((holding_days < 5).mean()) if not holding_days.empty else float("nan"),
+        "percent_exits_under_10_days": float((holding_days < 10).mean()) if not holding_days.empty else float("nan"),
         "trades_per_year": trades_per_year,
         "return_concentration": concentration,
     }
@@ -1398,33 +2602,287 @@ def _spy_return_by_year(benchmark_prices: pd.DataFrame) -> dict[int, float]:
 def yearly_trade_performance(trades: pd.DataFrame, benchmark_prices: pd.DataFrame) -> pd.DataFrame:
     if trades.empty:
         return pd.DataFrame(columns=YEARLY_COLUMNS)
-    frame = trades.copy()
-    frame["exit_date"] = pd.to_datetime(frame["exit_date"], errors="coerce")
-    frame = frame.dropna(subset=["exit_date"])
-    frame["year"] = frame["exit_date"].dt.year.astype(int)
     spy_by_year = _spy_return_by_year(benchmark_prices)
+    grouped: dict[tuple[Any, Any, int], dict[str, Any]] = {}
+    candidate_values = trades.get("candidate_id", pd.Series([""] * len(trades))).to_numpy(dtype=object, copy=False)
+    split_values = trades.get("split", pd.Series([""] * len(trades))).to_numpy(dtype=object, copy=False)
+    exit_values = trades["exit_date"].to_numpy(dtype=object, copy=False)
+    return_values = pd.to_numeric(trades["return_pct"], errors="coerce").to_numpy(dtype=float, copy=False)
+    holding_values = pd.to_numeric(trades["holding_days"], errors="coerce").to_numpy(dtype=float, copy=False)
+    for idx, value in enumerate(exit_values):
+        year = _exit_year_from_value(value)
+        if year is None:
+            continue
+        key = (candidate_values[idx], split_values[idx], int(year))
+        bucket = grouped.setdefault(key, {"trade_count": 0, "returns": [], "holding_days": []})
+        bucket["trade_count"] += 1
+        ret = float(return_values[idx])
+        if math.isfinite(ret):
+            bucket["returns"].append(ret)
+        holding = float(holding_values[idx])
+        if math.isfinite(holding):
+            bucket["holding_days"].append(holding)
     rows: list[dict[str, Any]] = []
-    group_cols = ["candidate_id", "split", "year"]
-    for (candidate_id, split, year), group in frame.groupby(group_cols, dropna=False):
-        ret = pd.to_numeric(group["return_pct"], errors="coerce").dropna()
-        wins = ret[ret > 0]
-        losses = ret[ret < 0]
-        pf = float(wins.sum() / abs(losses.sum())) if float(losses.sum()) < 0 else float("inf")
+    for (candidate_id, split, year), bucket in grouped.items():
+        ret_array = np.asarray(bucket["returns"], dtype=float)
+        wins = ret_array[ret_array > 0]
+        losses = ret_array[ret_array < 0]
+        loss_sum = float(losses.sum())
+        pf = float(wins.sum() / abs(loss_sum)) if loss_sum < 0 else float("inf")
+        holding_array = np.asarray(bucket["holding_days"], dtype=float)
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "split": split,
+                "year": int(year),
+                "trades": int(bucket["trade_count"]),
+                "avg_trade_return_pct": float(ret_array.mean()) if len(ret_array) else float("nan"),
+                "median_trade_return_pct": float(np.median(ret_array)) if len(ret_array) else float("nan"),
+                "win_rate": float((ret_array > 0).mean()) if len(ret_array) else float("nan"),
+                "profit_factor": pf,
+                "avg_holding_days": float(holding_array.mean()) if len(holding_array) else float("nan"),
+                "spy_return_pct": spy_by_year.get(int(year), float("nan")),
+            }
+        )
+    return pd.DataFrame(rows, columns=YEARLY_COLUMNS).sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+
+
+def symbol_entry_counts_by_year(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    required = {"candidate_id", "symbol", "split", "entry_date"}
+    if not required.issubset(trades.columns):
+        return pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "symbol", "split", "entry_date"]].copy()
+    frame["entry_date"] = pd.to_datetime(frame["entry_date"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "symbol", "split", "entry_date"])
+    if frame.empty:
+        return pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    frame["year"] = frame["entry_date"].dt.year.astype(int)
+    grouped = (
+        frame.groupby(["candidate_id", "split", "year"], dropna=False)
+        .agg(unique_entry_symbols=("symbol", "nunique"), entries=("symbol", "size"))
+        .reset_index()
+    )
+    return grouped.loc[:, SYMBOL_ENTRY_COUNTS_COLUMNS].sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+
+
+def _profit_factor_from_return_series(values: pd.Series) -> float:
+    returns = pd.to_numeric(values, errors="coerce").dropna().astype(float)
+    if returns.empty:
+        return float("nan")
+    wins = returns[returns > 0.0].sum()
+    losses = returns[returns < 0.0].sum()
+    if losses < 0.0:
+        return float(wins / abs(losses))
+    return float("inf") if wins > 0.0 else float("nan")
+
+
+def annual_trade_equity_curve(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    required = {"candidate_id", "split", "exit_date", "return_pct", "holding_days"}
+    if not required.issubset(trades.columns):
+        return pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "split", "exit_date", "return_pct", "holding_days"]].copy()
+    frame["exit_date"] = pd.to_datetime(frame["exit_date"], errors="coerce")
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "exit_date", "return_pct"])
+    if frame.empty:
+        return pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    frame["year"] = frame["exit_date"].dt.year.astype(int)
+    rows: list[dict[str, Any]] = []
+    for (candidate_id, split, year), group in frame.groupby(["candidate_id", "split", "year"], dropna=False):
+        returns = pd.to_numeric(group["return_pct"], errors="coerce").dropna().astype(float)
         rows.append(
             {
                 "candidate_id": candidate_id,
                 "split": split,
                 "year": int(year),
                 "trades": int(len(group)),
-                "avg_trade_return_pct": float(ret.mean()) if len(ret) else float("nan"),
-                "median_trade_return_pct": float(ret.median()) if len(ret) else float("nan"),
-                "win_rate": float((ret > 0).mean()) if len(ret) else float("nan"),
-                "profit_factor": pf,
-                "avg_holding_days": float(pd.to_numeric(group["holding_days"], errors="coerce").mean()),
-                "spy_return_pct": spy_by_year.get(int(year), float("nan")),
+                "annual_trade_return_sum_pct": float(returns.sum()) if len(returns) else float("nan"),
+                "annual_avg_trade_return_pct": float(returns.mean()) if len(returns) else float("nan"),
+                "annual_median_trade_return_pct": float(returns.median()) if len(returns) else float("nan"),
+                "annual_win_rate": float((returns > 0.0).mean()) if len(returns) else float("nan"),
+                "annual_profit_factor": _profit_factor_from_return_series(returns),
+                "cumulative_trade_return_sum_pct": float("nan"),
             }
         )
-    return pd.DataFrame(rows, columns=YEARLY_COLUMNS).sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+    out = pd.DataFrame(rows, columns=ANNUAL_TRADE_EQUITY_COLUMNS).sort_values(["candidate_id", "split", "year"]).reset_index(drop=True)
+    if not out.empty:
+        out["cumulative_trade_return_sum_pct"] = out.groupby(["candidate_id", "split"], dropna=False)[
+            "annual_trade_return_sum_pct"
+        ].cumsum()
+    return out
+
+
+def trade_return_distribution(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty or not {"candidate_id", "split", "return_pct"}.issubset(trades.columns):
+        return pd.DataFrame(columns=TRADE_DISTRIBUTION_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "split", "return_pct"]].copy()
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "return_pct"])
+    bins = [
+        (float("-inf"), -20.0, "< -20%"),
+        (-20.0, -10.0, "-20% a -10%"),
+        (-10.0, -5.0, "-10% a -5%"),
+        (-5.0, -2.0, "-5% a -2%"),
+        (-2.0, -1.0, "-2% a -1%"),
+        (-1.0, 0.0, "-1% a 0%"),
+        (0.0, 1.0, "0% a 1%"),
+        (1.0, 2.0, "1% a 2%"),
+        (2.0, 5.0, "2% a 5%"),
+        (5.0, 10.0, "5% a 10%"),
+        (10.0, 20.0, "10% a 20%"),
+        (20.0, float("inf"), "> 20%"),
+    ]
+    rows: list[dict[str, Any]] = []
+    for (candidate_id, split), group in frame.groupby(["candidate_id", "split"], dropna=False):
+        total = int(len(group))
+        returns = group["return_pct"]
+        for low, high, label in bins:
+            if math.isinf(low):
+                mask = returns < high
+            elif math.isinf(high):
+                mask = returns >= low
+            else:
+                mask = (returns >= low) & (returns < high)
+            count = int(mask.sum())
+            rows.append(
+                {
+                    "candidate_id": candidate_id,
+                    "split": split,
+                    "return_bin": label,
+                    "return_pct_min": low,
+                    "return_pct_max": high,
+                    "trades": count,
+                    "share": float(count / total) if total else float("nan"),
+                }
+            )
+    return pd.DataFrame(rows, columns=TRADE_DISTRIBUTION_COLUMNS)
+
+
+def ticker_trade_summary(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    required = {"candidate_id", "split", "symbol", "return_pct", "holding_days"}
+    if not required.issubset(trades.columns):
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    frame = trades.loc[:, ["candidate_id", "split", "symbol", "return_pct", "holding_days"]].copy()
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame["holding_days"] = pd.to_numeric(frame["holding_days"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "symbol", "return_pct"])
+    rows: list[dict[str, Any]] = []
+    for (candidate_id, split, symbol), group in frame.groupby(["candidate_id", "split", "symbol"], dropna=False):
+        returns = pd.to_numeric(group["return_pct"], errors="coerce").dropna().astype(float)
+        holding = pd.to_numeric(group["holding_days"], errors="coerce").dropna().astype(float)
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "split": split,
+                "symbol": symbol,
+                "trades": int(len(group)),
+                "sum_return_pct": float(returns.sum()) if len(returns) else float("nan"),
+                "avg_return_pct": float(returns.mean()) if len(returns) else float("nan"),
+                "median_return_pct": float(returns.median()) if len(returns) else float("nan"),
+                "win_rate": float((returns > 0.0).mean()) if len(returns) else float("nan"),
+                "profit_factor": _profit_factor_from_return_series(returns),
+                "avg_holding_days": float(holding.mean()) if len(holding) else float("nan"),
+                "best_trade_pct": float(returns.max()) if len(returns) else float("nan"),
+                "worst_trade_pct": float(returns.min()) if len(returns) else float("nan"),
+            }
+        )
+    return pd.DataFrame(rows, columns=TICKER_TRADE_SUMMARY_COLUMNS)
+
+
+def _cap_ticker_trade_summary(ticker_summary: pd.DataFrame, *, limit: int = MAX_TICKER_TRADE_SUMMARY_ROWS) -> pd.DataFrame:
+    if ticker_summary.empty or int(limit) <= 0 or len(ticker_summary) <= int(limit):
+        return ticker_summary
+    frame = ticker_summary.copy()
+    sort_columns: list[str] = []
+    ascending: list[bool] = []
+    if "sum_return_pct" in frame.columns:
+        frame["_abs_sum_return_pct"] = pd.to_numeric(frame["sum_return_pct"], errors="coerce").abs().fillna(-np.inf)
+        sort_columns.append("_abs_sum_return_pct")
+        ascending.append(False)
+    if "trades" in frame.columns:
+        frame["_trades_sort"] = pd.to_numeric(frame["trades"], errors="coerce").fillna(-np.inf)
+        sort_columns.append("_trades_sort")
+        ascending.append(False)
+    for column in ("candidate_id", "split", "symbol"):
+        if column in frame.columns:
+            sort_columns.append(column)
+            ascending.append(True)
+    if sort_columns:
+        frame = frame.sort_values(sort_columns, ascending=ascending, kind="mergesort")
+    frame = frame.head(int(limit)).drop(columns=[col for col in ("_abs_sum_return_pct", "_trades_sort") if col in frame.columns])
+    return frame.loc[:, [column for column in TICKER_TRADE_SUMMARY_COLUMNS if column in frame.columns]]
+
+
+def _count_csv_data_rows(path: Path) -> int:
+    if not path.exists() or not path.stat().st_size:
+        return 0
+    with path.open("rb") as handle:
+        lines = sum(1 for _ in handle)
+    return max(int(lines) - 1, 0)
+
+
+def _read_capped_ticker_trade_summary(path: Path, *, limit: int = MAX_TICKER_TRADE_SUMMARY_ROWS) -> tuple[pd.DataFrame, int]:
+    if not path.stat().st_size:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS), 0
+    total_rows = 0
+    capped = pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    try:
+        reader = pd.read_csv(path, chunksize=50_000)
+        for chunk in reader:
+            total_rows += int(len(chunk))
+            chunk = _cap_ticker_trade_summary(chunk, limit=limit)
+            if chunk.empty:
+                continue
+            capped = _cap_ticker_trade_summary(
+                pd.concat([capped, chunk], ignore_index=True, sort=False),
+                limit=limit,
+            )
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS), 0
+    except ValueError:
+        return pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS), _count_csv_data_rows(path)
+    return capped, total_rows
+
+
+def extreme_trades_by_return(trades: pd.DataFrame, *, n: int = 100, largest: bool) -> pd.DataFrame:
+    if trades.empty or "return_pct" not in trades.columns:
+        return pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    frame = trades.copy()
+    frame["return_pct"] = pd.to_numeric(frame["return_pct"], errors="coerce")
+    frame = frame.dropna(subset=["candidate_id", "split", "return_pct"])
+    rows: list[pd.DataFrame] = []
+    for (_candidate_id, _split), group in frame.groupby(["candidate_id", "split"], dropna=False):
+        selected = group.sort_values("return_pct", ascending=not largest).head(n).copy()
+        selected.insert(0, "rank", range(1, len(selected) + 1))
+        for column in TRADE_COLUMNS:
+            if column not in selected.columns:
+                selected[column] = pd.NA
+        rows.append(selected.loc[:, ["rank", *TRADE_COLUMNS]])
+    if not rows:
+        return pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    return pd.concat(rows, ignore_index=True, sort=False)
+
+
+def selected_symbol_trades(trades: pd.DataFrame, symbols_csv: str | None = None) -> pd.DataFrame:
+    if trades.empty or "symbol" not in trades.columns:
+        return pd.DataFrame(columns=SELECTED_SYMBOL_TRADE_COLUMNS)
+    symbols_value = symbols_csv if symbols_csv is not None else os.environ.get("GTBI_SELECTED_SYMBOLS", "")
+    symbols = {item.strip().upper() for item in str(symbols_value).split(",") if item.strip()}
+    if not symbols:
+        return pd.DataFrame(columns=SELECTED_SYMBOL_TRADE_COLUMNS)
+    frame = trades.copy()
+    mask = frame["symbol"].astype(str).str.upper().isin(symbols)
+    selected = frame.loc[mask].copy()
+    for column in SELECTED_SYMBOL_TRADE_COLUMNS:
+        if column not in selected.columns:
+            selected[column] = pd.NA
+    return selected.loc[:, SELECTED_SYMBOL_TRADE_COLUMNS].sort_values(["candidate_id", "split", "entry_date", "symbol"]).reset_index(drop=True)
 
 
 def _candidate_score(train: dict[str, float]) -> float:
@@ -1463,6 +2921,34 @@ def _finite_float(value: Any, default: float = float("nan")) -> float:
     return out if math.isfinite(out) else default
 
 
+def _best_adjusted_row(frame: pd.DataFrame) -> pd.Series | None:
+    if frame.empty:
+        return None
+    if "adjusted_return_time_risk" not in frame.columns:
+        return frame.iloc[0]
+    ranked = frame.copy()
+    ranked["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+        ranked["adjusted_return_time_risk"],
+        errors="coerce",
+    )
+    ranked = ranked[np.isfinite(ranked["_adjusted_return_time_risk_numeric"])]
+    if ranked.empty:
+        return frame.iloc[0]
+    sort_columns = ["_adjusted_return_time_risk_numeric"]
+    ascending = [False]
+    if "validation_median_trade_return_pct" in ranked.columns:
+        ranked["_validation_median_trade_return_pct_numeric"] = pd.to_numeric(
+            ranked["validation_median_trade_return_pct"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        sort_columns.append("_validation_median_trade_return_pct_numeric")
+        ascending.append(False)
+    if "candidate_id" in ranked.columns:
+        sort_columns.append("candidate_id")
+        ascending.append(True)
+    return ranked.sort_values(sort_columns, ascending=ascending).iloc[0]
+
+
 def _external_pct(value: Any, default: float = 0.0) -> float:
     out = _finite_float(value, default=default)
     if not math.isfinite(out):
@@ -1481,6 +2967,170 @@ def _ma_days(value: Any, default: int) -> int:
     text = str(value or "").lower()
     digits = "".join(ch for ch in text if ch.isdigit())
     return int(digits) if digits else int(default)
+
+
+def _long_hold_quality_score(row: dict[str, Any]) -> float:
+    """Secondary diagnostic score for longer-hold candidates.
+
+    This intentionally does not replace the final filter or primary ranking. It
+    only helps inspect strategies that actually hold positions for a meaningful
+    period instead of producing very short churn.
+    """
+
+    avg = _finite_float(row.get("validation_avg_trade_return_pct"), default=0.0)
+    med = _finite_float(row.get("validation_median_trade_return_pct"), default=0.0)
+    pf = min(_finite_float(row.get("validation_profit_factor"), default=0.0), 5.0)
+    adjusted = _finite_float(row.get("adjusted_return_time_risk"), default=0.0)
+    holding = _finite_float(row.get("validation_avg_holding_days"), default=0.0)
+    holding_p50 = _finite_float(row.get("validation_holding_days_p50"), default=0.0)
+    exits_under_10 = _finite_float(row.get("validation_percent_exits_under_10_days"), default=1.0)
+    drawdown = abs(_finite_float(row.get("validation_max_drawdown_pct"), default=100.0))
+    positive_years = _finite_float(row.get("validation_positive_years"), default=0.0)
+    yearly_pf = min(_finite_float(row.get("validation_min_yearly_profit_factor"), default=0.0), 2.0)
+    concentration = _finite_float(row.get("validation_max_profit_contribution_share"), default=1.0)
+    hold_bonus = min(max(holding - 15.0, 0.0), 75.0) * 0.06 + min(max(holding_p50 - 15.0, 0.0), 60.0) * 0.04
+    short_exit_penalty = max(exits_under_10, 0.0) * 4.0
+    low_hold_penalty = max(25.0 - holding, 0.0) * 0.35
+    return (
+        adjusted * 1000.0
+        + avg * 0.25
+        + med * 0.40
+        + pf * 1.25
+        + yearly_pf * 2.0
+        + positive_years * 0.30
+        + hold_bonus
+        - drawdown * 0.05
+        - short_exit_penalty
+        - low_hold_penalty
+        - max(concentration - 0.25, 0.0) * 8.0
+    )
+
+
+def _score_bucket(value: float) -> str:
+    if not math.isfinite(value):
+        return "unknown"
+    if value >= 8.0:
+        return "excellent"
+    if value >= 5.0:
+        return "strong"
+    if value >= 2.5:
+        return "watchlist"
+    if value >= 0.0:
+        return "weak"
+    return "poor"
+
+
+def _fundamental_timing_score_no_drawdown(row: dict[str, Any]) -> float:
+    """Exploratory timing score for fundamental stock picks.
+
+    Drawdown is intentionally not used here. The score ranks buy/sell timing
+    overlays by trade quality, PF, positive years, duration, frequency, median
+    trade and early-exit behavior.
+    """
+
+    avg = float(np.clip(_finite_float(row.get("validation_avg_trade_return_pct"), default=0.0), -5.0, 8.0))
+    median = float(np.clip(_finite_float(row.get("validation_median_trade_return_pct"), default=0.0), -5.0, 5.0))
+    pf = float(np.clip(_finite_float(row.get("validation_profit_factor"), default=0.0), 0.0, 3.0))
+    positive_years = float(np.clip(_finite_float(row.get("validation_positive_years"), default=0.0), 0.0, 10.0))
+    median_positive_years = float(np.clip(_finite_float(row.get("validation_median_positive_years"), default=0.0), 0.0, 10.0))
+    holding = max(_finite_float(row.get("validation_avg_holding_days"), default=0.0), 0.0)
+    holding_p50 = max(_finite_float(row.get("validation_holding_days_p50"), default=0.0), 0.0)
+    trades_per_year = max(_finite_float(row.get("validation_trades_per_year"), default=0.0), 0.0)
+    exits_under_5 = float(np.clip(_finite_float(row.get("validation_percent_exits_under_5_days"), default=1.0), 0.0, 1.0))
+    exits_under_10 = float(np.clip(_finite_float(row.get("validation_percent_exits_under_10_days"), default=1.0), 0.0, 1.0))
+    train_pf = float(np.clip(_finite_float(row.get("train_profit_factor"), default=0.0), 0.0, 3.0))
+    train_positive_years = float(np.clip(_finite_float(row.get("train_2003_2010_positive_years"), default=0.0), 0.0, 8.0))
+    train_avg = float(np.clip(_finite_float(row.get("train_avg_trade_return_pct"), default=0.0), -5.0, 8.0))
+
+    avg_trade_component = avg * 1.25
+    profit_factor_component = max(pf - 1.0, 0.0) * 4.0 + max(pf - 1.4, 0.0) * 2.0
+    positive_years_component = positive_years * 0.65 + median_positive_years * 0.25
+    if holding < 25.0:
+        holding_component = -((25.0 - holding) * 0.35)
+    elif holding <= 60.0:
+        holding_component = 2.0 + min(holding - 25.0, 35.0) * 0.08 + min(max(holding_p50 - 20.0, 0.0), 40.0) * 0.04
+    elif holding <= 100.0:
+        holding_component = 4.8 - (holding - 60.0) * 0.03
+    else:
+        holding_component = 3.6 - min(holding - 100.0, 120.0) * 0.02
+    if trades_per_year < 50.0:
+        frequency_component = -4.0
+    elif trades_per_year < 200.0:
+        frequency_component = -1.5 + (trades_per_year - 50.0) / 150.0
+    elif trades_per_year <= 10_000.0:
+        frequency_component = 2.0 + min(math.log10(max(trades_per_year, 1.0) / 200.0), 2.0)
+    else:
+        frequency_component = 3.0
+    median_trade_component = median * 0.85 if median > 0.0 else median * 0.35 - (0.65 if median == 0.0 else 0.0)
+    low_early_exit_component = (1.0 - exits_under_5) * 0.9 + (1.0 - exits_under_10) * 1.4
+    train_sanity_component = max(train_pf - 1.0, 0.0) * 1.2 + train_positive_years * 0.18 + max(train_avg, 0.0) * 0.25
+
+    return float(
+        avg_trade_component
+        + profit_factor_component
+        + positive_years_component
+        + holding_component
+        + frequency_component
+        + median_trade_component
+        + low_early_exit_component
+        + train_sanity_component
+    )
+
+
+def _return_pf_score_no_drawdown(row: dict[str, Any]) -> float:
+    """Compact no-drawdown score focused only on return, PF and duration sanity."""
+
+    avg = float(np.clip(_finite_float(row.get("validation_avg_trade_return_pct"), default=0.0), -5.0, 8.0))
+    median = float(np.clip(_finite_float(row.get("validation_median_trade_return_pct"), default=0.0), -5.0, 5.0))
+    pf = float(np.clip(_finite_float(row.get("validation_profit_factor"), default=0.0), 0.0, 3.0))
+    holding = max(_finite_float(row.get("validation_avg_holding_days"), default=0.0), 0.0)
+    positive_years = float(np.clip(_finite_float(row.get("validation_positive_years"), default=0.0), 0.0, 10.0))
+    train_pf = float(np.clip(_finite_float(row.get("train_profit_factor"), default=0.0), 0.0, 3.0))
+    holding_bonus = 0.0
+    if holding >= 25.0:
+        holding_bonus += 1.0
+    if 30.0 <= holding <= 60.0:
+        holding_bonus += 0.75
+    return float(
+        avg * 1.4
+        + max(median, 0.0) * 0.7
+        + max(pf - 1.0, 0.0) * 5.0
+        + positive_years * 0.35
+        + max(train_pf - 1.0, 0.0)
+        + holding_bonus
+    )
+
+
+def _add_fundamental_timing_no_drawdown_fields(row: dict[str, Any]) -> None:
+    trades_per_year = _finite_float(row.get("validation_trades_per_year"), default=0.0)
+    avg_trade = _finite_float(row.get("validation_avg_trade_return_pct"), default=0.0)
+    total_return_proxy = avg_trade * trades_per_year * 10.0
+    score = _fundamental_timing_score_no_drawdown(row)
+    row["fundamental_timing_score_no_drawdown"] = score
+    row["return_pf_score"] = _return_pf_score_no_drawdown(row)
+    row["total_return_proxy"] = float(total_return_proxy) if math.isfinite(total_return_proxy) else float("nan")
+    row["is_ultra_frequent"] = bool(trades_per_year > 10_000.0)
+    row["score_bucket"] = _score_bucket(score)
+
+
+def _best_numeric_row(frame: pd.DataFrame, column: str, *, mask: pd.Series | None = None) -> pd.Series | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    ranked = frame.copy()
+    if mask is not None:
+        ranked = ranked.loc[mask.reindex(frame.index).fillna(False)].copy()
+    if ranked.empty:
+        return None
+    ranked[f"_{column}_numeric"] = pd.to_numeric(ranked[column], errors="coerce")
+    ranked = ranked[np.isfinite(ranked[f"_{column}_numeric"])]
+    if ranked.empty:
+        return None
+    sort_columns = [f"_{column}_numeric"]
+    ascending = [False]
+    if "candidate_id" in ranked.columns:
+        sort_columns.append("candidate_id")
+        ascending.append(True)
+    return ranked.sort_values(sort_columns, ascending=ascending).iloc[0]
 
 
 def _external_strategy_files(pack_path: Path, shard_id: int | None, strategy_format: str) -> list[Path]:
@@ -1540,9 +3190,12 @@ def _iter_external_strategy_payloads(path: Path) -> Iterable[dict[str, Any]]:
 
 def _external_unknown_rules(payload: dict[str, Any]) -> list[str]:
     unknown: list[str] = []
-    missing = [field for field in EXTERNAL_REQUIRED_FIELDS if field not in payload]
+    is_long_hold = str(payload.get("schema_version", "")).lower() == LONG_HOLD_SCHEMA_VERSION
+    required_fields = LONG_HOLD_REQUIRED_FIELDS if is_long_hold else EXTERNAL_REQUIRED_FIELDS
+    supported_rules = LONG_HOLD_SUPPORTED_RULE_KEYS if is_long_hold else EXTERNAL_SUPPORTED_RULE_KEYS
+    missing = [field for field in required_fields if field not in payload]
     unknown.extend(f"missing_required.{field}" for field in missing)
-    for section, supported in EXTERNAL_SUPPORTED_RULE_KEYS.items():
+    for section, supported in supported_rules.items():
         rules = payload.get(section) or {}
         if not isinstance(rules, dict):
             unknown.append(f"{section}.__not_object__")
@@ -1554,6 +3207,8 @@ def _external_unknown_rules(payload: dict[str, Any]) -> list[str]:
 
 
 def _family_for_external_strategy(payload: dict[str, Any]) -> str:
+    if str(payload.get("schema_version", "")).lower() == LONG_HOLD_SCHEMA_VERSION:
+        return "gtbi_long_hold"
     concept = str(payload.get("concept_id", "")).lower()
     if any(token in concept for token in ("breakout", "vcp", "squeeze", "inside", "stair_step")):
         return "quallamaggie"
@@ -1564,7 +3219,140 @@ def _family_for_external_strategy(payload: dict[str, Any]) -> str:
     return "quallamaggie"
 
 
+def _long_hold_external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCandidate:
+    unknown = _external_unknown_rules(payload)
+    entry = payload.get("entry_rules") or {}
+    market = payload.get("market_regime_rules") or {}
+    stock = payload.get("stock_trend_rules") or {}
+    rs_rules = payload.get("relative_strength_rules") or {}
+    exit_rules = payload.get("exit_rules") or {}
+    risk_controls = payload.get("risk_controls") or {}
+    target_profile = payload.get("target_profile") or {}
+    concept = str(payload.get("concept", "")).lower()
+    trigger_type = str(entry.get("trigger_type") or concept).lower()
+    reclaim_label = str(entry.get("reclaim_ma") or entry.get("reclaim_level") or "")
+    trailing_label = str(exit_rules.get("trailing_stop_type") or "")
+    entry_ma_days = _ma_days(reclaim_label, 50)
+    if entry_ma_days <= 0:
+        entry_ma_days = 50
+    entry_ma_kind = "ema" if "ema" in reclaim_label.lower() else "sma"
+    exit_ma_days = _ma_days(trailing_label, 50 if "ema50" in trailing_label.lower() else 20)
+    if exit_ma_days <= 0:
+        exit_ma_days = 20
+    pullback_max_pct = max(
+        _external_pct(entry.get("pullback_depth_max_pct"), default=0.0),
+        _external_pct(stock.get("distance_from_52w_high_max_pct"), default=0.0),
+        0.08,
+    )
+    pullback_min_pct = max(_external_pct(entry.get("pullback_depth_min_pct"), default=0.0), 0.0)
+    near_high_pct = 1.0 - max(_external_pct(stock.get("distance_from_52w_high_max_pct"), default=0.0), 0.02)
+    above_low_multiple = 1.0 + max(_external_pct(stock.get("price_above_200d_low_pct_min"), default=0.0), 0.05)
+    volume_multiple = max(
+        _finite_float(entry.get("volume_on_signal_min_adv20_mult"), default=0.0),
+        _finite_float(entry.get("volume_confirmation_min_adv20_mult"), default=0.0),
+        _finite_float(entry.get("volume_expansion_min_adv20_mult"), default=0.0),
+        _finite_float(entry.get("event_volume_min_adv20_mult"), default=0.0),
+        1.0,
+    )
+    market_exit = str(exit_rules.get("market_exit") or market.get("market_exit") or "")
+    raw_min_soft_exit_days = _external_int(exit_rules.get("minimum_holding_days_before_soft_exit"), 0, low=0, high=520)
+    raw_take_profit_min_days = _external_int(exit_rules.get("take_profit_min_holding_days"), 0, low=0, high=520)
+    min_target_holding_days = max(
+        _external_int(risk_controls.get("minimum_target_avg_holding_days"), 0, low=0, high=520),
+        _external_int(target_profile.get("min_acceptable_avg_holding_days"), 0, low=0, high=520),
+    )
+    delay_soft_exits = bool(risk_controls.get("soft_exit_delayed_until_minimum_holding_days"))
+    minimum_soft_exit_days = max(raw_min_soft_exit_days, min_target_holding_days) if delay_soft_exits else raw_min_soft_exit_days
+    take_profit_pct = float(np.clip(_external_pct(exit_rules.get("take_profit_pct"), 0.0), 0.0, 5.0))
+    take_profit_min_days = (
+        max(raw_take_profit_min_days, min_target_holding_days)
+        if delay_soft_exits and take_profit_pct > 0.0
+        else raw_take_profit_min_days
+    )
+    config = IndicatorConfig(
+        family="gtbi_long_hold",
+        minervini_trend=bool(entry.get("trend_required", True) or stock),
+        require_rs=bool(rs_rules),
+        require_base_tight=bool(
+            entry.get("atr_compression_required")
+            or entry.get("entry_after_pullback_or_tightening")
+            or entry.get("base_min_days")
+            or entry.get("contraction_lookback_days")
+        ),
+        require_breakout=bool("breakout" in trigger_type or entry.get("close_above_base_high") or entry.get("entry_on_reclaim_or_base_break")),
+        require_pocket_pivot=False,
+        require_oneil_stack=False,
+        require_volume_dryup=bool(entry.get("release_confirmation") or "tight" in trigger_type),
+        require_prior_runup=bool(entry.get("prior_runup_min_pct")),
+        require_episodic_gap=bool("event" in trigger_type or entry.get("event_gap_min_pct")),
+        require_market_trend=bool(market),
+        strict_market_filter=False,
+        breakout_lookback=_external_int(entry.get("breakout_lookback_days"), 63, low=10, high=252),
+        base_lookback=_external_int(
+            entry.get("base_min_days") or entry.get("contraction_lookback_days") or entry.get("pullback_lookback_days"),
+            40,
+            low=5,
+            high=180,
+        ),
+        volume_lookback=20,
+        rs_lookback=_external_int(rs_rules.get("rs_ratio_vs_spy_ma_days") or rs_rules.get("rs_new_high_days"), 63, low=20, high=252),
+        high_lookback=252,
+        low_lookback=252,
+        ma_short=50 if entry_ma_days > 50 else max(entry_ma_days, 20),
+        ma_mid=150,
+        ma_long=200,
+        oneil_fast_ma=10,
+        oneil_mid_ma=21,
+        volume_multiple=float(np.clip(volume_multiple, 0.5, 5.0)),
+        max_base_range_pct=float(np.clip(pullback_max_pct, 0.03, 0.60)),
+        rs_near_high_pct=0.95 if rs_rules.get("rs_new_high_days") else 0.90,
+        near_high_pct=float(np.clip(near_high_pct, 0.50, 0.99)),
+        above_low_multiple=float(np.clip(above_low_multiple, 1.0, 3.0)),
+        rsi_period=14,
+        rsi_max=float(np.clip(_finite_float(entry.get("oversold_threshold"), default=74.0), 35.0, 95.0)),
+        prior_runup_lookback=63,
+        prior_runup_min_pct=float(np.clip(_external_pct(entry.get("prior_runup_min_pct"), default=0.0), 0.0, 1.5)),
+        volume_dryup_lookback=_external_int(entry.get("contraction_lookback_days"), 20, low=5, high=80),
+        volume_dryup_max_ratio=0.90,
+        episodic_gap_pct=float(np.clip(_external_pct(entry.get("event_gap_min_pct"), default=0.04), 0.0, 0.30)),
+        min_adr_pct=0.001,
+        stop_loss_pct=float(np.clip(_external_pct(exit_rules.get("stop_loss_pct"), 0.10), 0.005, 0.60)),
+        trailing_stop_pct=float(np.clip(_finite_float(exit_rules.get("atr_stop_mult"), default=0.0) * 0.03, 0.0, 0.80)),
+        take_profit_pct=take_profit_pct,
+        max_holding_days=_external_int(exit_rules.get("max_holding_days"), 120, low=5, high=520),
+        use_exit_ma=bool(trailing_label),
+        use_market_exit=bool(market_exit),
+        exit_ma_days=int(np.clip(exit_ma_days, 2, 250)),
+        market_ma_days=200 if market.get("spy_close_gt_sma200") or market.get("spy_sma50_gt_sma200") else 50,
+        market_momentum_days=63 if "63d" in json.dumps(market) else 20,
+        entry_trigger_type=trigger_type,
+        entry_ma_days=int(np.clip(entry_ma_days, 2, 250)),
+        entry_ma_kind=entry_ma_kind,
+        pullback_min_pct=float(np.clip(pullback_min_pct, 0.0, 0.80)),
+        pullback_max_pct=float(np.clip(pullback_max_pct, 0.01, 0.95)),
+        close_position_in_range_min=float(np.clip(_finite_float(entry.get("close_position_in_range_min"), default=0.0), 0.0, 1.0)),
+        trailing_stop_type=trailing_label,
+        take_profit_min_holding_days=take_profit_min_days,
+        minimum_holding_days_before_soft_exit=minimum_soft_exit_days,
+        market_exit_confirmation_days=_external_int(exit_rules.get("market_exit_confirmation_days"), 1, low=1, high=20),
+    )
+    approximated: list[str] = []
+    supported = LONG_HOLD_SUPPORTED_RULE_KEYS
+    for section in ("entry_rules", "market_regime_rules", "stock_trend_rules", "relative_strength_rules", "exit_rules"):
+        for key in (payload.get(section) or {}):
+            if key in supported.get(section, set()):
+                approximated.append(f"{section}.{key}")
+    return ExternalStrategyCandidate(
+        payload=payload,
+        config=config,
+        unsupported_rules=tuple(sorted(unknown)),
+        approximated_rules=tuple(sorted(approximated)),
+    )
+
+
 def external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCandidate:
+    if str(payload.get("schema_version", "")).lower() == LONG_HOLD_SCHEMA_VERSION:
+        return _long_hold_external_strategy_to_config(payload)
     unknown = _external_unknown_rules(payload)
     entry = payload.get("entry_rules") or {}
     market = payload.get("market_regime_rules") or {}
@@ -1715,25 +3503,394 @@ def external_strategy_to_config(payload: dict[str, Any]) -> ExternalStrategyCand
     )
 
 
+class CandidateEvaluationTimeout(TimeoutError):
+    pass
+
+
+class EarlyRejectedStrategy(Exception):
+    """Raised when a candidate cannot mathematically pass required filters."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        split: str = "",
+        year: int | None = None,
+        actual: float | int | str | None = None,
+        threshold: float | int | str | None = None,
+        stage: str = "safe_prefilter",
+        symbols_processed: int = 0,
+        seconds_until_reject: float = 0.0,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.split = split
+        self.year = year
+        self.actual = actual
+        self.threshold = threshold
+        self.stage = stage
+        self.symbols_processed = int(symbols_processed)
+        self.seconds_until_reject = float(seconds_until_reject)
+        self.diagnostic = dict(diagnostic or {})
+
+
+@contextlib.contextmanager
+def _candidate_evaluation_heartbeat(label: str, interval_seconds: int = 60) -> Iterator[None]:
+    """Emit periodic progress so GitHub Actions does not kill long silent jobs."""
+    stop_event = threading.Event()
+
+    def _beat() -> None:
+        while not stop_event.wait(interval_seconds):
+            print(f"[gtbi] still evaluating {label}", flush=True)
+
+    thread = threading.Thread(target=_beat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=1)
+
+
 def load_external_strategy_candidates(
     pack_path: Path,
     *,
     shard_id: int | None = None,
+    offset: int = 0,
     limit: int | None = None,
     strategy_format: str = "auto",
 ) -> list[ExternalStrategyCandidate]:
     if shard_id is not None and not (0 <= int(shard_id) <= 359):
         raise ValueError("external_strategy_shard_id must be between 0 and 359")
+    strategy_offset = int(offset)
+    if strategy_offset < 0:
+        raise ValueError("external_strategy_offset must be greater than or equal to 0")
     candidates: list[ExternalStrategyCandidate] = []
     max_count = None if limit is None or int(limit) <= 0 else int(limit)
+    matched = 0
     for path in _external_strategy_files(Path(pack_path), shard_id, strategy_format):
+        inferred_shard_id: int | None = None
+        match = re.search(r"shard_(\d+)", path.stem)
+        if match:
+            inferred_shard_id = int(match.group(1))
+        slot_in_file = 0
         for payload in _iter_external_strategy_payloads(path):
+            if "shard_id" not in payload and inferred_shard_id is not None:
+                payload["shard_id"] = int(inferred_shard_id)
+            if "slot_in_shard" not in payload:
+                payload["slot_in_shard"] = int(slot_in_file)
+            slot_in_file += 1
             if shard_id is not None and int(payload.get("shard_id", -1)) != int(shard_id):
                 continue
+            if matched < strategy_offset:
+                matched += 1
+                continue
             candidates.append(external_strategy_to_config(payload))
+            matched += 1
             if max_count is not None and len(candidates) >= max_count:
                 return candidates
     return candidates
+
+
+def _balanced_external_strategy_candidates_for_job(
+    pack_path: Path,
+    *,
+    job_index: int,
+    candidate_count_per_job: int,
+    schedule_active_jobs: int | None = None,
+    strategy_format: str = "auto",
+    optimized_evaluation_mode: str = "",
+) -> tuple[list[ExternalStrategyCandidate], int]:
+    all_candidates = load_external_strategy_candidates(
+        pack_path,
+        shard_id=None,
+        offset=0,
+        limit=None,
+        strategy_format=strategy_format,
+    )
+    per_job = max(int(candidate_count_per_job), 1)
+    total_jobs = int(math.ceil(len(all_candidates) / per_job)) if all_candidates else 0
+    if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
+        return [], total_jobs
+
+    def candidate_sort_key(candidate: ExternalStrategyCandidate) -> tuple[Any, ...]:
+        return (
+            _estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0],
+            str(candidate.payload.get("concept_id", "")),
+            int(candidate.payload.get("shard_id", 0)),
+            int(candidate.payload.get("slot_in_shard", 0)),
+            str(candidate.payload.get("strategy_id", "")),
+        )
+
+    ordered = sorted(
+        all_candidates,
+        key=lambda candidate: (candidate_sort_key(candidate), signal_external_strategy_hash(candidate)),
+    )
+    signal_groups: dict[str, list[ExternalStrategyCandidate]] = {}
+    signal_group_order: list[str] = []
+    for candidate in ordered:
+        signal_hash = signal_external_strategy_hash(candidate)
+        if signal_hash not in signal_groups:
+            signal_groups[signal_hash] = []
+            signal_group_order.append(signal_hash)
+        signal_groups[signal_hash].append(candidate)
+
+    grouped_ordered: list[ExternalStrategyCandidate] = []
+    for signal_hash in signal_group_order:
+        grouped_ordered.extend(sorted(signal_groups[signal_hash], key=candidate_sort_key))
+
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
+        schedule_group = int(job_index // active_jobs)
+        schedule_position = int(job_index % active_jobs)
+        start = (schedule_group * active_jobs * per_job) + (schedule_position * per_job)
+    else:
+        start = int(job_index) * per_job
+    selected = grouped_ordered[start : start + per_job]
+    selected.sort(
+        key=lambda candidate: (
+            _estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0],
+            signal_external_strategy_hash(candidate),
+            str(candidate.payload.get("strategy_id", "")),
+        )
+    )
+    return selected, total_jobs
+
+
+def _group_external_candidates_by_signal(
+    candidates: Iterable[ExternalStrategyCandidate],
+    *,
+    optimized_evaluation_mode: str = "",
+) -> list[list[ExternalStrategyCandidate]]:
+    ordered_input = list(candidates)
+    input_order = {id(candidate): index for index, candidate in enumerate(ordered_input)}
+
+    def candidate_sort_key(candidate: ExternalStrategyCandidate) -> tuple[Any, ...]:
+        return (
+            _estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0],
+            str(candidate.payload.get("concept_id", "")),
+            int(candidate.payload.get("shard_id", 0)),
+            int(candidate.payload.get("slot_in_shard", 0)),
+            input_order.get(id(candidate), 0),
+            str(candidate.payload.get("strategy_id", "")),
+        )
+
+    groups: dict[str, list[ExternalStrategyCandidate]] = {}
+    group_order: dict[str, int] = {}
+    for candidate in ordered_input:
+        signal_hash = signal_external_strategy_hash(candidate)
+        group_order.setdefault(signal_hash, input_order.get(id(candidate), 0))
+        groups.setdefault(signal_hash, []).append(candidate)
+
+    def group_sort_key(group: list[ExternalStrategyCandidate]) -> tuple[Any, ...]:
+        first = min(group, key=candidate_sort_key)
+        cost = max(
+            float(_estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0])
+            for candidate in group
+        )
+        return (
+            cost,
+            str(first.payload.get("concept_id", "")),
+            group_order.get(signal_external_strategy_hash(first), 0),
+            signal_external_strategy_hash(first),
+        )
+
+    return [sorted(group, key=candidate_sort_key) for group in sorted(groups.values(), key=group_sort_key)]
+
+
+def _balanced_external_signal_groups_for_job(
+    pack_path: Path,
+    *,
+    job_index: int,
+    signal_groups_per_job: int,
+    schedule_active_jobs: int | None = None,
+    max_signal_groups: int | None = None,
+    strategy_format: str = "auto",
+    optimized_evaluation_mode: str = "",
+) -> tuple[list[list[ExternalStrategyCandidate]], int, int]:
+    all_candidates = load_external_strategy_candidates(
+        pack_path,
+        shard_id=None,
+        offset=0,
+        limit=None,
+        strategy_format=strategy_format,
+    )
+    groups = _group_external_candidates_by_signal(
+        all_candidates,
+        optimized_evaluation_mode=optimized_evaluation_mode,
+    )
+    use_event_first_balanced_schedule = (
+        _is_event_first_mode(str(optimized_evaluation_mode))
+        and schedule_active_jobs is not None
+        and int(schedule_active_jobs) > 0
+    )
+    if max_signal_groups is not None and int(max_signal_groups) > 0 and not use_event_first_balanced_schedule:
+        groups = groups[: int(max_signal_groups)]
+    per_job = max(int(signal_groups_per_job), 1)
+    group_position_by_hash = {
+        signal_external_strategy_hash(group[0]): index
+        for index, group in enumerate(groups)
+        if group
+    }
+    if use_event_first_balanced_schedule:
+        active_jobs = max(int(schedule_active_jobs or 0), 1)
+
+        def group_base_cost(group: list[ExternalStrategyCandidate]) -> float:
+            if not group:
+                return 0.0
+            return max(
+                float(_estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0])
+                for candidate in group
+            )
+
+        def group_cost(group: list[ExternalStrategyCandidate]) -> float:
+            base_cost = float(group_base_cost(group))
+            return float(base_cost + max(len(group), 1) * 0.25)
+
+        candidate_budget = max(per_job * 5, per_job)
+        group_budget = max(1, min(3, per_job))
+        max_window_groups = max(active_jobs * group_budget, 1)
+        ordered_for_windows = sorted(
+            groups,
+            key=lambda group: (
+                group_base_cost(group),
+                -len(group),
+                group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
+                signal_external_strategy_hash(group[0]) if group else "",
+            ),
+        )
+        if max_signal_groups is not None and int(max_signal_groups) > 0:
+            ordered_for_windows = ordered_for_windows[: int(max_signal_groups)]
+        schedule_group = max(int(job_index) // active_jobs, 0)
+        schedule_position = int(job_index) % active_jobs
+        window_start = schedule_group * max_window_groups
+        window_groups = ordered_for_windows[window_start : window_start + max_window_groups]
+        if len(window_groups) > max_window_groups:
+            window_groups = window_groups[:max_window_groups]
+        ordered = sorted(
+            window_groups,
+            key=lambda group: (
+                -group_cost(group),
+                group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
+                signal_external_strategy_hash(group[0]) if group else "",
+            ),
+        )
+        buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(active_jobs)]
+        bucket_signal_hashes: list[set[str]] = [set() for _ in range(active_jobs)]
+        bucket_counts = [0 for _ in range(active_jobs)]
+        bucket_costs = [0.0 for _ in range(active_jobs)]
+        for group in ordered:
+            group_size = int(len(group))
+            signal_hash = signal_external_strategy_hash(group[0]) if group else ""
+            available = [
+                idx
+                for idx, bucket in enumerate(buckets)
+                if (
+                    len(bucket) < group_budget
+                    and bucket_counts[idx] + group_size <= candidate_budget
+                    and signal_hash not in bucket_signal_hashes[idx]
+                )
+            ]
+            if not available and group_size > candidate_budget:
+                available = [
+                    idx
+                    for idx, bucket in enumerate(buckets)
+                    if not bucket and signal_hash not in bucket_signal_hashes[idx]
+                ]
+            if not available:
+                break
+            target = min(available, key=lambda idx: (bucket_costs[idx], bucket_counts[idx], len(buckets[idx]), idx))
+            buckets[target].append(group)
+            bucket_signal_hashes[target].add(signal_hash)
+            bucket_counts[target] += group_size
+            bucket_costs[target] += group_cost(group)
+        total_signal_groups = int(sum(len(bucket) for bucket in buckets))
+        if total_signal_groups <= 0 or job_index < 0:
+            return [], active_jobs, total_signal_groups
+        return buckets[schedule_position], active_jobs, total_signal_groups
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        active_groups = max(int(schedule_active_jobs), 1) * per_job
+        groups = groups[:active_groups]
+    total_signal_groups = int(len(groups))
+    total_jobs = int(math.ceil(total_signal_groups / per_job)) if total_signal_groups else 0
+    if total_jobs <= 0 or job_index < 0 or job_index >= total_jobs:
+        return [], total_jobs, total_signal_groups
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0:
+        start = int(job_index) * per_job
+        return groups[start : start + per_job], total_jobs, total_signal_groups
+
+    def fallback_group_cost(group: list[ExternalStrategyCandidate]) -> float:
+        if not group:
+            return 0.0
+        max_cost = max(
+            float(_estimated_cost_score(candidate.payload, optimized_evaluation_mode=optimized_evaluation_mode)[0])
+            for candidate in group
+        )
+        return float(max_cost * max(len(group), 1))
+
+    ordered = sorted(
+        groups,
+        key=lambda group: (
+            -fallback_group_cost(group),
+            group_position_by_hash.get(signal_external_strategy_hash(group[0]), 0) if group else 0,
+            signal_external_strategy_hash(group[0]) if group else "",
+        ),
+    )
+    fallback_buckets: list[list[list[ExternalStrategyCandidate]]] = [[] for _ in range(total_jobs)]
+    fallback_bucket_costs = [0.0 for _ in range(total_jobs)]
+    for group in ordered:
+        available = [idx for idx, bucket in enumerate(fallback_buckets) if len(bucket) < per_job]
+        if not available:
+            break
+        target = min(
+            available,
+            key=lambda idx: (fallback_bucket_costs[idx], len(fallback_buckets[idx]), idx),
+        )
+        fallback_buckets[target].append(group)
+        fallback_bucket_costs[target] += fallback_group_cost(group)
+
+    if schedule_active_jobs is not None and int(schedule_active_jobs) > 0 and total_jobs > int(schedule_active_jobs):
+        active_jobs = min(total_jobs, max(int(schedule_active_jobs), 1))
+        schedule_group = int(job_index // active_jobs)
+        schedule_position = int(job_index % active_jobs)
+        mapped_job_index = schedule_group * active_jobs + schedule_position
+        if mapped_job_index >= total_jobs:
+            return [], total_jobs, total_signal_groups
+        job_index = mapped_job_index
+    return fallback_buckets[int(job_index)], total_jobs, total_signal_groups
+
+
+def _apply_schedule_subgroup(
+    groups: list[list[ExternalStrategyCandidate]],
+    *,
+    schedule_subgroup_index: int = 0,
+    schedule_subgroup_count: int = 0,
+) -> list[list[ExternalStrategyCandidate]]:
+    schedule_subgroup_count = max(int(schedule_subgroup_count), 0)
+    schedule_subgroup_index = max(int(schedule_subgroup_index), 0)
+    if schedule_subgroup_count <= 1:
+        return groups
+    if schedule_subgroup_index >= schedule_subgroup_count:
+        raise ValueError("schedule_subgroup_index must be lower than schedule_subgroup_count")
+    return [
+        group
+        for index, group in enumerate(groups)
+        if index % schedule_subgroup_count == schedule_subgroup_index
+    ]
+
+
+def _effective_job_deadline(
+    *,
+    optimized_evaluation_mode: str,
+    job_start: float,
+    job_wall_clock_seconds: int | float | None,
+) -> float | None:
+    if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}:
+        return None
+    if job_wall_clock_seconds is None or float(job_wall_clock_seconds) <= 0:
+        return None
+    return float(job_start) + float(job_wall_clock_seconds)
 
 
 def _yearly_for_split(yearly: pd.DataFrame, split: str, years: range) -> pd.DataFrame:
@@ -1853,6 +4010,42 @@ def _strict_quality_score(row: dict[str, Any]) -> float:
         + med * 100.0
         + pf * 10.0
     )
+
+
+def _event_first_final_quality_reject(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Classify candidates that already fail irreversible final filters."""
+
+    if bool(row.get("strict_quality_pass")):
+        return None
+    median = _finite_float(row.get("validation_median_trade_return_pct"), default=float("nan"))
+    profit_factor = _finite_float(row.get("validation_profit_factor"), default=float("nan"))
+    if math.isfinite(median) and math.isfinite(profit_factor) and median <= 0.0 and profit_factor < 1.16:
+        return {
+            "reason": "final_filter_validation_median_nonpositive_and_profit_factor_lt_1_16",
+            "split": "validation",
+            "year": "",
+            "actual": f"median={median:.6g};profit_factor={profit_factor:.6g}",
+            "threshold": "median>0;profit_factor>=1.4",
+            "stage": "final_filter_irreversible",
+        }
+    return None
+
+
+def _event_first_amortize_diagnostic(
+    diagnostic: dict[str, Any],
+    *,
+    signal_group_size: int,
+    exit_group_size: int,
+) -> dict[str, Any]:
+    out = dict(diagnostic)
+    for key, divisor in (
+        ("seconds_signal", max(int(signal_group_size), 1)),
+        ("seconds_simulation", max(int(exit_group_size), int(signal_group_size), 1)),
+    ):
+        value = _finite_float(out.get(key), default=float("nan"))
+        if math.isfinite(value) and value > 0.0:
+            out[key] = float(value / divisor)
+    return out
 
 
 def _frequency_quality_score(row: dict[str, Any]) -> float:
@@ -2073,7 +4266,7 @@ def evaluate_candidate(
         if signal.empty or not bool(signal.any()):
             continue
         prepared_frame = _prepare_ohlcv(frame)
-        market_exit = ~_market_trend_ok(prepared_frame.index, benchmark_prices, config) if config.use_market_exit else None
+        market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
         raw_trades = simulate_trades(
             symbol,
             frame,
@@ -2100,6 +4293,7 @@ def evaluate_candidate(
     validation_years = max((_dt(validation_end) - _dt(validation_start)).days / 365.25, 1.0)
     train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
     validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    combined = summarize_trades(trades_df, years=max(train_years + validation_years, 1.0))
     yearly = yearly_trade_performance(trades_df, benchmark_prices)
     selected_metrics = validation if selection_split == "validation" else train
     score = _candidate_score(selected_metrics)
@@ -2133,7 +4327,17 @@ def evaluate_candidate(
         row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
         row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
         row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_holding_days_p50"] = metrics["holding_days_p50"]
+        row[f"{prefix}_holding_days_p75"] = metrics["holding_days_p75"]
+        row[f"{prefix}_holding_days_p90"] = metrics["holding_days_p90"]
+        row[f"{prefix}_percent_exits_under_5_days"] = metrics["percent_exits_under_5_days"]
+        row[f"{prefix}_percent_exits_under_10_days"] = metrics["percent_exits_under_10_days"]
         row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row["holding_days_p50"] = combined["holding_days_p50"]
+    row["holding_days_p75"] = combined["holding_days_p75"]
+    row["holding_days_p90"] = combined["holding_days_p90"]
+    row["percent_exits_under_5_days"] = combined["percent_exits_under_5_days"]
+    row["percent_exits_under_10_days"] = combined["percent_exits_under_10_days"]
     row.update(
         _strict_quality_metrics(
             row=row,
@@ -2151,7 +4355,1848 @@ def evaluate_candidate(
     elif scoring_profile != "default":
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     row["score"] = score
+    row["long_hold_quality_score"] = _long_hold_quality_score(row)
+    _add_fundamental_timing_no_drawdown_fields(row)
     return row, trades_df, yearly
+
+
+def _external_profile_value(payload: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _external_diagnostic_base(
+    payload: dict[str, Any],
+    *,
+    job_id: str | None = None,
+    canonical_hash: str | None = None,
+) -> dict[str, Any]:
+    out = {
+        "strategy_id": str(payload.get("strategy_id", "")),
+        "job_id": "" if job_id is None else str(job_id),
+        "shard_id": payload.get("shard_id"),
+        "slot_in_shard": payload.get("slot_in_shard"),
+        "family": _family_for_external_strategy(payload),
+        "concept": _external_profile_value(payload, "concept_id", "concept"),
+        "market_overlay": _external_profile_value(payload, "market_overlay_id", "market_overlay"),
+        "trend_filter": _external_profile_value(payload, "trend_profile_id", "trend_filter"),
+        "relative_strength_filter": _external_profile_value(payload, "rs_profile_id", "relative_strength_filter"),
+        "exit_rule": _external_profile_value(payload, "exit_profile_id", "exit_rule"),
+        "aggressiveness": _external_profile_value(payload, "aggression_id", "aggressiveness"),
+    }
+    if canonical_hash is not None:
+        out["canonical_hash"] = canonical_hash
+    return out
+
+
+def canonical_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
+    payload = candidate.payload
+    canonical = {
+        "config": candidate.config.to_dict(),
+        "effective_rules": {
+            "family": _family_for_external_strategy(payload),
+            "concept_id": payload.get("concept_id") or payload.get("concept"),
+            "market_overlay_id": payload.get("market_overlay_id") or payload.get("market_profile_id"),
+            "trend_profile_id": payload.get("trend_profile_id"),
+            "rs_profile_id": payload.get("rs_profile_id") or payload.get("relative_strength_profile_id"),
+            "exit_profile_id": payload.get("exit_profile_id"),
+            "aggression_id": payload.get("aggression_id") or payload.get("entry_profile_id"),
+            "entry_rules": payload.get("entry_rules", {}),
+            "market_regime_rules": payload.get("market_regime_rules", {}),
+            "stock_trend_rules": payload.get("stock_trend_rules", {}),
+            "relative_strength_rules": payload.get("relative_strength_rules", {}),
+            "exit_rules": payload.get("exit_rules", {}),
+            "guardrails": {
+                key: value
+                for key, value in dict(payload.get("guardrails") or {}).items()
+                if key
+                in {
+                    "data_scope",
+                    "do_not_load_or_use_data_on_or_after",
+                    "locked_start_exclusive",
+                    "execution",
+                    "positioning",
+                    "min_market_cap_usd",
+                    "train_end",
+                    "validation_start",
+                    "validation_end",
+                }
+            },
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def signal_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
+    """Hash only fields that can change the evaluated entry signal.
+
+    External pack rows carry rich research metadata and source rule labels, but
+    the legacy-compatible evaluator first maps every row to IndicatorConfig and
+    then builds signals from that config alone. Hashing raw rule JSON here makes
+    v5 rebuild identical signals many times; hashing the effective signal config
+    preserves results while allowing safe signal-level dedupe.
+    """
+
+    canonical = {
+        "config_signal": {
+            key: value
+            for key, value in candidate.config.to_dict().items()
+            if key
+            not in {
+                "stop_loss_pct",
+                "trailing_stop_pct",
+                "trailing_stop_type",
+                "take_profit_pct",
+                "take_profit_min_holding_days",
+                "max_holding_days",
+                "use_exit_ma",
+                "use_market_exit",
+                "exit_ma_days",
+                "minimum_holding_days_before_soft_exit",
+                "market_exit_confirmation_days",
+            }
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def exit_external_strategy_hash(candidate: ExternalStrategyCandidate) -> str:
+    """Hash only the effective exit definition used after a shared signal fires."""
+
+    payload = candidate.payload
+    config = candidate.config
+    canonical = {
+        "exit_profile_id": payload.get("exit_profile_id"),
+        "exit_rules": payload.get("exit_rules", {}),
+        "config_exit": {
+            "stop_loss_pct": config.stop_loss_pct,
+            "trailing_stop_pct": config.trailing_stop_pct,
+            "take_profit_pct": config.take_profit_pct,
+            "max_holding_days": config.max_holding_days,
+            "use_exit_ma": config.use_exit_ma,
+            "exit_ma_days": config.exit_ma_days,
+            "use_market_exit": config.use_market_exit,
+            "take_profit_min_holding_days": config.take_profit_min_holding_days,
+            "minimum_holding_days_before_soft_exit": config.minimum_holding_days_before_soft_exit,
+            "market_exit_confirmation_days": config.market_exit_confirmation_days,
+        },
+        "market_regime_exit": {
+            key: value
+            for key, value in dict(payload.get("market_regime_rules") or {}).items()
+            if key in {"use_market_exit", "market_ma_days", "market_momentum_days", "strict_market_filter"}
+        },
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+RECOVERY_FAST_CONCEPT_SCORES = {
+    "post_ep_pullback_reclaim_proxy": -6.0,
+    "macd_histogram_turnup_trend": -5.0,
+    "three_weeks_tight_daily_proxy": -4.0,
+    "q_stair_step_reclaim": -3.0,
+}
+
+V3_SIGNAL_TIMEOUT_CONCEPT_SCORES = {
+    # Observed in v3 signal-first smoke 28301085292. These concepts were cheap
+    # enough under earlier strategy-level sampling, but expensive when the engine
+    # builds the full shared signal across the global universe.
+    "moving_average_timing_cross": 7.0,
+    "q_stair_step_breakout": 7.0,
+    "time_series_momentum_reentry": 6.0,
+    "rsi2_pullback_rebound_trend": 6.0,
+}
+
+ZERO_TIMEOUT_MODE = "optimized_evaluation_v4_zero_timeout"
+ZERO_TIMEOUT_SLOW_QUEUE_MODE = "optimized_evaluation_v4_zero_timeout_slow_queue"
+EVENT_FIRST_MODE = "optimized_evaluation_v5_event_first"
+EVENT_FIRST_SYMBOL_BUCKET_MODE = "optimized_evaluation_v5_event_first_symbol_bucket"
+SIGNAL_FIRST_MODES = {
+    "optimized_evaluation_v3_signal_first",
+    ZERO_TIMEOUT_MODE,
+    ZERO_TIMEOUT_SLOW_QUEUE_MODE,
+    EVENT_FIRST_MODE,
+    EVENT_FIRST_SYMBOL_BUCKET_MODE,
+}
+V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS = {
+    "macd_histogram_turnup_trend",
+    "post_ep_pullback_reclaim_proxy",
+}
+V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS = V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS
+V5_EVENT_FIRST_PRECHECK_CONCEPTS = {
+    "academic_6_12m_momentum_reclaim",
+    "academic_52w_high_pullback_reclaim",
+    "adx_di_pullback_reversal",
+    "ep_gap_volume_continuation_proxy",
+    "three_weeks_tight_daily_proxy",
+    "q_stair_step_reclaim",
+    "macd_histogram_turnup_trend",
+    "post_ep_pullback_reclaim_proxy",
+    "q_stair_step_breakout",
+    "bollinger_lower_band_reclaim_trend",
+    "rs_pullback_hold_rebound",
+}
+
+
+def _estimated_cost_score(
+    payload: dict[str, Any],
+    *,
+    optimized_evaluation_mode: str = "",
+) -> tuple[float, str]:
+    concept = _external_profile_value(payload, "concept_id", "concept")
+    family = _family_for_external_strategy(payload)
+    exit_rule = _external_profile_value(payload, "exit_profile_id", "exit_rule")
+    market_overlay = _external_profile_value(payload, "market_overlay_id", "market_overlay")
+    aggressiveness = _external_profile_value(payload, "aggression_id", "aggressiveness")
+    very_slow_concepts = {
+        "atr_compression_nr_breakout",
+        "ibd_cup_handle_proxy",
+        "ibd_flat_base_proxy",
+        "bollinger_squeeze_breakout",
+        "weinstein_stage2_breakout_proxy",
+        "minervini_vcp_pivot_breakout",
+        "minervini_vcp_anticipation_reclaim",
+        "inside_day_breakout_reclaim",
+    }
+    slow_concepts = {
+        "keltner_pullback_reclaim",
+        "ep_gap_volume_continuation_proxy",
+        "academic_6_12m_momentum_reclaim",
+        "failed_breakdown_reclaim",
+        "pocket_pivot_reclaim",
+        "ema_value_zone_pullback",
+        "academic_52w_high_pullback_reclaim",
+        "rs_new_high_before_price_reclaim",
+        "gap_down_leader_reclaim",
+        "undercut_reclaim_shakeout",
+        "trend_template_pullback_rebound",
+        "adx_di_pullback_reversal",
+    }
+    v5_event_first_expensive_concepts = {
+        "three_weeks_tight_daily_proxy": 9.0,
+        "q_stair_step_reclaim": 8.0,
+        "q_stair_step_breakout": 8.0,
+        "macd_histogram_turnup_trend": 5.0,
+        "post_ep_pullback_reclaim_proxy": 5.0,
+        "bollinger_lower_band_reclaim_trend": 8.0,
+        "rs_pullback_hold_rebound": 8.0,
+    }
+    score = float(RECOVERY_FAST_CONCEPT_SCORES.get(concept, 0.0))
+    score += float(V3_SIGNAL_TIMEOUT_CONCEPT_SCORES.get(concept, 0.0))
+    if _is_event_first_mode(str(optimized_evaluation_mode)):
+        score += float(v5_event_first_expensive_concepts.get(concept, 0.0))
+    if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
+        score += 9.0
+    if concept in very_slow_concepts:
+        score += 5.0
+    elif concept in slow_concepts:
+        score += 3.0
+    if family == "oneil_canslim":
+        score += 2.0
+    elif family == "quallamaggie":
+        score += 1.5
+    if exit_rule in {"chandelier_runner", "balanced_tp_ema20"}:
+        score += 2.0
+    if market_overlay in {"spy_broad_loose_bull", "spy_low_vol_uptrend"}:
+        score += 1.0
+    if aggressiveness == "frequency_quality":
+        score += 1.0
+    if score <= -4.0:
+        return score, "fast"
+    if score >= 8.0:
+        return score, "very_slow"
+    if score >= 5.0:
+        return score, "slow"
+    if score >= 2.0:
+        return score, "normal"
+    return score, "fast"
+
+
+def _is_zero_timeout_mode(optimized_evaluation_mode: str) -> bool:
+    return str(optimized_evaluation_mode) in {
+        ZERO_TIMEOUT_MODE,
+        ZERO_TIMEOUT_SLOW_QUEUE_MODE,
+        EVENT_FIRST_MODE,
+        EVENT_FIRST_SYMBOL_BUCKET_MODE,
+    }
+
+
+def _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode: str) -> bool:
+    return str(optimized_evaluation_mode) == ZERO_TIMEOUT_SLOW_QUEUE_MODE
+
+
+def _is_event_first_mode(optimized_evaluation_mode: str) -> bool:
+    return str(optimized_evaluation_mode) in {EVENT_FIRST_MODE, EVENT_FIRST_SYMBOL_BUCKET_MODE}
+
+
+def _zero_timeout_defer_reason(
+    *,
+    payload: dict[str, Any],
+    cost_score: float,
+    cost_bucket: str,
+    optimized_evaluation_mode: str = ZERO_TIMEOUT_MODE,
+    allow_slow_queue_evaluation: bool = False,
+) -> str | None:
+    if _is_event_first_mode(optimized_evaluation_mode):
+        return None
+    if _is_zero_timeout_slow_queue_mode(optimized_evaluation_mode) or allow_slow_queue_evaluation:
+        return None
+    concept = _external_profile_value(payload, "concept_id", "concept")
+    if concept in V4_ZERO_TIMEOUT_KNOWN_SLOW_CONCEPTS:
+        return "known_slow_concept"
+    if str(cost_bucket) == "very_slow" or float(cost_score) >= 8.0:
+        return "estimated_cost_too_high"
+    if str(cost_bucket) == "slow":
+        return "needs_slow_queue"
+    return None
+
+
+def _event_first_formula_tokens(candidate: ExternalStrategyCandidate) -> str:
+    payload = candidate.payload
+    tokens = {
+        "entry_rules": payload.get("entry_rules", {}),
+        "market_regime_rules": payload.get("market_regime_rules", {}),
+        "stock_trend_rules": payload.get("stock_trend_rules", {}),
+        "relative_strength_rules": payload.get("relative_strength_rules", {}),
+        "concept_id": payload.get("concept_id"),
+        "market_overlay_id": payload.get("market_overlay_id"),
+        "trend_profile_id": payload.get("trend_profile_id"),
+        "rs_profile_id": payload.get("rs_profile_id"),
+        "aggression_id": payload.get("aggression_id"),
+    }
+    return json.dumps(tokens, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _event_first_symbols_with_events(signals_by_symbol: dict[str, pd.Series]) -> int:
+    total = 0
+    for signal in signals_by_symbol.values():
+        if signal is not None and not signal.empty and bool(signal.astype(bool).any()):
+            total += 1
+    return int(total)
+
+
+def _append_event_first_signal_artifacts(
+    *,
+    compiled_signal_plan_rows: list[dict[str, Any]],
+    event_store_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    signal_diagnostic: dict[str, Any],
+    locked_start: str,
+    validation_end: str,
+) -> None:
+    first_candidate = group[0]
+    raw_signals_total = int(signal_diagnostic.get("raw_signals_total", 0))
+    seconds_signal = float(signal_diagnostic.get("seconds_signal", 0.0))
+    symbols_with_events = int(signal_diagnostic.get("symbols_with_events", signal_diagnostic.get("symbols_processed", 0)))
+    compiled_signal_plan_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_ids": ";".join(strategy_ids),
+            "strategy_count": int(len(group)),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+            "formula_tokens": _event_first_formula_tokens(first_candidate),
+            "uses_event_store": True,
+            "uses_bitset": False,
+            "uses_sparse_events": True,
+            "storage_kind": "compact_npz_sparse",
+            "events_total": raw_signals_total,
+            "symbols_with_events": symbols_with_events,
+            "seconds_event_build": seconds_signal,
+            "legacy_equivalence_status": "legacy_signal_path",
+        }
+    )
+    event_store_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "concept": diagnostic_base.get("concept", ""),
+            "family": diagnostic_base.get("family", ""),
+            "events_total": raw_signals_total,
+            "symbols_with_events": symbols_with_events,
+            "store_format": "compact_npz_sparse",
+            "locked_start_exclusive": locked_start,
+            "validation_end": validation_end,
+            "seconds_event_build": seconds_signal,
+        }
+    )
+
+
+def _append_event_first_precheck_diagnostics(
+    *,
+    concept_precheck_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    concept: str,
+    reject: dict[str, Any] | None,
+    validation_signal_total: int,
+    validation_year_count: int,
+) -> None:
+    decision = "passed" if reject is None else "early_rejected"
+    reason = "" if reject is None else str(reject.get("reason", ""))
+    actual = validation_signal_total if reject is None else reject.get("actual", validation_signal_total)
+    threshold = "" if reject is None else reject.get("threshold", "")
+    max_avg = float(validation_signal_total / max(int(validation_year_count), 1))
+    for candidate in group:
+        concept_precheck_rows.append(
+            {
+                "job_id": output_padded,
+                "strategy_id": str(candidate.payload.get("strategy_id")),
+                "signal_hash": signal_hash,
+                "concept": concept,
+                "precheck_name": str(reject.get("stage", "safe_prefilter") if reject else "safe_prefilter"),
+                "max_events_by_year": actual,
+                "max_avg_events_per_year": max_avg,
+                "decision": decision,
+                "reason": reason,
+                "actual": actual,
+                "threshold": threshold,
+            }
+        )
+
+
+def _append_event_first_exit_group_artifacts(
+    *,
+    exit_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    result_status: str,
+) -> None:
+    for candidate in group:
+        payload = candidate.payload
+        config = candidate.config
+        diagnostic = _external_diagnostic_base(payload, job_id=output_padded)
+        exit_group_manifest_rows.append(
+            {
+                "job_id": output_padded,
+                "strategy_id": str(payload.get("strategy_id")),
+                "signal_hash": signal_hash,
+                "exit_group_hash": exit_external_strategy_hash(candidate),
+                "exit_rule": diagnostic.get("exit_rule", ""),
+                "stop_loss": config.stop_loss_pct,
+                "take_profit": config.take_profit_pct,
+                "max_holding": config.max_holding_days,
+                "market_exit": config.use_market_exit,
+                "result_status": result_status,
+            }
+        )
+
+
+def _suggested_slow_timeout_seconds(reason: str) -> int:
+    if str(reason) in {"known_slow_concept", "estimated_cost_too_high", "needs_slow_queue"}:
+        return 1800
+    if str(reason) == "insufficient_job_budget":
+        return 1800
+    return 900
+
+
+def _suggested_slow_strategies_per_job(reason: str) -> int:
+    if str(reason) in {"known_slow_concept", "estimated_cost_too_high", "needs_slow_queue", "insufficient_job_budget"}:
+        return 1
+    return 1
+
+
+def _signal_events_npz_path(output_dir: Path, file_suffix: str) -> Path:
+    return Path(output_dir) / f"signal_events_{file_suffix}.npz"
+
+
+def _signal_ready_groups_path(output_dir: Path, file_suffix: str) -> Path:
+    return Path(output_dir) / f"signal_ready_groups_{file_suffix}.jsonl"
+
+
+def _summary_path_for_suffix(output_dir: Path, file_suffix: str) -> Path:
+    return Path(output_dir) / f"summary_{file_suffix}.json"
+
+
+def _write_compact_signal_events(
+    path: Path,
+    *,
+    signal_events: dict[str, dict[str, pd.Series]],
+    symbol_frames: dict[str, pd.DataFrame],
+) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(
+        f"[gtbi] write_signal_events_start path={path} signal_hashes={len(signal_events)} symbols={len(symbol_frames)}",
+        flush=True,
+    )
+    signal_hashes: list[str] = []
+    symbol_keys = sorted(str(symbol) for symbol in symbol_frames)
+    symbol_to_index = {symbol: index for index, symbol in enumerate(symbol_keys)}
+    signal_index_chunks: list[np.ndarray] = []
+    symbol_index_chunks: list[np.ndarray] = []
+    event_position_chunks: list[np.ndarray] = []
+    for signal_index, (signal_hash, signals_by_symbol) in enumerate(signal_events.items()):
+        signal_hashes.append(str(signal_hash))
+        for symbol, signal in signals_by_symbol.items():
+            symbol_key = str(symbol)
+            frame = symbol_frames.get(symbol_key)
+            if frame is None or signal.empty:
+                continue
+            aligned = signal.reindex(frame.index).fillna(False).astype(bool)
+            positions = np.flatnonzero(aligned.to_numpy(dtype=bool))
+            if positions.size == 0:
+                continue
+            signal_index_chunks.append(np.full(int(positions.size), int(signal_index), dtype=np.int32))
+            symbol_index_chunks.append(
+                np.full(int(positions.size), int(symbol_to_index[symbol_key]), dtype=np.int32)
+            )
+            event_position_chunks.append(positions.astype(np.int32, copy=False))
+    event_signal_index = (
+        np.concatenate(signal_index_chunks).astype(np.int32, copy=False)
+        if signal_index_chunks
+        else np.asarray([], dtype=np.int32)
+    )
+    event_symbol_index = (
+        np.concatenate(symbol_index_chunks).astype(np.int32, copy=False)
+        if symbol_index_chunks
+        else np.asarray([], dtype=np.int32)
+    )
+    event_pos = (
+        np.concatenate(event_position_chunks).astype(np.int32, copy=False)
+        if event_position_chunks
+        else np.asarray([], dtype=np.int32)
+    )
+    print(
+        f"[gtbi] write_signal_events_save path={path} signal_hashes={len(signal_hashes)} events={len(event_pos)}",
+        flush=True,
+    )
+    np.savez(
+        path,
+        signal_hashes=np.asarray(signal_hashes, dtype=str),
+        event_symbols=np.asarray(symbol_keys, dtype=str),
+        event_signal_index=event_signal_index,
+        event_symbol_index=event_symbol_index,
+        event_pos=event_pos,
+    )
+    print(f"[gtbi] write_signal_events_done path={path}", flush=True)
+
+
+def _load_compact_signal_events(
+    path: Path,
+    *,
+    symbol_frames: dict[str, pd.DataFrame],
+) -> dict[str, dict[str, pd.Series]]:
+    path = Path(path)
+    if not path.exists():
+        return {}
+    loaded = np.load(path, allow_pickle=False)
+    signal_hashes_array = loaded["signal_hashes"] if "signal_hashes" in loaded.files else np.asarray([], dtype=str)
+    signal_hashes = [str(value) for value in signal_hashes_array.tolist()]
+    by_hash: dict[str, dict[str, pd.Series]] = {signal_hash: {} for signal_hash in signal_hashes}
+    event_signal_index = loaded["event_signal_index"] if "event_signal_index" in loaded.files else np.asarray([], dtype=np.int32)
+    if "event_symbol_index" in loaded.files and "event_symbols" in loaded.files:
+        symbol_lookup = [str(value) for value in loaded["event_symbols"].tolist()]
+        event_symbol = np.asarray(
+            [
+                symbol_lookup[int(index)]
+                for index in loaded["event_symbol_index"].tolist()
+                if 0 <= int(index) < len(symbol_lookup)
+            ],
+            dtype=str,
+        )
+        valid_length = min(len(event_signal_index), len(event_symbol), len(loaded["event_pos"] if "event_pos" in loaded.files else []))
+        event_signal_index = event_signal_index[:valid_length]
+    else:
+        event_symbol = loaded["event_symbol"] if "event_symbol" in loaded.files else np.asarray([], dtype=str)
+    event_pos = loaded["event_pos"] if "event_pos" in loaded.files else np.asarray([], dtype=np.int32)
+    for signal_index, symbol, pos in zip(event_signal_index.tolist(), event_symbol.tolist(), event_pos.tolist()):
+        signal_idx = int(signal_index)
+        if signal_idx < 0 or signal_idx >= len(signal_hashes):
+            continue
+        symbol_key = str(symbol)
+        frame = symbol_frames.get(symbol_key)
+        if frame is None:
+            continue
+        signal_hash = signal_hashes[signal_idx]
+        signals_by_symbol = by_hash.setdefault(signal_hash, {})
+        if symbol_key not in signals_by_symbol:
+            signals_by_symbol[symbol_key] = pd.Series(False, index=frame.index)
+        int_pos = int(pos)
+        if 0 <= int_pos < len(signals_by_symbol[symbol_key]):
+            signals_by_symbol[symbol_key].iloc[int_pos] = True
+    return {
+        signal_hash: {
+            symbol: signal
+            for symbol, signal in signals_by_symbol.items()
+            if not signal.empty and bool(signal.any())
+        }
+        for signal_hash, signals_by_symbol in by_hash.items()
+    }
+
+
+def _write_signal_ready_groups(path: Path, records: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def _load_signal_ready_groups(path: Path) -> list[dict[str, Any]]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            records.append(json.loads(line))
+    return records
+
+
+def _csv_records_or_empty(path: Path) -> list[dict[str, Any]]:
+    path = Path(path)
+    if not path.exists() or not path.stat().st_size:
+        return []
+    try:
+        return pd.read_csv(path).to_dict("records")
+    except pd.errors.EmptyDataError:
+        return []
+
+
+def _append_external_timeout_result(
+    *,
+    timeout_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    diagnostic_base: dict[str, Any],
+    payload: dict[str, Any],
+    candidate_id: str,
+    canonical_hash: str,
+    signal_hash: str,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int,
+    signal_canonical_strategy_id: str = "",
+    signal_deduped: bool = False,
+) -> None:
+    timeout_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "shard_id": payload.get("shard_id"),
+            "slot_in_shard": payload.get("slot_in_shard"),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "exit_rule": diagnostic_base.get("exit_rule", ""),
+            "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+            "reason": reason,
+            "seconds_until_timeout": float(seconds_total),
+        }
+    )
+    dedupe_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "canonical_hash": canonical_hash,
+            "canonical_strategy_id": "",
+            "deduped": False,
+            "signal_hash": signal_hash,
+            "signal_canonical_strategy_id": signal_canonical_strategy_id,
+            "signal_deduped": bool(signal_deduped),
+        }
+    )
+    timing_rows.append(
+        {
+            **diagnostic_base,
+            "seconds_total": float(seconds_total),
+            "seconds_feature_build": 0.0,
+            "seconds_signal": float("nan"),
+            "seconds_simulation": float("nan"),
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": int(symbols_total),
+            "symbols_processed": int(symbols_processed),
+            "raw_signals_total": 0,
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+            "result_status": "timeout",
+            "reject_reason": reason,
+            "timeout": True,
+            "early_rejected": False,
+            "runtime_error": False,
+        }
+    )
+
+
+def _append_external_slow_deferred_result(
+    *,
+    slow_deferred_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    diagnostic_base: dict[str, Any],
+    payload: dict[str, Any],
+    candidate_id: str,
+    canonical_hash: str,
+    signal_hash: str,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int,
+    estimated_cost: float,
+    signal_canonical_strategy_id: str = "",
+    signal_deduped: bool = False,
+) -> None:
+    slow_deferred_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "shard_id": payload.get("shard_id"),
+            "slot_in_shard": payload.get("slot_in_shard"),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "exit_rule": diagnostic_base.get("exit_rule", ""),
+            "aggressiveness": diagnostic_base.get("aggressiveness", ""),
+            "reason": reason,
+            "seconds_until_deferred": float(seconds_total),
+            "suggested_timeout_seconds": int(_suggested_slow_timeout_seconds(reason)),
+            "suggested_strategies_per_job": int(_suggested_slow_strategies_per_job(reason)),
+            "signal_hash": signal_hash,
+            "estimated_cost": float(estimated_cost),
+        }
+    )
+    dedupe_rows.append(
+        {
+            "strategy_id": candidate_id,
+            "canonical_hash": canonical_hash,
+            "canonical_strategy_id": "",
+            "deduped": False,
+            "signal_hash": signal_hash,
+            "signal_canonical_strategy_id": signal_canonical_strategy_id,
+            "signal_deduped": bool(signal_deduped),
+        }
+    )
+    timing_rows.append(
+        {
+            **diagnostic_base,
+            "seconds_total": float(seconds_total),
+            "seconds_feature_build": 0.0,
+            "seconds_signal": float("nan"),
+            "seconds_simulation": float("nan"),
+            "seconds_train": 0.0,
+            "seconds_validation": 0.0,
+            "symbols_total": int(symbols_total),
+            "symbols_processed": int(symbols_processed),
+            "raw_signals_total": 0,
+            "trades_total": 0,
+            "train_trades": 0,
+            "validation_trades": 0,
+            "result_status": "slow_deferred",
+            "reject_reason": reason,
+            "timeout": False,
+            "early_rejected": False,
+            "runtime_error": False,
+        }
+    )
+
+
+def _append_signal_group_timeout_result(
+    *,
+    timeout_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    signal_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    cost_score: float,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int = 0,
+) -> None:
+    for index, candidate in enumerate(group):
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        _append_external_timeout_result(
+            timeout_rows=timeout_rows,
+            dedupe_rows=dedupe_rows,
+            timing_rows=timing_rows,
+            diagnostic_base=_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+            payload=payload,
+            candidate_id=candidate_id,
+            canonical_hash=canonical_hash,
+            signal_hash=signal_hash,
+            reason=reason,
+            seconds_total=seconds_total,
+            symbols_total=symbols_total,
+            symbols_processed=symbols_processed,
+            signal_canonical_strategy_id=first_id,
+            signal_deduped=bool(index > 0),
+        )
+    signal_group_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_count": int(len(group)),
+            "strategy_ids": ";".join(strategy_ids),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "number_of_reuses": int(max(len(group) - 1, 0)),
+            "result_status": "signal_timeout",
+            "reject_reason": reason,
+            "seconds_signal": float(seconds_total),
+            "raw_signals_total": 0,
+            "symbols_processed": int(symbols_processed),
+        }
+    )
+
+
+def _append_signal_group_slow_deferred_result(
+    *,
+    slow_deferred_rows: list[dict[str, Any]],
+    slow_queue_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    signal_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    cost_score: float,
+    reason: str,
+    seconds_total: float,
+    symbols_total: int,
+    symbols_processed: int = 0,
+) -> None:
+    for index, candidate in enumerate(group):
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        _append_external_slow_deferred_result(
+            slow_deferred_rows=slow_deferred_rows,
+            dedupe_rows=dedupe_rows,
+            timing_rows=timing_rows,
+            diagnostic_base=_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+            payload=payload,
+            candidate_id=candidate_id,
+            canonical_hash=canonical_hash,
+            signal_hash=signal_hash,
+            reason=reason,
+            seconds_total=seconds_total,
+            symbols_total=symbols_total,
+            symbols_processed=symbols_processed,
+            estimated_cost=cost_score,
+            signal_canonical_strategy_id=first_id,
+            signal_deduped=bool(index > 0),
+        )
+    slow_queue_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "strategy_ids": ";".join(strategy_ids),
+            "concept": diagnostic_base.get("concept", ""),
+            "family": diagnostic_base.get("family", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "reason": reason,
+            "suggested_timeout_seconds": int(_suggested_slow_timeout_seconds(reason)),
+            "suggested_strategies_per_job": int(_suggested_slow_strategies_per_job(reason)),
+        }
+    )
+    signal_group_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_count": int(len(group)),
+            "strategy_ids": ";".join(strategy_ids),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "number_of_reuses": int(max(len(group) - 1, 0)),
+            "result_status": "signal_slow_deferred",
+            "reject_reason": reason,
+            "seconds_signal": float(seconds_total),
+            "raw_signals_total": 0,
+            "symbols_processed": int(symbols_processed),
+        }
+    )
+
+
+def _append_signal_group_early_rejected_result(
+    *,
+    early_reject_rows: list[dict[str, Any]],
+    dedupe_rows: list[dict[str, Any]],
+    timing_rows: list[dict[str, Any]],
+    signal_group_manifest_rows: list[dict[str, Any]],
+    group: list[ExternalStrategyCandidate],
+    output_padded: str,
+    signal_hash: str,
+    first_id: str,
+    strategy_ids: list[str],
+    diagnostic_base: dict[str, Any],
+    cost_score: float,
+    reject: dict[str, Any],
+    validation_signal_total: int,
+    seconds_total: float,
+    seconds_signal: float,
+    symbols_total: int,
+    symbols_processed: int,
+    raw_signals_total: int,
+) -> None:
+    reason = str(reject["reason"])
+    for index, candidate in enumerate(group):
+        payload = candidate.payload
+        candidate_id = str(payload.get("strategy_id"))
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        early_reject_rows.append(
+            {
+                "strategy_id": candidate_id,
+                "reason": reason,
+                "split": str(reject.get("split", "")),
+                "year": reject.get("year", ""),
+                "actual": reject.get("actual", validation_signal_total),
+                "threshold": reject.get("threshold", ""),
+                "stage": str(reject.get("stage", "safe_prefilter")),
+                "seconds_until_reject": float(seconds_total),
+                "symbols_processed": int(symbols_processed),
+            }
+        )
+        dedupe_rows.append(
+            {
+                "strategy_id": candidate_id,
+                "canonical_hash": canonical_hash,
+                "canonical_strategy_id": "",
+                "deduped": False,
+                "signal_hash": signal_hash,
+                "signal_canonical_strategy_id": first_id,
+                "signal_deduped": bool(index > 0),
+            }
+        )
+        timing_rows.append(
+            {
+                **_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+                "seconds_total": float(seconds_total),
+                "seconds_feature_build": 0.0,
+                "seconds_signal": float(seconds_signal) if index == 0 else 0.0,
+                "seconds_simulation": 0.0,
+                "seconds_train": 0.0,
+                "seconds_validation": 0.0,
+                "symbols_total": int(symbols_total),
+                "symbols_processed": int(symbols_processed),
+                "raw_signals_total": int(raw_signals_total),
+                "trades_total": 0,
+                "train_trades": 0,
+                "validation_trades": 0,
+                "result_status": "signal_early_rejected",
+                "reject_reason": reason,
+                "timeout": False,
+                "early_rejected": True,
+                "runtime_error": False,
+            }
+        )
+    signal_group_manifest_rows.append(
+        {
+            "job_id": output_padded,
+            "signal_hash": signal_hash,
+            "canonical_strategy_id": first_id,
+            "strategy_count": int(len(group)),
+            "strategy_ids": ";".join(strategy_ids),
+            "family": diagnostic_base.get("family", ""),
+            "concept": diagnostic_base.get("concept", ""),
+            "market_overlay": diagnostic_base.get("market_overlay", ""),
+            "trend_filter": diagnostic_base.get("trend_filter", ""),
+            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+            "estimated_cost": float(cost_score),
+            "number_of_reuses": int(max(len(group) - 1, 0)),
+            "result_status": "signal_early_rejected",
+            "reject_reason": reason,
+            "seconds_signal": float(seconds_signal),
+            "raw_signals_total": int(raw_signals_total),
+            "symbols_processed": int(symbols_processed),
+        }
+    )
+
+
+def _signal_year_counts_for_possible_exits(
+    *,
+    signals_by_symbol: dict[str, pd.Series],
+    symbol_frames: dict[str, pd.DataFrame],
+    config: IndicatorConfig,
+    years: range,
+) -> dict[int, int]:
+    counts = {int(year): 0 for year in years}
+    lookback_days = max(int(config.max_holding_days) + 7, 14)
+    year_windows = [
+        (
+            int(year),
+            np.datetime64(f"{int(year):04d}-01-01", "D") - np.timedelta64(lookback_days, "D"),
+            np.datetime64(f"{int(year):04d}-12-31", "D"),
+        )
+        for year in years
+    ]
+    for symbol, signal in signals_by_symbol.items():
+        frame = _prepare_ohlcv(symbol_frames[symbol])
+        if frame.empty or signal.empty:
+            continue
+        if signal.index.equals(frame.index):
+            signal_values = signal.fillna(False).to_numpy(dtype=bool, copy=False)
+        else:
+            signal_values = signal.reindex(frame.index).fillna(False).to_numpy(dtype=bool, copy=False)
+        if signal_values.size <= 1:
+            continue
+        signal_positions = np.flatnonzero(signal_values[:-1])
+        if signal_positions.size == 0:
+            continue
+        date_values = frame.index.to_numpy(dtype="datetime64[ns]", copy=False)
+        signal_dates = date_values[signal_positions]
+        for year, start, end in year_windows:
+            counts[int(year)] += int(np.count_nonzero((signal_dates >= start) & (signal_dates <= end)))
+    return counts
+
+
+def _specific_slow_concept_precheck_signal(
+    *,
+    concept: str,
+    frame: pd.DataFrame,
+    config: IndicatorConfig,
+) -> pd.Series:
+    prepared = _prepare_ohlcv(frame)
+    if prepared.empty:
+        return pd.Series(dtype=bool)
+    close = prepared["close"]
+    volume = prepared["volume"].fillna(0.0)
+    index = prepared.index
+    if concept == "macd_histogram_turnup_trend":
+        fast = close.ewm(span=12, adjust=False, min_periods=12).mean()
+        slow = close.ewm(span=26, adjust=False, min_periods=26).mean()
+        macd = fast - slow
+        macd_signal = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+        hist = macd - macd_signal
+        # Superset of histogram turn-up/reclaim entries. We intentionally do
+        # not apply trend, RS, market, or exit filters here; if this broad set
+        # is too sparse, the final stricter strategy cannot pass frequency gates.
+        signal = (hist > hist.shift(1)) & (hist.shift(1) <= hist.shift(2))
+        return signal.fillna(False).astype(bool)
+    if concept == "post_ep_pullback_reclaim_proxy":
+        avg_vol = volume.rolling(config.volume_lookback, min_periods=min(config.volume_lookback, len(prepared))).mean()
+        tiny_gap = (prepared["open"] / close.shift(1) - 1.0) > 0.0
+        high_reclaim = close > prepared["high"].shift(1).rolling(10, min_periods=3).max()
+        volume_confirm = volume >= avg_vol.fillna(0.0) * 0.5
+        # Broad EP/reclaim proxy: any positive gap or short-term reclaim with
+        # loose volume confirmation. This is deliberately a superset.
+        signal = (tiny_gap | high_reclaim) & volume_confirm
+        return signal.fillna(False).astype(bool)
+    if concept == "three_weeks_tight_daily_proxy":
+        # Superset for tight-base entries: any positive day with valid volume
+        # can contain a later tight-base breakout. This is intentionally broad
+        # and is only used to prove impossibility when even this set is sparse.
+        signal = (close > close.shift(1)) & (volume > 0)
+        return signal.fillna(False).astype(bool)
+    if concept == "q_stair_step_reclaim":
+        ema10 = close.ewm(span=10, adjust=False, min_periods=10).mean()
+        short_reclaim = close > prepared["high"].shift(1).rolling(5, min_periods=2).max()
+        trend_reclaim = (close > ema10) & (close.shift(1) <= ema10.shift(1))
+        signal = (short_reclaim | trend_reclaim) & (volume > 0)
+        return signal.fillna(False).astype(bool)
+    if concept == "q_stair_step_breakout":
+        breakout = close > prepared["high"].shift(1).rolling(10, min_periods=3).max()
+        signal = breakout & (volume > 0)
+        return signal.fillna(False).astype(bool)
+    if concept == "ep_gap_volume_continuation_proxy":
+        avg_vol = volume.rolling(
+            config.volume_lookback,
+            min_periods=min(config.volume_lookback, len(prepared)),
+        ).mean()
+        resistance = prepared["high"].shift(1).rolling(
+            config.breakout_lookback,
+            min_periods=config.breakout_lookback,
+        ).max()
+        breakout = close > resistance
+        gap = (prepared["open"] / close.shift(1) - 1.0) >= config.episodic_gap_pct
+        volume_confirm = volume > avg_vol * max(config.volume_multiple, 1.5)
+        # The quallamaggie legacy formula requires (breakout | episodic_gap)
+        # plus stricter trend/runup/dryup/ADR/RSI/market gates. This is a safe
+        # upper bound for frequency impossibility checks only.
+        signal = (breakout | gap) & volume_confirm
+        return signal.fillna(False).astype(bool)
+    if concept in {"bollinger_lower_band_reclaim_trend", "rs_pullback_hold_rebound"}:
+        if not config.require_breakout:
+            signal = (close > close.shift(1)) & (volume > 0)
+            return signal.fillna(False).astype(bool)
+        resistance = prepared["high"].shift(1).rolling(
+            config.breakout_lookback,
+            min_periods=config.breakout_lookback,
+        ).max()
+        avg_vol = volume.rolling(
+            config.volume_lookback,
+            min_periods=min(config.volume_lookback, len(prepared)),
+        ).mean()
+        if config.require_base_tight:
+            base_range = (
+                prepared["high"].rolling(config.base_lookback, min_periods=config.base_lookback).max()
+                - prepared["low"].rolling(config.base_lookback, min_periods=config.base_lookback).min()
+            )
+            base_tight = (base_range / close.replace(0.0, np.nan)) <= config.max_base_range_pct
+        else:
+            base_tight = _safe_bool_series(True, index)
+        # The legacy external mapping evaluates these concepts through the
+        # oneil_canslim family, where every final signal is a subset of
+        # breakout & volume & optional base-tight. This precheck is therefore a
+        # safe upper bound for rejecting impossible frequency profiles.
+        signal = (close > resistance) & (volume > avg_vol * config.volume_multiple) & base_tight
+        return signal.fillna(False).astype(bool)
+    if concept in {
+        "academic_6_12m_momentum_reclaim",
+        "academic_52w_high_pullback_reclaim",
+        "adx_di_pullback_reversal",
+    }:
+        resistance = prepared["high"].shift(1).rolling(
+            config.breakout_lookback,
+            min_periods=config.breakout_lookback,
+        ).max()
+        avg_vol = volume.rolling(
+            config.volume_lookback,
+            min_periods=min(config.volume_lookback, len(prepared)),
+        ).mean()
+        if config.require_base_tight:
+            base_range = (
+                prepared["high"].rolling(config.base_lookback, min_periods=config.base_lookback).max()
+                - prepared["low"].rolling(config.base_lookback, min_periods=config.base_lookback).min()
+            )
+            base_tight = (base_range / close.replace(0.0, np.nan)) <= config.max_base_range_pct
+        else:
+            base_tight = _safe_bool_series(True, index)
+        # These concepts map to oneil_canslim in the current evaluator:
+        # oneil_stack & rs_ok & breakout & rsi_ok & market_trend. Breakout is
+        # therefore a conservative superset, not a replacement signal.
+        signal = (close > resistance) & (volume > avg_vol * config.volume_multiple) & base_tight
+        return signal.fillna(False).astype(bool)
+    return pd.Series(False, index=index)
+
+
+def _specific_slow_concept_precheck(
+    *,
+    payload: dict[str, Any],
+    config: IndicatorConfig,
+    symbol_frames: dict[str, pd.DataFrame],
+    validation_start: str,
+    validation_end: str,
+    deadline: float | None,
+    optimized_evaluation_mode: str = ZERO_TIMEOUT_MODE,
+) -> tuple[dict[str, Any] | None, int, int, int, float]:
+    concept = _external_profile_value(payload, "concept_id", "concept")
+    allowed_concepts = V5_EVENT_FIRST_PRECHECK_CONCEPTS if _is_event_first_mode(optimized_evaluation_mode) else V4_ZERO_TIMEOUT_SPECIFIC_PRECHECK_CONCEPTS
+    if concept not in allowed_concepts:
+        return None, 0, 0, 0, 0.0
+    start = time.perf_counter()
+    signals_by_symbol: dict[str, pd.Series] = {}
+    raw_signals_total = 0
+    symbols_processed = 0
+    for symbol, frame in symbol_frames.items():
+        if deadline is not None and time.perf_counter() >= float(deadline):
+            return (
+                {
+                    "action": "slow_deferred",
+                    "reason": "needs_slow_queue",
+                    "split": "",
+                    "year": "",
+                    "actual": raw_signals_total,
+                    "threshold": "",
+                    "stage": f"{concept}_precheck",
+                },
+                raw_signals_total,
+                symbols_processed,
+                raw_signals_total,
+                float(time.perf_counter() - start),
+            )
+        signal = _specific_slow_concept_precheck_signal(concept=concept, frame=frame, config=config)
+        signals_by_symbol[str(symbol)] = signal
+        raw_signals_total += int(signal.sum()) if not signal.empty else 0
+        symbols_processed += 1
+    reject, validation_signal_total = _safe_prefilter_raw_signals(
+        signals_by_symbol=signals_by_symbol,
+        symbol_frames=symbol_frames,
+        config=config,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    seconds = float(time.perf_counter() - start)
+    if reject is None:
+        return None, validation_signal_total, symbols_processed, raw_signals_total, seconds
+    reject = dict(reject)
+    reject["stage"] = f"{concept}_precheck"
+    reject["reason"] = f"{concept}_precheck_{reject['reason']}"
+    reject["action"] = "early_reject"
+    return reject, validation_signal_total, symbols_processed, raw_signals_total, seconds
+
+
+def _safe_prefilter_raw_signals(
+    *,
+    signals_by_symbol: dict[str, pd.Series],
+    symbol_frames: dict[str, pd.DataFrame],
+    config: IndicatorConfig,
+    validation_start: str,
+    validation_end: str,
+) -> tuple[dict[str, Any] | None, int]:
+    validation_years = range(_dt(validation_start).year, _dt(validation_end).year + 1)
+    validation_counts = _signal_year_counts_for_possible_exits(
+        signals_by_symbol=signals_by_symbol,
+        symbol_frames=symbol_frames,
+        config=config,
+        years=validation_years,
+    )
+    if validation_counts:
+        min_year = min(validation_counts, key=lambda year: validation_counts[year])
+        min_count = int(validation_counts[min_year])
+        if min_count < 100:
+            return (
+                {
+                    "reason": "raw_signal_yearly_trades_lt_100",
+                    "split": "validation",
+                    "year": int(min_year),
+                    "actual": int(min_count),
+                    "threshold": 100,
+                    "stage": "safe_prefilter",
+                },
+                int(sum(validation_counts.values())),
+            )
+        avg_count = float(sum(validation_counts.values()) / max(len(validation_counts), 1))
+        if avg_count < 150.0:
+            return (
+                {
+                    "reason": "raw_signal_trades_per_year_lt_150",
+                    "split": "validation",
+                    "year": "",
+                    "actual": avg_count,
+                    "threshold": 150.0,
+                    "stage": "safe_prefilter",
+                },
+                int(sum(validation_counts.values())),
+            )
+
+    train_counts = _signal_year_counts_for_possible_exits(
+        signals_by_symbol=signals_by_symbol,
+        symbol_frames=symbol_frames,
+        config=config,
+        years=range(2003, 2011),
+    )
+    train_possible_years = int(sum(1 for value in train_counts.values() if int(value) > 0))
+    if train_counts and train_possible_years < 8:
+        return (
+            {
+                "reason": "raw_signal_train_2003_2010_years_lt_8",
+                "split": "train",
+                "year": "",
+                "actual": int(train_possible_years),
+                "threshold": 8,
+                "stage": "safe_prefilter",
+            },
+            int(sum(validation_counts.values())),
+        )
+    return None, int(sum(validation_counts.values()))
+
+
+class SignalMap(dict[str, pd.Series]):
+    """Dense compatibility view plus sparse positions retained for simulation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.event_positions: dict[str, np.ndarray] = {}
+
+
+def _signal_event_positions(signal: pd.Series) -> np.ndarray:
+    values = signal.fillna(False).to_numpy(dtype=bool, copy=False)
+    return np.flatnonzero(values[:-1]).astype(np.int32, copy=False)
+
+
+def _configured_symbol_workers() -> int:
+    raw = os.environ.get("GTBI_SYMBOL_WORKERS", "1").strip()
+    try:
+        requested = int(raw)
+    except ValueError:
+        requested = 1
+    return max(1, min(requested, 4))
+
+
+def _build_signals_by_symbol(
+    *,
+    config: IndicatorConfig,
+    candidate_id: str,
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    deadline: float | None = None,
+    feature_store: FeatureStore | None = None,
+    max_workers: int = 1,
+) -> tuple[SignalMap, dict[str, Any]]:
+    signal_start = time.perf_counter()
+    signals_by_symbol = SignalMap()
+    symbols_processed = 0
+    raw_signals_total = 0
+
+    def build_one(item: tuple[str, pd.DataFrame]) -> tuple[str, pd.Series, np.ndarray]:
+        symbol, frame = item
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
+        primitive_store = (
+            feature_store.primitives_for(symbol, frame, benchmark_prices)
+            if feature_store is not None and feature_store.enabled
+            else None
+        )
+        signal = _entry_signal_optimized(
+            frame,
+            benchmark_prices,
+            config,
+            primitive_store=primitive_store,
+        )
+        positions = _signal_event_positions(signal) if not signal.empty else np.empty(0, dtype=np.int32)
+        return symbol, signal, positions
+
+    items = list(symbol_frames.items())
+    worker_count = max(1, min(int(max_workers), 4))
+    built: Iterable[tuple[str, pd.Series, np.ndarray]]
+    if worker_count == 1:
+        built = map(build_one, items)
+    else:
+        executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="gtbi-signal")
+        built = executor.map(build_one, items)
+    try:
+        for symbol, signal, positions in built:
+            symbols_processed += 1
+            if symbols_processed % 250 == 0:
+                print(
+                    f"[gtbi] candidate={candidate_id} signal_progress={symbols_processed}/{len(symbol_frames)}",
+                    flush=True,
+                )
+            if signal.empty or not bool(signal.any()):
+                if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
+                    raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
+                continue
+            signals_by_symbol[symbol] = signal
+            signals_by_symbol.event_positions[symbol] = positions
+            raw_signals_total += int(signal.sum())
+            if deadline is not None and time.perf_counter() >= deadline and symbols_processed < len(symbol_frames):
+                raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while building signals")
+    finally:
+        if worker_count > 1:
+            executor.shutdown(wait=True, cancel_futures=True)
+    return signals_by_symbol, {
+        "seconds_signal": float(time.perf_counter() - signal_start),
+        "symbols_processed": int(symbols_processed),
+        "raw_signals_total": int(raw_signals_total),
+    }
+
+
+def evaluate_candidate_optimized(
+    *,
+    config: IndicatorConfig,
+    candidate_id: str,
+    stage: int,
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+    search_method: str = DEFAULT_SEARCH_METHOD,
+    selection_split: str = DEFAULT_SELECTION_SPLIT,
+    min_selection_trades_per_year: int = 0,
+    scoring_profile: str = DEFAULT_SCORING_PROFILE,
+    enable_safe_prefilter: bool = True,
+    enable_early_stopping: bool = True,
+    deadline: float | None = None,
+    precomputed_signals_by_symbol: dict[str, pd.Series] | None = None,
+    precomputed_signal_seconds: float | None = None,
+    precomputed_symbols_processed: int | None = None,
+    precomputed_raw_signals_total: int | None = None,
+    feature_store: FeatureStore | None = None,
+    symbol_workers: int = 1,
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    total_start = time.perf_counter()
+    if precomputed_signals_by_symbol is not None:
+        signals_by_symbol = SignalMap()
+        precomputed_positions = getattr(precomputed_signals_by_symbol, "event_positions", {})
+        for symbol, signal in precomputed_signals_by_symbol.items():
+            symbol = str(symbol)
+            if symbol not in symbol_frames or signal.empty or not bool(signal.any()):
+                continue
+            signals_by_symbol[symbol] = signal
+            positions = precomputed_positions.get(symbol)
+            signals_by_symbol.event_positions[symbol] = (
+                np.asarray(positions, dtype=np.int32)
+                if positions is not None
+                else _signal_event_positions(signal)
+            )
+        symbols_processed = int(precomputed_symbols_processed if precomputed_symbols_processed is not None else len(symbol_frames))
+        raw_signals_total = int(
+            precomputed_raw_signals_total
+            if precomputed_raw_signals_total is not None
+            else sum(int(signal.sum()) for signal in signals_by_symbol.values())
+        )
+        seconds_signal = float(precomputed_signal_seconds or 0.0)
+    else:
+        signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
+            config=config,
+            candidate_id=candidate_id,
+            symbol_frames=symbol_frames,
+            benchmark_prices=benchmark_prices,
+            deadline=deadline,
+            feature_store=feature_store,
+            max_workers=symbol_workers,
+        )
+        seconds_signal = float(signal_diagnostic["seconds_signal"])
+        symbols_processed = int(signal_diagnostic["symbols_processed"])
+        raw_signals_total = int(signal_diagnostic["raw_signals_total"])
+
+    if enable_safe_prefilter or enable_early_stopping:
+        reject, validation_signal_total = _safe_prefilter_raw_signals(
+            signals_by_symbol=signals_by_symbol,
+            symbol_frames=symbol_frames,
+            config=config,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+        if reject is not None:
+            seconds_total = float(time.perf_counter() - total_start)
+            diagnostic = {
+                "seconds_total": seconds_total,
+                "seconds_feature_build": 0.0,
+                "seconds_signal": seconds_signal,
+                "seconds_simulation": 0.0,
+                "seconds_train": 0.0,
+                "seconds_validation": 0.0,
+                "symbols_total": int(len(symbol_frames)),
+                "symbols_processed": int(symbols_processed),
+                "raw_signals_total": int(raw_signals_total),
+                "trades_total": 0,
+                "train_trades": 0,
+                "validation_trades": 0,
+            }
+            raise EarlyRejectedStrategy(
+                str(reject["reason"]),
+                split=str(reject.get("split", "")),
+                year=int(reject["year"]) if str(reject.get("year", "")).isdigit() else None,
+                actual=reject.get("actual", validation_signal_total),
+                threshold=reject.get("threshold", ""),
+                stage=str(reject.get("stage", "safe_prefilter")),
+                symbols_processed=symbols_processed,
+                seconds_until_reject=seconds_total,
+                diagnostic=diagnostic,
+            )
+
+    simulation_start = time.perf_counter()
+    all_trade_records: list[dict[str, Any]] = []
+    simulated_symbols = 0
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
+    event_positions = signals_by_symbol.event_positions
+    for symbol, signal in signals_by_symbol.items():
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
+        simulated_symbols += 1
+        frame = symbol_frames[symbol]
+        prepared_frame = _prepare_ohlcv(frame)
+        market_exit = ~_market_trend_ok_for_frame(prepared_frame, benchmark_prices, config) if config.use_market_exit else None
+        raw_records = _simulate_trade_records(
+            symbol,
+            frame,
+            signal,
+            config,
+            split="unassigned",
+            candidate_id=candidate_id,
+            exit_signal=market_exit,
+            signal_positions=event_positions.get(symbol),
+        )
+        for record in raw_records:
+            exit_day = _exit_date64_from_value(record.get("exit_date"))
+            if exit_day is None:
+                continue
+            if exit_day <= train_end_day:
+                split_record = dict(record)
+                split_record["split"] = "train"
+                all_trade_records.append(split_record)
+            elif validation_start_day <= exit_day <= validation_end_day:
+                split_record = dict(record)
+                split_record["split"] = "validation"
+                all_trade_records.append(split_record)
+        if simulated_symbols % 250 == 0:
+            print(
+                f"[gtbi] candidate={candidate_id} simulation_progress={simulated_symbols}/{len(signals_by_symbol)}",
+                flush=True,
+            )
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise CandidateEvaluationTimeout("candidate evaluation exceeded cooperative deadline while simulating trades")
+    seconds_simulation = float(time.perf_counter() - simulation_start)
+    trades_df = pd.DataFrame(all_trade_records, columns=TRADE_COLUMNS)
+
+    train_years = max(_date64_days_between(train_end_day, np.datetime64("1900-01-01", "D")) / 365.25, 1.0)
+    if not trades_df.empty:
+        split_values = trades_df["split"].to_numpy(dtype=object, copy=False)
+        exit_values = trades_df["exit_date"].to_numpy(dtype=object, copy=False)
+        first_train_day: np.datetime64 | None = None
+        for idx, split_value in enumerate(split_values):
+            if str(split_value) != "train":
+                continue
+            exit_day = _exit_date64_from_value(exit_values[idx])
+            if exit_day is None:
+                continue
+            if first_train_day is None or exit_day < first_train_day:
+                first_train_day = exit_day
+        if first_train_day is not None:
+            train_years = max(_date64_days_between(train_end_day, first_train_day) / 365.25, 1.0)
+    validation_years = max(_date64_days_between(validation_end_day, validation_start_day) / 365.25, 1.0)
+
+    train_start = time.perf_counter()
+    train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
+    seconds_train = float(time.perf_counter() - train_start)
+    validation_start_timer = time.perf_counter()
+    validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    combined = summarize_trades(trades_df, years=max(train_years + validation_years, 1.0))
+    yearly = yearly_trade_performance(trades_df, benchmark_prices)
+    seconds_validation = float(time.perf_counter() - validation_start_timer)
+
+    selected_metrics = validation if selection_split == "validation" else train
+    score = _candidate_score(selected_metrics)
+    selection_min_yearly_trades = _min_yearly_trades_for_selection(
+        yearly,
+        selection_split=selection_split,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    if int(min_selection_trades_per_year) > 0 and selection_min_yearly_trades < int(min_selection_trades_per_year):
+        score = -1e9 + float(selection_min_yearly_trades)
+    row = {
+        "candidate_id": candidate_id,
+        "stage": int(stage),
+        "search_method": str(search_method),
+        "family": config.family,
+        "score": score,
+        "selection_split": str(selection_split),
+        "selection_min_yearly_trades": int(selection_min_yearly_trades),
+        "min_selection_trades_per_year": int(min_selection_trades_per_year),
+        "scoring_profile": str(scoring_profile),
+        "locked_opened": False,
+    }
+    for prefix, metrics in (("train", train), ("validation", validation)):
+        row[f"{prefix}_trades"] = int(metrics["trades"])
+        row[f"{prefix}_avg_trade_return_pct"] = metrics["avg_trade_return_pct"]
+        row[f"{prefix}_median_trade_return_pct"] = metrics["median_trade_return_pct"]
+        row[f"{prefix}_win_rate"] = metrics["win_rate"]
+        row[f"{prefix}_profit_factor"] = metrics["profit_factor"]
+        row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
+        row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
+        row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_holding_days_p50"] = metrics["holding_days_p50"]
+        row[f"{prefix}_holding_days_p75"] = metrics["holding_days_p75"]
+        row[f"{prefix}_holding_days_p90"] = metrics["holding_days_p90"]
+        row[f"{prefix}_percent_exits_under_5_days"] = metrics["percent_exits_under_5_days"]
+        row[f"{prefix}_percent_exits_under_10_days"] = metrics["percent_exits_under_10_days"]
+        row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row["holding_days_p50"] = combined["holding_days_p50"]
+    row["holding_days_p75"] = combined["holding_days_p75"]
+    row["holding_days_p90"] = combined["holding_days_p90"]
+    row["percent_exits_under_5_days"] = combined["percent_exits_under_5_days"]
+    row["percent_exits_under_10_days"] = combined["percent_exits_under_10_days"]
+    row.update(
+        _strict_quality_metrics(
+            row=row,
+            yearly=yearly,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+    )
+    if scoring_profile == "strict_quality":
+        score = _strict_quality_score(row)
+    elif scoring_profile == "frequency_quality":
+        score = _frequency_quality_score(row)
+    elif scoring_profile == "stability_quality":
+        score = _stability_quality_score(row)
+    elif scoring_profile != "default":
+        raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
+    row["score"] = score
+    row["long_hold_quality_score"] = _long_hold_quality_score(row)
+    _add_fundamental_timing_no_drawdown_fields(row)
+    diagnostic = {
+        "seconds_total": float(time.perf_counter() - total_start),
+        "seconds_feature_build": 0.0,
+        "seconds_signal": seconds_signal,
+        "seconds_simulation": seconds_simulation,
+        "seconds_train": seconds_train,
+        "seconds_validation": seconds_validation,
+        "symbols_total": int(len(symbol_frames)),
+        "symbols_processed": int(symbols_processed),
+        "raw_signals_total": int(raw_signals_total),
+        "trades_total": int(len(trades_df)),
+        "train_trades": int(_finite_float(row.get("train_trades"), default=0.0)),
+        "validation_trades": int(_finite_float(row.get("validation_trades"), default=0.0)),
+    }
+    return row, trades_df, yearly, diagnostic
+
+
+def rebuild_external_candidate_from_trades(
+    *,
+    candidate_id: str,
+    trades: pd.DataFrame,
+    metadata: Mapping[str, Any] | None = None,
+    partial_yearly: pd.DataFrame | None = None,
+    train_end: str = DEFAULT_TRAIN_END,
+    validation_start: str = DEFAULT_VALIDATION_START,
+    validation_end: str = DEFAULT_VALIDATION_END,
+    selection_split: str = "validation",
+    min_selection_trades_per_year: int = 100,
+    scoring_profile: str = "strict_quality",
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
+    metadata = dict(metadata or {})
+    trades_df = trades.copy() if trades is not None and not trades.empty else pd.DataFrame(columns=TRADE_COLUMNS)
+    if not trades_df.empty:
+        trades_df["candidate_id"] = str(candidate_id)
+        if "split" not in trades_df.columns:
+            trades_df["split"] = ""
+        trades_df["split"] = trades_df["split"].astype(object)
+    trades_df = split_trade_frame(
+        trades_df,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    train_end_day = np.datetime64(str(train_end), "D")
+    validation_start_day = np.datetime64(str(validation_start), "D")
+    validation_end_day = np.datetime64(str(validation_end), "D")
+    train_years = max(_date64_days_between(train_end_day, np.datetime64("1900-01-01", "D")) / 365.25, 1.0)
+    if not trades_df.empty and "split" in trades_df.columns and "exit_date" in trades_df.columns:
+        first_train_day: np.datetime64 | None = None
+        for split_value, exit_value in zip(trades_df["split"].to_numpy(dtype=object), trades_df["exit_date"].to_numpy(dtype=object)):
+            if str(split_value) != "train":
+                continue
+            exit_day = _exit_date64_from_value(exit_value)
+            if exit_day is None:
+                continue
+            if first_train_day is None or exit_day < first_train_day:
+                first_train_day = exit_day
+        if first_train_day is not None:
+            train_years = max(_date64_days_between(train_end_day, first_train_day) / 365.25, 1.0)
+    validation_years = max(_date64_days_between(validation_end_day, validation_start_day) / 365.25, 1.0)
+    train = summarize_trades(trades_df[trades_df["split"] == "train"], years=train_years)
+    validation = summarize_trades(trades_df[trades_df["split"] == "validation"], years=validation_years)
+    combined = summarize_trades(trades_df, years=max(train_years + validation_years, 1.0))
+    yearly = yearly_trade_performance(trades_df, pd.DataFrame())
+    if partial_yearly is not None and not partial_yearly.empty and not yearly.empty:
+        if {"split", "year", "spy_return_pct"}.issubset(partial_yearly.columns) and {"split", "year"}.issubset(yearly.columns):
+            spy_rows = partial_yearly[["split", "year", "spy_return_pct"]].dropna(subset=["split", "year"]).copy()
+            if not spy_rows.empty:
+                spy_rows["year"] = pd.to_numeric(spy_rows["year"], errors="coerce")
+                spy_rows = spy_rows.dropna(subset=["year"]).copy()
+                spy_rows["year"] = spy_rows["year"].astype(int)
+                spy_map = spy_rows.drop_duplicates(["split", "year"]).set_index(["split", "year"])["spy_return_pct"]
+                yearly = yearly.copy()
+                yearly["spy_return_pct"] = [
+                    spy_map.get((str(row_split), int(row_year)), np.nan)
+                    for row_split, row_year in zip(yearly["split"], yearly["year"])
+                ]
+    selected_metrics = validation if selection_split == "validation" else train
+    score = _candidate_score(selected_metrics)
+    selection_min_yearly_trades = _min_yearly_trades_for_selection(
+        yearly,
+        selection_split=selection_split,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+    )
+    if int(min_selection_trades_per_year) > 0 and selection_min_yearly_trades < int(min_selection_trades_per_year):
+        score = -1e9 + float(selection_min_yearly_trades)
+
+    def meta_text(*keys: str, default: str = "") -> str:
+        for key in keys:
+            value = metadata.get(key)
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            text = str(value)
+            if text:
+                return text
+        return default
+
+    def meta_int(*keys: str, default: int = 0) -> int:
+        for key in keys:
+            value = metadata.get(key)
+            number = _finite_float(value, default=float("nan"))
+            if number is not None and math.isfinite(number):
+                return int(number)
+        return int(default)
+
+    row: dict[str, Any] = {
+        "candidate_id": str(candidate_id),
+        "stage": meta_int("stage", "shard_id", default=0),
+        "search_method": meta_text("search_method", default=EXTERNAL_SEARCH_METHOD),
+        "family": meta_text("family", default="external_pack"),
+        "score": score,
+        "selection_split": str(selection_split),
+        "selection_min_yearly_trades": int(selection_min_yearly_trades),
+        "min_selection_trades_per_year": int(min_selection_trades_per_year),
+        "scoring_profile": str(scoring_profile),
+        "locked_opened": False,
+        "strategy_id": meta_text("strategy_id", "candidate_id", default=str(candidate_id)),
+        "shard_id": meta_int("shard_id", default=0),
+        "slot_in_shard": meta_int("slot_in_shard", default=0),
+        "concept_id": meta_text("concept_id", "concept"),
+        "market_overlay_id": meta_text("market_overlay_id", "market_overlay"),
+        "trend_profile_id": meta_text("trend_profile_id", "trend_filter"),
+        "rs_profile_id": meta_text("rs_profile_id", "relative_strength_filter"),
+        "exit_profile_id": meta_text("exit_profile_id", "exit_rule"),
+        "aggression_id": meta_text("aggression_id", "aggressiveness"),
+        "source_quality_score": _finite_float(metadata.get("source_quality_score"), default=np.nan),
+        "symbol_bucket_merged": True,
+        "symbol_bucket_trade_rows": int(len(trades_df)),
+    }
+    for prefix, metrics in (("train", train), ("validation", validation)):
+        row[f"{prefix}_trades"] = int(metrics["trades"])
+        row[f"{prefix}_avg_trade_return_pct"] = metrics["avg_trade_return_pct"]
+        row[f"{prefix}_median_trade_return_pct"] = metrics["median_trade_return_pct"]
+        row[f"{prefix}_win_rate"] = metrics["win_rate"]
+        row[f"{prefix}_profit_factor"] = metrics["profit_factor"]
+        row[f"{prefix}_trade_sharpe"] = metrics["trade_sharpe"]
+        row[f"{prefix}_max_drawdown_pct"] = metrics["max_drawdown_pct"]
+        row[f"{prefix}_avg_holding_days"] = metrics["avg_holding_days"]
+        row[f"{prefix}_holding_days_p50"] = metrics["holding_days_p50"]
+        row[f"{prefix}_holding_days_p75"] = metrics["holding_days_p75"]
+        row[f"{prefix}_holding_days_p90"] = metrics["holding_days_p90"]
+        row[f"{prefix}_percent_exits_under_5_days"] = metrics["percent_exits_under_5_days"]
+        row[f"{prefix}_percent_exits_under_10_days"] = metrics["percent_exits_under_10_days"]
+        row[f"{prefix}_trades_per_year"] = metrics["trades_per_year"]
+    row["holding_days_p50"] = combined["holding_days_p50"]
+    row["holding_days_p75"] = combined["holding_days_p75"]
+    row["holding_days_p90"] = combined["holding_days_p90"]
+    row["percent_exits_under_5_days"] = combined["percent_exits_under_5_days"]
+    row["percent_exits_under_10_days"] = combined["percent_exits_under_10_days"]
+    row.update(
+        _strict_quality_metrics(
+            row=row,
+            yearly=yearly,
+            validation_start=validation_start,
+            validation_end=validation_end,
+        )
+    )
+    if scoring_profile == "strict_quality":
+        row["score"] = _strict_quality_score(row)
+    elif scoring_profile == "frequency_quality":
+        row["score"] = _frequency_quality_score(row)
+    elif scoring_profile == "stability_quality":
+        row["score"] = _stability_quality_score(row)
+    elif scoring_profile != "default":
+        raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
+    row["long_hold_quality_score"] = _long_hold_quality_score(row)
+    _add_fundamental_timing_no_drawdown_fields(row)
+    return row, trades_df, yearly
+
+
+def _evaluate_external_candidate_core(
+    *,
+    config: IndicatorConfig,
+    candidate_id: str,
+    stage: int,
+    symbol_frames: dict[str, pd.DataFrame],
+    benchmark_prices: pd.DataFrame,
+    train_end: str,
+    validation_start: str,
+    validation_end: str,
+    optimized_evaluation_mode: str,
+    enable_safe_prefilter: bool,
+    enable_early_stopping: bool,
+    deadline: float | None = None,
+    precomputed_signals_by_symbol: dict[str, pd.Series] | None = None,
+    precomputed_signal_seconds: float | None = None,
+    precomputed_symbols_processed: int | None = None,
+    precomputed_raw_signals_total: int | None = None,
+    feature_store: FeatureStore | None = None,
+    symbol_workers: int = 1,
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if optimized_evaluation_mode in {"optimized_evaluation_v1", "optimized_evaluation_v2", *SIGNAL_FIRST_MODES}:
+        return evaluate_candidate_optimized(
+            config=config,
+            candidate_id=candidate_id,
+            stage=stage,
+            symbol_frames=symbol_frames,
+            benchmark_prices=benchmark_prices,
+            train_end=train_end,
+            validation_start=validation_start,
+            validation_end=validation_end,
+            search_method=EXTERNAL_SEARCH_METHOD,
+            selection_split="validation",
+            min_selection_trades_per_year=100,
+            scoring_profile="strict_quality",
+            enable_safe_prefilter=enable_safe_prefilter,
+            enable_early_stopping=enable_early_stopping,
+            deadline=deadline,
+            precomputed_signals_by_symbol=precomputed_signals_by_symbol,
+            precomputed_signal_seconds=precomputed_signal_seconds,
+            precomputed_symbols_processed=precomputed_symbols_processed,
+            precomputed_raw_signals_total=precomputed_raw_signals_total,
+            feature_store=feature_store,
+            symbol_workers=symbol_workers,
+        )
+
+    start = time.perf_counter()
+    row, trades, yearly = evaluate_candidate(
+        config=config,
+        candidate_id=candidate_id,
+        stage=stage,
+        symbol_frames=symbol_frames,
+        benchmark_prices=benchmark_prices,
+        train_end=train_end,
+        validation_start=validation_start,
+        validation_end=validation_end,
+        search_method=EXTERNAL_SEARCH_METHOD,
+        selection_split="validation",
+        min_selection_trades_per_year=100,
+        scoring_profile="strict_quality",
+    )
+    diagnostic = {
+        "seconds_total": float(time.perf_counter() - start),
+        "seconds_feature_build": 0.0,
+        "seconds_signal": float("nan"),
+        "seconds_simulation": float("nan"),
+        "seconds_train": float("nan"),
+        "seconds_validation": float("nan"),
+        "symbols_total": int(len(symbol_frames)),
+        "symbols_processed": int(len(symbol_frames)),
+        "raw_signals_total": 0,
+        "trades_total": int(len(trades)),
+        "train_trades": int(row.get("train_trades", 0)),
+        "validation_trades": int(row.get("validation_trades", 0)),
+    }
+    return row, trades, yearly, diagnostic
 
 
 _NUMERIC_BOUNDS: dict[str, tuple[float, float, bool]] = {
@@ -2591,8 +6636,27 @@ def _load_symbol_frames(prices_path: Path) -> dict[str, pd.DataFrame]:
     if "symbol" not in prices.columns:
         raise ValueError(f"{prices_path} does not contain a symbol column")
     return {
-        str(symbol): group.reset_index(drop=True)
+        str(symbol): _prepare_ohlcv(group.reset_index(drop=True))
         for symbol, group in prices.groupby("symbol", sort=True)
+    }
+
+
+def _apply_symbol_bucket(
+    symbol_frames: dict[str, pd.DataFrame],
+    *,
+    symbol_bucket_index: int = 0,
+    symbol_bucket_count: int = 0,
+) -> dict[str, pd.DataFrame]:
+    bucket_count = max(int(symbol_bucket_count), 0)
+    bucket_index = max(int(symbol_bucket_index), 0)
+    if bucket_count <= 1:
+        return symbol_frames
+    if bucket_index >= bucket_count:
+        raise ValueError("symbol_bucket_index must be lower than symbol_bucket_count")
+    return {
+        symbol: frame
+        for position, (symbol, frame) in enumerate(sorted(symbol_frames.items()))
+        if position % bucket_count == bucket_index
     }
 
 
@@ -2627,7 +6691,7 @@ def run_stage(
         raise ValueError(f"unknown scoring_profile {scoring_profile!r}; expected one of {SCORING_PROFILES}")
     _families_for_set(family_set)
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
-    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+    benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
     rng = np.random.default_rng(int(seed) + int(stage) * 1009)
     seed_configs = _load_seed_configs(seed_rules_path, max_seeds=200)
     seed_share = float(np.clip(seed_mutation_share, 0.0, 0.95)) if seed_configs else 0.0
@@ -2809,10 +6873,21 @@ def build_stage_packs(
     lake_root = Path(lake_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _build_pack_log(
+        "start "
+        f"lake_root={lake_root} output_dir={output_dir} stage_count={stage_count} "
+        f"group_count={group_count} locked_start={locked_start} min_market_cap={min_market_cap}"
+    )
+    _build_pack_log("reading universe")
     all_symbols = _read_universe_symbols(lake_root)
+    _build_pack_log(f"universe_symbols={len(all_symbols)}")
+    _build_pack_log("filtering market cap")
     symbols = _filter_symbols_by_market_cap(lake_root, all_symbols, min_market_cap)
+    _build_pack_log(f"symbols_after_market_cap={len(symbols)}")
     normalized = lake_root / "normalized"
+    _build_pack_log("loading benchmark")
     benchmark = _load_benchmark(lake_root, locked_start)
+    _build_pack_log(f"benchmark_rows={len(benchmark)}")
     effective_group_count = max(int(group_count), 1)
     grouped: dict[int, list[str]] = {group: [] for group in range(effective_group_count)}
     for idx, symbol in enumerate(symbols):
@@ -2820,21 +6895,33 @@ def build_stage_packs(
 
     def build_group_prices(group_index: int) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
-        for symbol in grouped[group_index]:
+        group_symbols = grouped[group_index]
+        _build_pack_log(f"group={group_index} read_symbols={len(group_symbols)}")
+        for symbol_index, symbol in enumerate(group_symbols, start=1):
             path = normalized / f"{symbol}.parquet"
             if not path.exists():
+                _build_pack_log(f"group={group_index} missing_symbol={symbol}", verbose=True)
                 continue
             try:
-                frame = _prepare_ohlcv(pd.read_parquet(path))
+                _build_pack_log(
+                    f"group={group_index} read_symbol={symbol_index}/{len(group_symbols)} symbol={symbol}",
+                    verbose=True,
+                )
+                frame = _prepare_pack_prices_before_locked(
+                    pd.read_parquet(path),
+                    symbol=symbol,
+                    locked_start=locked_start,
+                )
             except Exception:
+                _build_pack_log(f"group={group_index} skip_symbol={symbol}", verbose=True)
                 continue
-            frame = frame[frame.index < _dt(locked_start)].copy()
             if len(frame) < min_rows:
                 continue
-            frame["symbol"] = symbol
-            frames.append(frame.reset_index(drop=True)[PRICE_COLUMNS])
+            frames.append(frame[PRICE_COLUMNS])
         if frames:
+            _build_pack_log(f"group={group_index} concat_frames={len(frames)}")
             return pd.concat(frames, ignore_index=True, sort=False)
+        _build_pack_log(f"group={group_index} empty")
         return pd.DataFrame(columns=PRICE_COLUMNS)
 
     stage_rows: list[dict[str, Any]] = []
@@ -2844,7 +6931,9 @@ def build_stage_packs(
             group_dir = output_dir / f"group-{group_index:03d}"
             group_dir.mkdir(parents=True, exist_ok=True)
             prices = build_group_prices(group_index)
+            _build_pack_log(f"group={group_index} write_prices rows={len(prices)}")
             prices.to_parquet(group_dir / "prices.parquet", index=False)
+            _build_pack_log(f"group={group_index} write_benchmark")
             benchmark.to_parquet(group_dir / "benchmark.parquet", index=False)
             group_stats[group_index] = {
                 "symbols": int(prices["symbol"].nunique()) if not prices.empty else 0,
@@ -2866,7 +6955,9 @@ def build_stage_packs(
             stage_dir = output_dir / f"stage-{stage:03d}"
             stage_dir.mkdir(parents=True, exist_ok=True)
             prices = build_group_prices(0)
+            _build_pack_log(f"stage={stage} write_prices rows={len(prices)}")
             prices.to_parquet(stage_dir / "prices.parquet", index=False)
+            _build_pack_log(f"stage={stage} write_benchmark")
             benchmark.to_parquet(stage_dir / "benchmark.parquet", index=False)
             stage_rows.append(
                 {
@@ -2891,6 +6982,7 @@ def build_stage_packs(
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     pd.DataFrame(stage_rows).to_csv(output_dir / "manifest.csv", index=False)
+    _build_pack_log("complete")
     return manifest
 
 
@@ -2958,6 +7050,38 @@ def merge_stage_outputs(stage_dirs: Iterable[Path], output_dir: Path, *, top_n: 
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+    long_hold_quality = leaderboard.copy()
+    if not long_hold_quality.empty and "long_hold_quality_score" in long_hold_quality.columns:
+        long_hold_quality["_long_hold_quality_score_numeric"] = pd.to_numeric(
+            long_hold_quality["long_hold_quality_score"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        long_hold_quality = long_hold_quality.sort_values(
+            ["_long_hold_quality_score_numeric", "candidate_id"],
+            ascending=[False, True],
+        ).drop(columns=["_long_hold_quality_score_numeric"])
+    long_hold_quality.to_csv(output_dir / "long_hold_quality_leaderboard.csv", index=False)
+    long_hold_adjusted_holding_ge25 = leaderboard.copy()
+    if not long_hold_adjusted_holding_ge25.empty:
+        if "validation_avg_holding_days" not in long_hold_adjusted_holding_ge25.columns:
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"] = np.nan
+        holding_numeric = pd.to_numeric(
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"],
+            errors="coerce",
+        )
+        long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.loc[holding_numeric >= 25.0].copy()
+        if not long_hold_adjusted_holding_ge25.empty:
+            if "adjusted_return_time_risk" not in long_hold_adjusted_holding_ge25.columns:
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"] = np.nan
+            long_hold_adjusted_holding_ge25["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"],
+                errors="coerce",
+            ).fillna(float("-inf"))
+            long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.sort_values(
+                ["_adjusted_return_time_risk_numeric", "candidate_id"],
+                ascending=[False, True],
+            ).drop(columns=["_adjusted_return_time_risk_numeric"])
+    long_hold_adjusted_holding_ge25.to_csv(output_dir / "long_hold_adjusted_holding_ge25.csv", index=False)
     if not leaderboard.empty and "family" in leaderboard.columns:
         family = (
             leaderboard.groupby("family", dropna=False)
@@ -3084,7 +7208,7 @@ def reevaluate_global_candidates(
     )
     pack_dir = pack_root / "stage-000"
     symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
-    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+    benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
 
     ordered_ids = [
         str(value)
@@ -3200,12 +7324,12 @@ def _external_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         "strategy_id": str(payload.get("strategy_id", "")),
         "shard_id": int(payload.get("shard_id", -1)),
         "slot_in_shard": int(payload.get("slot_in_shard", -1)),
-        "concept_id": str(payload.get("concept_id", "")),
-        "market_overlay_id": str(payload.get("market_overlay_id", "")),
+        "concept_id": str(payload.get("concept_id") or payload.get("concept") or ""),
+        "market_overlay_id": str(payload.get("market_overlay_id") or payload.get("market_profile_id") or ""),
         "trend_profile_id": str(payload.get("trend_profile_id", "")),
-        "rs_profile_id": str(payload.get("rs_profile_id", "")),
+        "rs_profile_id": str(payload.get("rs_profile_id") or payload.get("relative_strength_profile_id") or ""),
         "exit_profile_id": str(payload.get("exit_profile_id", "")),
-        "aggression_id": str(payload.get("aggression_id", "")),
+        "aggression_id": str(payload.get("aggression_id") or payload.get("entry_profile_id") or ""),
         "source_quality_score": _finite_float(payload.get("source_quality_score"), default=float("nan")),
         "external_strategy_pack": True,
     }
@@ -3218,25 +7342,154 @@ def run_external_strategy_pack_shard(
     output_dir: Path,
     prebuilt_pack_dir: Path | None = None,
     external_strategy_shard_id: int,
+    external_strategy_offset: int = 0,
     external_strategy_limit: int = 200,
     external_strategy_format: str = "auto",
     external_strategy_fail_on_unsupported: bool = False,
+    candidate_timeout_seconds: int = DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS,
     min_market_cap: float = 2_000_000_000,
     locked_start: str = DEFAULT_LOCKED_START,
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
+    optimized_evaluation_mode: str = "optimized_evaluation_v2",
+    enable_feature_cache: bool = True,
+    enable_dedupe: bool = True,
+    enable_safe_prefilter: bool = True,
+    enable_early_stopping: bool = True,
+    enable_cost_scheduling: bool = True,
+    job_wall_clock_seconds: int = 300,
+    schedule_active_jobs: int = 0,
+    schedule_subgroup_index: int = 0,
+    schedule_subgroup_count: int = 0,
+    symbol_bucket_index: int = 0,
+    symbol_bucket_count: int = 0,
+    test_max_signal_groups: int = 0,
+    signal_first_phase: str = "combined",
+    signal_events_dir: Path | None = None,
 ) -> dict[str, Any]:
+    job_start = time.perf_counter()
+    job_deadline = _effective_job_deadline(
+        optimized_evaluation_mode=optimized_evaluation_mode,
+        job_start=job_start,
+        job_wall_clock_seconds=job_wall_clock_seconds,
+    )
     shard = int(external_strategy_shard_id)
     shard_padded = f"{shard:03d}"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    candidates = load_external_strategy_candidates(
-        external_strategy_pack_path,
-        shard_id=shard,
-        limit=external_strategy_limit,
-        strategy_format=external_strategy_format,
+    output_name = output_dir.name
+    output_prefix = "job" if output_name.startswith("job-") else "shard"
+    output_padded = output_name.split("-", 1)[1] if output_prefix == "job" and "-" in output_name else shard_padded
+    file_suffix = f"{output_prefix}_{output_padded}"
+    job_index_for_balancing: int | None = None
+    if output_prefix == "job" and str(output_padded).isdigit():
+        job_index_for_balancing = int(output_padded)
+    use_zero_timeout = _is_zero_timeout_mode(str(optimized_evaluation_mode))
+    use_event_first = _is_event_first_mode(str(optimized_evaluation_mode))
+    use_v3_signal_first = str(optimized_evaluation_mode) in SIGNAL_FIRST_MODES
+    signal_first_phase = str(signal_first_phase or "combined").strip().lower()
+    if signal_first_phase not in {"combined", "signals", "exits"}:
+        raise ValueError("signal_first_phase must be one of: combined, signals, exits")
+    if not use_v3_signal_first:
+        signal_first_phase = "combined"
+    schedule_subgroup_count = max(int(schedule_subgroup_count), 0)
+    schedule_subgroup_index = max(int(schedule_subgroup_index), 0)
+    if schedule_subgroup_count <= 1:
+        schedule_subgroup_count = 0
+        schedule_subgroup_index = 0
+    elif schedule_subgroup_index >= schedule_subgroup_count:
+        raise ValueError("schedule_subgroup_index must be lower than schedule_subgroup_count")
+    symbol_bucket_count = max(int(symbol_bucket_count), 0)
+    symbol_bucket_index = max(int(symbol_bucket_index), 0)
+    if symbol_bucket_count <= 1:
+        symbol_bucket_count = 0
+        symbol_bucket_index = 0
+    elif symbol_bucket_index >= symbol_bucket_count:
+        raise ValueError("symbol_bucket_index must be lower than symbol_bucket_count")
+
+    signal_events_dir = Path(signal_events_dir) if signal_events_dir is not None else output_dir
+    selected_signal_groups: list[list[ExternalStrategyCandidate]] | None = None
+    signal_ready_records: list[dict[str, Any]] = []
+    signal_phase_summary: dict[str, Any] = {}
+    total_signal_groups_for_schedule = 0
+    use_v2_global_schedule = (
+        str(optimized_evaluation_mode) == "optimized_evaluation_v2"
+        and bool(enable_cost_scheduling)
+        and job_index_for_balancing is not None
     )
+    use_v3_global_schedule = use_v3_signal_first and bool(enable_cost_scheduling) and job_index_for_balancing is not None
+    if use_v3_signal_first and signal_first_phase == "exits":
+        ready_path = _signal_ready_groups_path(signal_events_dir, file_suffix)
+        signal_ready_records = _load_signal_ready_groups(ready_path)
+        selected_signal_groups = []
+        for record in signal_ready_records:
+            group_candidates = [
+                external_strategy_to_config(dict(payload))
+                for payload in record.get("strategies", [])
+            ]
+            if group_candidates:
+                selected_signal_groups.append(group_candidates)
+        candidates = [candidate for group in selected_signal_groups for candidate in group]
+        total_signal_groups_for_schedule = int(len(selected_signal_groups))
+        summary_path = _summary_path_for_suffix(signal_events_dir, file_suffix)
+        if summary_path.exists():
+            signal_phase_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        print(
+            "[gtbi] job "
+            f"{output_padded} using optimized_evaluation_v3_signal_first exit phase "
+            f"ready_signal_groups={len(selected_signal_groups)} candidates={len(candidates)} "
+            f"signal_events_dir={signal_events_dir}",
+            flush=True,
+        )
+    elif use_v3_global_schedule:
+        selected_signal_groups, balanced_total_jobs, total_signal_groups_for_schedule = _balanced_external_signal_groups_for_job(
+            external_strategy_pack_path,
+            job_index=int(job_index_for_balancing or 0),
+            signal_groups_per_job=external_strategy_limit,
+            schedule_active_jobs=schedule_active_jobs if int(schedule_active_jobs) > 0 else None,
+            max_signal_groups=test_max_signal_groups if int(test_max_signal_groups) > 0 else None,
+            strategy_format=external_strategy_format,
+            optimized_evaluation_mode=str(optimized_evaluation_mode),
+        )
+        selected_signal_groups = _apply_schedule_subgroup(
+            selected_signal_groups,
+            schedule_subgroup_index=schedule_subgroup_index,
+            schedule_subgroup_count=schedule_subgroup_count,
+        )
+        candidates = [candidate for group in selected_signal_groups for candidate in group]
+        print(
+            "[gtbi] job "
+            f"{output_padded} using optimized_evaluation_v3_signal_first signal schedule "
+            f"total_jobs={balanced_total_jobs} total_signal_groups={total_signal_groups_for_schedule} "
+            f"active_jobs={schedule_active_jobs} signal_groups={len(selected_signal_groups)} "
+            f"schedule_subgroup={schedule_subgroup_index}/{schedule_subgroup_count or 1} "
+            f"candidates={len(candidates)}",
+            flush=True,
+        )
+    elif use_v2_global_schedule:
+        candidates, balanced_total_jobs = _balanced_external_strategy_candidates_for_job(
+            external_strategy_pack_path,
+            job_index=int(job_index_for_balancing or 0),
+            candidate_count_per_job=external_strategy_limit,
+            schedule_active_jobs=schedule_active_jobs if int(schedule_active_jobs) > 0 else None,
+            strategy_format=external_strategy_format,
+            optimized_evaluation_mode=str(optimized_evaluation_mode),
+        )
+        print(
+            "[gtbi] job "
+            f"{output_padded} using optimized_evaluation_v2 balanced schedule "
+            f"total_jobs={balanced_total_jobs} active_jobs={schedule_active_jobs} candidates={len(candidates)}",
+            flush=True,
+        )
+    else:
+        candidates = load_external_strategy_candidates(
+            external_strategy_pack_path,
+            shard_id=shard,
+            offset=external_strategy_offset,
+            limit=external_strategy_limit,
+            strategy_format=external_strategy_format,
+        )
     unsupported_rows: list[dict[str, Any]] = []
     if any(candidate.unsupported_rules for candidate in candidates):
         for candidate in candidates:
@@ -3252,10 +7505,26 @@ def run_external_strategy_pack_shard(
                     }
                 )
         if external_strategy_fail_on_unsupported:
-            pd.DataFrame(unsupported_rows).to_csv(output_dir / f"unsupported_strategies_shard_{shard_padded}.csv", index=False)
+            pd.DataFrame(unsupported_rows).to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
             raise ValueError(f"{len(unsupported_rows)} unsupported external strategies in shard {shard_padded}")
 
     evaluable = [candidate for candidate in candidates if not candidate.unsupported_rules]
+    if enable_cost_scheduling and not use_v2_global_schedule:
+        evaluable = sorted(
+            evaluable,
+            key=lambda item: _estimated_cost_score(
+                item.payload,
+                optimized_evaluation_mode=str(optimized_evaluation_mode),
+            )[0],
+        )
+    signal_group_size_by_hash: dict[str, int] = {}
+    exit_group_size_by_key: dict[tuple[str, str], int] = {}
+    for candidate in evaluable:
+        candidate_signal_hash = signal_external_strategy_hash(candidate)
+        candidate_exit_hash = exit_external_strategy_hash(candidate)
+        signal_group_size_by_hash[candidate_signal_hash] = signal_group_size_by_hash.get(candidate_signal_hash, 0) + 1
+        key = (candidate_signal_hash, candidate_exit_hash)
+        exit_group_size_by_key[key] = exit_group_size_by_key.get(key, 0) + 1
     if prebuilt_pack_dir is None:
         pack_root = output_dir / "_external_pack_data"
         build_stage_packs(
@@ -3273,48 +7542,1140 @@ def run_external_strategy_pack_shard(
         missing = [name for name in ("prices.parquet", "benchmark.parquet") if not (pack_dir / name).exists()]
         if missing:
             raise FileNotFoundError(f"prebuilt external pack is missing: {', '.join(missing)}")
-    symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
-    benchmark = pd.read_parquet(pack_dir / "benchmark.parquet")
+    loaded_symbol_frames = _load_symbol_frames(pack_dir / "prices.parquet")
+    loaded_symbol_count = int(len(loaded_symbol_frames))
+    symbol_frames = _apply_symbol_bucket(
+        loaded_symbol_frames,
+        symbol_bucket_index=symbol_bucket_index,
+        symbol_bucket_count=symbol_bucket_count,
+    )
+    benchmark = _prepare_ohlcv(pd.read_parquet(pack_dir / "benchmark.parquet"))
+    prewarm_feature_cache = str(optimized_evaluation_mode) not in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES}
+    feature_store = build_feature_store(
+        symbol_frames,
+        benchmark,
+        enabled=enable_feature_cache,
+        prewarm=prewarm_feature_cache,
+    )
+    symbol_workers = _configured_symbol_workers()
+    if use_v3_signal_first and not use_event_first and job_wall_clock_seconds and float(job_wall_clock_seconds) > 0:
+        job_deadline = time.perf_counter() + float(job_wall_clock_seconds)
+    print(
+        "[gtbi] job "
+        f"{output_padded} loaded {len(candidates)} candidates "
+        f"({len(evaluable)} evaluable), symbols={len(symbol_frames)}/{loaded_symbol_count}, "
+        f"symbol_bucket={symbol_bucket_index}/{symbol_bucket_count or 1}, "
+        f"feature_cache={bool(feature_store.enabled)}",
+        flush=True,
+    )
 
     rows: list[dict[str, Any]] = []
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
     rules: list[dict[str, Any]] = []
-    failed_rows: list[dict[str, Any]] = []
-    for candidate in evaluable:
+    timeout_rows: list[dict[str, Any]] = []
+    slow_deferred_rows: list[dict[str, Any]] = []
+    early_reject_rows: list[dict[str, Any]] = []
+    runtime_error_rows: list[dict[str, Any]] = []
+    timing_rows: list[dict[str, Any]] = []
+    dedupe_rows: list[dict[str, Any]] = []
+    job_manifest_rows: list[dict[str, Any]] = []
+    slow_queue_rows: list[dict[str, Any]] = []
+    signal_group_manifest_rows: list[dict[str, Any]] = []
+    strategy_to_signal_rows: list[dict[str, Any]] = []
+    compiled_signal_plan_rows: list[dict[str, Any]] = []
+    event_store_manifest_rows: list[dict[str, Any]] = []
+    concept_precheck_rows: list[dict[str, Any]] = []
+    exit_group_manifest_rows: list[dict[str, Any]] = []
+    signal_group_seconds: list[float] = []
+    evaluation_cache: dict[str, tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
+    exit_evaluation_cache: dict[tuple[str, str], tuple[str, dict[str, Any], pd.DataFrame, pd.DataFrame, dict[str, Any]]] = {}
+    signal_evaluation_cache: dict[str, tuple[str, dict[str, pd.Series], dict[str, Any]]] = {}
+    signal_events_to_write: dict[str, dict[str, pd.Series]] = {}
+    ready_group_records_to_write: list[dict[str, Any]] = []
+    signal_groups_loaded = 0
+    signal_groups_evaluated = 0
+    signal_groups_early_rejected = 0
+    signal_groups_timed_out = 0
+    signal_groups_slow_deferred = 0
+    if use_v3_signal_first and signal_first_phase == "exits":
+        source_suffix = file_suffix
+        unsupported_rows.extend(_csv_records_or_empty(signal_events_dir / f"unsupported_strategies_{source_suffix}.csv"))
+        timeout_rows.extend(_csv_records_or_empty(signal_events_dir / f"timeout_strategies_{source_suffix}.csv"))
+        slow_deferred_rows.extend(_csv_records_or_empty(signal_events_dir / f"slow_deferred_strategies_{source_suffix}.csv"))
+        early_reject_rows.extend(_csv_records_or_empty(signal_events_dir / f"early_rejected_strategies_{source_suffix}.csv"))
+        runtime_error_rows.extend(_csv_records_or_empty(signal_events_dir / f"runtime_errors_{source_suffix}.csv"))
+        timing_rows.extend(_csv_records_or_empty(signal_events_dir / f"timing_diagnostics_{source_suffix}.csv"))
+        dedupe_rows.extend(_csv_records_or_empty(signal_events_dir / f"dedupe_map_{source_suffix}.csv"))
+        job_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"job_manifest_{source_suffix}.csv"))
+        slow_queue_rows.extend(_csv_records_or_empty(signal_events_dir / f"slow_queue_manifest_{source_suffix}.csv"))
+        signal_group_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"signal_group_manifest_{source_suffix}.csv"))
+        strategy_to_signal_rows.extend(_csv_records_or_empty(signal_events_dir / f"strategy_to_signal_map_{source_suffix}.csv"))
+        compiled_signal_plan_rows.extend(_csv_records_or_empty(signal_events_dir / f"compiled_signal_plan_{source_suffix}.csv"))
+        event_store_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"event_store_manifest_{source_suffix}.csv"))
+        concept_precheck_rows.extend(_csv_records_or_empty(signal_events_dir / f"concept_precheck_diagnostics_{source_suffix}.csv"))
+        exit_group_manifest_rows.extend(_csv_records_or_empty(signal_events_dir / f"exit_group_manifest_{source_suffix}.csv"))
+        signal_group_seconds = [
+            float(row.get("seconds_signal", 0.0))
+            for row in signal_group_manifest_rows
+            if math.isfinite(_finite_float(row.get("seconds_signal"), default=float("nan")))
+        ]
+        loaded_signal_events = _load_compact_signal_events(
+            _signal_events_npz_path(signal_events_dir, file_suffix),
+            symbol_frames=symbol_frames,
+        )
+        diagnostics_by_hash = {
+            str(record.get("signal_hash")): dict(record.get("signal_diagnostic", {}))
+            for record in signal_ready_records
+        }
+        canonical_by_hash = {
+            str(record.get("signal_hash")): str(record.get("canonical_strategy_id", ""))
+            for record in signal_ready_records
+        }
+        for signal_hash, signals_by_symbol in loaded_signal_events.items():
+            signal_evaluation_cache[str(signal_hash)] = (
+                canonical_by_hash.get(str(signal_hash), ""),
+                signals_by_symbol,
+                diagnostics_by_hash.get(str(signal_hash), {}),
+            )
+        signal_groups_loaded = int(signal_phase_summary.get("signal_groups_loaded", len(signal_group_manifest_rows)))
+        signal_groups_evaluated = int(
+            signal_phase_summary.get(
+                "signal_groups_evaluated",
+                sum(1 for row in signal_group_manifest_rows if str(row.get("result_status")) in {"signal_ready", "signal_early_rejected"}),
+            )
+        )
+        signal_groups_early_rejected = int(
+            signal_phase_summary.get(
+                "signal_groups_early_rejected",
+                sum(1 for row in signal_group_manifest_rows if str(row.get("result_status")) == "signal_early_rejected"),
+            )
+        )
+        signal_groups_timed_out = int(
+            signal_phase_summary.get(
+                "signal_groups_timed_out",
+                sum(1 for row in signal_group_manifest_rows if str(row.get("result_status")) == "signal_timeout"),
+            )
+        )
+        signal_groups_slow_deferred = int(
+            signal_phase_summary.get(
+                "signal_groups_slow_deferred",
+                sum(1 for row in signal_group_manifest_rows if str(row.get("result_status")) == "signal_slow_deferred"),
+            )
+        )
+    for candidate in candidates:
+        if not candidate.unsupported_rules:
+            continue
+        payload = candidate.payload
+        diagnostic = _external_diagnostic_base(payload, job_id=output_padded)
+        timing_rows.append(
+            {
+                **diagnostic,
+                "seconds_total": 0.0,
+                "seconds_feature_build": 0.0,
+                "seconds_signal": 0.0,
+                "seconds_simulation": 0.0,
+                "seconds_train": 0.0,
+                "seconds_validation": 0.0,
+                "symbols_total": int(len(symbol_frames)),
+                "symbols_processed": 0,
+                "raw_signals_total": 0,
+                "trades_total": 0,
+                "train_trades": 0,
+                "validation_trades": 0,
+                "result_status": "unsupported",
+                "reject_reason": "unsupported_or_missing_external_rule",
+                "timeout": False,
+                "early_rejected": False,
+                "runtime_error": False,
+            }
+        )
+
+    signal_first_skipped_strategy_ids: set[str] = set()
+    if use_v3_signal_first and signal_first_phase != "exits":
+        signal_groups = (
+            selected_signal_groups
+            if selected_signal_groups is not None
+            else _group_external_candidates_by_signal(
+                evaluable,
+                optimized_evaluation_mode=str(optimized_evaluation_mode),
+            )
+        )
+        signal_groups_loaded = int(len(signal_groups))
+        reserve_remaining_job_for_exit = False
+        for group in signal_groups:
+            if not group:
+                continue
+            first_candidate = group[0]
+            first_payload = first_candidate.payload
+            first_id = str(first_payload.get("strategy_id"))
+            signal_hash = signal_external_strategy_hash(first_candidate)
+            cost_pairs = [
+                _estimated_cost_score(
+                    candidate.payload,
+                    optimized_evaluation_mode=str(optimized_evaluation_mode),
+                )
+                for candidate in group
+            ]
+            cost_score = max(float(score) for score, _bucket in cost_pairs)
+            cost_bucket = "very_slow" if any(bucket == "very_slow" for _score, bucket in cost_pairs) else (
+                "slow" if any(bucket == "slow" for _score, bucket in cost_pairs) else (
+                    "normal" if any(bucket == "normal" for _score, bucket in cost_pairs) else "fast"
+                )
+            )
+            diagnostic_base = _external_diagnostic_base(
+                first_payload,
+                job_id=output_padded,
+                canonical_hash=canonical_external_strategy_hash(first_candidate),
+            )
+            strategy_ids = [str(candidate.payload.get("strategy_id")) for candidate in group]
+            for candidate in group:
+                payload = candidate.payload
+                canonical_hash = canonical_external_strategy_hash(candidate)
+                signal_hash_for_candidate = signal_external_strategy_hash(candidate)
+                candidate_id = str(payload.get("strategy_id"))
+                cost, bucket = _estimated_cost_score(
+                    payload,
+                    optimized_evaluation_mode=str(optimized_evaluation_mode),
+                )
+                job_manifest_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "strategy_id": candidate_id,
+                        "shard_id": payload.get("shard_id"),
+                        "slot_in_shard": payload.get("slot_in_shard"),
+                        "canonical_hash": canonical_hash,
+                        "signal_hash": signal_hash_for_candidate,
+                        "cost_score": float(cost),
+                        "estimated_cost_bucket": bucket,
+                    }
+                )
+                strategy_to_signal_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "strategy_id": candidate_id,
+                        "signal_hash": signal_hash_for_candidate,
+                        "canonical_strategy_id": first_id,
+                        "shard_id": payload.get("shard_id"),
+                        "slot_in_shard": payload.get("slot_in_shard"),
+                        "exit_rule": _external_diagnostic_base(payload, job_id=output_padded).get("exit_rule", ""),
+                        "aggressiveness": _external_diagnostic_base(payload, job_id=output_padded).get("aggressiveness", ""),
+                        "market_overlay": _external_diagnostic_base(payload, job_id=output_padded).get("market_overlay", ""),
+                        "trend_filter": _external_diagnostic_base(payload, job_id=output_padded).get("trend_filter", ""),
+                        "relative_strength_filter": _external_diagnostic_base(payload, job_id=output_padded).get("relative_strength_filter", ""),
+                    }
+            )
+            group_start = time.perf_counter()
+            try:
+                if reserve_remaining_job_for_exit:
+                    if use_zero_timeout and not use_event_first:
+                        signal_groups_slow_deferred += 1
+                        reason = "insufficient_job_budget"
+                        _append_signal_group_slow_deferred_result(
+                            slow_deferred_rows=slow_deferred_rows,
+                            slow_queue_rows=slow_queue_rows,
+                            dedupe_rows=dedupe_rows,
+                            timing_rows=timing_rows,
+                            signal_group_manifest_rows=signal_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            first_id=first_id,
+                            strategy_ids=strategy_ids,
+                            diagnostic_base=diagnostic_base,
+                            cost_score=cost_score,
+                            reason=reason,
+                            seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                            symbols_total=len(symbol_frames),
+                            symbols_processed=0,
+                        )
+                    else:
+                        signal_groups_timed_out += 1
+                        reason = "CandidateEvaluationTimeout('job wall clock budget reserved for exit simulation after signal group ready')"
+                        _append_signal_group_timeout_result(
+                            timeout_rows=timeout_rows,
+                            dedupe_rows=dedupe_rows,
+                            timing_rows=timing_rows,
+                            signal_group_manifest_rows=signal_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            first_id=first_id,
+                            strategy_ids=strategy_ids,
+                            diagnostic_base=diagnostic_base,
+                            cost_score=cost_score,
+                            reason=reason,
+                            seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                            symbols_total=len(symbol_frames),
+                            symbols_processed=0,
+                        )
+                    for candidate in group:
+                        signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                    continue
+                candidate_deadlines: list[float] = []
+                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                    candidate_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
+                if job_deadline is not None:
+                    job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
+                    if job_safe_deadline <= time.perf_counter():
+                        if use_zero_timeout and not use_event_first:
+                            signal_groups_slow_deferred += 1
+                            reason = "insufficient_job_budget"
+                            _append_signal_group_slow_deferred_result(
+                                slow_deferred_rows=slow_deferred_rows,
+                                slow_queue_rows=slow_queue_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=reason,
+                                seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=0,
+                            )
+                        else:
+                            signal_groups_timed_out += 1
+                            reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before signal group start')"
+                            _append_signal_group_timeout_result(
+                                timeout_rows=timeout_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=reason,
+                                seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=0,
+                            )
+                        for candidate in group:
+                            signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                        continue
+                    candidate_deadlines.append(job_safe_deadline)
+                if use_zero_timeout:
+                    allow_slow_queue_evaluation = (
+                        int(external_strategy_limit) <= 1
+                        and float(candidate_timeout_seconds) >= 1800.0
+                        and float(job_wall_clock_seconds) >= 1800.0
+                    )
+                    precheck_deadline = min(candidate_deadlines) if candidate_deadlines else None
+                    precheck_reject, precheck_validation_total, precheck_symbols, precheck_raw_total, precheck_seconds = (
+                        _specific_slow_concept_precheck(
+                            payload=first_payload,
+                            config=first_candidate.config,
+                            symbol_frames=symbol_frames,
+                            validation_start=validation_start,
+                            validation_end=validation_end,
+                            deadline=precheck_deadline,
+                            optimized_evaluation_mode=str(optimized_evaluation_mode),
+                        )
+                    )
+                    if precheck_reject is not None:
+                        action = str(precheck_reject.get("action", "early_reject"))
+                        if action == "slow_deferred" and not use_event_first:
+                            signal_groups_slow_deferred += 1
+                            _append_signal_group_slow_deferred_result(
+                                slow_deferred_rows=slow_deferred_rows,
+                                slow_queue_rows=slow_queue_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=str(precheck_reject.get("reason", "needs_slow_queue")),
+                                seconds_total=precheck_seconds,
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=precheck_symbols,
+                            )
+                        elif action == "slow_deferred":
+                            signal_groups_timed_out += 1
+                            _append_signal_group_timeout_result(
+                                timeout_rows=timeout_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reason=str(precheck_reject.get("reason", "event_first_precheck_deadline_exceeded")),
+                                seconds_total=precheck_seconds,
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=precheck_symbols,
+                            )
+                        else:
+                            signal_groups_early_rejected += 1
+                            if use_event_first:
+                                precheck_diagnostic = {
+                                    "raw_signals_total": precheck_raw_total,
+                                    "symbols_processed": precheck_symbols,
+                                    "symbols_with_events": precheck_symbols,
+                                    "seconds_signal": precheck_seconds,
+                                }
+                                _append_event_first_signal_artifacts(
+                                    compiled_signal_plan_rows=compiled_signal_plan_rows,
+                                    event_store_manifest_rows=event_store_manifest_rows,
+                                    group=group,
+                                    output_padded=output_padded,
+                                    signal_hash=signal_hash,
+                                    first_id=first_id,
+                                    strategy_ids=strategy_ids,
+                                    diagnostic_base=diagnostic_base,
+                                    signal_diagnostic=precheck_diagnostic,
+                                    locked_start=locked_start,
+                                    validation_end=validation_end,
+                                )
+                                _append_event_first_precheck_diagnostics(
+                                    concept_precheck_rows=concept_precheck_rows,
+                                    group=group,
+                                    output_padded=output_padded,
+                                    signal_hash=signal_hash,
+                                    concept=str(diagnostic_base.get("concept", "")),
+                                    reject=precheck_reject,
+                                    validation_signal_total=precheck_validation_total,
+                                    validation_year_count=_dt(validation_end).year - _dt(validation_start).year + 1,
+                                )
+                                _append_event_first_exit_group_artifacts(
+                                    exit_group_manifest_rows=exit_group_manifest_rows,
+                                    group=group,
+                                    output_padded=output_padded,
+                                    signal_hash=signal_hash,
+                                    result_status="signal_early_rejected",
+                                )
+                            _append_signal_group_early_rejected_result(
+                                early_reject_rows=early_reject_rows,
+                                dedupe_rows=dedupe_rows,
+                                timing_rows=timing_rows,
+                                signal_group_manifest_rows=signal_group_manifest_rows,
+                                group=group,
+                                output_padded=output_padded,
+                                signal_hash=signal_hash,
+                                first_id=first_id,
+                                strategy_ids=strategy_ids,
+                                diagnostic_base=diagnostic_base,
+                                cost_score=cost_score,
+                                reject=precheck_reject,
+                                validation_signal_total=precheck_validation_total,
+                                seconds_total=precheck_seconds,
+                                seconds_signal=precheck_seconds,
+                                symbols_total=len(symbol_frames),
+                                symbols_processed=precheck_symbols,
+                                raw_signals_total=precheck_raw_total,
+                            )
+                        for candidate in group:
+                            signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                        continue
+                    defer_reason = _zero_timeout_defer_reason(
+                        payload=first_payload,
+                        cost_score=cost_score,
+                        cost_bucket=cost_bucket,
+                        optimized_evaluation_mode=str(optimized_evaluation_mode),
+                        allow_slow_queue_evaluation=allow_slow_queue_evaluation,
+                    )
+                    if defer_reason is not None:
+                        signal_groups_slow_deferred += 1
+                        _append_signal_group_slow_deferred_result(
+                            slow_deferred_rows=slow_deferred_rows,
+                            slow_queue_rows=slow_queue_rows,
+                            dedupe_rows=dedupe_rows,
+                            timing_rows=timing_rows,
+                            signal_group_manifest_rows=signal_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            first_id=first_id,
+                            strategy_ids=strategy_ids,
+                            diagnostic_base=diagnostic_base,
+                            cost_score=cost_score,
+                            reason=defer_reason,
+                            seconds_total=max(0.0, float(time.perf_counter() - group_start)),
+                            symbols_total=len(symbol_frames),
+                            symbols_processed=0,
+                        )
+                        for candidate in group:
+                            signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                        continue
+                signal_deadline = min(candidate_deadlines) if candidate_deadlines else None
+                with _candidate_evaluation_heartbeat(f"job={output_padded} signal={signal_hash[:12]}"):
+                    signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
+                        config=first_candidate.config,
+                        candidate_id=first_id,
+                        symbol_frames=symbol_frames,
+                        benchmark_prices=benchmark,
+                        deadline=signal_deadline,
+                        feature_store=feature_store,
+                        max_workers=symbol_workers,
+                    )
+                print(
+                    f"[gtbi] signal_complete job={output_padded} candidate={first_id} "
+                    f"signal={signal_hash[:12]} symbols_processed={signal_diagnostic.get('symbols_processed')} "
+                    f"raw_signals={signal_diagnostic.get('raw_signals_total')} "
+                    f"seconds_signal={signal_diagnostic.get('seconds_signal')}",
+                    flush=True,
+                )
+                signal_groups_evaluated += 1
+                signal_seconds = float(signal_diagnostic.get("seconds_signal", time.perf_counter() - group_start))
+                signal_diagnostic.setdefault("symbols_with_events", _event_first_symbols_with_events(signals_by_symbol))
+                effective_signal_seconds = (
+                    signal_seconds / max(signal_group_size_by_hash.get(signal_hash, len(group)), 1)
+                    if use_event_first
+                    else signal_seconds
+                )
+                signal_group_seconds.append(float(effective_signal_seconds))
+                signal_evaluation_cache[signal_hash] = (first_id, signals_by_symbol, signal_diagnostic)
+                reject = None
+                validation_signal_total = 0
+                if enable_safe_prefilter or enable_early_stopping:
+                    print(
+                        f"[gtbi] safe_prefilter_start job={output_padded} candidate={first_id} "
+                        f"signal={signal_hash[:12]}",
+                        flush=True,
+                    )
+                    reject, validation_signal_total = _safe_prefilter_raw_signals(
+                        signals_by_symbol=signals_by_symbol,
+                        symbol_frames=symbol_frames,
+                        config=first_candidate.config,
+                        validation_start=validation_start,
+                        validation_end=validation_end,
+                    )
+                    print(
+                        f"[gtbi] safe_prefilter_done job={output_padded} candidate={first_id} "
+                        f"signal={signal_hash[:12]} reject={'' if reject is None else reject.get('reason')} "
+                        f"validation_signal_total={validation_signal_total}",
+                        flush=True,
+                    )
+                if use_event_first:
+                    _append_event_first_signal_artifacts(
+                        compiled_signal_plan_rows=compiled_signal_plan_rows,
+                        event_store_manifest_rows=event_store_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        signal_diagnostic=signal_diagnostic,
+                        locked_start=locked_start,
+                        validation_end=validation_end,
+                    )
+                    _append_event_first_precheck_diagnostics(
+                        concept_precheck_rows=concept_precheck_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        concept=str(diagnostic_base.get("concept", "")),
+                        reject=reject,
+                        validation_signal_total=validation_signal_total,
+                        validation_year_count=_dt(validation_end).year - _dt(validation_start).year + 1,
+                    )
+                if reject is not None:
+                    signal_groups_early_rejected += 1
+                    if use_event_first:
+                        _append_event_first_exit_group_artifacts(
+                            exit_group_manifest_rows=exit_group_manifest_rows,
+                            group=group,
+                            output_padded=output_padded,
+                            signal_hash=signal_hash,
+                            result_status="signal_early_rejected",
+                        )
+                    reason = str(reject["reason"])
+                    for index, candidate in enumerate(group):
+                        payload = candidate.payload
+                        candidate_id = str(payload.get("strategy_id"))
+                        canonical_hash = canonical_external_strategy_hash(candidate)
+                        signal_first_skipped_strategy_ids.add(candidate_id)
+                        early_reject_rows.append(
+                            {
+                                "strategy_id": candidate_id,
+                                "reason": reason,
+                                "split": str(reject.get("split", "")),
+                                "year": reject.get("year", ""),
+                                "actual": reject.get("actual", validation_signal_total),
+                                "threshold": reject.get("threshold", ""),
+                                "stage": str(reject.get("stage", "safe_prefilter")),
+                                "seconds_until_reject": float(time.perf_counter() - group_start),
+                                "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                            }
+                        )
+                        dedupe_rows.append(
+                            {
+                                "strategy_id": candidate_id,
+                                "canonical_hash": canonical_hash,
+                                "canonical_strategy_id": "",
+                                "deduped": False,
+                                "signal_hash": signal_hash,
+                                "signal_canonical_strategy_id": first_id,
+                                "signal_deduped": bool(index > 0),
+                            }
+                        )
+                        timing_rows.append(
+                            {
+                                **_external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash),
+                                "seconds_total": float(time.perf_counter() - group_start),
+                                "seconds_feature_build": 0.0,
+                                "seconds_signal": signal_seconds if index == 0 else 0.0,
+                                "seconds_simulation": 0.0,
+                                "seconds_train": 0.0,
+                                "seconds_validation": 0.0,
+                                "symbols_total": int(len(symbol_frames)),
+                                "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                                "raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                                "trades_total": 0,
+                                "train_trades": 0,
+                                "validation_trades": 0,
+                                "result_status": "signal_early_rejected",
+                                "reject_reason": reason,
+                                "timeout": False,
+                                "early_rejected": True,
+                                "runtime_error": False,
+                            }
+                        )
+                    signal_group_manifest_rows.append(
+                        {
+                            "job_id": output_padded,
+                            "signal_hash": signal_hash,
+                            "canonical_strategy_id": first_id,
+                            "strategy_count": int(len(group)),
+                            "strategy_ids": ";".join(strategy_ids),
+                            "family": diagnostic_base.get("family", ""),
+                            "concept": diagnostic_base.get("concept", ""),
+                            "market_overlay": diagnostic_base.get("market_overlay", ""),
+                            "trend_filter": diagnostic_base.get("trend_filter", ""),
+                            "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                            "estimated_cost": float(cost_score),
+                            "number_of_reuses": int(max(len(group) - 1, 0)),
+                            "result_status": "signal_early_rejected",
+                            "reject_reason": reason,
+                            "seconds_signal": signal_seconds,
+                            "raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                            "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                        }
+                    )
+                    continue
+                signal_group_manifest_rows.append(
+                    {
+                        "job_id": output_padded,
+                        "signal_hash": signal_hash,
+                        "canonical_strategy_id": first_id,
+                        "strategy_count": int(len(group)),
+                        "strategy_ids": ";".join(strategy_ids),
+                        "family": diagnostic_base.get("family", ""),
+                        "concept": diagnostic_base.get("concept", ""),
+                        "market_overlay": diagnostic_base.get("market_overlay", ""),
+                        "trend_filter": diagnostic_base.get("trend_filter", ""),
+                        "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                        "estimated_cost": float(cost_score),
+                        "number_of_reuses": int(max(len(group) - 1, 0)),
+                        "result_status": "signal_ready",
+                        "reject_reason": "",
+                        "seconds_signal": signal_seconds,
+                        "raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                        "symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                    }
+                )
+                if use_event_first:
+                    _append_event_first_exit_group_artifacts(
+                        exit_group_manifest_rows=exit_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        result_status="signal_ready",
+                    )
+                signal_events_to_write[signal_hash] = signals_by_symbol
+                ready_group_records_to_write.append(
+                    {
+                        "signal_hash": signal_hash,
+                        "canonical_strategy_id": first_id,
+                        "strategies": [candidate.payload for candidate in group],
+                        "signal_diagnostic": dict(signal_diagnostic),
+                    }
+                )
+                if signal_first_phase == "signals":
+                    for candidate in group:
+                        signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+                elif job_deadline is not None:
+                    reserve_remaining_job_for_exit = True
+            except CandidateEvaluationTimeout as exc:
+                seconds_total = float(time.perf_counter() - group_start)
+                if use_zero_timeout and not use_event_first:
+                    signal_groups_slow_deferred += 1
+                    _append_signal_group_slow_deferred_result(
+                        slow_deferred_rows=slow_deferred_rows,
+                        slow_queue_rows=slow_queue_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        signal_group_manifest_rows=signal_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        cost_score=cost_score,
+                        reason="needs_slow_queue",
+                        seconds_total=seconds_total,
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                    )
+                else:
+                    signal_groups_timed_out += 1
+                    _append_signal_group_timeout_result(
+                        timeout_rows=timeout_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        signal_group_manifest_rows=signal_group_manifest_rows,
+                        group=group,
+                        output_padded=output_padded,
+                        signal_hash=signal_hash,
+                        first_id=first_id,
+                        strategy_ids=strategy_ids,
+                        diagnostic_base=diagnostic_base,
+                        cost_score=cost_score,
+                        reason=repr(exc),
+                        seconds_total=seconds_total,
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                    )
+                for candidate in group:
+                    signal_first_skipped_strategy_ids.add(str(candidate.payload.get("strategy_id")))
+
+    candidate_loop_evaluable = [
+        candidate
+        for candidate in evaluable
+        if str(candidate.payload.get("strategy_id")) not in signal_first_skipped_strategy_ids
+    ]
+    for candidate in candidate_loop_evaluable:
         payload = candidate.payload
         candidate_id = str(payload.get("strategy_id"))
-        try:
-            row, trades, yearly = evaluate_candidate(
-                config=candidate.config,
-                candidate_id=candidate_id,
-                stage=shard,
-                symbol_frames=symbol_frames,
-                benchmark_prices=benchmark,
-                train_end=train_end,
-                validation_start=validation_start,
-                validation_end=validation_end,
-                search_method=EXTERNAL_SEARCH_METHOD,
-                selection_split="validation",
-                min_selection_trades_per_year=100,
-                scoring_profile="strict_quality",
+        canonical_hash = canonical_external_strategy_hash(candidate)
+        signal_hash = signal_external_strategy_hash(candidate)
+        exit_hash = exit_external_strategy_hash(candidate)
+        diagnostic_base = _external_diagnostic_base(payload, job_id=output_padded, canonical_hash=canonical_hash)
+        cost_score, cost_bucket = _estimated_cost_score(
+            payload,
+            optimized_evaluation_mode=str(optimized_evaluation_mode),
+        )
+        if not use_v3_signal_first:
+            job_manifest_rows.append(
+                {
+                    "job_id": output_padded,
+                    "strategy_id": candidate_id,
+                    "shard_id": payload.get("shard_id"),
+                    "slot_in_shard": payload.get("slot_in_shard"),
+                    "canonical_hash": canonical_hash,
+                    "signal_hash": signal_hash,
+                    "cost_score": float(cost_score),
+                    "estimated_cost_bucket": cost_bucket,
+                }
             )
+        candidate_start = time.perf_counter()
+        signal_deduped = False
+        signal_canonical_strategy_id = ""
+        if job_deadline is not None:
+            remaining_job_seconds = float(job_deadline - candidate_start)
+            if remaining_job_seconds <= JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS:
+                if use_zero_timeout and not use_event_first:
+                    reason = "insufficient_job_budget"
+                    _append_external_slow_deferred_result(
+                        slow_deferred_rows=slow_deferred_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        diagnostic_base=diagnostic_base,
+                        payload=payload,
+                        candidate_id=candidate_id,
+                        canonical_hash=canonical_hash,
+                        signal_hash=signal_hash,
+                        reason=reason,
+                        seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                        estimated_cost=cost_score,
+                        signal_canonical_strategy_id=signal_canonical_strategy_id,
+                        signal_deduped=signal_deduped,
+                    )
+                else:
+                    reason = "CandidateEvaluationTimeout('job wall clock budget exhausted before candidate start')"
+                    _append_external_timeout_result(
+                        timeout_rows=timeout_rows,
+                        dedupe_rows=dedupe_rows,
+                        timing_rows=timing_rows,
+                        diagnostic_base=diagnostic_base,
+                        payload=payload,
+                        candidate_id=candidate_id,
+                        canonical_hash=canonical_hash,
+                        signal_hash=signal_hash,
+                        reason=reason,
+                        seconds_total=max(0.0, float(time.perf_counter() - candidate_start)),
+                        symbols_total=len(symbol_frames),
+                        symbols_processed=0,
+                        signal_canonical_strategy_id=signal_canonical_strategy_id,
+                        signal_deduped=signal_deduped,
+                    )
+                print(
+                    "[gtbi] job "
+                    f"{output_padded} {'slow_deferred' if use_zero_timeout else 'deferred_timeout'} candidate={candidate_id} "
+                    f"reason={reason} "
+                    f"remaining_job_seconds={remaining_job_seconds:.2f}",
+                    flush=True,
+                )
+                continue
+        print(
+            "[gtbi] job "
+            f"{output_padded} start candidate={candidate_id} "
+            f"concept={diagnostic_base.get('concept', '')} "
+            f"exit={diagnostic_base.get('exit_rule', '')} "
+            f"cost_bucket={cost_bucket}",
+            flush=True,
+        )
+        try:
+            cached = evaluation_cache.get(canonical_hash) if enable_dedupe else None
+            if enable_dedupe and cached is None:
+                cached_signal = signal_evaluation_cache.get(signal_hash)
+                if cached_signal is not None:
+                    signal_canonical_strategy_id = str(cached_signal[0])
+                    signal_deduped = str(candidate_id) != signal_canonical_strategy_id
+                if use_v3_signal_first:
+                    cached = exit_evaluation_cache.get((signal_hash, exit_hash))
+            deduped = cached is not None
+            if not deduped:
+                heartbeat_label = f"job={output_padded} candidate={candidate_id}"
+                eval_kwargs = {
+                    "config": candidate.config,
+                    "candidate_id": candidate_id,
+                    "stage": shard,
+                    "symbol_frames": symbol_frames,
+                    "benchmark_prices": benchmark,
+                    "train_end": train_end,
+                    "validation_start": validation_start,
+                    "validation_end": validation_end,
+                    "optimized_evaluation_mode": optimized_evaluation_mode,
+                    "enable_safe_prefilter": enable_safe_prefilter,
+                    "enable_early_stopping": enable_early_stopping,
+                    "feature_store": feature_store,
+                    "symbol_workers": symbol_workers,
+                }
+                strategy_deadlines: list[float] = []
+                if candidate_timeout_seconds and float(candidate_timeout_seconds) > 0:
+                    strategy_deadlines.append(time.perf_counter() + float(candidate_timeout_seconds))
+                if job_deadline is not None:
+                    job_safe_deadline = job_deadline - JOB_WALL_CLOCK_SHUTDOWN_MARGIN_SECONDS
+                    if job_safe_deadline > time.perf_counter():
+                        strategy_deadlines.append(job_safe_deadline)
+                    else:
+                        strategy_deadlines.append(time.perf_counter())
+                eval_kwargs["deadline"] = min(strategy_deadlines) if strategy_deadlines else None
+                if str(optimized_evaluation_mode) in {"optimized_evaluation_v2", *SIGNAL_FIRST_MODES} and enable_dedupe:
+                    cached_signal = signal_evaluation_cache.get(signal_hash)
+                    if cached_signal is None:
+                        signal_heartbeat_label = f"job={output_padded} candidate={candidate_id} signal"
+                        with _candidate_evaluation_heartbeat(signal_heartbeat_label):
+                            signals_by_symbol, signal_diagnostic = _build_signals_by_symbol(
+                                config=candidate.config,
+                                candidate_id=candidate_id,
+                                symbol_frames=symbol_frames,
+                                benchmark_prices=benchmark,
+                                deadline=eval_kwargs["deadline"],
+                                feature_store=feature_store,
+                                max_workers=symbol_workers,
+                            )
+                        signal_evaluation_cache[signal_hash] = (candidate_id, signals_by_symbol, signal_diagnostic)
+                        signal_canonical_strategy_id = candidate_id
+                    else:
+                        signal_canonical_strategy_id, signals_by_symbol, signal_diagnostic = cached_signal
+                        signal_deduped = str(candidate_id) != str(signal_canonical_strategy_id)
+                    eval_kwargs.update(
+                        {
+                            "precomputed_signals_by_symbol": signals_by_symbol,
+                            "precomputed_signal_seconds": 0.0
+                            if signal_deduped
+                            else float(signal_diagnostic.get("seconds_signal", 0.0)),
+                            "precomputed_symbols_processed": int(signal_diagnostic.get("symbols_processed", len(symbol_frames))),
+                            "precomputed_raw_signals_total": int(signal_diagnostic.get("raw_signals_total", 0)),
+                        }
+                    )
+                with _candidate_evaluation_heartbeat(heartbeat_label):
+                    row, trades, yearly, diagnostic = _evaluate_external_candidate_core(**eval_kwargs)
+                evaluation_cache[canonical_hash] = (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic))
+                if enable_dedupe and use_v3_signal_first:
+                    exit_evaluation_cache.setdefault(
+                        (signal_hash, exit_hash),
+                        (candidate_id, row.copy(), trades.copy(), yearly.copy(), dict(diagnostic)),
+                    )
+                canonical_strategy_id = candidate_id
+            else:
+                assert cached is not None
+                canonical_strategy_id, row, trades, yearly, diagnostic = cached
+                row = row.copy()
+                trades = trades.copy()
+                yearly = yearly.copy()
+                diagnostic = dict(diagnostic)
+                row["candidate_id"] = candidate_id
+                if not trades.empty:
+                    trades["candidate_id"] = candidate_id
+                if not yearly.empty:
+                    yearly["candidate_id"] = candidate_id
+                diagnostic["seconds_total"] = float(time.perf_counter() - candidate_start)
+                diagnostic["seconds_signal"] = 0.0
+                diagnostic["seconds_simulation"] = 0.0
+                diagnostic["seconds_train"] = 0.0
+                diagnostic["seconds_validation"] = 0.0
+                canonical_strategy_id = str(canonical_strategy_id)
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": canonical_strategy_id,
+                    "deduped": bool(deduped),
+                    "signal_hash": signal_hash,
+                    "signal_canonical_strategy_id": signal_canonical_strategy_id or canonical_strategy_id,
+                    "signal_deduped": bool(signal_deduped or deduped),
+                }
+            )
+            print(
+                "[gtbi] job "
+                f"{output_padded} done candidate={candidate_id} "
+                f"status={'deduped' if deduped else 'evaluated'} "
+                f"seconds={time.perf_counter() - candidate_start:.2f}",
+                flush=True,
+            )
+        except EarlyRejectedStrategy as exc:
+            diagnostic = dict(exc.diagnostic)
+            diagnostic.setdefault("seconds_total", float(time.perf_counter() - candidate_start))
+            diagnostic.setdefault("seconds_feature_build", 0.0)
+            diagnostic.setdefault("seconds_signal", float("nan"))
+            diagnostic.setdefault("seconds_simulation", 0.0)
+            diagnostic.setdefault("seconds_train", 0.0)
+            diagnostic.setdefault("seconds_validation", 0.0)
+            diagnostic.setdefault("symbols_total", int(len(symbol_frames)))
+            diagnostic.setdefault("symbols_processed", int(exc.symbols_processed))
+            diagnostic.setdefault("raw_signals_total", 0)
+            diagnostic.setdefault("trades_total", 0)
+            diagnostic.setdefault("train_trades", 0)
+            diagnostic.setdefault("validation_trades", 0)
+            early_reject_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "reason": exc.reason,
+                    "split": exc.split,
+                    "year": "" if exc.year is None else int(exc.year),
+                    "actual": exc.actual,
+                    "threshold": exc.threshold,
+                    "stage": exc.stage,
+                    "seconds_until_reject": exc.seconds_until_reject,
+                    "symbols_processed": exc.symbols_processed,
+                }
+            )
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": "",
+                    "deduped": False,
+                    "signal_hash": signal_hash,
+                    "signal_canonical_strategy_id": signal_canonical_strategy_id,
+                    "signal_deduped": bool(signal_deduped),
+                }
+            )
+            timing_rows.append(
+                {
+                    **diagnostic_base,
+                    **diagnostic,
+                    "result_status": "early_rejected",
+                    "reject_reason": exc.reason,
+                    "timeout": False,
+                    "early_rejected": True,
+                    "runtime_error": False,
+                }
+            )
+            print(
+                "[gtbi] job "
+                f"{output_padded} early_rejected candidate={candidate_id} "
+                f"reason={exc.reason} seconds={time.perf_counter() - candidate_start:.2f}",
+                flush=True,
+            )
+            continue
+        except CandidateEvaluationTimeout as exc:
+            seconds_total = float(time.perf_counter() - candidate_start)
+            if use_zero_timeout and not use_event_first:
+                _append_external_slow_deferred_result(
+                    slow_deferred_rows=slow_deferred_rows,
+                    dedupe_rows=dedupe_rows,
+                    timing_rows=timing_rows,
+                    diagnostic_base=diagnostic_base,
+                    payload=payload,
+                    candidate_id=candidate_id,
+                    canonical_hash=canonical_hash,
+                    signal_hash=signal_hash,
+                    reason="needs_slow_queue",
+                    seconds_total=seconds_total,
+                    symbols_total=len(symbol_frames),
+                    symbols_processed=len(symbol_frames),
+                    estimated_cost=cost_score,
+                    signal_canonical_strategy_id=signal_canonical_strategy_id,
+                    signal_deduped=signal_deduped,
+                )
+            else:
+                _append_external_timeout_result(
+                    timeout_rows=timeout_rows,
+                    dedupe_rows=dedupe_rows,
+                    timing_rows=timing_rows,
+                    diagnostic_base=diagnostic_base,
+                    payload=payload,
+                    candidate_id=candidate_id,
+                    canonical_hash=canonical_hash,
+                    signal_hash=signal_hash,
+                    reason=repr(exc),
+                    seconds_total=seconds_total,
+                    symbols_total=len(symbol_frames),
+                    symbols_processed=len(symbol_frames),
+                    signal_canonical_strategy_id=signal_canonical_strategy_id,
+                    signal_deduped=signal_deduped,
+                )
+            print(
+                "[gtbi] job "
+                f"{output_padded} {'slow_deferred' if use_zero_timeout and not use_event_first else 'timeout'} candidate={candidate_id} "
+                f"seconds={seconds_total:.2f}",
+                flush=True,
+            )
+            continue
         except Exception as exc:
-            failed_rows.append(
+            runtime_error_rows.append(
                 {
                     "strategy_id": candidate_id,
                     "shard_id": payload.get("shard_id"),
                     "slot_in_shard": payload.get("slot_in_shard"),
+                    "family": diagnostic_base.get("family", ""),
+                    "concept": diagnostic_base.get("concept", ""),
+                    "market_overlay": diagnostic_base.get("market_overlay", ""),
+                    "trend_filter": diagnostic_base.get("trend_filter", ""),
+                    "relative_strength_filter": diagnostic_base.get("relative_strength_filter", ""),
+                    "exit_rule": diagnostic_base.get("exit_rule", ""),
+                    "aggressiveness": diagnostic_base.get("aggressiveness", ""),
                     "reason": repr(exc),
                 }
             )
+            dedupe_rows.append(
+                {
+                    "strategy_id": candidate_id,
+                    "canonical_hash": canonical_hash,
+                    "canonical_strategy_id": "",
+                    "deduped": False,
+                    "signal_hash": signal_hash,
+                    "signal_canonical_strategy_id": signal_canonical_strategy_id,
+                    "signal_deduped": bool(signal_deduped),
+                }
+            )
+            timing_rows.append(
+                {
+                    **diagnostic_base,
+                    "seconds_total": float(time.perf_counter() - candidate_start),
+                    "seconds_feature_build": 0.0,
+                    "seconds_signal": float("nan"),
+                    "seconds_simulation": float("nan"),
+                    "seconds_train": 0.0,
+                    "seconds_validation": 0.0,
+                    "symbols_total": int(len(symbol_frames)),
+                    "symbols_processed": int(len(symbol_frames)),
+                    "raw_signals_total": 0,
+                    "trades_total": 0,
+                    "train_trades": 0,
+                    "validation_trades": 0,
+                    "result_status": "runtime_error",
+                    "reject_reason": repr(exc),
+                    "timeout": False,
+                    "early_rejected": False,
+                    "runtime_error": True,
+                }
+            )
+            print(
+                "[gtbi] job "
+                f"{output_padded} runtime_error candidate={candidate_id} "
+                f"error={type(exc).__name__} seconds={time.perf_counter() - candidate_start:.2f}",
+                flush=True,
+            )
             continue
+        if use_event_first:
+            diagnostic = _event_first_amortize_diagnostic(
+                diagnostic,
+                signal_group_size=signal_group_size_by_hash.get(signal_hash, 1),
+                exit_group_size=exit_group_size_by_key.get((signal_hash, exit_hash), 1),
+            )
+            diagnostic["seconds_feature_build"] = float(
+                feature_store.seconds_build / max(len(evaluable), 1)
+            )
+            diagnostic = _normalize_timing_diagnostic(diagnostic)
+            final_reject = _event_first_final_quality_reject(row)
+            if final_reject is not None:
+                reject_reason = str(final_reject["reason"])
+                early_reject_rows.append(
+                    {
+                        "strategy_id": candidate_id,
+                        "reason": reject_reason,
+                        "split": str(final_reject.get("split", "")),
+                        "year": final_reject.get("year", ""),
+                        "actual": final_reject.get("actual", ""),
+                        "threshold": final_reject.get("threshold", ""),
+                        "stage": str(final_reject.get("stage", "final_filter_irreversible")),
+                        "seconds_until_reject": float(diagnostic.get("seconds_total", time.perf_counter() - candidate_start)),
+                        "symbols_processed": int(diagnostic.get("symbols_processed", len(symbol_frames))),
+                    }
+                )
+                timing_rows.append(
+                    {
+                        **diagnostic_base,
+                        **diagnostic,
+                        "result_status": "early_rejected",
+                        "reject_reason": reject_reason,
+                        "timeout": False,
+                        "early_rejected": True,
+                        "runtime_error": False,
+                    }
+                )
+                print(
+                    "[gtbi] job "
+                    f"{output_padded} final_filter_early_rejected candidate={candidate_id} "
+                    f"reason={reject_reason} seconds={time.perf_counter() - candidate_start:.2f}",
+                    flush=True,
+                )
+                continue
         row.update(_external_metadata(payload))
         rows.append(row)
         if not yearly.empty:
             yearly_frames.append(yearly)
         if not trades.empty:
             trade_frames.append(trades)
+        diagnostic["seconds_feature_build"] = float(feature_store.seconds_build / max(len(evaluable), 1))
+        diagnostic = _normalize_timing_diagnostic(diagnostic)
+        timing_rows.append(
+            {
+                **diagnostic_base,
+                **diagnostic,
+                "result_status": "deduped" if deduped else "evaluated",
+                "reject_reason": "",
+                "timeout": False,
+                "early_rejected": False,
+                "runtime_error": False,
+            }
+        )
         rules.append(
             {
                 "candidate_id": candidate_id,
@@ -3331,7 +8692,17 @@ def run_external_strategy_pack_shard(
             }
         )
 
+    if use_v3_signal_first and signal_first_phase == "signals":
+        _write_compact_signal_events(
+            _signal_events_npz_path(output_dir, file_suffix),
+            signal_events=signal_events_to_write,
+            symbol_frames=symbol_frames,
+        )
+        _write_signal_ready_groups(_signal_ready_groups_path(output_dir, file_suffix), ready_group_records_to_write)
+
     leaderboard = pd.DataFrame(rows)
+    if leaderboard.empty:
+        leaderboard = pd.DataFrame(columns=LEADERBOARD_COLUMNS)
     if not leaderboard.empty:
         leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
     filtered = pd.DataFrame(columns=leaderboard.columns)
@@ -3344,30 +8715,240 @@ def run_external_strategy_pack_shard(
             )
     yearly_out = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
     trades_out = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
-    if unsupported_rows:
-        unsupported = pd.DataFrame(unsupported_rows)
-    else:
-        unsupported = pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"])
-    if failed_rows:
-        failed = pd.DataFrame(failed_rows)
-        unsupported = pd.concat([unsupported, failed.assign(unsupported_rules="", reason=failed["reason"])], ignore_index=True, sort=False)
+    symbol_entry_counts = symbol_entry_counts_by_year(trades_out)
+    annual_equity = annual_trade_equity_curve(trades_out)
+    return_distribution = trade_return_distribution(trades_out)
+    ticker_summary_full = ticker_trade_summary(trades_out)
+    ticker_summary_rows_total = int(len(ticker_summary_full))
+    ticker_summary = _cap_ticker_trade_summary(ticker_summary_full)
+    ticker_summary_rows_written = int(len(ticker_summary))
+    top_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=True)
+    bottom_trades_by_return = extreme_trades_by_return(trades_out, n=100, largest=False)
+    selected_trades = selected_symbol_trades(trades_out)
+    unsupported = pd.DataFrame(unsupported_rows, columns=UNSUPPORTED_COLUMNS)
+    timeouts = pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)
+    slow_deferred = pd.DataFrame(slow_deferred_rows, columns=SLOW_DEFERRED_COLUMNS)
+    early_rejected = pd.DataFrame(early_reject_rows, columns=EARLY_REJECT_COLUMNS)
+    runtime_errors = pd.DataFrame(runtime_error_rows, columns=RUNTIME_ERROR_COLUMNS)
+    timing = pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)
+    dedupe_map = pd.DataFrame(dedupe_rows, columns=DEDUPE_MAP_COLUMNS)
+    job_manifest = pd.DataFrame(job_manifest_rows, columns=JOB_MANIFEST_COLUMNS)
+    slow_queue_manifest = pd.DataFrame(slow_queue_rows, columns=SLOW_QUEUE_MANIFEST_COLUMNS)
+    signal_group_manifest = pd.DataFrame(signal_group_manifest_rows, columns=SIGNAL_GROUP_MANIFEST_COLUMNS)
+    strategy_to_signal_map = pd.DataFrame(strategy_to_signal_rows, columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
+    compiled_signal_plan = pd.DataFrame(compiled_signal_plan_rows, columns=COMPILED_SIGNAL_PLAN_COLUMNS)
+    event_store_manifest = pd.DataFrame(event_store_manifest_rows, columns=EVENT_STORE_MANIFEST_COLUMNS)
+    concept_precheck_diagnostics = pd.DataFrame(concept_precheck_rows, columns=CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS)
+    exit_group_manifest = pd.DataFrame(exit_group_manifest_rows, columns=EXIT_GROUP_MANIFEST_COLUMNS)
 
-    leaderboard.to_csv(output_dir / f"leaderboard_shard_{shard_padded}.csv", index=False)
-    filtered.to_csv(output_dir / f"filtered_leaderboard_shard_{shard_padded}.csv", index=False)
-    yearly_out.to_csv(output_dir / f"yearly_trade_performance_shard_{shard_padded}.csv", index=False)
-    trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_shard_{shard_padded}.csv", index=False)
-    unsupported.to_csv(output_dir / f"unsupported_strategies_shard_{shard_padded}.csv", index=False)
-    with (output_dir / f"top_indicator_rules_shard_{shard_padded}.jsonl").open("w", encoding="utf-8") as handle:
+    long_hold_quality = leaderboard.copy()
+    if not long_hold_quality.empty and "long_hold_quality_score" in long_hold_quality.columns:
+        long_hold_quality["_long_hold_quality_score_numeric"] = pd.to_numeric(
+            long_hold_quality["long_hold_quality_score"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        long_hold_quality = long_hold_quality.sort_values(
+            ["_long_hold_quality_score_numeric", "candidate_id"],
+            ascending=[False, True],
+        ).drop(columns=["_long_hold_quality_score_numeric"])
+    long_hold_adjusted_holding_ge25 = leaderboard.copy()
+    if not long_hold_adjusted_holding_ge25.empty:
+        if "validation_avg_holding_days" not in long_hold_adjusted_holding_ge25.columns:
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"] = np.nan
+        holding_numeric_for_rank = pd.to_numeric(long_hold_adjusted_holding_ge25["validation_avg_holding_days"], errors="coerce")
+        long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.loc[holding_numeric_for_rank >= 25.0].copy()
+        if not long_hold_adjusted_holding_ge25.empty:
+            if "adjusted_return_time_risk" not in long_hold_adjusted_holding_ge25.columns:
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"] = np.nan
+            long_hold_adjusted_holding_ge25["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"],
+                errors="coerce",
+            ).fillna(float("-inf"))
+            long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.sort_values(
+                ["_adjusted_return_time_risk_numeric", "candidate_id"],
+                ascending=[False, True],
+            ).drop(columns=["_adjusted_return_time_risk_numeric"])
+
+    leaderboard.to_csv(output_dir / f"leaderboard_{file_suffix}.csv", index=False)
+    filtered.to_csv(output_dir / f"filtered_leaderboard_{file_suffix}.csv", index=False)
+    yearly_out.to_csv(output_dir / f"yearly_trade_performance_{file_suffix}.csv", index=False)
+    symbol_entry_counts.to_csv(output_dir / f"symbol_entry_counts_by_year_{file_suffix}.csv", index=False)
+    annual_equity.to_csv(output_dir / f"annual_trade_equity_curve_{file_suffix}.csv", index=False)
+    return_distribution.to_csv(output_dir / f"trade_return_distribution_{file_suffix}.csv", index=False)
+    ticker_summary.to_csv(output_dir / f"ticker_trade_summary_{file_suffix}.csv", index=False)
+    top_trades_by_return.to_csv(output_dir / f"top_100_trades_by_return_{file_suffix}.csv", index=False)
+    bottom_trades_by_return.to_csv(output_dir / f"bottom_100_trades_by_return_{file_suffix}.csv", index=False)
+    selected_trades.to_csv(output_dir / f"selected_symbol_trades_{file_suffix}.csv", index=False)
+    trades_out.head(5000).to_csv(output_dir / f"top_trades_sample_{file_suffix}.csv", index=False)
+    if symbol_bucket_count > 1:
+        trades_out.to_csv(output_dir / f"symbol_bucket_trades_{file_suffix}.csv", index=False)
+    unsupported.to_csv(output_dir / f"unsupported_strategies_{file_suffix}.csv", index=False)
+    timeouts.to_csv(output_dir / f"timeout_strategies_{file_suffix}.csv", index=False)
+    slow_deferred.to_csv(output_dir / f"slow_deferred_strategies_{file_suffix}.csv", index=False)
+    early_rejected.to_csv(output_dir / f"early_rejected_strategies_{file_suffix}.csv", index=False)
+    runtime_errors.to_csv(output_dir / f"runtime_errors_{file_suffix}.csv", index=False)
+    timing.to_csv(output_dir / f"timing_diagnostics_{file_suffix}.csv", index=False)
+    dedupe_map.to_csv(output_dir / f"dedupe_map_{file_suffix}.csv", index=False)
+    job_manifest.to_csv(output_dir / f"job_manifest_{file_suffix}.csv", index=False)
+    slow_queue_manifest.to_csv(output_dir / f"slow_queue_manifest_{file_suffix}.csv", index=False)
+    signal_group_manifest.to_csv(output_dir / f"signal_group_manifest_{file_suffix}.csv", index=False)
+    strategy_to_signal_map.to_csv(output_dir / f"strategy_to_signal_map_{file_suffix}.csv", index=False)
+    compiled_signal_plan.to_csv(output_dir / f"compiled_signal_plan_{file_suffix}.csv", index=False)
+    event_store_manifest.to_csv(output_dir / f"event_store_manifest_{file_suffix}.csv", index=False)
+    concept_precheck_diagnostics.to_csv(output_dir / f"concept_precheck_diagnostics_{file_suffix}.csv", index=False)
+    exit_group_manifest.to_csv(output_dir / f"exit_group_manifest_{file_suffix}.csv", index=False)
+    long_hold_quality.to_csv(output_dir / f"long_hold_quality_leaderboard_{file_suffix}.csv", index=False)
+    long_hold_adjusted_holding_ge25.to_csv(output_dir / f"long_hold_adjusted_holding_ge25_{file_suffix}.csv", index=False)
+    cost_profile_v5 = {
+        "optimized_evaluation_mode": str(optimized_evaluation_mode),
+        "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
+        "signal_groups_evaluated": int(signal_groups_evaluated if use_v3_signal_first else len(signal_evaluation_cache)),
+        "events_total": int(pd.to_numeric(event_store_manifest.get("events_total", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        if not event_store_manifest.empty
+        else 0,
+        "slow_deferred_rate": 0.0 if use_event_first else None,
+        "timeout_rate": 0.0 if use_event_first else None,
+    }
+    (output_dir / f"cost_profile_v5_{file_suffix}.json").write_text(
+        json.dumps(cost_profile_v5, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    with (output_dir / f"top_indicator_rules_{file_suffix}.jsonl").open("w", encoding="utf-8") as handle:
         for rule in rules:
             handle.write(json.dumps(rule, sort_keys=True) + "\n")
+    deduped_count = int(dedupe_map["deduped"].astype(str).str.lower().isin({"true", "1", "yes"}).sum()) if not dedupe_map.empty else 0
+    signal_deduped_count = (
+        int(dedupe_map["signal_deduped"].astype(str).str.lower().isin({"true", "1", "yes"}).sum())
+        if not dedupe_map.empty and "signal_deduped" in dedupe_map.columns
+        else 0
+    )
+    signal_seconds_array = np.asarray(signal_group_seconds, dtype=float)
+    signal_seconds_array = signal_seconds_array[np.isfinite(signal_seconds_array)]
+    exit_seconds = (
+        pd.to_numeric(timing.get("seconds_simulation", pd.Series(dtype=float)), errors="coerce").dropna().to_numpy(dtype=float)
+        if not timing.empty
+        else np.asarray([], dtype=float)
+    )
+
+    def percentile_or_none(values: np.ndarray, percentile: float) -> float | None:
+        if values.size == 0:
+            return None
+        return float(np.percentile(values, percentile))
+
+    best_row = _best_adjusted_row(leaderboard)
+    best_filtered_row = _best_adjusted_row(filtered)
+    best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
+    best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
+    validation_avg_holding = (
+        pd.to_numeric(leaderboard.get("validation_avg_holding_days", pd.Series(dtype=float)), errors="coerce")
+        if not leaderboard.empty
+        else pd.Series(dtype=float)
+    )
+    validation_holding_ge25_count = int((validation_avg_holding >= 25.0).sum()) if len(validation_avg_holding) else 0
+    validation_holding_ge30_count = int((validation_avg_holding >= 30.0).sum()) if len(validation_avg_holding) else 0
+    validation_holding_p50 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.50))
+    validation_holding_p75 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.75))
+    validation_holding_p90 = None if validation_avg_holding.dropna().empty else float(validation_avg_holding.quantile(0.90))
+    best_holding_ge25_row = _best_numeric_row(
+        leaderboard,
+        "adjusted_return_time_risk",
+        mask=validation_avg_holding >= 25.0 if len(validation_avg_holding) else pd.Series(dtype=bool),
+    )
+    best_no_drawdown_row = _best_numeric_row(leaderboard, "fundamental_timing_score_no_drawdown")
+    best_return_pf_row = _best_numeric_row(leaderboard, "return_pf_score")
+    best_avg_trade_row = _best_numeric_row(leaderboard, "validation_avg_trade_return_pct")
+    best_profit_factor_row = _best_numeric_row(leaderboard, "validation_profit_factor")
+    best_total_return_proxy_row = _best_numeric_row(leaderboard, "total_return_proxy")
+    validation_under_10_mean = (
+        pd.to_numeric(leaderboard.get("validation_percent_exits_under_10_days", pd.Series(dtype=float)), errors="coerce")
+        if not leaderboard.empty
+        else pd.Series(dtype=float)
+    )
+    validation_under_10_mean_value = None if validation_under_10_mean.dropna().empty else float(validation_under_10_mean.mean())
+    strategies_loaded_for_summary = int(
+        signal_phase_summary.get("strategies_loaded", len(candidates))
+        if use_v3_signal_first and signal_first_phase == "exits"
+        else len(candidates)
+    )
+    unique_signal_evaluations_for_summary = int(
+        signal_phase_summary.get("unique_signal_evaluations", len(signal_evaluation_cache))
+        if use_v3_signal_first and signal_first_phase == "exits"
+        else len(signal_evaluation_cache)
+    )
+    signal_groups_requested_for_summary = int(
+        signal_groups_loaded
+        if use_event_first and signal_first_phase == "exits"
+        else external_strategy_limit if use_v3_signal_first else 0
+    )
+    strategies_requested_for_summary = int(strategies_loaded_for_summary if use_v3_signal_first else external_strategy_limit)
+    numba_enabled, numba_reason = _numba_simulation_state()
     summary = {
         "shard_id": shard,
-        "strategies_requested": int(external_strategy_limit),
-        "strategies_loaded": int(len(candidates)),
+        "base_shard_id": shard,
+        "job_padded": output_padded if output_prefix == "job" else None,
+        "chunk_index": int(external_strategy_offset) // max(int(external_strategy_limit), 1),
+        "strategy_offset": int(external_strategy_offset),
+        "strategy_limit": int(external_strategy_limit),
+        "signal_groups_requested": int(signal_groups_requested_for_summary),
+        "signal_groups_loaded": int(signal_groups_loaded if use_v3_signal_first else len(signal_evaluation_cache)),
+        "strategies_requested": int(strategies_requested_for_summary),
+        "strategies_loaded": int(strategies_loaded_for_summary),
         "strategies_evaluated": int(len(rows)),
+        "strategies_early_rejected": int(len(early_rejected)),
+        "strategies_slow_deferred": int(len(slow_deferred)),
+        "total_strategies_slow_deferred": int(len(slow_deferred)),
         "strategies_unsupported": int(len(unsupported_rows)),
-        "strategies_failed": int(len(failed_rows)),
+        "strategies_runtime_error": int(len(runtime_errors)),
+        "strategies_failed": int((0 if use_zero_timeout else len(timeouts)) + len(runtime_errors)),
+        "strategies_timed_out": int(len(timeouts)),
+        "strategies_deduped": int(deduped_count),
+        "strategies_signal_deduped": int(signal_deduped_count),
+        "strategies_signal_reused": int(signal_deduped_count),
+        "strategies_covered": int(strategies_loaded_for_summary),
+        "strategies_evaluated_complete": int(len(rows)),
+        "signal_groups_evaluated": int(signal_groups_evaluated if use_v3_signal_first else len(signal_evaluation_cache)),
+        "signal_groups_early_rejected": int(signal_groups_early_rejected),
+        "signal_groups_timed_out": int(signal_groups_timed_out),
+        "signal_groups_slow_deferred": int(signal_groups_slow_deferred),
+        "total_signal_groups_slow_deferred": int(signal_groups_slow_deferred),
+        "time_per_signal_p50_seconds": percentile_or_none(signal_seconds_array, 50),
+        "time_per_signal_p95_seconds": percentile_or_none(signal_seconds_array, 95),
+        "time_per_signal_max_seconds": percentile_or_none(signal_seconds_array, 100),
+        "time_per_exit_simulation_p50_seconds": percentile_or_none(exit_seconds, 50),
+        "time_per_exit_simulation_p95_seconds": percentile_or_none(exit_seconds, 95),
+        "time_per_exit_simulation_max_seconds": percentile_or_none(exit_seconds, 100),
+        "full_runtime_estimate_hours": (
+            None
+            if signal_seconds_array.size == 0
+            else float((18_000 * float(np.mean(signal_seconds_array))) / 360.0 / 3600.0)
+        ),
+        "numba_enabled": bool(numba_enabled),
+        "numba_reason": str(numba_reason),
+        "candidate_timeout_seconds": int(candidate_timeout_seconds),
+        "job_wall_clock_seconds": int(job_wall_clock_seconds),
+        "schedule_active_jobs": int(schedule_active_jobs),
+        "schedule_subgroup_index": int(schedule_subgroup_index),
+        "schedule_subgroup_count": int(schedule_subgroup_count),
+        "symbol_bucket_index": int(symbol_bucket_index),
+        "symbol_bucket_count": int(symbol_bucket_count),
+        "symbol_bucket_mode": bool(symbol_bucket_count > 1),
+        "unique_config_evaluations": int(len(evaluation_cache)),
+        "cached_config_reuses": int(deduped_count),
+        "unique_signal_evaluations": int(unique_signal_evaluations_for_summary),
+        "cached_signal_reuses": int(signal_deduped_count),
+        "optimized_evaluation_mode": str(optimized_evaluation_mode),
+        "zero_timeout_mode": bool(use_zero_timeout),
+        "zero_slow_deferred_mode": bool(use_event_first),
+        "signal_first_phase": str(signal_first_phase),
+        "enable_feature_cache": bool(enable_feature_cache),
+        "enable_dedupe": bool(enable_dedupe),
+        "enable_safe_prefilter": bool(enable_safe_prefilter),
+        "enable_early_stopping": bool(enable_early_stopping),
+        "enable_cost_scheduling": bool(enable_cost_scheduling),
+        "seconds_feature_store_build": float(feature_store.seconds_build),
         "symbols": int(len(symbol_frames)),
+        "symbols_universe_total": int(loaded_symbol_count),
+        "symbols_after_bucket": int(len(symbol_frames)),
         "locked_start": str(locked_start),
         "train_end": str(train_end),
         "validation_start": str(validation_start),
@@ -3376,14 +8957,72 @@ def run_external_strategy_pack_shard(
         "requires_local_machine": False,
         "locked_opened": False,
         "filtered_candidates": int(len(filtered)),
-        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
-        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
-        "best_adjusted_return_time_risk": (
-            None if leaderboard.empty else float(leaderboard.iloc[0].get("adjusted_return_time_risk", float("nan")))
-        ),
+        "ticker_trade_summary_rows_total": int(ticker_summary_rows_total),
+        "ticker_trade_summary_rows_written": int(ticker_summary_rows_written),
+        "ticker_trade_summary_row_cap": int(MAX_TICKER_TRADE_SUMMARY_ROWS),
+        "long_hold_quality_candidate_count": int(len(long_hold_quality)),
+        "validation_avg_holding_days_ge25_count": int(validation_holding_ge25_count),
+        "validation_avg_holding_days_ge30_count": int(validation_holding_ge30_count),
+        "validation_avg_holding_days_p50": validation_holding_p50,
+        "validation_avg_holding_days_p75": validation_holding_p75,
+        "validation_avg_holding_days_p90": validation_holding_p90,
+        "validation_percent_exits_under_10_days_mean": validation_under_10_mean_value,
+        "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_overall": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_holding_ge25": None if best_holding_ge25_row is None else str(best_holding_ge25_row["candidate_id"]),
+        "best_candidate_id_no_drawdown_score": None if best_no_drawdown_row is None else str(best_no_drawdown_row["candidate_id"]),
+        "best_candidate_id_return_pf_score": None if best_return_pf_row is None else str(best_return_pf_row["candidate_id"]),
+        "best_candidate_id_avg_trade": None if best_avg_trade_row is None else str(best_avg_trade_row["candidate_id"]),
+        "best_candidate_id_profit_factor": None if best_profit_factor_row is None else str(best_profit_factor_row["candidate_id"]),
+        "best_candidate_id_total_return_proxy": None if best_total_return_proxy_row is None else str(best_total_return_proxy_row["candidate_id"]),
+        "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
+        "best_adjusted_return_time_risk": best_adjusted,
     }
-    (output_dir / f"summary_shard_{shard_padded}.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    (output_dir / f"summary_{file_suffix}.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
+
+
+def _duplicate_comparison_value(value: Any) -> tuple[str, str]:
+    """Return an exact, hashable representation for duplicate validation."""
+    try:
+        if bool(pd.isna(value)):
+            return ("missing", "")
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (float, np.floating)):
+        return ("float", float(value).hex())
+    if isinstance(value, np.generic):
+        value = value.item()
+    return (type(value).__name__, repr(value))
+
+
+def _assert_consistent_duplicate_rows(
+    frame: pd.DataFrame,
+    identity_columns: list[str],
+    *,
+    label: str,
+) -> None:
+    """Fail before dedupe when the same result identity has different content."""
+    if frame.empty:
+        return
+    missing = [column for column in identity_columns if column not in frame.columns]
+    if missing:
+        return
+    duplicate_mask = frame.duplicated(subset=identity_columns, keep=False)
+    if not bool(duplicate_mask.any()):
+        return
+    value_columns = sorted(str(column) for column in frame.columns)
+    duplicate_rows = frame.loc[duplicate_mask]
+    group_key: str | list[str] = identity_columns[0] if len(identity_columns) == 1 else identity_columns
+    for identity, group in duplicate_rows.groupby(group_key, dropna=False, sort=False):
+        normalized = {
+            tuple(_duplicate_comparison_value(row[column]) for column in value_columns)
+            for _, row in group.iterrows()
+        }
+        if len(normalized) > 1:
+            raise ValueError(
+                f"conflicting duplicate {label} rows for identity {identity!r}"
+            )
 
 
 def merge_external_strategy_pack_outputs(
@@ -3392,11 +9031,18 @@ def merge_external_strategy_pack_outputs(
     output_dir: Path,
     total_strategies_requested: int,
     total_shards_requested: int,
+    total_jobs_requested: int | None = None,
+    candidate_count_per_job: int | None = None,
     locked_start: str = DEFAULT_LOCKED_START,
     train_end: str = DEFAULT_TRAIN_END,
     validation_start: str = DEFAULT_VALIDATION_START,
     validation_end: str = DEFAULT_VALIDATION_END,
+    fill_missing_timeouts_pack_path: Path | None = None,
+    fill_missing_timeouts_reason: str = "missing_slot_classified_as_timeout_in_merge",
+    strict_final_eval_mode: bool = False,
 ) -> dict[str, Any]:
+    if strict_final_eval_mode and fill_missing_timeouts_pack_path is not None:
+        raise ValueError("strict final merge does not permit fill_missing_timeouts_pack_path")
     shards_root = Path(shards_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3405,26 +9051,244 @@ def merge_external_strategy_pack_outputs(
     filtered_frames: list[pd.DataFrame] = []
     yearly_frames: list[pd.DataFrame] = []
     trade_frames: list[pd.DataFrame] = []
+    symbol_entry_count_frames: list[pd.DataFrame] = []
+    annual_equity_frames: list[pd.DataFrame] = []
+    return_distribution_frames: list[pd.DataFrame] = []
+    ticker_summary_frames: list[pd.DataFrame] = []
+    top_trade_frames: list[pd.DataFrame] = []
+    bottom_trade_frames: list[pd.DataFrame] = []
+    selected_symbol_trade_frames: list[pd.DataFrame] = []
     unsupported_frames: list[pd.DataFrame] = []
+    timeout_frames: list[pd.DataFrame] = []
+    slow_deferred_frames: list[pd.DataFrame] = []
+    early_rejected_frames: list[pd.DataFrame] = []
+    runtime_error_frames: list[pd.DataFrame] = []
+    timing_frames: list[pd.DataFrame] = []
+    dedupe_frames: list[pd.DataFrame] = []
+    job_manifest_frames: list[pd.DataFrame] = []
+    slow_queue_frames: list[pd.DataFrame] = []
+    signal_group_manifest_frames: list[pd.DataFrame] = []
+    strategy_to_signal_map_frames: list[pd.DataFrame] = []
+    compiled_signal_plan_frames: list[pd.DataFrame] = []
+    event_store_manifest_frames: list[pd.DataFrame] = []
+    concept_precheck_frames: list[pd.DataFrame] = []
+    exit_group_manifest_frames: list[pd.DataFrame] = []
+    cost_profile_v5_rows: list[dict[str, Any]] = []
     rule_rows: list[dict[str, Any]] = []
-    for summary_path in sorted(shards_root.rglob("summary_shard_*.json")):
-        summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
-    for path in sorted(shards_root.rglob("leaderboard_shard_*.csv")):
-        if path.stat().st_size:
-            leaderboards.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("filtered_leaderboard_shard_*.csv")):
-        if path.stat().st_size:
-            filtered_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("yearly_trade_performance_shard_*.csv")):
-        if path.stat().st_size:
-            yearly_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("top_trades_sample_shard_*.csv")):
-        if path.stat().st_size:
-            trade_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("unsupported_strategies_shard_*.csv")):
-        if path.stat().st_size:
-            unsupported_frames.append(pd.read_csv(path))
-    for path in sorted(shards_root.rglob("top_indicator_rules_shard_*.jsonl")):
+    symbol_bucket_source_metadata: dict[Path, dict[str, Any]] = {}
+
+    def annotate_symbol_bucket_source(frame: pd.DataFrame, path: Path) -> pd.DataFrame:
+        metadata = symbol_bucket_source_metadata.get(path.parent)
+        if not metadata or frame.empty:
+            return frame
+        frame = frame.copy()
+        for column, value in metadata.items():
+            frame[column] = value
+        return frame
+
+    def has_symbol_bucket_rows(frame: pd.DataFrame) -> bool:
+        if frame.empty:
+            return False
+        if "symbol_bucket_mode" in frame.columns:
+            mode_values = frame["symbol_bucket_mode"].astype(str).str.lower()
+            if bool(mode_values.isin({"true", "1", "yes"}).any()):
+                return True
+        if "symbol_bucket_count" in frame.columns:
+            bucket_counts = pd.to_numeric(frame["symbol_bucket_count"], errors="coerce").fillna(0)
+            if bool((bucket_counts > 1).any()):
+                return True
+        return False
+
+    def read_csv_or_empty(path: Path, *, nrows: int | None = None) -> pd.DataFrame:
+        if not path.stat().st_size:
+            return pd.DataFrame()
+        try:
+            return annotate_symbol_bucket_source(pd.read_csv(path, nrows=nrows), path)
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
+
+    for summary_path in sorted(
+        [
+            *shards_root.rglob("summary_shard_*.json"),
+            *shards_root.rglob("summary_job_*.json"),
+            *shards_root.rglob("summary.json"),
+        ]
+    ):
+        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        summaries.append(summary_payload)
+        symbol_bucket_count = int(summary_payload.get("symbol_bucket_count", 0) or 0)
+        if bool(summary_payload.get("symbol_bucket_mode")) or symbol_bucket_count > 1:
+            symbol_bucket_source_metadata[summary_path.parent] = {
+                "symbol_bucket_mode": True,
+                "symbol_bucket_index": int(summary_payload.get("symbol_bucket_index", 0) or 0),
+                "symbol_bucket_count": symbol_bucket_count,
+                "symbols_universe_total": int(summary_payload.get("symbols_universe_total", 0) or 0),
+                "symbols_after_bucket": int(summary_payload.get("symbols_after_bucket", 0) or 0),
+            }
+    for path in sorted([*shards_root.rglob("leaderboard_shard_*.csv"), *shards_root.rglob("leaderboard_job_*.csv"), *shards_root.rglob("leaderboard.csv")]):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            leaderboards.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("filtered_leaderboard_shard_*.csv"),
+            *shards_root.rglob("filtered_leaderboard_job_*.csv"),
+            *shards_root.rglob("filtered_leaderboard.csv"),
+        ]
+    ):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            filtered_frames.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("yearly_trade_performance_shard_*.csv"),
+            *shards_root.rglob("yearly_trade_performance_job_*.csv"),
+            *shards_root.rglob("yearly_trade_performance.csv"),
+        ]
+    ):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            yearly_frames.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("symbol_entry_counts_by_year_shard_*.csv"),
+            *shards_root.rglob("symbol_entry_counts_by_year_job_*.csv"),
+            *shards_root.rglob("symbol_entry_counts_by_year.csv"),
+        ]
+    ):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            symbol_entry_count_frames.append(frame)
+    for pattern, target in (
+        ("annual_trade_equity_curve_shard_*.csv", annual_equity_frames),
+        ("annual_trade_equity_curve_job_*.csv", annual_equity_frames),
+        ("annual_trade_equity_curve.csv", annual_equity_frames),
+        ("trade_return_distribution_shard_*.csv", return_distribution_frames),
+        ("trade_return_distribution_job_*.csv", return_distribution_frames),
+        ("trade_return_distribution.csv", return_distribution_frames),
+        ("top_100_trades_by_return_shard_*.csv", top_trade_frames),
+        ("top_100_trades_by_return_job_*.csv", top_trade_frames),
+        ("top_100_trades_by_return.csv", top_trade_frames),
+        ("bottom_100_trades_by_return_shard_*.csv", bottom_trade_frames),
+        ("bottom_100_trades_by_return_job_*.csv", bottom_trade_frames),
+        ("bottom_100_trades_by_return.csv", bottom_trade_frames),
+        ("selected_symbol_trades_shard_*.csv", selected_symbol_trade_frames),
+        ("selected_symbol_trades_job_*.csv", selected_symbol_trade_frames),
+        ("selected_symbol_trades.csv", selected_symbol_trade_frames),
+    ):
+        for path in sorted(shards_root.rglob(pattern)):
+            frame = read_csv_or_empty(path)
+            if not frame.empty:
+                target.append(frame)
+    ticker_summary = pd.DataFrame(columns=TICKER_TRADE_SUMMARY_COLUMNS)
+    ticker_summary_rows_total = 0
+    for path in sorted(
+        [
+            *shards_root.rglob("ticker_trade_summary_shard_*.csv"),
+            *shards_root.rglob("ticker_trade_summary_job_*.csv"),
+            *shards_root.rglob("ticker_trade_summary.csv"),
+        ]
+    ):
+        frame, row_count = _read_capped_ticker_trade_summary(path, limit=MAX_TICKER_TRADE_SUMMARY_ROWS)
+        ticker_summary_rows_total += int(row_count)
+        if not frame.empty:
+            ticker_summary = _cap_ticker_trade_summary(
+                pd.concat([ticker_summary, frame], ignore_index=True, sort=False),
+                limit=MAX_TICKER_TRADE_SUMMARY_ROWS,
+            )
+    ticker_summary_rows_written = int(len(ticker_summary))
+    top_trades_sample_remaining = 5000
+    for path in sorted([*shards_root.rglob("top_trades_sample_shard_*.csv"), *shards_root.rglob("top_trades_sample_job_*.csv"), *shards_root.rglob("top_trades_sample.csv")]):
+        if top_trades_sample_remaining <= 0:
+            break
+        frame = read_csv_or_empty(path, nrows=top_trades_sample_remaining)
+        if not frame.empty:
+            trade_frames.append(frame)
+            if not has_symbol_bucket_rows(frame):
+                top_trades_sample_remaining -= int(len(frame))
+    symbol_bucket_trade_frames: list[pd.DataFrame] = []
+    for path in sorted([*shards_root.rglob("symbol_bucket_trades_shard_*.csv"), *shards_root.rglob("symbol_bucket_trades_job_*.csv"), *shards_root.rglob("symbol_bucket_trades.csv")]):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            symbol_bucket_trade_frames.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("unsupported_strategies_shard_*.csv"),
+            *shards_root.rglob("unsupported_strategies_job_*.csv"),
+            *shards_root.rglob("unsupported_strategies.csv"),
+        ]
+    ):
+        frame = read_csv_or_empty(path)
+        if not frame.empty:
+            unsupported_frames.append(frame)
+    for pattern, target in (
+        ("timeout_strategies_shard_*.csv", timeout_frames),
+        ("timeout_strategies_job_*.csv", timeout_frames),
+        ("timeout_strategies.csv", timeout_frames),
+        ("slow_deferred_strategies_shard_*.csv", slow_deferred_frames),
+        ("slow_deferred_strategies_job_*.csv", slow_deferred_frames),
+        ("slow_deferred_strategies.csv", slow_deferred_frames),
+        ("early_rejected_strategies_shard_*.csv", early_rejected_frames),
+        ("early_rejected_strategies_job_*.csv", early_rejected_frames),
+        ("early_rejected_strategies.csv", early_rejected_frames),
+        ("runtime_errors_shard_*.csv", runtime_error_frames),
+        ("runtime_errors_job_*.csv", runtime_error_frames),
+        ("runtime_errors.csv", runtime_error_frames),
+        ("timing_diagnostics_shard_*.csv", timing_frames),
+        ("timing_diagnostics_job_*.csv", timing_frames),
+        ("timing_diagnostics.csv", timing_frames),
+        ("dedupe_map_shard_*.csv", dedupe_frames),
+        ("dedupe_map_job_*.csv", dedupe_frames),
+        ("dedupe_map.csv", dedupe_frames),
+        ("job_manifest_shard_*.csv", job_manifest_frames),
+        ("job_manifest_job_*.csv", job_manifest_frames),
+        ("job_manifest.csv", job_manifest_frames),
+        ("slow_queue_manifest_shard_*.csv", slow_queue_frames),
+        ("slow_queue_manifest_job_*.csv", slow_queue_frames),
+        ("slow_queue_manifest.csv", slow_queue_frames),
+        ("signal_group_manifest_shard_*.csv", signal_group_manifest_frames),
+        ("signal_group_manifest_job_*.csv", signal_group_manifest_frames),
+        ("signal_group_manifest.csv", signal_group_manifest_frames),
+        ("strategy_to_signal_map_shard_*.csv", strategy_to_signal_map_frames),
+        ("strategy_to_signal_map_job_*.csv", strategy_to_signal_map_frames),
+        ("strategy_to_signal_map.csv", strategy_to_signal_map_frames),
+        ("compiled_signal_plan_shard_*.csv", compiled_signal_plan_frames),
+        ("compiled_signal_plan_job_*.csv", compiled_signal_plan_frames),
+        ("compiled_signal_plan.csv", compiled_signal_plan_frames),
+        ("event_store_manifest_shard_*.csv", event_store_manifest_frames),
+        ("event_store_manifest_job_*.csv", event_store_manifest_frames),
+        ("event_store_manifest.csv", event_store_manifest_frames),
+        ("concept_precheck_diagnostics_shard_*.csv", concept_precheck_frames),
+        ("concept_precheck_diagnostics_job_*.csv", concept_precheck_frames),
+        ("concept_precheck_diagnostics.csv", concept_precheck_frames),
+        ("exit_group_manifest_shard_*.csv", exit_group_manifest_frames),
+        ("exit_group_manifest_job_*.csv", exit_group_manifest_frames),
+        ("exit_group_manifest.csv", exit_group_manifest_frames),
+    ):
+        for path in sorted(shards_root.rglob(pattern)):
+            frame = read_csv_or_empty(path)
+            if not frame.empty:
+                target.append(frame)
+    for path in sorted(
+        [
+            *shards_root.rglob("cost_profile_v5_shard_*.json"),
+            *shards_root.rglob("cost_profile_v5_job_*.json"),
+            *shards_root.rglob("cost_profile_v5.json"),
+        ]
+    ):
+        try:
+            profile = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(profile, dict):
+            cost_profile_v5_rows.append(profile)
+    for path in sorted(
+        [
+            *shards_root.rglob("top_indicator_rules_shard_*.jsonl"),
+            *shards_root.rglob("top_indicator_rules_job_*.jsonl"),
+            *shards_root.rglob("top_indicator_rules.jsonl"),
+        ]
+    ):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 rule_rows.append(json.loads(line))
@@ -3439,21 +9303,724 @@ def merge_external_strategy_pack_outputs(
             ascending=[False, False, True],
         ).reset_index(drop=True)
     yearly = pd.concat(yearly_frames, ignore_index=True, sort=False) if yearly_frames else pd.DataFrame(columns=YEARLY_COLUMNS)
+    validation_end_year = int(str(validation_end)[:4])
+    if not yearly.empty and "year" in yearly.columns:
+        yearly_years = pd.to_numeric(yearly["year"], errors="coerce")
+        yearly = yearly.loc[yearly_years <= validation_end_year].copy()
+    symbol_entry_counts = (
+        pd.concat(symbol_entry_count_frames, ignore_index=True, sort=False)
+        if symbol_entry_count_frames
+        else pd.DataFrame(columns=SYMBOL_ENTRY_COUNTS_COLUMNS)
+    )
+    if not symbol_entry_counts.empty and "year" in symbol_entry_counts.columns:
+        symbol_years = pd.to_numeric(symbol_entry_counts["year"], errors="coerce")
+        symbol_entry_counts = symbol_entry_counts.loc[symbol_years <= validation_end_year].copy()
+    annual_equity = (
+        pd.concat(annual_equity_frames, ignore_index=True, sort=False)
+        if annual_equity_frames
+        else pd.DataFrame(columns=ANNUAL_TRADE_EQUITY_COLUMNS)
+    )
+    if not annual_equity.empty and "year" in annual_equity.columns:
+        equity_years = pd.to_numeric(annual_equity["year"], errors="coerce")
+        annual_equity = annual_equity.loc[equity_years <= validation_end_year].copy()
+    return_distribution = (
+        pd.concat(return_distribution_frames, ignore_index=True, sort=False)
+        if return_distribution_frames
+        else pd.DataFrame(columns=TRADE_DISTRIBUTION_COLUMNS)
+    )
+    top_trades_by_return = (
+        pd.concat(top_trade_frames, ignore_index=True, sort=False)
+        if top_trade_frames
+        else pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    )
+    bottom_trades_by_return = (
+        pd.concat(bottom_trade_frames, ignore_index=True, sort=False)
+        if bottom_trade_frames
+        else pd.DataFrame(columns=["rank", *TRADE_COLUMNS])
+    )
+    selected_symbol_trade_rows = (
+        pd.concat(selected_symbol_trade_frames, ignore_index=True, sort=False)
+        if selected_symbol_trade_frames
+        else pd.DataFrame(columns=SELECTED_SYMBOL_TRADE_COLUMNS)
+    )
     trades = pd.concat(trade_frames, ignore_index=True, sort=False) if trade_frames else pd.DataFrame(columns=TRADE_COLUMNS)
     unsupported = (
         pd.concat(unsupported_frames, ignore_index=True, sort=False)
         if unsupported_frames
-        else pd.DataFrame(columns=["strategy_id", "shard_id", "slot_in_shard", "unsupported_rules", "reason"])
+        else pd.DataFrame(columns=UNSUPPORTED_COLUMNS)
+    )
+    timeouts = pd.concat(timeout_frames, ignore_index=True, sort=False) if timeout_frames else pd.DataFrame(columns=TIMEOUT_COLUMNS)
+    slow_deferred = (
+        pd.concat(slow_deferred_frames, ignore_index=True, sort=False)
+        if slow_deferred_frames
+        else pd.DataFrame(columns=SLOW_DEFERRED_COLUMNS)
+    )
+    early_rejected = (
+        pd.concat(early_rejected_frames, ignore_index=True, sort=False)
+        if early_rejected_frames
+        else pd.DataFrame(columns=EARLY_REJECT_COLUMNS)
+    )
+    runtime_errors = (
+        pd.concat(runtime_error_frames, ignore_index=True, sort=False)
+        if runtime_error_frames
+        else pd.DataFrame(columns=RUNTIME_ERROR_COLUMNS)
+    )
+    timing = pd.concat(timing_frames, ignore_index=True, sort=False) if timing_frames else pd.DataFrame(columns=TIMING_DIAGNOSTIC_COLUMNS)
+    dedupe_map = pd.concat(dedupe_frames, ignore_index=True, sort=False) if dedupe_frames else pd.DataFrame(columns=DEDUPE_MAP_COLUMNS)
+    job_manifest = (
+        pd.concat(job_manifest_frames, ignore_index=True, sort=False)
+        if job_manifest_frames
+        else pd.DataFrame(columns=JOB_MANIFEST_COLUMNS)
+    )
+    symbol_bucket_partial_outputs: dict[str, pd.DataFrame] = {}
+
+    def symbol_bucket_partial_mask(frame: pd.DataFrame) -> pd.Series:
+        if frame.empty:
+            return pd.Series(False, index=frame.index, dtype=bool)
+        mask = pd.Series(False, index=frame.index, dtype=bool)
+        if "symbol_bucket_mode" in frame.columns:
+            mode_values = frame["symbol_bucket_mode"].astype(str).str.lower()
+            mask = mask | mode_values.isin({"true", "1", "yes"})
+        if "symbol_bucket_count" in frame.columns:
+            bucket_counts = pd.to_numeric(frame["symbol_bucket_count"], errors="coerce").fillna(0)
+            mask = mask | (bucket_counts > 1)
+        return mask
+
+    def split_symbol_bucket_partials(name: str, frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            symbol_bucket_partial_outputs[name] = pd.DataFrame(columns=frame.columns)
+            return frame
+        mask = symbol_bucket_partial_mask(frame)
+        partial = frame.loc[mask].copy()
+        complete = frame.loc[~mask].copy()
+        symbol_bucket_partial_outputs[name] = partial
+        return complete
+
+    leaderboard = split_symbol_bucket_partials("leaderboard", leaderboard)
+    filtered = split_symbol_bucket_partials("filtered_leaderboard", filtered)
+    yearly = split_symbol_bucket_partials("yearly_trade_performance", yearly)
+    symbol_entry_counts = split_symbol_bucket_partials("symbol_entry_counts_by_year", symbol_entry_counts)
+    annual_equity = split_symbol_bucket_partials("annual_trade_equity_curve", annual_equity)
+    return_distribution = split_symbol_bucket_partials("trade_return_distribution", return_distribution)
+    ticker_summary = split_symbol_bucket_partials("ticker_trade_summary", ticker_summary)
+    top_trades_by_return = split_symbol_bucket_partials("top_100_trades_by_return", top_trades_by_return)
+    bottom_trades_by_return = split_symbol_bucket_partials("bottom_100_trades_by_return", bottom_trades_by_return)
+    selected_symbol_trade_rows = split_symbol_bucket_partials("selected_symbol_trades", selected_symbol_trade_rows)
+    trades = split_symbol_bucket_partials("top_trades_sample", trades)
+    unsupported = split_symbol_bucket_partials("unsupported_strategies", unsupported)
+    timeouts = split_symbol_bucket_partials("timeout_strategies", timeouts)
+    slow_deferred = split_symbol_bucket_partials("slow_deferred_strategies", slow_deferred)
+    early_rejected = split_symbol_bucket_partials("early_rejected_strategies", early_rejected)
+    runtime_errors = split_symbol_bucket_partials("runtime_errors", runtime_errors)
+    timing = split_symbol_bucket_partials("timing_diagnostics", timing)
+    dedupe_map = split_symbol_bucket_partials("dedupe_map", dedupe_map)
+    job_manifest = split_symbol_bucket_partials("job_manifest", job_manifest)
+    symbol_bucket_trades = (
+        pd.concat(symbol_bucket_trade_frames, ignore_index=True, sort=False)
+        if symbol_bucket_trade_frames
+        else pd.DataFrame(columns=TRADE_COLUMNS)
+    )
+    symbol_bucket_partial_outputs["symbol_bucket_trades"] = symbol_bucket_trades
+    symbol_bucket_terminal_names = (
+        "leaderboard",
+        "early_rejected_strategies",
+        "timeout_strategies",
+        "runtime_errors",
+        "unsupported_strategies",
+        "slow_deferred_strategies",
+    )
+    symbol_bucket_bad_terminal_names = (
+        "timeout_strategies",
+        "runtime_errors",
+        "unsupported_strategies",
+        "slow_deferred_strategies",
+    )
+    symbol_bucket_info: dict[str, dict[str, Any]] = {}
+
+    def _symbol_bucket_id_from_row(row: Mapping[str, Any], id_column: str) -> str:
+        value = row.get(id_column)
+        if value is None and id_column != "candidate_id":
+            value = row.get("candidate_id")
+        if value is None and id_column != "strategy_id":
+            value = row.get("strategy_id")
+        if value is None:
+            return ""
+        text = str(value)
+        return text if text and text.lower() != "nan" else ""
+
+    def _symbol_bucket_int(row: Mapping[str, Any], key: str, default: int = -1) -> int:
+        value = row.get(key)
+        number = _finite_float(value, default=float("nan"))
+        return int(number) if number is not None and math.isfinite(number) else int(default)
+
+    def _record_symbol_bucket_row(row: Mapping[str, Any], *, id_column: str, bad_terminal: bool = False) -> None:
+        strategy_id = _symbol_bucket_id_from_row(row, id_column)
+        if not strategy_id:
+            return
+        info = symbol_bucket_info.setdefault(
+            strategy_id,
+            {"indices": set(), "count": 0, "bad_rows": 0, "metadata": {}},
+        )
+        bucket_count = _symbol_bucket_int(row, "symbol_bucket_count", default=0)
+        bucket_index = _symbol_bucket_int(row, "symbol_bucket_index", default=-1)
+        if bucket_count > 1:
+            info["count"] = max(int(info.get("count", 0)), int(bucket_count))
+        if bucket_index >= 0:
+            info["indices"].add(int(bucket_index))
+        if bad_terminal:
+            info["bad_rows"] = int(info.get("bad_rows", 0)) + 1
+        if not info.get("metadata"):
+            info["metadata"] = dict(row)
+
+    for frame_name, id_column in (
+        ("leaderboard", "candidate_id"),
+        ("early_rejected_strategies", "strategy_id"),
+        ("timeout_strategies", "strategy_id"),
+        ("runtime_errors", "strategy_id"),
+        ("unsupported_strategies", "strategy_id"),
+        ("slow_deferred_strategies", "strategy_id"),
+        ("timing_diagnostics", "strategy_id"),
+        ("job_manifest", "strategy_id"),
+    ):
+        partial_frame = symbol_bucket_partial_outputs.get(frame_name, pd.DataFrame())
+        if partial_frame.empty:
+            continue
+        for row in partial_frame.to_dict(orient="records"):
+            _record_symbol_bucket_row(
+                row,
+                id_column=id_column,
+                bad_terminal=frame_name in symbol_bucket_bad_terminal_names,
+            )
+    if not symbol_bucket_trades.empty:
+        trade_id_column = "candidate_id" if "candidate_id" in symbol_bucket_trades.columns else "strategy_id"
+        for row in symbol_bucket_trades.to_dict(orient="records"):
+            _record_symbol_bucket_row(row, id_column=trade_id_column, bad_terminal=False)
+
+    symbol_bucket_partial_terminal_ids: set[str] = set()
+    for frame_name, id_column in (
+        ("leaderboard", "candidate_id"),
+        ("early_rejected_strategies", "strategy_id"),
+        ("timeout_strategies", "strategy_id"),
+        ("runtime_errors", "strategy_id"),
+        ("unsupported_strategies", "strategy_id"),
+        ("slow_deferred_strategies", "strategy_id"),
+    ):
+        partial_frame = symbol_bucket_partial_outputs.get(frame_name, pd.DataFrame())
+        if not partial_frame.empty and id_column in partial_frame.columns:
+            symbol_bucket_partial_terminal_ids.update(
+                str(value) for value in partial_frame[id_column].dropna().astype(str) if str(value)
+            )
+    symbol_bucket_partial_strategy_count = int(len(symbol_bucket_partial_terminal_ids))
+    symbol_bucket_partial_terminal_rows = int(
+        sum(len(symbol_bucket_partial_outputs.get(name, pd.DataFrame())) for name in symbol_bucket_terminal_names)
+    )
+
+    symbol_bucket_merged_strategy_ids: set[str] = set()
+    symbol_bucket_unmerged_strategy_ids: set[str] = set()
+    merged_bucket_rows: list[dict[str, Any]] = []
+    merged_bucket_early_rows: list[dict[str, Any]] = []
+    merged_bucket_yearly_frames: list[pd.DataFrame] = []
+    merged_bucket_trade_sample_frames: list[pd.DataFrame] = []
+    merged_bucket_symbol_entry_frames: list[pd.DataFrame] = []
+    merged_bucket_annual_equity_frames: list[pd.DataFrame] = []
+    merged_bucket_return_distribution_frames: list[pd.DataFrame] = []
+    merged_bucket_ticker_summary_frames: list[pd.DataFrame] = []
+    merged_bucket_top_trade_frames: list[pd.DataFrame] = []
+    merged_bucket_bottom_trade_frames: list[pd.DataFrame] = []
+    if symbol_bucket_info:
+        trade_id_column = "candidate_id" if "candidate_id" in symbol_bucket_trades.columns else "strategy_id"
+        for strategy_id, info in sorted(symbol_bucket_info.items()):
+            bucket_count = int(info.get("count", 0) or 0)
+            bucket_indices = set(int(value) for value in info.get("indices", set()))
+            expected_indices = set(range(bucket_count)) if bucket_count > 1 else set()
+            if bucket_count <= 1 or bucket_indices != expected_indices or int(info.get("bad_rows", 0) or 0) > 0:
+                symbol_bucket_unmerged_strategy_ids.add(str(strategy_id))
+                continue
+            strategy_trade_rows = (
+                symbol_bucket_trades.loc[symbol_bucket_trades[trade_id_column].astype(str) == str(strategy_id)].copy()
+                if not symbol_bucket_trades.empty and trade_id_column in symbol_bucket_trades.columns
+                else pd.DataFrame(columns=TRADE_COLUMNS)
+            )
+            merged_strategy_trades = merge_symbol_bucket_trade_frames([strategy_trade_rows])
+            partial_yearly = symbol_bucket_partial_outputs.get("yearly_trade_performance", pd.DataFrame())
+            if not partial_yearly.empty:
+                yearly_id_column = "candidate_id" if "candidate_id" in partial_yearly.columns else "strategy_id"
+                if yearly_id_column in partial_yearly.columns:
+                    partial_yearly = partial_yearly.loc[partial_yearly[yearly_id_column].astype(str) == str(strategy_id)].copy()
+            metadata = dict(info.get("metadata") or {})
+            row, rebuilt_trades, rebuilt_yearly = rebuild_external_candidate_from_trades(
+                candidate_id=str(strategy_id),
+                trades=merged_strategy_trades,
+                metadata=metadata,
+                partial_yearly=partial_yearly,
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+                selection_split="validation",
+                min_selection_trades_per_year=100,
+                scoring_profile="strict_quality",
+            )
+            row["symbol_bucket_count"] = int(bucket_count)
+            row["symbol_bucket_merged"] = True
+            final_reject = _event_first_final_quality_reject(row)
+            if final_reject is not None:
+                early_row = {
+                    "strategy_id": str(strategy_id),
+                    "reason": str(final_reject["reason"]),
+                    "split": str(final_reject.get("split", "")),
+                    "year": final_reject.get("year", ""),
+                    "actual": final_reject.get("actual", ""),
+                    "threshold": final_reject.get("threshold", ""),
+                    "stage": "symbol_bucket_final_filter",
+                    "seconds_until_reject": "",
+                    "symbols_processed": "",
+                    "shard_id": row.get("shard_id", metadata.get("shard_id", 0)),
+                    "slot_in_shard": row.get("slot_in_shard", metadata.get("slot_in_shard", 0)),
+                    "family": row.get("family", metadata.get("family", "")),
+                    "concept": row.get("concept_id", metadata.get("concept", "")),
+                    "market_overlay": row.get("market_overlay_id", metadata.get("market_overlay", "")),
+                    "trend_filter": row.get("trend_profile_id", metadata.get("trend_filter", "")),
+                    "relative_strength_filter": row.get("rs_profile_id", metadata.get("relative_strength_filter", "")),
+                    "exit_rule": row.get("exit_profile_id", metadata.get("exit_rule", "")),
+                    "aggressiveness": row.get("aggression_id", metadata.get("aggressiveness", "")),
+                    "symbol_bucket_merged": True,
+                    "symbol_bucket_count": int(bucket_count),
+                }
+                merged_bucket_early_rows.append(early_row)
+            else:
+                merged_bucket_rows.append(row)
+                if not rebuilt_yearly.empty:
+                    merged_bucket_yearly_frames.append(rebuilt_yearly)
+                if not rebuilt_trades.empty:
+                    merged_bucket_trade_sample_frames.append(rebuilt_trades.head(5000))
+                    merged_bucket_symbol_entry_frames.append(symbol_entry_counts_by_year(rebuilt_trades))
+                    merged_bucket_annual_equity_frames.append(annual_trade_equity_curve(rebuilt_trades))
+                    merged_bucket_return_distribution_frames.append(trade_return_distribution(rebuilt_trades))
+                    merged_bucket_ticker_summary_frames.append(ticker_trade_summary(rebuilt_trades).head(MAX_TICKER_TRADE_SUMMARY_ROWS))
+                    ranked_returns = rebuilt_trades.copy()
+                    ranked_returns["_return_pct_numeric"] = pd.to_numeric(ranked_returns.get("return_pct", np.nan), errors="coerce")
+                    merged_bucket_top_trade_frames.append(
+                        ranked_returns.sort_values("_return_pct_numeric", ascending=False)
+                        .head(100)
+                        .drop(columns=["_return_pct_numeric"])
+                    )
+                    merged_bucket_bottom_trade_frames.append(
+                        ranked_returns.sort_values("_return_pct_numeric", ascending=True)
+                        .head(100)
+                        .drop(columns=["_return_pct_numeric"])
+                    )
+            symbol_bucket_merged_strategy_ids.add(str(strategy_id))
+    if merged_bucket_rows:
+        leaderboard = pd.concat([leaderboard, pd.DataFrame(merged_bucket_rows)], ignore_index=True, sort=False)
+    if merged_bucket_early_rows:
+        early_rejected = pd.concat([early_rejected, pd.DataFrame(merged_bucket_early_rows)], ignore_index=True, sort=False)
+    if merged_bucket_yearly_frames:
+        yearly = pd.concat([yearly, *merged_bucket_yearly_frames], ignore_index=True, sort=False)
+    if merged_bucket_trade_sample_frames:
+        trades = pd.concat([trades, *merged_bucket_trade_sample_frames], ignore_index=True, sort=False)
+    if merged_bucket_symbol_entry_frames:
+        symbol_entry_counts = pd.concat([symbol_entry_counts, *merged_bucket_symbol_entry_frames], ignore_index=True, sort=False)
+    if merged_bucket_annual_equity_frames:
+        annual_equity = pd.concat([annual_equity, *merged_bucket_annual_equity_frames], ignore_index=True, sort=False)
+    if merged_bucket_return_distribution_frames:
+        return_distribution = pd.concat([return_distribution, *merged_bucket_return_distribution_frames], ignore_index=True, sort=False)
+    if merged_bucket_ticker_summary_frames:
+        ticker_summary = pd.concat([ticker_summary, *merged_bucket_ticker_summary_frames], ignore_index=True, sort=False)
+    if merged_bucket_top_trade_frames:
+        top_trades_by_return = pd.concat([top_trades_by_return, *merged_bucket_top_trade_frames], ignore_index=True, sort=False)
+    if merged_bucket_bottom_trade_frames:
+        bottom_trades_by_return = pd.concat([bottom_trades_by_return, *merged_bucket_bottom_trade_frames], ignore_index=True, sort=False)
+    if not leaderboard.empty:
+        leaderboard = leaderboard.sort_values(["score", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    if not leaderboard.empty and "strict_quality_pass" in leaderboard.columns:
+        filtered = leaderboard.loc[leaderboard["strict_quality_pass"].astype(str).str.lower().isin({"true", "1"})].copy()
+    else:
+        filtered = pd.DataFrame(columns=leaderboard.columns if not leaderboard.empty else LEADERBOARD_COLUMNS)
+    if not filtered.empty:
+        filtered = filtered.sort_values(["adjusted_return_time_risk", "candidate_id"], ascending=[False, True]).reset_index(drop=True)
+    symbol_bucket_unmerged_strategy_count = int(len(symbol_bucket_unmerged_strategy_ids))
+    symbol_bucket_unmerged_terminal_rows = int(
+        sum(
+            len(
+                frame.loc[
+                    frame[( "candidate_id" if "candidate_id" in frame.columns else "strategy_id")].astype(str).isin(symbol_bucket_unmerged_strategy_ids)
+                ]
+            )
+            for frame in (symbol_bucket_partial_outputs.get(name, pd.DataFrame()) for name in symbol_bucket_terminal_names)
+            if not frame.empty and ("candidate_id" in frame.columns or "strategy_id" in frame.columns)
+        )
+    )
+    if not symbol_bucket_trades.empty and trade_id_column in symbol_bucket_trades.columns:
+        symbol_bucket_unmerged_trade_rows = int(
+            symbol_bucket_trades[trade_id_column].astype(str).isin(symbol_bucket_unmerged_strategy_ids).sum()
+        )
+    else:
+        symbol_bucket_unmerged_trade_rows = 0
+
+    synthetic_missing_timeout_count = 0
+    if fill_missing_timeouts_pack_path is not None and int(total_strategies_requested) > 0:
+        fill_pack_path = Path(fill_missing_timeouts_pack_path)
+        if not fill_pack_path.exists():
+            raise FileNotFoundError(f"fill-missing strategy pack path does not exist: {fill_pack_path}")
+        if "shard_id" in job_manifest.columns and "slot_in_shard" in job_manifest.columns:
+            manifest_shards = pd.to_numeric(job_manifest["shard_id"], errors="coerce")
+            manifest_slots = pd.to_numeric(job_manifest["slot_in_shard"], errors="coerce")
+            covered_slots = {
+                int(shard) * 200 + int(slot)
+                for shard, slot in zip(manifest_shards, manifest_slots)
+                if pd.notna(shard) and pd.notna(slot)
+            }
+        else:
+            covered_slots = set()
+        missing_slots = [slot for slot in range(int(total_strategies_requested)) if slot not in covered_slots]
+        if missing_slots:
+            fill_shards_root = fill_pack_path / "shards" if (fill_pack_path / "shards").exists() else fill_pack_path
+            slots_by_shard: dict[int, set[int]] = {}
+            for slot in missing_slots:
+                slots_by_shard.setdefault(int(slot) // 200, set()).add(int(slot) % 200)
+            timeout_rows: list[dict[str, Any]] = []
+            timing_rows: list[dict[str, Any]] = []
+            manifest_rows: list[dict[str, Any]] = []
+            chunks_per_shard = int(math.ceil(200 / max(int(candidate_count_per_job or 10), 1)))
+            for shard_id, wanted_slots in sorted(slots_by_shard.items()):
+                shard_path = fill_shards_root / f"shard_{shard_id:03d}.jsonl"
+                if not shard_path.exists():
+                    raise FileNotFoundError(f"cannot fill missing slots; shard file missing: {shard_path}")
+                with shard_path.open(encoding="utf-8") as handle:
+                    for slot_in_shard, line in enumerate(handle):
+                        if slot_in_shard not in wanted_slots:
+                            continue
+                        payload = json.loads(line)
+                        strategy_id = str(payload.get("strategy_id") or f"missing_{shard_id:03d}_{slot_in_shard:03d}")
+                        family = str(payload.get("family", ""))
+                        concept = str(payload.get("concept", ""))
+                        market_overlay = str(payload.get("market_profile_id") or payload.get("market_overlay") or "")
+                        trend_filter = str(payload.get("trend_profile_id") or payload.get("stock_trend_profile_id") or "")
+                        relative_strength_filter = str(payload.get("rs_profile_id") or payload.get("relative_strength_profile_id") or "")
+                        exit_rule = str(payload.get("exit_profile_id") or "")
+                        aggressiveness = str(payload.get("aggression_id") or payload.get("aggressiveness") or "")
+                        chunk_index = int(slot_in_shard) // max(int(candidate_count_per_job or 10), 1)
+                        job_id = int(shard_id) * chunks_per_shard + chunk_index
+                        timeout_rows.append(
+                            {
+                                "strategy_id": strategy_id,
+                                "shard_id": int(shard_id),
+                                "slot_in_shard": int(slot_in_shard),
+                                "family": family,
+                                "concept": concept,
+                                "market_overlay": market_overlay,
+                                "trend_filter": trend_filter,
+                                "relative_strength_filter": relative_strength_filter,
+                                "exit_rule": exit_rule,
+                                "aggressiveness": aggressiveness,
+                                "reason": fill_missing_timeouts_reason,
+                                "seconds_until_timeout": np.nan,
+                            }
+                        )
+                        timing_rows.append(
+                            {
+                                "strategy_id": strategy_id,
+                                "job_id": int(job_id),
+                                "shard_id": int(shard_id),
+                                "slot_in_shard": int(slot_in_shard),
+                                "family": family,
+                                "concept": concept,
+                                "market_overlay": market_overlay,
+                                "trend_filter": trend_filter,
+                                "relative_strength_filter": relative_strength_filter,
+                                "exit_rule": exit_rule,
+                                "aggressiveness": aggressiveness,
+                                "seconds_total": np.nan,
+                                "seconds_feature_build": 0.0,
+                                "seconds_signal": np.nan,
+                                "seconds_simulation": 0.0,
+                                "seconds_train": 0.0,
+                                "seconds_validation": 0.0,
+                                "symbols_total": 0,
+                                "symbols_processed": 0,
+                                "raw_signals_total": 0,
+                                "trades_total": 0,
+                                "train_trades": 0,
+                                "validation_trades": 0,
+                                "result_status": "timeout",
+                                "reject_reason": fill_missing_timeouts_reason,
+                                "timeout": True,
+                                "early_rejected": False,
+                                "runtime_error": False,
+                            }
+                        )
+                        manifest_rows.append(
+                            {
+                                "job_id": int(job_id),
+                                "strategy_id": strategy_id,
+                                "shard_id": int(shard_id),
+                                "slot_in_shard": int(slot_in_shard),
+                                "canonical_hash": "",
+                                "signal_hash": "",
+                                "cost_score": "",
+                                "estimated_cost_bucket": "merge_timeout",
+                            }
+                        )
+            synthetic_missing_timeout_count = int(len(timeout_rows))
+            if timeout_rows:
+                timeouts = pd.concat([timeouts, pd.DataFrame(timeout_rows, columns=TIMEOUT_COLUMNS)], ignore_index=True, sort=False)
+                timing = pd.concat([timing, pd.DataFrame(timing_rows, columns=TIMING_DIAGNOSTIC_COLUMNS)], ignore_index=True, sort=False)
+                job_manifest = pd.concat([job_manifest, pd.DataFrame(manifest_rows, columns=JOB_MANIFEST_COLUMNS)], ignore_index=True, sort=False)
+    _assert_consistent_duplicate_rows(leaderboard, ["candidate_id"], label="leaderboard")
+    _assert_consistent_duplicate_rows(early_rejected, ["strategy_id"], label="early_rejected")
+    _assert_consistent_duplicate_rows(
+        yearly,
+        ["candidate_id", "split", "year"],
+        label="yearly",
+    )
+    _assert_consistent_duplicate_rows(
+        trades,
+        ["candidate_id", "symbol", "entry_date", "exit_date"],
+        label="trades",
+    )
+
+    def drop_duplicate_strategy_rows(frame: pd.DataFrame, strategy_column: str) -> pd.DataFrame:
+        if frame.empty or strategy_column not in frame.columns:
+            return frame
+        return frame.drop_duplicates(subset=[strategy_column], keep="first").copy()
+
+    def drop_duplicate_detail_rows(frame: pd.DataFrame, strategy_column: str, keys: list[str]) -> pd.DataFrame:
+        if frame.empty or strategy_column not in frame.columns:
+            return frame
+        subset = [key for key in keys if key in frame.columns]
+        if strategy_column not in subset:
+            subset.insert(0, strategy_column)
+        if not subset:
+            return frame
+        return frame.drop_duplicates(subset=subset, keep="first").copy()
+
+    leaderboard = drop_duplicate_strategy_rows(leaderboard, "candidate_id")
+    filtered = drop_duplicate_strategy_rows(filtered, "candidate_id")
+    early_rejected = drop_duplicate_strategy_rows(early_rejected, "strategy_id")
+
+    leaderboard_ids = (
+        set(leaderboard["candidate_id"].dropna().astype(str))
+        if not leaderboard.empty and "candidate_id" in leaderboard.columns
+        else set()
+    )
+    if leaderboard_ids and not early_rejected.empty and "strategy_id" in early_rejected.columns:
+        early_rejected = early_rejected.loc[~early_rejected["strategy_id"].astype(str).isin(leaderboard_ids)].copy()
+
+    yearly = drop_duplicate_detail_rows(yearly, "candidate_id", ["candidate_id", "split", "year"])
+    trades = drop_duplicate_detail_rows(
+        trades,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "entry_price", "exit_price"],
+    )
+    symbol_entry_counts = drop_duplicate_detail_rows(symbol_entry_counts, "candidate_id", ["candidate_id", "year", "symbol"])
+    annual_equity = drop_duplicate_detail_rows(annual_equity, "candidate_id", ["candidate_id", "year"])
+    return_distribution = drop_duplicate_detail_rows(return_distribution, "candidate_id", ["candidate_id", "bucket"])
+    ticker_summary = drop_duplicate_detail_rows(ticker_summary, "candidate_id", ["candidate_id", "symbol"])
+    top_trades_by_return = drop_duplicate_detail_rows(
+        top_trades_by_return,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "trade_return_pct"],
+    )
+    bottom_trades_by_return = drop_duplicate_detail_rows(
+        bottom_trades_by_return,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "trade_return_pct"],
+    )
+    selected_symbol_trade_rows = drop_duplicate_detail_rows(
+        selected_symbol_trade_rows,
+        "candidate_id",
+        ["candidate_id", "symbol", "entry_date", "exit_date", "trade_return_pct"],
+    )
+
+    terminal_success_ids: set[str] = set()
+    if not leaderboard.empty and "candidate_id" in leaderboard.columns:
+        terminal_success_ids.update(str(value) for value in leaderboard["candidate_id"].dropna().astype(str) if str(value))
+    if not early_rejected.empty and "strategy_id" in early_rejected.columns:
+        terminal_success_ids.update(str(value) for value in early_rejected["strategy_id"].dropna().astype(str) if str(value))
+
+    def drop_superseded_rows(frame: pd.DataFrame, strategy_column: str) -> pd.DataFrame:
+        if frame.empty or strategy_column not in frame.columns or not terminal_success_ids:
+            return frame
+        return frame.loc[~frame[strategy_column].astype(str).isin(terminal_success_ids)].copy()
+
+    # Cross-run recoveries produce a real terminal result for a strategy that may
+    # have timed out in an earlier source run. The real result wins; otherwise a
+    # strict final merge would keep stale timeout rows forever.
+    timeouts = drop_superseded_rows(timeouts, "strategy_id")
+    slow_deferred = drop_superseded_rows(slow_deferred, "strategy_id")
+    runtime_errors = drop_superseded_rows(runtime_errors, "strategy_id")
+    unsupported = drop_superseded_rows(unsupported, "strategy_id")
+
+    def slot_id_map_from_frame(frame: pd.DataFrame, id_column: str) -> dict[str, int]:
+        if frame.empty or id_column not in frame.columns:
+            return {}
+        if "shard_id" not in frame.columns or "slot_in_shard" not in frame.columns:
+            return {}
+        shards = pd.to_numeric(frame["shard_id"], errors="coerce")
+        slots = pd.to_numeric(frame["slot_in_shard"], errors="coerce")
+        ids = frame[id_column].astype(str)
+        out: dict[str, int] = {}
+        for strategy_id, shard, slot in zip(ids, shards, slots):
+            if not strategy_id or pd.isna(shard) or pd.isna(slot):
+                continue
+            out[str(strategy_id)] = int(shard) * 200 + int(slot)
+        return out
+
+    terminal_id_to_slot: dict[str, int] = {}
+    for frame, column in (
+        (job_manifest, "strategy_id"),
+        (timing, "strategy_id"),
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        terminal_id_to_slot.update(slot_id_map_from_frame(frame, column))
+
+    terminal_slot_values: list[int] = []
+    for frame, column in (
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        if frame.empty or column not in frame.columns:
+            continue
+        for strategy_id in frame[column].dropna().astype(str):
+            terminal_slot = terminal_id_to_slot.get(strategy_id)
+            if terminal_slot is not None:
+                terminal_slot_values.append(int(terminal_slot))
+    expected_slots = set(range(max(int(total_strategies_requested), 0)))
+    terminal_slot_set = set(terminal_slot_values)
+    actual_missing_slots = sorted(expected_slots - terminal_slot_set)
+    actual_extra_slots = sorted(slot for slot in terminal_slot_set if slot not in expected_slots)
+    actual_overlap_count = int(len(terminal_slot_values) - len(terminal_slot_set))
+    missing_strategies = pd.DataFrame(
+        [
+            {
+                "strategy_id": f"slot_{slot}",
+                "shard_id": int(slot) // 200,
+                "slot_in_shard": int(slot) % 200,
+                "reason": "missing_terminal_result",
+            }
+            for slot in actual_missing_slots
+        ],
+        columns=["strategy_id", "shard_id", "slot_in_shard", "reason"],
+    )
+    slow_queue_manifest = (
+        pd.concat(slow_queue_frames, ignore_index=True, sort=False)
+        if slow_queue_frames
+        else pd.DataFrame(columns=SLOW_QUEUE_MANIFEST_COLUMNS)
+    )
+    signal_group_manifest = (
+        pd.concat(signal_group_manifest_frames, ignore_index=True, sort=False)
+        if signal_group_manifest_frames
+        else pd.DataFrame(columns=SIGNAL_GROUP_MANIFEST_COLUMNS)
+    )
+    strategy_to_signal_map = (
+        pd.concat(strategy_to_signal_map_frames, ignore_index=True, sort=False)
+        if strategy_to_signal_map_frames
+        else pd.DataFrame(columns=STRATEGY_TO_SIGNAL_MAP_COLUMNS)
+    )
+    compiled_signal_plan = (
+        pd.concat(compiled_signal_plan_frames, ignore_index=True, sort=False)
+        if compiled_signal_plan_frames
+        else pd.DataFrame(columns=COMPILED_SIGNAL_PLAN_COLUMNS)
+    )
+    event_store_manifest = (
+        pd.concat(event_store_manifest_frames, ignore_index=True, sort=False)
+        if event_store_manifest_frames
+        else pd.DataFrame(columns=EVENT_STORE_MANIFEST_COLUMNS)
+    )
+    concept_precheck_diagnostics = (
+        pd.concat(concept_precheck_frames, ignore_index=True, sort=False)
+        if concept_precheck_frames
+        else pd.DataFrame(columns=CONCEPT_PRECHECK_DIAGNOSTIC_COLUMNS)
+    )
+    exit_group_manifest = (
+        pd.concat(exit_group_manifest_frames, ignore_index=True, sort=False)
+        if exit_group_manifest_frames
+        else pd.DataFrame(columns=EXIT_GROUP_MANIFEST_COLUMNS)
     )
 
     leaderboard.to_csv(output_dir / "leaderboard.csv", index=False)
     filtered.to_csv(output_dir / "filtered_leaderboard.csv", index=False)
     yearly.to_csv(output_dir / "yearly_trade_performance.csv", index=False)
+    symbol_entry_counts.to_csv(output_dir / "symbol_entry_counts_by_year.csv", index=False)
+    annual_equity.to_csv(output_dir / "annual_trade_equity_curve.csv", index=False)
+    return_distribution.to_csv(output_dir / "trade_return_distribution.csv", index=False)
+    ticker_summary.to_csv(output_dir / "ticker_trade_summary.csv", index=False)
+    top_trades_by_return.to_csv(output_dir / "top_100_trades_by_return.csv", index=False)
+    bottom_trades_by_return.to_csv(output_dir / "bottom_100_trades_by_return.csv", index=False)
+    selected_symbol_trade_rows.to_csv(output_dir / "selected_symbol_trades.csv", index=False)
     trades.to_csv(output_dir / "top_trades_sample.csv", index=False)
+    for name, frame in symbol_bucket_partial_outputs.items():
+        frame.to_csv(output_dir / f"symbol_bucket_partial_{name}.csv", index=False)
     unsupported.to_csv(output_dir / "unsupported_strategies.csv", index=False)
+    timeouts.to_csv(output_dir / "timeout_strategies.csv", index=False)
+    slow_deferred.to_csv(output_dir / "slow_deferred_strategies.csv", index=False)
+    early_rejected.to_csv(output_dir / "early_rejected_strategies.csv", index=False)
+    runtime_errors.to_csv(output_dir / "runtime_errors.csv", index=False)
+    missing_strategies.to_csv(output_dir / "missing_strategies.csv", index=False)
+    timing.to_csv(output_dir / "timing_diagnostics.csv", index=False)
+    dedupe_map.to_csv(output_dir / "dedupe_map.csv", index=False)
+    job_manifest.to_csv(output_dir / "job_manifest.csv", index=False)
+    slow_queue_manifest.to_csv(output_dir / "slow_queue_manifest.csv", index=False)
+    signal_group_manifest.to_csv(output_dir / "signal_group_manifest.csv", index=False)
+    strategy_to_signal_map.to_csv(output_dir / "strategy_to_signal_map.csv", index=False)
+    compiled_signal_plan.to_csv(output_dir / "compiled_signal_plan.csv", index=False)
+    event_store_manifest.to_csv(output_dir / "event_store_manifest.csv", index=False)
+    concept_precheck_diagnostics.to_csv(output_dir / "concept_precheck_diagnostics.csv", index=False)
+    exit_group_manifest.to_csv(output_dir / "exit_group_manifest.csv", index=False)
+    cost_profile_v5 = {
+        "optimized_evaluation_mode": next(
+            (str(item.get("optimized_evaluation_mode")) for item in cost_profile_v5_rows if item.get("optimized_evaluation_mode")),
+            next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy"),
+        ),
+        "profiles": cost_profile_v5_rows,
+        "signal_groups_loaded": int(sum(int(item.get("signal_groups_loaded", 0) or 0) for item in cost_profile_v5_rows)),
+        "signal_groups_evaluated": int(sum(int(item.get("signal_groups_evaluated", 0) or 0) for item in cost_profile_v5_rows)),
+        "events_total": int(pd.to_numeric(event_store_manifest.get("events_total", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        if not event_store_manifest.empty
+        else int(sum(int(item.get("events_total", 0) or 0) for item in cost_profile_v5_rows)),
+    }
+    (output_dir / "cost_profile_v5.json").write_text(json.dumps(cost_profile_v5, indent=2, sort_keys=True), encoding="utf-8")
     with (output_dir / "top_indicator_rules.jsonl").open("w", encoding="utf-8") as handle:
         for row in sorted(rule_rows, key=lambda item: str(item.get("candidate_id", ""))):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+    long_hold_quality = leaderboard.copy()
+    if not long_hold_quality.empty and "long_hold_quality_score" in long_hold_quality.columns:
+        long_hold_quality["_long_hold_quality_score_numeric"] = pd.to_numeric(
+            long_hold_quality["long_hold_quality_score"],
+            errors="coerce",
+        ).fillna(float("-inf"))
+        long_hold_quality = long_hold_quality.sort_values(
+            ["_long_hold_quality_score_numeric", "candidate_id"],
+            ascending=[False, True],
+        ).drop(columns=["_long_hold_quality_score_numeric"])
+    long_hold_quality.to_csv(output_dir / "long_hold_quality_leaderboard.csv", index=False)
+    long_hold_adjusted_holding_ge25 = leaderboard.copy()
+    if not long_hold_adjusted_holding_ge25.empty:
+        if "validation_avg_holding_days" not in long_hold_adjusted_holding_ge25.columns:
+            long_hold_adjusted_holding_ge25["validation_avg_holding_days"] = np.nan
+        holding_numeric_for_rank = pd.to_numeric(long_hold_adjusted_holding_ge25["validation_avg_holding_days"], errors="coerce")
+        long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.loc[holding_numeric_for_rank >= 25.0].copy()
+        if not long_hold_adjusted_holding_ge25.empty:
+            if "adjusted_return_time_risk" not in long_hold_adjusted_holding_ge25.columns:
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"] = np.nan
+            long_hold_adjusted_holding_ge25["_adjusted_return_time_risk_numeric"] = pd.to_numeric(
+                long_hold_adjusted_holding_ge25["adjusted_return_time_risk"],
+                errors="coerce",
+            ).fillna(float("-inf"))
+            long_hold_adjusted_holding_ge25 = long_hold_adjusted_holding_ge25.sort_values(
+                ["_adjusted_return_time_risk_numeric", "candidate_id"],
+                ascending=[False, True],
+            ).drop(columns=["_adjusted_return_time_risk_numeric"])
+    long_hold_adjusted_holding_ge25.to_csv(output_dir / "long_hold_adjusted_holding_ge25.csv", index=False)
 
     def summary_by(column: str) -> pd.DataFrame:
         if leaderboard.empty or column not in leaderboard.columns:
@@ -3477,31 +10044,518 @@ def merge_external_strategy_pack_outputs(
     summary_by("concept_id").to_csv(output_dir / "concept_summary.csv", index=False)
     summary_by("market_overlay_id").to_csv(output_dir / "market_overlay_summary.csv", index=False)
 
-    best_adjusted = None
-    if not leaderboard.empty and "adjusted_return_time_risk" in leaderboard.columns:
-        best_adjusted = _finite_float(leaderboard.iloc[0].get("adjusted_return_time_risk"), default=float("nan"))
-        best_adjusted = None if not math.isfinite(best_adjusted) else float(best_adjusted)
-    summary = {
-        "total_strategies_requested": int(total_strategies_requested),
-        "total_strategies_loaded": int(sum(int(item.get("strategies_loaded", 0)) for item in summaries)),
-        "total_strategies_evaluated": int(sum(int(item.get("strategies_evaluated", 0)) for item in summaries)),
-        "total_strategies_unsupported": int(sum(int(item.get("strategies_unsupported", 0)) for item in summaries)),
-        "total_strategies_failed": int(sum(int(item.get("strategies_failed", 0)) for item in summaries)),
+    def _rank_by_numeric(frame: pd.DataFrame, column: str, *, ascending: bool = False) -> pd.DataFrame:
+        ranked = frame.copy()
+        if ranked.empty:
+            return ranked
+        if column not in ranked.columns:
+            ranked[column] = np.nan
+        tie_column = "candidate_id" if "candidate_id" in ranked.columns else "strategy_id"
+        ranked[f"_{column}_numeric"] = pd.to_numeric(ranked[column], errors="coerce").fillna(
+            float("inf") if ascending else float("-inf")
+        )
+        ranked = ranked.sort_values([f"_{column}_numeric", tie_column], ascending=[ascending, True])
+        return ranked.drop(columns=[f"_{column}_numeric"])
+
+    no_drawdown_ranked = _rank_by_numeric(leaderboard, "fundamental_timing_score_no_drawdown")
+    no_drawdown_ranked.to_csv(output_dir / "long_hold_no_drawdown_ranking.csv", index=False)
+    no_drawdown_ranked.head(100).to_csv(output_dir / "top_100_no_drawdown_score.csv", index=False)
+    _rank_by_numeric(leaderboard, "validation_avg_trade_return_pct").head(100).to_csv(
+        output_dir / "top_100_by_avg_trade_return.csv",
+        index=False,
+    )
+    _rank_by_numeric(leaderboard, "validation_profit_factor").head(100).to_csv(
+        output_dir / "top_100_by_profit_factor.csv",
+        index=False,
+    )
+    _rank_by_numeric(leaderboard, "total_return_proxy").head(100).to_csv(
+        output_dir / "top_100_by_total_return_proxy.csv",
+        index=False,
+    )
+
+    def _numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
+        if frame.empty:
+            return pd.Series(dtype=float)
+        if column not in frame.columns:
+            return pd.Series(np.nan, index=frame.index, dtype=float)
+        return pd.to_numeric(frame[column], errors="coerce")
+
+    holding_days = _numeric_series(leaderboard, "validation_avg_holding_days")
+    _rank_by_numeric(leaderboard.loc[holding_days >= 25.0].copy(), "fundamental_timing_score_no_drawdown").head(100).to_csv(
+        output_dir / "top_100_holding_ge25.csv",
+        index=False,
+    )
+    _rank_by_numeric(
+        leaderboard.loc[(holding_days >= 30.0) & (holding_days <= 60.0)].copy(),
+        "fundamental_timing_score_no_drawdown",
+    ).head(100).to_csv(output_dir / "top_100_holding_30_to_60.csv", index=False)
+    _rank_by_numeric(leaderboard, "validation_positive_years").head(100).to_csv(
+        output_dir / "top_100_positive_years.csv",
+        index=False,
+    )
+    _rank_by_numeric(leaderboard, "percent_exits_under_10_days", ascending=True).head(100).to_csv(
+        output_dir / "top_100_low_early_exit_rate.csv",
+        index=False,
+    )
+
+    def no_drawdown_summary_by(column: str) -> pd.DataFrame:
+        if leaderboard.empty or column not in leaderboard.columns:
+            return pd.DataFrame(
+                columns=[
+                    column,
+                    "candidates",
+                    "best_no_drawdown_score",
+                    "median_no_drawdown_score",
+                    "best_avg_trade_return_pct",
+                    "best_profit_factor",
+                    "best_total_return_proxy",
+                ]
+            )
+        summary_source = leaderboard.copy()
+        for numeric_column in (
+            "fundamental_timing_score_no_drawdown",
+            "validation_avg_trade_return_pct",
+            "validation_profit_factor",
+            "total_return_proxy",
+        ):
+            if numeric_column not in summary_source.columns:
+                summary_source[numeric_column] = np.nan
+            summary_source[numeric_column] = pd.to_numeric(summary_source[numeric_column], errors="coerce")
+        if "candidate_id" not in summary_source.columns:
+            summary_source["candidate_id"] = ""
+        grouped = (
+            summary_source.groupby(column, dropna=False)
+            .agg(
+                candidates=("candidate_id", "count"),
+                best_no_drawdown_score=("fundamental_timing_score_no_drawdown", "max"),
+                median_no_drawdown_score=("fundamental_timing_score_no_drawdown", "median"),
+                best_avg_trade_return_pct=("validation_avg_trade_return_pct", "max"),
+                best_profit_factor=("validation_profit_factor", "max"),
+                best_total_return_proxy=("total_return_proxy", "max"),
+            )
+            .reset_index()
+            .sort_values(["best_no_drawdown_score", column], ascending=[False, True])
+        )
+        return grouped
+
+    concept_no_drawdown = no_drawdown_summary_by("concept_id")
+    family_no_drawdown = no_drawdown_summary_by("family")
+    concept_no_drawdown.to_csv(output_dir / "concept_summary_no_drawdown.csv", index=False)
+    family_no_drawdown.to_csv(output_dir / "family_summary_no_drawdown.csv", index=False)
+    if not no_drawdown_ranked.empty and "concept_id" in no_drawdown_ranked.columns:
+        no_drawdown_ranked.groupby("concept_id", dropna=False).head(1).to_csv(
+            output_dir / "best_by_concept_no_drawdown.csv",
+            index=False,
+        )
+    else:
+        pd.DataFrame(columns=leaderboard.columns).to_csv(output_dir / "best_by_concept_no_drawdown.csv", index=False)
+    if not no_drawdown_ranked.empty and "family" in no_drawdown_ranked.columns:
+        no_drawdown_ranked.groupby("family", dropna=False).head(1).to_csv(
+            output_dir / "best_by_family_no_drawdown.csv",
+            index=False,
+        )
+    else:
+        pd.DataFrame(columns=leaderboard.columns).to_csv(output_dir / "best_by_family_no_drawdown.csv", index=False)
+    top_50_no_drawdown_ids = (
+        set(no_drawdown_ranked.head(50)["candidate_id"].dropna().astype(str))
+        if not no_drawdown_ranked.empty and "candidate_id" in no_drawdown_ranked.columns
+        else set()
+    )
+    yearly_id_column = "candidate_id" if "candidate_id" in yearly.columns else "strategy_id"
+    if top_50_no_drawdown_ids and yearly_id_column in yearly.columns:
+        yearly.loc[yearly[yearly_id_column].astype(str).isin(top_50_no_drawdown_ids)].to_csv(
+            output_dir / "annual_detail_top_50_no_drawdown.csv",
+            index=False,
+        )
+    else:
+        pd.DataFrame(columns=yearly.columns).to_csv(output_dir / "annual_detail_top_50_no_drawdown.csv", index=False)
+
+    best_row = _best_adjusted_row(leaderboard)
+    best_filtered_row = _best_adjusted_row(filtered)
+    best_adjusted = None if best_row is None else _finite_float(best_row.get("adjusted_return_time_risk"), default=float("nan"))
+    best_adjusted = None if best_adjusted is None or not math.isfinite(best_adjusted) else float(best_adjusted)
+    validation_avg_holding_for_best = _numeric_series(leaderboard, "validation_avg_holding_days")
+    best_holding_ge25_row = _best_numeric_row(
+        leaderboard,
+        "adjusted_return_time_risk",
+        mask=validation_avg_holding_for_best >= 25.0 if len(validation_avg_holding_for_best) else pd.Series(dtype=bool),
+    )
+    best_no_drawdown_row = _best_numeric_row(leaderboard, "fundamental_timing_score_no_drawdown")
+    best_return_pf_row = _best_numeric_row(leaderboard, "return_pf_score")
+    best_avg_trade_row = _best_numeric_row(leaderboard, "validation_avg_trade_return_pct")
+    best_profit_factor_row = _best_numeric_row(leaderboard, "validation_profit_factor")
+    best_total_return_proxy_row = _best_numeric_row(leaderboard, "total_return_proxy")
+    jobs_requested = int(total_jobs_requested) if total_jobs_requested is not None else int(total_shards_requested)
+    inferred_candidate_count = None
+    if candidate_count_per_job is not None:
+        inferred_candidate_count = int(candidate_count_per_job)
+    elif jobs_requested > 0:
+        inferred_candidate_count = int(total_strategies_requested) // jobs_requested
+    def sum_summary(*keys: str) -> int:
+        total = 0
+        for item in summaries:
+            for key in keys:
+                if key in item and item.get(key) is not None:
+                    total += int(item.get(key, 0))
+                    break
+        return int(total)
+
+    optimized_mode = next((str(item.get("optimized_evaluation_mode")) for item in summaries if item.get("optimized_evaluation_mode")), "legacy")
+    reconcile_counts_to_output_rows = _is_event_first_mode(optimized_mode)
+    terminal_strategy_ids: set[str] = set()
+    for frame, column in (
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        if not frame.empty and column in frame.columns:
+            terminal_strategy_ids.update(str(value) for value in frame[column].dropna().astype(str) if str(value))
+    terminal_coverage_count = int(len(terminal_strategy_ids))
+    terminal_rows_by_strategy = 0
+    terminal_duplicate_ids = 0
+    terminal_id_frames: list[pd.Series] = []
+    for frame, column in (
+        (leaderboard, "candidate_id"),
+        (early_rejected, "strategy_id"),
+        (timeouts, "strategy_id"),
+        (runtime_errors, "strategy_id"),
+        (unsupported, "strategy_id"),
+        (slow_deferred, "strategy_id"),
+    ):
+        if not frame.empty and column in frame.columns:
+            values = frame[column].dropna().astype(str)
+            values = values.loc[values != ""]
+            terminal_rows_by_strategy += int(len(values))
+            terminal_id_frames.append(values)
+    if terminal_id_frames:
+        terminal_all_ids = pd.concat(terminal_id_frames, ignore_index=True)
+        terminal_duplicate_ids = int(terminal_all_ids.duplicated().sum())
+    terminal_coverage_complete = bool(
+        reconcile_counts_to_output_rows
+        and int(total_strategies_requested) > 0
+        and terminal_coverage_count >= int(total_strategies_requested)
+    )
+    completed_jobs = sum_summary("total_jobs_completed")
+    if completed_jobs == 0:
+        completed_jobs = int(len(summaries))
+    completed_shards = sum_summary("total_shards_completed")
+    if completed_shards == 0:
+        completed_shards = int(len(summaries))
+    leaderboard_row_count = int(len(leaderboard))
+    early_rejected_row_count = int(len(early_rejected))
+    loaded_total = (
+        int(len(timing))
+        if reconcile_counts_to_output_rows and not timing.empty
+        else sum_summary("strategies_loaded", "total_strategies_loaded")
+    )
+    if loaded_total == 0:
+        loaded_total = int(
+            leaderboard_row_count
+            + early_rejected_row_count
+            + len(unsupported)
+            + len(timeouts)
+            + len(runtime_errors)
+            + len(slow_deferred)
+        )
+    if terminal_coverage_complete:
+        loaded_total = int(max(loaded_total, terminal_coverage_count))
+        completed_jobs = int(jobs_requested)
+        completed_shards = int(total_shards_requested)
+    timed_out_total = int(len(timeouts)) if reconcile_counts_to_output_rows else sum_summary("strategies_timed_out", "total_strategies_timed_out")
+    slow_deferred_total = sum_summary("strategies_slow_deferred", "total_strategies_slow_deferred")
+    if reconcile_counts_to_output_rows:
+        slow_deferred_total = int(len(slow_deferred))
+    if slow_deferred_total == 0 and not slow_deferred.empty:
+        slow_deferred_total = int(len(slow_deferred))
+    runtime_error_total = int(len(runtime_errors)) if reconcile_counts_to_output_rows else sum_summary("strategies_runtime_error", "total_strategies_runtime_error")
+    unsupported_total = int(len(unsupported)) if reconcile_counts_to_output_rows else sum_summary("strategies_unsupported", "total_strategies_unsupported")
+    failed_total = sum_summary("strategies_failed", "total_strategies_failed")
+    if reconcile_counts_to_output_rows:
+        failed_total = int(timed_out_total + runtime_error_total)
+    elif failed_total == 0:
+        failed_total = int(timed_out_total + runtime_error_total)
+    signal_seconds = (
+        pd.to_numeric(signal_group_manifest.get("seconds_signal", pd.Series(dtype=float)), errors="coerce")
+        .dropna()
+        .to_numpy(dtype=float)
+        if not signal_group_manifest.empty
+        else np.asarray([], dtype=float)
+    )
+    exit_seconds = (
+        pd.to_numeric(timing.get("seconds_simulation", pd.Series(dtype=float)), errors="coerce")
+        .dropna()
+        .to_numpy(dtype=float)
+        if not timing.empty
+        else np.asarray([], dtype=float)
+    )
+
+    def percentile_or_none(values: np.ndarray, percentile: float) -> float | None:
+        if values.size == 0:
+            return None
+        return float(np.percentile(values, percentile))
+
+    signal_groups_loaded = sum_summary("signal_groups_loaded")
+    if signal_groups_loaded == 0 and not signal_group_manifest.empty:
+        signal_groups_loaded = int(len(signal_group_manifest))
+    signal_groups_evaluated = sum_summary("signal_groups_evaluated")
+    if signal_groups_evaluated == 0 and not signal_group_manifest.empty:
+        signal_groups_evaluated = int(
+            signal_group_manifest["result_status"].astype(str).isin({"signal_ready", "signal_early_rejected"}).sum()
+            if "result_status" in signal_group_manifest.columns
+            else len(signal_group_manifest)
+        )
+    signal_groups_early_rejected = sum_summary("signal_groups_early_rejected")
+    if signal_groups_early_rejected == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
+        signal_groups_early_rejected = int((signal_group_manifest["result_status"].astype(str) == "signal_early_rejected").sum())
+    signal_groups_timed_out = sum_summary("signal_groups_timed_out")
+    if signal_groups_timed_out == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
+        signal_groups_timed_out = int((signal_group_manifest["result_status"].astype(str) == "signal_timeout").sum())
+    signal_groups_slow_deferred = sum_summary("signal_groups_slow_deferred", "total_signal_groups_slow_deferred")
+    if signal_groups_slow_deferred == 0 and not signal_group_manifest.empty and "result_status" in signal_group_manifest.columns:
+        signal_groups_slow_deferred = int((signal_group_manifest["result_status"].astype(str) == "signal_slow_deferred").sum())
+    signal_groups_requested = sum_summary("signal_groups_requested")
+    if signal_groups_requested == 0 and reconcile_counts_to_output_rows:
+        signal_groups_requested = int(signal_groups_loaded)
+    strategy_slots_requested = int(total_strategies_requested)
+    strategies_requested_for_summary = int(loaded_total if reconcile_counts_to_output_rows else total_strategies_requested)
+    zero_timeout_mode = any(bool(item.get("zero_timeout_mode")) for item in summaries)
+    zero_slow_deferred_mode = any(bool(item.get("zero_slow_deferred_mode")) for item in summaries)
+    strict_success_rows = int(leaderboard_row_count + early_rejected_row_count)
+    strict_missing = max(int(total_strategies_requested) - strict_success_rows, 0)
+    strict_extra = max(strict_success_rows - int(total_strategies_requested), 0)
+    strict_overlaps = int(terminal_duplicate_ids)
+    missing_count = int(len(actual_missing_slots))
+    extra_count = int(len(actual_extra_slots))
+    overlap_count = int(actual_overlap_count)
+    summary: dict[str, Any] = {
+        "total_strategies_requested": int(strategies_requested_for_summary),
+        "strategy_slots_requested": int(strategy_slots_requested),
+        "total_strategies_loaded": int(loaded_total),
+        "total_strategies_evaluated": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated", "total_strategies_evaluated"),
+        "total_strategies_early_rejected": int(early_rejected_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
+        "total_strategies_slow_deferred": int(slow_deferred_total),
+        "synthetic_missing_timeout_rows": int(synthetic_missing_timeout_count),
+        "fill_missing_timeouts_enabled": bool(fill_missing_timeouts_pack_path is not None),
+        "total_strategies_unsupported": int(unsupported_total),
+        "total_strategies_runtime_error": int(runtime_error_total),
+        "total_strategies_failed": int(failed_total),
+        "total_strategies_timed_out": int(timed_out_total),
+        "total_strategies_deduped": sum_summary("strategies_deduped", "total_strategies_deduped"),
+        "total_strategies_signal_deduped": sum_summary("strategies_signal_deduped", "total_strategies_signal_deduped"),
+        "strategies_signal_reused": sum_summary("strategies_signal_reused", "total_strategies_signal_deduped"),
+        "signal_groups_requested": int(signal_groups_requested),
+        "strategies_requested": int(strategies_requested_for_summary),
+        "strategies_loaded": int(loaded_total),
+        "strategies_evaluated": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated", "total_strategies_evaluated"),
+        "strategies_early_rejected": int(early_rejected_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_early_rejected", "total_strategies_early_rejected"),
+        "strategies_timed_out": int(timed_out_total),
+        "strategies_runtime_error": int(runtime_error_total),
+        "strategies_unsupported": int(unsupported_total),
+        "strategies_covered": int(loaded_total),
+        "strategies_evaluated_complete": int(leaderboard_row_count) if reconcile_counts_to_output_rows else sum_summary("strategies_evaluated_complete", "total_strategies_evaluated"),
+        "signal_groups_loaded": int(signal_groups_loaded),
+        "signal_groups_evaluated": int(signal_groups_evaluated),
+        "signal_groups_early_rejected": int(signal_groups_early_rejected),
+        "signal_groups_timed_out": int(signal_groups_timed_out),
+        "signal_groups_slow_deferred": int(signal_groups_slow_deferred),
+        "total_signal_groups_slow_deferred": int(signal_groups_slow_deferred),
+        "time_per_signal_p50_seconds": percentile_or_none(signal_seconds, 50),
+        "time_per_signal_p95_seconds": percentile_or_none(signal_seconds, 95),
+        "time_per_signal_max_seconds": percentile_or_none(signal_seconds, 100),
+        "time_per_exit_simulation_p50_seconds": percentile_or_none(exit_seconds, 50),
+        "time_per_exit_simulation_p95_seconds": percentile_or_none(exit_seconds, 95),
+        "time_per_exit_simulation_max_seconds": percentile_or_none(exit_seconds, 100),
+        "full_runtime_estimate_hours": (
+            None
+            if signal_seconds.size == 0
+            else float((18_000 * float(np.mean(signal_seconds))) / 360.0 / 3600.0)
+        ),
+        "numba_enabled": any(bool(item.get("numba_enabled")) for item in summaries),
+        "numba_reason": next((str(item.get("numba_reason")) for item in summaries if item.get("numba_reason")), ""),
+        "unique_signal_evaluations": sum_summary("unique_signal_evaluations"),
+        "cached_signal_reuses": sum_summary("cached_signal_reuses"),
         "total_shards_requested": int(total_shards_requested),
-        "total_shards_completed": int(len(summaries)),
+        "total_shards_completed": int(completed_shards),
+        "total_jobs_requested": jobs_requested,
+        "total_jobs_completed": int(completed_jobs),
+        "total_jobs_failed": int(0 if terminal_coverage_complete else max(jobs_requested - completed_jobs, 0)),
+        "candidate_count_per_job": inferred_candidate_count,
+        "candidate_timeout_seconds": None
+        if not summaries
+        else int(
+            next(
+                (
+                    item.get("candidate_timeout_seconds")
+                    for item in summaries
+                    if item.get("candidate_timeout_seconds") is not None
+                ),
+                0,
+            )
+            or 0
+        ),
+        "optimized_evaluation_mode": optimized_mode,
+        "zero_timeout_mode": bool(zero_timeout_mode),
+        "zero_slow_deferred_mode": bool(zero_slow_deferred_mode),
+        "signal_first_phase": next((str(item.get("signal_first_phase")) for item in summaries if item.get("signal_first_phase")), ""),
         "filtered_candidates": int(len(filtered)),
-        "best_candidate_id": None if leaderboard.empty else str(leaderboard.iloc[0]["candidate_id"]),
-        "best_filtered_candidate_id": None if filtered.empty else str(filtered.iloc[0]["candidate_id"]),
+        "best_candidate_id": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_overall": None if best_row is None else str(best_row["candidate_id"]),
+        "best_candidate_id_holding_ge25": None if best_holding_ge25_row is None else str(best_holding_ge25_row["candidate_id"]),
+        "best_candidate_id_no_drawdown_score": None if best_no_drawdown_row is None else str(best_no_drawdown_row["candidate_id"]),
+        "best_candidate_id_return_pf_score": None if best_return_pf_row is None else str(best_return_pf_row["candidate_id"]),
+        "best_candidate_id_avg_trade": None if best_avg_trade_row is None else str(best_avg_trade_row["candidate_id"]),
+        "best_candidate_id_profit_factor": None if best_profit_factor_row is None else str(best_profit_factor_row["candidate_id"]),
+        "best_candidate_id_total_return_proxy": None if best_total_return_proxy_row is None else str(best_total_return_proxy_row["candidate_id"]),
+        "best_filtered_candidate_id": None if best_filtered_row is None else str(best_filtered_row["candidate_id"]),
         "best_adjusted_return_time_risk": best_adjusted,
+        "ticker_trade_summary_rows_total": int(ticker_summary_rows_total),
+        "ticker_trade_summary_rows_written": int(ticker_summary_rows_written),
+        "ticker_trade_summary_row_cap": int(MAX_TICKER_TRADE_SUMMARY_ROWS),
         "locked_start": str(locked_start),
         "train_end": str(train_end),
         "validation_start": str(validation_start),
         "validation_end": str(validation_end),
         "github_only_run": True,
         "requires_local_machine": False,
+        "final_strict_eval_mode": bool(strict_final_eval_mode),
+        "strict_terminal_rows": int(terminal_rows_by_strategy),
+        "strict_leaderboard_plus_early_rejected": int(strict_success_rows),
+        "strict_missing": int(strict_missing),
+        "strict_extra": int(strict_extra),
+        "strict_overlaps": int(strict_overlaps),
+        "missing": int(missing_count),
+        "extra": int(extra_count),
+        "overlaps": int(overlap_count),
+        "symbol_bucket_partial_terminal_rows": int(symbol_bucket_partial_terminal_rows),
+        "symbol_bucket_partial_strategy_count": int(symbol_bucket_partial_strategy_count),
+        "symbol_bucket_partial_trade_rows": int(len(symbol_bucket_trades)),
+        "symbol_bucket_merged_strategy_count": int(len(symbol_bucket_merged_strategy_ids)),
+        "symbol_bucket_unmerged_strategy_count": int(symbol_bucket_unmerged_strategy_count),
+        "symbol_bucket_unmerged_terminal_rows": int(symbol_bucket_unmerged_terminal_rows),
+        "symbol_bucket_unmerged_trade_rows": int(symbol_bucket_unmerged_trade_rows),
+        "symbol_bucket_merge_complete": bool(symbol_bucket_unmerged_strategy_count == 0),
     }
+    strict_violations: list[dict[str, Any]] = []
+    if strict_final_eval_mode:
+        strict_checks = (
+            ("timeouts", int(timed_out_total), 0),
+            ("synthetic_missing_timeout_rows", int(synthetic_missing_timeout_count), 0),
+            ("fill_missing_timeouts_enabled", int(bool(fill_missing_timeouts_pack_path is not None)), 0),
+            ("runtime_errors", int(runtime_error_total), 0),
+            ("unsupported", int(unsupported_total), 0),
+            ("slow_deferred", int(slow_deferred_total), 0),
+            ("leaderboard_plus_early_rejected", int(strict_success_rows), int(total_strategies_requested)),
+            ("missing", int(missing_count), 0),
+            ("extra", int(extra_count), 0),
+            ("overlaps", int(overlap_count), 0),
+        )
+        for name, actual, expected in strict_checks:
+            if actual != expected:
+                strict_violations.append({"check": name, "actual": actual, "expected": expected})
+        if symbol_bucket_unmerged_strategy_count:
+            strict_violations.append(
+                {
+                    "check": "unmerged_symbol_bucket_partials",
+                    "actual": int(symbol_bucket_unmerged_strategy_count),
+                    "expected": 0,
+                }
+            )
+        if str(locked_start) != DEFAULT_LOCKED_START:
+            strict_violations.append({"check": "locked_start", "actual": str(locked_start), "expected": DEFAULT_LOCKED_START})
+        if str(validation_end) != DEFAULT_VALIDATION_END:
+            strict_violations.append({"check": "validation_end", "actual": str(validation_end), "expected": DEFAULT_VALIDATION_END})
+    summary["strict_final_pass"] = bool(strict_final_eval_mode and not strict_violations)
+    summary["strict_final_violation_count"] = int(len(strict_violations))
+    summary["strict_final_violations"] = strict_violations
+    top_no_drawdown_ids = (
+        no_drawdown_ranked.head(20)["candidate_id"].dropna().astype(str).tolist()
+        if not no_drawdown_ranked.empty and "candidate_id" in no_drawdown_ranked.columns
+        else []
+    )
+    report_lines = [
+        "# Long Hold No-Drawdown Report",
+        "",
+        f"strategy_slots_requested: {strategy_slots_requested}",
+        f"strategies_covered: {loaded_total}",
+        f"evaluated: {leaderboard_row_count}",
+        f"early_rejected: {early_rejected_row_count}",
+        f"timeouts: {timed_out_total}",
+        f"runtime_errors: {runtime_error_total}",
+        f"unsupported: {unsupported_total}",
+        f"slow_deferred: {slow_deferred_total}",
+        f"synthetic_missing_timeout_rows: {synthetic_missing_timeout_count}",
+        f"locked_start: {locked_start}",
+        f"train_end: {train_end}",
+        f"validation_start: {validation_start}",
+        f"validation_end: {validation_end}",
+        "",
+        "## Best IDs",
+        f"best_candidate_id_no_drawdown_score: {summary.get('best_candidate_id_no_drawdown_score')}",
+        f"best_candidate_id_avg_trade: {summary.get('best_candidate_id_avg_trade')}",
+        f"best_candidate_id_profit_factor: {summary.get('best_candidate_id_profit_factor')}",
+        f"best_candidate_id_total_return_proxy: {summary.get('best_candidate_id_total_return_proxy')}",
+        "",
+        "## Top 20 No-Drawdown",
+        *[f"{idx + 1}. {candidate_id}" for idx, candidate_id in enumerate(top_no_drawdown_ids)],
+        "",
+    ]
+    (output_dir / "long_hold_no_drawdown_full_report.md").write_text("\n".join(report_lines), encoding="utf-8")
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    if strict_final_eval_mode and strict_violations:
+        (output_dir / "strict_final_validation_report.json").write_text(
+            json.dumps({"ok": False, "violations": strict_violations}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        raise ValueError(f"strict final merge failed: {strict_violations}")
+    if strict_final_eval_mode:
+        (output_dir / "strict_final_validation_report.json").write_text(
+            json.dumps({"ok": True, "violations": []}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     return summary
+
+
+def merge_symbol_bucket_trade_frames(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
+    non_empty = [frame.copy() for frame in frames if frame is not None and not frame.empty]
+    if not non_empty:
+        return pd.DataFrame(columns=TRADE_COLUMNS)
+    merged = pd.concat(non_empty, ignore_index=True, sort=False)
+    id_column = "strategy_id" if "strategy_id" in merged.columns else "candidate_id"
+    date_column = "date" if "date" in merged.columns else "entry_date"
+    key_columns = [column for column in (id_column, "symbol", date_column, "exit_date") if column in merged.columns]
+    if key_columns:
+        merged = merged.drop_duplicates(subset=key_columns, keep="last")
+        merged = merged.sort_values(key_columns).reset_index(drop=True)
+    return merged
+
+
+def merge_subgroup_terminal_frames(
+    frames: Iterable[pd.DataFrame],
+    *,
+    expected_strategy_ids: Iterable[str] | None = None,
+    id_column: str = "strategy_id",
+) -> tuple[pd.DataFrame, list[str]]:
+    non_empty = [frame.copy() for frame in frames if frame is not None and not frame.empty]
+    if not non_empty:
+        merged = pd.DataFrame(columns=[id_column])
+    else:
+        merged = pd.concat(non_empty, ignore_index=True, sort=False)
+        if id_column not in merged.columns and "candidate_id" in merged.columns:
+            id_column = "candidate_id"
+        if id_column in merged.columns:
+            merged = merged.drop_duplicates(subset=[id_column], keep="last")
+            merged = merged.sort_values(id_column).reset_index(drop=True)
+    expected = {str(value) for value in expected_strategy_ids or []}
+    present = (
+        set(merged[id_column].dropna().astype(str))
+        if id_column in merged.columns
+        else set()
+    )
+    missing = sorted(expected - present)
+    return merged, missing
 
 
 def _default_run_root() -> Path:
@@ -3509,6 +10563,10 @@ def _default_run_root() -> Path:
 
 
 def build_pack_cli(argv: list[str] | None = None) -> int:
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(description="Build stage packs for global technical buy indicator search.")
     parser.add_argument("--data-lake-root", type=Path, default=base_data_dir() / "prices" / "free_us_daily")
     parser.add_argument("--output-dir", type=Path, default=_default_run_root() / "pack")
@@ -3618,15 +10676,36 @@ def reevaluate_global_cli(argv: list[str] | None = None) -> int:
 
 
 def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(description="Run one external GTBI strategy-pack shard.")
     parser.add_argument("--data-lake-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--prebuilt-pack-dir", type=Path, default=None)
     parser.add_argument("--external-strategy-pack-path", type=Path, default=DEFAULT_EXTERNAL_STRATEGY_PACK_PATH)
     parser.add_argument("--external-strategy-shard-id", type=int, required=True)
+    parser.add_argument("--external-strategy-offset", type=int, default=0)
     parser.add_argument("--external-strategy-limit", type=int, default=200)
     parser.add_argument("--external-strategy-format", choices=("auto", "jsonl", "csv"), default="auto")
     parser.add_argument("--external-strategy-fail-on-unsupported", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--candidate-timeout-seconds", type=int, default=DEFAULT_EXTERNAL_CANDIDATE_TIMEOUT_SECONDS)
+    parser.add_argument("--job-wall-clock-seconds", type=int, default=300)
+    parser.add_argument("--schedule-active-jobs", type=int, default=0)
+    parser.add_argument("--schedule-subgroup-index", type=int, default=0)
+    parser.add_argument("--schedule-subgroup-count", type=int, default=0)
+    parser.add_argument("--symbol-bucket-index", type=int, default=0)
+    parser.add_argument("--symbol-bucket-count", type=int, default=0)
+    parser.add_argument("--test-max-signal-groups", type=int, default=0)
+    parser.add_argument("--signal-first-phase", choices=("combined", "signals", "exits"), default="combined")
+    parser.add_argument("--signal-events-dir", type=Path, default=None)
+    parser.add_argument("--optimized-evaluation-mode", default="optimized_evaluation_v2")
+    parser.add_argument("--enable-feature-cache", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-dedupe", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-safe-prefilter", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-early-stopping", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--enable-cost-scheduling", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--min-market-cap", type=float, default=2_000_000_000)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
@@ -3639,14 +10718,31 @@ def run_external_strategy_pack_shard_cli(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         prebuilt_pack_dir=args.prebuilt_pack_dir,
         external_strategy_shard_id=args.external_strategy_shard_id,
+        external_strategy_offset=args.external_strategy_offset,
         external_strategy_limit=args.external_strategy_limit,
         external_strategy_format=args.external_strategy_format,
         external_strategy_fail_on_unsupported=args.external_strategy_fail_on_unsupported,
+        candidate_timeout_seconds=args.candidate_timeout_seconds,
+        job_wall_clock_seconds=args.job_wall_clock_seconds,
+        schedule_active_jobs=args.schedule_active_jobs,
+        schedule_subgroup_index=args.schedule_subgroup_index,
+        schedule_subgroup_count=args.schedule_subgroup_count,
+        symbol_bucket_index=args.symbol_bucket_index,
+        symbol_bucket_count=args.symbol_bucket_count,
+        test_max_signal_groups=args.test_max_signal_groups,
+        signal_first_phase=args.signal_first_phase,
+        signal_events_dir=args.signal_events_dir,
         min_market_cap=args.min_market_cap,
         locked_start=args.locked_start,
         train_end=args.train_end,
         validation_start=args.validation_start,
         validation_end=args.validation_end,
+        optimized_evaluation_mode=args.optimized_evaluation_mode,
+        enable_feature_cache=args.enable_feature_cache,
+        enable_dedupe=args.enable_dedupe,
+        enable_safe_prefilter=args.enable_safe_prefilter,
+        enable_early_stopping=args.enable_early_stopping,
+        enable_cost_scheduling=args.enable_cost_scheduling,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
@@ -3658,20 +10754,30 @@ def merge_external_strategy_pack_cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--total-strategies-requested", type=int, required=True)
     parser.add_argument("--total-shards-requested", type=int, required=True)
+    parser.add_argument("--total-jobs-requested", type=int, default=None)
+    parser.add_argument("--candidate-count-per-job", type=int, default=None)
     parser.add_argument("--locked-start", default=DEFAULT_LOCKED_START)
     parser.add_argument("--train-end", default=DEFAULT_TRAIN_END)
     parser.add_argument("--validation-start", default=DEFAULT_VALIDATION_START)
     parser.add_argument("--validation-end", default=DEFAULT_VALIDATION_END)
+    parser.add_argument("--fill-missing-timeouts-pack-path", type=Path, default=None)
+    parser.add_argument("--fill-missing-timeouts-reason", default="missing_slot_classified_as_timeout_in_merge")
+    parser.add_argument("--strict-final-eval-mode", action="store_true")
     args = parser.parse_args(argv)
     summary = merge_external_strategy_pack_outputs(
         shards_root=args.shards_root,
         output_dir=args.output_dir,
         total_strategies_requested=args.total_strategies_requested,
         total_shards_requested=args.total_shards_requested,
+        total_jobs_requested=args.total_jobs_requested,
+        candidate_count_per_job=args.candidate_count_per_job,
         locked_start=args.locked_start,
         train_end=args.train_end,
         validation_start=args.validation_start,
         validation_end=args.validation_end,
+        fill_missing_timeouts_pack_path=args.fill_missing_timeouts_pack_path,
+        fill_missing_timeouts_reason=args.fill_missing_timeouts_reason,
+        strict_final_eval_mode=args.strict_final_eval_mode,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
