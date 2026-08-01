@@ -113,6 +113,14 @@ def test_jina_sec_json_wrapper_is_parsed_without_losing_payload() -> None:
     assert payload["cik"] == 320193
 
 
+def test_jina_sec_json_wrapper_accepts_control_characters_in_strings() -> None:
+    payload = _json_from_jina_text(
+        'Title: SEC\n\nMarkdown Content:\n{"cik":1,"entityName":"Example\u000bCorp"}'
+    )
+
+    assert payload["entityName"] == "Example\u000bCorp"
+
+
 def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
     payload = {
         "entityName": "Example",
