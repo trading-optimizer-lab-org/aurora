@@ -151,6 +151,8 @@ def test_release_stream_is_verified_once_and_extracts_only_required_files(
 
 
 def test_historical_pack_physically_excludes_locked_rows(tmp_path: Path) -> None:
+    from scripts import run_gtbi_fast_strict_worker as worker
+
     source = tmp_path / "source"
     _release_verification(source)
     prices = pd.DataFrame(
@@ -194,6 +196,9 @@ def test_historical_pack_physically_excludes_locked_rows(tmp_path: Path) -> None
     assert manifest["v7_data_contract"]["locked_rows_in_execution_pack"] is False
     assert manifest["v7_data_contract"]["retained_symbol_count"] == 1
     assert result["data_pack_identity"] == manifest["data_pack_identity"]
+    assert worker._verify_data_manifest(manifest, output / "data-pack") == result[
+        "data_pack_identity"
+    ]
 
 
 def test_historical_pack_rejects_symbol_below_market_cap(tmp_path: Path) -> None:
