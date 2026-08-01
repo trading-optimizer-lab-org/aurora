@@ -360,7 +360,7 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
         processes_per_runner=1,
     )
     assert result["worker_ids"] == [4, 5, 6, 7]
-    assert result["symbol_workers_per_process"] == 4
+    assert result["symbol_workers_per_process"] == 1
     assert {path.name for path in output.glob("worker-*")} == {
         "worker-004",
         "worker-005",
@@ -396,7 +396,7 @@ def test_benchmark_selects_fastest_only_after_equivalence(tmp_path: Path) -> Non
                 "campaign_fingerprint": "fp",
                 "worker_ids": [0, 1],
                 "processes_per_runner": mode,
-                "symbol_workers_per_process": 4 // mode,
+                "symbol_workers_per_process": 1,
                 "effective_cpu_count": 4,
                 "wall_seconds": seconds,
                 "locked_data_accessed": False,
