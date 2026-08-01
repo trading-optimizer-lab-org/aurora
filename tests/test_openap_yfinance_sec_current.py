@@ -18,6 +18,7 @@ from aurora.research.openap_current_score import (
     latest_sec_concepts,
     select_strict_predictors,
 )
+from scripts.run_openap_yfinance_sec_current import _sec_exchange_csv_rows
 
 
 def _metadata(rows: int = EXPECTED_PREDICTORS) -> pd.DataFrame:
@@ -71,6 +72,24 @@ def test_sec_concepts_ignore_facts_not_yet_available() -> None:
     concepts = latest_sec_concepts(facts, pd.Timestamp("2025-06-01"))
     assert concepts["assets"][0] == 100.0
     assert 999.0 not in concepts["assets"]
+
+
+def test_pinned_sec_mapper_fallback_filters_non_common_securities(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mappings.csv"
+    path.write_text(
+        "CIK,Ticker,Name,Exchange\n"
+        "0000320193,AAPL,Apple Inc,Nasdaq\n"
+        "0000000002,TESTW,Test Corp Warrant,Nasdaq\n"
+        "0000000003,OTCX,OTC Example,OTC\n",
+        encoding="utf-8",
+    )
+    result = _sec_exchange_csv_rows(path)
+    assert result[["symbol", "cik"]].to_dict(orient="records") == [
+        {"symbol": "AAPL", "cik": 320193}
+    ]
+    assert result["source"].iloc[0] == "sec_cik_mapper_pinned_sec_derived"
 
 
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
