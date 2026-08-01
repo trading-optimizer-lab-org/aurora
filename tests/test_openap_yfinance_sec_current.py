@@ -138,7 +138,10 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
     )
     assert len(rows) == 6
     assert {row["tag"] for row in rows} == {"Assets"}
-    assert all(pd.Timestamp(row["available_at"]) > pd.Timestamp(row["filed"]) for row in rows)
+    assert all(
+        pd.Timestamp(row["available_at"]) > pd.Timestamp(row["filed"], tz="UTC")
+        for row in rows
+    )
 
 
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
