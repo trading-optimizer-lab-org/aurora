@@ -41,7 +41,7 @@ def _token_similarity(left: str, right: str) -> float:
 
 
 def _components(nodes: list[str], edges: list[tuple[str, str]]) -> list[list[str]]:
-    graph = {node: set() for node in nodes}
+    graph: dict[str, set[str]] = {node: set() for node in nodes}
     for left, right in edges:
         graph[left].add(right)
         graph[right].add(left)

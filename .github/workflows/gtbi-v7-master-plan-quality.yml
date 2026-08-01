@@ -32,6 +32,7 @@ on:
       - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_retention_policy.py"
+      - "scripts/generate_gtbi_v7_retention_policy_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_initial_readiness_records.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
       - "scripts/reconcile_gtbi_v7_pr1_merge.py"
@@ -76,6 +77,7 @@ on:
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_retention_policy.py"
+      - "tests/test_gtbi_v7_retention_policy_reconciliation.py"
       - "tests/test_gtbi_v7_initial_readiness_records.py"
       - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
@@ -130,6 +132,7 @@ on:
       - "scripts/generate_gtbi_v7_bootstrap_contracts.py"
       - "scripts/generate_gtbi_v7_inventory.py"
       - "scripts/generate_gtbi_v7_retention_policy.py"
+      - "scripts/generate_gtbi_v7_retention_policy_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_initial_readiness_records.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
       - "scripts/reconcile_gtbi_v7_pr1_merge.py"
@@ -174,6 +177,7 @@ on:
       - "tests/test_gtbi_v7_readiness_bootstrap.py"
       - "tests/test_gtbi_v7_inventory.py"
       - "tests/test_gtbi_v7_retention_policy.py"
+      - "tests/test_gtbi_v7_retention_policy_reconciliation.py"
       - "tests/test_gtbi_v7_initial_readiness_records.py"
       - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
@@ -249,6 +253,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_g3b_stage_two_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_reproducibility_classification
           python -m scripts.generate_gtbi_v7_retention_policy
+          python -m scripts.generate_gtbi_v7_retention_policy_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_codeowners_contract
           python -m scripts.generate_gtbi_v7_g3a_owner_auth_completion \
             --recorded-at-utc 2026-07-31T14:00:00Z
@@ -276,6 +281,8 @@ jobs:
             config/gtbi/governance/codeowners_owner_controlled.json \
             docs/readiness/gtbi-v7/master_plan_audit_scope_manifest.json \
             docs/readiness/gtbi-v7/master_plan_quality_status.json \
+            docs/readiness/gtbi-v7/g2_retention_policy_state_controller_apply_receipt.json \
+            docs/readiness/gtbi-v7/g2_retention_policy_state_transition_reconciliation_receipt.json \
             docs/readiness/gtbi-v7/pre_genesis_status.json \
             docs/readiness/gtbi-v7/legacy_run_cancellation_candidates.json \
             docs/readiness/gtbi-v7/task_status.csv \
@@ -336,6 +343,7 @@ jobs:
             tests/test_gtbi_v7_readiness_bootstrap.py \
             tests/test_gtbi_v7_inventory.py \
             tests/test_gtbi_v7_retention_policy.py \
+            tests/test_gtbi_v7_retention_policy_reconciliation.py \
             tests/test_gtbi_v7_initial_readiness_records.py \
             tests/test_gtbi_v7_identity_adr.py \
             tests/test_gtbi_v7_post_merge.py \
