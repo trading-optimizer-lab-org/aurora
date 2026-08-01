@@ -18,7 +18,12 @@ from aurora.research.openap_current_score import (
     latest_sec_concepts,
     select_strict_predictors,
 )
-from scripts.run_openap_yfinance_sec_current import _sec_exchange_csv_rows
+from scripts.run_openap_yfinance_sec_current import (
+    _companyfacts_rows,
+    _json_from_jina_text,
+    _sec_exchange_csv_rows,
+    _select_chunk_rows,
+)
 
 
 def _metadata(rows: int = EXPECTED_PREDICTORS) -> pd.DataFrame:
@@ -90,6 +95,50 @@ def test_pinned_sec_mapper_fallback_filters_non_common_securities(
         {"symbol": "AAPL", "cik": 320193}
     ]
     assert result["source"].iloc[0] == "sec_cik_mapper_pinned_sec_derived"
+
+
+def test_chunk_rows_remain_dataframes_and_cover_input_once() -> None:
+    frame = pd.DataFrame({"symbol": [f"S{i}" for i in range(11)]})
+    chunks = [_select_chunk_rows(frame, index, 4) for index in range(4)]
+    assert all(isinstance(chunk, pd.DataFrame) for chunk in chunks)
+    assert sorted(pd.concat(chunks)["symbol"].tolist()) == sorted(frame["symbol"].tolist())
+    with pytest.raises(OpenAPDataError):
+        _select_chunk_rows(frame, 4, 4)
+
+
+def test_jina_sec_json_wrapper_is_parsed_without_losing_payload() -> None:
+    payload = _json_from_jina_text(
+        'Title: SEC\n\nURL Source: https://data.sec.gov/example\n\nMarkdown Content:\n{"cik":320193,"facts":{}}'
+    )
+    assert payload["cik"] == 320193
+
+
+def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
+    payload = {
+        "entityName": "Example",
+        "facts": {
+            "us-gaap": {
+                "Assets": {
+                    "units": {
+                        "USD": [
+                            {"end": f"20{year:02d}-12-31", "val": year, "filed": f"20{year + 1:02d}-02-01", "form": "10-K"}
+                            for year in range(10, 20)
+                        ]
+                    }
+                },
+                "UnneededTag": {"units": {"USD": [{"end": "2019-12-31", "val": 1, "filed": "2020-02-01"}]}},
+            }
+        },
+    }
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+    )
+    assert len(rows) == 6
+    assert {row["tag"] for row in rows} == {"Assets"}
+    assert all(pd.Timestamp(row["available_at"]) > pd.Timestamp(row["filed"]) for row in rows)
 
 
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
@@ -175,9 +224,11 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(encoding="utf-8")
     assert "OpenAP Current Score YFinance SEC EDGAR" in text
     assert "YFINANCE_CHUNKS: \"48\"" in text
+    assert "SEC_CHUNKS: \"48\"" in text
     assert "max-parallel: 16" in text
-    assert "sec-bulk" in text
-    assert "openap-sec-raw-archives" in text
+    assert "max-parallel: 8" in text
+    assert "sec-chunk" in text
+    assert "openap-sec-raw-${{ matrix.chunk }}" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "locked_opened" in text
     assert "backtest_enabled" in text
