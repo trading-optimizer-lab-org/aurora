@@ -18,7 +18,7 @@ from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from infra.gtbi_v7_readiness.frozen_data_lake import MANIFEST_DOMAIN, MANIFEST_MEMBER, RECEIPT_DOMAIN
 from scripts import gtbi_fast_strict as strict
 from scripts.summarize_gtbi_v7_new_reference_benchmark import summarize
-from scripts.validate_gtbi_v7_new_reference_smoke import validate_smoke
+from scripts.validate_gtbi_v7_new_reference_smoke import _summary_count, validate_smoke
 
 
 BENCHMARK_RELATIVE_PATH = "benchmarks/SPY.parquet"
@@ -513,12 +513,12 @@ def test_smoke_validator_reconciles_real_output_rows(tmp_path: Path) -> None:
             output / "worker_summary.json",
             {
                 "canonical_group_count": 1,
-                "total_strategies_evaluated": 1,
-                "total_strategies_early_rejected": 0,
-                "total_strategies_timed_out": 0,
-                "total_strategies_runtime_error": 0,
-                "total_strategies_unsupported": 0,
-                "total_strategies_slow_deferred": 0,
+                "strategies_evaluated": 1,
+                "strategies_early_rejected": 0,
+                "strategies_timed_out": 0,
+                "strategies_runtime_error": 0,
+                "strategies_unsupported": 0,
+                "strategies_slow_deferred": 0,
             },
         )
         _canonical(
@@ -534,6 +534,14 @@ def test_smoke_validator_reconciles_real_output_rows(tmp_path: Path) -> None:
     result = validate_smoke(root, tmp_path / "smoke.json", expected_workers=2)
     assert result["valid"] is True
     assert result["canonical_terminal_count"] == 2
+
+
+def test_smoke_validator_rejects_conflicting_current_and_legacy_counts() -> None:
+    with pytest.raises(ValueError, match="summary count mismatch"):
+        _summary_count(
+            {"strategies_evaluated": 10, "total_strategies_evaluated": 9},
+            "strategies_evaluated",
+        )
 
 
 def test_worker_requires_github_actions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
