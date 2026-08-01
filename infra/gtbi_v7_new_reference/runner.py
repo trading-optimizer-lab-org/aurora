@@ -62,6 +62,7 @@ REQUIRED_SCIENTIFIC_KINDS = {
     "top_indicator_rules",
     "top_trades_sample",
 }
+DETERMINISTIC_SYMBOL_WORKERS_PER_PROCESS = 1
 
 
 class V7RunnerError(RuntimeError):
@@ -243,8 +244,10 @@ def run_v7_batch(
     cpu_count = effective_cpu_count()
     if processes > cpu_count:
         raise V7RunnerError(f"requested {processes} processes but runner exposes {cpu_count} CPUs")
-    symbol_workers = max(1, cpu_count // processes)
-    symbol_workers = min(symbol_workers, 4)
+    # Parallelize independent logical workers with processes. Nested symbol
+    # threads can change the final floating-point reduction by a few ulps,
+    # while four independent processes already consume all runner CPUs.
+    symbol_workers = DETERMINISTIC_SYMBOL_WORKERS_PER_PROCESS
     output = Path(output_root)
     if output.exists():
         raise V7RunnerError(f"batch output already exists: {output}")

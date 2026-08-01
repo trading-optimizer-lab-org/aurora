@@ -43,7 +43,7 @@ def summarize(mode_roots: dict[int, Path], output_path: Path) -> dict[str, Any]:
             raise ValueError(f"benchmark receipt mode mismatch: {mode}")
         if receipt.get("locked_data_accessed") is not False:
             raise ValueError("benchmark reports locked access")
-        expected_symbol_workers = min(max(next(iter(cpu_counts)) // mode, 1), 4)
+        expected_symbol_workers = 1
         if int(receipt.get("symbol_workers_per_process", 0)) != expected_symbol_workers:
             raise ValueError(f"benchmark receipt symbol-worker mismatch: {mode}")
     selected = min(receipts, key=lambda mode: float(receipts[mode]["wall_seconds"]))
