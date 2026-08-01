@@ -86,4 +86,3 @@ jobs:
           path: ${{ runner.temp }}/no-go-close-receipt.json
           if-no-files-found: error
           retention-days: 90
-
