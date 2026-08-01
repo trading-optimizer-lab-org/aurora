@@ -92,7 +92,7 @@ def evidence_weight(row: Mapping[str, Any], status: str) -> float:
     reproduction = abs(float(row.get("tstat") or 0.0))
     original_raw = row.get("T.Stat")
     try:
-        original = abs(float(original_raw))
+        original = abs(float(str(original_raw)))
         original_factor = min(original, 8.0) / 8.0
     except (TypeError, ValueError):
         original_factor = 0.70
@@ -114,7 +114,7 @@ def signed_percentile(values: pd.Series, sign: float) -> pd.Series:
 
 
 def _connected_components(nodes: Sequence[str], edges: Sequence[tuple[str, str]]) -> list[list[str]]:
-    graph = {node: set() for node in nodes}
+    graph: dict[str, set[str]] = {node: set() for node in nodes}
     for left, right in edges:
         if left in graph and right in graph:
             graph[left].add(right)
@@ -195,7 +195,8 @@ def _return_between(prices: pd.Series, older: int, newer: int = 0) -> float | No
         return None
     old = prices.iloc[-(older + 1)]
     new = prices.iloc[-(newer + 1)] if newer else prices.iloc[-1]
-    return _safe_ratio(new, old) - 1.0 if _safe_ratio(new, old) is not None else None
+    ratio = _safe_ratio(new, old)
+    return ratio - 1.0 if ratio is not None else None
 
 
 def _monthly_close(frame: pd.DataFrame) -> pd.Series:

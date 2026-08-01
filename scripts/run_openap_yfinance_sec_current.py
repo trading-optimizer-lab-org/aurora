@@ -426,9 +426,10 @@ def _submission_rows(payload: Mapping[str, Any], cik: int) -> list[dict[str, Any
     n = max((len(value) for value in arrays.values()), default=0)
     rows = []
     for index in range(n):
-        def item(name: str) -> Any:
+        def item(name: str, position: int = index) -> Any:
             values = arrays.get(name, [])
-            return values[index] if index < len(values) else None
+            return values[position] if position < len(values) else None
+
         rows.append(
             {
                 "cik": cik,
@@ -491,7 +492,7 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     with zipfile.ZipFile(submissions_zip) as archive:
         for member in archive.namelist():
             cik = _cik_from_member(member)
-            if cik not in ciks or not member.lower().endswith(".json"):
+            if cik is None or cik not in ciks or not member.lower().endswith(".json"):
                 continue
             try:
                 payload = json.loads(archive.read(member).decode("utf-8", errors="replace"))
@@ -514,7 +515,7 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
         with zipfile.ZipFile(companyfacts_zip) as archive:
             for member in archive.namelist():
                 cik = _cik_from_member(member)
-                if cik not in ciks or not member.lower().endswith(".json"):
+                if cik is None or cik not in ciks or not member.lower().endswith(".json"):
                     continue
                 try:
                     payload = json.loads(archive.read(member).decode("utf-8", errors="replace"))
@@ -765,7 +766,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         if market_cap is None and not prices.empty:
             shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
             if _is_number(shares):
-                market_cap = float(prices["adj_close"].iloc[-1]) * float(shares)
+                market_cap = float(prices["adj_close"].iloc[-1]) * float(str(shares))
         values.update(calculate_accounting_features(concepts, market_cap=market_cap))
         if market_cap is not None:
             values["Size"] = FeatureValue("Size", float(market_cap), "exact", "yfinance_sec", "current_market_cap")

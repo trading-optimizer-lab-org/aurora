@@ -26,12 +26,22 @@ env:
   YFINANCE_CHUNKS: "48"
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: openap-current-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
   validate:
+    needs: framework_contract
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -53,8 +63,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -91,7 +101,7 @@ jobs:
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False
           PY
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-prepare
           path: outputs/prepare/
@@ -156,14 +166,14 @@ jobs:
           - 46
           - 47
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -e . requests
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-prepare
           path: inputs/prepare
@@ -175,7 +185,7 @@ jobs:
             --chunk-index "${{ matrix.chunk }}" \
             --total-chunks "$YFINANCE_CHUNKS" \
             --output-dir "outputs/yfinance_${{ matrix.chunk }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-yfinance-${{ matrix.chunk }}
           path: outputs/yfinance_${{ matrix.chunk }}/
@@ -187,14 +197,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -e . requests
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-prepare
           path: inputs/prepare
@@ -212,7 +222,7 @@ jobs:
           test -s outputs/sec/lake/sec_companyfacts.parquet
           test -s outputs/sec/lake/sec_submissions.parquet
           test -s outputs/sec/sec_bulk_summary.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-sec-lake
           path: |
@@ -222,7 +232,7 @@ jobs:
           retention-days: 30
           compression-level: 0
       - if: ${{ inputs.keep_sec_raw_archives }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-sec-raw-archives
           path: outputs/sec/raw/
@@ -238,22 +248,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -e . duckdb requests
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-prepare
           path: inputs/prepare
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: openap-yfinance-*
           path: inputs/yfinance
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-sec-lake
           path: inputs/sec
@@ -289,7 +299,7 @@ jobs:
           assert summary["backtest_enabled"] is False
           assert summary["partial"] is False
           PY
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-yfinance-sec-current-score-results
           path: outputs/final/
