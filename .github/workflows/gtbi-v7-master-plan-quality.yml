@@ -36,6 +36,7 @@ on:
       - "scripts/generate_gtbi_v7_provider_terms_acceptance.py"
       - "scripts/generate_gtbi_v7_provider_terms_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_github_actions_envelope.py"
+      - "scripts/generate_gtbi_v7_v6_input_identity_decision.py"
       - "scripts/generate_gtbi_v7_initial_readiness_records.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
       - "scripts/reconcile_gtbi_v7_pr1_merge.py"
@@ -87,6 +88,7 @@ on:
       - "tests/test_gtbi_v7_provider_terms_acceptance.py"
       - "tests/test_gtbi_v7_provider_terms_reconciliation.py"
       - "tests/test_gtbi_v7_github_actions_envelope.py"
+      - "tests/test_gtbi_v7_v6_input_identity_decision.py"
       - "tests/test_gtbi_v7_initial_readiness_records.py"
       - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
@@ -148,6 +150,7 @@ on:
       - "scripts/generate_gtbi_v7_provider_terms_acceptance.py"
       - "scripts/generate_gtbi_v7_provider_terms_apply_reconciliation_receipt.py"
       - "scripts/generate_gtbi_v7_github_actions_envelope.py"
+      - "scripts/generate_gtbi_v7_v6_input_identity_decision.py"
       - "scripts/generate_gtbi_v7_initial_readiness_records.py"
       - "scripts/generate_gtbi_v7_pre_genesis_status.py"
       - "scripts/reconcile_gtbi_v7_pr1_merge.py"
@@ -199,6 +202,7 @@ on:
       - "tests/test_gtbi_v7_provider_terms_acceptance.py"
       - "tests/test_gtbi_v7_provider_terms_reconciliation.py"
       - "tests/test_gtbi_v7_github_actions_envelope.py"
+      - "tests/test_gtbi_v7_v6_input_identity_decision.py"
       - "tests/test_gtbi_v7_initial_readiness_records.py"
       - "tests/test_gtbi_v7_identity_adr.py"
       - "tests/test_gtbi_v7_pre_genesis_status.py"
@@ -282,6 +286,7 @@ jobs:
           python -m scripts.generate_gtbi_v7_provider_terms_acceptance
           python -m scripts.generate_gtbi_v7_provider_terms_apply_reconciliation_receipt
           python -m scripts.generate_gtbi_v7_github_actions_envelope
+          python -m scripts.generate_gtbi_v7_v6_input_identity_decision
           python -m scripts.generate_gtbi_v7_codeowners_contract
           python -m scripts.generate_gtbi_v7_g3a_owner_auth_completion \
             --recorded-at-utc 2026-07-31T14:00:00Z
@@ -364,6 +369,9 @@ jobs:
             docs/readiness/gtbi-v7/transition_manifests/g2-provider-terms-acceptance-v1.json \
             docs/readiness/gtbi-v7/g2_github_actions_envelope_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g2-github-actions-envelope-v1.json \
+            docs/readiness/gtbi-v7/new_reference_proposal.json \
+            docs/readiness/gtbi-v7/g2_v6_input_identity_decision_receipt.json \
+            docs/readiness/gtbi-v7/transition_manifests/g2-v6-input-identity-no-baseline-v1.json \
             docs/readiness/gtbi-v7/g3a_owner_auth_completion_receipt.json \
             docs/readiness/gtbi-v7/transition_manifests/g3a-owner-auth-close-v1.json \
             config/gtbi/governance/role_registry.json \
@@ -389,6 +397,7 @@ jobs:
             tests/test_gtbi_v7_provider_terms_acceptance.py \
             tests/test_gtbi_v7_provider_terms_reconciliation.py \
             tests/test_gtbi_v7_github_actions_envelope.py \
+            tests/test_gtbi_v7_v6_input_identity_decision.py \
             tests/test_gtbi_v7_initial_readiness_records.py \
             tests/test_gtbi_v7_identity_adr.py \
             tests/test_gtbi_v7_post_merge.py \
