@@ -118,6 +118,28 @@ def test_workflow_binds_every_gate_and_exact_commit() -> None:
     assert "ACTUAL_CPUS" in text
 
 
+def test_each_post_resolve_scope_survives_the_intentionally_skipped_prepare_gate() -> None:
+    data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    jobs = data["jobs"]
+    required_results = {
+        "benchmark-run": ("resolve",),
+        "benchmark": ("resolve", "benchmark-run"),
+        "run-smoke": ("resolve",),
+        "validate-smoke": ("resolve", "run-smoke"),
+        "full-gate": ("resolve",),
+        "run-full-a": ("resolve", "full-gate"),
+        "run-full-b": ("resolve", "full-gate"),
+        "merge-block": ("resolve", "full-gate", "run-full-a", "run-full-b"),
+        "merge-final": ("resolve", "full-gate", "merge-block"),
+        "preserve-final": ("merge-final",),
+    }
+    for job_id, dependencies in required_results.items():
+        condition = str(jobs[job_id]["if"])
+        assert "always()" in condition
+        for dependency in dependencies:
+            assert f"needs.{dependency}.result == 'success'" in condition
+
+
 def test_reusable_worker_is_github_only_and_has_no_manual_trigger() -> None:
     text = WORKER_WORKFLOW.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
