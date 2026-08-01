@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from infra.readiness_state_controller.policy import validate_transition_manifest
@@ -18,7 +19,7 @@ from scripts.generate_gtbi_v7_v6_input_identity_decision import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load(path: Path) -> dict[str, object]:
+def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
