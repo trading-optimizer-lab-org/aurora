@@ -53,6 +53,14 @@ def _receipt_digest(receipt: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
+def _write_strict_campaign_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    """Preserve the strict engine's JSON number spelling and fingerprint."""
+    Path(path).write_text(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":"), default=str) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _validated_authorization(path: Path) -> dict[str, Any]:
     authorization = _load_object(path)
     if authorization.get("campaign_id") != CAMPAIGN_ID:
@@ -168,7 +176,7 @@ def create_v7_campaign_plan(
     contract["contract_digest"] = _contract_digest(contract)
     manifest["v7_campaign_contract"] = contract
     manifest_path = Path(output_dir) / "campaign_manifest.json"
-    manifest_path.write_bytes(canonical_bytes(manifest) + b"\n")
+    _write_strict_campaign_manifest(manifest_path, manifest)
     (Path(output_dir) / "v7_campaign_contract.json").write_bytes(canonical_bytes(contract) + b"\n")
     return manifest
 
