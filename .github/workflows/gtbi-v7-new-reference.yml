@@ -195,7 +195,7 @@ jobs:
 
   benchmark-run:
     name: Cold benchmark with ${{ matrix.processes }} process(es)
-    if: inputs.scope == 'benchmark'
+    if: always() && inputs.scope == 'benchmark' && needs.resolve.result == 'success'
     needs: resolve
     strategy:
       fail-fast: false
@@ -263,7 +263,7 @@ jobs:
 
   benchmark:
     name: Prove cold 1/2/4 equivalence and select fastest
-    if: inputs.scope == 'benchmark'
+    if: always() && inputs.scope == 'benchmark' && needs.resolve.result == 'success' && needs.benchmark-run.result == 'success'
     needs: [resolve, benchmark-run]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -318,7 +318,7 @@ jobs:
 
   run-smoke:
     name: Smoke worker ${{ matrix.worker_padded }}
-    if: inputs.scope == 'smoke' && inputs.benchmark_run_id != ''
+    if: always() && inputs.scope == 'smoke' && inputs.benchmark_run_id != '' && needs.resolve.result == 'success'
     needs: resolve
     strategy:
       fail-fast: false
@@ -402,7 +402,7 @@ jobs:
 
   validate-smoke:
     name: Validate exact 100-job smoke
-    if: inputs.scope == 'smoke' && inputs.benchmark_run_id != ''
+    if: always() && inputs.scope == 'smoke' && inputs.benchmark_run_id != '' && needs.resolve.result == 'success' && needs.run-smoke.result == 'success'
     needs: [resolve, run-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -448,7 +448,7 @@ jobs:
 
   full-gate:
     name: Bind full run to exact benchmark and smoke
-    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    if: always() && inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != '' && needs.resolve.result == 'success'
     needs: resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -551,7 +551,7 @@ jobs:
 
   run-full-a:
     name: Full A runner ${{ matrix.runner_padded }}
-    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    if: always() && inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != '' && needs.resolve.result == 'success' && needs.full-gate.result == 'success'
     needs: [resolve, full-gate]
     strategy:
       fail-fast: false
@@ -569,7 +569,7 @@ jobs:
 
   run-full-b:
     name: Full B runner ${{ matrix.runner_padded }}
-    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    if: always() && inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != '' && needs.resolve.result == 'success' && needs.full-gate.result == 'success'
     needs: [resolve, full-gate]
     strategy:
       fail-fast: false
@@ -587,7 +587,7 @@ jobs:
 
   merge-block:
     name: Merge block ${{ matrix.block_padded }}
-    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    if: always() && inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != '' && needs.resolve.result == 'success' && needs.full-gate.result == 'success' && needs.run-full-a.result == 'success' && needs.run-full-b.result == 'success'
     needs: [resolve, full-gate, run-full-a, run-full-b]
     strategy:
       fail-fast: false
@@ -648,7 +648,7 @@ jobs:
 
   merge-final:
     name: Merge, validate and seal 72,000 historical strategies
-    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    if: always() && inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != '' && needs.resolve.result == 'success' && needs.full-gate.result == 'success' && needs.merge-block.result == 'success'
     needs: [resolve, full-gate, merge-block]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
@@ -721,7 +721,7 @@ jobs:
 
   preserve-final:
     name: Preserve final V7 result in private GitHub release
-    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    if: always() && inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != '' && needs.merge-final.result == 'success'
     needs: merge-final
     runs-on: ubuntu-24.04
     timeout-minutes: 120
