@@ -1,0 +1,53 @@
+dataset_id: openap_yfinance_sec_current_v1
+openap:
+  repository: https://github.com/OpenSourceAP/CrossSection
+  commit: 8db892442c2c3a3779b0f1eac4370d3655be15a1
+  predictor_summary_gdrive_id: 1nLQWwt1023NLrfhdQiCvIRbFkiW2z3fG
+  predictor_returns_gdrive_id: 10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI
+  reproduction_tstat_minimum: 1.96
+  original_tstat_minimum: 1.96
+  expected_predictors: 185
+  correlation_threshold: 0.80
+  minimum_overlap_months: 60
+universe:
+  country: United States
+  exchanges:
+    - Nasdaq
+    - NYSE
+    - NYSE American
+    - Cboe
+  common_stock_only: true
+  exclude_etf: true
+  exclude_funds: true
+  exclude_spac: true
+  exclude_adr: true
+  exclude_preferred: true
+  exclude_warrants: true
+yfinance:
+  history_period: max
+  batch_size: 25
+  metadata_snapshot: true
+  analyst_snapshot: true
+  institutional_snapshot: true
+  current_options_snapshot: true
+  target_option_days: 30
+sec:
+  ticker_exchange_url: https://www.sec.gov/files/company_tickers_exchange.json
+  companyfacts_bulk_url: https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
+  submissions_bulk_url: https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
+  user_agent_env: AU_SEC_EDGAR_USER_AGENT
+  preserve_raw_archives: true
+score:
+  horizons_months: [1, 3, 6, 12, 36]
+  exact_source_multiplier: 1.0
+  proxy_source_multiplier: 0.55
+  maximum_metric_weight_multiple: 2.0
+  maximum_family_weight: 0.15
+  minimum_metrics_per_score: 5
+execution:
+  execution_location: github_actions
+  local_runs_allowed: false
+  requires_explicit_user_local_permission: true
+  yfinance_chunks: 48
+  yfinance_max_parallel: 16
+  artifact_retention_days: 30
