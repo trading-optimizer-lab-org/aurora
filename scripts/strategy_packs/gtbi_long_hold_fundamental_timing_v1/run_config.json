@@ -1,0 +1,20 @@
+{
+  "candidate_count_per_job": 10,
+  "concept_count": 60,
+  "desired_avg_holding_days_report_threshold": 30,
+  "execution": "next_session_open",
+  "final_filters": "same strict GTBI filters unless user explicitly approves changes",
+  "locked_start": "2021-01-01",
+  "minimum_target_avg_holding_days": 25,
+  "new_pack_goal": "increase average holding duration and reduce right-tail/median-zero behavior from prior pack",
+  "optimized_evaluation_mode": "optimized_evaluation_v5_event_first",
+  "pack_name": "gtbi_long_hold_fundamental_timing_v1",
+  "positioning": "long_cash_only_no_short_no_leverage",
+  "shard_count": 360,
+  "strategies_per_concept": 1200,
+  "strategies_per_shard": 200,
+  "strategy_count": 72000,
+  "train_end": "2010-12-31",
+  "validation_end": "2020-12-31",
+  "validation_start": "2011-01-01"
+}

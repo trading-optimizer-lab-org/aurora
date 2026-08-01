@@ -1,0 +1,787 @@
+name: GTBI V7 New Reference Historical Campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Preparation, equal-workload benchmark, 100-job smoke or full historical campaign
+        required: true
+        default: prepare
+        type: choice
+        options:
+          - prepare
+          - benchmark
+          - smoke
+          - full
+      prepared_run_id:
+        description: Successful prepare run to reuse; blank creates a new immutable pack and plan
+        required: false
+        default: ""
+        type: string
+      benchmark_run_id:
+        description: Successful benchmark run; required for smoke and full
+        required: false
+        default: ""
+        type: string
+      smoke_run_id:
+        description: Successful 100-job smoke run; required for full
+        required: false
+        default: ""
+        type: string
+      full_authorized:
+        description: Explicit confirmation for the historical full only; never authorizes locked
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gtbi-v7-new-reference-${{ inputs.scope }}
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/..
+  PYTHONUNBUFFERED: "1"
+  PYTHONFAULTHANDLER: "1"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  DATA_ARTIFACT_PREFIX: gtbi-v7-new-reference-historical-data
+  PLAN_ARTIFACT_PREFIX: gtbi-v7-new-reference-plan
+  BENCHMARK_ARTIFACT_PREFIX: gtbi-v7-new-reference-benchmark
+  SMOKE_ARTIFACT_PREFIX: gtbi-v7-new-reference-smoke
+  FINAL_ARTIFACT_NAME: gtbi-v7-new-reference-historical-results
+
+jobs:
+  resolve:
+    name: Resolve immutable inputs and matrices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      artifact_run_id: ${{ steps.outputs.outputs.artifact_run_id }}
+      data_artifact_name: ${{ steps.outputs.outputs.data_artifact_name }}
+      plan_artifact_name: ${{ steps.outputs.outputs.plan_artifact_name }}
+      smoke_matrix: ${{ steps.outputs.outputs.smoke_matrix }}
+    steps:
+      - name: Checkout exact campaign code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        if: inputs.prepared_run_id == ''
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+
+      - name: Install pinned scientific runtime
+        if: inputs.prepared_run_id == ''
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+
+      - name: Download exact private frozen release
+        if: inputs.prepared_run_id == ''
+        env:
+          GH_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN"
+          mkdir -p release
+          gh release download gtbi-v7-frozen-data-lake-v1 \
+            --repo trading-optimizer-lab-org/aurora-v7-assets \
+            --pattern 'gtbi-v7-frozen-data-lake-v1.manifest.json' \
+            --pattern 'gtbi-v7-frozen-data-lake-v1.receipt.json' \
+            --pattern 'gtbi-v7-frozen-data-lake-v1.tar.part-*' \
+            --dir release
+
+      - name: Verify every release byte and build the physical pre-2021 pack
+        if: inputs.prepared_run_id == ''
+        run: |
+          python -m scripts.prepare_gtbi_v7_new_reference_data \
+            --release-root release \
+            --extracted-root selected-source \
+            --output-root prepared \
+            --min-market-cap 2000000000
+
+      - name: Create the independent 360-worker V7 plan
+        if: inputs.prepared_run_id == ''
+        run: |
+          python -m scripts.materialize_gtbi_v7_strategy_pack extract \
+            --pack-root scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1 \
+            --output-dir materialized-strategy-pack
+          python -m scripts.plan_gtbi_v7_new_reference create \
+            --pack-path materialized-strategy-pack \
+            --output-dir plan \
+            --data-manifest prepared/data_manifest.json \
+            --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json \
+            --dependency-lock requirements/gtbi-fast-strict.lock \
+            --logical-workers 360 \
+            --block-size 20 \
+            --execution-mode optimized_evaluation_v5_event_first
+          python -m scripts.plan_gtbi_v7_new_reference verify \
+            --plan-root plan \
+            --data-manifest prepared/data_manifest.json \
+            --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json
+
+      - name: Upload immutable historical execution pack
+        if: inputs.prepared_run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.DATA_ARTIFACT_PREFIX }}-${{ github.run_id }}
+          path: prepared
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 30
+
+      - name: Upload immutable campaign plan
+        if: inputs.prepared_run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.PLAN_ARTIFACT_PREFIX }}-${{ github.run_id }}
+          path: plan
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 30
+
+      - name: Emit exact matrices and artifact identity
+        id: outputs
+        env:
+          PREPARED_RUN_ID: ${{ inputs.prepared_run_id }}
+        run: |
+          python - <<'PY'
+          import json, os
+          run_id = os.environ.get("PREPARED_RUN_ID") or os.environ["GITHUB_RUN_ID"]
+          smoke = {"include": [{"worker_id": i, "worker_padded": f"{i:03d}"} for i in range(100)]}
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as handle:
+              handle.write(f"artifact_run_id={run_id}\n")
+              handle.write(f"data_artifact_name={os.environ['DATA_ARTIFACT_PREFIX']}-{run_id}\n")
+              handle.write(f"plan_artifact_name={os.environ['PLAN_ARTIFACT_PREFIX']}-{run_id}\n")
+              handle.write("smoke_matrix=" + json.dumps(smoke, separators=(",", ":")) + "\n")
+          PY
+
+      - name: Record immutable preparation summary
+        run: |
+          {
+            echo "## GTBI V7 new-reference input"
+            echo "- Scope: `${{ inputs.scope }}`"
+            echo "- Data/plan run: `${{ steps.outputs.outputs.artifact_run_id }}`"
+            echo "- Train end: `2010-12-31`"
+            echo "- Validation: `2011-01-01..2020-12-31`"
+            echo "- Locked start: `2021-01-01`"
+            echo "- Locked opened: `false`"
+            echo "- Survivorship biased: `true`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  benchmark-run:
+    name: Cold benchmark with ${{ matrix.processes }} process(es)
+    if: inputs.scope == 'benchmark'
+    needs: resolve
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        processes: [1, 2, 4]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 720
+    steps:
+      - name: Checkout exact campaign code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download immutable data pack
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.data_artifact_name }}
+          path: prepared
+          github-token: ${{ github.token }}
+      - name: Download immutable campaign plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.plan_artifact_name }}
+          path: plan
+          github-token: ${{ github.token }}
+      - name: Require four effective CPUs
+        run: |
+          python - <<'PY'
+          from infra.gtbi_v7_new_reference.runner import effective_cpu_count
+          count = effective_cpu_count()
+          print(f"effective_cpu_count={count}")
+          if count < 4:
+              raise SystemExit("V7 benchmark requires a runner with four effective CPUs")
+          PY
+      - name: Run one cold identical four-worker workload
+        run: |
+          python -m scripts.run_gtbi_v7_new_reference_worker \
+            --campaign-manifest plan/campaign_manifest.json \
+            --data-manifest prepared/data_manifest.json \
+            --plan-root plan \
+            --data-pack-root prepared/data-pack \
+            --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json \
+            --batch-worker-ids 0,1,2,3 \
+            --processes-per-runner "${{ matrix.processes }}" \
+            --output-dir "benchmark-mode-${{ matrix.processes }}"
+      - name: Upload complete mode output for equivalence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-benchmark-mode-${{ matrix.processes }}-${{ github.run_id }}
+          path: benchmark-mode-${{ matrix.processes }}
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 14
+
+  benchmark:
+    name: Prove cold 1/2/4 equivalence and select fastest
+    if: inputs.scope == 'benchmark'
+    needs: [resolve, benchmark-run]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact campaign code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download all three independent cold modes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for mode in 1 2 4; do
+            gh run download "$GITHUB_RUN_ID" \
+              --name "gtbi-v7-benchmark-mode-${mode}-${GITHUB_RUN_ID}" \
+              --dir "benchmark-input/mode-${mode}"
+          done
+      - name: Download immutable campaign plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.plan_artifact_name }}
+          path: plan
+          github-token: ${{ github.token }}
+      - name: Prove equivalence and select fastest mode
+        run: |
+          python -m scripts.summarize_gtbi_v7_new_reference_benchmark \
+            --mode-1 benchmark-input/mode-1 \
+            --mode-2 benchmark-input/mode-2 \
+            --mode-4 benchmark-input/mode-4 \
+            --output benchmark-evidence/benchmark.json
+          python -m scripts.verify_gtbi_v7_new_reference_evidence \
+            --campaign-manifest plan/campaign_manifest.json \
+            --benchmark benchmark-evidence/benchmark.json
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.BENCHMARK_ARTIFACT_PREFIX }}-${{ github.run_id }}
+          path: benchmark-evidence
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 30
+
+  run-smoke:
+    name: Smoke worker ${{ matrix.worker_padded }}
+    if: inputs.scope == 'smoke' && inputs.benchmark_run_id != ''
+    needs: resolve
+    strategy:
+      fail-fast: false
+      max-parallel: 100
+      matrix: ${{ fromJSON(needs.resolve.outputs.smoke_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout exact campaign code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /pyproject.toml
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /infra/gtbi_v7_new_reference/**
+            /infra/gtbi_v7_readiness/**
+            /scripts/*.py
+            /docs/readiness/gtbi-v7-new-reference/campaign_authorization.json
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download data pack
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.data_artifact_name }}
+          path: prepared
+          github-token: ${{ github.token }}
+      - name: Download campaign plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.plan_artifact_name }}
+          path: plan
+          github-token: ${{ github.token }}
+      - name: Download accepted benchmark
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ inputs.benchmark_run_id }}
+          name: ${{ env.BENCHMARK_ARTIFACT_PREFIX }}-${{ inputs.benchmark_run_id }}
+          path: benchmark
+          github-token: ${{ github.token }}
+      - name: Run one exact smoke worker under selected per-process mode
+        env:
+          WORKER_ID: ${{ matrix.worker_id }}
+        run: |
+          python -m scripts.verify_gtbi_v7_new_reference_evidence \
+            --campaign-manifest plan/campaign_manifest.json \
+            --benchmark benchmark/benchmark.json
+          EXPECTED_CPUS=$(python -c "import json; print(json.load(open('benchmark/benchmark.json'))['effective_cpu_count'])")
+          ACTUAL_CPUS=$(python -c "from infra.gtbi_v7_new_reference.runner import effective_cpu_count; print(effective_cpu_count())")
+          test "$ACTUAL_CPUS" -eq "$EXPECTED_CPUS"
+          SYMBOL_WORKERS=$(python -c "import json; print(json.load(open('benchmark/benchmark.json'))['selected_symbol_workers_per_process'])")
+          python -m scripts.run_gtbi_v7_new_reference_worker \
+            --campaign-manifest plan/campaign_manifest.json \
+            --data-manifest prepared/data_manifest.json \
+            --plan-root plan \
+            --data-pack-root prepared/data-pack \
+            --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json \
+            --worker-id "$WORKER_ID" \
+            --symbol-workers "$SYMBOL_WORKERS" \
+            --output-dir "smoke-output/worker-${{ matrix.worker_padded }}"
+      - name: Upload exact smoke worker
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-smoke-worker-${{ matrix.worker_padded }}-${{ github.run_id }}
+          path: smoke-output
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 14
+
+  validate-smoke:
+    name: Validate exact 100-job smoke
+    if: inputs.scope == 'smoke' && inputs.benchmark_run_id != ''
+    needs: [resolve, run-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact campaign code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download all 100 worker artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern "gtbi-v7-smoke-worker-*-$GITHUB_RUN_ID" --dir smoke-input
+      - name: Download immutable campaign plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.plan_artifact_name }}
+          path: plan
+          github-token: ${{ github.token }}
+      - name: Reconcile rows, failures, digests and locked state
+        run: |
+          python -m scripts.validate_gtbi_v7_new_reference_smoke \
+            --input-root smoke-input \
+            --output smoke-validation/smoke_validation.json \
+            --expected-workers 100
+          python -m scripts.verify_gtbi_v7_new_reference_evidence \
+            --campaign-manifest plan/campaign_manifest.json \
+            --smoke-validation smoke-validation/smoke_validation.json
+      - name: Upload smoke validation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.SMOKE_ARTIFACT_PREFIX }}-${{ github.run_id }}
+          path: smoke-validation
+          if-no-files-found: error
+          retention-days: 30
+
+  full-gate:
+    name: Bind full run to exact benchmark and smoke
+    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      full_matrix_a: ${{ steps.matrix.outputs.full_matrix_a }}
+      full_matrix_b: ${{ steps.matrix.outputs.full_matrix_b }}
+      block_matrix: ${{ steps.matrix.outputs.block_matrix }}
+      selected_processes: ${{ steps.matrix.outputs.selected_processes }}
+      selected_symbol_workers: ${{ steps.matrix.outputs.selected_symbol_workers }}
+      effective_cpu_count: ${{ steps.matrix.outputs.effective_cpu_count }}
+      runner_count: ${{ steps.matrix.outputs.runner_count }}
+    steps:
+      - name: Checkout exact campaign code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/gtbi-fast-strict.lock
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download immutable campaign plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+          name: ${{ needs.resolve.outputs.plan_artifact_name }}
+          path: plan
+          github-token: ${{ github.token }}
+      - name: Download accepted benchmark and smoke receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.benchmark_run_id }}" --name "${BENCHMARK_ARTIFACT_PREFIX}-${{ inputs.benchmark_run_id }}" --dir benchmark
+          gh run download "${{ inputs.smoke_run_id }}" --name "${SMOKE_ARTIFACT_PREFIX}-${{ inputs.smoke_run_id }}" --dir smoke
+      - name: Verify exact evidence binding
+        run: |
+          python -m scripts.verify_gtbi_v7_new_reference_evidence \
+            --campaign-manifest plan/campaign_manifest.json \
+            --benchmark benchmark/benchmark.json \
+            --smoke-validation smoke/smoke_validation.json
+      - name: Build the fastest one-wave full matrix
+        id: matrix
+        run: |
+          python - <<'PY'
+          import json, os
+          benchmark = json.load(open("benchmark/benchmark.json", encoding="utf-8"))
+          processes = int(benchmark["selected_processes_per_runner"])
+          symbol_workers = int(benchmark["selected_symbol_workers_per_process"])
+          cpu_count = int(benchmark["effective_cpu_count"])
+          logical_workers = 360
+          block_size = 20
+          if processes not in {1, 2, 4} or logical_workers % processes or block_size % processes:
+              raise SystemExit("selected process allocation cannot cover exact logical workers")
+          runner_count = logical_workers // processes
+          runners = [
+              {
+                  "runner_id": runner,
+                  "runner_padded": f"{runner:03d}",
+                  "worker_ids": ",".join(
+                      str(value) for value in range(runner * processes, (runner + 1) * processes)
+                  ),
+                  "processes": processes,
+                  "symbol_workers": symbol_workers,
+                  "effective_cpu_count": cpu_count,
+              }
+              for runner in range(runner_count)
+          ]
+          midpoint = (runner_count + 1) // 2
+          full_a = {"include": runners[:midpoint]}
+          full_b = {"include": runners[midpoint:]}
+          if len(full_a["include"]) > 180 or len(full_b["include"]) > 180:
+              raise SystemExit("a full matrix exceeds the 180-row campaign limit")
+          blocks = {
+              "include": [
+                  {
+                      "block_id": block,
+                      "block_padded": f"{block:02d}",
+                      "runner_start": (block * block_size) // processes,
+                      "runner_count": block_size // processes,
+                      "worker_ids": ",".join(
+                          str(value) for value in range(block * block_size, (block + 1) * block_size)
+                      ),
+                  }
+                  for block in range(logical_workers // block_size)
+              ]
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write("full_matrix_a=" + json.dumps(full_a, separators=(",", ":")) + "\n")
+              handle.write("full_matrix_b=" + json.dumps(full_b, separators=(",", ":")) + "\n")
+              handle.write("block_matrix=" + json.dumps(blocks, separators=(",", ":")) + "\n")
+              handle.write(f"selected_processes={processes}\n")
+              handle.write(f"selected_symbol_workers={symbol_workers}\n")
+              handle.write(f"effective_cpu_count={cpu_count}\n")
+              handle.write(f"runner_count={runner_count}\n")
+          PY
+
+  run-full-a:
+    name: Full A runner ${{ matrix.runner_padded }}
+    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    needs: [resolve, full-gate]
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJSON(needs.full-gate.outputs.full_matrix_a) }}
+    uses: ./.github/workflows/gtbi-v7-new-reference-worker.yml
+    with:
+      artifact_run_id: ${{ needs.resolve.outputs.artifact_run_id }}
+      data_artifact_name: ${{ needs.resolve.outputs.data_artifact_name }}
+      plan_artifact_name: ${{ needs.resolve.outputs.plan_artifact_name }}
+      runner_padded: ${{ matrix.runner_padded }}
+      worker_ids: ${{ matrix.worker_ids }}
+      processes: ${{ matrix.processes }}
+      effective_cpu_count: ${{ matrix.effective_cpu_count }}
+
+  run-full-b:
+    name: Full B runner ${{ matrix.runner_padded }}
+    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    needs: [resolve, full-gate]
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJSON(needs.full-gate.outputs.full_matrix_b) }}
+    uses: ./.github/workflows/gtbi-v7-new-reference-worker.yml
+    with:
+      artifact_run_id: ${{ needs.resolve.outputs.artifact_run_id }}
+      data_artifact_name: ${{ needs.resolve.outputs.data_artifact_name }}
+      plan_artifact_name: ${{ needs.resolve.outputs.plan_artifact_name }}
+      runner_padded: ${{ matrix.runner_padded }}
+      worker_ids: ${{ matrix.worker_ids }}
+      processes: ${{ matrix.processes }}
+      effective_cpu_count: ${{ matrix.effective_cpu_count }}
+
+  merge-block:
+    name: Merge block ${{ matrix.block_padded }}
+    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    needs: [resolve, full-gate, run-full-a, run-full-b]
+    strategy:
+      fail-fast: false
+      max-parallel: 18
+      matrix: ${{ fromJSON(needs.full-gate.outputs.block_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout merge code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /__init__.py
+            /pyproject.toml
+            /requirements/gtbi-fast-strict.lock
+            /core/**
+            /scripts/*.py
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download only aligned runner artifacts for this block
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNER_START: ${{ matrix.runner_start }}
+          RUNNER_COUNT: ${{ matrix.runner_count }}
+        run: |
+          mkdir -p block-input
+          for offset in $(seq 0 $((RUNNER_COUNT - 1))); do
+            runner=$((RUNNER_START + offset))
+            padded=$(printf '%03d' "$runner")
+            gh run download "$GITHUB_RUN_ID" \
+              --name "gtbi-v7-runner-${padded}-${GITHUB_RUN_ID}" \
+              --dir "block-input/runner-${padded}"
+          done
+      - name: Strictly merge exact 20-worker block
+        env:
+          WORKER_IDS: ${{ matrix.worker_ids }}
+        run: |
+          python scripts/merge_gtbi_fast_strict_block.py \
+            --input-root block-input \
+            --output-dir "block-output/block-${{ matrix.block_padded }}" \
+            --block-id "${{ matrix.block_id }}" \
+            --worker-ids "$WORKER_IDS"
+      - name: Upload exact block artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-block-${{ matrix.block_padded }}-${{ github.run_id }}
+          path: block-output
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 14
+
+  merge-final:
+    name: Merge, validate and seal 72,000 historical strategies
+    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    needs: [resolve, full-gate, merge-block]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact full source and strategy pack
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned runtime
+        run: python -m pip install -r requirements/gtbi-fast-strict.lock
+      - name: Download plan and data manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ needs.resolve.outputs.artifact_run_id }}" --name "${{ needs.resolve.outputs.plan_artifact_name }}" --dir plan
+          gh run download "${{ needs.resolve.outputs.artifact_run_id }}" --name "${{ needs.resolve.outputs.data_artifact_name }}" --dir prepared
+      - name: Download exactly 18 block artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p blocks
+          for block in $(seq 0 17); do
+            padded=$(printf '%02d' "$block")
+            gh run download "$GITHUB_RUN_ID" \
+              --name "gtbi-v7-block-${padded}-${GITHUB_RUN_ID}" \
+              --dir "blocks/block-${padded}"
+          done
+      - name: Download accepted benchmark and smoke evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.benchmark_run_id }}" --name "${BENCHMARK_ARTIFACT_PREFIX}-${{ inputs.benchmark_run_id }}" --dir benchmark
+          gh run download "${{ inputs.smoke_run_id }}" --name "${SMOKE_ARTIFACT_PREFIX}-${{ inputs.smoke_run_id }}" --dir smoke
+      - name: Strict final merge and 72,000-alias expansion
+        run: |
+          python -m scripts.materialize_gtbi_v7_strategy_pack extract \
+            --pack-root scripts/strategy_packs/gtbi_long_hold_fundamental_timing_v1 \
+            --output-dir materialized-strategy-pack
+          python scripts/merge_gtbi_fast_strict_final.py \
+            --plan-root plan \
+            --blocks-root blocks \
+            --original-pack materialized-strategy-pack \
+            --output-dir final-results \
+            --expected-alias-count 72000 \
+            --expected-block-count 18 \
+            --expected-worker-count 360
+      - name: Validate and seal independent V7 artifact
+        run: |
+          python -m scripts.finalize_gtbi_v7_new_reference_results \
+            --artifact-root final-results \
+            --plan-root plan \
+            --data-manifest prepared/data_manifest.json \
+            --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json \
+            --benchmark benchmark/benchmark.json \
+            --smoke-validation smoke/smoke_validation.json \
+            --expected-strategy-count 72000
+      - name: Upload final immutable historical artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.FINAL_ARTIFACT_NAME }}
+          path: final-results
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 90
+
+  preserve-final:
+    name: Preserve final V7 result in private GitHub release
+    if: inputs.scope == 'full' && inputs.full_authorized && inputs.benchmark_run_id != '' && inputs.smoke_run_id != ''
+    needs: merge-final
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download sealed final artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ github.run_id }}
+          name: ${{ env.FINAL_ARTIFACT_NAME }}
+          path: final-results
+          github-token: ${{ github.token }}
+      - name: Create deterministic release assets and receipt
+        run: |
+          mkdir -p preserved
+          tar --sort=name --mtime='UTC 1980-01-01' --owner=0 --group=0 --numeric-owner \
+            -czf preserved/gtbi-v7-new-reference-results.tar.gz final-results
+          archive_size=$(stat -c '%s' preserved/gtbi-v7-new-reference-results.tar.gz)
+          if [ "$archive_size" -gt 1900000000 ]; then
+            split -b 1900000000 -d -a 3 \
+              preserved/gtbi-v7-new-reference-results.tar.gz \
+              preserved/gtbi-v7-new-reference-results.tar.gz.part-
+            rm preserved/gtbi-v7-new-reference-results.tar.gz
+          fi
+          sha256sum preserved/gtbi-v7-new-reference-results.tar.gz* > preserved/SHA256SUMS
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          files=[]
+          for path in sorted(Path('preserved').glob('gtbi-v7-new-reference-results.tar.gz*')):
+              hasher=hashlib.sha256()
+              with path.open('rb') as handle:
+                  while chunk := handle.read(1024 * 1024):
+                      hasher.update(chunk)
+              digest=hasher.hexdigest()
+              files.append({'name':path.name,'size_bytes':path.stat().st_size,'sha256':'sha256:'+digest})
+          receipt={
+              'schema_version':'gtbi_v7_new_reference_preservation_receipt_v1',
+              'repository':os.environ['GITHUB_REPOSITORY'],
+              'run_id':int(os.environ['GITHUB_RUN_ID']),
+              'commit_sha':os.environ['GITHUB_SHA'],
+              'release_tag':f"gtbi-v7-new-reference-results-{os.environ['GITHUB_RUN_ID']}",
+              'files':files,
+              'locked_authorized':False,
+              'locked_data_accessed':False,
+              'historical_exclusion_start':'2021-01-01',
+          }
+          raw=json.dumps(receipt,sort_keys=True,separators=(',',':')).encode()
+          receipt['receipt_digest']='sha256:'+hashlib.sha256(raw).hexdigest()
+          Path('preserved/preservation_receipt.json').write_text(
+              json.dumps(receipt,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8'
+          )
+          PY
+      - name: Publish or repair private release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="gtbi-v7-new-reference-results-${GITHUB_RUN_ID}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" preserved/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" preserved/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "GTBI V7 new-reference historical results ${GITHUB_RUN_ID}" \
+              --notes "Independent survivorship-biased historical campaign. Locked remained closed; no data after 2020-12-31 was evaluated."
+          fi
+      - name: Upload preservation receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-new-reference-preservation-${{ github.run_id }}
+          path: |
+            preserved/preservation_receipt.json
+            preserved/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
