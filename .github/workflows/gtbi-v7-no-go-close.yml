@@ -1,0 +1,88 @@
+name: GTBI V7 Terminal No-Go Close
+
+on:
+  workflow_dispatch:
+    inputs:
+      close_id:
+        description: Exact immutable no-go close generation
+        required: true
+        default: NO_GO_CLOSE-1
+        type: choice
+        options:
+          - NO_GO_CLOSE-1
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gtbi-v7-terminal-no-go-close
+  cancel-in-progress: false
+
+jobs:
+  close:
+    name: Exact terminal no-go closure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact default-branch state
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Resolve immutable controller inputs
+        id: inputs
+        shell: bash
+        run: |
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "closed_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Validate every terminal predicate and emit exact receipt
+        env:
+          CLOSE_ID: ${{ inputs.close_id }}
+          BASE_SHA: ${{ steps.inputs.outputs.base_sha }}
+          CLOSED_AT_UTC: ${{ steps.inputs.outputs.closed_at_utc }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -m scripts.run_gtbi_v7_no_go_close \
+            --repository-root . \
+            --base-sha "$BASE_SHA" \
+            --close-id "$CLOSE_ID" \
+            --closed-at-utc "$CLOSED_AT_UTC" \
+            --run-id "$RUN_ID" \
+            --run-url "$RUN_URL" \
+            --receipt-path "$RUNNER_TEMP/no-go-close-receipt.json"
+
+      - name: Prove repository remained unchanged
+        run: test -z "$(git status --short)"
+
+      - name: Record terminal summary
+        env:
+          CLOSE_ID: ${{ inputs.close_id }}
+        run: |
+          {
+            echo "## GTBI V7 terminal no-go closure"
+            echo
+            echo "- Close ID: \`$CLOSE_ID\`"
+            echo "- Terminal state: \`NO_GO_CLOSED\`"
+            echo "- Base SHA: \`${{ steps.inputs.outputs.base_sha }}\`"
+            echo "- Scientific work: \`false\`"
+            echo "- Locked data accessed: \`false\`"
+            echo "- Incremental spend: \`USD 0\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable terminal receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gtbi-v7-${{ inputs.close_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/no-go-close-receipt.json
+          if-no-files-found: error
+          retention-days: 90
