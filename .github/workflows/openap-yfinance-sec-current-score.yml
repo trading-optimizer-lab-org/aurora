@@ -1,0 +1,308 @@
+name: OpenAP Current Score YFinance SEC EDGAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      sec_user_agent:
+        description: SEC-compliant User-Agent with contact email
+        required: true
+        default: "Aurora Research gomez5757@users.noreply.github.com"
+      keep_sec_raw_archives:
+        description: Preserve original SEC ZIP files as a separate artifact
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-yfinance-sec-current-score
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  OPENAP_CONFIG: config/openap_yfinance_sec_current.yaml
+  YFINANCE_CHUNKS: "48"
+
+jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: openap-current-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
+  validate:
+    needs: framework_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest duckdb openpyxl requests
+      - name: Compile changed modules
+        run: |
+          python -m py_compile research/openap_current_score.py
+          python -m py_compile scripts/run_openap_yfinance_sec_current.py
+      - name: Run focused tests
+        run: python -m pytest tests/test_openap_yfinance_sec_current.py -q
+      - name: Enforce GitHub-only guard
+        run: |
+          grep -q "require_github_actions_or_explicit_local_permission" scripts/run_openap_yfinance_sec_current.py
+          grep -q "local_runs_allowed: false" "$OPENAP_CONFIG"
+
+  prepare:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . gdown openpyxl requests
+      - name: Download pinned OpenAP evidence files
+        run: |
+          mkdir -p inputs/openap
+          gdown 10sOryk_ddjkXagaajTKUk1nwJs2ZLRiI -O inputs/openap/PredictorLSretWide.csv
+          gdown 1nLQWwt1023NLrfhdQiCvIRbFkiW2z3fG -O inputs/openap/PredictorSummary.xlsx
+          test -s inputs/openap/PredictorLSretWide.csv
+          test -s inputs/openap/PredictorSummary.xlsx
+      - name: Prepare strict predictors, redundancy groups and SEC universe
+        env:
+          AU_SEC_EDGAR_USER_AGENT: ${{ inputs.sec_user_agent }}
+        run: |
+          python scripts/run_openap_yfinance_sec_current.py \
+            --config "$OPENAP_CONFIG" prepare \
+            --predictor-summary inputs/openap/PredictorSummary.xlsx \
+            --predictor-returns inputs/openap/PredictorLSretWide.csv \
+            --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
+            --output-dir outputs/prepare
+      - name: Validate prepare outputs
+        run: |
+          test -s outputs/prepare/selected_185_predictors.parquet
+          test -s outputs/prepare/security_master_seed.parquet
+          test -s outputs/prepare/redundancy_groups.csv
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path("outputs/prepare/prepare_summary.json").read_text())
+          assert summary["selected_predictors"] == 185
+          assert summary["unique_symbols"] > 1000
+          assert summary["locked_opened"] is False
+          assert summary["backtest_enabled"] is False
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-prepare
+          path: outputs/prepare/
+          if-no-files-found: error
+          retention-days: 30
+
+  yfinance:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        chunk:
+          - 0
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+          - 11
+          - 12
+          - 13
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+          - 19
+          - 20
+          - 21
+          - 22
+          - 23
+          - 24
+          - 25
+          - 26
+          - 27
+          - 28
+          - 29
+          - 30
+          - 31
+          - 32
+          - 33
+          - 34
+          - 35
+          - 36
+          - 37
+          - 38
+          - 39
+          - 40
+          - 41
+          - 42
+          - 43
+          - 44
+          - 45
+          - 46
+          - 47
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . requests
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-prepare
+          path: inputs/prepare
+      - name: Download YFinance history and current snapshots
+        run: |
+          python scripts/run_openap_yfinance_sec_current.py \
+            --config "$OPENAP_CONFIG" yfinance-chunk \
+            --security-master inputs/prepare/security_master_seed.parquet \
+            --chunk-index "${{ matrix.chunk }}" \
+            --total-chunks "$YFINANCE_CHUNKS" \
+            --output-dir "outputs/yfinance_${{ matrix.chunk }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-yfinance-${{ matrix.chunk }}
+          path: outputs/yfinance_${{ matrix.chunk }}/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+  sec_bulk:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . requests
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-prepare
+          path: inputs/prepare
+      - name: Download and filter SEC bulk archives
+        env:
+          AU_SEC_EDGAR_USER_AGENT: ${{ inputs.sec_user_agent }}
+        run: |
+          python scripts/run_openap_yfinance_sec_current.py \
+            --config "$OPENAP_CONFIG" sec-bulk \
+            --security-master inputs/prepare/security_master_seed.parquet \
+            --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
+            --output-dir outputs/sec
+      - name: Validate SEC output
+        run: |
+          test -s outputs/sec/lake/sec_companyfacts.parquet
+          test -s outputs/sec/lake/sec_submissions.parquet
+          test -s outputs/sec/sec_bulk_summary.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-sec-lake
+          path: |
+            outputs/sec/lake/
+            outputs/sec/sec_bulk_summary.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - if: ${{ inputs.keep_sec_raw_archives }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-sec-raw-archives
+          path: outputs/sec/raw/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  merge:
+    needs:
+      - prepare
+      - yfinance
+      - sec_bulk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . duckdb requests
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-prepare
+          path: inputs/prepare
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-yfinance-*
+          path: inputs/yfinance
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-sec-lake
+          path: inputs/sec
+      - name: Merge lake and calculate current scores
+        run: |
+          python scripts/run_openap_yfinance_sec_current.py \
+            --config "$OPENAP_CONFIG" merge \
+            --input-root inputs/yfinance \
+            --prepare-dir inputs/prepare \
+            --sec-dir inputs/sec \
+            --output-dir outputs/final
+      - name: Validate final acceptance contract
+        run: |
+          test -s outputs/final/openap_current.duckdb
+          test -s outputs/final/openap_features_current.parquet
+          test -s outputs/final/openap_scores_current.parquet
+          test -s outputs/final/coverage_185.csv
+          test -s outputs/final/execution_summary.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path("outputs/final/execution_summary.json").read_text())
+          assert summary["input_predictors"] == 185
+          assert summary["coverage_rows"] == 185
+          assert summary["eligible_symbols"] > 1000
+          assert summary["price_rows"] > 1_000_000
+          assert summary["sec_companyfacts_rows"] > 100_000
+          assert summary["all_facts_have_available_at"] is True
+          assert summary["duplicate_price_rows"] == 0
+          assert summary["future_price_rows"] == 0
+          assert summary["facts_without_available_at"] == 0
+          assert summary["locked_opened"] is False
+          assert summary["backtest_enabled"] is False
+          assert summary["partial"] is False
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: outputs/final/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
