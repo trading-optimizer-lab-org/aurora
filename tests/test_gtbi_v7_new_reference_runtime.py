@@ -5,6 +5,7 @@ import io
 import json
 import tarfile
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
@@ -14,6 +15,7 @@ import pytest
 from infra.gtbi_v7_new_reference import campaign, release, runner
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from infra.gtbi_v7_readiness.frozen_data_lake import MANIFEST_DOMAIN, MANIFEST_MEMBER, RECEIPT_DOMAIN
+from scripts import gtbi_fast_strict as strict
 from scripts.summarize_gtbi_v7_new_reference_benchmark import summarize
 from scripts.validate_gtbi_v7_new_reference_smoke import validate_smoke
 
@@ -277,6 +279,49 @@ def test_scientific_digest_rejects_incomplete_output(tmp_path: Path) -> None:
 
 def test_effective_cpu_count_is_positive() -> None:
     assert runner.effective_cpu_count() >= 1
+
+
+def test_v7_manifest_rewrite_preserves_strict_float_fingerprint(tmp_path: Path) -> None:
+    inputs: dict[str, str | float] = {
+        "code_sha": "abc",
+        "strategy_pack_digest": "pack",
+        "data_run_identity": "data",
+        "train_end": "2010-12-31",
+        "validation_start": "2011-01-01",
+        "validation_end": "2020-12-31",
+        "locked_start": "2021-01-01",
+        "min_market_cap": 2_000_000_000.0,
+        "execution_mode": "optimized_evaluation_v5_event_first",
+        "universe_identity": "universe",
+        "dependency_lock_identity": "lock",
+    }
+    plan_content: dict[str, Any] = {"assignments": {}, "bundle_assignments": {}, "counts": {}}
+    fingerprint = strict.campaign_fingerprint(
+        code_sha=str(inputs["code_sha"]),
+        strategy_pack_digest=str(inputs["strategy_pack_digest"]),
+        data_run_identity=str(inputs["data_run_identity"]),
+        train_end=str(inputs["train_end"]),
+        validation_start=str(inputs["validation_start"]),
+        validation_end=str(inputs["validation_end"]),
+        locked_start=str(inputs["locked_start"]),
+        min_market_cap=float(inputs["min_market_cap"]),
+        execution_mode=str(inputs["execution_mode"]),
+        universe_identity=str(inputs["universe_identity"]),
+        dependency_lock_identity=str(inputs["dependency_lock_identity"]),
+        artifact_inventory=[],
+        plan_content=plan_content,
+    )
+    manifest = {
+        "campaign_fingerprint": fingerprint,
+        "inputs": inputs,
+        "plan_content": plan_content,
+        "artifacts": [],
+        "v7_campaign_contract": {"campaign_fingerprint": fingerprint},
+    }
+    campaign._write_strict_campaign_manifest(tmp_path / "campaign_manifest.json", manifest)
+    strict.verify_campaign_artifacts(tmp_path)
+    reloaded = json.loads((tmp_path / "campaign_manifest.json").read_text(encoding="utf-8"))
+    assert isinstance(reloaded["inputs"]["min_market_cap"], float)
 
 
 def test_batch_reuses_one_runner_and_covers_every_worker(
