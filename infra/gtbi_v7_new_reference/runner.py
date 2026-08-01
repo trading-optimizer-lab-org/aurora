@@ -202,7 +202,7 @@ def run_v7_worker(
         "cpu_seconds": cpu_seconds,
         "cpu_capacity_utilization": 0.0 if wall <= 0 else cpu_seconds / (wall * cpu_count),
         "peak_rss_kib": (
-            int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)  # type: ignore[attr-defined]
+            int(getattr(resource, "getrusage")(getattr(resource, "RUSAGE_SELF")).ru_maxrss)
             if resource is not None
             else None
         ),

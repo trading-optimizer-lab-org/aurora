@@ -351,9 +351,11 @@ def _write_filtered_prices(source: Path, destination: Path, symbols: list[str]) 
     )
     if not retained:
         raise FrozenReleaseError("no symbol has the minimum historical rows")
-    table = table.filter(pc.is_in(table["symbol"], value_set=pa.array(retained)))  # type: ignore[attr-defined]
+    is_in = getattr(pc, "is_in")
+    maximum_value = getattr(pc, "max")
+    table = table.filter(is_in(table["symbol"], value_set=pa.array(retained)))
     table = table.sort_by([("symbol", "ascending"), ("date", "ascending")])
-    maximum = pc.max(table["date"]).as_py()  # type: ignore[attr-defined]
+    maximum = maximum_value(table["date"]).as_py()
     if maximum is None or str(maximum) > SCIENTIFIC_CUTOFF:
         raise FrozenReleaseError("historical prices expose locked rows")
     pq.write_table(table, destination, compression="zstd", use_dictionary=True)
@@ -370,17 +372,18 @@ def _write_filtered_benchmark(source: Path, destination: Path) -> int:
     elif pa.types.is_date(date_type):
         cutoff = pa.scalar(pd.Timestamp(LOCKED_START).date(), type=date_type)
     else:
-        dates = pc.strptime(  # type: ignore[attr-defined]
+        parse_timestamp = getattr(pc, "strptime")
+        dates = parse_timestamp(
             table["date"], format="%Y-%m-%d", unit="ns", error_is_null=True
         )
         table = table.set_column(table.schema.get_field_index("date"), "date", dates)
         cutoff = pa.scalar(pd.Timestamp(LOCKED_START), type=dates.type)
-    table = table.filter(pc.less(table["date"], cutoff)).sort_by(  # type: ignore[attr-defined]
-        [("date", "ascending")]
-    )
+    less_than = getattr(pc, "less")
+    maximum_value = getattr(pc, "max")
+    table = table.filter(less_than(table["date"], cutoff)).sort_by([("date", "ascending")])
     if table.num_rows == 0:
         raise FrozenReleaseError("historical benchmark is empty")
-    maximum = pc.max(table["date"]).as_py()  # type: ignore[attr-defined]
+    maximum = maximum_value(table["date"]).as_py()
     if pd.Timestamp(maximum).date().isoformat() > SCIENTIFIC_CUTOFF:
         raise FrozenReleaseError("historical benchmark exposes locked rows")
     pq.write_table(table, destination, compression="zstd", use_dictionary=True)

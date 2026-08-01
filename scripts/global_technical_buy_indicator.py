@@ -21,8 +21,11 @@ from typing import Any, Iterable, Iterator, Mapping
 import numpy as np
 import pandas as pd
 
+_numba_njit: Any
 try:  # Optional; the evaluator must run without numba in CI.
-    from numba import njit as _numba_njit
+    from numba import njit
+
+    _numba_njit = njit
 except Exception:  # pragma: no cover - depends on optional local dependency.
     _numba_njit = None
 
