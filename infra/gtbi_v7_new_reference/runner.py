@@ -267,19 +267,19 @@ def run_v7_batch(
     }
     start = time.perf_counter()
     results: dict[int, dict[str, Any]] = {}
-    if processes == 1:
-        for worker_id in ids:
-            results[worker_id] = _run_v7_worker_process(kwargs_by_id[worker_id])
-    else:
-        context = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=processes, mp_context=context) as executor:
-            futures = {
-                executor.submit(_run_v7_worker_process, kwargs_by_id[worker_id]): worker_id
-                for worker_id in ids
-            }
-            for future in as_completed(futures):
-                worker_id = futures[future]
-                results[worker_id] = future.result()
+    # Always isolate logical workers in spawned processes. Running the
+    # one-process reference inline lets module-level caches leak from one
+    # worker to the next, which can change floating-point reductions by a few
+    # ulps and makes the benchmark reference depend on execution order.
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=processes, mp_context=context) as executor:
+        futures = {
+            executor.submit(_run_v7_worker_process, kwargs_by_id[worker_id]): worker_id
+            for worker_id in ids
+        }
+        for future in as_completed(futures):
+            worker_id = futures[future]
+            results[worker_id] = future.result()
     wall = float(time.perf_counter() - start)
     if set(results) != set(ids):
         raise V7RunnerError("batch did not return every requested worker")

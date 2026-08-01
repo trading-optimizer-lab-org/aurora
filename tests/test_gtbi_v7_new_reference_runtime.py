@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import tarfile
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
@@ -347,7 +348,27 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
         }
         return {"v7_worker_receipt": receipt}
 
+    executor_sizes: list[int] = []
+
+    class InlineExecutor:
+        def __init__(self, *, max_workers: int, mp_context: Any) -> None:
+            del mp_context
+            executor_sizes.append(max_workers)
+
+        def __enter__(self) -> InlineExecutor:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def submit(self, function: Any, argument: dict) -> Future:
+            future: Future = Future()
+            future.set_result(function(argument))
+            return future
+
     monkeypatch.setattr(runner, "_run_v7_worker_process", fake_run)
+    monkeypatch.setattr(runner, "ProcessPoolExecutor", InlineExecutor)
+    monkeypatch.setattr(runner, "as_completed", lambda futures: list(futures))
     output = tmp_path / "batch"
     result = runner.run_v7_batch(
         campaign_manifest_path=tmp_path / "campaign.json",
@@ -361,6 +382,7 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
     )
     assert result["worker_ids"] == [4, 5, 6, 7]
     assert result["symbol_workers_per_process"] == 1
+    assert executor_sizes == [1]
     assert {path.name for path in output.glob("worker-*")} == {
         "worker-004",
         "worker-005",
