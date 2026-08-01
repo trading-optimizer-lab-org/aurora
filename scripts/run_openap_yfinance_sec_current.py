@@ -588,7 +588,10 @@ def _json_from_jina_text(text: str) -> Mapping[str, Any]:
         candidate = candidate[3:]
     if candidate.endswith("```"):
         candidate = candidate[:-3]
-    payload = json.loads(candidate.strip())
+    # Jina can preserve raw control characters present in SEC company names.
+    # Non-strict mode accepts those characters while retaining JSON structure
+    # validation and the existing object-type check below.
+    payload = json.loads(candidate.strip(), strict=False)
     if not isinstance(payload, Mapping):
         raise OpenAPDataError("Jina SEC fallback did not return a JSON object")
     return payload
