@@ -63,10 +63,19 @@ REQUIRED_SCIENTIFIC_KINDS = {
     "top_trades_sample",
 }
 DETERMINISTIC_SYMBOL_WORKERS_PER_PROCESS = 1
+DETERMINISTIC_PYTHON_HASH_SEED = "0"
 
 
 class V7RunnerError(RuntimeError):
     """Raised when runner capacity or scientific equivalence fails."""
+
+
+def _require_deterministic_python_hash_seed() -> None:
+    value = os.environ.get("PYTHONHASHSEED")
+    if value != DETERMINISTIC_PYTHON_HASH_SEED:
+        raise V7RunnerError(
+            "GTBI V7 requires PYTHONHASHSEED=0 before the Python interpreter starts"
+        )
 
 
 def effective_cpu_count() -> int:
@@ -157,6 +166,7 @@ def run_v7_worker(
     """Run one logical V7 worker and add capacity/runtime evidence."""
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise V7RunnerError("GTBI V7 scientific workers are GitHub Actions only")
+    _require_deterministic_python_hash_seed()
     cpu_count = effective_cpu_count()
     requested = int(symbol_workers)
     if requested not in {1, 2, 4}:
@@ -199,6 +209,7 @@ def run_v7_worker(
         "symbol_workers": requested,
         "effective_cpu_count": cpu_count,
         "blas_threads_per_process": 1,
+        "python_hash_seed": DETERMINISTIC_PYTHON_HASH_SEED,
         "wall_seconds": wall,
         "cpu_seconds": cpu_seconds,
         "cpu_capacity_utilization": 0.0 if wall <= 0 else cpu_seconds / (wall * cpu_count),
@@ -235,6 +246,7 @@ def run_v7_batch(
     """Run up to four independent logical workers on one downloaded data pack."""
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise V7RunnerError("GTBI V7 scientific batches are GitHub Actions only")
+    _require_deterministic_python_hash_seed()
     ids = [int(value) for value in worker_ids]
     if not ids or len(ids) > 4 or len(set(ids)) != len(ids):
         raise V7RunnerError("worker_ids must contain one to four unique values")
@@ -292,6 +304,7 @@ def run_v7_batch(
         "processes_per_runner": processes,
         "symbol_workers_per_process": symbol_workers,
         "effective_cpu_count": cpu_count,
+        "python_hash_seed": DETERMINISTIC_PYTHON_HASH_SEED,
         "wall_seconds": wall,
         "aggregate_worker_cpu_seconds": sum(float(row["cpu_seconds"]) for row in receipts),
         "aggregate_peak_rss_kib": sum(int(row.get("peak_rss_kib") or 0) for row in receipts),
@@ -304,6 +317,11 @@ def run_v7_batch(
     }
     if any(row["campaign_fingerprint"] != batch["campaign_fingerprint"] for row in receipts):
         raise V7RunnerError("batch workers used different campaign fingerprints")
+    if any(
+        row.get("python_hash_seed") != DETERMINISTIC_PYTHON_HASH_SEED
+        for row in receipts
+    ):
+        raise V7RunnerError("batch workers did not use PYTHONHASHSEED=0")
     batch["receipt_digest"] = "sha256:" + hashlib.sha256(canonical_bytes(batch)).hexdigest()
     (output / "v7_batch_receipt.json").write_bytes(canonical_bytes(batch) + b"\n")
     return batch
