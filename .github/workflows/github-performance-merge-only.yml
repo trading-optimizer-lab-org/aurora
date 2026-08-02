@@ -243,6 +243,91 @@ jobs:
             --preflight-root "$RUNNER_TEMP/preflight" \
             --recovery-root "$RUNNER_TEMP/recovery" \
             --output-dir "$RUNNER_TEMP/final"
+      - name: Download verified source final artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_FINAL_ARTIFACT: >-
+            ${{ inputs.comparison_artifact_name ||
+            format('{0}-results', inputs.run_label) }}
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" \
+            --name "$SOURCE_FINAL_ARTIFACT" \
+            --dir "$RUNNER_TEMP/comparison"
+      - name: Rehydrate telemetry and prove scientific equivalence
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          final = root / "final"
+          comparison = root / "comparison"
+          telemetry_files = (
+              "github_jobs_timeline.parquet",
+              "parallelism_timeline.csv",
+              "timeline_summary.json",
+              "performance_telemetry_status.json",
+              "performance_telemetry_manifest.json",
+              "runtime_breakdown.parquet",
+          )
+          for name in telemetry_files:
+              source = comparison / name
+              if not source.is_file():
+                  raise SystemExit(
+                      f"MERGE_ONLY_SOURCE_TELEMETRY_MISSING:{name}"
+                  )
+              shutil.copy2(source, final / name)
+
+          current_summary = json.loads(
+              (final / "final_merge_summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          previous_summary = json.loads(
+              (comparison / "final_merge_summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          current = final / str(current_summary["scientific_output"])
+          previous = (
+              comparison / str(previous_summary["scientific_output"])
+          )
+          current_sha = hashlib.sha256(current.read_bytes()).hexdigest()
+          previous_sha = hashlib.sha256(previous.read_bytes()).hexdigest()
+          payload = {
+              "schema_version": "1",
+              "source_run_id": os.environ["SOURCE_RUN_ID"],
+              "telemetry_source_run_id": os.environ["SOURCE_RUN_ID"],
+              "compute_scheduled": False,
+              "merge_only": True,
+              "scientific_outputs_equal": current_sha == previous_sha,
+              "scientific_output_sha256": current_sha,
+              "source_scientific_output_sha256": previous_sha,
+          }
+          if not payload["scientific_outputs_equal"]:
+              raise SystemExit(
+                  "MERGE_ONLY_SCIENTIFIC_OUTPUT_MISMATCH"
+              )
+          encoded = (
+              json.dumps(payload, indent=2, sort_keys=True) + "\n"
+          )
+          (final / "merge_only_verification.json").write_text(
+              encoded,
+              encoding="utf-8",
+          )
+          (root / "merge-only" / "merge_only_verification.json").write_text(
+              encoded,
+              encoding="utf-8",
+          )
+          PY
       - name: Record terminal merge-only reconciliation
         run: |
           set -euo pipefail
@@ -269,6 +354,12 @@ jobs:
             --completed-unit-manifest-sha256 "${reconciliation[0]}" \
             --completed-unit-count "${reconciliation[1]}" \
             --pending-unit-count 0
+      - name: Seal complete rebuilt artifact
+        run: |
+          set -euo pipefail
+          aurora github seal-final-artifact \
+            --spec "$RUNNER_TEMP/final/resolved_run_spec.json" \
+            --root "$RUNNER_TEMP/final"
       - name: Independently verify merge-only artifact
         run: |
           set -euo pipefail
@@ -283,62 +374,6 @@ jobs:
             --spec "$RUNNER_TEMP/contract/resolved_run_spec.json" \
             --state-root "$RUNNER_TEMP/state" \
             --phase completed
-      - name: Compare optional source scientific output
-        if: inputs.comparison_artifact_name != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-          COMPARISON_ARTIFACT: ${{ inputs.comparison_artifact_name }}
-        run: |
-          set -euo pipefail
-          gh run download "$SOURCE_RUN_ID" --name "$COMPARISON_ARTIFACT" \
-            --dir "$RUNNER_TEMP/comparison"
-          python - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-
-          root = Path(os.environ["RUNNER_TEMP"])
-          current_summary = json.loads(
-              (root / "final" / "final_merge_summary.json").read_text(
-                  encoding="utf-8"
-              )
-          )
-          previous_summary = json.loads(
-              (
-                  root
-                  / "comparison"
-                  / "final_merge_summary.json"
-              ).read_text(encoding="utf-8")
-          )
-          current = (
-              root / "final" / str(current_summary["scientific_output"])
-          )
-          previous = (
-              root
-              / "comparison"
-              / str(previous_summary["scientific_output"])
-          )
-          current_sha = hashlib.sha256(current.read_bytes()).hexdigest()
-          previous_sha = hashlib.sha256(previous.read_bytes()).hexdigest()
-          payload = {
-              "schema_version": "1",
-              "source_run_id": os.environ["SOURCE_RUN_ID"],
-              "compute_scheduled": False,
-              "merge_only": True,
-              "scientific_outputs_equal": current_sha == previous_sha,
-              "scientific_output_sha256": current_sha,
-              "source_scientific_output_sha256": previous_sha,
-          }
-          if not payload["scientific_outputs_equal"]:
-              raise SystemExit("MERGE_ONLY_SCIENTIFIC_OUTPUT_MISMATCH")
-          target = root / "merge-only" / "merge_only_verification.json"
-          target.write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          PY
       - name: Upload merge-only campaign state
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -358,6 +393,7 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
       - name: Publish merge-only final artifact
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.run_label }}-merge-only-results-${{ github.run_id }}-${{ github.run_attempt }}

@@ -410,6 +410,39 @@ def test_exact_internal_framework_helper_passes_policy(tmp_path: Path) -> None:
     assert validate_workflow_policy(helper, tmp_path, {}) == []
 
 
+def test_exact_serial_maintenance_inventory_passes_policy(
+    tmp_path: Path,
+) -> None:
+    workflow = write_yaml(
+        tmp_path / ".github/workflows/aurora-maintenance-inventory.yml",
+        {
+            "name": "read-only complete inventory",
+            "on": {"workflow_dispatch": {}},
+            "permissions": {
+                "actions": "read",
+                "contents": "read",
+                "packages": "read",
+            },
+            "jobs": {
+                "inventory": {
+                    "runs-on": "ubuntu-24.04",
+                    "timeout-minutes": 360,
+                    "steps": [
+                        {
+                            "run": (
+                                "python -m scripts."
+                                "generate_gtbi_v7_full_inventory"
+                            )
+                        }
+                    ],
+                }
+            },
+        },
+    )
+
+    assert validate_workflow_policy(workflow, tmp_path, {}) == []
+
+
 def test_internal_helper_exception_is_path_scoped(tmp_path: Path) -> None:
     lookalike = write_yaml(
         tmp_path / ".github/workflows/unregistered-helper.yml",

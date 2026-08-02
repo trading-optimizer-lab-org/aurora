@@ -26,6 +26,7 @@ class ScientificOutputMismatch(RuntimeError):
 class BenchmarkReport(FrozenModel):
     schema_version: str
     status: str
+    comparison_dimension: str
     scientific_outputs_equal: bool
     timing_comparable: bool
     compared_units: int
@@ -414,9 +415,19 @@ def compare_runs(
     reference_dir: Path,
     optimized_dir: Path,
     environment_setup_benchmark: Path | Mapping[str, Any] | None = None,
+    *,
+    comparison_dimension: str = "assignment_strategy",
 ) -> BenchmarkReport:
     """Compare performance only after exact unit-level equivalence."""
 
+    if comparison_dimension not in {
+        "assignment_strategy",
+        "adaptive_topology",
+    }:
+        raise ValueError(
+            "comparison_dimension must be assignment_strategy "
+            "or adaptive_topology"
+        )
     baseline_root = Path(reference_dir)
     optimized_root = Path(optimized_dir)
     baseline_hashes = _scientific_hashes(baseline_root)
@@ -479,6 +490,16 @@ def compare_runs(
         == optimized["performance_contract_sha256"]
     )
     same_jobs = baseline["selected_jobs"] == optimized["selected_jobs"]
+    topology_comparable = (
+        same_jobs
+        if comparison_dimension == "assignment_strategy"
+        else not same_jobs
+    )
+    topology_failure_code = (
+        "SELECTED_JOB_COUNT_MISMATCH"
+        if comparison_dimension == "assignment_strategy"
+        else "TOPOLOGY_NOT_DIFFERENT"
+    )
     matrix_ok = (
         baseline["matrix_job_ceiling"] <= 256
         and optimized["matrix_job_ceiling"] <= 256
@@ -522,7 +543,7 @@ def compare_runs(
             same_performance_contract,
             "PERFORMANCE_CONTRACT_MISMATCH",
         ),
-        (same_jobs, "SELECTED_JOB_COUNT_MISMATCH"),
+        (topology_comparable, topology_failure_code),
         (
             baseline["assignment_strategy"] == "equal_count_flat",
             "BASELINE_MODE_INVALID",
@@ -586,6 +607,7 @@ def compare_runs(
     return BenchmarkReport(
         schema_version="1",
         status="success" if not failures else "failed",
+        comparison_dimension=comparison_dimension,
         scientific_outputs_equal=True,
         timing_comparable=timing_comparable,
         compared_units=len(baseline_hashes),
@@ -683,6 +705,7 @@ def write_benchmark_outputs(
         {
             "schema_version": "1",
             "status": report.status,
+            "comparison_dimension": report.comparison_dimension,
             "scientific_outputs_equal": (
                 report.scientific_outputs_equal
             ),

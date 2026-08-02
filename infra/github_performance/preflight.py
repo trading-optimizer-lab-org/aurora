@@ -706,6 +706,9 @@ FRAMEWORK_INTERNAL_WORKFLOW_PATHS = frozenset(
         ".github/workflows/gtbi-v7-new-reference-worker.yml",
         ".github/workflows/github-performance-merge-only.yml",
         ".github/workflows/github-performance-replan.yml",
+        # Serial read-only control-plane inventory. It is intentionally not a
+        # scientific workload and cannot use the sharded research framework.
+        ".github/workflows/aurora-maintenance-inventory.yml",
     }
 )
 
