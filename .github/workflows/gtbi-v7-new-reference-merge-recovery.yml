@@ -11,6 +11,11 @@ on:
         description: Exact scientific commit used by the source full run
         required: true
         type: string
+      source_block_run_id:
+        description: Optional prior recovery run containing all 18 verified block artifacts
+        required: false
+        default: ""
+        type: string
       prepared_run_id:
         description: Exact successful V7 preparation run
         required: true
@@ -126,6 +131,24 @@ jobs:
           if extras:
               raise SystemExit(f"source run has unexpected runner artifacts: {extras[:5]}")
           PY
+      - name: Verify reusable block artifacts when supplied
+        if: inputs.source_block_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BLOCK_RUN_ID: ${{ inputs.source_block_run_id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_BLOCK_RUN_ID}/artifacts" --paginate \
+            --jq '.artifacts[].name' > source-block-artifacts.txt
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          run_id = os.environ["SOURCE_BLOCK_RUN_ID"]
+          names = set(Path("source-block-artifacts.txt").read_text(encoding="utf-8").splitlines())
+          expected = {f"gtbi-v7-block-{block:02d}-{run_id}" for block in range(18)}
+          missing = sorted(expected - names)
+          if missing:
+              raise SystemExit(f"source block run is missing block artifacts: {missing}")
+          PY
       - name: Emit exact 18-block recovery matrix
         id: matrix
         run: |
@@ -153,7 +176,7 @@ jobs:
 
   merge-block:
     name: Recover merge block ${{ matrix.block_padded }}
-    if: always() && inputs.recovery_authorized && needs.recovery-gate.result == 'success'
+    if: always() && inputs.recovery_authorized && inputs.source_block_run_id == '' && needs.recovery-gate.result == 'success'
     needs: recovery-gate
     strategy:
       fail-fast: false
@@ -216,7 +239,7 @@ jobs:
 
   merge-final:
     name: Recover, validate and seal 72,000 historical strategies
-    if: always() && inputs.recovery_authorized && needs.recovery-gate.result == 'success' && needs.merge-block.result == 'success'
+    if: always() && inputs.recovery_authorized && needs.recovery-gate.result == 'success' && (inputs.source_block_run_id != '' || needs.merge-block.result == 'success')
     needs: [recovery-gate, merge-block]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
@@ -235,16 +258,19 @@ jobs:
       - name: Download plan, data manifest, blocks and accepted evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_BLOCK_RUN_ID: ${{ inputs.source_block_run_id }}
         run: |
           gh run download "${{ inputs.prepared_run_id }}" --name "${PLAN_ARTIFACT_PREFIX}-${{ inputs.prepared_run_id }}" --dir plan
           gh run download "${{ inputs.prepared_run_id }}" --name "${DATA_ARTIFACT_PREFIX}-${{ inputs.prepared_run_id }}" --dir prepared
           gh run download "${{ inputs.benchmark_run_id }}" --name "${BENCHMARK_ARTIFACT_PREFIX}-${{ inputs.benchmark_run_id }}" --dir benchmark
           gh run download "${{ inputs.smoke_run_id }}" --name "${SMOKE_ARTIFACT_PREFIX}-${{ inputs.smoke_run_id }}" --dir smoke
           mkdir -p blocks
+          block_run_id="$SOURCE_BLOCK_RUN_ID"
+          if [ -z "$block_run_id" ]; then block_run_id="$GITHUB_RUN_ID"; fi
           for block in $(seq 0 17); do
             padded=$(printf '%02d' "$block")
-            gh run download "$GITHUB_RUN_ID" \
-              --name "gtbi-v7-block-${padded}-${GITHUB_RUN_ID}" \
+            gh run download "$block_run_id" \
+              --name "gtbi-v7-block-${padded}-${block_run_id}" \
               --dir "blocks/block-${padded}"
           done
       - name: Strict final merge and 72,000-alias expansion
@@ -264,6 +290,7 @@ jobs:
         env:
           SOURCE_RUN_ID: ${{ inputs.source_full_run_id }}
           SOURCE_COMMIT_SHA: ${{ inputs.source_commit_sha }}
+          SOURCE_BLOCK_RUN_ID: ${{ inputs.source_block_run_id }}
         run: |
           python - <<'PY'
           import hashlib, json, os
@@ -271,6 +298,7 @@ jobs:
           receipt = {
               "schema_version": "gtbi_v7_new_reference_merge_recovery_receipt_v1",
               "source_full_run_id": int(os.environ["SOURCE_RUN_ID"]),
+              "source_block_run_id": int(os.environ["SOURCE_BLOCK_RUN_ID"] or os.environ["GITHUB_RUN_ID"]),
               "source_scientific_commit_sha": os.environ["SOURCE_COMMIT_SHA"],
               "merge_recovery_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "merge_recovery_commit_sha": os.environ["GITHUB_SHA"],
@@ -295,7 +323,8 @@ jobs:
             --authorization docs/readiness/gtbi-v7-new-reference/campaign_authorization.json \
             --benchmark benchmark/benchmark.json \
             --smoke-validation smoke/smoke_validation.json \
-            --expected-strategy-count 72000
+            --expected-strategy-count 72000 \
+            --merge-recovery-receipt final-results/merge_recovery_receipt.json
       - name: Upload final immutable historical artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
