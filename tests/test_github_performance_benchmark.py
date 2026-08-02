@@ -31,6 +31,7 @@ def _artifact(
     mode: str,
     wall_seconds: float,
     unit_hash: str = "a" * 64,
+    selected_jobs: int = 4,
 ) -> Path:
     root.mkdir(parents=True)
     pq.write_table(
@@ -77,7 +78,7 @@ def _artifact(
             {
                 "assignment_strategy": mode,
                 "job_count": {
-                    "selected_jobs": 4,
+                    "selected_jobs": selected_jobs,
                     "predicted_seconds": 120.0,
                 },
             }
@@ -204,6 +205,7 @@ def test_compare_reports_speed_only_after_equivalence(
         ).read_text()
     )
     assert closure["status"] == "success"
+    assert closure["comparison_dimension"] == "assignment_strategy"
     assert closure["optimization_selected"] is True
     assert closure["selected_execution_mode"] == "optimized"
 
@@ -260,6 +262,61 @@ def test_compare_rejects_non_material_speedup(
     )
 
 
+def test_compare_adaptive_topology_allows_different_job_counts(
+    tmp_path: Path,
+) -> None:
+    baseline = _artifact(
+        tmp_path / "baseline",
+        mode="equal_count_flat",
+        wall_seconds=240.0,
+        selected_jobs=1,
+    )
+    optimized = _artifact(
+        tmp_path / "optimized",
+        mode="weighted_lpt_hierarchical",
+        wall_seconds=120.0,
+        selected_jobs=16,
+    )
+
+    report = compare_runs(
+        baseline,
+        optimized,
+        comparison_dimension="adaptive_topology",
+    )
+
+    assert report.status == "success"
+    assert report.comparison_dimension == "adaptive_topology"
+    assert report.same_selected_jobs is False
+    assert report.scientific_outputs_equal is True
+    assert report.timing_comparable is True
+    assert report.material_speedup_achieved is True
+
+
+def test_compare_adaptive_topology_requires_different_job_counts(
+    tmp_path: Path,
+) -> None:
+    baseline = _artifact(
+        tmp_path / "baseline",
+        mode="equal_count_flat",
+        wall_seconds=240.0,
+    )
+    optimized = _artifact(
+        tmp_path / "optimized",
+        mode="weighted_lpt_hierarchical",
+        wall_seconds=120.0,
+    )
+
+    report = compare_runs(
+        baseline,
+        optimized,
+        comparison_dimension="adaptive_topology",
+    )
+
+    assert report.status == "failed"
+    assert report.timing_comparable is False
+    assert "TOPOLOGY_NOT_DIFFERENT" in report.failure_codes
+
+
 def test_compare_does_not_claim_speed_for_different_environment(
     tmp_path: Path,
 ) -> None:
@@ -294,6 +351,14 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
         "robustness",
     ]
     assert inputs["forced_job_count"]["default"] == 0
+    assert inputs["baseline_forced_job_count"]["default"] == 0
+    assert inputs["comparison_dimension"]["default"] == (
+        "assignment_strategy"
+    )
+    assert inputs["comparison_dimension"]["options"] == [
+        "assignment_strategy",
+        "adaptive_topology",
+    ]
     assert inputs["performance_profile_run_id"]["default"] == ""
     assert inputs["performance_profile_artifact_name"]["default"] == ""
     assert inputs["fault_injection_shard_id"]["default"] == ""
@@ -332,6 +397,7 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     forced = jobs["baseline"]["with"]["forced_job_count"]
     assert "needs.optimized.outputs.selected_jobs" in str(forced)
     assert "inputs.forced_job_count" in str(forced)
+    assert "inputs.baseline_forced_job_count" in str(forced)
     assert jobs["compare"]["needs"] == [
         "optimized",
         "baseline",
@@ -339,6 +405,7 @@ def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
     ]
     compare_text = str(jobs["compare"])
     assert "environment_setup_benchmark.json" in compare_text
+    assert "--comparison-dimension" in compare_text
     assert "--cold-repetitions 3" in str(jobs["setup_benchmark"])
     assert "aurora github build-performance-profile" in compare_text
     assert "performance_profile.json" in compare_text

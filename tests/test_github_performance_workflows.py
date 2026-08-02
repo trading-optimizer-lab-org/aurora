@@ -19,14 +19,14 @@ WORKFLOW_PATH = (
 POLICY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-policy.yml"
 )
-RECOVERY_WAVE_WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "_aurora-recovery-plan-v3.yml"
+RECOVERY_PLAN_ACTION_PATH = (
+    ROOT / ".github" / "actions" / "aurora-recovery-plan" / "action.yml"
 )
-RETRY_SHARD_WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "_aurora-retry-shard-v3.yml"
+RETRY_SHARD_ACTION_PATH = (
+    ROOT / ".github" / "actions" / "aurora-retry-shard" / "action.yml"
 )
-MERGE_LEVEL_WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "_aurora-merge-level-v3.yml"
+MERGE_LEVEL_ACTION_PATH = (
+    ROOT / ".github" / "actions" / "aurora-merge-level" / "action.yml"
 )
 MERGE_ONLY_WORKFLOW_PATH = (
     ROOT / ".github" / "workflows" / "github-performance-merge-only.yml"
@@ -150,6 +150,16 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     }
     assert _needs(jobs["retry_a"]) == {"plan", "recovery_plan"}
     assert _needs(jobs["retry_b"]) == {"plan", "recovery_plan"}
+    assert jobs["retry_a"]["if"] == (
+        "always() && needs.recovery_plan.result == 'success' && "
+        "needs.recovery_plan.outputs.status == 'retry' && "
+        "needs.recovery_plan.outputs.has_matrix_a == 'true'"
+    )
+    assert jobs["retry_b"]["if"] == (
+        "always() && needs.recovery_plan.result == 'success' && "
+        "needs.recovery_plan.outputs.status == 'retry' && "
+        "needs.recovery_plan.outputs.has_matrix_b == 'true'"
+    )
     previous_a = "retry_a"
     previous_b = "retry_b"
     previous_recovery = "recovery_plan"
@@ -167,6 +177,16 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
             next_b = f"retry_{wave + 1}_b"
             assert _needs(jobs[next_a]) == {"plan", recovery}
             assert _needs(jobs[next_b]) == {"plan", recovery}
+            assert jobs[next_a]["if"] == (
+                f"always() && needs.{recovery}.result == 'success' && "
+                f"needs.{recovery}.outputs.status == 'retry' && "
+                f"needs.{recovery}.outputs.has_matrix_a == 'true'"
+            )
+            assert jobs[next_b]["if"] == (
+                f"always() && needs.{recovery}.result == 'success' && "
+                f"needs.{recovery}.outputs.status == 'retry' && "
+                f"needs.{recovery}.outputs.has_matrix_b == 'true'"
+            )
             previous_a = next_a
             previous_b = next_b
     assert _needs(jobs["merge_level_0"]) == {
@@ -220,6 +240,47 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "seal_final_artifact",
     }
     assert _needs(jobs["publish"]) == {"verify"}
+    assert _needs(jobs["conclude"]) == {"plan", "publish"}
+
+
+def test_reusable_workflow_conclusion_is_bound_to_verified_publication() -> None:
+    workflow = _workflow()
+    outputs = workflow["on"]["workflow_call"]["outputs"]
+    jobs = workflow["jobs"]
+    conclude = jobs["conclude"]
+
+    assert outputs["selected_jobs"]["value"] == (
+        "${{ jobs.conclude.outputs.selected_jobs }}"
+    )
+    assert outputs["profile_reused"]["value"] == (
+        "${{ jobs.conclude.outputs.profile_reused }}"
+    )
+    assert outputs["verification_passed"]["value"] == (
+        "${{ jobs.conclude.outputs.verification_passed }}"
+    )
+    assert conclude["if"] == "always()"
+    assert conclude["runs-on"] == "ubuntu-24.04"
+    assert _needs(conclude) == {"plan", "publish"}
+    verdict = next(
+        step
+        for step in conclude["steps"]
+        if step["name"] == "Bind reusable result to verified publication"
+    )
+    assert verdict["env"]["PLAN_RESULT"] == "${{ needs.plan.result }}"
+    assert verdict["env"]["PUBLISH_RESULT"] == "${{ needs.publish.result }}"
+    assert "verification_passed=true" in verdict["run"]
+
+
+def test_universal_workflow_supports_direct_dispatch_without_a_caller() -> None:
+    workflow = _workflow()
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    call_inputs = workflow["on"]["workflow_call"]["inputs"]
+
+    assert dispatch_inputs == call_inputs
+    assert {"spec_path", "workload", "run_label"} <= set(dispatch_inputs)
+    assert dispatch_inputs["spec_path"]["required"] is True
+    assert dispatch_inputs["workload"]["required"] is True
+    assert dispatch_inputs["run_label"]["required"] is True
 
 
 def test_reusable_workflow_respects_standard_runner_limits() -> None:
@@ -270,18 +331,34 @@ def test_recovery_is_durable_and_iterates_to_maximum_retry_budget() -> None:
     )
     for wave, name in enumerate(recovery_jobs):
         job = jobs[name]
-        assert job["uses"] == (
-            "./.github/workflows/_aurora-recovery-plan-v3.yml"
+        assert job["runs-on"] == "ubuntu-24.04"
+        recovery = next(
+            step
+            for step in job["steps"]
+            if step.get("uses")
+            == "./.github/actions/aurora-recovery-plan"
         )
-        assert job["with"]["current_wave"] == wave
-        assert job["with"]["max_waves"] == 6
+        assert recovery["with"]["current-wave"] == wave
+        assert recovery["with"]["max-waves"] == 6
     assert "campaign-update" in WORKFLOW_PATH.read_text(encoding="utf-8")
-    recovery_text = RECOVERY_WAVE_WORKFLOW_PATH.read_text(encoding="utf-8")
+    recovery_text = RECOVERY_PLAN_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github recovery-loop" in recovery_text
     assert "campaign_state_latest.json" in recovery_text
-    retry_text = RETRY_SHARD_WORKFLOW_PATH.read_text(encoding="utf-8")
+    retry_text = RETRY_SHARD_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github run-shard" in retry_text
     assert "matrix" not in retry_text
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "_aurora-recovery-plan-v3.yml" not in workflow_text
+    assert "_aurora-retry-shard-v3.yml" not in workflow_text
+    for wave in range(2, 6):
+        for suffix in ("a", "b"):
+            job = jobs[f"retry_{wave}_{suffix}"]
+            assert job["runs-on"] == "ubuntu-24.04"
+            assert any(
+                step.get("uses")
+                == "./.github/actions/aurora-retry-shard"
+                for step in job["steps"]
+            )
 
 
 def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
@@ -298,13 +375,31 @@ def test_universal_merge_only_workflow_reuses_verified_artifacts_only() -> None:
     text = MERGE_ONLY_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-only" in text
     assert "aurora github final-merge" in text
+    assert "aurora github seal-final-artifact" in text
     assert "aurora github verify" in text
     assert "campaign_state_latest.json" in text
     assert "verified_source_artifacts" in text
     assert "gh run download" in text
+    assert "MERGE_ONLY_SOURCE_TELEMETRY_MISSING" in text
+    assert "merge_only_verification.json" in text
+    assert "scientific_outputs_equal" in text
     assert "aurora github run-shard" not in text
     assert '["scientific_output"]' in text
     assert "reference_results.parquet" not in text
+    steps = workflow["jobs"]["merge_only"]["steps"]
+    names = [step["name"] for step in steps]
+    assert names.index(
+        "Rehydrate telemetry and prove scientific equivalence"
+    ) < names.index("Seal complete rebuilt artifact")
+    assert names.index(
+        "Seal complete rebuilt artifact"
+    ) < names.index("Independently verify merge-only artifact")
+    publish = next(
+        step
+        for step in steps
+        if step["name"] == "Publish merge-only final artifact"
+    )
+    assert "always()" in publish["if"]
     for job in workflow["jobs"].values():
         assert job["runs-on"] == "ubuntu-24.04"
 
@@ -449,34 +544,47 @@ def test_reusable_workflow_preserves_salvage_and_bounded_merge() -> None:
     assert "pattern" not in final_download["with"]
 
 
+def test_checkpoint_salvage_detects_files_outside_github_workspace() -> None:
+    workflows = (
+        WORKFLOW_PATH.read_text(encoding="utf-8"),
+        RETRY_SHARD_ACTION_PATH.read_text(encoding="utf-8"),
+    )
+    for text in workflows:
+        assert "find \"$RUNNER_TEMP/attempt\"" in text
+        assert "-name checkpoint_manifest.json" in text
+        assert "steps.checkpoint.outputs.exists == 'true'" in text
+        assert "hashFiles(format('{0}/attempt" not in text
+
+
 def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
     jobs = _workflow()["jobs"]
-    levels = [f"merge_level_{level}" for level in range(4)]
-    assert all(level in jobs for level in levels)
-    assert jobs["merge_level_0"]["uses"] == (
-        "./.github/workflows/_aurora-merge-level-v3.yml"
-    )
-    for level in range(1, 4):
-        assert _needs(jobs[f"merge_level_{level}"]) == {
+    level_names = [f"merge_level_{level_index}" for level_index in range(4)]
+    assert all(level_name in jobs for level_name in level_names)
+    for level_name in level_names:
+        job = jobs[level_name]
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert job["strategy"]["fail-fast"] is False
+        assert job["strategy"]["max-parallel"] <= 256
+        assert any(
+            step.get("uses")
+            == "./.github/actions/aurora-merge-level"
+            for step in job["steps"]
+        )
+    for level_index in range(1, 4):
+        assert _needs(jobs[f"merge_level_{level_index}"]) == {
             "plan",
-            f"merge_level_{level - 1}",
+            f"merge_level_{level_index - 1}",
         }
     assert _needs(jobs["final_merge"]) == {
         "plan",
         "freeze_contract",
-        *levels,
+        *level_names,
     }
-    merge_workflow = dict(load_github_yaml(MERGE_LEVEL_WORKFLOW_PATH))
-    merge_jobs = merge_workflow["jobs"]
-    assert set(merge_jobs) == {"merge"}
-    merge_job = merge_jobs["merge"]
-    assert merge_job["runs-on"] == "ubuntu-24.04"
-    assert merge_job["strategy"]["fail-fast"] is False
-    assert merge_job["strategy"]["max-parallel"] <= 256
-    merge_text = MERGE_LEVEL_WORKFLOW_PATH.read_text(encoding="utf-8")
+    merge_text = MERGE_LEVEL_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-plan-group" in merge_text
-    assert "matrix.output_artifact" in merge_text
+    assert "inputs.output-artifact" in merge_text
     final_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "_aurora-merge-level-v3.yml" not in final_text
     assert "needs.plan.outputs.merge_root_artifact" in final_text
     assert "Download merge root only" in final_text
 
@@ -687,7 +795,8 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
         assert execute["env"]["AURORA_FAULT_INJECTION_AFTER_UNITS"] == (
             "${{ inputs.fault_injection_after_units }}"
         )
-        assert execute["continue-on-error"] is True
+        assert "continue-on-error" not in execute
+        assert "--defer-technical-failure-to-recovery" in execute["run"]
         salvage = next(
             step
             for step in jobs[name]["steps"]
@@ -695,11 +804,11 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
         )
         assert salvage["continue-on-error"] is True
 
-    retry_path = ROOT / ".github/workflows/_aurora-retry-shard-v3.yml"
+    retry_path = RETRY_SHARD_ACTION_PATH
     retry_text = retry_path.read_text(encoding="utf-8")
     assert "AURORA_FAULT_INJECTION_SHARD_ID" not in retry_text
     assert "AURORA_FAULT_INJECTION_AFTER_UNITS" not in retry_text
-    retry = load_github_yaml(retry_path)["jobs"]["execute"]
+    retry = load_github_yaml(retry_path)["runs"]
     execute_retry = next(
         step
         for step in retry["steps"]
@@ -710,8 +819,21 @@ def test_transient_fault_is_limited_to_initial_fanout() -> None:
         for step in retry["steps"]
         if step["name"] == "Salvage retry evidence"
     )
-    assert execute_retry["continue-on-error"] is True
+    assert "continue-on-error" not in execute_retry
+    assert "--defer-technical-failure-to-recovery" in execute_retry["run"]
     assert salvage_retry["continue-on-error"] is True
+
+
+def test_inline_retries_record_failure_without_poisoning_reusable_workflow() -> None:
+    jobs = _workflow()["jobs"]
+    for name in ("retry_a", "retry_b"):
+        execute = next(
+            step
+            for step in jobs[name]["steps"]
+            if step["name"] == "Execute retry"
+        )
+        assert "continue-on-error" not in execute
+        assert "--defer-technical-failure-to-recovery" in execute["run"]
 
 
 def test_timeline_collection_is_read_only_and_cannot_block_science() -> None:

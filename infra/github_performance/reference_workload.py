@@ -18,7 +18,10 @@ import pyarrow.parquet as pq
 
 from aurora.core.costs import CostModel
 from aurora.core.engine import run_backtest
-from aurora.infra.github_performance.checkpoint import CheckpointManager
+from aurora.infra.github_performance.checkpoint import (
+    CheckpointManager,
+    raise_controlled_transient_after_checkpoint,
+)
 from aurora.infra.github_performance.audits import (
     DataAccessRecord,
     RuntimeAccessLedger,
@@ -340,6 +343,8 @@ def _checkpoint_rows(
 class ReferenceWorkload:
     """Real Aurora engine adapter with deterministic generated inputs."""
 
+    result_filename = "reference_results.parquet"
+
     def prepare(self, spec: RunSpec, output_dir: Path) -> PreparedInputs:
         root = Path(output_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
@@ -513,6 +518,11 @@ class ReferenceWorkload:
                     len(rows),
                     unit_key,
                     checkpoint_path,
+                )
+                raise_controlled_transient_after_checkpoint(
+                    shard.shard_id,
+                    len(rows),
+                    latest_checkpoint,
                 )
         output_path = _write_results(
             rows,

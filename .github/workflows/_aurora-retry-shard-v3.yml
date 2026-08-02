@@ -108,7 +108,6 @@ jobs:
           )
           PY
       - name: Execute exact retry
-        continue-on-error: true
         env:
           WORKLOAD: ${{ inputs.workload }}
           DESCRIPTOR_JSON: ${{ inputs.descriptor_json }}
@@ -149,7 +148,8 @@ jobs:
             --assignment-root "$RUNNER_TEMP/plan" \
             --prepared-root "$RUNNER_TEMP/prepared" \
             --output-dir "$RUNNER_TEMP/attempt/${shard_id}/${attempt_id}" \
-            "${checkpoint_args[@]}"
+            "${checkpoint_args[@]}" \
+            --defer-technical-failure-to-recovery
       - name: Resolve artifact identities
         if: always()
         id: identity
@@ -185,8 +185,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
+      - name: Detect valid checkpoint
+        if: always()
+        id: checkpoint
+        run: |
+          set -euo pipefail
+          checkpoint="$(
+            find "$RUNNER_TEMP/attempt" \
+              -name checkpoint_manifest.json -type f -print -quit \
+              2>/dev/null || true
+          )"
+          if [[ -n "$checkpoint" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Salvage valid checkpoint
-        if: always() && hashFiles(format('{0}/attempt/**/checkpoint_manifest.json', runner.temp)) != ''
+        if: always() && steps.checkpoint.outputs.exists == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

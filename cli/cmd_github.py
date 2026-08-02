@@ -728,6 +728,24 @@ def cmd_github_run_shard(args: argparse.Namespace) -> int:
             [attempt],
             output_dir / "shard_attempt_manifest.parquet",
         )
+        if getattr(
+            args,
+            "defer_technical_failure_to_recovery",
+            False,
+        ):
+            _print(
+                {
+                    "attempt": str(
+                        output_dir / "shard_attempt_manifest.json"
+                    ),
+                    "attempt_parquet": str(
+                        output_dir / "shard_attempt_manifest.parquet"
+                    ),
+                    "state": attempt.state.value,
+                    "technical_failure_deferred_to_recovery": True,
+                }
+            )
+            return 0
         raise
     json_path = _write_json(
         output_dir / "shard_attempt_manifest.json",
@@ -1373,6 +1391,15 @@ def register(subparsers, parent_parser=None) -> None:
     run_shard.add_argument("--assignment-root")
     run_shard.add_argument("--prepared-root")
     run_shard.add_argument("--checkpoint")
+    run_shard.add_argument(
+        "--defer-technical-failure-to-recovery",
+        action="store_true",
+        help=(
+            "Persist failed_technical evidence and let recovery/final "
+            "verification decide workflow success instead of returning "
+            "a process failure immediately."
+        ),
+    )
     run_shard.set_defaults(func=cmd_github_run_shard)
 
     recover = commands.add_parser("recover-plan")
