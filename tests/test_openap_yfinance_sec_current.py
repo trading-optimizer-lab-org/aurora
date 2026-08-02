@@ -360,3 +360,18 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "openap-yfinance-sec-current-score-results" in text
     assert "locked_opened" in text
     assert "backtest_enabled" in text
+    assert 'summary["companyfacts_rows"] > 0' in text
+    assert 'summary["submissions_rows"] > 0' in text
+
+
+def test_repair_workflow_reuses_source_run_and_replaces_only_empty_shards() -> None:
+    text = Path(
+        ".github/workflows/openap-yfinance-sec-repair-merge.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "source_run_id" in text
+    assert "chunk: [7, 23]" in text
+    assert "openap-sec-repair-lake-${{ matrix.chunk }}" in text
+    assert "sec_companyfacts_${chunk}.parquet" in text
+    assert "score_horizons" in text
+    assert "openap-yfinance-sec-current-score-results" in text
