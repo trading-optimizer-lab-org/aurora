@@ -32,8 +32,10 @@ from aurora.research.openap_current_score import (
     calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
+    clean_price_history,
     coverage_report,
     latest_sec_concept_inputs,
+    redundancy_correlation_audit,
     sec_concepts_from_inputs,
     select_strict_predictors,
     sha256_file,
@@ -42,9 +44,16 @@ from aurora.research.openap_current_score import (
 
 
 EXCLUDE_SECURITY_RE = re.compile(
-    r"\b(?:ETF|ETN|FUND|DEPOSITARY|ADR|ADS|WARRANT|RIGHT|UNIT|PREFERRED|PREF|SPAC|ACQUISITION CORP)\b",
+    r"\b(?:ETF|ETN|EXCHANGE[- ]TRADED|MUTUAL FUND|CLOSED[- ]END FUND|INVESTMENT TRUST|"
+    r"DEPOSITARY|ADR|ADS|WARRANTS?|RIGHTS?|UNITS|PREFERRED|PREF|SPAC|BLANK CHECK|"
+    r"ACQUISITION (?:CORP|CO|COMPANY)|ACQUISITION LTD)\b",
     re.IGNORECASE,
 )
+PREFERRED_SYMBOL_RE = re.compile(r"-P[A-Z]$", re.IGNORECASE)
+UNIT_SYMBOL_RE = re.compile(r"-(?:UN|U)$", re.IGNORECASE)
+WARRANT_SYMBOL_RE = re.compile(r"-(?:WT|WS)$", re.IGNORECASE)
+FOREIGN_SEC_FORMS = frozenset({"20-F", "40-F", "6-K", "F-1", "F-3", "F-4"})
+INVESTMENT_COMPANY_FORMS = frozenset({"N-1A", "N-2", "N-CSR", "N-CSRS", "NPORT-P", "NPORT-NP"})
 ALLOWED_EXCHANGE_RE = re.compile(r"NASDAQ|NYSE|NEW YORK STOCK EXCHANGE|CBOE", re.IGNORECASE)
 
 
@@ -245,6 +254,13 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
         minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
     )
     groups.to_csv(output / "redundancy_groups.csv", index=False)
+    redundancy_correlation_audit(
+        selected,
+        returns,
+        groups,
+        threshold=float(config["openap"]["correlation_threshold"]),
+        minimum_overlap=int(config["openap"]["minimum_overlap_months"]),
+    ).to_csv(output / "redundancy_correlation_audit.csv", index=False)
 
     sec_payload_path = output / "company_tickers_exchange.json"
     sec_source_url = str(config["sec"]["ticker_exchange_url"])
@@ -267,10 +283,16 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
         universe = _sec_exchange_csv_rows(sec_payload_path)
     universe.to_csv(output / "security_master_seed.csv", index=False)
     universe.to_parquet(output / "security_master_seed.parquet", index=False)
+    cik_universe = (
+        universe.sort_values(["cik", "symbol"])
+        .drop_duplicates("cik", keep="first")[["cik", "symbol"]]
+        .reset_index(drop=True)
+    )
+    cik_universe.to_parquet(output / "sec_cik_universe.parquet", index=False)
 
     source_rows = [
-        {"source": "PredictorSummary.xlsx", "sha256": sha256_file(args.predictor_summary), "role": "selection_and_evidence"},
-        {"source": "PredictorLSretWide.csv", "sha256": sha256_file(args.predictor_returns), "role": "redundancy_groups"},
+        {"source": "PredictorSummary.xlsx", "source_url": f"https://drive.google.com/uc?id={config['openap']['predictor_summary_gdrive_id']}", "source_mode": "openap_official_gdrive", "sha256": sha256_file(args.predictor_summary), "role": "selection_and_evidence"},
+        {"source": "PredictorLSretWide.csv", "source_url": f"https://drive.google.com/uc?id={config['openap']['predictor_returns_gdrive_id']}", "source_mode": "openap_official_gdrive", "sha256": sha256_file(args.predictor_returns), "role": "redundancy_groups"},
         {
             "source": sec_payload_path.name,
             "source_url": sec_source_url,
@@ -289,6 +311,7 @@ def prepare(config: dict[str, Any], args: argparse.Namespace) -> None:
             "universe_rows": len(universe),
             "unique_symbols": int(universe["symbol"].nunique()),
             "unique_ciks": int(universe["cik"].nunique()),
+            "sec_cik_rows": len(cik_universe),
             "redundancy_groups": int(groups["redundancy_group"].nunique()),
             "openap_commit": config["openap"]["commit"],
             "ticker_universe_source_mode": sec_source_mode,
@@ -536,6 +559,10 @@ def _submission_rows(payload: Mapping[str, Any], cik: int) -> list[dict[str, Any
                 "form": item("form"),
                 "primary_document": item("primaryDocument"),
                 "is_xbrl": item("isXBRL"),
+                "entity_type": payload.get("entityType"),
+                "sic": payload.get("sic"),
+                "sic_description": payload.get("sicDescription"),
+                "fiscal_year_end": payload.get("fiscalYearEnd"),
                 "source": "sec_submissions_bulk",
             }
         )
@@ -642,6 +669,7 @@ def _companyfacts_rows(
     *,
     source_url: str,
     source_mode: str,
+    accepted_at_by_accession: Mapping[str, Any] | None = None,
     observations_per_tag: int = 24,
 ) -> list[dict[str, Any]]:
     wanted_tags = {
@@ -681,6 +709,17 @@ def _companyfacts_rows(
                     filed = pd.to_datetime(observation.get("filed"), errors="coerce", utc=True)
                     if pd.isna(filed):
                         continue
+                    accession = str(observation.get("accn") or "")
+                    accepted = pd.to_datetime(
+                        (accepted_at_by_accession or {}).get(accession),
+                        errors="coerce",
+                        utc=True,
+                    )
+                    if pd.isna(accepted):
+                        accepted = filed + pd.Timedelta(days=1)
+                        available_quality = "conservative_filing_date_plus_one_day"
+                    else:
+                        available_quality = "sec_acceptance_timestamp"
                     rows.append(
                         {
                             "cik": cik,
@@ -695,10 +734,10 @@ def _companyfacts_rows(
                             "fp": observation.get("fp"),
                             "form": observation.get("form"),
                             "filed": observation.get("filed"),
-                            "accession_number": observation.get("accn"),
+                            "accession_number": accession,
                             "frame": observation.get("frame"),
-                            "available_at": filed + pd.Timedelta(days=1),
-                            "available_at_quality": "conservative_filing_date_plus_one_day",
+                            "available_at": accepted,
+                            "available_at_quality": available_quality,
                             "source": source_url,
                             "source_mode": source_mode,
                         }
@@ -734,6 +773,52 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
             submissions_direct = str(config["sec"]["submissions_api_template"]).format(cik=cik_text)
             submissions_fallback = str(config["sec"]["submissions_fallback_template"]).format(cik=cik_text)
             companyfacts_payload: Mapping[str, Any] | None = None
+            accepted_at_by_accession: dict[str, Any] = {}
+            try:
+                submissions_payload, source_mode, source_url = _request_sec_json(
+                    submissions_direct,
+                    submissions_fallback,
+                    headers=headers,
+                )
+                raw_bytes = _canonical_json_bytes(submissions_payload)
+                archive.writestr(f"submissions/CIK{cik_text}.json", raw_bytes)
+                rows = _submission_rows(submissions_payload, cik)
+                for item in rows:
+                    item["source"] = source_url
+                    item["source_mode"] = source_mode
+                    accession = str(item.get("accession_number") or "")
+                    accepted = item.get("accepted_at")
+                    if accession and accepted:
+                        accepted_at_by_accession[accession] = accepted
+                submission_rows.extend(rows)
+                source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "submissions",
+                        "status": "ok",
+                        "rows": len(rows),
+                        "source_mode": source_mode,
+                        "source_url": source_url,
+                        "canonical_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                        "error": "",
+                    }
+                )
+            except Exception as exc:
+                status_rows.append(
+                    {
+                        "cik": cik,
+                        "symbol": str(row.symbol),
+                        "surface": "submissions",
+                        "status": "error",
+                        "rows": 0,
+                        "source_mode": "unavailable",
+                        "source_url": submissions_direct,
+                        "canonical_json_sha256": "",
+                        "error": str(exc)[:1000],
+                    }
+                )
             try:
                 companyfacts_payload, source_mode, source_url = _request_sec_json(
                     companyfacts_direct,
@@ -747,6 +832,7 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
                     cik,
                     source_url=source_url,
                     source_mode=source_mode,
+                    accepted_at_by_accession=accepted_at_by_accession,
                 )
                 fact_rows.extend(rows)
                 source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
@@ -778,47 +864,6 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
                     }
                 )
 
-            try:
-                submissions_payload, source_mode, source_url = _request_sec_json(
-                    submissions_direct,
-                    submissions_fallback,
-                    headers=headers,
-                )
-                raw_bytes = _canonical_json_bytes(submissions_payload)
-                archive.writestr(f"submissions/CIK{cik_text}.json", raw_bytes)
-                rows = _submission_rows(submissions_payload, cik)
-                for item in rows:
-                    item["source"] = source_url
-                    item["source_mode"] = source_mode
-                submission_rows.extend(rows)
-                source_counts[source_mode] = source_counts.get(source_mode, 0) + 1
-                status_rows.append(
-                    {
-                        "cik": cik,
-                        "symbol": str(row.symbol),
-                        "surface": "submissions",
-                        "status": "ok",
-                        "rows": len(rows),
-                        "source_mode": source_mode,
-                        "source_url": source_url,
-                        "canonical_json_sha256": hashlib.sha256(raw_bytes).hexdigest(),
-                        "error": "",
-                    }
-                )
-            except Exception as exc:
-                status_rows.append(
-                    {
-                        "cik": cik,
-                        "symbol": str(row.symbol),
-                        "surface": "submissions",
-                        "status": "error",
-                        "rows": 0,
-                        "source_mode": "unavailable",
-                        "source_url": submissions_direct,
-                        "canonical_json_sha256": "",
-                        "error": str(exc)[:1000],
-                    }
-                )
             time.sleep(interval)
 
     facts = _normalise_fact_batch(pd.DataFrame(fact_rows)) if fact_rows else pd.DataFrame(
@@ -826,7 +871,11 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     submissions = pd.DataFrame(submission_rows)
     if submissions.empty:
-        submissions = pd.DataFrame(columns=["cik", "accession_number", "filing_date", "accepted_at", "report_date", "form", "primary_document", "is_xbrl", "source", "source_mode"])
+        submissions = pd.DataFrame(columns=[
+            "cik", "accession_number", "filing_date", "accepted_at", "report_date",
+            "form", "primary_document", "is_xbrl", "entity_type", "sic",
+            "sic_description", "fiscal_year_end", "source", "source_mode",
+        ])
     else:
         submissions["accepted_at"] = pd.to_datetime(submissions["accepted_at"], errors="coerce", utc=True)
     facts_path = lake_dir / f"sec_companyfacts_{chunk_index:03d}.parquet"
@@ -984,13 +1033,75 @@ def _read_jsonl_files(paths: Iterable[Path]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _options_features(frame: pd.DataFrame, stock_volume: float | None, realized_vol: float | None) -> dict[str, FeatureValue]:
+def _options_features(
+    frame: pd.DataFrame,
+    stock_volume: float | None,
+    realized_vol: float | None,
+    *,
+    stock_price: float | None = None,
+    as_of: pd.Timestamp | None = None,
+    config: Mapping[str, Any] | None = None,
+    audit: dict[str, Any] | None = None,
+) -> dict[str, FeatureValue]:
     if frame.empty:
+        if audit is not None:
+            audit.update({"option_contracts_raw": 0, "option_contracts_usable": 0})
         return {}
     data = frame.copy()
-    for column in ("impliedVolatility", "volume", "openInterest", "strike"):
+    raw_contracts = len(data)
+    settings = (config or {}).get("yfinance", config or {})
+    for column in ("impliedVolatility", "volume", "openInterest", "strike", "bid", "ask"):
         if column in data:
             data[column] = pd.to_numeric(data[column], errors="coerce")
+    now = pd.Timestamp(as_of or pd.Timestamp.utcnow()).tz_localize(None)
+    expiration_source = data.get("expiration", pd.Series(pd.NaT, index=data.index))
+    trade_source = data.get("lastTradeDate", pd.Series(pd.NaT, index=data.index))
+    data["expiration"] = pd.to_datetime(expiration_source, errors="coerce").dt.tz_localize(None)
+    data["lastTradeDate"] = pd.to_datetime(trade_source, errors="coerce", utc=True).dt.tz_localize(None)
+    data["days_to_expiry"] = (data["expiration"] - now.normalize()).dt.days
+    valid = (
+        data["days_to_expiry"].between(
+            int(settings.get("minimum_option_days", 14)),
+            int(settings.get("maximum_option_days", 60)),
+        )
+        & data["impliedVolatility"].between(
+            float(settings.get("minimum_implied_volatility", 0.01)),
+            float(settings.get("maximum_implied_volatility", 5.0)),
+        )
+        & data["lastTradeDate"].ge(
+            now - pd.Timedelta(days=int(settings.get("maximum_option_staleness_days", 14)))
+        )
+    )
+    if {"bid", "ask"}.issubset(data.columns):
+        valid &= data["bid"].fillna(0).ge(0) & data["ask"].fillna(0).ge(data["bid"].fillna(0))
+    if stock_price is not None and _is_number(stock_price):
+        moneyness = data["strike"] / float(stock_price)
+        valid &= moneyness.between(
+            float(settings.get("minimum_option_moneyness", 0.80)),
+            float(settings.get("maximum_option_moneyness", 1.20)),
+        )
+    data = data.loc[valid].copy()
+    if data.empty:
+        if audit is not None:
+            audit.update({"option_contracts_raw": raw_contracts, "option_contracts_usable": 0})
+        return {}
+    target_days = int(settings.get("target_option_days", 30))
+    nearest_expiry = (
+        data[["expiration", "days_to_expiry"]]
+        .drop_duplicates()
+        .assign(distance=lambda item: (item["days_to_expiry"] - target_days).abs())
+        .sort_values(["distance", "expiration"])
+        .iloc[0]["expiration"]
+    )
+    data = data.loc[data["expiration"].eq(nearest_expiry)]
+    if audit is not None:
+        audit.update(
+            {
+                "option_contracts_raw": raw_contracts,
+                "option_contracts_usable": len(data),
+                "option_expiry_used": pd.Timestamp(nearest_expiry).date().isoformat(),
+            }
+        )
     calls = data.loc[data["option_type"].eq("call")]
     puts = data.loc[data["option_type"].eq("put")]
     call_iv = calls["impliedVolatility"].median() if "impliedVolatility" in calls else np.nan
@@ -1003,7 +1114,7 @@ def _options_features(frame: pd.DataFrame, stock_volume: float | None, realized_
         "OptionVolume2": FeatureValue("OptionVolume2", _safe_numeric_ratio(total_oi, stock_volume), "proxy", "yfinance_current_option_chain", "option_oi_over_stock_volume", "Open interest proxy for total option activity"),
         "SmileSlope": FeatureValue("SmileSlope", float(put_iv - call_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "put_iv_minus_call_iv", "Median IV spread replaces matched-delta smile slope"),
         "skew1": FeatureValue("skew1", float(put_iv - call_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "put_iv_minus_call_iv", "Current-chain smirk proxy"),
-        "RIVolSpread": FeatureValue("RIVolSpread", float(realized_vol - (call_iv + put_iv) / 2) if realized_vol is not None and pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "realized_minus_median_implied_vol", "Current-chain proxy"),
+        "RIVolSpread": FeatureValue("RIVolSpread", float(realized_vol * math.sqrt(252.0) - (call_iv + put_iv) / 2) if realized_vol is not None and pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "annualized_realized_minus_median_implied_vol", "Current-chain proxy with compatible annualized units"),
     }
     return values
 
@@ -1110,6 +1221,29 @@ def _hashes_by_chunk(paths: Iterable[Path]) -> dict[int, str]:
     return result
 
 
+def _sec_issuer_flags(submissions: pd.DataFrame) -> pd.DataFrame:
+    """Summarise SEC filing evidence used to exclude foreign/fund issuers."""
+
+    columns = ["cik", "sec_foreign_filer", "sec_investment_company", "sec_forms_seen"]
+    if submissions.empty:
+        return pd.DataFrame(columns=columns)
+    frame = submissions.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce").astype("Int64")
+    frame["form"] = frame.get("form", "").astype("string").fillna("").str.upper()
+    rows = []
+    for cik, group in frame.dropna(subset=["cik"]).groupby("cik"):
+        forms = sorted(set(group["form"].dropna().astype(str)) - {""})
+        rows.append(
+            {
+                "cik": int(cik),
+                "sec_foreign_filer": bool(set(forms) & FOREIGN_SEC_FORMS),
+                "sec_investment_company": bool(set(forms) & INVESTMENT_COMPANY_FORMS),
+                "sec_forms_seen": "|".join(forms),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _classify_security_eligibility(
     frame: pd.DataFrame,
     *,
@@ -1132,6 +1266,7 @@ def _classify_security_eligibility(
         "company_name_sec", pd.Series(index=out.index, dtype="string")
     ).astype("string")
     name = yahoo_name.fillna(sec_name).fillna("")
+    symbol = out["symbol"].astype("string").fillna("").str.upper()
     price_rows = pd.to_numeric(
         out.get("price_rows", pd.Series(index=out.index, dtype="float64")),
         errors="coerce",
@@ -1144,9 +1279,22 @@ def _classify_security_eligibility(
         days=int(maximum_price_age_days)
     )
     excluded_name = name.str.contains(EXCLUDE_SECURITY_RE, regex=True, na=False)
+    excluded_symbol = (
+        symbol.str.contains(PREFERRED_SYMBOL_RE, regex=True, na=False)
+        | symbol.str.contains(UNIT_SYMBOL_RE, regex=True, na=False)
+        | symbol.str.contains(WARRANT_SYMBOL_RE, regex=True, na=False)
+    )
+    foreign_filer = out.get(
+        "sec_foreign_filer", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
+    investment_company = out.get(
+        "sec_investment_company", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
     reasons = np.select(
         [
-            excluded_name,
+            excluded_name | excluded_symbol,
+            foreign_filer,
+            investment_company,
             quote_type.ne("EQUITY"),
             country.eq(""),
             country.ne("United States"),
@@ -1156,6 +1304,8 @@ def _classify_security_eligibility(
         ],
         [
             "excluded_name_or_instrument",
+            "excluded_foreign_sec_filer",
+            "excluded_investment_company",
             "yahoo_quote_type_not_equity",
             "yahoo_country_unavailable",
             "yahoo_country_not_united_states",
@@ -1169,6 +1319,24 @@ def _classify_security_eligibility(
     out["eligible_common_stock"] = out["eligibility_reason"].eq(
         "eligible_us_common_stock"
     )
+    if "cik" in out:
+        candidates = out.loc[out["eligible_common_stock"]].copy()
+        candidates["_cap"] = pd.to_numeric(
+            candidates.get("marketCap", pd.Series(np.nan, index=candidates.index)),
+            errors="coerce",
+        ).fillna(-1)
+        candidates["_plain_symbol"] = ~candidates["symbol"].astype(str).str.contains("-", regex=False)
+        keep = (
+            candidates.sort_values(
+                ["cik", "_plain_symbol", "_cap", "symbol"],
+                ascending=[True, False, False, True],
+            )
+            .drop_duplicates("cik", keep="first")
+            .index
+        )
+        secondary = out["eligible_common_stock"] & ~out.index.isin(keep)
+        out.loc[secondary, "eligible_common_stock"] = False
+        out.loc[secondary, "eligibility_reason"] = "duplicate_cik_secondary_security"
     return out
 
 
@@ -1182,6 +1350,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     sec_dir = Path(args.sec_dir)
     metadata = pd.read_parquet(prepare_dir / "selected_185_predictors.parquet")
     groups = pd.read_csv(prepare_dir / "redundancy_groups.csv")
+    redundancy_audit = pd.read_csv(prepare_dir / "redundancy_correlation_audit.csv")
     seed = pd.read_parquet(prepare_dir / "security_master_seed.parquet")
     source_manifest = pd.read_csv(prepare_dir / "source_manifest.csv")
 
@@ -1219,8 +1388,14 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         )
     quoted_sec_facts = ",".join(repr(str(path)) for path in sec_fact_paths)
     quoted_sec_submissions = ",".join(repr(str(path)) for path in sec_submission_paths)
-    connection.execute(f"CREATE OR REPLACE TABLE sec_companyfacts AS SELECT * FROM read_parquet([{quoted_sec_facts}], union_by_name=true)")
-    connection.execute(f"CREATE OR REPLACE TABLE sec_submissions AS SELECT * FROM read_parquet([{quoted_sec_submissions}], union_by_name=true)")
+    connection.execute(
+        f"CREATE OR REPLACE TABLE sec_companyfacts AS "
+        f"SELECT DISTINCT * FROM read_parquet([{quoted_sec_facts}], union_by_name=true)"
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TABLE sec_submissions AS "
+        f"SELECT DISTINCT * FROM read_parquet([{quoted_sec_submissions}], union_by_name=true)"
+    )
 
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
     if not yahoo_meta.empty:
@@ -1231,26 +1406,88 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     ).df()
     security_master = seed.merge(yahoo_meta, on="symbol", how="left", suffixes=("_sec", "_yahoo"))
     security_master = security_master.merge(price_coverage, on="symbol", how="left")
+    sec_issuer_flags = _sec_issuer_flags(connection.execute("SELECT * FROM sec_submissions").df())
+    security_master = security_master.merge(sec_issuer_flags, on="cik", how="left")
     as_of = pd.Timestamp.utcnow().tz_localize(None)
     security_master = _classify_security_eligibility(
         security_master,
         as_of=as_of,
+        maximum_price_age_days=int(config["universe"]["maximum_price_age_days"]),
     )
-    security_master.to_parquet(output / "security_master.parquet", index=False, compression="zstd")
-    security_master.loc[~security_master["eligible_common_stock"]].to_csv(
-        output / "security_universe_exclusions.csv",
-        index=False,
-    )
-
     analysts = _read_jsonl_files(analyst_paths)
+    if analysts.empty:
+        analysts = pd.DataFrame(columns=["symbol", "dataset", "retrieved_at", "payload_json"])
+    analysts.to_parquet(
+        output / "yahoo_analyst_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     values_by_symbol: dict[str, dict[str, FeatureValue]] = {}
     quality_rows: list[dict[str, Any]] = []
     sec_concept_input_frames: list[pd.DataFrame] = []
-    eligible = security_master.loc[security_master["eligible_common_stock"]].copy()
+    for row in security_master.loc[security_master["eligible_common_stock"]].itertuples():
+        symbol = str(row.symbol)
+        prices = connection.execute(
+            "SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]
+        ).df()
+        clean_prices, price_quality = clean_price_history(prices)
+        current_price = (
+            float(clean_prices["adj_close"].iloc[-1]) if not clean_prices.empty else np.nan
+        )
+        recent = clean_prices.tail(21)
+        average_volume = pd.to_numeric(recent.get("volume"), errors="coerce").mean()
+        average_dollar_volume = (
+            pd.to_numeric(recent.get("volume"), errors="coerce")
+            * pd.to_numeric(recent.get("adj_close"), errors="coerce")
+        ).mean()
+        quality_rows.append(
+            {
+                "symbol": symbol,
+                **price_quality,
+                "current_price": current_price,
+                "average_volume_21d": average_volume,
+                "average_dollar_volume_21d": average_dollar_volume,
+            }
+        )
+    price_quality_frame = pd.DataFrame(quality_rows)
+    security_master = security_master.merge(price_quality_frame, on="symbol", how="left")
+    market_cap = pd.to_numeric(security_master.get("marketCap"), errors="coerce")
+    rank_conditions = [
+        market_cap.lt(float(config["universe"]["minimum_market_cap_usd"])) | market_cap.isna(),
+        pd.to_numeric(security_master.get("current_price"), errors="coerce").lt(float(config["universe"]["minimum_price_usd"])),
+        pd.to_numeric(security_master.get("average_volume_21d"), errors="coerce").lt(float(config["universe"]["minimum_average_volume_21d"])) | pd.to_numeric(security_master.get("average_volume_21d"), errors="coerce").isna(),
+        pd.to_numeric(security_master.get("average_dollar_volume_21d"), errors="coerce").lt(float(config["universe"]["minimum_average_dollar_volume_21d"])) | pd.to_numeric(security_master.get("average_dollar_volume_21d"), errors="coerce").isna(),
+        pd.to_numeric(security_master.get("clean_price_rows"), errors="coerce").lt(float(config["universe"]["minimum_clean_price_rows"])),
+        ~security_master.get("price_quality_pass", pd.Series(False, index=security_master.index)).fillna(False).astype(bool),
+    ]
+    security_master["ranking_rejection_reason"] = np.select(
+        rank_conditions,
+        [
+            "market_cap_below_minimum_or_missing",
+            "price_below_minimum",
+            "average_volume_below_minimum",
+            "average_dollar_volume_below_minimum",
+            "insufficient_clean_price_history",
+            "price_quality_failed",
+        ],
+        default="",
+    )
+    security_master["ranking_eligible"] = (
+        security_master["eligible_common_stock"]
+        & security_master["ranking_rejection_reason"].eq("")
+    )
+    security_master.to_parquet(output / "security_master.parquet", index=False, compression="zstd")
+    security_master.loc[~security_master["ranking_eligible"]].to_csv(
+        output / "security_universe_exclusions.csv",
+        index=False,
+    )
+    eligible = security_master.loc[security_master["ranking_eligible"]].copy()
+    quality_rows = []
     for row in eligible.itertuples():
         symbol = str(row.symbol)
         cik = int(row.cik)
         prices = connection.execute("SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]).df()
+        prices, price_quality = clean_price_history(prices)
         values = calculate_price_features(prices)
         market_cap = getattr(row, "marketCap", None)
         if not _is_number(market_cap):
@@ -1277,7 +1514,19 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         symbol_options = connection.execute("SELECT * FROM yahoo_options_current WHERE symbol = ?", [symbol]).df()
         stock_volume = float(prices["volume"].tail(21).mean()) if not prices.empty else None
         realized = values.get("RealizedVol").raw_value if values.get("RealizedVol") else None
-        values.update(_options_features(symbol_options, stock_volume, realized))
+        stock_price = float(prices["adj_close"].iloc[-1]) if not prices.empty else None
+        option_audit: dict[str, Any] = {}
+        values.update(
+            _options_features(
+                symbol_options,
+                stock_volume,
+                realized,
+                stock_price=stock_price,
+                as_of=as_of,
+                config=config,
+                audit=option_audit,
+            )
+        )
         symbol_analysts = analysts.loc[analysts["symbol"].eq(symbol)] if not analysts.empty else pd.DataFrame()
         values.update(_analyst_features(symbol_analysts))
         values_by_symbol[symbol] = values
@@ -1285,6 +1534,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             {
                 "symbol": symbol,
                 "cik": cik,
+                **price_quality,
                 "price_rows": len(prices),
                 "first_price_date": prices["date"].min() if not prices.empty else None,
                 "last_price_date": prices["date"].max() if not prices.empty else None,
@@ -1293,6 +1543,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 "computed_features": sum(item.raw_value is not None for item in values.values()),
                 "exact_features": sum(item.status == "exact" and item.raw_value is not None for item in values.values()),
                 "proxy_features": sum(item.status == "proxy" and item.raw_value is not None for item in values.values()),
+                **option_audit,
             }
         )
 
@@ -1329,9 +1580,20 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         values_by_symbol,
         as_of=as_of.date().isoformat(),
         redundancy_groups=groups,
+        exact_source_multiplier=float(config["score"]["exact_source_multiplier"]),
+        proxy_source_multiplier=float(config["score"]["proxy_source_multiplier"]),
     )
-    scores = calculate_scores(feature_frame, minimum_metrics=int(config["score"]["minimum_metrics_per_score"]))
-    aggregate_scores = calculate_aggregate_scores(scores)
+    scores = calculate_scores(
+        feature_frame,
+        minimum_metrics=int(config["score"]["minimum_metrics_per_score"]),
+        maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
+        maximum_family_weight=float(config["score"]["maximum_family_weight"]),
+    )
+    aggregate_scores = calculate_aggregate_scores(
+        scores,
+        minimum_horizons=int(config["score"]["minimum_horizons_for_ranking"]),
+        minimum_confidence=float(config["score"]["minimum_aggregate_confidence"]),
+    )
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
     score_context = quality[
@@ -1347,6 +1609,20 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     score_context["missing_features"] = EXPECTED_PREDICTORS - score_context["computed_features"]
     scores = scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(score_context, on="symbol", how="left")
+    aggregate_scores = aggregate_scores.merge(
+        security_master[["symbol", "marketCap", "current_price", "average_volume_21d", "average_dollar_volume_21d", "ranking_eligible"]],
+        on="symbol",
+        how="left",
+        suffixes=("", "_universe"),
+    )
+    aggregate_scores["ranking_eligible"] = (
+        aggregate_scores["ranking_eligible"].fillna(False)
+        & aggregate_scores["ranking_eligible_universe"].fillna(False)
+    )
+    aggregate_scores = aggregate_scores.drop(columns=["ranking_eligible_universe"])
+    leaderboard = aggregate_scores.loc[aggregate_scores["ranking_eligible"]].sort_values(
+        ["aggregate_score", "aggregate_confidence"], ascending=[False, False]
+    )
     sec_concept_inputs = (
         pd.concat(sec_concept_input_frames, ignore_index=True)
         if sec_concept_input_frames
@@ -1362,6 +1638,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         index=False,
         compression="zstd",
     )
+    leaderboard.to_csv(output / "openap_current_leaderboard.csv", index=False)
     sec_concept_inputs.to_parquet(
         output / "sec_concept_inputs_current.parquet",
         index=False,
@@ -1369,10 +1646,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     coverage.to_csv(output / "coverage_185.csv", index=False)
     quality.to_csv(output / "data_quality.csv", index=False)
+    price_quality_frame.to_csv(output / "price_quality_current.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("proxy")].to_csv(output / "proxy_audit.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("unavailable")].to_csv(output / "unavailable_predictors.csv", index=False)
     metadata.to_csv(output / "selected_185_predictors.csv", index=False)
     groups.to_csv(output / "redundancy_groups.csv", index=False)
+    redundancy_audit.to_csv(output / "redundancy_correlation_audit.csv", index=False)
 
     connection.execute("CREATE OR REPLACE TABLE security_master AS SELECT * FROM read_parquet(?)", [str(output / "security_master.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_features_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_features_current.parquet")])
@@ -1384,6 +1663,18 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute(
         "CREATE OR REPLACE TABLE sec_concept_inputs_current AS SELECT * FROM read_parquet(?)",
         [str(output / "sec_concept_inputs_current.parquet")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE yahoo_analyst_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "yahoo_analyst_current.parquet")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE price_quality_current AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "price_quality_current.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_current_leaderboard AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "openap_current_leaderboard.csv")],
     )
     duplicate_prices = int(
         connection.execute(
@@ -1406,6 +1697,83 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         connection.execute(
             "SELECT COUNT(*) FROM sec_concept_inputs_current WHERE available_at IS NULL"
         ).fetchone()[0]
+    )
+    future_concept_inputs = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current "
+            "WHERE CAST(period_end AS DATE) > CAST(? AS DATE)",
+            [as_of.date().isoformat()],
+        ).fetchone()[0]
+    )
+    invalid_concept_units = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current WHERE "
+            "(concept = 'shares' AND lower(unit) <> 'shares') OR "
+            "(concept = 'employees' AND lower(unit) NOT IN ('employee','employees','person','persons')) OR "
+            "(concept NOT IN ('shares','employees') AND upper(unit) <> 'USD')"
+        ).fetchone()[0]
+    )
+    duplicate_companyfacts = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT cik, taxonomy, tag, unit, period_start, period_end, accession_number, value, COUNT(*) n "
+            "FROM sec_companyfacts GROUP BY ALL HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
+    duplicate_submissions = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT cik, accession_number, form, filing_date, COUNT(*) n "
+            "FROM sec_submissions GROUP BY ALL HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
+    inconsistent_feature_status = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE raw_value IS NULL AND status IN ('exact','proxy')"
+        ).fetchone()[0]
+    )
+    ineligible_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard WHERE NOT ranking_eligible"
+        ).fetchone()[0]
+    )
+    schema_contract_rows = [
+        {"table_name": "prices_daily", "unique_key": "symbol,date", "required_non_null": "symbol,date,adj_close"},
+        {"table_name": "sec_companyfacts", "unique_key": "cik,taxonomy,tag,unit,period_start,period_end,accession_number,value", "required_non_null": "cik,tag,period_end,available_at"},
+        {"table_name": "sec_submissions", "unique_key": "cik,accession_number,form,filing_date", "required_non_null": "cik,accession_number,form"},
+        {"table_name": "openap_features_current", "unique_key": "as_of,symbol,signalname", "required_non_null": "as_of,symbol,signalname,status,value_status"},
+        {"table_name": "openap_scores_current", "unique_key": "as_of,symbol,horizon_months", "required_non_null": "as_of,symbol,horizon_months"},
+        {"table_name": "openap_scores_aggregate_current", "unique_key": "as_of,symbol", "required_non_null": "as_of,symbol,score_validation_status"},
+    ]
+    schema_contract = pd.DataFrame(schema_contract_rows)
+    schema_contract.to_csv(output / "schema_contract.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE schema_contract AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "schema_contract.csv")],
+    )
+    issue_counts = {
+        "duplicate_price_rows": duplicate_prices,
+        "future_price_rows": future_price_rows,
+        "facts_without_available_at": facts_without_available_at,
+        "concept_inputs_without_available_at": concept_inputs_without_available_at,
+        "future_concept_inputs": future_concept_inputs,
+        "invalid_concept_units": invalid_concept_units,
+        "duplicate_companyfacts": duplicate_companyfacts,
+        "duplicate_submissions": duplicate_submissions,
+        "inconsistent_feature_status": inconsistent_feature_status,
+        "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+    }
+    issues = pd.DataFrame(
+        [
+            {"check_name": name, "severity": "error", "issue_count": count, "passed": count == 0}
+            for name, count in issue_counts.items()
+        ]
+    )
+    issues.to_csv(output / "data_quality_issues.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE data_quality_issues AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "data_quality_issues.csv")],
     )
     connection.close()
 
@@ -1477,6 +1845,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
         "aggregate_scores_rows": len(aggregate_scores),
+        "leaderboard_rows": len(leaderboard),
         "score_horizons": sorted(scores["horizon_months"].dropna().astype(int).unique().tolist()),
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": all_facts_have_available_at,
@@ -1485,29 +1854,32 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "validation_used_for_selection": False,
         "partial": False,
         "raw_sec_archives_preserved_in_run": True,
+        "raw_sec_archives_in_final_artifact": False,
+        "raw_sec_archive_retention_days": int(config["execution"]["artifact_retention_days"]),
         "sec_chunks_found": len(sec_summary_paths),
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
         "facts_without_available_at": facts_without_available_at,
         "sec_concept_input_rows": len(sec_concept_inputs),
         "concept_inputs_without_available_at": concept_inputs_without_available_at,
+        "future_concept_inputs": future_concept_inputs,
+        "invalid_concept_units": invalid_concept_units,
+        "duplicate_companyfacts": duplicate_companyfacts,
+        "duplicate_submissions": duplicate_submissions,
+        "inconsistent_feature_status": inconsistent_feature_status,
+        "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "score_validation_status": str(config["score"]["validation_status"]),
+        "prediction_probability_claimed": False,
         "source_manifest_rows": len(source_manifest),
         "yfinance_source_manifest_rows": len(yahoo_source_manifest),
         "sec_source_manifest_rows": len(sec_source_manifest),
         "pipeline_git_sha": os.environ.get("GITHUB_SHA", ""),
         "config_sha256": sha256_file(args.config),
     }
-    if (
-        duplicate_prices
-        or future_price_rows
-        or facts_without_available_at
-        or concept_inputs_without_available_at
-    ):
+    if any(issue_counts.values()):
         raise OpenAPDataError(
             "Data-quality gate failed: "
-            f"duplicate_prices={duplicate_prices}, future_prices={future_price_rows}, "
-            f"facts_without_available_at={facts_without_available_at}, "
-            f"concept_inputs_without_available_at={concept_inputs_without_available_at}"
+            + ", ".join(f"{name}={count}" for name, count in issue_counts.items() if count)
         )
     if len(coverage) != EXPECTED_PREDICTORS or len(feature_frame) != len(values_by_symbol) * EXPECTED_PREDICTORS:
         raise OpenAPDataError("Final feature or coverage row counts do not reconcile")

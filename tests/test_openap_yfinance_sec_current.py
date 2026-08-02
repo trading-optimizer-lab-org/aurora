@@ -15,6 +15,7 @@ from aurora.research.openap_current_score import (
     calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
+    clean_price_history,
     coverage_report,
     latest_sec_concepts,
     latest_sec_concept_inputs,
@@ -26,8 +27,11 @@ from scripts.run_openap_yfinance_sec_current import (
     _companyfacts_rows,
     _hashes_by_chunk,
     _json_from_jina_text,
+    _options_features,
     _sec_exchange_csv_rows,
+    _sec_issuer_flags,
     _select_chunk_rows,
+    _submission_rows,
 )
 
 
@@ -70,6 +74,28 @@ def test_redundancy_groups_catch_positive_and_mirror_signals() -> None:
     assert set(groups["signalname"]) == {"a", "b", "c"}
 
 
+def test_redundancy_groups_do_not_chain_or_mix_economic_families() -> None:
+    metadata = _metadata(4)
+    metadata.loc[:, "signalname"] = ["a", "b", "c", "d"]
+    metadata.loc[:, "Cat.Economic"] = ["price", "price", "price", "quality"]
+    rng = np.random.default_rng(7)
+    basis, _ = np.linalg.qr(rng.normal(size=(200, 3)))
+    a = basis[:, 0]
+    b = 0.9 * basis[:, 0] + np.sqrt(1 - 0.9**2) * basis[:, 1]
+    residual = basis[:, 2] - np.dot(basis[:, 2], b) * b
+    residual = residual / np.linalg.norm(residual)
+    c = 0.9 * b + np.sqrt(1 - 0.9**2) * residual
+    d = a.copy()
+    returns = pd.DataFrame({"a": a, "b": b, "c": c, "d": d})
+
+    groups = build_redundancy_groups(metadata, returns, threshold=0.85, minimum_overlap=60)
+    mapping = groups.set_index("signalname")["redundancy_group"]
+
+    assert mapping["a"] == mapping["b"]
+    assert mapping["c"] != mapping["a"]
+    assert mapping["d"] != mapping["a"]
+
+
 def test_sec_concepts_ignore_facts_not_yet_available() -> None:
     facts = pd.DataFrame(
         {
@@ -77,6 +103,7 @@ def test_sec_concepts_ignore_facts_not_yet_available() -> None:
             "value": [100.0, 999.0],
             "period_end": ["2024-12-31", "2025-12-31"],
             "available_at": ["2025-02-01T12:00:00Z", "2026-02-01T12:00:00Z"],
+            "unit": ["USD", "USD"],
         }
     )
     concepts = latest_sec_concepts(facts, pd.Timestamp("2025-06-01"))
@@ -94,6 +121,7 @@ def test_sec_concepts_prefer_comparable_annual_facts() -> None:
             "available_at": ["2024-05-01", "2025-02-01", "2024-02-01"],
             "form": ["10-Q", "10-K", "10-K"],
             "fp": ["Q1", "FY", "FY"],
+            "unit": ["USD", "USD", "USD"],
         }
     )
 
@@ -141,6 +169,7 @@ def test_sec_concept_inputs_choose_latest_amendment_then_preferred_alias() -> No
             "accession_number": ["original", "lower-priority-alias", "amendment"],
             "form": ["10-K", "10-K", "10-K/A"],
             "fp": ["FY", "FY", "FY"],
+            "unit": ["USD", "USD", "USD"],
         }
     )
 
@@ -149,6 +178,24 @@ def test_sec_concept_inputs_choose_latest_amendment_then_preferred_alias() -> No
 
     assert revenue["value"].tolist() == [110.0]
     assert revenue["accession_number"].tolist() == ["amendment"]
+
+
+def test_sec_concept_inputs_reject_future_periods_and_wrong_units() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": ["Assets", "Assets", "EntityCommonStockSharesOutstanding"],
+            "value": [999.0, 100.0, 25.0],
+            "period_end": ["2030-12-31", "2025-12-31", "2025-12-31"],
+            "available_at": ["2026-01-01", "2026-01-01", "2026-01-01"],
+            "form": ["10-K", "10-K", "10-K"],
+            "fp": ["FY", "FY", "FY"],
+            "unit": ["USD", "CAD", "USD"],
+        }
+    )
+
+    inputs = latest_sec_concept_inputs(facts, pd.Timestamp("2026-08-01"))
+
+    assert inputs.empty
 
 
 def test_pinned_sec_mapper_fallback_filters_non_common_securities(
@@ -224,6 +271,33 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
     )
 
 
+def test_companyfacts_use_real_sec_acceptance_timestamp_when_available() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Assets": {
+                    "units": {
+                        "USD": [{
+                            "end": "2025-12-31", "val": 10, "filed": "2026-02-01",
+                            "accn": "0001", "form": "10-K",
+                        }]
+                    }
+                }
+            }
+        }
+    }
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+        accepted_at_by_accession={"0001": "2026-02-01T16:42:00Z"},
+    )
+
+    assert rows[0]["available_at_quality"] == "sec_acceptance_timestamp"
+    assert pd.Timestamp(rows[0]["available_at"]) == pd.Timestamp("2026-02-01T16:42:00Z")
+
+
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     dates = pd.bdate_range("2004-01-01", periods=5500)
     frame = pd.DataFrame(
@@ -242,6 +316,32 @@ def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     assert result["TrendFactor"].raw_value is not None
     assert result["MomSeasonShort"].status == "exact"
     assert result["Mom12mOffSeason"].raw_value is not None
+
+
+def test_price_cleaner_quarantines_nonpositive_invalid_and_extreme_history() -> None:
+    dates = pd.bdate_range("2024-01-01", periods=400)
+    price = np.linspace(10.0, 20.0, len(dates))
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "open": price,
+            "high": price + 0.2,
+            "low": price - 0.2,
+            "close": price,
+            "adj_close": price,
+            "volume": 100_000,
+        }
+    )
+    frame.loc[50, "adj_close"] = 0.0
+    frame.loc[100, "high"] = 1.0
+    frame.loc[120, ["open", "high", "low", "close", "adj_close"]] = 1000.0
+
+    clean, quality = clean_price_history(frame)
+
+    assert quality["nonpositive_price_rows"] == 1
+    assert quality["invalid_ohlc_rows"] >= 1
+    assert quality["extreme_return_rows"] >= 1
+    assert clean["date"].min() > frame.loc[120, "date"]
 
 
 def test_accounting_features_do_not_fill_missing_with_zero() -> None:
@@ -335,6 +435,51 @@ def test_analyst_revision_proxy_does_not_replace_missing_counts_with_zero() -> N
     assert result["REV6"].raw_value is None
 
 
+def test_options_use_fresh_near_money_contracts_and_annualized_realized_vol() -> None:
+    as_of = pd.Timestamp("2026-08-01")
+    rows = pd.DataFrame(
+        {
+            "option_type": ["call", "put", "call", "put"],
+            "expiration": ["2026-08-28"] * 4,
+            "lastTradeDate": ["2026-07-31", "2026-07-31", "2025-01-01", "2026-07-31"],
+            "strike": [100.0, 100.0, 100.0, 300.0],
+            "impliedVolatility": [0.30, 0.40, 9.0, 0.50],
+            "volume": [10, 20, 999, 999],
+            "openInterest": [100, 200, 999, 999],
+            "bid": [1.0, 1.0, 1.0, 2.0],
+            "ask": [1.2, 1.2, 1.2, 1.0],
+        }
+    )
+
+    result = _options_features(
+        rows,
+        1_000.0,
+        0.01,
+        stock_price=100.0,
+        as_of=as_of,
+        config={"yfinance": {}},
+    )
+
+    assert result["CPVolSpread"].raw_value == pytest.approx(-0.10)
+    assert result["OptionVolume1"].raw_value == pytest.approx(0.03)
+    assert result["RIVolSpread"].raw_value == pytest.approx(0.01 * np.sqrt(252) - 0.35)
+
+
+def test_sec_issuer_flags_detect_foreign_and_investment_company_forms() -> None:
+    submissions = pd.DataFrame(
+        {
+            "cik": [1, 1, 2, 3],
+            "form": ["10-K", "20-F", "N-CSR", "10-Q"],
+        }
+    )
+
+    flags = _sec_issuer_flags(submissions).set_index("cik")
+
+    assert bool(flags.at[1, "sec_foreign_filer"])
+    assert bool(flags.at[2, "sec_investment_company"])
+    assert not bool(flags.at[3, "sec_foreign_filer"])
+
+
 def test_security_eligibility_requires_verified_us_equity_and_recent_price() -> None:
     frame = pd.DataFrame(
         {
@@ -358,6 +503,31 @@ def test_security_eligibility_requires_verified_us_equity_and_recent_price() -> 
     assert result.at["ETF", "eligibility_reason"] == "excluded_name_or_instrument"
     assert result.at["UNKNOWN", "eligibility_reason"] == "yahoo_quote_type_not_equity"
     assert result.at["STALE", "eligibility_reason"] == "latest_price_is_stale"
+
+
+def test_security_eligibility_excludes_suffixes_foreign_filers_and_secondary_ciks() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["GOOD", "GOOD-PB", "UNIT-UN", "FOREIGN"],
+            "cik": [1, 1, 2, 3],
+            "company_name_sec": ["Good Inc", "Good Preferred", "Unit Corp", "Foreign Inc"],
+            "longName": ["Good Inc", "Good Preferred", "Unit Corp", "Foreign Inc"],
+            "quoteType": ["EQUITY"] * 4,
+            "country_yahoo": ["United States"] * 4,
+            "price_rows": [300] * 4,
+            "last_price_date": ["2026-08-01"] * 4,
+            "marketCap": [1_000, 500, 500, 500],
+            "sec_foreign_filer": [False, False, False, True],
+            "sec_investment_company": [False] * 4,
+        }
+    )
+
+    result = _classify_security_eligibility(frame, as_of=pd.Timestamp("2026-08-02")).set_index("symbol")
+
+    assert bool(result.at["GOOD", "eligible_common_stock"])
+    assert result.at["GOOD-PB", "eligibility_reason"] == "excluded_name_or_instrument"
+    assert result.at["UNIT-UN", "eligibility_reason"] == "excluded_name_or_instrument"
+    assert result.at["FOREIGN", "eligibility_reason"] == "excluded_foreign_sec_filer"
 
 
 def test_chunk_hash_manifest_uses_three_digit_suffix(tmp_path: Path) -> None:
@@ -432,6 +602,10 @@ def test_coverage_does_not_call_null_exact_values_available() -> None:
     assert row["coverage_status"] == "unavailable"
     assert row["exact_rows"] == 0
     assert row["unavailable_rows"] == 1
+    feature = features.loc[features["signalname"].eq("signal_000")].iloc[0]
+    assert feature["implementation_status"] == "exact"
+    assert feature["value_status"] == "missing"
+    assert feature["status"] == "unavailable"
 
 
 def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
@@ -460,7 +634,7 @@ def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
     assert aaa.loc[aaa["horizon_months"].eq(6), "confidence"].iloc[0] > 0
 
 
-def test_aggregate_score_uses_available_horizons_without_zero_filling() -> None:
+def test_aggregate_score_keeps_partial_research_score_but_rejects_ranking() -> None:
     scores = pd.DataFrame(
         {
             "as_of": ["2026-08-01"] * 3,
@@ -478,6 +652,26 @@ def test_aggregate_score_uses_available_horizons_without_zero_filling() -> None:
     assert result["aggregate_score"] == pytest.approx((80.0 + 30.0) / 1.5)
     assert result["horizons_used"] == 2
     assert result["aggregate_confidence"] == pytest.approx(30.0)
+    assert not bool(result["ranking_eligible"])
+    assert result["ranking_rejection_reason"] == "incomplete_horizons"
+    assert result["score_validation_status"] == "unvalidated_current_snapshot_only"
+
+
+def test_aggregate_score_requires_all_horizons_and_minimum_confidence() -> None:
+    scores = pd.DataFrame(
+        {
+            "as_of": ["2026-08-01"] * 5,
+            "symbol": ["AAA"] * 5,
+            "horizon_months": [1, 3, 6, 12, 36],
+            "score": [70.0] * 5,
+            "confidence": [80.0] * 5,
+        }
+    )
+
+    result = calculate_aggregate_scores(scores, minimum_horizons=5, minimum_confidence=30).iloc[0]
+
+    assert bool(result["all_horizons_present"])
+    assert bool(result["ranking_eligible"])
 
 
 def test_workflow_contract_is_github_only_and_complete() -> None:
@@ -494,6 +688,20 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "backtest_enabled" in text
     assert 'summary["companyfacts_rows"] > 0' in text
     assert 'summary["submissions_rows"] > 0' in text
+    assert "sec_cik_universe.parquet" in text
+
+
+def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
+    text = Path("config/openap_yfinance_sec_current.yaml").read_text(encoding="utf-8")
+    for requirement in (
+        "minimum_market_cap_usd",
+        "minimum_average_dollar_volume_21d",
+        "minimum_clean_price_rows",
+        "minimum_horizons_for_ranking",
+        "minimum_aggregate_confidence",
+        "maximum_family_weight",
+    ):
+        assert requirement in text
 
 
 def test_repair_workflow_reuses_source_run_and_replaces_only_empty_shards() -> None:

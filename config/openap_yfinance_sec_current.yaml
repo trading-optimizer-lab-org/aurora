@@ -23,6 +23,15 @@ universe:
   exclude_adr: true
   exclude_preferred: true
   exclude_warrants: true
+  exclude_units: true
+  exclude_foreign_sec_filers: true
+  one_primary_security_per_cik: true
+  minimum_market_cap_usd: 100000000
+  minimum_price_usd: 1.0
+  minimum_average_volume_21d: 10000
+  minimum_average_dollar_volume_21d: 1000000
+  minimum_clean_price_rows: 252
+  maximum_price_age_days: 14
 yfinance:
   history_period: max
   batch_size: 25
@@ -31,6 +40,13 @@ yfinance:
   institutional_snapshot: true
   current_options_snapshot: true
   target_option_days: 30
+  minimum_option_days: 14
+  maximum_option_days: 60
+  maximum_option_staleness_days: 14
+  minimum_option_moneyness: 0.80
+  maximum_option_moneyness: 1.20
+  minimum_implied_volatility: 0.01
+  maximum_implied_volatility: 5.0
 sec:
   ticker_exchange_url: https://www.sec.gov/files/company_tickers_exchange.json
   ticker_exchange_fallback_url: https://raw.githubusercontent.com/jadchaar/sec-cik-mapper/7883b83389836f9bba9bdfe53031467235746334/mappings/stocks/mappings.csv
@@ -51,6 +67,9 @@ score:
   maximum_metric_weight_multiple: 2.0
   maximum_family_weight: 0.15
   minimum_metrics_per_score: 5
+  minimum_horizons_for_ranking: 5
+  minimum_aggregate_confidence: 30.0
+  validation_status: unvalidated_current_snapshot_only
 execution:
   execution_location: github_actions
   local_runs_allowed: false

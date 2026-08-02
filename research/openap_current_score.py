@@ -86,7 +86,13 @@ def _quality_multiplier(value: object) -> float:
     return 0.70
 
 
-def evidence_weight(row: Mapping[str, Any], status: str) -> float:
+def evidence_weight(
+    row: Mapping[str, Any],
+    status: str,
+    *,
+    exact_source_multiplier: float = 1.0,
+    proxy_source_multiplier: float = 0.55,
+) -> float:
     """Return a bounded evidence weight without treating missing t-stats as zero."""
 
     reproduction = abs(float(row.get("tstat") or 0.0))
@@ -97,7 +103,10 @@ def evidence_weight(row: Mapping[str, Any], status: str) -> float:
     except (TypeError, ValueError):
         original_factor = 0.70
     reproduction_factor = min(reproduction, 8.0) / 8.0
-    source_factor = {"exact": 1.0, "proxy": 0.55}.get(status, 0.0)
+    source_factor = {
+        "exact": float(exact_source_multiplier),
+        "proxy": float(proxy_source_multiplier),
+    }.get(status, 0.0)
     return (
         max(reproduction_factor, 0.10)
         * max(original_factor, 0.10)
@@ -145,7 +154,14 @@ def build_redundancy_groups(
     threshold: float = 0.80,
     minimum_overlap: int = 60,
 ) -> pd.DataFrame:
-    """Group near-identical and mirror predictors after direction alignment."""
+    """Group genuinely redundant predictors without transitive chaining.
+
+    Directions are aligned first.  Two predictors may share a group only when
+    their aligned returns are positively correlated, belong to the same
+    economic family, and clear the threshold against every existing member.
+    Strong inverse relationships are useful diversification evidence, not
+    duplicates, so they deliberately remain separate.
+    """
 
     names = metadata["signalname"].astype(str).tolist()
     signs = metadata.set_index("signalname")["Sign"].apply(
@@ -156,14 +172,29 @@ def build_redundancy_groups(
     aligned = aligned.mul(signs.reindex(available), axis=1)
     corr = aligned.corr(min_periods=int(minimum_overlap))
     count = aligned.notna().astype("int16").T.dot(aligned.notna().astype("int16"))
-    edges: list[tuple[str, str]] = []
-    for index, left in enumerate(available):
-        for right in available[index + 1 :]:
-            value = corr.at[left, right]
-            overlap = int(count.at[left, right])
-            if overlap >= minimum_overlap and pd.notna(value) and abs(float(value)) >= threshold:
-                edges.append((left, right))
-    components = _connected_components(names, edges)
+    family_column = "Cat.Economic" if "Cat.Economic" in metadata else "Cat.Data"
+    families = metadata.set_index("signalname")[family_column].fillna("unknown").astype(str)
+    components: list[list[str]] = []
+    for signal in names:
+        placed = False
+        if signal in available:
+            for component in components:
+                comparable = [member for member in component if member in available]
+                if not comparable:
+                    continue
+                if any(families.get(member, "unknown") != families.get(signal, "unknown") for member in comparable):
+                    continue
+                if all(
+                    int(count.at[signal, member]) >= minimum_overlap
+                    and pd.notna(corr.at[signal, member])
+                    and float(corr.at[signal, member]) >= threshold
+                    for member in comparable
+                ):
+                    component.append(signal)
+                    placed = True
+                    break
+        if not placed:
+            components.append([signal])
     rows: list[dict[str, Any]] = []
     for group_index, component in enumerate(components, start=1):
         group_id = f"redundancy_{group_index:03d}"
@@ -176,6 +207,55 @@ def build_redundancy_groups(
                 }
             )
     return pd.DataFrame(rows).sort_values(["redundancy_group", "signalname"])
+
+
+def redundancy_correlation_audit(
+    metadata: pd.DataFrame,
+    portfolio_returns: pd.DataFrame,
+    groups: pd.DataFrame,
+    *,
+    threshold: float = 0.80,
+    minimum_overlap: int = 60,
+) -> pd.DataFrame:
+    """Record strong positive and inverse relationships without conflating them."""
+
+    names = [name for name in metadata["signalname"].astype(str) if name in portfolio_returns]
+    signs = metadata.set_index("signalname")["Sign"].fillna(1.0).astype(float)
+    family_column = "Cat.Economic" if "Cat.Economic" in metadata else "Cat.Data"
+    families = metadata.set_index("signalname")[family_column].fillna("unknown").astype(str)
+    raw = portfolio_returns[names].apply(pd.to_numeric, errors="coerce")
+    aligned = raw.mul(signs.reindex(names), axis=1)
+    raw_corr = raw.corr(min_periods=minimum_overlap)
+    aligned_corr = aligned.corr(min_periods=minimum_overlap)
+    overlap = aligned.notna().astype("int16").T.dot(aligned.notna().astype("int16"))
+    group_map = groups.set_index("signalname")["redundancy_group"].astype(str).to_dict()
+    rows = []
+    for index, left in enumerate(names):
+        for right in names[index + 1 :]:
+            value = aligned_corr.at[left, right]
+            observations = int(overlap.at[left, right])
+            if observations < minimum_overlap or pd.isna(value) or abs(float(value)) < threshold:
+                continue
+            rows.append(
+                {
+                    "signal_left": left,
+                    "signal_right": right,
+                    "raw_correlation": raw_corr.at[left, right],
+                    "aligned_correlation": value,
+                    "overlap_months": observations,
+                    "same_economic_family": families.get(left) == families.get(right),
+                    "relationship": "duplicate_candidate" if float(value) >= threshold else "inverse_diversifier",
+                    "same_redundancy_group": group_map.get(left) == group_map.get(right),
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "signal_left", "signal_right", "raw_correlation", "aligned_correlation",
+            "overlap_months", "same_economic_family", "relationship",
+            "same_redundancy_group",
+        ],
+    )
 
 
 def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
@@ -209,6 +289,56 @@ def _monthly_close(frame: pd.DataFrame) -> pd.Series:
     return values.set_index("date")["adj_close"].resample("ME").last().dropna()
 
 
+def clean_price_history(
+    frame: pd.DataFrame,
+    *,
+    maximum_absolute_daily_return: float = 3.0,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Quarantine impossible rows and discard history before the last split-like break."""
+
+    data = frame.copy()
+    data["date"] = pd.to_datetime(data.get("date"), errors="coerce")
+    numeric_columns = ("open", "high", "low", "close", "adj_close", "volume")
+    for column in numeric_columns:
+        if column in data:
+            data[column] = pd.to_numeric(data[column], errors="coerce")
+    data = data.dropna(subset=["date", "adj_close"]).sort_values("date")
+    duplicate_rows = int(data.duplicated(["date"], keep=False).sum())
+    data = data.drop_duplicates("date", keep="last")
+    positive = data["adj_close"].gt(0)
+    ohlc_valid = pd.Series(True, index=data.index)
+    if {"open", "high", "low", "close"}.issubset(data.columns):
+        ohlc = data[["open", "high", "low", "close"]]
+        complete = ohlc.notna().all(axis=1)
+        ohlc_valid = ~complete | (
+            ohlc.gt(0).all(axis=1)
+            & data["high"].ge(data[["open", "close", "low"]].max(axis=1))
+            & data["low"].le(data[["open", "close", "high"]].min(axis=1))
+        )
+    base_valid = positive & ohlc_valid
+    provisional = data.loc[base_valid].copy()
+    returns = provisional["adj_close"].pct_change()
+    severe = returns.abs().gt(float(maximum_absolute_daily_return)) | returns.le(-0.95)
+    last_break_date = provisional.loc[severe, "date"].max() if severe.any() else pd.NaT
+    clean = provisional.loc[~severe].copy()
+    if pd.notna(last_break_date):
+        clean = clean.loc[clean["date"].gt(last_break_date)].copy()
+    recent_cutoff = data["date"].max() - pd.Timedelta(days=400) if not data.empty else pd.NaT
+    recent_severe = int((severe & provisional["date"].ge(recent_cutoff)).sum()) if pd.notna(recent_cutoff) else 0
+    quality = {
+        "raw_price_rows": int(len(data)),
+        "clean_price_rows": int(len(clean)),
+        "duplicate_price_dates": duplicate_rows,
+        "nonpositive_price_rows": int((~positive).sum()),
+        "invalid_ohlc_rows": int((~ohlc_valid).sum()),
+        "extreme_return_rows": int(severe.sum()),
+        "recent_extreme_return_rows": recent_severe,
+        "history_reset_after": last_break_date,
+        "price_quality_pass": bool(len(clean) >= 252 and recent_severe == 0),
+    }
+    return clean, quality
+
+
 def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     """Calculate current price and trading characteristics.
 
@@ -219,12 +349,7 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     required = {"date", "adj_close", "volume"}
     if required.difference(frame.columns):
         return {}
-    daily = frame.copy()
-    daily["date"] = pd.to_datetime(daily["date"], errors="coerce")
-    for column in ("adj_close", "volume", "high", "low", "close"):
-        if column in daily:
-            daily[column] = pd.to_numeric(daily[column], errors="coerce")
-    daily = daily.dropna(subset=["date", "adj_close"]).sort_values("date")
+    daily, _ = clean_price_history(frame)
     if daily.empty:
         return {}
     close = daily["adj_close"]
@@ -407,10 +532,23 @@ def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.Da
     if "period_start" in frame:
         frame["period_start"] = pd.to_datetime(frame["period_start"], errors="coerce")
     frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
-    frame = frame.loc[frame["available_at"].le(pd.Timestamp(as_of))].dropna(subset=["period_end", "value"])
+    as_of_timestamp = pd.Timestamp(as_of).tz_localize(None)
+    frame = frame.loc[
+        frame["available_at"].le(as_of_timestamp)
+        & frame["period_end"].le(as_of_timestamp.normalize())
+    ].dropna(subset=["period_end", "value"])
     selected_rows: list[pd.DataFrame] = []
     for concept, aliases in SEC_CONCEPT_ALIASES.items():
         subset = frame.loc[frame["tag"].isin(aliases)].copy()
+        if subset.empty:
+            continue
+        unit = subset.get("unit", pd.Series(index=subset.index, dtype="string")).astype(str)
+        if concept == "shares":
+            subset = subset.loc[unit.str.lower().eq("shares")]
+        elif concept == "employees":
+            subset = subset.loc[unit.str.lower().isin({"employee", "employees", "person", "persons"})]
+        else:
+            subset = subset.loc[unit.str.upper().eq("USD")]
         if subset.empty:
             continue
         if "form" in subset:
@@ -895,6 +1033,8 @@ def assemble_feature_table(
     *,
     as_of: str,
     redundancy_groups: pd.DataFrame | None = None,
+    exact_source_multiplier: float = 1.0,
+    proxy_source_multiplier: float = 0.55,
 ) -> pd.DataFrame:
     """Produce one audited long row per symbol and strict predictor."""
 
@@ -914,6 +1054,10 @@ def assemble_feature_table(
                 status, source, note = computed.status, computed.source, computed.note
                 raw_value = computed.raw_value
                 formula_id = computed.formula_id
+            implementation_status = status
+            value_status = "available" if raw_value is not None and pd.notna(raw_value) else "missing"
+            if value_status == "missing":
+                status = "unavailable"
             sign = float(definition.get("Sign")) if pd.notna(definition.get("Sign")) else 1.0
             horizon_raw = pd.to_numeric(pd.Series([definition.get("portperiod")]), errors="coerce").iloc[0]
             horizon = int(horizon_raw) if pd.notna(horizon_raw) else 1
@@ -927,6 +1071,8 @@ def assemble_feature_table(
                     "raw_value": raw_value,
                     "sign": sign,
                     "status": status,
+                    "implementation_status": implementation_status,
+                    "value_status": value_status,
                     "source": source,
                     "formula_id": formula_id,
                     "note": note,
@@ -936,7 +1082,12 @@ def assemble_feature_table(
                     "tstat_reproduction": definition.get("tstat"),
                     "tstat_study": definition.get("T.Stat"),
                     "redundancy_group": group_map.get(str(signal), f"single_{signal}"),
-                    "evidence_weight": evidence_weight(definition, status),
+                    "evidence_weight": evidence_weight(
+                        definition,
+                        status,
+                        exact_source_multiplier=exact_source_multiplier,
+                        proxy_source_multiplier=proxy_source_multiplier,
+                    ),
                 }
             )
     frame = pd.DataFrame(rows)
@@ -947,7 +1098,13 @@ def assemble_feature_table(
     return frame
 
 
-def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.DataFrame:
+def calculate_scores(
+    features: pd.DataFrame,
+    minimum_metrics: int = 5,
+    *,
+    maximum_metric_weight_multiple: float = 2.0,
+    maximum_family_weight: float = 0.15,
+) -> pd.DataFrame:
     """Aggregate metric percentiles with one bounded vote per redundancy group."""
 
     usable = features.loc[
@@ -960,6 +1117,11 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
             columns=["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]
         )
     usable["metric_weight"] = pd.to_numeric(usable["evidence_weight"], errors="coerce").fillna(0.0)
+    median_weight = usable.groupby(["symbol", "horizon_months"])["metric_weight"].transform("median")
+    usable["metric_weight"] = np.minimum(
+        usable["metric_weight"],
+        median_weight * float(maximum_metric_weight_multiple),
+    )
     group_weight_sum = usable.groupby(["symbol", "horizon_months", "redundancy_group"])["metric_weight"].transform("sum")
     usable["within_group_weight"] = usable["metric_weight"] / group_weight_sum.replace(0, np.nan)
     usable["group_score_component"] = usable["percentile"] * usable["within_group_weight"]
@@ -967,16 +1129,32 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
         group_score=("group_score_component", "sum"),
         group_evidence=("metric_weight", "mean"),
         metrics_in_group=("signalname", "nunique"),
+        economic_family=("economic_family", "first"),
     )
+    family_total = groups.groupby(["as_of", "symbol", "horizon_months", "economic_family"])["group_evidence"].transform("sum")
+    all_total = groups.groupby(["as_of", "symbol", "horizon_months"])["group_evidence"].transform("sum")
+    groups["original_total_weight"] = all_total
+    family_cap = all_total * float(maximum_family_weight)
+    family_scale = np.minimum(1.0, family_cap / family_total.replace(0, np.nan))
+    groups["group_evidence"] = groups["group_evidence"] * family_scale.fillna(0.0)
     groups["weighted_score"] = groups["group_score"] * groups["group_evidence"]
     summary = groups.groupby(["as_of", "symbol", "horizon_months"], as_index=False).agg(
         weighted_sum=("weighted_score", "sum"),
         total_weight=("group_evidence", "sum"),
+        original_total_weight=("original_total_weight", "first"),
         groups_used=("redundancy_group", "nunique"),
         metrics_used=("metrics_in_group", "sum"),
     )
-    summary["score"] = summary["weighted_sum"] / summary["total_weight"].replace(0, np.nan)
-    summary["confidence"] = np.minimum(100.0, 100.0 * summary["groups_used"] / 25.0)
+    unallocated_weight = (summary["original_total_weight"] - summary["total_weight"]).clip(lower=0.0)
+    summary["score"] = (
+        summary["weighted_sum"] + 50.0 * unallocated_weight
+    ) / summary["original_total_weight"].replace(0, np.nan)
+    available_groups = groups.groupby("horizon_months")["redundancy_group"].nunique()
+    group_coverage = summary["groups_used"] / summary["horizon_months"].map(available_groups).replace(0, np.nan)
+    evidence_strength = (
+        summary["total_weight"] / summary["original_total_weight"].replace(0, np.nan)
+    ).clip(0.0, 1.0)
+    summary["confidence"] = (100.0 * group_coverage * evidence_strength).clip(0.0, 100.0)
     available_by_horizon = (
         usable.groupby("horizon_months")["signalname"].nunique().clip(upper=int(minimum_metrics)).astype(int)
     )
@@ -995,7 +1173,12 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
     return result[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
 
 
-def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
+def calculate_aggregate_scores(
+    scores: pd.DataFrame,
+    *,
+    minimum_horizons: int = len(SUPPORTED_HORIZONS),
+    minimum_confidence: float = 30.0,
+) -> pd.DataFrame:
     """Combine independent horizon scores without treating missing horizons as zero."""
 
     columns = [
@@ -1004,6 +1187,10 @@ def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
         "aggregate_score",
         "aggregate_confidence",
         "horizons_used",
+        "all_horizons_present",
+        "ranking_eligible",
+        "ranking_rejection_reason",
+        "score_validation_status",
     ]
     if scores.empty:
         return pd.DataFrame(columns=columns)
@@ -1018,6 +1205,10 @@ def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
         result["aggregate_score"] = np.nan
         result["aggregate_confidence"] = 0.0
         result["horizons_used"] = 0
+        result["all_horizons_present"] = False
+        result["ranking_eligible"] = False
+        result["ranking_rejection_reason"] = "no_usable_horizons"
+        result["score_validation_status"] = "unvalidated_current_snapshot_only"
         return result[columns]
     result = usable.groupby(["as_of", "symbol"], as_index=False).agg(
         weighted_sum=("weighted_score", "sum"),
@@ -1031,6 +1222,18 @@ def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
     result = grid.merge(result, on=["as_of", "symbol"], how="left")
     result["aggregate_confidence"] = result["aggregate_confidence"].fillna(0.0)
     result["horizons_used"] = result["horizons_used"].fillna(0).astype(int)
+    result["all_horizons_present"] = result["horizons_used"].ge(int(minimum_horizons))
+    result["ranking_eligible"] = result["all_horizons_present"] & result["aggregate_confidence"].ge(float(minimum_confidence))
+    result["ranking_rejection_reason"] = np.select(
+        [
+            result["horizons_used"].eq(0),
+            ~result["all_horizons_present"],
+            result["aggregate_confidence"].lt(float(minimum_confidence)),
+        ],
+        ["no_usable_horizons", "incomplete_horizons", "aggregate_confidence_too_low"],
+        default="",
+    )
+    result["score_validation_status"] = "unvalidated_current_snapshot_only"
     return result[columns]
 
 
