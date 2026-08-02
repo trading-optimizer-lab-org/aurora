@@ -26,6 +26,7 @@ NO_GO_RECEIPT = MASTER_READINESS / "no_go_close_receipt.json"
 AUTHORIZATION = NEW_REFERENCE_READINESS / "campaign_authorization.json"
 FINAL_SUMMARY = NEW_REFERENCE_READINESS / "final_summary.json"
 PRESERVATION_RECEIPT = NEW_REFERENCE_READINESS / "preservation_receipt.json"
+SUCCESSOR_AUTHORIZATION = MASTER_READINESS / "canonical_successor_authorization.json"
 DESTINATION = MASTER_READINESS / "master_plan_execution_reconciliation.json"
 
 
@@ -179,13 +180,48 @@ def _validate_independent_campaign(
         raise ValueError("preserved result identity changed")
 
 
+def _validate_successor_authorization(
+    successor: dict[str, Any], no_go: dict[str, Any], summary: dict[str, Any]
+) -> None:
+    expected = domain_digest(
+        "GTBI_V7_CANONICAL_SUCCESSOR_AUTHORIZATION_V1",
+        successor,
+        omit_top_level_fields=("receipt_digest",),
+    )
+    if successor.get("receipt_digest") != expected:
+        raise ValueError("canonical-successor authorization digest mismatch")
+    if successor.get("master_plan", {}).get("sha256") != raw_sha256(MASTER_PLAN):
+        raise ValueError("canonical-successor authorization is not plan-bound")
+    historical = successor.get("historical_v6_lineage", {})
+    if historical.get("terminal_state") != "NO_GO_CLOSED":
+        raise ValueError("successor authorization reopens historical V6")
+    if historical.get("receipt_digest") != no_go.get("receipt_digest"):
+        raise ValueError("successor authorization changed historical closure")
+    if historical.get("reopened") is not False:
+        raise ValueError("successor authorization reopens historical V6")
+    canonical = successor.get("canonical_successor", {})
+    if canonical.get("campaign_id") != summary.get("campaign_id"):
+        raise ValueError("successor authorization campaign mismatch")
+    if canonical.get("terminal_strategy_identities") != 72_000:
+        raise ValueError("successor authorization lacks complete accounting")
+    boundaries = successor.get("scientific_boundaries", {})
+    if boundaries.get("locked_authorized") is not False:
+        raise ValueError("successor authorization opens locked")
+    if boundaries.get("locked_data_accessed") is not False:
+        raise ValueError("successor authorization records locked access")
+    if boundaries.get("maximum_incremental_net_spend_usd") != 0:
+        raise ValueError("successor authorization changes the cost cap")
+
+
 def build_reconciliation() -> dict[str, Any]:
     no_go = _canonical_json(NO_GO_RECEIPT)
     authorization = _canonical_json(AUTHORIZATION)
     summary = _canonical_json(FINAL_SUMMARY)
     preservation = _canonical_json(PRESERVATION_RECEIPT)
+    successor = _canonical_json(SUCCESSOR_AUTHORIZATION)
     _validate_no_go(no_go)
     _validate_independent_campaign(authorization, summary, preservation, no_go)
+    _validate_successor_authorization(successor, no_go, summary)
 
     tasks = _csv_rows(MASTER_READINESS / "task_status.csv")
     gates = _csv_rows(MASTER_READINESS / "gate_status.csv")
@@ -245,6 +281,8 @@ def build_reconciliation() -> dict[str, Any]:
             "no_go_close_id": no_go["no_go_close_id"],
             "no_go_run_id": no_go["run"]["id"],
             "no_go_receipt_digest": no_go["receipt_digest"],
+            "version": "7.1",
+            "active_generation": "GTBI_V7_CANONICAL_SUCCESSOR_1",
         },
         "formal_projection": {
             "task_count": len(tasks),
@@ -253,15 +291,25 @@ def build_reconciliation() -> dict[str, Any]:
             "gate_counts": gate_counts,
             "terminal_no_go_does_not_green_pending_gates": True,
         },
-        "selected_terminal_path": {
+        "historical_v6_terminal_path": {
             "terminal_state": "NO_GO_CLOSED",
             "plan_completion_definition": "section_24_NO_GO_CLOSED",
             "requirements": terminal_requirements,
             "requirements_satisfied": True,
             "successful_readiness_path_completed": False,
             "scientific_success": False,
-            "downstream_blocked_tasks_required_for_selected_terminal_state": False,
-            "downstream_blocked_tasks_may_be_executed_under_selected_path": False,
+            "reopened": False,
+            "scientific_lineage_status": "historical_reference_only",
+        },
+        "active_successor_path": {
+            "generation_id": "GTBI_V7_CANONICAL_SUCCESSOR_1",
+            "state": "AUTHORIZED_RECONCILIATION_ACTIVE",
+            "target_terminal_state": "COMPLETED_CLEAN",
+            "authorization_receipt_digest": successor["receipt_digest"],
+            "historical_v6_reopened": False,
+            "v6_equivalence_claim_allowed": False,
+            "downstream_applicable_tasks_required": True,
+            "downstream_tasks_may_transition_only_after_gate_evidence": True,
         },
         "independent_new_reference_campaign": {
             "campaign_id": summary["campaign_id"],
@@ -289,12 +337,13 @@ def build_reconciliation() -> dict[str, Any]:
             "maximum_incremental_net_spend_usd": 0,
         },
         "remaining_administrative_scope": {
-            "blocks_selected_terminal_state": False,
-            "classification": "optional_post_terminal_or_future_campaign_scope",
+            "blocks_selected_terminal_state": True,
+            "classification": "required_canonical_successor_completion_scope",
             "repository_inventory_and_reorganization": "pending",
             "legacy_retirement": "pending_decision_no_v7_candidate_passed_filters",
             "repository_wide_modernization": "pending",
             "may_not_reopen_v6_equivalent_scientific_path": True,
+            "active_successor_must_reach_completed_clean": True,
         },
         "receipt_digest": "",
     }

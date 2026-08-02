@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Version | `7.0` |
-| Status | `UNIFIED V7 PLAN, OWNER-AUTHORIZED TECHNICAL PREPARATION` |
+| Version | `7.1` |
+| Status | `CANONICAL SUCCESSOR AUTHORIZED, COMPLETED_CLEAN EXECUTION ACTIVE` |
 | Audited at | `2026-07-29T11:42:58+02:00` |
 | Repository | `trading-optimizer-lab-org/aurora` |
 | Scientific execution environment | GitHub Actions only |
@@ -38,6 +38,50 @@ Any later use of words such as `independent`, `distinct`, `custodian`,
 high-separation model. It is optional guidance, not a requirement, dependency
 or reason to return `NO-GO`.
 
+### Canonical Successor Amendment
+
+The repository owner explicitly authorizes the already approved and completed
+`gtbi_v7_new_reference_v1` campaign as this plan's canonical successor
+generation. The authorization is recorded in
+`docs/readiness/gtbi-v7/canonical_successor_authorization.json` and its
+deterministic reconciliation receipt. This amendment has precedence over every
+later statement that limits this document to V6-equivalent execution.
+
+The immutable identity is:
+
+```text
+successor_generation=GTBI_V7_CANONICAL_SUCCESSOR_1
+product=GTBI V7 Performance Engine
+campaign_id=gtbi_v7_new_reference_v1
+scientific_baseline=gtbi-v7-frozen-data-lake-v1
+source_scientific_commit=e262264031ce70ee8e50d3f28d4771fb9072670b
+final_recovery_run=30757436940
+locked_start=2021-01-01
+locked_authorized=false
+maximum_incremental_net_spend_usd=0
+```
+
+The historical V6-equivalent generation remains permanently and correctly
+closed as `NO_GO_CLOSED`. It is never reopened, relabelled or presented as
+reproduced. V6 remains `historical_reference_only`; the successor makes no V6
+equivalence, point-in-time, survivorship-free or causal-market-alignment claim.
+
+The successor campaign was separately authorized before its scientific run,
+used a frozen content-addressed input, evaluated all 72,000 terminal strategy
+identities and produced zero passing candidates. Promoting that complete run
+therefore does not select a favourable strategy or alter its historical
+outputs. Its existing evaluation may satisfy the scientific execution evidence
+of the successor path after exact receipt, row-count, digest and boundary
+verification. It must not be rerun merely to change the project label.
+
+`G2` and later gates may now be evaluated under the successor identity. They
+remain fail-closed until their own applicable evidence and state transitions
+verify. Requirements belonging only to the retired V6-equivalent lineage or to
+the retired high-separation operating model are not successor dependencies.
+The normal successor terminal target is `COMPLETED_CLEAN`; `ABANDONED_CLEAN`
+remains the failure/abandonment alternative. Locked access remains prohibited
+unless the owner gives a new explicit authorization in a future task.
+
 ## 1. Purpose
 
 This is the proposed single GTBI V7 master document. It becomes canonical only
@@ -61,8 +105,8 @@ It defines the exact work required to:
 
 1. Preserve the scientific evidence that is about to expire.
 2. Build one unified `GTBI V7 Performance Engine`.
-3. Recover the missing reproducibility chain or keep this V7 blocked while a
-   separately scoped future-reference proposal is reviewed elsewhere.
+3. Preserve V6 as a historical result with incomplete original lineage and use
+   the owner-authorized V7 canonical successor as the active reference.
 4. Put GitHub governance in place without blocking the sole current owner.
 5. Reorganize GitHub and the local editing environment safely.
 6. Implement the complete V7 performance architecture in Aurora without a
@@ -242,8 +286,9 @@ records, is:
 
 ```text
 product=GTBI V7 Performance Engine
-scientific_baseline=GTBI Fast Strict V6
-scientific_change=false
+scientific_baseline=gtbi-v7-frozen-data-lake-v1
+scientific_lineage=GTBI_V7_CANONICAL_SUCCESSOR_1
+v6_equivalence_claim=false
 execution_environment=GitHub Actions
 security_control_plane_deadman=github_native_non_scientific
 ```
@@ -252,7 +297,7 @@ V7 includes:
 
 - all readiness and preservation work in this document;
 - complete GitHub and local reorganization;
-- exact V6 scientific semantics;
+- exact frozen canonical-successor scientific semantics;
 - maximum measured use of four vCPU per runner;
 - preplanned profile-selected internal execution;
 - FeatureStore;
@@ -264,8 +309,8 @@ V7 includes:
 - checkpoint and selective recovery;
 - scientific and runtime diagnostics.
 
-`GTBI Fast Strict V6 Performance v2` is no longer a separate project. It is
-the compatibility and equivalence mode used while building V7.
+`GTBI Fast Strict V6 Performance v2` remains a preserved historical reference.
+It is not the successor baseline and cannot supply an equivalence claim.
 
 `GTBI Clean Portfolio` is not part of this V7. Shared capital, portfolio
 sizing and portfolio risk change the science and must be implemented later as
@@ -704,8 +749,9 @@ The remaining final result from run `29148013009` is not a substitute for the
 missing input data.
 
 V6 is not fully reproducible until all required input bytes are recovered and
-authenticated. A newly named baseline may start a separate product/campaign,
-but it cannot complete or redefine this V6-equivalent GTBI V7 plan.
+authenticated. The owner-authorized canonical-successor amendment does not
+change that classification. It permits the separately authorized V7 campaign
+to complete this plan only under its own identity and limitations.
 
 ### 5.4 Governance
 
@@ -16321,9 +16367,10 @@ Immediate `NO-GO` conditions:
 - semantic oracle lacks 100% effective-branch coverage or leaves a non-
   equivalent frozen mutant alive;
 - input data identity unknown;
-- `reuse_recovered_v6_inputs` is not true, Oracle B is unavailable/mismatched,
-  or a separately named future reference is offered as a substitute for this
-  V6-equivalent V7;
+- on the historical V6-equivalent lineage, `reuse_recovered_v6_inputs` is not
+  true or Oracle B is unavailable/mismatched; on the canonical-successor
+  lineage, the owner authorization, frozen campaign identity, complete terminal
+  accounting or explicit non-equivalence limitations are missing;
 - private storage unavailable;
 - private storage authentication not proven;
 - licence decision missing;
@@ -16499,6 +16546,8 @@ There are three valid terminal project states:
 ```text
 COMPLETED_CLEAN:
   G0,G1A,G1B,G2,G3A,G3B,G4,G5,G6A,G6B,G7,G8,G9,G10 green
+  active_generation=GTBI_V7_CANONICAL_SUCCESSOR_1
+  V6 remains historical_reference_only and NO_GO_CLOSED
   full_disposition=completed
   normal G9 cleanup receipts verified
   PREV7-0913 done and terminal_output=CAMPAIGN_COMPLETED_CLEAN
