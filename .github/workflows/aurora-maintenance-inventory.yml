@@ -1,0 +1,95 @@
+name: Aurora Maintenance Complete Inventory
+
+on:
+  workflow_dispatch:
+    inputs:
+      cutoff_utc:
+        description: Frozen UTC cutoff; blank uses first scan start and resumes reuse it
+        required: false
+        default: ""
+        type: string
+      resume_run_id:
+        description: Prior incomplete inventory run whose checkpoint should be resumed
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+concurrency:
+  group: aurora-maintenance-complete-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    name: Two-pass resumable GitHub inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GTBI_INVENTORY_TOKEN: ${{ secrets.GTBI_INVENTORY_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact dispatch ref
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Restore prior page checkpoint when requested
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: |
+          mkdir -p inventory-checkpoint
+          gh run download "$RESUME_RUN_ID" \
+            --name "aurora-maintenance-inventory-checkpoint-$RESUME_RUN_ID" \
+            --dir inventory-checkpoint
+
+      - name: Enumerate artifacts releases and package versions twice
+        id: scan
+        continue-on-error: true
+        env:
+          INVENTORY_CUTOFF: ${{ inputs.cutoff_utc }}
+        run: |
+          python -m scripts.generate_gtbi_v7_full_inventory \
+            --cutoff-utc "$INVENTORY_CUTOFF" \
+            --checkpoint inventory-checkpoint/full_inventory_checkpoint.sqlite \
+            --output-dir inventory-results
+
+      - name: Upload resumable page checkpoint
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aurora-maintenance-inventory-checkpoint-${{ github.run_id }}
+          path: inventory-checkpoint/full_inventory_checkpoint.sqlite
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 1
+
+      - name: Upload complete reconciled inventory
+        if: steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aurora-maintenance-inventory-results-${{ github.run_id }}
+          path: inventory-results
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 1
+
+      - name: Upload explicit incomplete reconciliation
+        if: steps.scan.outcome != 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aurora-maintenance-inventory-incomplete-${{ github.run_id }}
+          path: inventory-results/inventory_reconciliation.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Fail closed when reconciliation is incomplete
+        if: steps.scan.outcome != 'success'
+        run: |
+          echo "Complete inventory is not yet reconciled; resume from this run checkpoint."
+          exit 1
