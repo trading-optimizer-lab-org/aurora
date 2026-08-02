@@ -590,13 +590,14 @@ def calculate_accounting_features(
     result["GrAdExp"] = exact("GrAdExp", growth("advertising"), "advertising_growth_1y")
     rd_growth = growth("rd")
     rd_assets = _safe_ratio(rd, assets)
+    rd_sales = _safe_ratio(rd, revenue)
     lag_rd_assets = _safe_ratio(value("rd", 1), assets_lag)
     result["SurpriseRD"] = exact(
         "SurpriseRD",
         float(
             bool(
-                _safe_ratio(rd, revenue) is not None
-                and _safe_ratio(rd, revenue) > 0
+                rd_sales is not None
+                and rd_sales > 0
                 and rd_assets is not None
                 and rd_assets > 0
                 and rd_growth is not None
@@ -645,9 +646,10 @@ def calculate_accounting_features(
         else None,
         "log_total_debt_minus_log_total_debt_five_years_ago",
     )
+    debt_issuance = value("debt_issuance")
     result["DebtIssuance"] = exact(
         "DebtIssuance",
-        float(value("debt_issuance") > 0) if value("debt_issuance") is not None else None,
+        float(debt_issuance > 0) if debt_issuance is not None else None,
         "long_term_debt_issuance_positive_indicator",
     )
     result["NetDebtFinance"] = exact("NetDebtFinance", _safe_ratio(delta("debt_long"), assets_lag), "net_debt_change_over_lag_assets")
@@ -662,19 +664,20 @@ def calculate_accounting_features(
         "sga_plus_cogs_over_assets",
     )
     operating_profit = None
-    if all(item is not None for item in (revenue, cogs, equity)):
+    if revenue is not None and cogs is not None and equity is not None:
         operating_profit = revenue - cogs - (sga or 0.0) - (value("interest") or 0.0)
     result["OperProf"] = exact(
         "OperProf",
         _safe_ratio(operating_profit, equity),
         "revenue_minus_cogs_sga_interest_over_book_equity",
     )
+    debt_reduction = value("debt_reduction")
     external_finance = sum_required(
         issuance,
         -dividends if dividends is not None else None,
         -repurchases if repurchases is not None else None,
-        value("debt_issuance"),
-        -value("debt_reduction") if value("debt_reduction") is not None else None,
+        debt_issuance,
+        -debt_reduction if debt_reduction is not None else None,
     )
     result["XFIN"] = exact(
         "XFIN",
