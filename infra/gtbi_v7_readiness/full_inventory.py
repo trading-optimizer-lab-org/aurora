@@ -431,6 +431,19 @@ def _package_version_record(
     }
 
 
+def _mapping_record(item: Mapping[str, Any]) -> dict[str, Any]:
+    return dict(item)
+
+
+def _package_version_transform(
+    package: Mapping[str, Any],
+) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
+    def transform(item: Mapping[str, Any]) -> dict[str, Any]:
+        return _package_version_record(item, package)
+
+    return transform
+
+
 def _page_items(payload: Any, item_key: str | None) -> list[dict[str, Any]]:
     value = payload.get(item_key, []) if item_key else payload
     if not isinstance(value, list):
@@ -582,7 +595,7 @@ def run_scan(
                     ),
                     cutoff_utc=cutoff_utc,
                     item_key=None,
-                    transform=lambda value: dict(value),
+                    transform=_mapping_record,
                     id_field="id",
                 )
                 for package in packages:
@@ -602,9 +615,7 @@ def run_scan(
                         ),
                         cutoff_utc=cutoff_utc,
                         item_key=None,
-                        transform=lambda value, package=package: _package_version_record(
-                            value, package
-                        ),
+                        transform=_package_version_transform(package),
                         id_field="package_version_id",
                     )
             checkpoint.mark_surface(scan_id, "package_index", complete=True, reason="")
