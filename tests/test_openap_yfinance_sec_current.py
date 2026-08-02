@@ -12,6 +12,7 @@ from aurora.research.openap_current_score import (
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
+    calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
     coverage_report,
@@ -79,6 +80,24 @@ def test_sec_concepts_ignore_facts_not_yet_available() -> None:
     assert 999.0 not in concepts["assets"]
 
 
+def test_sec_concepts_prefer_comparable_annual_facts() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": ["Revenues", "Revenues", "Revenues"],
+            "value": [25.0, 100.0, 80.0],
+            "period_start": ["2024-01-01", "2024-01-01", "2023-01-01"],
+            "period_end": ["2024-03-31", "2024-12-31", "2023-12-31"],
+            "available_at": ["2024-05-01", "2025-02-01", "2024-02-01"],
+            "form": ["10-Q", "10-K", "10-K"],
+            "fp": ["Q1", "FY", "FY"],
+        }
+    )
+
+    concepts = latest_sec_concepts(facts, pd.Timestamp("2025-06-01"))
+
+    assert concepts["revenue"][:2] == [100.0, 80.0]
+
+
 def test_pinned_sec_mapper_fallback_filters_non_common_securities(
     tmp_path: Path,
 ) -> None:
@@ -144,7 +163,7 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
         source_url="https://data.sec.gov/example",
         source_mode="sec_official_api",
     )
-    assert len(rows) == 6
+    assert len(rows) == 10
     assert {row["tag"] for row in rows} == {"Assets"}
     assert all(
         pd.Timestamp(row["available_at"]) > pd.Timestamp(row["filed"], tz="UTC")
@@ -153,7 +172,7 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
 
 
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
-    dates = pd.bdate_range("2021-01-01", periods=1100)
+    dates = pd.bdate_range("2004-01-01", periods=5500)
     frame = pd.DataFrame(
         {
             "date": dates,
@@ -168,6 +187,8 @@ def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     assert result["Mom12m"].status == "exact"
     assert result["TrendFactor"].status == "proxy"
     assert result["TrendFactor"].raw_value is not None
+    assert result["MomSeasonShort"].status == "exact"
+    assert result["Mom12mOffSeason"].raw_value is not None
 
 
 def test_accounting_features_do_not_fill_missing_with_zero() -> None:
@@ -182,6 +203,39 @@ def test_accounting_features_do_not_fill_missing_with_zero() -> None:
     assert result["BM"].raw_value == pytest.approx(0.3)
     assert result["AssetGrowth"].raw_value == pytest.approx(0.25)
     assert result["ChInv"].raw_value is None
+
+
+def test_accounting_features_cover_direct_sec_formulas_without_invented_inputs() -> None:
+    concepts = {
+        "assets": [100.0, 80.0, 70.0, 60.0, 55.0, 50.0],
+        "current_assets": [50.0, 40.0],
+        "current_liabilities": [25.0, 20.0],
+        "cash": [10.0, 8.0],
+        "debt_current": [5.0, 4.0, 4.0, 3.0, 3.0, 2.0],
+        "debt_long": [15.0, 14.0, 13.0, 12.0, 11.0, 10.0],
+        "equity": [60.0, 50.0],
+        "revenue": [150.0, 120.0, 100.0],
+        "inventory": [20.0, 16.0, 14.0],
+        "cogs": [90.0, 75.0],
+        "sga": [20.0, 18.0],
+        "interest": [3.0, 3.0],
+        "rd": [12.0, 8.0],
+        "share_issuance": [4.0, 3.0],
+        "repurchases": [2.0, 1.0],
+        "dividends": [1.0, 1.0],
+        "debt_issuance": [6.0, 5.0],
+        "debt_reduction": [2.0, 2.0],
+    }
+
+    result = calculate_accounting_features(concepts, market_cap=200.0)
+
+    assert result["CashProd"].raw_value == pytest.approx(10.0)
+    assert result["ChAssetTurnover"].raw_value == pytest.approx(0.0)
+    assert result["CompositeDebtIssuance"].raw_value == pytest.approx(np.log(20.0) - np.log(12.0))
+    assert result["NetEquityFinance"].raw_value == pytest.approx(2.0 / 90.0)
+    assert result["OPLeverage"].raw_value == pytest.approx(1.1)
+    assert result["OperProf"].raw_value == pytest.approx(37.0 / 60.0)
+    assert result["XFIN"].raw_value == pytest.approx(5.0 / 100.0)
 
 
 def test_score_gives_one_vote_to_redundancy_group() -> None:
@@ -229,6 +283,69 @@ def test_coverage_has_one_row_for_every_strict_predictor() -> None:
     report = coverage_report(features, metadata)
     assert len(report) == 185
     assert report.loc[report["signalname"].eq("signal_000"), "coverage_status"].iloc[0] == "exact"
+
+
+def test_coverage_does_not_call_null_exact_values_available() -> None:
+    metadata = _metadata()
+    values = {
+        "AAA": {
+            "signal_000": FeatureValue("signal_000", None, "exact", "test", "formula")
+        }
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    report = coverage_report(features, metadata)
+    row = report.loc[report["signalname"].eq("signal_000")].iloc[0]
+
+    assert row["coverage_status"] == "unavailable"
+    assert row["exact_rows"] == 0
+    assert row["unavailable_rows"] == 1
+
+
+def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
+    metadata = _metadata()
+    metadata.loc[:4, "portperiod"] = [1, 3, 6, 12, 36]
+    values = {
+        symbol: {
+            f"signal_{index:03d}": FeatureValue(
+                f"signal_{index:03d}",
+                float(value + index),
+                "proxy" if index in {2, 4} else "exact",
+                "test",
+                "formula",
+            )
+            for index in range(5)
+        }
+        for symbol, value in (("AAA", 1), ("BBB", 0))
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    scores = calculate_scores(features, minimum_metrics=5)
+    aaa = scores.loc[scores["symbol"].eq("AAA")]
+
+    assert set(aaa["horizon_months"]) == {1, 3, 6, 12, 36}
+    assert aaa["score"].notna().all()
+    assert aaa.loc[aaa["horizon_months"].eq(6), "confidence"].iloc[0] > 0
+
+
+def test_aggregate_score_uses_available_horizons_without_zero_filling() -> None:
+    scores = pd.DataFrame(
+        {
+            "as_of": ["2026-08-01"] * 3,
+            "symbol": ["AAA"] * 3,
+            "horizon_months": [1, 3, 6],
+            "score": [80.0, 60.0, np.nan],
+            "confidence": [100.0, 50.0, 0.0],
+            "metrics_used": [10, 5, 0],
+            "groups_used": [10, 5, 0],
+        }
+    )
+
+    result = calculate_aggregate_scores(scores).iloc[0]
+
+    assert result["aggregate_score"] == pytest.approx((80.0 + 30.0) / 1.5)
+    assert result["horizons_used"] == 2
+    assert result["aggregate_confidence"] == pytest.approx(30.0)
 
 
 def test_workflow_contract_is_github_only_and_complete() -> None:

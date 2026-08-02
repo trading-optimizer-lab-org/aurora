@@ -294,9 +294,39 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
         current_month = monthly.index[-1].month
         same_month = month_returns.loc[month_returns.index.month == current_month].dropna()
         result["MomSeason"] = exact("MomSeason", float(same_month.iloc[-5:].mean()) if len(same_month) >= 5 else None, "same_calendar_month_return_history")
+        result["MomSeasonShort"] = exact(
+            "MomSeasonShort",
+            float(same_month.iloc[-2]) if len(same_month) >= 2 else None,
+            "same_calendar_month_return_previous_year",
+        )
         result["MomSeason06YrPlus"] = exact("MomSeason06YrPlus", float(same_month.iloc[:-5].mean()) if len(same_month) > 5 else None, "same_month_history_excluding_recent_5y")
         result["MomSeason11YrPlus"] = exact("MomSeason11YrPlus", float(same_month.iloc[:-10].mean()) if len(same_month) > 10 else None, "same_month_history_excluding_recent_10y")
         result["MomSeason16YrPlus"] = exact("MomSeason16YrPlus", float(same_month.iloc[:-15].mean()) if len(same_month) > 15 else None, "same_month_history_excluding_recent_15y")
+        def off_season_average(older: int, newer: int) -> float | None:
+            window = month_returns.iloc[-older:-newer] if newer else month_returns.iloc[-older:]
+            window = window.loc[window.index.month != current_month].dropna()
+            return float(window.mean()) if not window.empty else None
+
+        result["Mom12mOffSeason"] = exact(
+            "Mom12mOffSeason",
+            off_season_average(12, 0),
+            "average_other_calendar_month_returns_previous_year",
+        )
+        result["MomOffSeason"] = exact(
+            "MomOffSeason",
+            off_season_average(60, 24),
+            "average_other_calendar_month_returns_years_2_to_5",
+        )
+        result["MomOffSeason06YrPlus"] = exact(
+            "MomOffSeason06YrPlus",
+            off_season_average(120, 60),
+            "average_other_calendar_month_returns_years_6_to_10",
+        )
+        result["MomOffSeason16YrPlus"] = exact(
+            "MomOffSeason16YrPlus",
+            off_season_average(240, 180),
+            "average_other_calendar_month_returns_years_16_to_20",
+        )
     return result
 
 
@@ -323,9 +353,16 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
     "debt_current": ("ShortTermBorrowings", "LongTermDebtCurrent"),
     "debt_long": ("LongTermDebtNoncurrent", "LongTermDebt"),
     "interest": ("InterestExpenseNonOperating", "InterestExpense"),
+    "operating_income": ("OperatingIncomeLoss", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"),
+    "short_investments": ("ShortTermInvestments", "MarketableSecuritiesCurrent"),
+    "long_investments": ("LongTermInvestments", "OtherInvestments"),
+    "preferred_stock": ("PreferredStockValue", "PreferredStockCarryingValue"),
+    "deferred_tax": ("DeferredIncomeTaxExpenseBenefit",),
     "dividends": ("PaymentsOfDividends", "PaymentsOfDividendsCommonStock"),
     "repurchases": ("PaymentsForRepurchaseOfCommonStock",),
     "share_issuance": ("ProceedsFromStockOptionsExercised", "ProceedsFromIssuanceOfCommonStock"),
+    "debt_issuance": ("ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromIssuanceOfDebt"),
+    "debt_reduction": ("RepaymentsOfLongTermDebt", "RepaymentsOfDebt"),
     "shares": ("EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"),
     "employees": ("EntityNumberOfEmployees",),
     "backlog": ("OrderBacklog",),
@@ -333,13 +370,23 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, list[float | None]]:
-    """Return current and lagged canonical concepts using strict available_at."""
+    """Return comparable annual concepts using strict available_at.
+
+    OpenAP accounting signals are annual.  SEC Company Facts frequently stores
+    quarterly, year-to-date and annual observations for the same tag.  Mixing
+    those rows would turn a quarter-to-quarter change into a fake annual
+    growth rate, so annual filings and fiscal-year observations are preferred.
+    The fallback keeps older fixtures and issuers with incomplete metadata
+    usable, but never chooses a future filing.
+    """
 
     if facts.empty:
         return {}
     frame = facts.copy()
     frame["available_at"] = pd.to_datetime(frame["available_at"], errors="coerce", utc=True).dt.tz_localize(None)
     frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce")
+    if "period_start" in frame:
+        frame["period_start"] = pd.to_datetime(frame["period_start"], errors="coerce")
     frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
     frame = frame.loc[frame["available_at"].le(pd.Timestamp(as_of))].dropna(subset=["period_end", "value"])
     result: dict[str, list[float | None]] = {}
@@ -348,6 +395,17 @@ def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, l
         if subset.empty:
             result[concept] = [None, None, None, None, None, None]
             continue
+        if "form" in subset:
+            annual_form = subset["form"].astype(str).str.upper().isin({"10-K", "20-F", "40-F"})
+        else:
+            annual_form = pd.Series(False, index=subset.index)
+        if "fp" in subset:
+            fiscal_year = subset["fp"].astype(str).str.upper().eq("FY")
+        else:
+            fiscal_year = pd.Series(False, index=subset.index)
+        annual = subset.loc[annual_form | fiscal_year].copy()
+        if not annual.empty:
+            subset = annual
         subset["alias_rank"] = subset["tag"].map({name: index for index, name in enumerate(aliases)})
         subset = subset.sort_values(["period_end", "available_at", "alias_rank"])
         subset = subset.drop_duplicates("period_end", keep="last").sort_values("period_end")
@@ -385,6 +443,16 @@ def calculate_accounting_features(
         ratio = _safe_ratio(current, previous)
         return ratio - 1.0 if ratio is not None else None
 
+    def difference(left: float | None, right: float | None) -> float | None:
+        if left is None or right is None:
+            return None
+        return left - right
+
+    def sum_required(*items: float | None) -> float | None:
+        if any(item is None for item in items):
+            return None
+        return float(sum(float(item) for item in items if item is not None))
+
     assets = value("assets")
     assets_lag = value("assets", 1)
     equity = value("equity")
@@ -400,13 +468,23 @@ def calculate_accounting_features(
     cogs = value("cogs")
     rd = value("rd")
     sga = value("sga")
-    debt = sum(item or 0.0 for item in (value("debt_current"), value("debt_long")))
+    debt = sum_required(value("debt_current"), value("debt_long"))
     dividends = value("dividends")
     repurchases = value("repurchases")
     issuance = value("share_issuance")
+    debt_current = value("debt_current")
+    debt_long = value("debt_long")
+    debt_lag = sum_required(value("debt_current", 1), value("debt_long", 1))
+    debt_5y = sum_required(value("debt_current", 5), value("debt_long", 5))
+    average_assets = (
+        (assets + assets_lag) / 2.0
+        if assets is not None and assets_lag is not None
+        else None
+    )
 
     def exact(name: str, raw: float | None, formula: str) -> FeatureValue:
-        return FeatureValue(name, raw, "exact", "sec_edgar", formula)
+        note = "" if raw is not None else "Required SEC inputs are unavailable or not comparable"
+        return FeatureValue(name, raw, "exact", "sec_edgar", formula, note)
 
     def proxy(name: str, raw: float | None, formula: str, note: str) -> FeatureValue:
         return FeatureValue(name, raw, "proxy", "sec_edgar", formula, note)
@@ -422,9 +500,21 @@ def calculate_accounting_features(
     result["GP"] = exact("GP", _safe_ratio(gross_profit, assets), "gross_profit_over_assets")
     result["RoE"] = exact("RoE", _safe_ratio(net_income, equity), "net_income_over_book_equity")
     result["Cash"] = exact("Cash", _safe_ratio(cash, assets), "cash_over_assets")
+    result["CashProd"] = exact(
+        "CashProd",
+        _safe_ratio(difference(market_cap, assets), cash),
+        "market_cap_minus_assets_over_cash",
+    )
     result["BookLeverage"] = exact("BookLeverage", _safe_ratio(liabilities, assets), "liabilities_over_assets")
     result["Leverage"] = exact("Leverage", _safe_ratio(debt, market_cap), "debt_over_market_cap")
     result["AssetGrowth"] = exact("AssetGrowth", growth("assets"), "assets_growth_1y")
+    current_asset_turnover = _safe_ratio(revenue, assets)
+    lag_asset_turnover = _safe_ratio(value("revenue", 1), assets_lag)
+    result["ChAssetTurnover"] = exact(
+        "ChAssetTurnover",
+        difference(current_asset_turnover, lag_asset_turnover),
+        "annual_change_revenue_over_assets",
+    )
     result["ChEQ"] = exact("ChEQ", growth("equity"), "book_equity_growth_1y")
     result["ChInv"] = exact("ChInv", _safe_ratio(delta("inventory"), assets_lag), "inventory_change_over_lag_assets")
     result["InvGrowth"] = exact("InvGrowth", growth("inventory"), "inventory_growth_1y")
@@ -438,21 +528,162 @@ def calculate_accounting_features(
     result["Accruals"] = exact("Accruals", _safe_ratio(accruals, assets_lag), "net_income_minus_ocf_over_lag_assets")
     result["TotalAccruals"] = exact("TotalAccruals", _safe_ratio(accruals, assets_lag), "total_accruals_over_lag_assets")
     result["PctAcc"] = exact("PctAcc", _safe_ratio(accruals, abs(net_income) if net_income is not None else None), "accruals_over_abs_earnings")
-    result["NOA"] = proxy("NOA", _safe_ratio((assets or 0) - (cash or 0) - debt, assets), "net_operating_assets_proxy", "SEC taxonomy cannot reproduce every financing component exactly")
+    current_operating_assets = difference(ca, cash)
+    lag_operating_assets = difference(value("current_assets", 1), value("cash", 1))
+    current_operating_liabilities = difference(cl, debt_current)
+    lag_operating_liabilities = difference(value("current_liabilities", 1), value("debt_current", 1))
+    result["DelCOA"] = exact(
+        "DelCOA",
+        _safe_ratio(difference(current_operating_assets, lag_operating_assets), average_assets),
+        "change_current_operating_assets_over_average_assets",
+    )
+    result["DelCOL"] = exact(
+        "DelCOL",
+        _safe_ratio(difference(current_operating_liabilities, lag_operating_liabilities), average_assets),
+        "change_current_operating_liabilities_over_average_assets",
+    )
+    result["DelEqu"] = exact(
+        "DelEqu",
+        _safe_ratio(delta("equity"), average_assets),
+        "change_book_equity_over_average_assets",
+    )
+    financial_liabilities = sum_required(debt_current, debt_long, value("preferred_stock"))
+    lag_financial_liabilities = sum_required(
+        value("debt_current", 1),
+        value("debt_long", 1),
+        value("preferred_stock", 1),
+    )
+    result["DelFINL"] = exact(
+        "DelFINL",
+        _safe_ratio(difference(financial_liabilities, lag_financial_liabilities), average_assets),
+        "change_financial_liabilities_over_average_assets",
+    )
+    result["DelLTI"] = exact(
+        "DelLTI",
+        _safe_ratio(delta("long_investments"), average_assets),
+        "change_long_term_investments_over_average_assets",
+    )
+    net_financial_assets = difference(
+        sum_required(value("short_investments"), value("long_investments")),
+        financial_liabilities,
+    )
+    lag_net_financial_assets = difference(
+        sum_required(value("short_investments", 1), value("long_investments", 1)),
+        lag_financial_liabilities,
+    )
+    result["DelNetFin"] = exact(
+        "DelNetFin",
+        _safe_ratio(difference(net_financial_assets, lag_net_financial_assets), average_assets),
+        "change_net_financial_assets_over_average_assets",
+    )
+    noa_proxy = (
+        assets - cash - debt
+        if assets is not None and cash is not None and debt is not None
+        else None
+    )
+    result["NOA"] = proxy("NOA", _safe_ratio(noa_proxy, assets), "net_operating_assets_proxy", "SEC taxonomy cannot reproduce every financing component exactly")
     result["dNoa"] = proxy("dNoa", None, "change_in_noa_proxy", "Requires lagged canonical financing components")
     result["RD"] = exact("RD", _safe_ratio(rd, market_cap), "rd_over_market_cap")
     result["RDS"] = exact("RDS", _safe_ratio(rd, revenue), "rd_over_sales")
     result["RDcap"] = proxy("RDcap", _safe_ratio(rd, assets), "rd_over_assets_proxy", "Official signal capitalizes R&D recursively")
     result["AdExp"] = exact("AdExp", _safe_ratio(value("advertising"), market_cap), "advertising_over_market_cap")
     result["GrAdExp"] = exact("GrAdExp", growth("advertising"), "advertising_growth_1y")
+    rd_growth = growth("rd")
+    rd_assets = _safe_ratio(rd, assets)
+    rd_sales = _safe_ratio(rd, revenue)
+    lag_rd_assets = _safe_ratio(value("rd", 1), assets_lag)
+    result["SurpriseRD"] = exact(
+        "SurpriseRD",
+        float(
+            bool(
+                rd_sales is not None
+                and rd_sales > 0
+                and rd_assets is not None
+                and rd_assets > 0
+                and rd_growth is not None
+                and rd_growth > 0.05
+                and lag_rd_assets is not None
+                and abs(lag_rd_assets) > 1e-12
+                and rd_assets / lag_rd_assets - 1.0 > 0.05
+            )
+        )
+        if all(item is not None for item in (rd, revenue, assets, assets_lag, rd_growth, lag_rd_assets))
+        else None,
+        "rd_intensity_and_growth_four_condition_indicator",
+    )
     result["grcapx"] = exact("grcapx", growth("capex"), "capex_growth_1y")
     result["grcapx3y"] = exact("grcapx3y", growth("capex", 3), "capex_growth_3y")
     result["InvestPPEInv"] = exact("InvestPPEInv", _safe_ratio((delta("ppe") or 0.0) + (delta("inventory") or 0.0), assets_lag), "ppe_plus_inventory_change_over_lag_assets")
     result["Investment"] = exact("Investment", _safe_ratio(value("capex"), revenue), "capex_over_revenue")
+    sales_growth = _safe_ratio(
+        difference(revenue, value("revenue", 1)),
+        np.mean([item for item in (value("revenue", 1), value("revenue", 2)) if item is not None])
+        if value("revenue", 1) is not None
+        else None,
+    )
+    inventory_growth = _safe_ratio(
+        difference(inventory, value("inventory", 1)),
+        np.mean([item for item in (value("inventory", 1), value("inventory", 2)) if item is not None])
+        if value("inventory", 1) is not None
+        else None,
+    )
+    result["GrSaleToGrInv"] = exact(
+        "GrSaleToGrInv",
+        difference(sales_growth, inventory_growth),
+        "sales_growth_minus_inventory_growth_using_two_year_average",
+    )
     result["PayoutYield"] = exact("PayoutYield", _safe_ratio((dividends or 0.0) + (repurchases or 0.0), market_cap), "dividends_plus_repurchases_over_market_cap")
     result["NetPayoutYield"] = exact("NetPayoutYield", _safe_ratio((dividends or 0.0) + (repurchases or 0.0) - (issuance or 0.0), market_cap), "net_payout_over_market_cap")
+    result["NetEquityFinance"] = exact(
+        "NetEquityFinance",
+        _safe_ratio(difference(issuance, repurchases), average_assets),
+        "stock_issuance_minus_repurchases_over_average_assets",
+    )
+    result["CompositeDebtIssuance"] = exact(
+        "CompositeDebtIssuance",
+        math.log(debt) - math.log(debt_5y)
+        if debt is not None and debt > 0 and debt_5y is not None and debt_5y > 0
+        else None,
+        "log_total_debt_minus_log_total_debt_five_years_ago",
+    )
+    debt_issuance = value("debt_issuance")
+    result["DebtIssuance"] = exact(
+        "DebtIssuance",
+        float(debt_issuance > 0) if debt_issuance is not None else None,
+        "long_term_debt_issuance_positive_indicator",
+    )
     result["NetDebtFinance"] = exact("NetDebtFinance", _safe_ratio(delta("debt_long"), assets_lag), "net_debt_change_over_lag_assets")
-    result["NetDebtPrice"] = exact("NetDebtPrice", _safe_ratio(debt - (cash or 0.0), market_cap), "net_debt_over_market_cap")
+    result["NetDebtPrice"] = exact(
+        "NetDebtPrice",
+        _safe_ratio(difference(debt, cash), market_cap),
+        "net_debt_over_market_cap",
+    )
+    result["OPLeverage"] = exact(
+        "OPLeverage",
+        _safe_ratio(sum_required(sga if sga is not None else 0.0, cogs), assets),
+        "sga_plus_cogs_over_assets",
+    )
+    operating_profit = None
+    if revenue is not None and cogs is not None and equity is not None:
+        operating_profit = revenue - cogs - (sga or 0.0) - (value("interest") or 0.0)
+    result["OperProf"] = exact(
+        "OperProf",
+        _safe_ratio(operating_profit, equity),
+        "revenue_minus_cogs_sga_interest_over_book_equity",
+    )
+    debt_reduction = value("debt_reduction")
+    external_finance = sum_required(
+        issuance,
+        -dividends if dividends is not None else None,
+        -repurchases if repurchases is not None else None,
+        debt_issuance,
+        -debt_reduction if debt_reduction is not None else None,
+    )
+    result["XFIN"] = exact(
+        "XFIN",
+        _safe_ratio(external_finance, assets),
+        "issuance_minus_dividends_repurchases_plus_net_debt_issuance_over_assets",
+    )
     result["ShareIss1Y"] = exact("ShareIss1Y", growth("shares"), "shares_growth_1y")
     result["ShareIss5Y"] = exact("ShareIss5Y", growth("shares", 5), "shares_growth_5y")
     tangible = None
@@ -476,6 +707,83 @@ UNAVAILABLE_BY_SOURCE = {
 }
 
 
+UNIMPLEMENTED_REQUIREMENTS: dict[str, tuple[str, str]] = {
+    "AbnormalAccruals": ("cross_sectional_regression", "Requires the annual industry cross-sectional modified-Jones regression"),
+    "AccrualsBM": ("cross_sectional_double_sort", "Requires current cross-sectional accrual and book-to-market quintiles"),
+    "AnnouncementReturn": ("earnings_event_history", "Requires causal quarterly earnings announcement dates and event returns"),
+    "BMdec": ("historical_december_market_cap", "Requires the most recent December market-equity snapshot"),
+    "BPEBM": ("additional_sec_concepts", "Requires preferred stock and deferred-charge concepts aligned to the official formula"),
+    "BetaLiquidityPS": ("external_liquidity_factor", "Requires the Pastor-Stambaugh liquidity innovation series and a 60-month regression"),
+    "BetaTailRisk": ("cross_sectional_tail_factor", "Requires a 120-month regression on a market-wide daily tail-risk factor"),
+    "BrandInvest": ("brand_investment_history", "Requires the paper's accumulated advertising-capital construction"),
+    "CBOperProf": ("industry_adjusted_accounting", "Requires the official conservative operating-profitability construction"),
+    "CashProd": ("official_formula_pending", "SEC inputs exist, but the official cash-productivity formula is not yet implemented"),
+    "ChAssetTurnover": ("annual_history_formula_pending", "Requires two causally available annual asset-turnover observations"),
+    "ChInvIA": ("historical_industry_membership", "Requires annual capex growth and historical two-digit SIC industry means"),
+    "ChNNCOA": ("additional_sec_concepts", "Requires non-current investments and the complete non-current operating-assets formula"),
+    "CompEquIss": ("historical_market_cap", "Requires five-year market-equity growth and five-year stock return"),
+    "CompositeDebtIssuance": ("five_year_debt_history", "Requires comparable current and five-year-lagged total debt"),
+    "ConvDebt": ("convertible_debt_classification", "Requires a reliable convertible-debt concept not consistently present in SEC XBRL"),
+    "CoskewACX": ("market_regression", "Requires one year of aligned daily stock and value-weighted market returns"),
+    "Coskewness": ("market_regression", "Requires 60 months of aligned stock and value-weighted market excess returns"),
+    "DebtIssuance": ("debt_issuance_cash_flow", "Requires a consistently mapped long-term debt issuance cash-flow concept"),
+    "DelCOA": ("additional_sec_concepts", "Requires current operating assets and comparable annual lags"),
+    "DelCOL": ("additional_sec_concepts", "Requires current operating liabilities and comparable annual lags"),
+    "DelEqu": ("annual_history_formula_pending", "Requires book-equity change scaled by average annual assets"),
+    "DelFINL": ("additional_sec_concepts", "Requires preferred stock plus current and long-term debt annual changes"),
+    "DelLTI": ("long_term_investments", "Requires investments-and-advances history"),
+    "DelNetFin": ("additional_sec_concepts", "Requires short- and long-term investments, debt and preferred stock history"),
+    "DivYieldST": ("distribution_code_history", "Yahoo dividends do not contain CRSP distribution codes required by the official bins"),
+    "EBM": ("additional_sec_concepts", "Requires preferred stock and deferred-charge concepts aligned to the official formula"),
+    "EarnSupBig": ("historical_industry_membership", "Requires quarterly earnings surprise and historical FF48 large-firm industry means"),
+    "EarningsConsistency": ("quarterly_eps_history", "Requires at least 48 months of comparable causal quarterly EPS"),
+    "EarningsStreak": ("point_in_time_analyst_history", "Requires point-in-time IBES actuals and forecasts"),
+    "EarningsSurprise": ("quarterly_eps_history", "Requires causal quarterly EPS and an eight-quarter drift history"),
+    "EntMult": ("additional_sec_concepts", "Requires operating income before depreciation and deferred charges"),
+    "EquityDuration": ("official_code_required", "The metadata delegates the formula to official code; no safe two-source implementation is frozen"),
+    "FirmAgeMom": ("cross_sectional_age_sort", "Requires firm-age quintiles and six-month momentum after a historical listing-date audit"),
+    "Frontier": ("rolling_cross_sectional_regression", "Requires a rolling 60-month cross-sectional regression with industry dummies"),
+    "GrLTNOA": ("additional_sec_concepts", "Requires the complete long-term net operating-assets and accrual formulas"),
+    "GrSaleToGrInv": ("annual_history_formula_pending", "Requires comparable two-year revenue and inventory histories"),
+    "Herf": ("historical_industry_membership", "Requires three-digit SIC revenue shares and a three-year rolling industry index"),
+    "HerfBE": ("historical_industry_membership", "Requires three-digit SIC book-equity shares and a three-year rolling industry index"),
+    "IdioVol3F": ("factor_returns", "Requires daily Fama-French three-factor residuals"),
+    "IntanBM": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "IntanCFP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "IntanEP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "IntanSP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "MS": ("official_code_required", "Requires the full low-BM Mohanram score construction and cross-sectional eligibility filter"),
+    "MeanRankRevGrowth": ("five_year_cross_sectional_ranks", "Requires annual revenue-growth ranks for five historical cross-sections"),
+    "Mom12mOffSeason": ("seasonality_formula_pending", "Price history exists, but the exact off-season month selection is not yet frozen"),
+    "Mom6mJunk": ("credit_rating_history", "Requires a causal issuer credit-rating history"),
+    "MomOffSeason": ("seasonality_formula_pending", "Price history exists, but the exact two-to-five-year off-season window is not yet frozen"),
+    "MomOffSeason06YrPlus": ("seasonality_formula_pending", "Price history exists, but the exact six-to-ten-year off-season window is not yet frozen"),
+    "MomOffSeason16YrPlus": ("seasonality_formula_pending", "Price history exists, but the exact sixteen-to-twenty-year off-season window is not yet frozen"),
+    "MomRev": ("cross_sectional_double_sort", "Requires current cross-sectional Mom6m and Mom36m quintiles"),
+    "MomSeasonShort": ("seasonality_formula_pending", "Requires the same calendar-month return from the previous year"),
+    "MomVol": ("historical_turnover_sort", "Requires independent momentum and six-month turnover portfolio sorts"),
+    "NetEquityFinance": ("equity_cash_flow_mapping", "Requires consistently mapped stock sale and repurchase cash flows"),
+    "NumEarnIncrease": ("quarterly_income_history", "Requires up to eight consecutive year-over-year quarterly income comparisons"),
+    "OPLeverage": ("official_formula_pending", "SEC cost and SG&A inputs exist, but the official formula is not yet implemented"),
+    "OScore": ("gnp_deflator_and_industry_filter", "Requires the historical GNP deflator and official industry exclusions"),
+    "OperProf": ("official_formula_pending", "SEC inputs exist, but the official operating-profitability formula and size filter are not yet implemented"),
+    "OrgCap": ("capitalized_sga_history", "Requires recursively capitalized SG&A organization capital"),
+    "PS": ("piotroski_cross_section", "Requires all nine Piotroski inputs plus the high book-to-market eligibility quintile"),
+    "PctTotAcc": ("cash_flow_statement_components", "Requires complete financing and investing cash-flow components"),
+    "PriceDelayRsq": ("market_regression", "Requires the annual daily market-lag regression and July refresh rule"),
+    "ResidualMomentum": ("factor_returns", "Requires 36 months of Fama-French residual returns"),
+    "ReturnSkew3F": ("factor_returns", "Requires daily Fama-French three-factor residuals"),
+    "RevenueSurprise": ("quarterly_revenue_per_share_history", "Requires causal quarterly revenue-per-share history and rolling standardization"),
+    "ShortInterest": ("short_interest_history", "SEC and Yahoo do not provide the required causal mid-month short-interest series"),
+    "SurpriseRD": ("annual_history_formula_pending", "Requires comparable annual R&D, revenue and assets growth"),
+    "Tax": ("tax_component_mapping", "Requires federal, foreign and deferred tax components mapped consistently"),
+    "XFIN": ("cash_flow_statement_components", "Requires stock issuance, repurchase, dividends and debt issue/reduction flows"),
+    "betaVIX": ("vix_market_regression", "Requires aligned daily VIX changes, market returns and stock excess returns"),
+    "retConglomerate": ("business_segment_history", "Requires causal Compustat business-segment sales and stand-alone industry returns"),
+    "roaq": ("quarterly_income_history", "Requires a clean quarterly net-income series divided by lagged quarterly assets"),
+}
+
+
 def classify_missing_signal(row: Mapping[str, Any]) -> tuple[str, str, str]:
     """Classify a non-computed predictor without claiming nonexistent data."""
 
@@ -483,6 +791,9 @@ def classify_missing_signal(row: Mapping[str, Any]) -> tuple[str, str, str]:
     category = str(row.get("Cat.Data", ""))
     if name in UNAVAILABLE_BY_SOURCE:
         return "unavailable", "missing_external_source", UNAVAILABLE_BY_SOURCE[name]
+    if name in UNIMPLEMENTED_REQUIREMENTS:
+        source, note = UNIMPLEMENTED_REQUIREMENTS[name]
+        return "unavailable", source, note
     if category == "13F":
         return "proxy", "yfinance_institutional_snapshot", "Current Yahoo holder snapshot is not historical Thomson/SEC 13F reconstruction"
     if category == "Options":
@@ -582,8 +893,61 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
     )
     summary["score"] = summary["weighted_sum"] / summary["total_weight"].replace(0, np.nan)
     summary["confidence"] = np.minimum(100.0, 100.0 * summary["groups_used"] / 25.0)
-    summary.loc[summary["metrics_used"].lt(int(minimum_metrics)), ["score", "confidence"]] = np.nan
-    return summary[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
+    available_by_horizon = (
+        usable.groupby("horizon_months")["signalname"].nunique().clip(upper=int(minimum_metrics)).astype(int)
+    )
+    required = summary["horizon_months"].map(available_by_horizon).fillna(int(minimum_metrics)).astype(int)
+    summary.loc[summary["metrics_used"].lt(required), ["score", "confidence"]] = np.nan
+
+    symbols = sorted(features["symbol"].astype(str).unique())
+    as_of_values = sorted(features["as_of"].astype(str).unique())
+    grid = pd.MultiIndex.from_product(
+        [as_of_values, symbols, SUPPORTED_HORIZONS],
+        names=["as_of", "symbol", "horizon_months"],
+    ).to_frame(index=False)
+    result = grid.merge(summary, on=["as_of", "symbol", "horizon_months"], how="left")
+    result[["metrics_used", "groups_used"]] = result[["metrics_used", "groups_used"]].fillna(0).astype(int)
+    result["confidence"] = result["confidence"].fillna(0.0)
+    return result[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
+
+
+def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
+    """Combine independent horizon scores without treating missing horizons as zero."""
+
+    columns = [
+        "as_of",
+        "symbol",
+        "aggregate_score",
+        "aggregate_confidence",
+        "horizons_used",
+    ]
+    if scores.empty:
+        return pd.DataFrame(columns=columns)
+    frame = scores.copy()
+    frame["score"] = pd.to_numeric(frame["score"], errors="coerce")
+    frame["confidence"] = pd.to_numeric(frame["confidence"], errors="coerce").fillna(0.0)
+    usable = frame.loc[frame["score"].notna() & frame["confidence"].gt(0)].copy()
+    usable["horizon_weight"] = usable["confidence"] / 100.0
+    usable["weighted_score"] = usable["score"] * usable["horizon_weight"]
+    if usable.empty:
+        result = frame[["as_of", "symbol"]].drop_duplicates()
+        result["aggregate_score"] = np.nan
+        result["aggregate_confidence"] = 0.0
+        result["horizons_used"] = 0
+        return result[columns]
+    result = usable.groupby(["as_of", "symbol"], as_index=False).agg(
+        weighted_sum=("weighted_score", "sum"),
+        total_weight=("horizon_weight", "sum"),
+        mean_confidence=("confidence", "mean"),
+        horizons_used=("horizon_months", "nunique"),
+    )
+    result["aggregate_score"] = result["weighted_sum"] / result["total_weight"].replace(0, np.nan)
+    result["aggregate_confidence"] = result["mean_confidence"] * result["horizons_used"] / len(SUPPORTED_HORIZONS)
+    grid = frame[["as_of", "symbol"]].drop_duplicates()
+    result = grid.merge(result, on=["as_of", "symbol"], how="left")
+    result["aggregate_confidence"] = result["aggregate_confidence"].fillna(0.0)
+    result["horizons_used"] = result["horizons_used"].fillna(0).astype(int)
+    return result[columns]
 
 
 def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFrame:
@@ -592,14 +956,20 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
     rows = []
     total_symbols = int(features["symbol"].nunique()) if not features.empty else 0
     for signal, group in features.groupby("signalname", sort=True):
-        statuses = group["status"].value_counts().to_dict()
-        values = int(group["raw_value"].notna().sum())
+        has_value = group["raw_value"].notna()
+        exact_values = int((has_value & group["status"].eq("exact")).sum())
+        proxy_values = int((has_value & group["status"].eq("proxy")).sum())
+        values = exact_values + proxy_values
         dominant = "unavailable"
-        if statuses.get("exact", 0):
+        if exact_values:
             dominant = "exact"
-        elif statuses.get("proxy", 0):
+        elif proxy_values:
             dominant = "proxy"
         meta = metadata.loc[metadata["signalname"].eq(signal)].iloc[0]
+        sources = sorted({str(item) for item in group.loc[has_value, "source"].dropna() if str(item)})
+        reasons = sorted({str(item) for item in group.loc[~has_value, "source"].dropna() if str(item)})
+        notes = sorted({str(item) for item in group["note"].dropna() if str(item)})
+        formulas = sorted({str(item) for item in group.loc[has_value, "formula_id"].dropna() if str(item)})
         rows.append(
             {
                 "signalname": signal,
@@ -609,9 +979,13 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
                 "symbols_with_value": values,
                 "total_symbols": total_symbols,
                 "coverage_pct": 100.0 * values / total_symbols if total_symbols else 0.0,
-                "exact_rows": int(statuses.get("exact", 0)),
-                "proxy_rows": int(statuses.get("proxy", 0)),
-                "unavailable_rows": int(statuses.get("unavailable", 0)),
+                "exact_rows": exact_values,
+                "proxy_rows": proxy_values,
+                "unavailable_rows": int(total_symbols - values),
+                "value_sources": " | ".join(sources),
+                "unavailable_reasons": " | ".join(reasons),
+                "notes": " | ".join(notes),
+                "formula_ids": " | ".join(formulas),
             }
         )
     report = pd.DataFrame(rows)
@@ -632,6 +1006,7 @@ __all__ = [
     "assemble_feature_table",
     "build_redundancy_groups",
     "calculate_accounting_features",
+    "calculate_aggregate_scores",
     "calculate_price_features",
     "calculate_scores",
     "classify_missing_signal",

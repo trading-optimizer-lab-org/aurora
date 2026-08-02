@@ -29,6 +29,7 @@ from aurora.research.openap_current_score import (
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
+    calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
     coverage_report,
@@ -640,7 +641,7 @@ def _companyfacts_rows(
     *,
     source_url: str,
     source_mode: str,
-    observations_per_tag: int = 6,
+    observations_per_tag: int = 24,
 ) -> list[dict[str, Any]]:
     wanted_tags = {
         alias
@@ -666,9 +667,15 @@ def _companyfacts_rows(
                     continue
                 usable = [item for item in observations if isinstance(item, Mapping) and item.get("end")]
                 usable.sort(key=lambda item: (str(item.get("end") or ""), str(item.get("filed") or "")))
-                by_period: dict[str, Mapping[str, Any]] = {}
+                by_period: dict[tuple[str, str, str, str], Mapping[str, Any]] = {}
                 for observation in usable:
-                    by_period[str(observation.get("end"))] = observation
+                    key = (
+                        str(observation.get("end") or ""),
+                        str(observation.get("start") or ""),
+                        str(observation.get("form") or ""),
+                        str(observation.get("fp") or ""),
+                    )
+                    by_period[key] = observation
                 for observation in list(by_period.values())[-observations_per_tag:]:
                     filed = pd.to_datetime(observation.get("filed"), errors="coerce", utc=True)
                     if pd.isna(filed):
@@ -1175,11 +1182,40 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 "price_rows": len(prices),
                 "first_price_date": prices["date"].min() if not prices.empty else None,
                 "last_price_date": prices["date"].max() if not prices.empty else None,
+                "last_sec_available_at": facts["available_at"].max() if not facts.empty else None,
                 "sec_fact_rows": len(facts),
                 "computed_features": sum(item.raw_value is not None for item in values.values()),
                 "exact_features": sum(item.status == "exact" and item.raw_value is not None for item in values.values()),
                 "proxy_features": sum(item.status == "proxy" and item.raw_value is not None for item in values.values()),
             }
+        )
+
+    industry_by_symbol = eligible.set_index("symbol").get("industry", pd.Series(dtype=object)).astype(str)
+    industry_momentum: dict[str, list[float]] = {}
+    for symbol, values in values_by_symbol.items():
+        momentum = values.get("Mom6m")
+        industry = industry_by_symbol.get(symbol, "")
+        if industry and industry not in {"nan", "None"} and momentum and _is_number(momentum.raw_value):
+            industry_momentum.setdefault(industry, []).append(float(momentum.raw_value))
+    industry_means = {name: float(np.mean(values)) for name, values in industry_momentum.items() if values}
+    for symbol, values in values_by_symbol.items():
+        industry = industry_by_symbol.get(symbol, "")
+        values["IndMom"] = FeatureValue(
+            "IndMom",
+            industry_means.get(industry),
+            "proxy",
+            "yfinance_current_industry",
+            "current_industry_mean_mom6m",
+            "Current Yahoo industry replaces historical SIC membership",
+        )
+        realized = values.get("RealizedVol")
+        values["IdioVolAHT"] = FeatureValue(
+            "IdioVolAHT",
+            float(realized.raw_value) if realized and _is_number(realized.raw_value) else None,
+            "proxy",
+            "yfinance_price_history",
+            "realized_volatility_proxy_for_idiosyncratic_volatility",
+            "Factor-residual volatility is unavailable; total realized volatility is disclosed as a proxy",
         )
 
     feature_frame = assemble_feature_table(
@@ -1189,10 +1225,16 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         redundancy_groups=groups,
     )
     scores = calculate_scores(feature_frame, minimum_metrics=int(config["score"]["minimum_metrics_per_score"]))
+    aggregate_scores = calculate_aggregate_scores(scores)
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
     feature_frame.to_parquet(output / "openap_features_current.parquet", index=False, compression="zstd")
     scores.to_parquet(output / "openap_scores_current.parquet", index=False, compression="zstd")
+    aggregate_scores.to_parquet(
+        output / "openap_scores_aggregate_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     coverage.to_csv(output / "coverage_185.csv", index=False)
     quality.to_csv(output / "data_quality.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("proxy")].to_csv(output / "proxy_audit.csv", index=False)
@@ -1203,6 +1245,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute("CREATE OR REPLACE TABLE security_master AS SELECT * FROM read_parquet(?)", [str(output / "security_master.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_features_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_features_current.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_scores_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_scores_current.parquet")])
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_scores_aggregate_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "openap_scores_aggregate_current.parquet")],
+    )
     duplicate_prices = int(
         connection.execute(
             "SELECT COALESCE(SUM(row_count - 1), 0) FROM "
@@ -1248,6 +1294,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "unavailable_predictors": unavailable_predictors,
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
+        "aggregate_scores_rows": len(aggregate_scores),
+        "score_horizons": sorted(scores["horizon_months"].dropna().astype(int).unique().tolist()),
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
