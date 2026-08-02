@@ -77,10 +77,28 @@ def _validate_no_go(receipt: dict[str, Any]) -> None:
     }
     if boundaries != expected_boundaries:
         raise ValueError("no-go scientific boundaries changed")
-    if receipt.get("financial_closure", {}).get(
-        "maximum_incremental_net_spend_usd"
-    ) != 0:
+    financial = receipt.get("financial_closure", {})
+    if financial.get("maximum_incremental_net_spend_usd") != 0:
         raise ValueError("no-go closure permits incremental spend")
+    if financial.get("current_actions_net_amount_usd") != 0:
+        raise ValueError("no-go closure records a non-zero Actions cost")
+    if financial.get("unreconciled_cost_domains") != []:
+        raise ValueError("no-go closure leaves an unreconciled cost domain")
+    if financial.get("terminal_financial_exception_required") is not False:
+        raise ValueError("no-go closure requires an unresolved financial exception")
+    resources = receipt.get("resource_inventory", {})
+    if resources.get("billable_resources_created") != 0:
+        raise ValueError("no-go closure created a billable resource")
+    if resources.get("temporary_cloud_resources_created") != 0:
+        raise ValueError("no-go closure left temporary cloud resources")
+    if resources.get("self_hosted_runners_created") != 0:
+        raise ValueError("no-go closure created self-hosted runners")
+    if resources.get("controller_artifact_retained_under_approved_evidence_policy") is not True:
+        raise ValueError("controller evidence is not retained under approved policy")
+    if resources.get("github_repository_retained_as_canonical_evidence") is not True:
+        raise ValueError("canonical repository evidence is not retained")
+    if not resources.get("retained_evidence_entries"):
+        raise ValueError("no-go closure has no retained-evidence manifest")
     if receipt.get("run") != {
         "id": 30698392125,
         "url": (
@@ -171,6 +189,8 @@ def build_reconciliation() -> dict[str, Any]:
 
     tasks = _csv_rows(MASTER_READINESS / "task_status.csv")
     gates = _csv_rows(MASTER_READINESS / "gate_status.csv")
+    tasks_by_id = {row["id"]: row for row in tasks}
+    gates_by_id = {row["gate_id"]: row for row in gates}
     task_counts = {
         status: sum(row["status"] == status for row in tasks)
         for status in ("done", "cancelled", "blocked")
@@ -187,6 +207,31 @@ def build_reconciliation() -> dict[str, Any]:
         raise ValueError("formal task projection changed without reconciliation")
     if len(gates) != 15 or gate_counts != {"green": 4, "red": 11}:
         raise ValueError("formal gate projection changed without reconciliation")
+
+    terminal_requirements = {
+        "prev7_0000_done": tasks_by_id["PREV7-0000"]["status"] == "done",
+        "g0_green": gates_by_id["G0"]["status"] == "green",
+        "no_successful_g7_or_full_claimed": (
+            no_go["resource_inventory"]["v7_g7_or_full_scientific_runs_dispatched"]
+            == 0
+        ),
+        "exact_no_go_controller_receipt_verified": True,
+        "resources_absent_or_retained_under_approved_policy": (
+            no_go["resource_inventory"]["billable_resources_created"] == 0
+            and no_go["resource_inventory"]["temporary_cloud_resources_created"]
+            == 0
+            and no_go["resource_inventory"][
+                "controller_artifact_retained_under_approved_evidence_policy"
+            ]
+            is True
+        ),
+        "all_cost_domains_reconciled": (
+            no_go["financial_closure"]["unreconciled_cost_domains"] == []
+            and no_go["financial_closure"]["current_actions_net_amount_usd"] == 0
+        ),
+    }
+    if not all(terminal_requirements.values()):
+        raise ValueError("NO_GO_CLOSED completion requirements are not satisfied")
 
     receipt: dict[str, Any] = {
         "schema_version": "gtbi_v7_master_execution_reconciliation_v1",
@@ -207,6 +252,16 @@ def build_reconciliation() -> dict[str, Any]:
             "gate_count": len(gates),
             "gate_counts": gate_counts,
             "terminal_no_go_does_not_green_pending_gates": True,
+        },
+        "selected_terminal_path": {
+            "terminal_state": "NO_GO_CLOSED",
+            "plan_completion_definition": "section_24_NO_GO_CLOSED",
+            "requirements": terminal_requirements,
+            "requirements_satisfied": True,
+            "successful_readiness_path_completed": False,
+            "scientific_success": False,
+            "downstream_blocked_tasks_required_for_selected_terminal_state": False,
+            "downstream_blocked_tasks_may_be_executed_under_selected_path": False,
         },
         "independent_new_reference_campaign": {
             "campaign_id": summary["campaign_id"],
@@ -234,6 +289,8 @@ def build_reconciliation() -> dict[str, Any]:
             "maximum_incremental_net_spend_usd": 0,
         },
         "remaining_administrative_scope": {
+            "blocks_selected_terminal_state": False,
+            "classification": "optional_post_terminal_or_future_campaign_scope",
             "repository_inventory_and_reorganization": "pending",
             "legacy_retirement": "pending_decision_no_v7_candidate_passed_filters",
             "repository_wide_modernization": "pending",
