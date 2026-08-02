@@ -279,6 +279,18 @@ jobs:
           test -s "outputs/sec_${{ matrix.chunk }}/lake/sec_companyfacts_$(printf '%03d' '${{ matrix.chunk }}').parquet"
           test -s "outputs/sec_${{ matrix.chunk }}/lake/sec_submissions_$(printf '%03d' '${{ matrix.chunk }}').parquet"
           test -s "outputs/sec_${{ matrix.chunk }}/sec_summary_$(printf '%03d' '${{ matrix.chunk }}').json"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          chunk = int("${{ matrix.chunk }}")
+          summary = json.loads(Path(f"outputs/sec_{chunk}/sec_summary_{chunk:03d}.json").read_text())
+          assert summary["ciks_expected"] > 0
+          assert summary["companyfacts_ciks_ok"] > 0
+          assert summary["submissions_ciks_ok"] > 0
+          assert summary["companyfacts_rows"] > 0
+          assert summary["submissions_rows"] > 0
+          assert summary["all_facts_have_available_at"] is True
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-sec-lake-${{ matrix.chunk }}
@@ -338,6 +350,7 @@ jobs:
           test -s outputs/final/openap_current.duckdb
           test -s outputs/final/openap_features_current.parquet
           test -s outputs/final/openap_scores_current.parquet
+          test -s outputs/final/openap_scores_aggregate_current.parquet
           test -s outputs/final/coverage_185.csv
           test -s outputs/final/execution_summary.json
           python - <<'PY'
@@ -353,6 +366,8 @@ jobs:
           assert summary["duplicate_price_rows"] == 0
           assert summary["future_price_rows"] == 0
           assert summary["facts_without_available_at"] == 0
+          assert summary["score_horizons"] == [1, 3, 6, 12, 36]
+          assert summary["aggregate_scores_rows"] == summary["eligible_symbols"]
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False
           assert summary["partial"] is False

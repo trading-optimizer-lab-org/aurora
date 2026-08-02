@@ -834,9 +834,7 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
     submissions.to_parquet(submissions_path, index=False, compression="zstd")
     status = pd.DataFrame(status_rows)
     status.to_csv(output / f"sec_status_{chunk_index:03d}.csv", index=False)
-    write_summary(
-        output / f"sec_summary_{chunk_index:03d}.json",
-        {
+    summary = {
             "chunk_index": chunk_index,
             "total_chunks": total_chunks,
             "ciks_expected": int(selected["cik"].nunique()),
@@ -850,8 +848,14 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
             "all_facts_have_available_at": bool(not facts.empty and facts["available_at"].notna().all()),
             "locked_opened": False,
             "retrieved_at": _utcnow(),
-        },
-    )
+        }
+    write_summary(output / f"sec_summary_{chunk_index:03d}.json", summary)
+    if selected.empty or facts.empty or submissions.empty:
+        raise OpenAPDataError(
+            "SEC shard is empty: "
+            f"chunk={chunk_index}, selected={len(selected)}, facts={len(facts)}, "
+            f"submissions={len(submissions)}"
+        )
 
 
 def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
