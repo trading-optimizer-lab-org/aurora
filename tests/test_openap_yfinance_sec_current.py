@@ -231,6 +231,49 @@ def test_coverage_has_one_row_for_every_strict_predictor() -> None:
     assert report.loc[report["signalname"].eq("signal_000"), "coverage_status"].iloc[0] == "exact"
 
 
+def test_coverage_does_not_call_null_exact_values_available() -> None:
+    metadata = _metadata()
+    values = {
+        "AAA": {
+            "signal_000": FeatureValue("signal_000", None, "exact", "test", "formula")
+        }
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    report = coverage_report(features, metadata)
+    row = report.loc[report["signalname"].eq("signal_000")].iloc[0]
+
+    assert row["coverage_status"] == "unavailable"
+    assert row["exact_rows"] == 0
+    assert row["unavailable_rows"] == 1
+
+
+def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
+    metadata = _metadata()
+    metadata.loc[:4, "portperiod"] = [1, 3, 6, 12, 36]
+    values = {
+        symbol: {
+            f"signal_{index:03d}": FeatureValue(
+                f"signal_{index:03d}",
+                float(value + index),
+                "proxy" if index in {2, 4} else "exact",
+                "test",
+                "formula",
+            )
+            for index in range(5)
+        }
+        for symbol, value in (("AAA", 1), ("BBB", 0))
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    scores = calculate_scores(features, minimum_metrics=5)
+    aaa = scores.loc[scores["symbol"].eq("AAA")]
+
+    assert set(aaa["horizon_months"]) == {1, 3, 6, 12, 36}
+    assert aaa["score"].notna().all()
+    assert aaa.loc[aaa["horizon_months"].eq(6), "confidence"].iloc[0] > 0
+
+
 def test_workflow_contract_is_github_only_and_complete() -> None:
     text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(encoding="utf-8")
     assert "OpenAP Current Score YFinance SEC EDGAR" in text

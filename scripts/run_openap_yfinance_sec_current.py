@@ -1182,6 +1182,34 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             }
         )
 
+    industry_by_symbol = eligible.set_index("symbol").get("industry", pd.Series(dtype=object)).astype(str)
+    industry_momentum: dict[str, list[float]] = {}
+    for symbol, values in values_by_symbol.items():
+        momentum = values.get("Mom6m")
+        industry = industry_by_symbol.get(symbol, "")
+        if industry and industry not in {"nan", "None"} and momentum and _is_number(momentum.raw_value):
+            industry_momentum.setdefault(industry, []).append(float(momentum.raw_value))
+    industry_means = {name: float(np.mean(values)) for name, values in industry_momentum.items() if values}
+    for symbol, values in values_by_symbol.items():
+        industry = industry_by_symbol.get(symbol, "")
+        values["IndMom"] = FeatureValue(
+            "IndMom",
+            industry_means.get(industry),
+            "proxy",
+            "yfinance_current_industry",
+            "current_industry_mean_mom6m",
+            "Current Yahoo industry replaces historical SIC membership",
+        )
+        realized = values.get("RealizedVol")
+        values["IdioVolAHT"] = FeatureValue(
+            "IdioVolAHT",
+            float(realized.raw_value) if realized and _is_number(realized.raw_value) else None,
+            "proxy",
+            "yfinance_price_history",
+            "realized_volatility_proxy_for_idiosyncratic_volatility",
+            "Factor-residual volatility is unavailable; total realized volatility is disclosed as a proxy",
+        )
+
     feature_frame = assemble_feature_table(
         metadata,
         values_by_symbol,

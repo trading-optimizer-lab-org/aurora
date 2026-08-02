@@ -582,8 +582,22 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
     )
     summary["score"] = summary["weighted_sum"] / summary["total_weight"].replace(0, np.nan)
     summary["confidence"] = np.minimum(100.0, 100.0 * summary["groups_used"] / 25.0)
-    summary.loc[summary["metrics_used"].lt(int(minimum_metrics)), ["score", "confidence"]] = np.nan
-    return summary[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
+    available_by_horizon = (
+        usable.groupby("horizon_months")["signalname"].nunique().clip(upper=int(minimum_metrics)).astype(int)
+    )
+    required = summary["horizon_months"].map(available_by_horizon).fillna(int(minimum_metrics)).astype(int)
+    summary.loc[summary["metrics_used"].lt(required), ["score", "confidence"]] = np.nan
+
+    symbols = sorted(features["symbol"].astype(str).unique())
+    as_of_values = sorted(features["as_of"].astype(str).unique())
+    grid = pd.MultiIndex.from_product(
+        [as_of_values, symbols, SUPPORTED_HORIZONS],
+        names=["as_of", "symbol", "horizon_months"],
+    ).to_frame(index=False)
+    result = grid.merge(summary, on=["as_of", "symbol", "horizon_months"], how="left")
+    result[["metrics_used", "groups_used"]] = result[["metrics_used", "groups_used"]].fillna(0).astype(int)
+    result["confidence"] = result["confidence"].fillna(0.0)
+    return result[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
 
 
 def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFrame:
@@ -592,12 +606,14 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
     rows = []
     total_symbols = int(features["symbol"].nunique()) if not features.empty else 0
     for signal, group in features.groupby("signalname", sort=True):
-        statuses = group["status"].value_counts().to_dict()
-        values = int(group["raw_value"].notna().sum())
+        has_value = group["raw_value"].notna()
+        exact_values = int((has_value & group["status"].eq("exact")).sum())
+        proxy_values = int((has_value & group["status"].eq("proxy")).sum())
+        values = exact_values + proxy_values
         dominant = "unavailable"
-        if statuses.get("exact", 0):
+        if exact_values:
             dominant = "exact"
-        elif statuses.get("proxy", 0):
+        elif proxy_values:
             dominant = "proxy"
         meta = metadata.loc[metadata["signalname"].eq(signal)].iloc[0]
         rows.append(
@@ -609,9 +625,9 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
                 "symbols_with_value": values,
                 "total_symbols": total_symbols,
                 "coverage_pct": 100.0 * values / total_symbols if total_symbols else 0.0,
-                "exact_rows": int(statuses.get("exact", 0)),
-                "proxy_rows": int(statuses.get("proxy", 0)),
-                "unavailable_rows": int(statuses.get("unavailable", 0)),
+                "exact_rows": exact_values,
+                "proxy_rows": proxy_values,
+                "unavailable_rows": int(total_symbols - values),
             }
         )
     report = pd.DataFrame(rows)
