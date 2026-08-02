@@ -186,6 +186,7 @@ def verify_v7_campaign_plan(
     plan_root: Path,
     authorization_path: Path | None = None,
     data_manifest_path: Path | None = None,
+    expected_code_sha: str | None = None,
 ) -> dict[str, Any]:
     """Verify strict plan artifacts and every independent V7 binding."""
     root = Path(plan_root)
@@ -205,8 +206,9 @@ def verify_v7_campaign_plan(
     if contract.get("campaign_fingerprint") != manifest.get("campaign_fingerprint"):
         raise V7CampaignError("V7 contract fingerprint mismatch")
     github_sha = os.environ.get("GITHUB_SHA") if os.environ.get("GITHUB_ACTIONS") == "true" else None
-    if github_sha and contract.get("code_sha") != github_sha:
-        raise V7CampaignError("campaign code SHA differs from the executing GitHub commit")
+    code_sha = str(expected_code_sha or github_sha or "")
+    if code_sha and contract.get("code_sha") != code_sha:
+        raise V7CampaignError("campaign code SHA differs from the expected scientific commit")
     if authorization_path is not None:
         authorization = _validated_authorization(Path(authorization_path))
         if contract.get("authorization_receipt_digest") != authorization.get("receipt_digest"):

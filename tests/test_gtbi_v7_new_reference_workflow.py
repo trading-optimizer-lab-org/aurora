@@ -93,6 +93,7 @@ def test_merge_recovery_reuses_workers_without_recalculating_science() -> None:
     assert set(inputs) == {
         "source_full_run_id",
         "source_commit_sha",
+        "source_block_run_id",
         "prepared_run_id",
         "benchmark_run_id",
         "smoke_run_id",
@@ -104,6 +105,8 @@ def test_merge_recovery_reuses_workers_without_recalculating_science() -> None:
     assert "scientific_recalculation_performed\": False" in text
     assert "range(90)" in text
     assert "range(18)" in text
+    assert "inputs.source_block_run_id != '' || needs.merge-block.result == 'success'" in text
+    assert "--merge-recovery-receipt final-results/merge_recovery_receipt.json" in text
     assert "--expected-alias-count 72000" in text
     assert "--expected-worker-count 360" in text
     assert "locked_authorized\": False" in text
