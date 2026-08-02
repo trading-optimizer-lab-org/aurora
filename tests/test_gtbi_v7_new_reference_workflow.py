@@ -99,6 +99,8 @@ def test_merge_recovery_reuses_workers_without_recalculating_science() -> None:
         "recovery_authorized",
     }
     assert "run_gtbi_v7_new_reference_worker" not in text
+    assert "uses: ./.github/workflows/_aurora-future-run-v3.yml" in text
+    assert "needs.framework-gate.result == 'success'" in text
     assert "scientific_recalculation_performed\": False" in text
     assert "range(90)" in text
     assert "range(18)" in text

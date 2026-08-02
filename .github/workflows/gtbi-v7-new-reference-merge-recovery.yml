@@ -53,9 +53,22 @@ env:
   FINAL_ARTIFACT_NAME: gtbi-v7-new-reference-historical-results
 
 jobs:
+  framework-gate:
+    name: Validate Aurora framework before V7 merge recovery
+    if: inputs.recovery_authorized
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: gtbi-v7-merge-recovery-framework-gate
+      retention_days: 1
+      execution_mode: optimized
+      forced_job_count: 4
+
   recovery-gate:
     name: Verify exact reusable full-run evidence
-    if: inputs.recovery_authorized
+    if: always() && inputs.recovery_authorized && needs.framework-gate.result == 'success'
+    needs: framework-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
