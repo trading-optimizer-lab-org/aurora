@@ -17,10 +17,14 @@ from aurora.research.openap_current_score import (
     calculate_scores,
     coverage_report,
     latest_sec_concepts,
+    latest_sec_concept_inputs,
     select_strict_predictors,
 )
 from scripts.run_openap_yfinance_sec_current import (
+    _analyst_features,
+    _classify_security_eligibility,
     _companyfacts_rows,
+    _hashes_by_chunk,
     _json_from_jina_text,
     _sec_exchange_csv_rows,
     _select_chunk_rows,
@@ -96,6 +100,55 @@ def test_sec_concepts_prefer_comparable_annual_facts() -> None:
     concepts = latest_sec_concepts(facts, pd.Timestamp("2025-06-01"))
 
     assert concepts["revenue"][:2] == [100.0, 80.0]
+
+
+def test_sec_concept_inputs_preserve_reconstruction_provenance() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": ["Assets", "Assets"],
+            "taxonomy": ["us-gaap", "us-gaap"],
+            "unit": ["USD", "USD"],
+            "value": [100.0, 80.0],
+            "period_end": ["2024-12-31", "2023-12-31"],
+            "available_at": ["2025-02-01", "2024-02-01"],
+            "accession_number": ["0001-25", "0001-24"],
+            "form": ["10-K", "10-K"],
+            "fp": ["FY", "FY"],
+            "source": ["sec-a", "sec-b"],
+        }
+    )
+
+    inputs = latest_sec_concept_inputs(facts, pd.Timestamp("2025-06-01"))
+    assets = inputs.loc[inputs["concept"].eq("assets")]
+
+    assert assets["concept_lag"].tolist() == [0, 1]
+    assert assets["accession_number"].tolist() == ["0001-25", "0001-24"]
+    assert assets["available_at"].notna().all()
+    assert assets["source"].tolist() == ["sec-a", "sec-b"]
+
+
+def test_sec_concept_inputs_choose_latest_amendment_then_preferred_alias() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": [
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+            ],
+            "value": [100.0, 999.0, 110.0],
+            "period_end": ["2024-12-31"] * 3,
+            "available_at": ["2025-02-01", "2025-02-01", "2025-03-01"],
+            "accession_number": ["original", "lower-priority-alias", "amendment"],
+            "form": ["10-K", "10-K", "10-K/A"],
+            "fp": ["FY", "FY", "FY"],
+        }
+    )
+
+    inputs = latest_sec_concept_inputs(facts, pd.Timestamp("2025-06-01"))
+    revenue = inputs.loc[inputs["concept"].eq("revenue")]
+
+    assert revenue["value"].tolist() == [110.0]
+    assert revenue["accession_number"].tolist() == ["amendment"]
 
 
 def test_pinned_sec_mapper_fallback_filters_non_common_securities(
@@ -203,6 +256,12 @@ def test_accounting_features_do_not_fill_missing_with_zero() -> None:
     assert result["BM"].raw_value == pytest.approx(0.3)
     assert result["AssetGrowth"].raw_value == pytest.approx(0.25)
     assert result["ChInv"].raw_value is None
+    assert result["InvestPPEInv"].raw_value is None
+    assert result["PayoutYield"].raw_value is None
+    assert result["NetPayoutYield"].raw_value is None
+    assert result["OPLeverage"].raw_value is None
+    assert result["OperProf"].raw_value is None
+    assert result["tang"].raw_value is None
 
 
 def test_accounting_features_cover_direct_sec_formulas_without_invented_inputs() -> None:
@@ -236,6 +295,79 @@ def test_accounting_features_cover_direct_sec_formulas_without_invented_inputs()
     assert result["OPLeverage"].raw_value == pytest.approx(1.1)
     assert result["OperProf"].raw_value == pytest.approx(37.0 / 60.0)
     assert result["XFIN"].raw_value == pytest.approx(5.0 / 100.0)
+
+
+def test_accounting_composites_require_every_reported_component() -> None:
+    concepts = {
+        "assets": [100.0, 90.0],
+        "ppe": [40.0, 35.0],
+        "dividends": [2.0],
+        "revenue": [120.0],
+        "cogs": [70.0],
+        "equity": [50.0],
+        "cash": [10.0],
+        "inventory": [20.0],
+    }
+
+    result = calculate_accounting_features(concepts, market_cap=200.0)
+
+    assert result["InvestPPEInv"].raw_value is None
+    assert result["PayoutYield"].raw_value is None
+    assert result["NetPayoutYield"].raw_value is None
+    assert result["OPLeverage"].raw_value is None
+    assert result["OperProf"].raw_value is None
+    assert result["tang"].raw_value is None
+
+
+def test_analyst_revision_proxy_does_not_replace_missing_counts_with_zero() -> None:
+    rows = pd.DataFrame(
+        {
+            "dataset": ["eps_revisions"],
+            "payload_json": ['[{"upLast7days": 2, "downLast7days": null}]'],
+        }
+    )
+
+    result = _analyst_features(rows)
+
+    assert result["UpRecomm"].raw_value == 2.0
+    assert result["DownRecomm"].raw_value is None
+    assert result["AnalystRevision"].raw_value is None
+    assert result["REV6"].raw_value is None
+
+
+def test_security_eligibility_requires_verified_us_equity_and_recent_price() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["GOOD", "FOREIGN", "ETF", "UNKNOWN", "STALE"],
+            "company_name_sec": ["Good Inc", "Foreign Inc", "Index ETF", "Unknown Inc", "Stale Inc"],
+            "longName": ["Good Inc", "Foreign Inc", "Index ETF", "Unknown Inc", "Stale Inc"],
+            "quoteType": ["EQUITY", "EQUITY", "ETF", None, "EQUITY"],
+            "country_yahoo": ["United States", "Canada", "United States", None, "United States"],
+            "price_rows": [100, 100, 100, 100, 100],
+            "last_price_date": ["2026-08-01", "2026-08-01", "2026-08-01", "2026-08-01", "2026-06-01"],
+        }
+    )
+
+    result = _classify_security_eligibility(
+        frame,
+        as_of=pd.Timestamp("2026-08-02"),
+    ).set_index("symbol")
+
+    assert bool(result.at["GOOD", "eligible_common_stock"])
+    assert result.at["FOREIGN", "eligibility_reason"] == "yahoo_country_not_united_states"
+    assert result.at["ETF", "eligibility_reason"] == "excluded_name_or_instrument"
+    assert result.at["UNKNOWN", "eligibility_reason"] == "yahoo_quote_type_not_equity"
+    assert result.at["STALE", "eligibility_reason"] == "latest_price_is_stale"
+
+
+def test_chunk_hash_manifest_uses_three_digit_suffix(tmp_path: Path) -> None:
+    path = tmp_path / "prices_007.parquet"
+    path.write_bytes(b"auditable")
+
+    result = _hashes_by_chunk([path])
+
+    assert set(result) == {7}
+    assert len(result[7]) == 64
 
 
 def test_score_gives_one_vote_to_redundancy_group() -> None:

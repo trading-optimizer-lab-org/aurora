@@ -369,8 +369,8 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, list[float | None]]:
-    """Return comparable annual concepts using strict available_at.
+def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
+    """Return the exact SEC observations selected for each canonical concept.
 
     OpenAP accounting signals are annual.  SEC Company Facts frequently stores
     quarterly, year-to-date and annual observations for the same tag.  Mixing
@@ -380,8 +380,27 @@ def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, l
     usable, but never chooses a future filing.
     """
 
+    audit_columns = [
+        "concept",
+        "concept_lag",
+        "tag",
+        "taxonomy",
+        "unit",
+        "value",
+        "period_start",
+        "period_end",
+        "fy",
+        "fp",
+        "form",
+        "filed",
+        "accession_number",
+        "available_at",
+        "available_at_quality",
+        "source",
+        "source_mode",
+    ]
     if facts.empty:
-        return {}
+        return pd.DataFrame(columns=audit_columns)
     frame = facts.copy()
     frame["available_at"] = pd.to_datetime(frame["available_at"], errors="coerce", utc=True).dt.tz_localize(None)
     frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce")
@@ -389,11 +408,10 @@ def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, l
         frame["period_start"] = pd.to_datetime(frame["period_start"], errors="coerce")
     frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
     frame = frame.loc[frame["available_at"].le(pd.Timestamp(as_of))].dropna(subset=["period_end", "value"])
-    result: dict[str, list[float | None]] = {}
+    selected_rows: list[pd.DataFrame] = []
     for concept, aliases in SEC_CONCEPT_ALIASES.items():
         subset = frame.loc[frame["tag"].isin(aliases)].copy()
         if subset.empty:
-            result[concept] = [None, None, None, None, None, None]
             continue
         if "form" in subset:
             annual_form = subset["form"].astype(str).str.upper().isin({"10-K", "20-F", "40-F"})
@@ -407,11 +425,38 @@ def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, l
         if not annual.empty:
             subset = annual
         subset["alias_rank"] = subset["tag"].map({name: index for index, name in enumerate(aliases)})
-        subset = subset.sort_values(["period_end", "available_at", "alias_rank"])
-        subset = subset.drop_duplicates("period_end", keep="last").sort_values("period_end")
-        values = subset["value"].tail(6).tolist()[::-1]
-        result[concept] = [float(value) for value in values] + [None] * (6 - len(values))
+        subset = subset.sort_values(
+            ["period_end", "available_at", "alias_rank"],
+            ascending=[True, False, True],
+        )
+        subset = subset.drop_duplicates("period_end", keep="first").sort_values("period_end")
+        chosen = subset.tail(6).sort_values("period_end", ascending=False).copy()
+        chosen["concept"] = concept
+        chosen["concept_lag"] = np.arange(len(chosen), dtype=int)
+        for column in audit_columns:
+            if column not in chosen:
+                chosen[column] = None
+        selected_rows.append(chosen[audit_columns])
+    if not selected_rows:
+        return pd.DataFrame(columns=audit_columns)
+    return pd.concat(selected_rows, ignore_index=True)
+
+
+def sec_concepts_from_inputs(inputs: pd.DataFrame) -> dict[str, list[float | None]]:
+    """Build canonical lag arrays from the auditable selected SEC rows."""
+
+    result: dict[str, list[float | None]] = {}
+    for concept in SEC_CONCEPT_ALIASES:
+        subset = inputs.loc[inputs["concept"].eq(concept)].sort_values("concept_lag")
+        values = pd.to_numeric(subset["value"], errors="coerce").dropna().tolist()
+        result[concept] = [float(value) for value in values[:6]] + [None] * (6 - len(values[:6]))
     return result
+
+
+def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, list[float | None]]:
+    """Return comparable annual concepts using strict available_at."""
+
+    return sec_concepts_from_inputs(latest_sec_concept_inputs(facts, as_of))
 
 
 def calculate_accounting_features(
@@ -452,6 +497,18 @@ def calculate_accounting_features(
         if any(item is None for item in items):
             return None
         return float(sum(float(item) for item in items if item is not None))
+
+    def average_required(*items: float | None) -> float | None:
+        if any(item is None for item in items):
+            return None
+        return float(np.mean([float(item) for item in items if item is not None]))
+
+    def weighted_sum_required(*items: tuple[float, float | None]) -> float | None:
+        if any(value is None for _, value in items):
+            return None
+        return float(
+            sum(weight * float(value) for weight, value in items if value is not None)
+        )
 
     assets = value("assets")
     assets_lag = value("assets", 1)
@@ -613,27 +670,42 @@ def calculate_accounting_features(
     )
     result["grcapx"] = exact("grcapx", growth("capex"), "capex_growth_1y")
     result["grcapx3y"] = exact("grcapx3y", growth("capex", 3), "capex_growth_3y")
-    result["InvestPPEInv"] = exact("InvestPPEInv", _safe_ratio((delta("ppe") or 0.0) + (delta("inventory") or 0.0), assets_lag), "ppe_plus_inventory_change_over_lag_assets")
+    result["InvestPPEInv"] = exact(
+        "InvestPPEInv",
+        _safe_ratio(sum_required(delta("ppe"), delta("inventory")), assets_lag),
+        "ppe_plus_inventory_change_over_lag_assets",
+    )
     result["Investment"] = exact("Investment", _safe_ratio(value("capex"), revenue), "capex_over_revenue")
     sales_growth = _safe_ratio(
         difference(revenue, value("revenue", 1)),
-        np.mean([item for item in (value("revenue", 1), value("revenue", 2)) if item is not None])
-        if value("revenue", 1) is not None
-        else None,
+        average_required(value("revenue", 1), value("revenue", 2)),
     )
     inventory_growth = _safe_ratio(
         difference(inventory, value("inventory", 1)),
-        np.mean([item for item in (value("inventory", 1), value("inventory", 2)) if item is not None])
-        if value("inventory", 1) is not None
-        else None,
+        average_required(value("inventory", 1), value("inventory", 2)),
     )
     result["GrSaleToGrInv"] = exact(
         "GrSaleToGrInv",
         difference(sales_growth, inventory_growth),
         "sales_growth_minus_inventory_growth_using_two_year_average",
     )
-    result["PayoutYield"] = exact("PayoutYield", _safe_ratio((dividends or 0.0) + (repurchases or 0.0), market_cap), "dividends_plus_repurchases_over_market_cap")
-    result["NetPayoutYield"] = exact("NetPayoutYield", _safe_ratio((dividends or 0.0) + (repurchases or 0.0) - (issuance or 0.0), market_cap), "net_payout_over_market_cap")
+    result["PayoutYield"] = exact(
+        "PayoutYield",
+        _safe_ratio(sum_required(dividends, repurchases), market_cap),
+        "dividends_plus_repurchases_over_market_cap",
+    )
+    result["NetPayoutYield"] = exact(
+        "NetPayoutYield",
+        _safe_ratio(
+            sum_required(
+                dividends,
+                repurchases,
+                -issuance if issuance is not None else None,
+            ),
+            market_cap,
+        ),
+        "net_payout_over_market_cap",
+    )
     result["NetEquityFinance"] = exact(
         "NetEquityFinance",
         _safe_ratio(difference(issuance, repurchases), average_assets),
@@ -660,12 +732,18 @@ def calculate_accounting_features(
     )
     result["OPLeverage"] = exact(
         "OPLeverage",
-        _safe_ratio(sum_required(sga if sga is not None else 0.0, cogs), assets),
+        _safe_ratio(sum_required(sga, cogs), assets),
         "sga_plus_cogs_over_assets",
     )
     operating_profit = None
-    if revenue is not None and cogs is not None and equity is not None:
-        operating_profit = revenue - cogs - (sga or 0.0) - (value("interest") or 0.0)
+    interest = value("interest")
+    if equity is not None:
+        operating_profit = weighted_sum_required(
+            (1.0, revenue),
+            (-1.0, cogs),
+            (-1.0, sga),
+            (-1.0, interest),
+        )
     result["OperProf"] = exact(
         "OperProf",
         _safe_ratio(operating_profit, equity),
@@ -687,8 +765,14 @@ def calculate_accounting_features(
     result["ShareIss1Y"] = exact("ShareIss1Y", growth("shares"), "shares_growth_1y")
     result["ShareIss5Y"] = exact("ShareIss5Y", growth("shares", 5), "shares_growth_5y")
     tangible = None
+    receivables = value("receivables")
     if assets is not None:
-        tangible = (cash or 0.0) + 0.715 * (value("receivables") or 0.0) + 0.547 * (inventory or 0.0) + 0.535 * (ppe or 0.0)
+        tangible = weighted_sum_required(
+            (1.0, cash),
+            (0.715, receivables),
+            (0.547, inventory),
+            (0.535, ppe),
+        )
     result["tang"] = exact("tang", _safe_ratio(tangible, assets), "berger_tangibility_over_assets")
     result["OrderBacklog"] = exact("OrderBacklog", _safe_ratio(value("backlog"), assets), "order_backlog_over_assets")
     result["OrderBacklogChg"] = exact("OrderBacklogChg", growth("backlog"), "order_backlog_growth_1y")
@@ -1013,6 +1097,8 @@ __all__ = [
     "coverage_report",
     "evidence_weight",
     "latest_sec_concepts",
+    "latest_sec_concept_inputs",
+    "sec_concepts_from_inputs",
     "select_strict_predictors",
     "sha256_file",
     "signed_percentile",
