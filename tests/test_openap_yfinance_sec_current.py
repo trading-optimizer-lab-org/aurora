@@ -19,6 +19,8 @@ from aurora.research.openap_current_score import (
     coverage_report,
     latest_sec_concepts,
     latest_sec_concept_inputs,
+    official_filter_mask,
+    refine_current_redundancy_groups,
     select_strict_predictors,
 )
 from scripts.run_openap_yfinance_sec_current import (
@@ -32,6 +34,7 @@ from scripts.run_openap_yfinance_sec_current import (
     _sec_issuer_flags,
     _select_chunk_rows,
     _submission_rows,
+    finalize_database_contract,
 )
 
 
@@ -47,6 +50,12 @@ def _metadata(rows: int = EXPECTED_PREDICTORS) -> pd.DataFrame:
             "Cat.Data": "Price",
             "Cat.Economic": "Test",
             "Signal.Rep.Quality": "1_good",
+            "Cat.Form": "continuous",
+            "q_cut": 0.2,
+            "q_filt": np.nan,
+            "filterstr": np.nan,
+            "sweight": "EW",
+            "startmonth": 6.0,
         }
     )
 
@@ -94,6 +103,99 @@ def test_redundancy_groups_do_not_chain_or_mix_economic_families() -> None:
     assert mapping["a"] == mapping["b"]
     assert mapping["c"] != mapping["a"]
     assert mapping["d"] != mapping["a"]
+
+
+def test_current_redundancy_merges_identical_cross_sectional_signals() -> None:
+    features = pd.DataFrame(
+        {
+            "symbol": ["AAA", "BBB", "CCC"] * 2,
+            "signalname": ["a"] * 3 + ["b"] * 3,
+            "formula_id": ["formula_a"] * 3 + ["formula_b"] * 3,
+            "horizon_months": [1] * 6,
+            "percentile": [20.0, 50.0, 90.0] * 2,
+            "redundancy_group": ["historical_a"] * 3 + ["historical_b"] * 3,
+        }
+    )
+
+    refined, audit = refine_current_redundancy_groups(
+        features, threshold=0.995, minimum_overlap=3
+    )
+
+    assert refined["redundancy_group"].nunique() == 1
+    assert audit["current_merge_applied"].all()
+
+
+def test_official_filter_mapping_fails_closed_and_applies_known_rules() -> None:
+    context = pd.DataFrame(
+        {
+            "current_price": [10.0, 4.0, 10.0],
+            "exchange_code": [1, 1, 3],
+            "eligible_common_stock": [True, True, True],
+            "market_cap": [100.0, 100.0, 100.0],
+            "nyse_market_cap_p20": [50.0, 50.0, 50.0],
+        },
+        index=["A", "B", "C"],
+    )
+    mask, status = official_filter_mask(
+        {"filterstr": "abs(prc)>5, exchcd==1"}, context
+    )
+    assert status == "applied"
+    assert mask.to_dict() == {"A": True, "B": False, "C": False}
+
+    unsupported, status = official_filter_mask(
+        {"filterstr": "siccd > 0"}, context
+    )
+    assert not unsupported.any()
+    assert status.startswith("unsupported:")
+
+
+def test_assemble_uses_nyse_breakpoints_and_neutralises_middle_bucket() -> None:
+    metadata = _metadata()
+    metadata.loc[0, ["signalname", "q_filt", "q_cut"]] = ["test_signal", "NYSE", 0.2]
+    values = {
+        "NYSE_LOW": {"test_signal": FeatureValue("test_signal", 1.0, "exact", "test", "f")},
+        "NYSE_HIGH": {"test_signal": FeatureValue("test_signal", 9.0, "exact", "test", "f")},
+        "NASDAQ_MID": {"test_signal": FeatureValue("test_signal", 5.0, "exact", "test", "f")},
+    }
+    context = pd.DataFrame(
+        {
+            "symbol": list(values),
+            "exchange_sec": ["NYSE", "NYSE", "Nasdaq"],
+            "marketCap": [100.0, 100.0, 100.0],
+            "current_price": [10.0, 10.0, 10.0],
+            "eligible_common_stock": True,
+        }
+    )
+
+    features = assemble_feature_table(
+        metadata, values, as_of="2026-08-01", security_context=context
+    )
+    rows = features.loc[features["signalname"].eq("test_signal")].set_index("symbol")
+
+    assert rows.at["NYSE_LOW", "official_portfolio_bucket"] == "short"
+    assert rows.at["NYSE_HIGH", "official_portfolio_bucket"] == "long"
+    assert rows.at["NASDAQ_MID", "official_portfolio_bucket"] == "neutral"
+    assert rows.at["NASDAQ_MID", "score_percentile"] == 50.0
+
+
+def test_equal_cross_sectional_values_are_neutral_not_bullish() -> None:
+    metadata = _metadata()
+    metadata.loc[0, "signalname"] = "constant_signal"
+    values = {
+        symbol: {
+            "constant_signal": FeatureValue(
+                "constant_signal", 7.0, "exact", "test", "constant_formula"
+            )
+        }
+        for symbol in ("AAA", "BBB", "CCC")
+    }
+
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+    rows = features.loc[features["signalname"].eq("constant_signal")]
+
+    assert rows["percentile"].eq(50.0).all()
+    assert rows["score_percentile"].eq(50.0).all()
+    assert rows["official_portfolio_bucket"].eq("neutral").all()
 
 
 def test_sec_concepts_ignore_facts_not_yet_available() -> None:
@@ -198,6 +300,25 @@ def test_sec_concept_inputs_reject_future_periods_and_wrong_units() -> None:
     assert inputs.empty
 
 
+def test_sec_concept_inputs_reject_impossible_availability_dates() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": ["Assets", "Assets"],
+            "value": [999.0, 100.0],
+            "period_end": ["2025-12-31", "2024-12-31"],
+            "filed": ["2025-02-01", "2025-02-01"],
+            "available_at": ["2025-02-02", "2025-02-02"],
+            "form": ["10-K", "10-K"],
+            "fp": ["FY", "FY"],
+            "unit": ["USD", "USD"],
+        }
+    )
+
+    inputs = latest_sec_concept_inputs(facts, pd.Timestamp("2026-08-01"))
+
+    assert inputs["value"].tolist() == [100.0]
+
+
 def test_pinned_sec_mapper_fallback_filters_non_common_securities(
     tmp_path: Path,
 ) -> None:
@@ -298,6 +419,33 @@ def test_companyfacts_use_real_sec_acceptance_timestamp_when_available() -> None
     assert pd.Timestamp(rows[0]["available_at"]) == pd.Timestamp("2026-02-01T16:42:00Z")
 
 
+def test_companyfacts_clamp_acceptance_timestamp_before_filing_date() -> None:
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Assets": {
+                    "units": {
+                        "USD": [{
+                            "end": "2025-12-31", "val": 10, "filed": "2026-02-05",
+                            "accn": "0001", "form": "10-K",
+                        }]
+                    }
+                }
+            }
+        }
+    }
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_api",
+        accepted_at_by_accession={"0001": "2026-02-01T16:42:00Z"},
+    )
+
+    assert rows[0]["available_at_quality"] == "sec_acceptance_before_filing_clamped_plus_one_day"
+    assert pd.Timestamp(rows[0]["available_at"]) == pd.Timestamp("2026-02-06T00:00:00Z")
+
+
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     dates = pd.bdate_range("2004-01-01", periods=5500)
     frame = pd.DataFrame(
@@ -315,7 +463,27 @@ def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     assert result["TrendFactor"].status == "proxy"
     assert result["TrendFactor"].raw_value is not None
     assert result["MomSeasonShort"].status == "exact"
+    assert result["MomSeasonShort"].formula_id == "openap_ret_lag_11"
     assert result["Mom12mOffSeason"].raw_value is not None
+
+
+def test_seasonality_does_not_replace_missing_month_with_zero() -> None:
+    dates = pd.date_range("2023-01-31", periods=30, freq="ME").delete(18)
+    price = np.linspace(100.0, 140.0, len(dates))
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "adj_close": price,
+            "close": price,
+            "high": price + 1.0,
+            "low": price - 1.0,
+            "volume": 1_000_000,
+        }
+    )
+
+    result = calculate_price_features(frame)
+
+    assert result["MomSeasonShort"].raw_value is None
 
 
 def test_price_cleaner_quarantines_nonpositive_invalid_and_extreme_history() -> None:
@@ -540,6 +708,29 @@ def test_chunk_hash_manifest_uses_three_digit_suffix(tmp_path: Path) -> None:
     assert len(result[7]) == 64
 
 
+def test_database_contract_covers_every_object_and_creates_unique_index(
+    tmp_path: Path,
+) -> None:
+    import duckdb
+
+    connection = duckdb.connect()
+    connection.execute(
+        "CREATE TABLE prices_daily_raw(symbol VARCHAR, date DATE, adj_close DOUBLE)"
+    )
+    connection.execute("CREATE VIEW prices_daily AS SELECT * FROM prices_daily_raw")
+
+    contract_rows, index_rows, violations = finalize_database_contract(connection, tmp_path)
+    contract = pd.read_csv(tmp_path / "schema_contract.csv")
+
+    assert contract_rows == 5
+    assert index_rows == 1
+    assert violations == 0
+    assert set(contract["table_name"]) == {
+        "database_contract_checks", "index_contract", "prices_daily",
+        "prices_daily_raw", "schema_contract",
+    }
+
+
 def test_score_gives_one_vote_to_redundancy_group() -> None:
     metadata = _metadata()
     metadata.loc[0, "signalname"] = "a"
@@ -572,6 +763,41 @@ def test_score_gives_one_vote_to_redundancy_group() -> None:
     scores = calculate_scores(features)
     assert not scores.empty
     assert scores.loc[scores["symbol"].eq("AAA"), "groups_used"].iloc[0] == 184
+
+
+def test_score_family_cap_is_applied_after_normalisation() -> None:
+    metadata = _metadata(rows=12)
+    metadata["Cat.Economic"] = ["dominant"] * 5 + [f"family_{i}" for i in range(7)]
+    groups = pd.DataFrame(
+        {
+            "signalname": metadata["signalname"],
+            "redundancy_group": [f"group_{i}" for i in range(12)],
+        }
+    )
+    values = {
+        f"S{symbol_index:03d}": {
+            signal: FeatureValue(
+                signal,
+                float(symbol_index + signal_index / 100.0),
+                "exact",
+                "test",
+                f"formula_{signal_index}",
+            )
+            for signal_index, signal in enumerate(metadata["signalname"])
+        }
+        for symbol_index in range(20)
+    }
+
+    features = assemble_feature_table(
+        metadata,
+        values,
+        as_of="2026-08-01",
+        redundancy_groups=groups,
+    )
+    scores = calculate_scores(features, minimum_metrics=5, maximum_family_weight=0.15)
+    horizon = scores.loc[scores["horizon_months"].eq(1)]
+
+    assert horizon["maximum_family_weight_actual"].le(0.15 + 1e-12).all()
 
 
 def test_coverage_has_one_row_for_every_strict_predictor() -> None:
@@ -608,7 +834,20 @@ def test_coverage_does_not_call_null_exact_values_available() -> None:
     assert feature["status"] == "unavailable"
 
 
-def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
+def test_coverage_marks_mixed_exact_and_proxy_rows_explicitly() -> None:
+    metadata = _metadata()
+    values = {
+        "AAA": {"signal_000": FeatureValue("signal_000", 1.0, "exact", "sec", "f")},
+        "BBB": {"signal_000": FeatureValue("signal_000", 2.0, "proxy", "yahoo", "f")},
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    report = coverage_report(features, metadata)
+
+    assert report.loc[report["signalname"].eq("signal_000"), "coverage_status"].iloc[0] == "mixed"
+
+
+def test_scores_include_all_buckets_but_do_not_lower_minimum_silently() -> None:
     metadata = _metadata()
     metadata.loc[:4, "portperiod"] = [1, 3, 6, 12, 36]
     values = {
@@ -630,8 +869,35 @@ def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
     aaa = scores.loc[scores["symbol"].eq("AAA")]
 
     assert set(aaa["horizon_months"]) == {1, 3, 6, 12, 36}
-    assert aaa["score"].notna().all()
-    assert aaa.loc[aaa["horizon_months"].eq(6), "confidence"].iloc[0] > 0
+    assert aaa["score"].isna().all()
+    assert aaa["confidence"].eq(0).all()
+    assert not aaa["horizon_evidence_sufficient"].any()
+
+
+def test_scores_use_fixed_denominator_when_one_symbol_lacks_a_metric() -> None:
+    metadata = _metadata(5)
+    values = {
+        "AAA": {
+            f"signal_{index:03d}": FeatureValue(
+                f"signal_{index:03d}", float(index + 1), "exact", "test", f"f{index}"
+            )
+            for index in range(5)
+        },
+        "BBB": {
+            f"signal_{index:03d}": FeatureValue(
+                f"signal_{index:03d}", float(index), "exact", "test", f"f{index}"
+            )
+            for index in range(4)
+        },
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    scores = calculate_scores(features, minimum_metrics=1)
+    rows = scores.loc[scores["horizon_months"].eq(1)].set_index("symbol")
+
+    assert rows.at["AAA", "metrics_expected"] == rows.at["BBB", "metrics_expected"] == 5
+    assert rows.at["AAA", "groups_expected"] == rows.at["BBB", "groups_expected"] == 5
+    assert rows.at["BBB", "confidence"] < rows.at["AAA", "confidence"]
 
 
 def test_aggregate_score_keeps_partial_research_score_but_rejects_ranking() -> None:
@@ -647,13 +913,13 @@ def test_aggregate_score_keeps_partial_research_score_but_rejects_ranking() -> N
         }
     )
 
-    result = calculate_aggregate_scores(scores).iloc[0]
+    result = calculate_aggregate_scores(scores, required_horizons=[1, 3]).iloc[0]
 
     assert result["aggregate_score"] == pytest.approx((80.0 + 30.0) / 1.5)
     assert result["horizons_used"] == 2
-    assert result["aggregate_confidence"] == pytest.approx(30.0)
-    assert not bool(result["ranking_eligible"])
-    assert result["ranking_rejection_reason"] == "incomplete_horizons"
+    assert result["aggregate_confidence"] == pytest.approx(75.0)
+    assert bool(result["ranking_eligible"])
+    assert result["ranking_rejection_reason"] == ""
     assert result["score_validation_status"] == "unvalidated_current_snapshot_only"
 
 
@@ -668,7 +934,12 @@ def test_aggregate_score_requires_all_horizons_and_minimum_confidence() -> None:
         }
     )
 
-    result = calculate_aggregate_scores(scores, minimum_horizons=5, minimum_confidence=30).iloc[0]
+    result = calculate_aggregate_scores(
+        scores,
+        minimum_horizons=2,
+        required_horizons=[1, 12],
+        minimum_confidence=30,
+    ).iloc[0]
 
     assert bool(result["all_horizons_present"])
     assert bool(result["ranking_eligible"])
@@ -698,6 +969,9 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
         "minimum_average_dollar_volume_21d",
         "minimum_clean_price_rows",
         "minimum_horizons_for_ranking",
+        "required_ranking_horizons",
+        "ranking_score_mode",
+        "horizon_semantics",
         "minimum_aggregate_confidence",
         "maximum_family_weight",
     ):

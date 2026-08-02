@@ -25,7 +25,8 @@ Every exclusion is retained in `security_universe_exclusions.csv`.
 
 ## Prices
 
-`prices_daily` preserves downloaded observations. Features use a cleaned view:
+`prices_daily_raw` preserves downloaded observations. `prices_daily` is the
+consumer-safe view over `prices_daily_clean`:
 non-positive prices, invalid OHLC rows, duplicate dates and extreme return
 breaks are quarantined. History before the last unresolved split-like break is
 not used for current features. The decision is recorded per symbol in
@@ -34,8 +35,11 @@ not used for current features. The decision is recorded per symbol in
 ## SEC EDGAR
 
 SEC data is downloaded once per unique CIK. Exact duplicates are removed at
-merge. Actual SEC acceptance timestamps are used when available; filing date
-plus one day is retained only as a disclosed fallback.
+merge. Actual SEC acceptance timestamps are used when available. An impossible
+acceptance timestamp before the filing date is clamped to filing date plus one
+day and marked explicitly. Filing date plus one day is retained only as a
+disclosed fallback. Failed per-company downloads are retried from the official
+SEC bulk archive and recorded in `sec_bulk_repair_audit`.
 
 Selected accounting inputs must satisfy all of the following:
 
@@ -49,7 +53,9 @@ No foreign-currency accounting value is divided by a USD market value.
 
 ## Options
 
-Current option proxies use only contracts that are fresh, within the configured
+Raw contracts live only in `yahoo_options_raw`. The consumer-safe
+`yahoo_options_current` view points to `yahoo_options_usable` and uses only
+contracts that are fresh, within the configured
 days-to-expiry range, near the current stock price, inside the configured IV
 bounds and free of crossed quotes. Realized volatility is annualized before it
 is compared with implied volatility.
@@ -63,25 +69,44 @@ no score weight.
 
 ## Redundancy And Score
 
+Official OpenAP universe filters and portfolio quantiles are applied before a
+predictor may vote. Middle observations outside the official long and short
+tails are neutral at 50 rather than treated as new evidence.
+
 Signals are direction-aligned before redundancy analysis. A shared redundancy
 group requires positive correlation above the threshold, the same economic
 family and complete-link agreement with every existing group member. Inverse
 signals are recorded as diversification relationships and are not merged.
+Current implementations are audited a second time: formulas that are identical
+or produce at least 0.995 current cross-sectional percentile correlation are
+collapsed into one vote when their official portfolio period also matches.
 
 The score uses one bounded vote per redundancy group. Metric weights and family
 weights use the configured caps. Unallocated family weight is neutral at 50,
 so a narrow set of related features cannot manufacture an extreme score.
 
-The public leaderboard requires all five horizons and minimum aggregate
-confidence. Partial scores remain available for research but cannot enter the
-leaderboard.
+Every symbol uses the same fixed metric and group denominator within a score
+bucket. Missing values and officially excluded observations contribute neutral
+50 while reducing confidence.
+
+OpenAP `portperiod` is a portfolio refresh period, not proof of a predictive
+horizon. The compatibility outputs still expose 1, 3, 6, 12 and 36 month
+refresh buckets as diagnostics. The public current ranking instead calculates
+one cross-sectional score from all usable predictors together, after
+deduplication and family caps. It requires minimum aggregate confidence. The
+score remains an unvalidated current cross-sectional ranking, not a probability
+forecast.
 
 ## Mandatory Gates
 
 The workflow fails if it finds duplicate price keys, future dates, missing SEC
 availability timestamps, future selected SEC periods, invalid selected units,
 duplicate SEC records, inconsistent feature status or an ineligible leaderboard
-row. `data_quality_issues` and `schema_contract` persist these checks in DuckDB.
+row. The merge also fails on missing shard surfaces, unsupported official
+filters, weak score buckets, variable score denominators or missing SEC data
+for a ranked issuer. `data_quality_issues`, `schema_contract` and
+`index_contract` persist these checks in DuckDB. Every database object appears
+in the schema contract and key tables receive physical unique indexes.
 
 Locked data is not used. Backtesting and validation-based selection remain
 disabled in this current-snapshot pipeline.

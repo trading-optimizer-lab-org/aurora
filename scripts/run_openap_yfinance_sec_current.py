@@ -36,6 +36,7 @@ from aurora.research.openap_current_score import (
     coverage_report,
     latest_sec_concept_inputs,
     redundancy_correlation_audit,
+    refine_current_redundancy_groups,
     sec_concepts_from_inputs,
     select_strict_predictors,
     sha256_file,
@@ -718,6 +719,9 @@ def _companyfacts_rows(
                     if pd.isna(accepted):
                         accepted = filed + pd.Timedelta(days=1)
                         available_quality = "conservative_filing_date_plus_one_day"
+                    elif accepted.normalize() < filed.normalize():
+                        accepted = filed + pd.Timedelta(days=1)
+                        available_quality = "sec_acceptance_before_filing_clamped_plus_one_day"
                     else:
                         available_quality = "sec_acceptance_timestamp"
                     rows.append(
@@ -1221,6 +1225,359 @@ def _hashes_by_chunk(paths: Iterable[Path]) -> dict[int, str]:
     return result
 
 
+DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
+    "prices_daily_raw": ("symbol", "date"),
+    "prices_daily_clean": ("symbol", "date"),
+    "security_master": ("symbol",),
+    "sec_companyfacts": (
+        "cik", "taxonomy", "tag", "unit", "period_start", "period_end",
+        "accession_number", "value",
+    ),
+    "sec_submissions": ("cik", "accession_number", "form", "filing_date"),
+    "sec_concept_inputs_current": ("symbol", "concept", "concept_lag"),
+    "openap_features_current": ("as_of", "symbol", "signalname"),
+    "openap_scores_current": ("as_of", "symbol", "horizon_months"),
+    "openap_overall_scores_current": ("as_of", "symbol", "horizon_months"),
+    "openap_scores_aggregate_current": ("as_of", "symbol"),
+    "openap_current_leaderboard": ("as_of", "symbol"),
+    "selected_predictors": ("signalname",),
+    "redundancy_groups": ("signalname",),
+    "current_redundancy_groups": ("signalname",),
+    "coverage_185": ("signalname",),
+    "price_quality_current": ("symbol",),
+    "yahoo_options_raw": ("contractSymbol",),
+    "yahoo_options_usable": ("contractSymbol",),
+    "source_manifest": ("source",),
+    "yfinance_source_manifest": ("chunk_index",),
+    "sec_source_manifest": ("chunk_index",),
+}
+
+DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
+    "prices_daily_raw": ("symbol", "date", "adj_close"),
+    "prices_daily_clean": ("symbol", "date", "adj_close"),
+    "security_master": ("symbol", "cik", "eligible_common_stock", "ranking_eligible"),
+    "sec_companyfacts": ("cik", "tag", "period_end", "filed", "available_at"),
+    "sec_submissions": ("cik", "accession_number", "form", "filing_date"),
+    "sec_concept_inputs_current": ("symbol", "concept", "concept_lag", "available_at"),
+    "openap_features_current": (
+        "as_of", "symbol", "signalname", "status", "value_status",
+        "official_filter_status",
+    ),
+    "openap_scores_current": (
+        "as_of", "symbol", "horizon_months", "metrics_expected", "groups_expected",
+    ),
+    "openap_overall_scores_current": (
+        "as_of", "symbol", "horizon_months", "metrics_expected", "groups_expected",
+    ),
+    "openap_scores_aggregate_current": (
+        "as_of", "symbol", "score_validation_status", "required_horizons",
+    ),
+    "selected_predictors": ("signalname", "tstat", "Sign"),
+}
+
+
+def _database_layer(table_name: str) -> str:
+    if table_name.endswith("_raw"):
+        return "raw"
+    if table_name.endswith("_clean") or table_name.endswith("_usable"):
+        return "clean"
+    if "manifest" in table_name or "status" in table_name:
+        return "provenance"
+    if "audit" in table_name or "quality" in table_name or "coverage" in table_name:
+        return "audit"
+    return "derived"
+
+
+def finalize_database_contract(connection: Any, output: Path) -> tuple[int, int, int]:
+    """Create physical indexes and a complete contract for every DB object."""
+
+    objects = connection.execute(
+        "SELECT table_name, table_type FROM information_schema.tables "
+        "WHERE table_schema = 'main' ORDER BY table_name"
+    ).fetchall()
+    object_names = {str(row[0]) for row in objects}
+    contract_check_rows: list[dict[str, Any]] = []
+    for table_name in sorted(set(DATABASE_UNIQUE_KEYS) | set(DATABASE_REQUIRED_NON_NULL)):
+        if table_name not in object_names:
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "required_table",
+                    "columns": "",
+                    "issue_count": 1,
+                    "passed": False,
+                }
+            )
+            continue
+        actual_columns = {
+            str(row[1])
+            for row in connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        }
+        required = DATABASE_REQUIRED_NON_NULL.get(table_name, ())
+        missing_required = sorted(set(required).difference(actual_columns))
+        if missing_required:
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "required_columns",
+                    "columns": ",".join(missing_required),
+                    "issue_count": len(missing_required),
+                    "passed": False,
+                }
+            )
+        elif required:
+            predicate = " OR ".join(f'"{column}" IS NULL' for column in required)
+            null_count = int(
+                connection.execute(
+                    f'SELECT COUNT(*) FROM "{table_name}" WHERE {predicate}'
+                ).fetchone()[0]
+            )
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "required_non_null",
+                    "columns": ",".join(required),
+                    "issue_count": null_count,
+                    "passed": null_count == 0,
+                }
+            )
+        unique_columns = DATABASE_UNIQUE_KEYS.get(table_name, ())
+        missing_unique = sorted(set(unique_columns).difference(actual_columns))
+        if missing_unique:
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "unique_key_columns",
+                    "columns": ",".join(missing_unique),
+                    "issue_count": len(missing_unique),
+                    "passed": False,
+                }
+            )
+        elif unique_columns:
+            quoted = ", ".join(f'"{column}"' for column in unique_columns)
+            duplicate_count = int(
+                connection.execute(
+                    f'SELECT COALESCE(SUM(n - 1), 0) FROM ('
+                    f'SELECT {quoted}, COUNT(*) AS n FROM "{table_name}" '
+                    f'GROUP BY {quoted} HAVING COUNT(*) > 1)'
+                ).fetchone()[0]
+            )
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "unique_key",
+                    "columns": ",".join(unique_columns),
+                    "issue_count": duplicate_count,
+                    "passed": duplicate_count == 0,
+                }
+            )
+    contract_checks = pd.DataFrame(contract_check_rows)
+    contract_checks.to_csv(output / "database_contract_checks.csv", index=False)
+    connection.register("database_contract_checks_frame", contract_checks)
+    connection.execute(
+        "CREATE OR REPLACE TABLE database_contract_checks AS "
+        "SELECT * FROM database_contract_checks_frame"
+    )
+    connection.unregister("database_contract_checks_frame")
+
+    index_rows: list[dict[str, Any]] = []
+    for table_name, columns in DATABASE_UNIQUE_KEYS.items():
+        if table_name not in object_names:
+            continue
+        failed_unique_check = any(
+            row["table_name"] == table_name
+            and row["check_type"] in {"unique_key_columns", "unique_key"}
+            and not row["passed"]
+            for row in contract_check_rows
+        )
+        if failed_unique_check:
+            continue
+        index_name = "ux_" + re.sub(r"[^a-zA-Z0-9_]", "_", table_name)
+        quoted_columns = ", ".join(f'"{column}"' for column in columns)
+        connection.execute(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" '
+            f'ON "{table_name}" ({quoted_columns})'
+        )
+        index_rows.append(
+            {
+                "index_name": index_name,
+                "table_name": table_name,
+                "columns": ",".join(columns),
+                "unique": True,
+            }
+        )
+    index_contract = pd.DataFrame(index_rows)
+    index_contract.to_csv(output / "index_contract.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE index_contract AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "index_contract.csv")],
+    )
+
+    objects = connection.execute(
+        "SELECT table_name, table_type FROM information_schema.tables "
+        "WHERE table_schema = 'main' ORDER BY table_name"
+    ).fetchall()
+    if "schema_contract" not in {str(row[0]) for row in objects}:
+        objects.append(("schema_contract", "BASE TABLE"))
+    schema_rows = []
+    for table_name, table_type in objects:
+        name = str(table_name)
+        schema_rows.append(
+            {
+                "table_name": name,
+                "table_type": str(table_type),
+                "data_layer": _database_layer(name),
+                "consumer_safe": bool(
+                    not name.endswith("_raw")
+                    and name not in {"sec_companyfacts", "yahoo_current_snapshots"}
+                ),
+                "unique_key": ",".join(DATABASE_UNIQUE_KEYS.get(name, ())),
+                "required_non_null": ",".join(DATABASE_REQUIRED_NON_NULL.get(name, ())),
+            }
+        )
+    schema_contract = pd.DataFrame(schema_rows)
+    schema_contract.to_csv(output / "schema_contract.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE schema_contract AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "schema_contract.csv")],
+    )
+    contract_violations = int(
+        contract_checks.loc[~contract_checks["passed"], "issue_count"].sum()
+    )
+    return len(schema_contract), len(index_contract), contract_violations
+
+
+def repair_failed_companyfacts_from_bulk(
+    connection: Any,
+    config: Mapping[str, Any],
+    output: Path,
+) -> dict[str, Any]:
+    """Repair API/Jina failures from the official SEC bulk archive once."""
+
+    audit_columns = ["cik", "status", "rows", "error"]
+
+    def persist_audit(rows: list[dict[str, Any]]) -> pd.DataFrame:
+        audit_frame = pd.DataFrame(rows, columns=audit_columns)
+        audit_frame.to_csv(output / "sec_bulk_repair_audit.csv", index=False)
+        connection.register("sec_bulk_repair_audit_frame", audit_frame)
+        connection.execute(
+            "CREATE OR REPLACE TABLE sec_bulk_repair_audit AS "
+            "SELECT * FROM sec_bulk_repair_audit_frame"
+        )
+        connection.unregister("sec_bulk_repair_audit_frame")
+        return audit_frame
+
+    failed = connection.execute(
+        "SELECT DISTINCT cik FROM sec_download_status "
+        "WHERE surface = 'companyfacts' AND status <> 'ok' ORDER BY cik"
+    ).df()
+    if failed.empty or not bool(config["sec"].get("repair_failed_from_bulk", True)):
+        persist_audit([])
+        return {
+            "requested": int(len(failed)),
+            "repaired": 0,
+            "still_missing": int(len(failed)),
+            "bulk_sha256": "",
+        }
+    bulk_path = output / ".companyfacts_repair.zip"
+    try:
+        _download(
+            str(config["sec"]["companyfacts_bulk_url"]),
+            bulk_path,
+            headers=_sec_headers(str(config["sec"]["default_user_agent"])),
+            retries=4,
+        )
+    except Exception as exc:
+        persist_audit(
+            [
+                {
+                    "cik": int(cik),
+                    "status": "bulk_download_failed",
+                    "rows": 0,
+                    "error": f"{type(exc).__name__}:{exc}",
+                }
+                for cik in failed["cik"].astype(int)
+            ]
+        )
+        bulk_path.unlink(missing_ok=True)
+        return {
+            "requested": int(len(failed)),
+            "repaired": 0,
+            "still_missing": int(len(failed)),
+            "bulk_sha256": "",
+        }
+    bulk_hash = sha256_file(bulk_path)
+    repair_rows: list[dict[str, Any]] = []
+    audit_rows: list[dict[str, Any]] = []
+    with zipfile.ZipFile(bulk_path) as archive:
+        member_map = {Path(name).name: name for name in archive.namelist()}
+        for cik_value in failed["cik"].astype(int):
+            member = member_map.get(f"CIK{cik_value:010d}.json")
+            if not member:
+                audit_rows.append(
+                    {
+                        "cik": cik_value,
+                        "status": "not_present_in_official_bulk",
+                        "rows": 0,
+                        "error": "",
+                    }
+                )
+                continue
+            payload = json.loads(archive.read(member))
+            submissions = connection.execute(
+                "SELECT accession_number, accepted_at FROM sec_submissions WHERE cik = ?",
+                [cik_value],
+            ).df()
+            accepted = {
+                str(row.accession_number): row.accepted_at
+                for row in submissions.itertuples()
+                if str(row.accession_number or "") and pd.notna(row.accepted_at)
+            }
+            rows = _companyfacts_rows(
+                payload,
+                cik_value,
+                source_url=str(config["sec"]["companyfacts_bulk_url"]),
+                source_mode="sec_official_bulk_repair",
+                accepted_at_by_accession=accepted,
+            )
+            repair_rows.extend(rows)
+            audit_rows.append(
+                {
+                    "cik": cik_value,
+                    "status": "repaired" if rows else "bulk_file_without_required_facts",
+                    "rows": len(rows),
+                    "error": "",
+                }
+            )
+    if repair_rows:
+        repair_frame = pd.DataFrame(repair_rows)
+        connection.register("sec_bulk_repair_rows", repair_frame)
+        connection.execute(
+            "INSERT INTO sec_companyfacts BY NAME SELECT * FROM sec_bulk_repair_rows"
+        )
+        connection.unregister("sec_bulk_repair_rows")
+        connection.execute(
+            "CREATE OR REPLACE TABLE sec_companyfacts AS SELECT DISTINCT * FROM sec_companyfacts"
+        )
+    audit = persist_audit(audit_rows)
+    repaired_ciks = audit.loc[audit["status"].eq("repaired"), "cik"].astype(int).tolist()
+    if repaired_ciks:
+        connection.execute(
+            "UPDATE sec_download_status SET status = 'repaired_bulk', "
+            "source_mode = 'sec_official_bulk_repair', error = '' "
+            "WHERE surface = 'companyfacts' AND cik IN (SELECT * FROM unnest(?))",
+            [repaired_ciks],
+        )
+    bulk_path.unlink(missing_ok=True)
+    repaired = len(repaired_ciks)
+    return {
+        "requested": int(len(failed)),
+        "repaired": repaired,
+        "still_missing": int(len(failed) - repaired),
+        "bulk_sha256": bulk_hash,
+    }
+
+
 def _sec_issuer_flags(submissions: pd.DataFrame) -> pd.DataFrame:
     """Summarise SEC filing evidence used to exclude foreign/fund issuers."""
 
@@ -1361,30 +1718,62 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     yahoo_status_paths = sorted(input_root.rglob("status_*.csv"))
     summary_paths = sorted(input_root.rglob("summary_*.json"))
     expected_chunks = int(config["execution"]["yfinance_chunks"])
-    if len(price_paths) != expected_chunks:
-        raise OpenAPDataError(f"Expected {expected_chunks} YFinance price chunks, found {len(price_paths)}")
+    yahoo_surface_counts = {
+        "prices": len(price_paths),
+        "metadata": len(metadata_paths),
+        "options": len(option_paths),
+        "analyst": len(analyst_paths),
+        "status": len(yahoo_status_paths),
+        "summary": len(summary_paths),
+    }
+    incomplete_yahoo = {
+        name: count for name, count in yahoo_surface_counts.items()
+        if count != expected_chunks
+    }
+    if incomplete_yahoo:
+        raise OpenAPDataError(
+            f"Expected {expected_chunks} YFinance chunks per surface, found {incomplete_yahoo}"
+        )
 
     db_path = output / "openap_current.duckdb"
     connection = duckdb.connect(str(db_path))
     quoted_prices = ",".join(repr(str(path)) for path in price_paths)
     quoted_metadata = ",".join(repr(str(path)) for path in metadata_paths)
-    connection.execute(f"CREATE OR REPLACE TABLE prices_daily AS SELECT * FROM read_parquet([{quoted_prices}], union_by_name=true)")
+    connection.execute(f"CREATE OR REPLACE TABLE prices_daily_raw AS SELECT * FROM read_parquet([{quoted_prices}], union_by_name=true)")
+    connection.execute("CREATE OR REPLACE VIEW prices_daily AS SELECT * FROM prices_daily_raw")
     connection.execute(f"CREATE OR REPLACE TABLE yahoo_current_snapshots AS SELECT * FROM read_parquet([{quoted_metadata}], union_by_name=true)")
     valid_options = [path for path in option_paths if path.stat().st_size > 0]
     if valid_options:
         quoted_options = ",".join(repr(str(path)) for path in valid_options)
-        connection.execute(f"CREATE OR REPLACE TABLE yahoo_options_current AS SELECT * FROM read_parquet([{quoted_options}], union_by_name=true)")
+        connection.execute(f"CREATE OR REPLACE TABLE yahoo_options_raw AS SELECT * FROM read_parquet([{quoted_options}], union_by_name=true)")
     else:
-        connection.execute("CREATE OR REPLACE TABLE yahoo_options_current(symbol VARCHAR, option_type VARCHAR, expiration VARCHAR, retrieved_at VARCHAR)")
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_raw("
+            "contractSymbol VARCHAR, lastTradeDate TIMESTAMPTZ, strike DOUBLE, "
+            "lastPrice DOUBLE, bid DOUBLE, ask DOUBLE, change DOUBLE, percentChange DOUBLE, "
+            "volume DOUBLE, openInterest DOUBLE, impliedVolatility DOUBLE, inTheMoney BOOLEAN, "
+            "contractSize VARCHAR, currency VARCHAR, symbol VARCHAR, option_type VARCHAR, "
+            "expiration VARCHAR, retrieved_at VARCHAR)"
+        )
+    connection.execute("CREATE OR REPLACE VIEW yahoo_options_current AS SELECT * FROM yahoo_options_raw")
     sec_fact_paths = sorted(sec_dir.rglob("sec_companyfacts_*.parquet"))
     sec_submission_paths = sorted(sec_dir.rglob("sec_submissions_*.parquet"))
     sec_status_paths = sorted(sec_dir.rglob("sec_status_*.csv"))
     sec_summary_paths = sorted(sec_dir.rglob("sec_summary_*.json"))
     expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
-    if len(sec_fact_paths) != expected_sec_chunks or len(sec_submission_paths) != expected_sec_chunks:
+    sec_surface_counts = {
+        "companyfacts": len(sec_fact_paths),
+        "submissions": len(sec_submission_paths),
+        "status": len(sec_status_paths),
+        "summary": len(sec_summary_paths),
+    }
+    incomplete_sec = {
+        name: count for name, count in sec_surface_counts.items()
+        if count != expected_sec_chunks
+    }
+    if incomplete_sec:
         raise OpenAPDataError(
-            f"Expected {expected_sec_chunks} SEC chunks, found "
-            f"facts={len(sec_fact_paths)} submissions={len(sec_submission_paths)}"
+            f"Expected {expected_sec_chunks} SEC chunks per surface, found {incomplete_sec}"
         )
     quoted_sec_facts = ",".join(repr(str(path)) for path in sec_fact_paths)
     quoted_sec_submissions = ",".join(repr(str(path)) for path in sec_submission_paths)
@@ -1395,6 +1784,19 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute(
         f"CREATE OR REPLACE TABLE sec_submissions AS "
         f"SELECT DISTINCT * FROM read_parquet([{quoted_sec_submissions}], union_by_name=true)"
+    )
+    quoted_yahoo_status = ",".join(repr(str(path)) for path in yahoo_status_paths)
+    quoted_sec_status = ",".join(repr(str(path)) for path in sec_status_paths)
+    connection.execute(
+        f"CREATE OR REPLACE TABLE yfinance_download_status AS "
+        f"SELECT * FROM read_csv_auto([{quoted_yahoo_status}], union_by_name=true, filename=true)"
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TABLE sec_download_status AS "
+        f"SELECT * FROM read_csv_auto([{quoted_sec_status}], union_by_name=true, filename=true)"
+    )
+    sec_bulk_repair = repair_failed_companyfacts_from_bulk(
+        connection, config, output
     )
 
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
@@ -1580,8 +1982,14 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         values_by_symbol,
         as_of=as_of.date().isoformat(),
         redundancy_groups=groups,
+        security_context=eligible,
         exact_source_multiplier=float(config["score"]["exact_source_multiplier"]),
         proxy_source_multiplier=float(config["score"]["proxy_source_multiplier"]),
+    )
+    feature_frame, current_redundancy_audit = refine_current_redundancy_groups(
+        feature_frame,
+        threshold=float(config["openap"].get("current_redundancy_threshold", 0.995)),
+        minimum_overlap=int(config["openap"].get("current_redundancy_minimum_overlap", 100)),
     )
     scores = calculate_scores(
         feature_frame,
@@ -1589,9 +1997,19 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
         maximum_family_weight=float(config["score"]["maximum_family_weight"]),
     )
+    overall_features = feature_frame.copy()
+    overall_features["horizon_months"] = 0
+    overall_scores = calculate_scores(
+        overall_features,
+        minimum_metrics=int(config["score"]["minimum_metrics_per_score"]),
+        maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
+        maximum_family_weight=float(config["score"]["maximum_family_weight"]),
+    )
+    overall_scores = overall_scores.loc[overall_scores["horizon_months"].eq(0)].copy()
     aggregate_scores = calculate_aggregate_scores(
-        scores,
+        overall_scores,
         minimum_horizons=int(config["score"]["minimum_horizons_for_ranking"]),
+        required_horizons=config["score"]["required_ranking_horizons"],
         minimum_confidence=float(config["score"]["minimum_aggregate_confidence"]),
     )
     coverage = coverage_report(feature_frame, metadata)
@@ -1608,6 +2026,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     ].copy()
     score_context["missing_features"] = EXPECTED_PREDICTORS - score_context["computed_features"]
     scores = scores.merge(score_context, on="symbol", how="left")
+    overall_scores = overall_scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(
         security_master[["symbol", "marketCap", "current_price", "average_volume_21d", "average_dollar_volume_21d", "ranking_eligible"]],
@@ -1633,6 +2052,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     feature_frame.to_parquet(output / "openap_features_current.parquet", index=False, compression="zstd")
     scores.to_parquet(output / "openap_scores_current.parquet", index=False, compression="zstd")
+    overall_scores.to_parquet(
+        output / "openap_overall_scores_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     aggregate_scores.to_parquet(
         output / "openap_scores_aggregate_current.parquet",
         index=False,
@@ -1647,15 +2071,23 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     coverage.to_csv(output / "coverage_185.csv", index=False)
     quality.to_csv(output / "data_quality.csv", index=False)
     price_quality_frame.to_csv(output / "price_quality_current.csv", index=False)
-    coverage.loc[coverage["coverage_status"].eq("proxy")].to_csv(output / "proxy_audit.csv", index=False)
+    coverage.loc[coverage["coverage_status"].isin(["proxy", "mixed"])].to_csv(output / "proxy_audit.csv", index=False)
+    coverage.loc[coverage["coverage_status"].eq("mixed")].to_csv(output / "mixed_fidelity_audit.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("unavailable")].to_csv(output / "unavailable_predictors.csv", index=False)
     metadata.to_csv(output / "selected_185_predictors.csv", index=False)
     groups.to_csv(output / "redundancy_groups.csv", index=False)
     redundancy_audit.to_csv(output / "redundancy_correlation_audit.csv", index=False)
+    current_redundancy_audit.to_csv(
+        output / "current_redundancy_groups.csv", index=False
+    )
 
     connection.execute("CREATE OR REPLACE TABLE security_master AS SELECT * FROM read_parquet(?)", [str(output / "security_master.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_features_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_features_current.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_scores_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_scores_current.parquet")])
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_overall_scores_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "openap_overall_scores_current.parquet")],
+    )
     connection.execute(
         "CREATE OR REPLACE TABLE openap_scores_aggregate_current AS SELECT * FROM read_parquet(?)",
         [str(output / "openap_scores_aggregate_current.parquet")],
@@ -1673,6 +2105,98 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         [str(output / "price_quality_current.csv")],
     )
     connection.execute(
+        """
+        CREATE OR REPLACE TABLE prices_daily_clean AS
+        SELECT p.*
+        FROM prices_daily_raw p
+        INNER JOIN price_quality_current q USING (symbol)
+        WHERE q.price_quality_pass
+          AND p.adj_close > 0
+          AND (p.open IS NULL OR p.open > 0)
+          AND (p.high IS NULL OR p.high > 0)
+          AND (p.low IS NULL OR p.low > 0)
+          AND (p.close IS NULL OR p.close > 0)
+          AND (
+            p.open IS NULL OR p.high IS NULL OR p.low IS NULL OR p.close IS NULL
+            OR (
+              p.high >= greatest(p.open, p.close, p.low)
+              AND p.low <= least(p.open, p.close, p.high)
+            )
+          )
+          AND (q.history_reset_after IS NULL OR p.date > q.history_reset_after)
+        """
+    )
+    connection.execute("CREATE OR REPLACE VIEW prices_daily AS SELECT * FROM prices_daily_clean")
+
+    option_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info('yahoo_options_raw')").fetchall()
+    }
+    required_option_columns = {
+        "symbol", "expiration", "lastTradeDate", "strike", "bid", "ask",
+        "impliedVolatility",
+    }
+    if required_option_columns.issubset(option_columns):
+        connection.execute(
+            """
+            CREATE OR REPLACE TABLE yahoo_options_quality AS
+            SELECT o.*,
+              CASE
+                WHEN try_cast(o.expiration AS DATE) IS NULL THEN 'invalid_expiration'
+                WHEN date_diff('day', CAST(? AS DATE), try_cast(o.expiration AS DATE)) NOT BETWEEN ? AND ? THEN 'dte_outside_policy'
+                WHEN o.bid < 0 OR o.ask < o.bid THEN 'crossed_or_negative_quote'
+                WHEN o.impliedVolatility NOT BETWEEN ? AND ? THEN 'invalid_implied_volatility'
+                WHEN try_cast(o.lastTradeDate AS TIMESTAMPTZ) < CAST(? AS TIMESTAMPTZ) - (? * INTERVAL '1 day') THEN 'stale_trade'
+                WHEN s.current_price IS NULL OR s.current_price <= 0 THEN 'missing_stock_price'
+                WHEN o.strike / s.current_price NOT BETWEEN ? AND ? THEN 'moneyness_outside_policy'
+                ELSE 'usable_candidate'
+              END AS quality_status
+            FROM yahoo_options_raw o
+            LEFT JOIN security_master s USING (symbol)
+            """,
+            [
+                as_of.date().isoformat(),
+                int(config["yfinance"]["minimum_option_days"]),
+                int(config["yfinance"]["maximum_option_days"]),
+                float(config["yfinance"]["minimum_implied_volatility"]),
+                float(config["yfinance"]["maximum_implied_volatility"]),
+                as_of.isoformat(),
+                int(config["yfinance"]["maximum_option_staleness_days"]),
+                float(config["yfinance"]["minimum_option_moneyness"]),
+                float(config["yfinance"]["maximum_option_moneyness"]),
+            ],
+        )
+        connection.execute(
+            """
+            CREATE OR REPLACE TABLE yahoo_options_usable AS
+            SELECT * EXCLUDE (quality_status)
+            FROM yahoo_options_quality
+            WHERE quality_status = 'usable_candidate'
+            QUALIFY try_cast(expiration AS DATE) = min(try_cast(expiration AS DATE)) OVER (PARTITION BY symbol)
+            """
+        )
+    else:
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_quality AS SELECT *, 'missing_required_columns' AS quality_status FROM yahoo_options_raw"
+        )
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_usable AS SELECT * EXCLUDE (quality_status) FROM yahoo_options_quality WHERE false"
+        )
+    connection.execute("CREATE OR REPLACE VIEW yahoo_options_current AS SELECT * FROM yahoo_options_usable")
+    option_quality_summary = connection.execute(
+        "SELECT quality_status, COUNT(*) AS rows FROM yahoo_options_quality GROUP BY quality_status ORDER BY quality_status"
+    ).df()
+    option_quality_summary.to_csv(output / "options_quality_summary.csv", index=False)
+    connection.execute(
+        "CREATE OR REPLACE TABLE options_quality_summary AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "options_quality_summary.csv")],
+    )
+    connection.execute("SELECT * FROM yfinance_download_status").df().to_csv(
+        output / "yfinance_download_status.csv", index=False
+    )
+    connection.execute("SELECT * FROM sec_download_status").df().to_csv(
+        output / "sec_download_status.csv", index=False
+    )
+    connection.execute(
         "CREATE OR REPLACE TABLE openap_current_leaderboard AS SELECT * FROM read_csv_auto(?)",
         [str(output / "openap_current_leaderboard.csv")],
     )
@@ -1680,9 +2204,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         ("selected_predictors", "selected_185_predictors.csv"),
         ("redundancy_groups", "redundancy_groups.csv"),
         ("redundancy_correlation_audit", "redundancy_correlation_audit.csv"),
+        ("current_redundancy_groups", "current_redundancy_groups.csv"),
         ("coverage_185", "coverage_185.csv"),
         ("data_quality_current", "data_quality.csv"),
         ("proxy_audit", "proxy_audit.csv"),
+        ("mixed_fidelity_audit", "mixed_fidelity_audit.csv"),
         ("unavailable_predictors", "unavailable_predictors.csv"),
         ("security_universe_exclusions", "security_universe_exclusions.csv"),
     ):
@@ -1696,6 +2222,26 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "(SELECT symbol, date, COUNT(*) AS row_count FROM prices_daily "
             "GROUP BY symbol, date HAVING COUNT(*) > 1)"
         ).fetchone()[0]
+    )
+    raw_price_rows_db = int(
+        connection.execute("SELECT COUNT(*) FROM prices_daily_raw").fetchone()[0]
+    )
+    sec_companyfacts_rows_db = int(
+        connection.execute("SELECT COUNT(*) FROM sec_companyfacts").fetchone()[0]
+    )
+    clean_price_rows_db = int(
+        connection.execute("SELECT COUNT(*) FROM prices_daily_clean").fetchone()[0]
+    )
+    raw_nonpositive_price_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM prices_daily_raw WHERE adj_close <= 0"
+        ).fetchone()[0]
+    )
+    options_raw_rows = int(
+        connection.execute("SELECT COUNT(*) FROM yahoo_options_raw").fetchone()[0]
+    )
+    options_usable_rows = int(
+        connection.execute("SELECT COUNT(*) FROM yahoo_options_usable").fetchone()[0]
     )
     future_price_rows = int(
         connection.execute(
@@ -1717,6 +2263,18 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "SELECT COUNT(*) FROM sec_concept_inputs_current "
             "WHERE CAST(period_end AS DATE) > CAST(? AS DATE)",
             [as_of.date().isoformat()],
+        ).fetchone()[0]
+    )
+    concept_inputs_before_period_end = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current "
+            "WHERE CAST(available_at AS TIMESTAMP) < CAST(period_end AS TIMESTAMP)"
+        ).fetchone()[0]
+    )
+    concept_inputs_before_filed = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current "
+            "WHERE filed IS NOT NULL AND CAST(available_at AS TIMESTAMP) < CAST(filed AS TIMESTAMP)"
         ).fetchone()[0]
     )
     invalid_concept_units = int(
@@ -1752,19 +2310,60 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "SELECT COUNT(*) FROM openap_current_leaderboard WHERE NOT ranking_eligible"
         ).fetchone()[0]
     )
-    schema_contract_rows = [
-        {"table_name": "prices_daily", "unique_key": "symbol,date", "required_non_null": "symbol,date,adj_close"},
-        {"table_name": "sec_companyfacts", "unique_key": "cik,taxonomy,tag,unit,period_start,period_end,accession_number,value", "required_non_null": "cik,tag,period_end,available_at"},
-        {"table_name": "sec_submissions", "unique_key": "cik,accession_number,form,filing_date", "required_non_null": "cik,accession_number,form"},
-        {"table_name": "openap_features_current", "unique_key": "as_of,symbol,signalname", "required_non_null": "as_of,symbol,signalname,status,value_status"},
-        {"table_name": "openap_scores_current", "unique_key": "as_of,symbol,horizon_months", "required_non_null": "as_of,symbol,horizon_months"},
-        {"table_name": "openap_scores_aggregate_current", "unique_key": "as_of,symbol", "required_non_null": "as_of,symbol,score_validation_status"},
-    ]
-    schema_contract = pd.DataFrame(schema_contract_rows)
-    schema_contract.to_csv(output / "schema_contract.csv", index=False)
-    connection.execute(
-        "CREATE OR REPLACE TABLE schema_contract AS SELECT * FROM read_csv_auto(?)",
-        [str(output / "schema_contract.csv")],
+    unsupported_official_filters = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE official_filter_status LIKE 'unsupported:%'"
+        ).fetchone()[0]
+    )
+    weak_bucket_scores = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_overall_scores_current "
+            "WHERE metrics_used < minimum_metrics_required AND score IS NOT NULL"
+        ).fetchone()[0]
+    )
+    family_weight_cap_violations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_overall_scores_current "
+            "WHERE horizon_evidence_sufficient "
+            "AND maximum_family_weight_actual > ? + 1e-12",
+            [float(config["score"]["maximum_family_weight"])],
+        ).fetchone()[0]
+    )
+    required_horizons = [int(value) for value in config["score"]["required_ranking_horizons"]]
+    required_horizon_denominator_variants = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT horizon_months FROM openap_overall_scores_current "
+            f"WHERE horizon_months IN ({','.join(map(str, required_horizons))}) "
+            "GROUP BY horizon_months HAVING COUNT(DISTINCT (metrics_expected, groups_expected)) <> 1)"
+        ).fetchone()[0]
+    )
+    ranking_sec_download_failures = int(
+        connection.execute(
+            "SELECT COUNT(DISTINCT d.cik) FROM sec_download_status d "
+            "INNER JOIN security_master s ON d.cik = s.cik "
+            "WHERE s.ranking_eligible AND d.surface = 'companyfacts' "
+            "AND d.status NOT IN ('ok','repaired_bulk')"
+        ).fetchone()[0]
+    )
+    sec_download_errors = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status "
+            "WHERE status NOT IN ('ok','repaired_bulk')"
+        ).fetchone()[0]
+    )
+    sec_direct_downloads = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status "
+            "WHERE status = 'ok' AND source_mode = 'sec_official_api'"
+        ).fetchone()[0]
+    )
+    sec_jina_fallback_downloads = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_download_status "
+            "WHERE status = 'ok' AND source_mode = 'sec_via_jina_readthrough'"
+        ).fetchone()[0]
     )
     issue_counts = {
         "duplicate_price_rows": duplicate_prices,
@@ -1772,16 +2371,34 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "facts_without_available_at": facts_without_available_at,
         "concept_inputs_without_available_at": concept_inputs_without_available_at,
         "future_concept_inputs": future_concept_inputs,
+        "concept_inputs_before_period_end": concept_inputs_before_period_end,
+        "concept_inputs_before_filed": concept_inputs_before_filed,
         "invalid_concept_units": invalid_concept_units,
         "duplicate_companyfacts": duplicate_companyfacts,
         "duplicate_submissions": duplicate_submissions,
         "inconsistent_feature_status": inconsistent_feature_status,
         "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "unsupported_official_filters": unsupported_official_filters,
+        "weak_bucket_scores": weak_bucket_scores,
+        "family_weight_cap_violations": family_weight_cap_violations,
+        "required_horizon_denominator_variants": required_horizon_denominator_variants,
+        "ranking_sec_download_failures": ranking_sec_download_failures,
+    }
+    warning_counts = {
+        "nonranking_sec_download_errors": max(
+            sec_download_errors - ranking_sec_download_failures, 0
+        ),
+        "sec_jina_fallback_downloads": sec_jina_fallback_downloads,
+        "raw_nonpositive_price_rows_quarantined": raw_nonpositive_price_rows,
     }
     issues = pd.DataFrame(
         [
             {"check_name": name, "severity": "error", "issue_count": count, "passed": count == 0}
             for name, count in issue_counts.items()
+        ]
+        + [
+            {"check_name": name, "severity": "warning", "issue_count": count, "passed": count == 0}
+            for name, count in warning_counts.items()
         ]
     )
     issues.to_csv(output / "data_quality_issues.csv", index=False)
@@ -1793,6 +2410,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
 
     exact_predictors = int((coverage["coverage_status"] == "exact").sum())
     proxy_predictors = int((coverage["coverage_status"] == "proxy").sum())
+    mixed_predictors = int((coverage["coverage_status"] == "mixed").sum())
     unavailable_predictors = int((coverage["coverage_status"] == "unavailable").sum())
     summaries = [json.loads(path.read_text(encoding="utf-8")) for path in summary_paths]
     if len(sec_summary_paths) != expected_sec_chunks:
@@ -1838,10 +2456,40 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "CREATE OR REPLACE TABLE sec_source_manifest AS SELECT * FROM read_csv_auto(?)",
         [str(output / "sec_source_manifest.csv")],
     )
+    (
+        schema_contract_rows,
+        database_index_rows,
+        database_contract_violations,
+    ) = finalize_database_contract(
+        connection, output
+    )
+    issues = pd.concat(
+        [
+            issues,
+            pd.DataFrame(
+                [
+                    {
+                        "check_name": "database_contract_violations",
+                        "severity": "error",
+                        "issue_count": database_contract_violations,
+                        "passed": database_contract_violations == 0,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    issues.to_csv(output / "data_quality_issues.csv", index=False)
+    connection.register("data_quality_issues_frame", issues)
+    connection.execute(
+        "CREATE OR REPLACE TABLE data_quality_issues AS "
+        "SELECT * FROM data_quality_issues_frame"
+    )
+    connection.unregister("data_quality_issues_frame")
     connection.close()
     sec_companyfacts_rows = sum(int(item.get("companyfacts_rows", 0)) for item in sec_summaries)
     sec_submissions_rows = sum(int(item.get("submissions_rows", 0)) for item in sec_summaries)
-    all_facts_have_available_at = all(bool(item.get("all_facts_have_available_at")) for item in sec_summaries)
+    all_facts_have_available_at = facts_without_available_at == 0
     summary = {
         "dataset_id": config["dataset_id"],
         "completed_at": _utcnow(),
@@ -1853,16 +2501,28 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "common_stock_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
         "ranking_exclusion_rows": int((~security_master["ranking_eligible"]).sum()),
         "price_rows": int(sum(int(item.get("price_rows", 0)) for item in summaries)),
-        "sec_companyfacts_rows": sec_companyfacts_rows,
+        "raw_price_rows_in_database": raw_price_rows_db,
+        "clean_price_rows_in_database": clean_price_rows_db,
+        "options_raw_rows": options_raw_rows,
+        "options_usable_rows": options_usable_rows,
+        "sec_companyfacts_rows": sec_companyfacts_rows_db,
+        "sec_companyfacts_rows_before_bulk_repair": sec_companyfacts_rows,
+        "sec_bulk_repair_requested": sec_bulk_repair["requested"],
+        "sec_bulk_repair_completed": sec_bulk_repair["repaired"],
+        "sec_bulk_repair_still_missing": sec_bulk_repair["still_missing"],
+        "sec_bulk_repair_sha256": sec_bulk_repair["bulk_sha256"],
         "sec_submissions_rows": sec_submissions_rows,
         "exact_predictors_with_any_value": exact_predictors,
         "proxy_predictors_with_any_value": proxy_predictors,
+        "mixed_predictors_with_exact_and_proxy_rows": mixed_predictors,
         "unavailable_predictors": unavailable_predictors,
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
+        "overall_scores_rows": len(overall_scores),
         "aggregate_scores_rows": len(aggregate_scores),
         "leaderboard_rows": len(leaderboard),
         "score_horizons": sorted(scores["horizon_months"].dropna().astype(int).unique().tolist()),
+        "ranking_score_mode": str(config["score"]["ranking_score_mode"]),
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
@@ -1884,18 +2544,32 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "duplicate_submissions": duplicate_submissions,
         "inconsistent_feature_status": inconsistent_feature_status,
         "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "unsupported_official_filters": unsupported_official_filters,
+        "weak_bucket_scores": weak_bucket_scores,
+        "family_weight_cap_violations": family_weight_cap_violations,
+        "required_horizon_denominator_variants": required_horizon_denominator_variants,
+        "ranking_sec_download_failures": ranking_sec_download_failures,
+        "sec_download_errors": sec_download_errors,
+        "sec_direct_downloads": sec_direct_downloads,
+        "sec_jina_fallback_downloads": sec_jina_fallback_downloads,
         "score_validation_status": str(config["score"]["validation_status"]),
         "prediction_probability_claimed": False,
         "source_manifest_rows": len(source_manifest),
         "yfinance_source_manifest_rows": len(yahoo_source_manifest),
         "sec_source_manifest_rows": len(sec_source_manifest),
+        "schema_contract_rows": schema_contract_rows,
+        "database_index_rows": database_index_rows,
+        "database_contract_violations": database_contract_violations,
         "pipeline_git_sha": os.environ.get("GITHUB_SHA", ""),
         "config_sha256": sha256_file(args.config),
     }
-    if any(issue_counts.values()):
+    if any(issue_counts.values()) or database_contract_violations:
         raise OpenAPDataError(
             "Data-quality gate failed: "
-            + ", ".join(f"{name}={count}" for name, count in issue_counts.items() if count)
+            + ", ".join(
+                [f"{name}={count}" for name, count in issue_counts.items() if count]
+                + ([f"database_contract_violations={database_contract_violations}"] if database_contract_violations else [])
+            )
         )
     if len(coverage) != EXPECTED_PREDICTORS or len(feature_frame) != len(values_by_symbol) * EXPECTED_PREDICTORS:
         raise OpenAPDataError("Final feature or coverage row counts do not reconcile")
