@@ -333,13 +333,23 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, list[float | None]]:
-    """Return current and lagged canonical concepts using strict available_at."""
+    """Return comparable annual concepts using strict available_at.
+
+    OpenAP accounting signals are annual.  SEC Company Facts frequently stores
+    quarterly, year-to-date and annual observations for the same tag.  Mixing
+    those rows would turn a quarter-to-quarter change into a fake annual
+    growth rate, so annual filings and fiscal-year observations are preferred.
+    The fallback keeps older fixtures and issuers with incomplete metadata
+    usable, but never chooses a future filing.
+    """
 
     if facts.empty:
         return {}
     frame = facts.copy()
     frame["available_at"] = pd.to_datetime(frame["available_at"], errors="coerce", utc=True).dt.tz_localize(None)
     frame["period_end"] = pd.to_datetime(frame["period_end"], errors="coerce")
+    if "period_start" in frame:
+        frame["period_start"] = pd.to_datetime(frame["period_start"], errors="coerce")
     frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
     frame = frame.loc[frame["available_at"].le(pd.Timestamp(as_of))].dropna(subset=["period_end", "value"])
     result: dict[str, list[float | None]] = {}
@@ -348,6 +358,17 @@ def latest_sec_concepts(facts: pd.DataFrame, as_of: pd.Timestamp) -> dict[str, l
         if subset.empty:
             result[concept] = [None, None, None, None, None, None]
             continue
+        if "form" in subset:
+            annual_form = subset["form"].astype(str).str.upper().isin({"10-K", "20-F", "40-F"})
+        else:
+            annual_form = pd.Series(False, index=subset.index)
+        if "fp" in subset:
+            fiscal_year = subset["fp"].astype(str).str.upper().eq("FY")
+        else:
+            fiscal_year = pd.Series(False, index=subset.index)
+        annual = subset.loc[annual_form | fiscal_year].copy()
+        if not annual.empty:
+            subset = annual
         subset["alias_rank"] = subset["tag"].map({name: index for index, name in enumerate(aliases)})
         subset = subset.sort_values(["period_end", "available_at", "alias_rank"])
         subset = subset.drop_duplicates("period_end", keep="last").sort_values("period_end")

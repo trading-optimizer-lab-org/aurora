@@ -641,7 +641,7 @@ def _companyfacts_rows(
     *,
     source_url: str,
     source_mode: str,
-    observations_per_tag: int = 6,
+    observations_per_tag: int = 24,
 ) -> list[dict[str, Any]]:
     wanted_tags = {
         alias
@@ -667,9 +667,15 @@ def _companyfacts_rows(
                     continue
                 usable = [item for item in observations if isinstance(item, Mapping) and item.get("end")]
                 usable.sort(key=lambda item: (str(item.get("end") or ""), str(item.get("filed") or "")))
-                by_period: dict[str, Mapping[str, Any]] = {}
+                by_period: dict[tuple[str, str, str, str], Mapping[str, Any]] = {}
                 for observation in usable:
-                    by_period[str(observation.get("end"))] = observation
+                    key = (
+                        str(observation.get("end") or ""),
+                        str(observation.get("start") or ""),
+                        str(observation.get("form") or ""),
+                        str(observation.get("fp") or ""),
+                    )
+                    by_period[key] = observation
                 for observation in list(by_period.values())[-observations_per_tag:]:
                     filed = pd.to_datetime(observation.get("filed"), errors="coerce", utc=True)
                     if pd.isna(filed):

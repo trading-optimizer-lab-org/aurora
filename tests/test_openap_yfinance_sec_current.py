@@ -80,6 +80,24 @@ def test_sec_concepts_ignore_facts_not_yet_available() -> None:
     assert 999.0 not in concepts["assets"]
 
 
+def test_sec_concepts_prefer_comparable_annual_facts() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": ["Revenues", "Revenues", "Revenues"],
+            "value": [25.0, 100.0, 80.0],
+            "period_start": ["2024-01-01", "2024-01-01", "2023-01-01"],
+            "period_end": ["2024-03-31", "2024-12-31", "2023-12-31"],
+            "available_at": ["2024-05-01", "2025-02-01", "2024-02-01"],
+            "form": ["10-Q", "10-K", "10-K"],
+            "fp": ["Q1", "FY", "FY"],
+        }
+    )
+
+    concepts = latest_sec_concepts(facts, pd.Timestamp("2025-06-01"))
+
+    assert concepts["revenue"][:2] == [100.0, 80.0]
+
+
 def test_pinned_sec_mapper_fallback_filters_non_common_securities(
     tmp_path: Path,
 ) -> None:
@@ -145,7 +163,7 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
         source_url="https://data.sec.gov/example",
         source_mode="sec_official_api",
     )
-    assert len(rows) == 6
+    assert len(rows) == 10
     assert {row["tag"] for row in rows} == {"Assets"}
     assert all(
         pd.Timestamp(row["available_at"]) > pd.Timestamp(row["filed"], tz="UTC")
