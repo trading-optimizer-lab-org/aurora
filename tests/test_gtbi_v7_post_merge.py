@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import shutil
 from pathlib import Path
@@ -98,6 +99,13 @@ def test_successor_amendment_preserves_historical_pr1_receipt() -> None:
         "master_plan_sha256": receipt["master_plan_sha256"],
         "pr1_merge_receipt_digest": receipt["receipt_digest"],
     }
+    with (
+        ROOT / "docs/readiness/gtbi-v7/task_planning_inputs.csv"
+    ).open(encoding="utf-8", newline="") as handle:
+        foundation = next(
+            row for row in csv.DictReader(handle) if row["task_id"] == "PREV7-0000"
+        )
+    assert foundation["estimate_basis_digest"] == receipt["master_plan_sha256"]
 
 
 def test_successor_amendment_rejects_current_plan_drift(tmp_path: Path) -> None:

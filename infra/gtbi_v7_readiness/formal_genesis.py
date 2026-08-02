@@ -296,6 +296,7 @@ def build_formal_genesis_records(
             "review_lead_time_hours": "0.22",
             "provider_or_hiring_lead_time_hours": "0",
             "estimated_cost_entries_by_domain": zero_cost,
+            "estimate_basis_digest": receipt["master_plan_sha256"],
             "approved_at_utc": times[7],
         }
     )
