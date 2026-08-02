@@ -12,6 +12,7 @@ from aurora.research.openap_current_score import (
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
+    calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
     coverage_report,
@@ -272,6 +273,26 @@ def test_scores_include_all_horizons_with_horizon_specific_minimums() -> None:
     assert set(aaa["horizon_months"]) == {1, 3, 6, 12, 36}
     assert aaa["score"].notna().all()
     assert aaa.loc[aaa["horizon_months"].eq(6), "confidence"].iloc[0] > 0
+
+
+def test_aggregate_score_uses_available_horizons_without_zero_filling() -> None:
+    scores = pd.DataFrame(
+        {
+            "as_of": ["2026-08-01"] * 3,
+            "symbol": ["AAA"] * 3,
+            "horizon_months": [1, 3, 6],
+            "score": [80.0, 60.0, np.nan],
+            "confidence": [100.0, 50.0, 0.0],
+            "metrics_used": [10, 5, 0],
+            "groups_used": [10, 5, 0],
+        }
+    )
+
+    result = calculate_aggregate_scores(scores).iloc[0]
+
+    assert result["aggregate_score"] == pytest.approx((80.0 + 30.0) / 1.5)
+    assert result["horizons_used"] == 2
+    assert result["aggregate_confidence"] == pytest.approx(30.0)
 
 
 def test_workflow_contract_is_github_only_and_complete() -> None:

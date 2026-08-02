@@ -29,6 +29,7 @@ from aurora.research.openap_current_score import (
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
+    calculate_aggregate_scores,
     calculate_price_features,
     calculate_scores,
     coverage_report,
@@ -1175,6 +1176,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 "price_rows": len(prices),
                 "first_price_date": prices["date"].min() if not prices.empty else None,
                 "last_price_date": prices["date"].max() if not prices.empty else None,
+                "last_sec_available_at": facts["available_at"].max() if not facts.empty else None,
                 "sec_fact_rows": len(facts),
                 "computed_features": sum(item.raw_value is not None for item in values.values()),
                 "exact_features": sum(item.status == "exact" and item.raw_value is not None for item in values.values()),
@@ -1217,10 +1219,16 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         redundancy_groups=groups,
     )
     scores = calculate_scores(feature_frame, minimum_metrics=int(config["score"]["minimum_metrics_per_score"]))
+    aggregate_scores = calculate_aggregate_scores(scores)
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
     feature_frame.to_parquet(output / "openap_features_current.parquet", index=False, compression="zstd")
     scores.to_parquet(output / "openap_scores_current.parquet", index=False, compression="zstd")
+    aggregate_scores.to_parquet(
+        output / "openap_scores_aggregate_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     coverage.to_csv(output / "coverage_185.csv", index=False)
     quality.to_csv(output / "data_quality.csv", index=False)
     coverage.loc[coverage["coverage_status"].eq("proxy")].to_csv(output / "proxy_audit.csv", index=False)
@@ -1231,6 +1239,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute("CREATE OR REPLACE TABLE security_master AS SELECT * FROM read_parquet(?)", [str(output / "security_master.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_features_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_features_current.parquet")])
     connection.execute("CREATE OR REPLACE TABLE openap_scores_current AS SELECT * FROM read_parquet(?)", [str(output / "openap_scores_current.parquet")])
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_scores_aggregate_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "openap_scores_aggregate_current.parquet")],
+    )
     duplicate_prices = int(
         connection.execute(
             "SELECT COALESCE(SUM(row_count - 1), 0) FROM "
@@ -1276,6 +1288,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "unavailable_predictors": unavailable_predictors,
         "coverage_rows": len(coverage),
         "scores_rows": len(scores),
+        "aggregate_scores_rows": len(aggregate_scores),
+        "score_horizons": sorted(scores["horizon_months"].dropna().astype(int).unique().tolist()),
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,

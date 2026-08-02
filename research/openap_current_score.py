@@ -476,6 +476,83 @@ UNAVAILABLE_BY_SOURCE = {
 }
 
 
+UNIMPLEMENTED_REQUIREMENTS: dict[str, tuple[str, str]] = {
+    "AbnormalAccruals": ("cross_sectional_regression", "Requires the annual industry cross-sectional modified-Jones regression"),
+    "AccrualsBM": ("cross_sectional_double_sort", "Requires current cross-sectional accrual and book-to-market quintiles"),
+    "AnnouncementReturn": ("earnings_event_history", "Requires causal quarterly earnings announcement dates and event returns"),
+    "BMdec": ("historical_december_market_cap", "Requires the most recent December market-equity snapshot"),
+    "BPEBM": ("additional_sec_concepts", "Requires preferred stock and deferred-charge concepts aligned to the official formula"),
+    "BetaLiquidityPS": ("external_liquidity_factor", "Requires the Pastor-Stambaugh liquidity innovation series and a 60-month regression"),
+    "BetaTailRisk": ("cross_sectional_tail_factor", "Requires a 120-month regression on a market-wide daily tail-risk factor"),
+    "BrandInvest": ("brand_investment_history", "Requires the paper's accumulated advertising-capital construction"),
+    "CBOperProf": ("industry_adjusted_accounting", "Requires the official conservative operating-profitability construction"),
+    "CashProd": ("official_formula_pending", "SEC inputs exist, but the official cash-productivity formula is not yet implemented"),
+    "ChAssetTurnover": ("annual_history_formula_pending", "Requires two causally available annual asset-turnover observations"),
+    "ChInvIA": ("historical_industry_membership", "Requires annual capex growth and historical two-digit SIC industry means"),
+    "ChNNCOA": ("additional_sec_concepts", "Requires non-current investments and the complete non-current operating-assets formula"),
+    "CompEquIss": ("historical_market_cap", "Requires five-year market-equity growth and five-year stock return"),
+    "CompositeDebtIssuance": ("five_year_debt_history", "Requires comparable current and five-year-lagged total debt"),
+    "ConvDebt": ("convertible_debt_classification", "Requires a reliable convertible-debt concept not consistently present in SEC XBRL"),
+    "CoskewACX": ("market_regression", "Requires one year of aligned daily stock and value-weighted market returns"),
+    "Coskewness": ("market_regression", "Requires 60 months of aligned stock and value-weighted market excess returns"),
+    "DebtIssuance": ("debt_issuance_cash_flow", "Requires a consistently mapped long-term debt issuance cash-flow concept"),
+    "DelCOA": ("additional_sec_concepts", "Requires current operating assets and comparable annual lags"),
+    "DelCOL": ("additional_sec_concepts", "Requires current operating liabilities and comparable annual lags"),
+    "DelEqu": ("annual_history_formula_pending", "Requires book-equity change scaled by average annual assets"),
+    "DelFINL": ("additional_sec_concepts", "Requires preferred stock plus current and long-term debt annual changes"),
+    "DelLTI": ("long_term_investments", "Requires investments-and-advances history"),
+    "DelNetFin": ("additional_sec_concepts", "Requires short- and long-term investments, debt and preferred stock history"),
+    "DivYieldST": ("distribution_code_history", "Yahoo dividends do not contain CRSP distribution codes required by the official bins"),
+    "EBM": ("additional_sec_concepts", "Requires preferred stock and deferred-charge concepts aligned to the official formula"),
+    "EarnSupBig": ("historical_industry_membership", "Requires quarterly earnings surprise and historical FF48 large-firm industry means"),
+    "EarningsConsistency": ("quarterly_eps_history", "Requires at least 48 months of comparable causal quarterly EPS"),
+    "EarningsStreak": ("point_in_time_analyst_history", "Requires point-in-time IBES actuals and forecasts"),
+    "EarningsSurprise": ("quarterly_eps_history", "Requires causal quarterly EPS and an eight-quarter drift history"),
+    "EntMult": ("additional_sec_concepts", "Requires operating income before depreciation and deferred charges"),
+    "EquityDuration": ("official_code_required", "The metadata delegates the formula to official code; no safe two-source implementation is frozen"),
+    "FirmAgeMom": ("cross_sectional_age_sort", "Requires firm-age quintiles and six-month momentum after a historical listing-date audit"),
+    "Frontier": ("rolling_cross_sectional_regression", "Requires a rolling 60-month cross-sectional regression with industry dummies"),
+    "GrLTNOA": ("additional_sec_concepts", "Requires the complete long-term net operating-assets and accrual formulas"),
+    "GrSaleToGrInv": ("annual_history_formula_pending", "Requires comparable two-year revenue and inventory histories"),
+    "Herf": ("historical_industry_membership", "Requires three-digit SIC revenue shares and a three-year rolling industry index"),
+    "HerfBE": ("historical_industry_membership", "Requires three-digit SIC book-equity shares and a three-year rolling industry index"),
+    "IdioVol3F": ("factor_returns", "Requires daily Fama-French three-factor residuals"),
+    "IntanBM": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "IntanCFP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "IntanEP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "IntanSP": ("rolling_cross_sectional_regression", "Requires the paper's monthly five-year cross-sectional regression"),
+    "MS": ("official_code_required", "Requires the full low-BM Mohanram score construction and cross-sectional eligibility filter"),
+    "MeanRankRevGrowth": ("five_year_cross_sectional_ranks", "Requires annual revenue-growth ranks for five historical cross-sections"),
+    "Mom12mOffSeason": ("seasonality_formula_pending", "Price history exists, but the exact off-season month selection is not yet frozen"),
+    "Mom6mJunk": ("credit_rating_history", "Requires a causal issuer credit-rating history"),
+    "MomOffSeason": ("seasonality_formula_pending", "Price history exists, but the exact two-to-five-year off-season window is not yet frozen"),
+    "MomOffSeason06YrPlus": ("seasonality_formula_pending", "Price history exists, but the exact six-to-ten-year off-season window is not yet frozen"),
+    "MomOffSeason16YrPlus": ("seasonality_formula_pending", "Price history exists, but the exact sixteen-to-twenty-year off-season window is not yet frozen"),
+    "MomRev": ("cross_sectional_double_sort", "Requires current cross-sectional Mom6m and Mom36m quintiles"),
+    "MomSeasonShort": ("seasonality_formula_pending", "Requires the same calendar-month return from the previous year"),
+    "MomVol": ("historical_turnover_sort", "Requires independent momentum and six-month turnover portfolio sorts"),
+    "NetEquityFinance": ("equity_cash_flow_mapping", "Requires consistently mapped stock sale and repurchase cash flows"),
+    "NumEarnIncrease": ("quarterly_income_history", "Requires up to eight consecutive year-over-year quarterly income comparisons"),
+    "OPLeverage": ("official_formula_pending", "SEC cost and SG&A inputs exist, but the official formula is not yet implemented"),
+    "OScore": ("gnp_deflator_and_industry_filter", "Requires the historical GNP deflator and official industry exclusions"),
+    "OperProf": ("official_formula_pending", "SEC inputs exist, but the official operating-profitability formula and size filter are not yet implemented"),
+    "OrgCap": ("capitalized_sga_history", "Requires recursively capitalized SG&A organization capital"),
+    "PS": ("piotroski_cross_section", "Requires all nine Piotroski inputs plus the high book-to-market eligibility quintile"),
+    "PctTotAcc": ("cash_flow_statement_components", "Requires complete financing and investing cash-flow components"),
+    "PriceDelayRsq": ("market_regression", "Requires the annual daily market-lag regression and July refresh rule"),
+    "ResidualMomentum": ("factor_returns", "Requires 36 months of Fama-French residual returns"),
+    "ReturnSkew3F": ("factor_returns", "Requires daily Fama-French three-factor residuals"),
+    "RevenueSurprise": ("quarterly_revenue_per_share_history", "Requires causal quarterly revenue-per-share history and rolling standardization"),
+    "ShortInterest": ("short_interest_history", "SEC and Yahoo do not provide the required causal mid-month short-interest series"),
+    "SurpriseRD": ("annual_history_formula_pending", "Requires comparable annual R&D, revenue and assets growth"),
+    "Tax": ("tax_component_mapping", "Requires federal, foreign and deferred tax components mapped consistently"),
+    "XFIN": ("cash_flow_statement_components", "Requires stock issuance, repurchase, dividends and debt issue/reduction flows"),
+    "betaVIX": ("vix_market_regression", "Requires aligned daily VIX changes, market returns and stock excess returns"),
+    "retConglomerate": ("business_segment_history", "Requires causal Compustat business-segment sales and stand-alone industry returns"),
+    "roaq": ("quarterly_income_history", "Requires a clean quarterly net-income series divided by lagged quarterly assets"),
+}
+
+
 def classify_missing_signal(row: Mapping[str, Any]) -> tuple[str, str, str]:
     """Classify a non-computed predictor without claiming nonexistent data."""
 
@@ -483,6 +560,9 @@ def classify_missing_signal(row: Mapping[str, Any]) -> tuple[str, str, str]:
     category = str(row.get("Cat.Data", ""))
     if name in UNAVAILABLE_BY_SOURCE:
         return "unavailable", "missing_external_source", UNAVAILABLE_BY_SOURCE[name]
+    if name in UNIMPLEMENTED_REQUIREMENTS:
+        source, note = UNIMPLEMENTED_REQUIREMENTS[name]
+        return "unavailable", source, note
     if category == "13F":
         return "proxy", "yfinance_institutional_snapshot", "Current Yahoo holder snapshot is not historical Thomson/SEC 13F reconstruction"
     if category == "Options":
@@ -600,6 +680,45 @@ def calculate_scores(features: pd.DataFrame, minimum_metrics: int = 5) -> pd.Dat
     return result[["as_of", "symbol", "horizon_months", "score", "confidence", "metrics_used", "groups_used"]]
 
 
+def calculate_aggregate_scores(scores: pd.DataFrame) -> pd.DataFrame:
+    """Combine independent horizon scores without treating missing horizons as zero."""
+
+    columns = [
+        "as_of",
+        "symbol",
+        "aggregate_score",
+        "aggregate_confidence",
+        "horizons_used",
+    ]
+    if scores.empty:
+        return pd.DataFrame(columns=columns)
+    frame = scores.copy()
+    frame["score"] = pd.to_numeric(frame["score"], errors="coerce")
+    frame["confidence"] = pd.to_numeric(frame["confidence"], errors="coerce").fillna(0.0)
+    usable = frame.loc[frame["score"].notna() & frame["confidence"].gt(0)].copy()
+    usable["horizon_weight"] = usable["confidence"] / 100.0
+    usable["weighted_score"] = usable["score"] * usable["horizon_weight"]
+    if usable.empty:
+        result = frame[["as_of", "symbol"]].drop_duplicates()
+        result["aggregate_score"] = np.nan
+        result["aggregate_confidence"] = 0.0
+        result["horizons_used"] = 0
+        return result[columns]
+    result = usable.groupby(["as_of", "symbol"], as_index=False).agg(
+        weighted_sum=("weighted_score", "sum"),
+        total_weight=("horizon_weight", "sum"),
+        mean_confidence=("confidence", "mean"),
+        horizons_used=("horizon_months", "nunique"),
+    )
+    result["aggregate_score"] = result["weighted_sum"] / result["total_weight"].replace(0, np.nan)
+    result["aggregate_confidence"] = result["mean_confidence"] * result["horizons_used"] / len(SUPPORTED_HORIZONS)
+    grid = frame[["as_of", "symbol"]].drop_duplicates()
+    result = grid.merge(result, on=["as_of", "symbol"], how="left")
+    result["aggregate_confidence"] = result["aggregate_confidence"].fillna(0.0)
+    result["horizons_used"] = result["horizons_used"].fillna(0).astype(int)
+    return result[columns]
+
+
 def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFrame:
     """Summarise exact, proxy and unavailable coverage per predictor."""
 
@@ -616,6 +735,10 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
         elif proxy_values:
             dominant = "proxy"
         meta = metadata.loc[metadata["signalname"].eq(signal)].iloc[0]
+        sources = sorted({str(item) for item in group.loc[has_value, "source"].dropna() if str(item)})
+        reasons = sorted({str(item) for item in group.loc[~has_value, "source"].dropna() if str(item)})
+        notes = sorted({str(item) for item in group["note"].dropna() if str(item)})
+        formulas = sorted({str(item) for item in group.loc[has_value, "formula_id"].dropna() if str(item)})
         rows.append(
             {
                 "signalname": signal,
@@ -628,6 +751,10 @@ def coverage_report(features: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
                 "exact_rows": exact_values,
                 "proxy_rows": proxy_values,
                 "unavailable_rows": int(total_symbols - values),
+                "value_sources": " | ".join(sources),
+                "unavailable_reasons": " | ".join(reasons),
+                "notes": " | ".join(notes),
+                "formula_ids": " | ".join(formulas),
             }
         )
     report = pd.DataFrame(rows)
@@ -648,6 +775,7 @@ __all__ = [
     "assemble_feature_table",
     "build_redundancy_groups",
     "calculate_accounting_features",
+    "calculate_aggregate_scores",
     "calculate_price_features",
     "calculate_scores",
     "classify_missing_signal",
