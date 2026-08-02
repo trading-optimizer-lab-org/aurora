@@ -58,3 +58,16 @@ def test_formal_projection_remains_honest_after_terminal_no_go() -> None:
     assert projection["gate_count"] == 15
     assert projection["gate_counts"] == {"green": 4, "red": 11}
     assert projection["terminal_no_go_does_not_green_pending_gates"] is True
+
+
+def test_no_go_is_a_complete_terminal_path_not_scientific_success() -> None:
+    receipt = build_reconciliation()
+    terminal = receipt["selected_terminal_path"]
+    assert terminal["terminal_state"] == "NO_GO_CLOSED"
+    assert terminal["requirements_satisfied"] is True
+    assert all(terminal["requirements"].values())
+    assert terminal["successful_readiness_path_completed"] is False
+    assert terminal["scientific_success"] is False
+    assert terminal["downstream_blocked_tasks_required_for_selected_terminal_state"] is False
+    assert terminal["downstream_blocked_tasks_may_be_executed_under_selected_path"] is False
+    assert receipt["remaining_administrative_scope"]["blocks_selected_terminal_state"] is False
