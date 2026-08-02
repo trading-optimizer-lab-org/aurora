@@ -11,6 +11,11 @@ on:
         description: SEC-compliant User-Agent with contact email
         required: true
         default: "Aurora Research gomez5757@users.noreply.github.com"
+      remerge_only:
+        description: Reuse every successful shard without redownloading SEC data
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -37,6 +42,7 @@ jobs:
 
   repair_sec:
     needs: framework_contract
+    if: ${{ !inputs.remerge_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
@@ -64,7 +70,7 @@ jobs:
         run: |
           python scripts/run_openap_yfinance_sec_current.py \
             --config "$OPENAP_CONFIG" sec-chunk \
-            --security-master inputs/prepare/security_master_seed.parquet \
+            --security-master inputs/prepare/sec_cik_universe.parquet \
             --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
             --chunk-index "${{ matrix.chunk }}" \
             --total-chunks "$SEC_CHUNKS" \
@@ -101,7 +107,8 @@ jobs:
           compression-level: 0
 
   merge:
-    needs: repair_sec
+    needs: [framework_contract, repair_sec]
+    if: ${{ always() && needs.framework_contract.result == 'success' && (needs.repair_sec.result == 'success' || needs.repair_sec.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -131,10 +138,12 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ !inputs.remerge_only }}
         with:
           pattern: openap-sec-repair-lake-*
           path: inputs/repair
       - name: Replace empty source shards with repaired shards
+        if: ${{ !inputs.remerge_only }}
         run: |
           for chunk in 007 023; do
             find inputs/sec -type f \( \
@@ -190,6 +199,12 @@ jobs:
           assert summary["facts_without_available_at"] == 0
           assert summary["sec_concept_input_rows"] > 100_000
           assert summary["concept_inputs_without_available_at"] == 0
+          assert summary["future_concept_inputs"] == 0
+          assert summary["invalid_concept_units"] == 0
+          assert summary["duplicate_companyfacts"] == 0
+          assert summary["duplicate_submissions"] == 0
+          assert summary["inconsistent_feature_status"] == 0
+          assert summary["ineligible_leaderboard_rows"] == 0
           assert summary["score_horizons"] == [1, 3, 6, 12, 36]
           assert summary["aggregate_scores_rows"] == summary["eligible_symbols"]
           assert summary["source_manifest_rows"] == 3
@@ -219,6 +234,15 @@ jobs:
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False
           assert summary["partial"] is False
+          import duckdb
+          con = duckdb.connect("outputs/final/openap_current.duckdb", read_only=True)
+          tables = {row[0] for row in con.execute("SHOW TABLES").fetchall()}
+          assert {
+              "selected_predictors", "redundancy_groups", "redundancy_correlation_audit",
+              "coverage_185", "data_quality_current", "proxy_audit",
+              "unavailable_predictors", "security_universe_exclusions",
+          }.issubset(tables)
+          con.close()
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

@@ -1,0 +1,114 @@
+name: OpenAP Current Score Remerge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful full OpenAP run whose immutable data shards are reused
+        required: true
+        default: "30752706708"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-current-score-remerge
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  OPENAP_CONFIG: config/openap_yfinance_sec_current.yaml
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check -e . pytest duckdb openpyxl requests
+      - name: Compile and test OpenAP pipeline
+        run: |
+          python -m py_compile research/openap_current_score.py
+          python -m py_compile scripts/run_openap_yfinance_sec_current.py
+          python -m pytest tests/test_openap_yfinance_sec_current.py -q
+
+  merge:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e . duckdb requests
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-prepare
+          path: inputs/prepare
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-yfinance-*
+          path: inputs/yfinance
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: openap-sec-lake-*
+          path: inputs/sec
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rebuild DuckDB and score outputs from immutable shards
+        run: |
+          python scripts/run_openap_yfinance_sec_current.py \
+            --config "$OPENAP_CONFIG" merge \
+            --input-root inputs/yfinance \
+            --prepare-dir inputs/prepare \
+            --sec-dir inputs/sec \
+            --output-dir outputs/final
+      - name: Validate corrected artifact
+        run: |
+          test -s outputs/final/openap_current.duckdb
+          test -s outputs/final/openap_current_leaderboard.csv
+          test -s outputs/final/data_quality_issues.csv
+          python - <<'PY'
+          import json
+          import duckdb
+          from pathlib import Path
+          summary = json.loads(Path("outputs/final/execution_summary.json").read_text())
+          for key in (
+              "duplicate_price_rows", "future_price_rows", "facts_without_available_at",
+              "concept_inputs_without_available_at", "future_concept_inputs",
+              "invalid_concept_units", "duplicate_companyfacts", "duplicate_submissions",
+              "inconsistent_feature_status", "ineligible_leaderboard_rows",
+          ):
+              assert summary[key] == 0, (key, summary[key])
+          assert summary["locked_opened"] is False
+          assert summary["validation_used_for_selection"] is False
+          con = duckdb.connect("outputs/final/openap_current.duckdb", read_only=True)
+          tables = {row[0] for row in con.execute("SHOW TABLES").fetchall()}
+          assert {
+              "selected_predictors", "redundancy_groups", "redundancy_correlation_audit",
+              "coverage_185", "data_quality_current", "proxy_audit",
+              "unavailable_predictors", "security_universe_exclusions",
+          }.issubset(tables)
+          assert con.execute("SELECT COUNT(*) FROM openap_current_leaderboard WHERE horizons_used < 5 OR aggregate_confidence < 30").fetchone()[0] == 0
+          con.close()
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-yfinance-sec-current-score-remerged-results
+          path: outputs/final/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

@@ -1676,6 +1676,20 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "CREATE OR REPLACE TABLE openap_current_leaderboard AS SELECT * FROM read_csv_auto(?)",
         [str(output / "openap_current_leaderboard.csv")],
     )
+    for table_name, file_name in (
+        ("selected_predictors", "selected_185_predictors.csv"),
+        ("redundancy_groups", "redundancy_groups.csv"),
+        ("redundancy_correlation_audit", "redundancy_correlation_audit.csv"),
+        ("coverage_185", "coverage_185.csv"),
+        ("data_quality_current", "data_quality.csv"),
+        ("proxy_audit", "proxy_audit.csv"),
+        ("unavailable_predictors", "unavailable_predictors.csv"),
+        ("security_universe_exclusions", "security_universe_exclusions.csv"),
+    ):
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto(?)",
+            [str(output / file_name)],
+        )
     duplicate_prices = int(
         connection.execute(
             "SELECT COALESCE(SUM(row_count - 1), 0) FROM "
@@ -1836,6 +1850,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "eligible_symbols": len(values_by_symbol),
         "security_master_rows": len(security_master),
         "security_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
+        "common_stock_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
+        "ranking_exclusion_rows": int((~security_master["ranking_eligible"]).sum()),
         "price_rows": int(sum(int(item.get("price_rows", 0)) for item in summaries)),
         "sec_companyfacts_rows": sec_companyfacts_rows,
         "sec_submissions_rows": sec_submissions_rows,
