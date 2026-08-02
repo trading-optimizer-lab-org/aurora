@@ -172,7 +172,7 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
 
 
 def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
-    dates = pd.bdate_range("2021-01-01", periods=1100)
+    dates = pd.bdate_range("2004-01-01", periods=5500)
     frame = pd.DataFrame(
         {
             "date": dates,
@@ -187,6 +187,8 @@ def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     assert result["Mom12m"].status == "exact"
     assert result["TrendFactor"].status == "proxy"
     assert result["TrendFactor"].raw_value is not None
+    assert result["MomSeasonShort"].status == "exact"
+    assert result["Mom12mOffSeason"].raw_value is not None
 
 
 def test_accounting_features_do_not_fill_missing_with_zero() -> None:
@@ -201,6 +203,39 @@ def test_accounting_features_do_not_fill_missing_with_zero() -> None:
     assert result["BM"].raw_value == pytest.approx(0.3)
     assert result["AssetGrowth"].raw_value == pytest.approx(0.25)
     assert result["ChInv"].raw_value is None
+
+
+def test_accounting_features_cover_direct_sec_formulas_without_invented_inputs() -> None:
+    concepts = {
+        "assets": [100.0, 80.0, 70.0, 60.0, 55.0, 50.0],
+        "current_assets": [50.0, 40.0],
+        "current_liabilities": [25.0, 20.0],
+        "cash": [10.0, 8.0],
+        "debt_current": [5.0, 4.0, 4.0, 3.0, 3.0, 2.0],
+        "debt_long": [15.0, 14.0, 13.0, 12.0, 11.0, 10.0],
+        "equity": [60.0, 50.0],
+        "revenue": [150.0, 120.0, 100.0],
+        "inventory": [20.0, 16.0, 14.0],
+        "cogs": [90.0, 75.0],
+        "sga": [20.0, 18.0],
+        "interest": [3.0, 3.0],
+        "rd": [12.0, 8.0],
+        "share_issuance": [4.0, 3.0],
+        "repurchases": [2.0, 1.0],
+        "dividends": [1.0, 1.0],
+        "debt_issuance": [6.0, 5.0],
+        "debt_reduction": [2.0, 2.0],
+    }
+
+    result = calculate_accounting_features(concepts, market_cap=200.0)
+
+    assert result["CashProd"].raw_value == pytest.approx(10.0)
+    assert result["ChAssetTurnover"].raw_value == pytest.approx(0.0)
+    assert result["CompositeDebtIssuance"].raw_value == pytest.approx(np.log(20.0) - np.log(12.0))
+    assert result["NetEquityFinance"].raw_value == pytest.approx(2.0 / 90.0)
+    assert result["OPLeverage"].raw_value == pytest.approx(1.1)
+    assert result["OperProf"].raw_value == pytest.approx(37.0 / 60.0)
+    assert result["XFIN"].raw_value == pytest.approx(5.0 / 100.0)
 
 
 def test_score_gives_one_vote_to_redundancy_group() -> None:

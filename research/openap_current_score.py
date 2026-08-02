@@ -294,9 +294,39 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
         current_month = monthly.index[-1].month
         same_month = month_returns.loc[month_returns.index.month == current_month].dropna()
         result["MomSeason"] = exact("MomSeason", float(same_month.iloc[-5:].mean()) if len(same_month) >= 5 else None, "same_calendar_month_return_history")
+        result["MomSeasonShort"] = exact(
+            "MomSeasonShort",
+            float(same_month.iloc[-2]) if len(same_month) >= 2 else None,
+            "same_calendar_month_return_previous_year",
+        )
         result["MomSeason06YrPlus"] = exact("MomSeason06YrPlus", float(same_month.iloc[:-5].mean()) if len(same_month) > 5 else None, "same_month_history_excluding_recent_5y")
         result["MomSeason11YrPlus"] = exact("MomSeason11YrPlus", float(same_month.iloc[:-10].mean()) if len(same_month) > 10 else None, "same_month_history_excluding_recent_10y")
         result["MomSeason16YrPlus"] = exact("MomSeason16YrPlus", float(same_month.iloc[:-15].mean()) if len(same_month) > 15 else None, "same_month_history_excluding_recent_15y")
+        def off_season_average(older: int, newer: int) -> float | None:
+            window = month_returns.iloc[-older:-newer] if newer else month_returns.iloc[-older:]
+            window = window.loc[window.index.month != current_month].dropna()
+            return float(window.mean()) if not window.empty else None
+
+        result["Mom12mOffSeason"] = exact(
+            "Mom12mOffSeason",
+            off_season_average(12, 0),
+            "average_other_calendar_month_returns_previous_year",
+        )
+        result["MomOffSeason"] = exact(
+            "MomOffSeason",
+            off_season_average(60, 24),
+            "average_other_calendar_month_returns_years_2_to_5",
+        )
+        result["MomOffSeason06YrPlus"] = exact(
+            "MomOffSeason06YrPlus",
+            off_season_average(120, 60),
+            "average_other_calendar_month_returns_years_6_to_10",
+        )
+        result["MomOffSeason16YrPlus"] = exact(
+            "MomOffSeason16YrPlus",
+            off_season_average(240, 180),
+            "average_other_calendar_month_returns_years_16_to_20",
+        )
     return result
 
 
@@ -323,9 +353,16 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
     "debt_current": ("ShortTermBorrowings", "LongTermDebtCurrent"),
     "debt_long": ("LongTermDebtNoncurrent", "LongTermDebt"),
     "interest": ("InterestExpenseNonOperating", "InterestExpense"),
+    "operating_income": ("OperatingIncomeLoss", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"),
+    "short_investments": ("ShortTermInvestments", "MarketableSecuritiesCurrent"),
+    "long_investments": ("LongTermInvestments", "OtherInvestments"),
+    "preferred_stock": ("PreferredStockValue", "PreferredStockCarryingValue"),
+    "deferred_tax": ("DeferredIncomeTaxExpenseBenefit",),
     "dividends": ("PaymentsOfDividends", "PaymentsOfDividendsCommonStock"),
     "repurchases": ("PaymentsForRepurchaseOfCommonStock",),
     "share_issuance": ("ProceedsFromStockOptionsExercised", "ProceedsFromIssuanceOfCommonStock"),
+    "debt_issuance": ("ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromIssuanceOfDebt"),
+    "debt_reduction": ("RepaymentsOfLongTermDebt", "RepaymentsOfDebt"),
     "shares": ("EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"),
     "employees": ("EntityNumberOfEmployees",),
     "backlog": ("OrderBacklog",),
@@ -406,6 +443,16 @@ def calculate_accounting_features(
         ratio = _safe_ratio(current, previous)
         return ratio - 1.0 if ratio is not None else None
 
+    def difference(left: float | None, right: float | None) -> float | None:
+        if left is None or right is None:
+            return None
+        return left - right
+
+    def sum_required(*items: float | None) -> float | None:
+        if any(item is None for item in items):
+            return None
+        return float(sum(float(item) for item in items if item is not None))
+
     assets = value("assets")
     assets_lag = value("assets", 1)
     equity = value("equity")
@@ -421,13 +468,23 @@ def calculate_accounting_features(
     cogs = value("cogs")
     rd = value("rd")
     sga = value("sga")
-    debt = sum(item or 0.0 for item in (value("debt_current"), value("debt_long")))
+    debt = sum_required(value("debt_current"), value("debt_long"))
     dividends = value("dividends")
     repurchases = value("repurchases")
     issuance = value("share_issuance")
+    debt_current = value("debt_current")
+    debt_long = value("debt_long")
+    debt_lag = sum_required(value("debt_current", 1), value("debt_long", 1))
+    debt_5y = sum_required(value("debt_current", 5), value("debt_long", 5))
+    average_assets = (
+        (assets + assets_lag) / 2.0
+        if assets is not None and assets_lag is not None
+        else None
+    )
 
     def exact(name: str, raw: float | None, formula: str) -> FeatureValue:
-        return FeatureValue(name, raw, "exact", "sec_edgar", formula)
+        note = "" if raw is not None else "Required SEC inputs are unavailable or not comparable"
+        return FeatureValue(name, raw, "exact", "sec_edgar", formula, note)
 
     def proxy(name: str, raw: float | None, formula: str, note: str) -> FeatureValue:
         return FeatureValue(name, raw, "proxy", "sec_edgar", formula, note)
@@ -443,9 +500,21 @@ def calculate_accounting_features(
     result["GP"] = exact("GP", _safe_ratio(gross_profit, assets), "gross_profit_over_assets")
     result["RoE"] = exact("RoE", _safe_ratio(net_income, equity), "net_income_over_book_equity")
     result["Cash"] = exact("Cash", _safe_ratio(cash, assets), "cash_over_assets")
+    result["CashProd"] = exact(
+        "CashProd",
+        _safe_ratio(difference(market_cap, assets), cash),
+        "market_cap_minus_assets_over_cash",
+    )
     result["BookLeverage"] = exact("BookLeverage", _safe_ratio(liabilities, assets), "liabilities_over_assets")
     result["Leverage"] = exact("Leverage", _safe_ratio(debt, market_cap), "debt_over_market_cap")
     result["AssetGrowth"] = exact("AssetGrowth", growth("assets"), "assets_growth_1y")
+    current_asset_turnover = _safe_ratio(revenue, assets)
+    lag_asset_turnover = _safe_ratio(value("revenue", 1), assets_lag)
+    result["ChAssetTurnover"] = exact(
+        "ChAssetTurnover",
+        difference(current_asset_turnover, lag_asset_turnover),
+        "annual_change_revenue_over_assets",
+    )
     result["ChEQ"] = exact("ChEQ", growth("equity"), "book_equity_growth_1y")
     result["ChInv"] = exact("ChInv", _safe_ratio(delta("inventory"), assets_lag), "inventory_change_over_lag_assets")
     result["InvGrowth"] = exact("InvGrowth", growth("inventory"), "inventory_growth_1y")
@@ -459,21 +528,159 @@ def calculate_accounting_features(
     result["Accruals"] = exact("Accruals", _safe_ratio(accruals, assets_lag), "net_income_minus_ocf_over_lag_assets")
     result["TotalAccruals"] = exact("TotalAccruals", _safe_ratio(accruals, assets_lag), "total_accruals_over_lag_assets")
     result["PctAcc"] = exact("PctAcc", _safe_ratio(accruals, abs(net_income) if net_income is not None else None), "accruals_over_abs_earnings")
-    result["NOA"] = proxy("NOA", _safe_ratio((assets or 0) - (cash or 0) - debt, assets), "net_operating_assets_proxy", "SEC taxonomy cannot reproduce every financing component exactly")
+    current_operating_assets = difference(ca, cash)
+    lag_operating_assets = difference(value("current_assets", 1), value("cash", 1))
+    current_operating_liabilities = difference(cl, debt_current)
+    lag_operating_liabilities = difference(value("current_liabilities", 1), value("debt_current", 1))
+    result["DelCOA"] = exact(
+        "DelCOA",
+        _safe_ratio(difference(current_operating_assets, lag_operating_assets), average_assets),
+        "change_current_operating_assets_over_average_assets",
+    )
+    result["DelCOL"] = exact(
+        "DelCOL",
+        _safe_ratio(difference(current_operating_liabilities, lag_operating_liabilities), average_assets),
+        "change_current_operating_liabilities_over_average_assets",
+    )
+    result["DelEqu"] = exact(
+        "DelEqu",
+        _safe_ratio(delta("equity"), average_assets),
+        "change_book_equity_over_average_assets",
+    )
+    financial_liabilities = sum_required(debt_current, debt_long, value("preferred_stock"))
+    lag_financial_liabilities = sum_required(
+        value("debt_current", 1),
+        value("debt_long", 1),
+        value("preferred_stock", 1),
+    )
+    result["DelFINL"] = exact(
+        "DelFINL",
+        _safe_ratio(difference(financial_liabilities, lag_financial_liabilities), average_assets),
+        "change_financial_liabilities_over_average_assets",
+    )
+    result["DelLTI"] = exact(
+        "DelLTI",
+        _safe_ratio(delta("long_investments"), average_assets),
+        "change_long_term_investments_over_average_assets",
+    )
+    net_financial_assets = difference(
+        sum_required(value("short_investments"), value("long_investments")),
+        financial_liabilities,
+    )
+    lag_net_financial_assets = difference(
+        sum_required(value("short_investments", 1), value("long_investments", 1)),
+        lag_financial_liabilities,
+    )
+    result["DelNetFin"] = exact(
+        "DelNetFin",
+        _safe_ratio(difference(net_financial_assets, lag_net_financial_assets), average_assets),
+        "change_net_financial_assets_over_average_assets",
+    )
+    noa_proxy = (
+        assets - cash - debt
+        if assets is not None and cash is not None and debt is not None
+        else None
+    )
+    result["NOA"] = proxy("NOA", _safe_ratio(noa_proxy, assets), "net_operating_assets_proxy", "SEC taxonomy cannot reproduce every financing component exactly")
     result["dNoa"] = proxy("dNoa", None, "change_in_noa_proxy", "Requires lagged canonical financing components")
     result["RD"] = exact("RD", _safe_ratio(rd, market_cap), "rd_over_market_cap")
     result["RDS"] = exact("RDS", _safe_ratio(rd, revenue), "rd_over_sales")
     result["RDcap"] = proxy("RDcap", _safe_ratio(rd, assets), "rd_over_assets_proxy", "Official signal capitalizes R&D recursively")
     result["AdExp"] = exact("AdExp", _safe_ratio(value("advertising"), market_cap), "advertising_over_market_cap")
     result["GrAdExp"] = exact("GrAdExp", growth("advertising"), "advertising_growth_1y")
+    rd_growth = growth("rd")
+    rd_assets = _safe_ratio(rd, assets)
+    lag_rd_assets = _safe_ratio(value("rd", 1), assets_lag)
+    result["SurpriseRD"] = exact(
+        "SurpriseRD",
+        float(
+            bool(
+                _safe_ratio(rd, revenue) is not None
+                and _safe_ratio(rd, revenue) > 0
+                and rd_assets is not None
+                and rd_assets > 0
+                and rd_growth is not None
+                and rd_growth > 0.05
+                and lag_rd_assets is not None
+                and abs(lag_rd_assets) > 1e-12
+                and rd_assets / lag_rd_assets - 1.0 > 0.05
+            )
+        )
+        if all(item is not None for item in (rd, revenue, assets, assets_lag, rd_growth, lag_rd_assets))
+        else None,
+        "rd_intensity_and_growth_four_condition_indicator",
+    )
     result["grcapx"] = exact("grcapx", growth("capex"), "capex_growth_1y")
     result["grcapx3y"] = exact("grcapx3y", growth("capex", 3), "capex_growth_3y")
     result["InvestPPEInv"] = exact("InvestPPEInv", _safe_ratio((delta("ppe") or 0.0) + (delta("inventory") or 0.0), assets_lag), "ppe_plus_inventory_change_over_lag_assets")
     result["Investment"] = exact("Investment", _safe_ratio(value("capex"), revenue), "capex_over_revenue")
+    sales_growth = _safe_ratio(
+        difference(revenue, value("revenue", 1)),
+        np.mean([item for item in (value("revenue", 1), value("revenue", 2)) if item is not None])
+        if value("revenue", 1) is not None
+        else None,
+    )
+    inventory_growth = _safe_ratio(
+        difference(inventory, value("inventory", 1)),
+        np.mean([item for item in (value("inventory", 1), value("inventory", 2)) if item is not None])
+        if value("inventory", 1) is not None
+        else None,
+    )
+    result["GrSaleToGrInv"] = exact(
+        "GrSaleToGrInv",
+        difference(sales_growth, inventory_growth),
+        "sales_growth_minus_inventory_growth_using_two_year_average",
+    )
     result["PayoutYield"] = exact("PayoutYield", _safe_ratio((dividends or 0.0) + (repurchases or 0.0), market_cap), "dividends_plus_repurchases_over_market_cap")
     result["NetPayoutYield"] = exact("NetPayoutYield", _safe_ratio((dividends or 0.0) + (repurchases or 0.0) - (issuance or 0.0), market_cap), "net_payout_over_market_cap")
+    result["NetEquityFinance"] = exact(
+        "NetEquityFinance",
+        _safe_ratio(difference(issuance, repurchases), average_assets),
+        "stock_issuance_minus_repurchases_over_average_assets",
+    )
+    result["CompositeDebtIssuance"] = exact(
+        "CompositeDebtIssuance",
+        math.log(debt) - math.log(debt_5y)
+        if debt is not None and debt > 0 and debt_5y is not None and debt_5y > 0
+        else None,
+        "log_total_debt_minus_log_total_debt_five_years_ago",
+    )
+    result["DebtIssuance"] = exact(
+        "DebtIssuance",
+        float(value("debt_issuance") > 0) if value("debt_issuance") is not None else None,
+        "long_term_debt_issuance_positive_indicator",
+    )
     result["NetDebtFinance"] = exact("NetDebtFinance", _safe_ratio(delta("debt_long"), assets_lag), "net_debt_change_over_lag_assets")
-    result["NetDebtPrice"] = exact("NetDebtPrice", _safe_ratio(debt - (cash or 0.0), market_cap), "net_debt_over_market_cap")
+    result["NetDebtPrice"] = exact(
+        "NetDebtPrice",
+        _safe_ratio(difference(debt, cash), market_cap),
+        "net_debt_over_market_cap",
+    )
+    result["OPLeverage"] = exact(
+        "OPLeverage",
+        _safe_ratio(sum_required(sga if sga is not None else 0.0, cogs), assets),
+        "sga_plus_cogs_over_assets",
+    )
+    operating_profit = None
+    if all(item is not None for item in (revenue, cogs, equity)):
+        operating_profit = revenue - cogs - (sga or 0.0) - (value("interest") or 0.0)
+    result["OperProf"] = exact(
+        "OperProf",
+        _safe_ratio(operating_profit, equity),
+        "revenue_minus_cogs_sga_interest_over_book_equity",
+    )
+    external_finance = sum_required(
+        issuance,
+        -dividends if dividends is not None else None,
+        -repurchases if repurchases is not None else None,
+        value("debt_issuance"),
+        -value("debt_reduction") if value("debt_reduction") is not None else None,
+    )
+    result["XFIN"] = exact(
+        "XFIN",
+        _safe_ratio(external_finance, assets),
+        "issuance_minus_dividends_repurchases_plus_net_debt_issuance_over_assets",
+    )
     result["ShareIss1Y"] = exact("ShareIss1Y", growth("shares"), "shares_growth_1y")
     result["ShareIss5Y"] = exact("ShareIss5Y", growth("shares", 5), "shares_growth_5y")
     tangible = None
