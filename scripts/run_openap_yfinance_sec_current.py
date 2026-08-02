@@ -33,7 +33,8 @@ from aurora.research.openap_current_score import (
     calculate_price_features,
     calculate_scores,
     coverage_report,
-    latest_sec_concepts,
+    latest_sec_concept_inputs,
+    sec_concepts_from_inputs,
     select_strict_predictors,
     sha256_file,
     write_summary,
@@ -1055,9 +1056,19 @@ def _analyst_features(rows: pd.DataFrame) -> dict[str, FeatureValue]:
     revisions = payloads.get("eps_revisions", [])
     if revisions:
         latest = revisions[0]
-        up = sum(float(latest.get(key) or 0) for key in latest if "up" in str(key).lower())
-        down = sum(float(latest.get(key) or 0) for key in latest if "down" in str(key).lower())
-        net = up - down
+        up_values = [
+            float(value)
+            for key, value in latest.items()
+            if "up" in str(key).lower() and _is_number(value)
+        ]
+        down_values = [
+            float(value)
+            for key, value in latest.items()
+            if "down" in str(key).lower() and _is_number(value)
+        ]
+        up = float(sum(up_values)) if up_values else None
+        down = float(sum(down_values)) if down_values else None
+        net = up - down if up is not None and down is not None else None
         result["AnalystRevision"] = FeatureValue("AnalystRevision", net, "proxy", "yfinance_analyst_snapshot", "current_up_minus_down_eps_revisions", "Current Yahoo snapshot, not PIT IBES")
         result["UpRecomm"] = FeatureValue("UpRecomm", up, "proxy", "yfinance_analyst_snapshot", "current_upward_eps_revisions", "Current Yahoo snapshot")
         result["DownRecomm"] = FeatureValue("DownRecomm", down, "proxy", "yfinance_analyst_snapshot", "current_downward_eps_revisions", "Current Yahoo snapshot")
@@ -1090,6 +1101,77 @@ def _is_number(value: Any) -> bool:
         return False
 
 
+def _hashes_by_chunk(paths: Iterable[Path]) -> dict[int, str]:
+    result: dict[int, str] = {}
+    for path in paths:
+        match = re.search(r"_(\d{3})(?:\.[^.]+)$", path.name)
+        if match:
+            result[int(match.group(1))] = sha256_file(path)
+    return result
+
+
+def _classify_security_eligibility(
+    frame: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp,
+    maximum_price_age_days: int = 14,
+) -> pd.DataFrame:
+    """Classify a strict US common-stock universe with an auditable reason."""
+
+    out = frame.copy()
+    quote_type = out.get(
+        "quoteType", pd.Series(index=out.index, dtype="string")
+    ).astype("string").fillna("").str.upper().str.strip()
+    country = out.get(
+        "country_yahoo", pd.Series(index=out.index, dtype="string")
+    ).astype("string").fillna("").str.strip()
+    yahoo_name = out.get(
+        "longName", pd.Series(index=out.index, dtype="string")
+    ).astype("string")
+    sec_name = out.get(
+        "company_name_sec", pd.Series(index=out.index, dtype="string")
+    ).astype("string")
+    name = yahoo_name.fillna(sec_name).fillna("")
+    price_rows = pd.to_numeric(
+        out.get("price_rows", pd.Series(index=out.index, dtype="float64")),
+        errors="coerce",
+    ).fillna(0)
+    last_price = pd.to_datetime(
+        out.get("last_price_date", pd.Series(index=out.index, dtype="datetime64[ns]")),
+        errors="coerce",
+    )
+    cutoff = pd.Timestamp(as_of).tz_localize(None).normalize() - pd.Timedelta(
+        days=int(maximum_price_age_days)
+    )
+    excluded_name = name.str.contains(EXCLUDE_SECURITY_RE, regex=True, na=False)
+    reasons = np.select(
+        [
+            excluded_name,
+            quote_type.ne("EQUITY"),
+            country.eq(""),
+            country.ne("United States"),
+            price_rows.le(0),
+            last_price.isna(),
+            last_price.lt(cutoff),
+        ],
+        [
+            "excluded_name_or_instrument",
+            "yahoo_quote_type_not_equity",
+            "yahoo_country_unavailable",
+            "yahoo_country_not_united_states",
+            "price_history_unavailable",
+            "latest_price_date_unavailable",
+            "latest_price_is_stale",
+        ],
+        default="eligible_us_common_stock",
+    )
+    out["eligibility_reason"] = reasons
+    out["eligible_common_stock"] = out["eligibility_reason"].eq(
+        "eligible_us_common_stock"
+    )
+    return out
+
+
 def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     import duckdb
 
@@ -1101,11 +1183,13 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     metadata = pd.read_parquet(prepare_dir / "selected_185_predictors.parquet")
     groups = pd.read_csv(prepare_dir / "redundancy_groups.csv")
     seed = pd.read_parquet(prepare_dir / "security_master_seed.parquet")
+    source_manifest = pd.read_csv(prepare_dir / "source_manifest.csv")
 
     price_paths = sorted(input_root.rglob("prices_*.parquet"))
     metadata_paths = sorted(input_root.rglob("metadata_*.parquet"))
     option_paths = sorted(input_root.rglob("options_*.parquet"))
     analyst_paths = sorted(input_root.rglob("analyst_*.jsonl"))
+    yahoo_status_paths = sorted(input_root.rglob("status_*.csv"))
     summary_paths = sorted(input_root.rglob("summary_*.json"))
     expected_chunks = int(config["execution"]["yfinance_chunks"])
     if len(price_paths) != expected_chunks:
@@ -1125,6 +1209,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         connection.execute("CREATE OR REPLACE TABLE yahoo_options_current(symbol VARCHAR, option_type VARCHAR, expiration VARCHAR, retrieved_at VARCHAR)")
     sec_fact_paths = sorted(sec_dir.rglob("sec_companyfacts_*.parquet"))
     sec_submission_paths = sorted(sec_dir.rglob("sec_submissions_*.parquet"))
+    sec_status_paths = sorted(sec_dir.rglob("sec_status_*.csv"))
     sec_summary_paths = sorted(sec_dir.rglob("sec_summary_*.json"))
     expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
     if len(sec_fact_paths) != expected_sec_chunks or len(sec_submission_paths) != expected_sec_chunks:
@@ -1140,15 +1225,27 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
     if not yahoo_meta.empty:
         yahoo_meta = yahoo_meta.sort_values("retrieved_at").drop_duplicates("symbol", keep="last")
+    price_coverage = connection.execute(
+        "SELECT symbol, COUNT(*) AS price_rows, MIN(date) AS first_price_date, "
+        "MAX(date) AS last_price_date FROM prices_daily GROUP BY symbol"
+    ).df()
     security_master = seed.merge(yahoo_meta, on="symbol", how="left", suffixes=("_sec", "_yahoo"))
-    quote_type = security_master.get("quoteType", pd.Series(index=security_master.index, dtype=object)).astype(str).str.upper()
-    security_master["eligible_common_stock"] = quote_type.isin(["EQUITY", "NONE", "NAN", ""])
+    security_master = security_master.merge(price_coverage, on="symbol", how="left")
+    as_of = pd.Timestamp.utcnow().tz_localize(None)
+    security_master = _classify_security_eligibility(
+        security_master,
+        as_of=as_of,
+    )
     security_master.to_parquet(output / "security_master.parquet", index=False, compression="zstd")
+    security_master.loc[~security_master["eligible_common_stock"]].to_csv(
+        output / "security_universe_exclusions.csv",
+        index=False,
+    )
 
     analysts = _read_jsonl_files(analyst_paths)
-    as_of = pd.Timestamp.utcnow().tz_localize(None)
     values_by_symbol: dict[str, dict[str, FeatureValue]] = {}
     quality_rows: list[dict[str, Any]] = []
+    sec_concept_input_frames: list[pd.DataFrame] = []
     eligible = security_master.loc[security_master["eligible_common_stock"]].copy()
     for row in eligible.itertuples():
         symbol = str(row.symbol)
@@ -1159,7 +1256,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         if not _is_number(market_cap):
             market_cap = None
         facts = connection.execute("SELECT * FROM sec_companyfacts WHERE cik = ?", [cik]).df()
-        concepts = latest_sec_concepts(facts, as_of)
+        concept_inputs = latest_sec_concept_inputs(facts, as_of)
+        if not concept_inputs.empty:
+            concept_inputs.insert(0, "cik", cik)
+            concept_inputs.insert(0, "symbol", symbol)
+            sec_concept_input_frames.append(concept_inputs)
+        concepts = sec_concepts_from_inputs(concept_inputs)
         if market_cap is None and not prices.empty:
             shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
             if _is_number(shares):
@@ -1232,10 +1334,36 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     aggregate_scores = calculate_aggregate_scores(scores)
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
+    score_context = quality[
+        [
+            "symbol",
+            "last_price_date",
+            "last_sec_available_at",
+            "computed_features",
+            "exact_features",
+            "proxy_features",
+        ]
+    ].copy()
+    score_context["missing_features"] = EXPECTED_PREDICTORS - score_context["computed_features"]
+    scores = scores.merge(score_context, on="symbol", how="left")
+    aggregate_scores = aggregate_scores.merge(score_context, on="symbol", how="left")
+    sec_concept_inputs = (
+        pd.concat(sec_concept_input_frames, ignore_index=True)
+        if sec_concept_input_frames
+        else latest_sec_concept_inputs(pd.DataFrame(), as_of).assign(
+            symbol=pd.Series(dtype="string"),
+            cik=pd.Series(dtype="Int64"),
+        )
+    )
     feature_frame.to_parquet(output / "openap_features_current.parquet", index=False, compression="zstd")
     scores.to_parquet(output / "openap_scores_current.parquet", index=False, compression="zstd")
     aggregate_scores.to_parquet(
         output / "openap_scores_aggregate_current.parquet",
+        index=False,
+        compression="zstd",
+    )
+    sec_concept_inputs.to_parquet(
+        output / "sec_concept_inputs_current.parquet",
         index=False,
         compression="zstd",
     )
@@ -1252,6 +1380,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute(
         "CREATE OR REPLACE TABLE openap_scores_aggregate_current AS SELECT * FROM read_parquet(?)",
         [str(output / "openap_scores_aggregate_current.parquet")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE sec_concept_inputs_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "sec_concept_inputs_current.parquet")],
     )
     duplicate_prices = int(
         connection.execute(
@@ -1270,6 +1402,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "SELECT COUNT(*) FROM sec_companyfacts WHERE available_at IS NULL"
         ).fetchone()[0]
     )
+    concept_inputs_without_available_at = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sec_concept_inputs_current WHERE available_at IS NULL"
+        ).fetchone()[0]
+    )
     connection.close()
 
     exact_predictors = int((coverage["coverage_status"] == "exact").sum())
@@ -1281,6 +1418,45 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             f"Expected {expected_sec_chunks} SEC summaries, found {len(sec_summary_paths)}"
         )
     sec_summaries = [json.loads(path.read_text(encoding="utf-8")) for path in sec_summary_paths]
+    yahoo_source_manifest = pd.DataFrame(summaries).sort_values("chunk_index")
+    sec_source_manifest = pd.DataFrame(sec_summaries).sort_values("chunk_index")
+    yahoo_hash_sources = {
+        "prices_sha256": price_paths,
+        "metadata_sha256": metadata_paths,
+        "options_sha256": option_paths,
+        "analyst_sha256": analyst_paths,
+        "status_sha256": yahoo_status_paths,
+        "summary_sha256": summary_paths,
+    }
+    for column, paths in yahoo_hash_sources.items():
+        hashes = _hashes_by_chunk(paths)
+        yahoo_source_manifest[column] = yahoo_source_manifest["chunk_index"].map(hashes)
+    sec_hash_sources = {
+        "companyfacts_parquet_sha256": sec_fact_paths,
+        "submissions_parquet_sha256": sec_submission_paths,
+        "status_sha256": sec_status_paths,
+        "summary_sha256": sec_summary_paths,
+    }
+    for column, paths in sec_hash_sources.items():
+        hashes = _hashes_by_chunk(paths)
+        sec_source_manifest[column] = sec_source_manifest["chunk_index"].map(hashes)
+    source_manifest.to_csv(output / "source_manifest.csv", index=False)
+    yahoo_source_manifest.to_csv(output / "yfinance_source_manifest.csv", index=False)
+    sec_source_manifest.to_csv(output / "sec_source_manifest.csv", index=False)
+    connection = duckdb.connect(str(db_path))
+    connection.execute(
+        "CREATE OR REPLACE TABLE source_manifest AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "source_manifest.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE yfinance_source_manifest AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "yfinance_source_manifest.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE sec_source_manifest AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "sec_source_manifest.csv")],
+    )
+    connection.close()
     sec_companyfacts_rows = sum(int(item.get("companyfacts_rows", 0)) for item in sec_summaries)
     sec_submissions_rows = sum(int(item.get("submissions_rows", 0)) for item in sec_summaries)
     all_facts_have_available_at = all(bool(item.get("all_facts_have_available_at")) for item in sec_summaries)
@@ -1290,6 +1466,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "as_of": as_of.isoformat(),
         "input_predictors": len(metadata),
         "eligible_symbols": len(values_by_symbol),
+        "security_master_rows": len(security_master),
+        "security_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
         "price_rows": int(sum(int(item.get("price_rows", 0)) for item in summaries)),
         "sec_companyfacts_rows": sec_companyfacts_rows,
         "sec_submissions_rows": sec_submissions_rows,
@@ -1311,16 +1489,41 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
         "facts_without_available_at": facts_without_available_at,
+        "sec_concept_input_rows": len(sec_concept_inputs),
+        "concept_inputs_without_available_at": concept_inputs_without_available_at,
+        "source_manifest_rows": len(source_manifest),
+        "yfinance_source_manifest_rows": len(yahoo_source_manifest),
+        "sec_source_manifest_rows": len(sec_source_manifest),
+        "pipeline_git_sha": os.environ.get("GITHUB_SHA", ""),
+        "config_sha256": sha256_file(args.config),
     }
-    if duplicate_prices or future_price_rows or facts_without_available_at:
+    if (
+        duplicate_prices
+        or future_price_rows
+        or facts_without_available_at
+        or concept_inputs_without_available_at
+    ):
         raise OpenAPDataError(
             "Data-quality gate failed: "
             f"duplicate_prices={duplicate_prices}, future_prices={future_price_rows}, "
-            f"facts_without_available_at={facts_without_available_at}"
+            f"facts_without_available_at={facts_without_available_at}, "
+            f"concept_inputs_without_available_at={concept_inputs_without_available_at}"
         )
     if len(coverage) != EXPECTED_PREDICTORS or len(feature_frame) != len(values_by_symbol) * EXPECTED_PREDICTORS:
         raise OpenAPDataError("Final feature or coverage row counts do not reconcile")
     write_summary(output / "execution_summary.json", summary)
+    output_rows = []
+    for path in sorted(output.iterdir()):
+        if not path.is_file() or path.name == "output_manifest.csv":
+            continue
+        output_rows.append(
+            {
+                "file": path.name,
+                "bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+        )
+    pd.DataFrame(output_rows).to_csv(output / "output_manifest.csv", index=False)
 
 
 def build_parser() -> argparse.ArgumentParser:
