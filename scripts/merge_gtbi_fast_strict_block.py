@@ -14,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 
+from infra.gtbi_v7_readiness.canonical import canonical_bytes
 from scripts.gtbi_fast_strict import campaign_fingerprint
 
 
@@ -31,6 +32,7 @@ TERMINAL_ID_COLUMNS = {
     "early_rejected_strategies": "strategy_id",
 }
 PARQUET_INTERMEDIATE_ROWS = 100_000
+POST_MANIFEST_AUDIT_FILES = {"v7_worker_receipt.json"}
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -110,6 +112,33 @@ def _validated_relative_path(value: Any) -> Path:
     return relative
 
 
+def _verify_optional_v7_worker_receipt(
+    *,
+    worker_root: Path,
+    worker_id: int,
+    fingerprint: str,
+) -> None:
+    """Verify the V7 audit receipt written after the scientific manifest."""
+    path = worker_root / "v7_worker_receipt.json"
+    if not path.is_file():
+        return
+    receipt = _json(path)
+    supplied_digest = str(receipt.pop("receipt_digest", ""))
+    expected_digest = "sha256:" + hashlib.sha256(canonical_bytes(receipt)).hexdigest()
+    if supplied_digest != expected_digest:
+        raise ValueError(f"worker {worker_id} V7 receipt digest mismatch")
+    if (
+        receipt.get("schema_version") != "gtbi_v7_new_reference_worker_receipt_v1"
+        or int(receipt.get("worker_id", -1)) != worker_id
+        or str(receipt.get("campaign_fingerprint") or "") != fingerprint
+        or receipt.get("python_hash_seed") != "0"
+        or receipt.get("locked_authorized") is not False
+        or receipt.get("locked_data_accessed") is not False
+        or receipt.get("github_actions_only") is not True
+    ):
+        raise ValueError(f"worker {worker_id} V7 receipt contract mismatch")
+
+
 def _verify_worker_manifest(
     *,
     worker_root: Path,
@@ -134,6 +163,12 @@ def _verify_worker_manifest(
     if len(canonical_ids) != canonical_count:
         raise ValueError(f"worker {worker_id} manifest canonical IDs differ from summary count")
 
+    _verify_optional_v7_worker_receipt(
+        worker_root=worker_root,
+        worker_id=worker_id,
+        fingerprint=fingerprint,
+    )
+
     raw_records = manifest.get("files")
     if not isinstance(raw_records, list):
         raise ValueError(f"worker {worker_id} manifest has no file records")
@@ -148,7 +183,9 @@ def _verify_worker_manifest(
     expected_paths = {
         path.relative_to(worker_root)
         for path in worker_root.iterdir()
-        if path.is_file() and path.name != "worker_manifest.json"
+        if path.is_file()
+        and path.name != "worker_manifest.json"
+        and path.name not in POST_MANIFEST_AUDIT_FILES
     }
     if set(records) != expected_paths:
         raise ValueError(f"worker {worker_id} manifest file membership mismatch")

@@ -8,6 +8,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from infra.gtbi_v7_readiness.canonical import canonical_bytes
+
 
 def _campaign(label: str) -> dict[str, object]:
     from scripts.gtbi_fast_strict import campaign_fingerprint
@@ -61,6 +63,20 @@ def _write_worker_manifest(worker: Path, worker_id: int, fingerprint: str, canon
         ),
         encoding="utf-8",
     )
+
+
+def _write_v7_worker_receipt(worker: Path, worker_id: int, fingerprint: str) -> None:
+    receipt = {
+        "schema_version": "gtbi_v7_new_reference_worker_receipt_v1",
+        "campaign_fingerprint": fingerprint,
+        "worker_id": worker_id,
+        "python_hash_seed": "0",
+        "locked_authorized": False,
+        "locked_data_accessed": False,
+        "github_actions_only": True,
+    }
+    receipt["receipt_digest"] = "sha256:" + hashlib.sha256(canonical_bytes(receipt)).hexdigest()
+    (worker / "v7_worker_receipt.json").write_bytes(canonical_bytes(receipt) + b"\n")
 
 
 def _worker(
@@ -165,6 +181,46 @@ def test_block_merge_preserves_rows_and_writes_manifest(tmp_path: Path) -> None:
     assert manifest["worker_ids"] == [0, 1]
     assert manifest["campaign_fingerprint"] == _campaign("fp")["campaign_fingerprint"]
     assert manifest["files"]
+
+
+def test_block_merge_accepts_verified_v7_receipt_written_after_manifest(tmp_path: Path) -> None:
+    from scripts import merge_gtbi_fast_strict_block as block
+
+    inputs = tmp_path / "inputs"
+    _worker(inputs, 0)
+    worker = inputs / "gtbi-v6-block-00-worker-000"
+    fingerprint = str(_campaign("fp")["campaign_fingerprint"])
+    _write_v7_worker_receipt(worker, 0, fingerprint)
+
+    result = block.merge_block(
+        input_root=inputs,
+        output_dir=tmp_path / "output",
+        block_id=0,
+        expected_worker_ids=[0],
+    )
+
+    assert result["total_strategies_evaluated"] == 1
+
+
+def test_block_merge_rejects_tampered_v7_receipt(tmp_path: Path) -> None:
+    from scripts import merge_gtbi_fast_strict_block as block
+
+    inputs = tmp_path / "inputs"
+    _worker(inputs, 0)
+    worker = inputs / "gtbi-v6-block-00-worker-000"
+    receipt_path = worker / "v7_worker_receipt.json"
+    _write_v7_worker_receipt(worker, 0, str(_campaign("fp")["campaign_fingerprint"]))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["locked_data_accessed"] = True
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="V7 receipt digest mismatch"):
+        block.merge_block(
+            input_root=inputs,
+            output_dir=tmp_path / "output",
+            block_id=0,
+            expected_worker_ids=[0],
+        )
 
 
 def test_block_merge_is_byte_deterministic(tmp_path: Path) -> None:

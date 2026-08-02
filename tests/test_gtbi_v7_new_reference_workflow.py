@@ -7,6 +7,7 @@ import yaml
 
 WORKFLOW = Path(".github/workflows/gtbi-v7-new-reference.yml")
 WORKER_WORKFLOW = Path(".github/workflows/gtbi-v7-new-reference-worker.yml")
+RECOVERY_WORKFLOW = Path(".github/workflows/gtbi-v7-new-reference-merge-recovery.yml")
 
 
 def test_workflow_is_manual_github_only_and_locked_has_no_input() -> None:
@@ -64,7 +65,7 @@ def test_workflow_benchmarks_one_two_four_and_pins_actions() -> None:
     assert "--processes-per-runner \"${{ matrix.processes }}\"" in text
     assert "gtbi-v7-benchmark-mode-${{ matrix.processes }}" in text
     assert "verify_gtbi_v7_new_reference_evidence" in text
-    for workflow in (WORKFLOW, WORKER_WORKFLOW):
+    for workflow in (WORKFLOW, WORKER_WORKFLOW, RECOVERY_WORKFLOW):
         workflow_text = workflow.read_text(encoding="utf-8")
         for action in (
             "actions/checkout@",
@@ -79,9 +80,33 @@ def test_workflow_benchmarks_one_two_four_and_pins_actions() -> None:
 
 
 def test_all_v7_workflows_pin_python_hash_seed_before_python_starts() -> None:
-    for workflow in (WORKFLOW, WORKER_WORKFLOW):
+    for workflow in (WORKFLOW, WORKER_WORKFLOW, RECOVERY_WORKFLOW):
         data = yaml.safe_load(workflow.read_text(encoding="utf-8"))
         assert str(data["env"]["PYTHONHASHSEED"]) == "0"
+
+
+def test_merge_recovery_reuses_workers_without_recalculating_science() -> None:
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    trigger = data.get("on") or data.get(True)
+    inputs = trigger["workflow_dispatch"]["inputs"]
+    assert set(inputs) == {
+        "source_full_run_id",
+        "source_commit_sha",
+        "prepared_run_id",
+        "benchmark_run_id",
+        "smoke_run_id",
+        "recovery_authorized",
+    }
+    assert "run_gtbi_v7_new_reference_worker" not in text
+    assert "scientific_recalculation_performed\": False" in text
+    assert "range(90)" in text
+    assert "range(18)" in text
+    assert "--expected-alias-count 72000" in text
+    assert "--expected-worker-count 360" in text
+    assert "locked_authorized\": False" in text
+    assert "C:\\" not in text
+    assert "self-hosted" not in text
 
 
 def test_full_downloads_only_dynamic_aligned_runner_artifacts() -> None:
