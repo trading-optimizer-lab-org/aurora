@@ -1,4 +1,4 @@
-# Plan De Ejecucion: Open Asset Pricing Con YFinance Y SEC EDGAR
+# Plan Y Registro De Ejecucion: Open Asset Pricing Con YFinance Y SEC EDGAR
 
 ## 1. Objetivo
 
@@ -11,7 +11,7 @@ El resultado debe permitir calcular el mayor numero posible de los 185 predictor
 
 Este trabajo prepara datos y calcula el score actual. No abre locked ni ejecuta backtests.
 
-## 2. Estado Local Verificado
+## 2. Estado Local Previo Verificado
 
 ### YFinance historico
 
@@ -215,7 +215,7 @@ Para cada accion elegible:
    - `insufficient_data`.
 7. Guardar todas las entradas utilizadas para reproducir cada valor calculado.
 
-Cobertura esperada con el mapa actual:
+Estimacion previa a la descarga:
 
 | Estado | Predictores |
 |---|---:|
@@ -223,7 +223,7 @@ Cobertura esperada con el mapa actual:
 | Calculables mediante proxy documentado | 32 |
 | No calculables estrictamente con estas dos fuentes | 10 |
 
-Estas cantidades se recalcularan después de inspeccionar realmente todos los campos descargados. No se forzara el resultado para conservar estas cifras.
+Estas cantidades eran una estimacion y no un criterio de aceptación. La ejecución real dio 75 predictores exactos, 23 proxies documentados y 87 no disponibles. La diferencia procede de exigir que cada formula disponga realmente de todas sus entradas y de no sustituir ausencias por cero.
 
 ### Fase 7. Agrupar predictores redundantes
 
@@ -344,13 +344,10 @@ Cada accion mostrara:
 
 La descarga masiva se considera un run pesado.
 
-- Sin permiso local explícito: preparar y ejecutar mediante GitHub Actions.
-- GitHub no puede reutilizar directamente el lago ya almacenado en `C:` y `E:`.
-- Para evitar duplicar 20.981.768 filas, la opción más eficiente es una autorizacion expresa para esta ingesta local concreta y escribir directamente en `E:`.
-- La autorizacion local, si se concede, sólo se aplicará a esta descarga y construcción del lago.
-- Los backtests y optimizaciones seguiran sujetos a la politica GitHub-only.
-
-No se inicia ninguna descarga con este documento.
+- La ingesta, el calculo y la validacion se ejecutaron integramente en GitHub Actions.
+- Local sólo se utilizo para descargar e inspeccionar el artifact final en modo lectura.
+- No se ejecutaron backtests, optimizaciones, smokes ni tests locales.
+- Los backtests y optimizaciones siguen sujetos a la politica GitHub-only.
 
 ## 8. Orden De Implementacion
 
@@ -387,14 +384,79 @@ El trabajo se considerara completo cuando:
 - la fecha de corte quede registrada;
 - el informe final detalle cobertura, fallos y limitaciones.
 
-## 10. Decisión Pendiente Antes De Ejecutar
+## 10. Estado De Ejecucion Verificado
 
-Debe fijarse una de estas rutas:
+Ejecucion final:
 
-### Ruta recomendada
+| Campo | Resultado |
+|---|---|
+| Workflow | `OpenAP Repair SEC Shards And Merge` |
+| Run | [30747362913](https://github.com/trading-optimizer-lab-org/aurora/actions/runs/30747362913) |
+| Estado | `success` |
+| Revision exacta | `742ef71ae7c36f6771c08876b5ddeba3f3cc1680` |
+| Fecha efectiva | 2026-08-02 |
+| Artifact GitHub | `openap-yfinance-sec-current-score-results`, id `8834009196` |
+| Copia local de lectura | `E:\AURORA_DATA\OPENAP_FINAL_30747362913` |
+| Tamaño extraido | 1,489 GB |
 
-Autorizar expresamente esta descarga local para reutilizar el lago existente y escribir directamente en `E:\AURORA_DATA\OPENAP_CURRENT`.
+Resultados:
 
-### Ruta GitHub-only
+| Control | Resultado |
+|---|---:|
+| Universo SEC/Yahoo examinado | 6.741 valores |
+| Acciones comunes estadounidenses elegibles | 4.124 |
+| Valores excluidos con motivo | 2.617 |
+| Filas diarias de precios | 25.021.464 |
+| Hechos SEC | 3.563.998 |
+| Filas de submissions SEC | 5.575.173 |
+| Entradas SEC conservadas por concepto | 424.771 |
+| Predictores exactos con algun valor | 75 |
+| Predictores proxy con algun valor | 23 |
+| Predictores no disponibles | 87 |
+| Features calculadas | 762.940 |
+| Scores por horizonte | 20.620 |
+| Scores agregados | 4.124 |
+| Grupos redundantes finales | 150 |
 
-Descargar y construir el lago en GitHub Actions, guardarlo en almacenamiento privado y sincronizarlo después. Esta ruta repite datos que ya existen localmente y necesita almacenamiento cloud configurado.
+Los 20.620 scores equivalen a 4.124 acciones por cinco horizontes: 1, 3, 6, 12 y 36 meses. No hay duplicados por accion y horizonte.
+
+## 11. Verificacion De Aceptacion
+
+- `locked_opened=false`.
+- `backtest_enabled=false`.
+- `validation_used_for_selection=false`.
+- `partial=false`.
+- Cero precios posteriores a la fecha de corte.
+- Cero duplicados de precio.
+- Todos los hechos SEC y todas las entradas por concepto tienen `available_at`.
+- Ninguna acción elegible tiene tipo distinto de `EQUITY`.
+- Ninguna acción elegible tiene país Yahoo distinto de `United States`.
+- Ninguna acción elegible carece de precio reciente.
+- Los 17 archivos del manifiesto final coinciden en tamaño y SHA-256.
+- Los manifiestos contienen 48 fragmentos Yahoo, 48 fragmentos SEC y los hashes de las tres fuentes base.
+- `zerotrade1M`, `zerotrade6M` y `zerotrade12M` pertenecen al mismo grupo redundante y no reciben tres votos independientes.
+
+## 12. Limitaciones De Uso
+
+Este resultado es una fotografia transversal actual, no un backtest ni una recomendacion de inversión. Un score alto significa atractivo relativo frente al universo en ese horizonte; no significa probabilidad de subida.
+
+La cobertura gratuita es incompleta. La confianza mediana de los scores por horizonte es 8 sobre 100 y algunos líderes brutos tienen confianza baja porque faltan señales de analistas, microestructura, opciones historicas y otros datos propietarios. Antes de utilizar un ranking debe exigirse un umbral de confianza y revisar `coverage_185.csv`, `proxy_audit.csv` y los campos `exact_features`, `proxy_features` y `missing_features`.
+
+## 13. Outputs Verificados
+
+- `openap_current.duckdb` con 13 tablas consultables.
+- `openap_features_current.parquet`.
+- `openap_scores_current.parquet`.
+- `openap_scores_aggregate_current.parquet`.
+- `sec_concept_inputs_current.parquet`.
+- `security_master.parquet`.
+- `security_universe_exclusions.csv`.
+- `coverage_185.csv`.
+- `proxy_audit.csv`.
+- `unavailable_predictors.csv`.
+- `data_quality.csv`.
+- `source_manifest.csv`.
+- `yfinance_source_manifest.csv`.
+- `sec_source_manifest.csv`.
+- `output_manifest.csv`.
+- `execution_summary.json`.
