@@ -334,6 +334,7 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
     monkeypatch.setattr(runner, "effective_cpu_count", lambda: 4)
 
     def fake_run(kwargs: dict) -> dict:
@@ -345,6 +346,7 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
             "cpu_seconds": 1.0,
             "peak_rss_kib": 10,
             "scientific_output_digest": runner.scientific_output_digest(output),
+            "python_hash_seed": "0",
         }
         return {"v7_worker_receipt": receipt}
 
@@ -382,6 +384,7 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
     )
     assert result["worker_ids"] == [4, 5, 6, 7]
     assert result["symbol_workers_per_process"] == 1
+    assert result["python_hash_seed"] == "0"
     assert executor_sizes == [1]
     assert {path.name for path in output.glob("worker-*")} == {
         "worker-004",
@@ -389,6 +392,24 @@ def test_batch_reuses_one_runner_and_covers_every_worker(
         "worker-006",
         "worker-007",
     }
+
+
+def test_batch_rejects_nondeterministic_python_hash_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("PYTHONHASHSEED", "random")
+    with pytest.raises(runner.V7RunnerError, match="PYTHONHASHSEED=0"):
+        runner.run_v7_batch(
+            campaign_manifest_path=tmp_path / "campaign.json",
+            data_manifest_path=tmp_path / "data.json",
+            plan_root=tmp_path,
+            data_pack_root=tmp_path,
+            authorization_path=tmp_path / "authorization.json",
+            worker_ids=[0],
+            output_root=tmp_path / "batch",
+            processes_per_runner=1,
+        )
 
 
 def test_batch_equivalence_compares_each_logical_worker(tmp_path: Path) -> None:

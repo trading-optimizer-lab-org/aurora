@@ -78,6 +78,12 @@ def test_workflow_benchmarks_one_two_four_and_pins_actions() -> None:
                 int(revision, 16)
 
 
+def test_all_v7_workflows_pin_python_hash_seed_before_python_starts() -> None:
+    for workflow in (WORKFLOW, WORKER_WORKFLOW):
+        data = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+        assert str(data["env"]["PYTHONHASHSEED"]) == "0"
+
+
 def test_full_downloads_only_dynamic_aligned_runner_artifacts() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     worker_text = WORKER_WORKFLOW.read_text(encoding="utf-8")
