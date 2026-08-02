@@ -23,6 +23,7 @@ from infra.gtbi_v7_readiness.records import (
 )
 
 RECEIPT_FILENAME = "pr1_merge_reconciliation_receipt.json"
+SUCCESSOR_AUTHORIZATION_FILENAME = "canonical_successor_authorization.json"
 REPOSITORY = "trading-optimizer-lab-org/aurora"
 REQUIRED_WORKFLOWS = frozenset(
     {
@@ -55,6 +56,76 @@ def _require_sha(value: object, label: str) -> str:
     return text
 
 
+def _validate_master_plan_binding(
+    root: Path,
+    readiness: Path,
+    receipt: dict[str, Any],
+) -> None:
+    """Bind PR-1 either to its original plan or to a canonical amendment."""
+    plan_path = root / "docs/plans/gtbi-v7-master-plan.md"
+    current_sha256 = raw_sha256(plan_path)
+    current_blob = git_blob_id(plan_path.read_bytes())
+    if (
+        receipt.get("master_plan_sha256") == current_sha256
+        and receipt.get("master_plan_git_blob_id") == current_blob
+    ):
+        return
+
+    authorization_path = readiness / SUCCESSOR_AUTHORIZATION_FILENAME
+    if not authorization_path.is_file():
+        raise PostMergeValidationError("master-plan SHA-256 mismatch")
+    authorization = _read_json(authorization_path)
+    if authorization_path.read_bytes() != canonical_bytes(authorization) + b"\n":
+        raise PostMergeValidationError(
+            "canonical-successor authorization is not canonical JSON"
+        )
+    if authorization.get("schema_version") != (
+        "gtbi_v7_canonical_successor_authorization_v1"
+    ):
+        raise PostMergeValidationError(
+            "unexpected canonical-successor authorization schema"
+        )
+    master_plan = authorization.get("master_plan")
+    if not isinstance(master_plan, dict):
+        raise PostMergeValidationError(
+            "canonical-successor master-plan binding is missing"
+        )
+    if master_plan.get("sha256") != current_sha256:
+        raise PostMergeValidationError(
+            "canonical-successor master-plan SHA-256 mismatch"
+        )
+    historical = authorization.get("historical_pr1_bootstrap")
+    if not isinstance(historical, dict):
+        raise PostMergeValidationError(
+            "canonical-successor historical PR-1 binding is missing"
+        )
+    expected_historical = {
+        "master_plan_sha256": receipt.get("master_plan_sha256"),
+        "master_plan_git_blob_id": receipt.get("master_plan_git_blob_id"),
+        "pr1_merge_receipt_digest": receipt.get("receipt_digest"),
+    }
+    if any(
+        historical.get(key) != value
+        for key, value in expected_historical.items()
+    ):
+        raise PostMergeValidationError(
+            "canonical-successor historical PR-1 binding mismatch"
+        )
+    if authorization.get("historical_v6_lineage", {}).get("reopened") is not False:
+        raise PostMergeValidationError(
+            "canonical-successor authorization reopened historical V6"
+        )
+    expected_authorization_digest = domain_digest(
+        "GTBI_V7_CANONICAL_SUCCESSOR_AUTHORIZATION_V1",
+        authorization,
+        omit_top_level_fields=("receipt_digest",),
+    )
+    if authorization.get("receipt_digest") != expected_authorization_digest:
+        raise PostMergeValidationError(
+            "canonical-successor authorization digest mismatch"
+        )
+
+
 def validate_pr1_merge_receipt(repository_root: Path) -> dict[str, Any]:
     """Validate the checked-in PR-1 merge and CI evidence against local bytes."""
     root = repository_root.resolve()
@@ -80,13 +151,7 @@ def validate_pr1_merge_receipt(repository_root: Path) -> dict[str, Any]:
     if receipt.get("pull_request_state") != "MERGED":
         raise PostMergeValidationError("PR-1 was not recorded as merged")
 
-    plan_path = root / "docs/plans/gtbi-v7-master-plan.md"
-    if receipt.get("master_plan_sha256") != raw_sha256(plan_path):
-        raise PostMergeValidationError("master-plan SHA-256 mismatch")
-    if receipt.get("master_plan_git_blob_id") != git_blob_id(
-        plan_path.read_bytes()
-    ):
-        raise PostMergeValidationError("master-plan Git blob mismatch")
+    _validate_master_plan_binding(root, readiness, receipt)
 
     initial_digests = receipt.get("initial_record_digests")
     if not isinstance(initial_digests, dict) or not initial_digests:

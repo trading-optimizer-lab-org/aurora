@@ -24,6 +24,7 @@ NO_GO = READINESS / "no_go_close_receipt.json"
 CAMPAIGN_AUTHORIZATION = NEW_REFERENCE / "campaign_authorization.json"
 FINAL_SUMMARY = NEW_REFERENCE / "final_summary.json"
 PRESERVATION = NEW_REFERENCE / "preservation_receipt.json"
+PR1_MERGE_RECEIPT = READINESS / "pr1_merge_reconciliation_receipt.json"
 DESTINATION = READINESS / "canonical_successor_authorization.json"
 
 
@@ -40,6 +41,7 @@ def build_authorization() -> dict[str, Any]:
     campaign = _canonical_json(CAMPAIGN_AUTHORIZATION)
     summary = _canonical_json(FINAL_SUMMARY)
     preservation = _canonical_json(PRESERVATION)
+    pr1_merge_receipt = _canonical_json(PR1_MERGE_RECEIPT)
 
     if "### Canonical Successor Amendment" not in plan_text:
         raise ValueError("master plan has no canonical-successor amendment")
@@ -97,6 +99,14 @@ def build_authorization() -> dict[str, Any]:
             "receipt_digest": no_go["receipt_digest"],
             "reopened": False,
             "equivalence_claim_allowed": False,
+        },
+        "historical_pr1_bootstrap": {
+            "master_plan_sha256": pr1_merge_receipt["master_plan_sha256"],
+            "master_plan_git_blob_id": pr1_merge_receipt[
+                "master_plan_git_blob_id"
+            ],
+            "pr1_merge_receipt_digest": pr1_merge_receipt["receipt_digest"],
+            "immutable_historical_record": True,
         },
         "canonical_successor": {
             "campaign_id": campaign["campaign_id"],
