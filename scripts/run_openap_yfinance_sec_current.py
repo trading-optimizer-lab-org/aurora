@@ -436,7 +436,7 @@ def _ticker_snapshots(ticker: Any, symbol: str, config: Mapping[str, Any], retri
         try:
             expirations = list(ticker.options or [])
             if expirations:
-                target = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(days=int(config["yfinance"].get("target_option_days", 30)))
+                target = pd.Timestamp.now(tz="UTC").tz_localize(None) + pd.Timedelta(days=int(config["yfinance"].get("target_option_days", 30)))
                 expiration = min(expirations, key=lambda item: abs((pd.Timestamp(item) - target).days))
                 chain = ticker.option_chain(expiration)
                 for option_type, frame in (("call", chain.calls), ("put", chain.puts)):
@@ -1057,7 +1057,7 @@ def _options_features(
     for column in ("impliedVolatility", "volume", "openInterest", "strike", "bid", "ask"):
         if column in data:
             data[column] = pd.to_numeric(data[column], errors="coerce")
-    now = pd.Timestamp(as_of or pd.Timestamp.utcnow()).tz_localize(None)
+    now = pd.Timestamp(as_of or pd.Timestamp.now(tz="UTC")).tz_localize(None)
     expiration_source = data.get("expiration", pd.Series(pd.NaT, index=data.index))
     trade_source = data.get("lastTradeDate", pd.Series(pd.NaT, index=data.index))
     data["expiration"] = pd.to_datetime(expiration_source, errors="coerce").dt.tz_localize(None)
@@ -1253,7 +1253,10 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
 DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "prices_daily_raw": ("symbol", "date", "adj_close"),
     "prices_daily_clean": ("symbol", "date", "adj_close"),
-    "security_master": ("symbol", "cik", "eligible_common_stock", "ranking_eligible"),
+    "security_master": (
+        "symbol", "cik", "eligible_common_stock", "ranking_eligible",
+        "clean_price_staleness_days",
+    ),
     "sec_companyfacts": (
         "fact_identity", "cik", "taxonomy", "tag", "unit", "value",
         "period_end", "filed", "accession_number", "available_at",
@@ -1273,7 +1276,10 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "openap_scores_aggregate_current": (
         "as_of", "symbol", "score_validation_status", "required_horizons",
     ),
-    "openap_current_leaderboard": ("as_of", "symbol"),
+    "openap_current_leaderboard": (
+        "as_of", "symbol", "aggregate_score", "aggregate_confidence",
+        "ranking_eligible", "clean_price_staleness_days",
+    ),
     "selected_predictors": ("signalname", "tstat", "Sign"),
     "redundancy_groups": ("signalname",),
     "current_redundancy_groups": ("signalname",),
@@ -1893,7 +1899,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     security_master = security_master.merge(price_coverage, on="symbol", how="left")
     sec_issuer_flags = _sec_issuer_flags(connection.execute("SELECT * FROM sec_submissions").df())
     security_master = security_master.merge(sec_issuer_flags, on="cik", how="left")
-    as_of = pd.Timestamp.utcnow().tz_localize(None)
+    as_of = pd.Timestamp.now(tz="UTC").tz_localize(None)
     security_master = _classify_security_eligibility(
         security_master,
         as_of=as_of,
@@ -1936,6 +1942,13 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         )
     price_quality_frame = pd.DataFrame(quality_rows)
     security_master = security_master.merge(price_quality_frame, on="symbol", how="left")
+    last_clean_price_dates = pd.to_datetime(
+        security_master.get("last_clean_price_date"), errors="coerce"
+    ).dt.normalize()
+    as_of_date = pd.Timestamp(as_of).tz_localize(None).normalize()
+    security_master["clean_price_staleness_days"] = (
+        as_of_date - last_clean_price_dates
+    ).dt.days
     market_cap = pd.to_numeric(security_master.get("marketCap"), errors="coerce")
     rank_conditions = [
         market_cap.lt(float(config["universe"]["minimum_market_cap_usd"])) | market_cap.isna(),
@@ -1943,6 +1956,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         pd.to_numeric(security_master.get("average_volume_21d"), errors="coerce").lt(float(config["universe"]["minimum_average_volume_21d"])) | pd.to_numeric(security_master.get("average_volume_21d"), errors="coerce").isna(),
         pd.to_numeric(security_master.get("average_dollar_volume_21d"), errors="coerce").lt(float(config["universe"]["minimum_average_dollar_volume_21d"])) | pd.to_numeric(security_master.get("average_dollar_volume_21d"), errors="coerce").isna(),
         pd.to_numeric(security_master.get("clean_price_rows"), errors="coerce").lt(float(config["universe"]["minimum_clean_price_rows"])),
+        pd.to_numeric(security_master.get("clean_price_staleness_days"), errors="coerce").gt(
+            int(config["universe"]["maximum_price_age_days"])
+        ) | pd.to_numeric(security_master.get("clean_price_staleness_days"), errors="coerce").isna(),
         ~security_master.get("price_quality_pass", pd.Series(False, index=security_master.index)).fillna(False).astype(bool),
     ]
     security_master["ranking_rejection_reason"] = np.select(
@@ -1953,6 +1969,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "average_volume_below_minimum",
             "average_dollar_volume_below_minimum",
             "insufficient_clean_price_history",
+            "stale_or_missing_latest_price",
             "price_quality_failed",
         ],
         default="",
@@ -2117,7 +2134,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     overall_scores = overall_scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(
-        security_master[["symbol", "marketCap", "current_price", "average_volume_21d", "average_dollar_volume_21d", "ranking_eligible"]],
+        security_master[[
+            "symbol",
+            "marketCap",
+            "current_price",
+            "average_volume_21d",
+            "average_dollar_volume_21d",
+            "clean_price_staleness_days",
+            "ranking_eligible",
+        ]],
         on="symbol",
         how="left",
         suffixes=("", "_universe"),
@@ -2402,6 +2427,13 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "SELECT COUNT(*) FROM openap_current_leaderboard WHERE NOT ranking_eligible"
         ).fetchone()[0]
     )
+    stale_leaderboard_prices = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE clean_price_staleness_days IS NULL OR clean_price_staleness_days > ?",
+            [int(config["universe"]["maximum_price_age_days"])],
+        ).fetchone()[0]
+    )
     unsupported_official_filters = int(
         connection.execute(
             "SELECT COUNT(*) FROM openap_features_current "
@@ -2470,6 +2502,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "duplicate_submissions": duplicate_submissions,
         "inconsistent_feature_status": inconsistent_feature_status,
         "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "stale_leaderboard_prices": stale_leaderboard_prices,
         "unsupported_official_filters": unsupported_official_filters,
         "weak_bucket_scores": weak_bucket_scores,
         "family_weight_cap_violations": family_weight_cap_violations,
@@ -2638,6 +2671,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "duplicate_submissions": duplicate_submissions,
         "inconsistent_feature_status": inconsistent_feature_status,
         "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
+        "stale_leaderboard_prices": stale_leaderboard_prices,
         "unsupported_official_filters": unsupported_official_filters,
         "weak_bucket_scores": weak_bucket_scores,
         "family_weight_cap_violations": family_weight_cap_violations,

@@ -514,6 +514,8 @@ def clean_price_history(
     quality = {
         "raw_price_rows": int(len(data)),
         "clean_price_rows": int(len(clean)),
+        "first_clean_price_date": clean["date"].min() if not clean.empty else pd.NaT,
+        "last_clean_price_date": clean["date"].max() if not clean.empty else pd.NaT,
         "duplicate_price_dates": duplicate_rows,
         "nonpositive_price_rows": int((~positive).sum()),
         "invalid_ohlc_rows": int((~ohlc_valid).sum()),

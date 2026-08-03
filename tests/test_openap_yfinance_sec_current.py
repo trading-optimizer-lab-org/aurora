@@ -544,6 +544,8 @@ def test_price_cleaner_quarantines_nonpositive_invalid_and_extreme_history() -> 
     assert quality["invalid_ohlc_rows"] >= 1
     assert quality["extreme_return_rows"] >= 1
     assert clean["date"].min() > frame.loc[120, "date"]
+    assert quality["first_clean_price_date"] == clean["date"].min()
+    assert quality["last_clean_price_date"] == clean["date"].max()
 
 
 def test_accounting_features_do_not_fill_missing_with_zero() -> None:
@@ -1026,6 +1028,7 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
         "minimum_market_cap_usd",
         "minimum_average_dollar_volume_21d",
         "minimum_clean_price_rows",
+        "maximum_price_age_days",
         "minimum_horizons_for_ranking",
         "required_ranking_horizons",
         "ranking_score_mode",

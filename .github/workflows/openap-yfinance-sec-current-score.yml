@@ -388,6 +388,7 @@ jobs:
           assert summary["duplicate_submissions"] == 0
           assert summary["inconsistent_feature_status"] == 0
           assert summary["ineligible_leaderboard_rows"] == 0
+          assert summary["stale_leaderboard_prices"] == 0
           assert summary["unsupported_official_filters"] == 0
           assert summary["weak_bucket_scores"] == 0
           assert summary["family_weight_cap_violations"] == 0
