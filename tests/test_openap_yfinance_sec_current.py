@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import requests
+import yaml
 from pathlib import Path
 
 import scripts.run_openap_yfinance_sec_current as current_runner
@@ -300,7 +301,7 @@ def test_assemble_uses_nyse_breakpoints_and_neutralises_middle_bucket() -> None:
     assert rows.at["NASDAQ_MID", "score_percentile"] == 50.0
 
 
-def test_equal_cross_sectional_values_are_neutral_not_bullish() -> None:
+def test_equal_cross_sectional_values_are_rejected_as_uninformative() -> None:
     metadata = _metadata()
     metadata.loc[0, "signalname"] = "constant_signal"
     values = {
@@ -315,9 +316,10 @@ def test_equal_cross_sectional_values_are_neutral_not_bullish() -> None:
     features = assemble_feature_table(metadata, values, as_of="2026-08-01")
     rows = features.loc[features["signalname"].eq("constant_signal")]
 
-    assert rows["percentile"].eq(50.0).all()
-    assert rows["score_percentile"].eq(50.0).all()
-    assert rows["official_portfolio_bucket"].eq("neutral").all()
+    assert rows["status"].eq("unavailable").all()
+    assert rows["value_status"].eq("uninformative_cross_section").all()
+    assert rows["evidence_weight"].eq(0.0).all()
+    assert rows["score_percentile"].isna().all()
 
 
 def test_sec_concepts_ignore_facts_not_yet_available() -> None:
@@ -352,6 +354,27 @@ def test_sec_concepts_prefer_comparable_annual_facts() -> None:
     concepts = latest_sec_concepts(facts, pd.Timestamp("2025-06-01"))
 
     assert concepts["revenue"][:2] == [100.0, 80.0]
+
+
+def test_sec_shares_use_latest_instant_observation_not_stale_annual_filing() -> None:
+    facts = pd.DataFrame(
+        {
+            "tag": ["CommonStockSharesOutstanding", "CommonStockSharesOutstanding"],
+            "value": [100.0, 200_000_000.0],
+            "period_end": ["2024-12-31", "2025-06-30"],
+            "available_at": ["2025-02-01", "2025-08-01"],
+            "accession_number": ["annual", "quarterly"],
+            "form": ["10-K", "10-Q"],
+            "fp": ["FY", "Q2"],
+            "unit": ["shares", "shares"],
+        }
+    )
+
+    inputs = latest_sec_concept_inputs(facts, pd.Timestamp("2025-09-01"))
+    shares = inputs.loc[inputs["concept"].eq("shares")]
+
+    assert shares.iloc[0]["value"] == 200_000_000.0
+    assert shares.iloc[0]["accession_number"] == "quarterly"
 
 
 def test_sec_concept_inputs_preserve_reconstruction_provenance() -> None:
@@ -589,6 +612,87 @@ def test_price_features_are_real_and_trendfactor_is_disclosed_proxy() -> None:
     assert result["Mom12mOffSeason"].raw_value is not None
 
 
+def test_price_features_match_official_reversal_and_liquidity_windows() -> None:
+    dates = pd.bdate_range("2018-01-01", "2026-08-01")
+    sequence = np.arange(len(dates), dtype=float)
+    price = 20.0 * np.exp(sequence / 5000.0 + np.sin(sequence / 37.0) / 20.0)
+    volume = 500_000.0 + (sequence % 101) * 10_000.0
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "adj_close": price,
+            "close": price,
+            "high": price * 1.01,
+            "low": price * 0.99,
+            "volume": volume,
+        }
+    )
+    result = calculate_price_features(frame)
+    monthly = frame.set_index("date")["adj_close"].resample("ME").last().dropna()
+    daily_returns = frame["adj_close"].pct_change()
+    dollar_volume = frame["adj_close"] * frame["volume"]
+    monthly_volume = frame.set_index("date")["volume"].resample("ME").sum().dropna()
+
+    assert result["MRreversal"].formula_id == "return_month_18_to_13"
+    assert result["MRreversal"].raw_value == pytest.approx(
+        monthly.iloc[-14] / monthly.iloc[-19] - 1.0
+    )
+    assert result["LRreversal"].formula_id == "return_month_36_to_13"
+    assert result["LRreversal"].raw_value == pytest.approx(
+        monthly.iloc[-14] / monthly.iloc[-37] - 1.0
+    )
+    assert result["Illiquidity"].formula_id == "amihud_252d"
+    assert result["Illiquidity"].raw_value == pytest.approx(
+        (daily_returns.abs() / dollar_volume).iloc[-252:].mean()
+    )
+    assert result["DolVol"].formula_id == "log_monthly_dollar_volume_lag_2"
+    assert result["DolVol"].raw_value == pytest.approx(
+        np.log(monthly.iloc[-3] * monthly_volume.iloc[-3])
+    )
+    assert result["RealizedVol"].status == "proxy"
+    assert result["ShareVol"].raw_value is None
+
+
+def test_share_count_resolution_rejects_stale_or_wrong_sec_values() -> None:
+    resolved = current_runner._resolve_current_shares_outstanding(
+        sec_shares=100.0,
+        yahoo_shares=232_945_978.0,
+    )
+
+    assert resolved.raw_value == 232_945_978.0
+    assert resolved.status == "proxy"
+    assert resolved.source == "yfinance_current_shares"
+    assert "SEC/Yahoo mismatch" in resolved.note
+
+
+def test_share_turnover_never_falls_back_to_raw_volume_units() -> None:
+    dates = pd.bdate_range("2023-01-01", periods=800)
+    prices = pd.DataFrame(
+        {
+            "date": dates,
+            "adj_close": np.linspace(10.0, 20.0, len(dates)),
+            "volume": np.linspace(1_000_000.0, 2_000_000.0, len(dates)),
+        }
+    )
+
+    missing = current_runner._share_turnover_features(prices, None)
+    assert missing["ShareVol"].raw_value is None
+    assert missing["std_turn"].raw_value is None
+    assert missing["ShareVol"].status == "unavailable"
+
+    resolved = FeatureValue(
+        "shares_outstanding",
+        100_000_000.0,
+        "exact",
+        "sec_edgar_cross_validated",
+        "latest_instant_shares",
+    )
+    available = current_runner._share_turnover_features(prices, resolved)
+    assert available["ShareVol"].formula_id == "openap_sharevol_binary_3m_turnover"
+    assert available["ShareVol"].raw_value in {0.0, 1.0, None}
+    assert available["std_turn"].formula_id == "monthly_turnover_std_36m"
+
+
 def test_seasonality_does_not_replace_missing_month_with_zero() -> None:
     dates = pd.date_range("2023-01-31", periods=30, freq="ME").delete(18)
     price = np.linspace(100.0, 140.0, len(dates))
@@ -692,6 +796,29 @@ def test_accounting_features_cover_direct_sec_formulas_without_invented_inputs()
     assert result["XFIN"].raw_value == pytest.approx(5.0 / 100.0)
 
 
+def test_materially_incomplete_accounting_formulas_are_never_labelled_exact() -> None:
+    concepts = {
+        name: [100.0, 90.0, 80.0, 70.0, 60.0, 50.0]
+        for name in (
+            "assets", "liabilities", "equity", "cash", "revenue", "net_income",
+            "operating_cash_flow", "inventory", "tax", "capex", "debt_current",
+            "debt_long", "preferred_stock", "dividends", "repurchases",
+            "share_issuance", "rd", "employees", "cogs", "sga", "interest",
+        )
+    }
+    result = calculate_accounting_features(concepts, market_cap=1_000.0)
+    materially_incomplete = {
+        "EP", "CF", "Cash", "BookLeverage", "Leverage", "ChTax", "InvGrowth",
+        "Investment", "grcapx", "grcapx3y", "NetDebtFinance", "NetDebtPrice",
+        "NetPayoutYield", "PayoutYield", "ShareIss1Y", "hire", "GP", "OperProf",
+        "tang",
+    }
+
+    assert all(result[name].status != "exact" for name in materially_incomplete)
+    assert result["RDS"].status == "unavailable"
+    assert result["RDS"].raw_value is None
+
+
 def test_accounting_composites_require_every_reported_component() -> None:
     concepts = {
         "assets": [100.0, 90.0],
@@ -758,6 +885,34 @@ def test_options_use_fresh_near_money_contracts_and_annualized_realized_vol() ->
     assert result["CPVolSpread"].raw_value == pytest.approx(-0.10)
     assert result["OptionVolume1"].raw_value == pytest.approx(0.03)
     assert result["RIVolSpread"].raw_value == pytest.approx(0.01 * np.sqrt(252) - 0.35)
+
+
+def test_options_fail_closed_when_chain_is_too_shallow_or_open_interest_is_zero() -> None:
+    as_of = pd.Timestamp("2026-08-01")
+    rows = pd.DataFrame(
+        {
+            "option_type": ["call", "put"],
+            "expiration": ["2026-08-28", "2026-08-28"],
+            "lastTradeDate": ["2026-07-31", "2026-07-31"],
+            "strike": [100.0, 100.0],
+            "impliedVolatility": [0.30, 0.40],
+            "volume": [10.0, 20.0],
+            "openInterest": [0.0, 0.0],
+            "bid": [1.0, 1.0],
+            "ask": [1.2, 1.2],
+        }
+    )
+
+    result = _options_features(
+        rows,
+        1_000.0,
+        0.01,
+        stock_price=100.0,
+        as_of=as_of,
+        config={"yfinance": {"minimum_option_contracts_per_side": 2}},
+    )
+
+    assert result == {}
 
 
 def test_sec_issuer_flags_detect_foreign_and_investment_company_forms() -> None:
@@ -947,6 +1102,26 @@ def test_score_family_cap_is_applied_after_normalisation() -> None:
     assert horizon["maximum_family_weight_actual"].le(0.15 + 1e-12).all()
 
 
+def test_score_exposes_raw_value_but_primary_score_is_cross_sectional_percentile() -> None:
+    metadata = _metadata(5)
+    values = {
+        f"S{symbol_index:03d}": {
+            signal: FeatureValue(signal, float(symbol_index), "exact", "test", signal)
+            for signal in metadata["signalname"]
+        }
+        for symbol_index in range(11)
+    }
+    features = assemble_feature_table(metadata, values, as_of="2026-08-01")
+
+    scores = calculate_scores(features, minimum_metrics=5)
+    horizon = scores.loc[scores["horizon_months"].eq(1)].sort_values("symbol")
+
+    assert "raw_score" in horizon.columns
+    assert horizon["score"].min() == pytest.approx(0.0)
+    assert horizon["score"].max() == pytest.approx(100.0)
+    assert horizon["score"].is_monotonic_increasing
+
+
 def test_coverage_has_one_row_for_every_strict_predictor() -> None:
     metadata = _metadata()
     values = {
@@ -1112,6 +1287,7 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
 
 def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     text = Path("config/openap_yfinance_sec_current.yaml").read_text(encoding="utf-8")
+    config = yaml.safe_load(text)
     for requirement in (
         "minimum_market_cap_usd",
         "minimum_average_dollar_volume_21d",
@@ -1123,8 +1299,19 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
         "horizon_semantics",
         "minimum_aggregate_confidence",
         "maximum_family_weight",
+        "minimum_computed_features_for_ranking",
+        "maximum_missing_features_for_ranking",
+        "maximum_sec_age_days_for_ranking",
+        "minimum_option_contracts_per_side",
+        "minimum_cross_sectional_nonmodal_fraction",
     ):
         assert requirement in text
+    assert config["score"]["minimum_aggregate_confidence"] >= 50
+    assert config["score"]["minimum_computed_features_for_ranking"] >= 60
+    assert config["score"]["maximum_missing_features_for_ranking"] <= 125
+    assert config["score"]["maximum_sec_age_days_for_ranking"] <= 183
+    assert config["yfinance"]["minimum_option_contracts_per_side"] >= 2
+    assert config["execution"]["artifact_retention_days"] == 90
 
 
 def test_repair_workflow_reuses_source_run_and_replaces_only_empty_shards() -> None:
