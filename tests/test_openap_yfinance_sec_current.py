@@ -683,6 +683,35 @@ def test_price_features_match_official_reversal_and_liquidity_windows() -> None:
     assert result["ShareVol"].raw_value is None
 
 
+def test_monthly_price_features_exclude_the_current_partial_month() -> None:
+    dates = pd.bdate_range("2024-01-02", "2026-08-10")
+    price = np.linspace(50.0, 150.0, len(dates))
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "adj_close": price,
+            "close": price,
+            "high": price * 1.01,
+            "low": price * 0.99,
+            "volume": 1_000_000.0,
+        }
+    )
+
+    result = calculate_price_features(
+        frame, as_of=pd.Timestamp("2026-08-10")
+    )
+    completed = (
+        frame.loc[frame["date"].dt.to_period("M").lt(pd.Period("2026-08"))]
+        .set_index("date")["adj_close"]
+        .resample("ME")
+        .last()
+    )
+
+    assert result["STreversal"].raw_value == pytest.approx(
+        completed.pct_change().iloc[-1]
+    )
+
+
 def test_share_count_resolution_rejects_stale_or_wrong_sec_values() -> None:
     resolved = current_runner._resolve_current_shares_outstanding(
         sec_shares=100.0,

@@ -551,7 +551,11 @@ def clean_price_history(
     return clean, quality
 
 
-def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
+def calculate_price_features(
+    frame: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp | None = None,
+) -> dict[str, FeatureValue]:
     """Calculate current price and trading characteristics.
 
     Signals that need the original CRSP cross-sectional regression, industry
@@ -567,6 +571,9 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     close = daily["adj_close"]
     returns = close.pct_change()
     monthly = _monthly_close(daily)
+    if as_of is not None and not monthly.empty:
+        as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
+        monthly = monthly.loc[monthly.index.to_period("M").lt(as_of_period)]
     month_returns = monthly.pct_change()
     current = float(close.iloc[-1])
     volume = pd.to_numeric(daily["volume"], errors="coerce")
@@ -673,6 +680,11 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
         .resample("ME")
         .last()
     )
+    if as_of is not None and not monthly_with_gaps.empty:
+        as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
+        monthly_with_gaps = monthly_with_gaps.loc[
+            monthly_with_gaps.index.to_period("M").lt(as_of_period)
+        ]
     monthly_returns = monthly_with_gaps.pct_change(fill_method=None).reset_index(drop=True)
 
     def lag_average(lags: Sequence[int]) -> float | None:

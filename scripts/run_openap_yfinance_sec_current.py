@@ -2283,7 +2283,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         cik = int(row.cik)
         prices = connection.execute("SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]).df()
         prices, price_quality = clean_price_history(prices)
-        values = calculate_price_features(prices)
+        values = calculate_price_features(prices, as_of=as_of)
         market_cap = getattr(row, "marketCap", None)
         market_cap_source = "yfinance_current_market_cap"
         if not _is_number(market_cap):
