@@ -256,6 +256,7 @@ jobs:
           assert summary["exact_formula_policy_violations"] == 0
           assert summary["mixed_unit_turnover_rows"] == 0
           assert summary["shallow_option_feature_rows"] == 0
+          assert summary["duplicate_usable_option_contracts"] == 0
           assert summary["overall_score_scale_violations"] == 0
           assert summary["score_contribution_mismatches"] == 0
           assert summary["clean_price_rows_in_database"] > 1_000_000

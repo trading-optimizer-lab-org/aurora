@@ -1573,14 +1573,8 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "current_redundancy_groups": ("signalname",),
     "overall_redundancy_groups": ("signalname",),
     "coverage_185": ("signalname",),
-    "price_quality_current": (
-        "symbol", "incomplete_session_rows_excluded", "latest_completed_session_date",
-    ),
-    "data_quality_current": (
-        "symbol", "computed_features", "exact_features", "proxy_features",
-        "incomplete_session_rows_excluded", "latest_completed_session_date",
-    ),
-    "yahoo_options_raw": ("contractSymbol",),
+    "price_quality_current": ("symbol",),
+    "data_quality_current": ("symbol",),
     "yahoo_options_usable": ("contractSymbol",),
     "source_manifest": ("source",),
     "yfinance_source_manifest": ("chunk_index",),
@@ -2223,6 +2217,104 @@ def _add_issuer_market_cap_context(
         out.loc[group.index, "issuer_market_cap"] = issuer_cap
         out.loc[group.index, "issuer_market_cap_source"] = source
     return out
+
+
+def create_options_quality_tables(
+    connection: Any,
+    *,
+    as_of: pd.Timestamp,
+    config: Mapping[str, Any],
+) -> None:
+    """Quarantine malformed Yahoo contracts and expose one canonical row each."""
+
+    option_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info('yahoo_options_raw')"
+        ).fetchall()
+    }
+    required_option_columns = {
+        "contractSymbol", "symbol", "option_type", "expiration",
+        "lastTradeDate", "strike", "bid", "ask", "impliedVolatility",
+        "retrieved_at",
+    }
+    if not required_option_columns.issubset(option_columns):
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_quality AS "
+            "SELECT *, 'missing_required_columns' AS quality_status "
+            "FROM yahoo_options_raw"
+        )
+        connection.execute(
+            "CREATE OR REPLACE TABLE yahoo_options_usable AS "
+            "SELECT * EXCLUDE (quality_status) FROM yahoo_options_quality WHERE false"
+        )
+        return
+
+    occ_pattern = r"^([A-Z0-9]{1,6})([0-9]{6})([CP])([0-9]{8})$"
+    connection.execute(
+        f"""
+        CREATE OR REPLACE TABLE yahoo_options_quality AS
+        SELECT o.*,
+          CASE
+            WHEN NOT regexp_full_match(upper(o.contractSymbol), '{occ_pattern}')
+              THEN 'invalid_contract_symbol'
+            WHEN regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 1)
+                 <> regexp_replace(upper(o.symbol), '[^A-Z0-9]', '', 'g')
+              THEN 'contract_underlying_mismatch'
+            WHEN try_strptime(
+                   regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 2),
+                   '%y%m%d'
+                 )::DATE <> try_cast(o.expiration AS DATE)
+              THEN 'contract_expiration_mismatch'
+            WHEN regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 3)
+                 <> CASE WHEN lower(o.option_type) = 'call' THEN 'C' ELSE 'P' END
+              THEN 'contract_type_mismatch'
+            WHEN abs(
+                   try_cast(regexp_extract(upper(o.contractSymbol), '{occ_pattern}', 4) AS DOUBLE)
+                   / 1000.0 - o.strike
+                 ) > 0.001
+              THEN 'contract_strike_mismatch'
+            WHEN try_cast(o.expiration AS DATE) IS NULL THEN 'invalid_expiration'
+            WHEN date_diff('day', CAST(? AS DATE), try_cast(o.expiration AS DATE))
+                 NOT BETWEEN ? AND ? THEN 'dte_outside_policy'
+            WHEN o.bid < 0 OR o.ask < o.bid THEN 'crossed_or_negative_quote'
+            WHEN o.impliedVolatility NOT BETWEEN ? AND ? THEN 'invalid_implied_volatility'
+            WHEN try_cast(o.lastTradeDate AS TIMESTAMPTZ)
+                 < CAST(? AS TIMESTAMPTZ) - (? * INTERVAL '1 day') THEN 'stale_trade'
+            WHEN s.current_price IS NULL OR s.current_price <= 0 THEN 'missing_stock_price'
+            WHEN o.strike / s.current_price NOT BETWEEN ? AND ? THEN 'moneyness_outside_policy'
+            ELSE 'usable_candidate'
+          END AS quality_status
+        FROM yahoo_options_raw o
+        LEFT JOIN security_master s USING (symbol)
+        """,
+        [
+            as_of.date().isoformat(),
+            int(config["yfinance"]["minimum_option_days"]),
+            int(config["yfinance"]["maximum_option_days"]),
+            float(config["yfinance"]["minimum_implied_volatility"]),
+            float(config["yfinance"]["maximum_implied_volatility"]),
+            as_of.isoformat(),
+            int(config["yfinance"]["maximum_option_staleness_days"]),
+            float(config["yfinance"]["minimum_option_moneyness"]),
+            float(config["yfinance"]["maximum_option_moneyness"]),
+        ],
+    )
+    connection.execute(
+        """
+        CREATE OR REPLACE TABLE yahoo_options_usable AS
+        SELECT * EXCLUDE (quality_status)
+        FROM yahoo_options_quality
+        WHERE quality_status = 'usable_candidate'
+        QUALIFY
+          try_cast(expiration AS DATE)
+            = min(try_cast(expiration AS DATE)) OVER (PARTITION BY symbol)
+          AND row_number() OVER (
+            PARTITION BY contractSymbol
+            ORDER BY try_cast(retrieved_at AS TIMESTAMPTZ) DESC, symbol
+          ) = 1
+        """
+    )
 
 
 def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
@@ -2955,59 +3047,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     connection.execute("CREATE OR REPLACE VIEW prices_daily AS SELECT * FROM prices_daily_clean")
 
-    option_columns = {
-        row[1] for row in connection.execute("PRAGMA table_info('yahoo_options_raw')").fetchall()
-    }
-    required_option_columns = {
-        "symbol", "expiration", "lastTradeDate", "strike", "bid", "ask",
-        "impliedVolatility",
-    }
-    if required_option_columns.issubset(option_columns):
-        connection.execute(
-            """
-            CREATE OR REPLACE TABLE yahoo_options_quality AS
-            SELECT o.*,
-              CASE
-                WHEN try_cast(o.expiration AS DATE) IS NULL THEN 'invalid_expiration'
-                WHEN date_diff('day', CAST(? AS DATE), try_cast(o.expiration AS DATE)) NOT BETWEEN ? AND ? THEN 'dte_outside_policy'
-                WHEN o.bid < 0 OR o.ask < o.bid THEN 'crossed_or_negative_quote'
-                WHEN o.impliedVolatility NOT BETWEEN ? AND ? THEN 'invalid_implied_volatility'
-                WHEN try_cast(o.lastTradeDate AS TIMESTAMPTZ) < CAST(? AS TIMESTAMPTZ) - (? * INTERVAL '1 day') THEN 'stale_trade'
-                WHEN s.current_price IS NULL OR s.current_price <= 0 THEN 'missing_stock_price'
-                WHEN o.strike / s.current_price NOT BETWEEN ? AND ? THEN 'moneyness_outside_policy'
-                ELSE 'usable_candidate'
-              END AS quality_status
-            FROM yahoo_options_raw o
-            LEFT JOIN security_master s USING (symbol)
-            """,
-            [
-                as_of.date().isoformat(),
-                int(config["yfinance"]["minimum_option_days"]),
-                int(config["yfinance"]["maximum_option_days"]),
-                float(config["yfinance"]["minimum_implied_volatility"]),
-                float(config["yfinance"]["maximum_implied_volatility"]),
-                as_of.isoformat(),
-                int(config["yfinance"]["maximum_option_staleness_days"]),
-                float(config["yfinance"]["minimum_option_moneyness"]),
-                float(config["yfinance"]["maximum_option_moneyness"]),
-            ],
-        )
-        connection.execute(
-            """
-            CREATE OR REPLACE TABLE yahoo_options_usable AS
-            SELECT * EXCLUDE (quality_status)
-            FROM yahoo_options_quality
-            WHERE quality_status = 'usable_candidate'
-            QUALIFY try_cast(expiration AS DATE) = min(try_cast(expiration AS DATE)) OVER (PARTITION BY symbol)
-            """
-        )
-    else:
-        connection.execute(
-            "CREATE OR REPLACE TABLE yahoo_options_quality AS SELECT *, 'missing_required_columns' AS quality_status FROM yahoo_options_raw"
-        )
-        connection.execute(
-            "CREATE OR REPLACE TABLE yahoo_options_usable AS SELECT * EXCLUDE (quality_status) FROM yahoo_options_quality WHERE false"
-        )
+    create_options_quality_tables(connection, as_of=as_of, config=config)
     connection.execute("CREATE OR REPLACE VIEW yahoo_options_current AS SELECT * FROM yahoo_options_usable")
     option_quality_summary = connection.execute(
         "SELECT quality_status, COUNT(*) AS rows FROM yahoo_options_quality GROUP BY quality_status ORDER BY quality_status"
@@ -3074,6 +3114,28 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     options_usable_rows = int(
         connection.execute("SELECT COUNT(*) FROM yahoo_options_usable").fetchone()[0]
+    )
+    raw_duplicate_option_contract_rows = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT contractSymbol, COUNT(*) n FROM yahoo_options_raw "
+            "GROUP BY contractSymbol HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+    )
+    quarantined_option_identity_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM yahoo_options_quality WHERE quality_status IN ("
+            "'invalid_contract_symbol','contract_underlying_mismatch',"
+            "'contract_expiration_mismatch','contract_type_mismatch',"
+            "'contract_strike_mismatch')"
+        ).fetchone()[0]
+    )
+    duplicate_usable_option_contracts = int(
+        connection.execute(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM ("
+            "SELECT contractSymbol, COUNT(*) n FROM yahoo_options_usable "
+            "GROUP BY contractSymbol HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
     )
     future_price_rows = int(
         connection.execute(
@@ -3407,6 +3469,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "missing_issuer_market_cap_leaderboard_rows": (
             missing_issuer_market_cap_leaderboard_rows
         ),
+        "duplicate_usable_option_contracts": duplicate_usable_option_contracts,
     }
     warning_counts = {
         "nonranking_sec_download_errors": max(
@@ -3442,6 +3505,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 security_master["eligible_common_stock"]
                 & ~security_master["issuer_primary_security"]
             ).sum()
+        ),
+        "raw_duplicate_option_contract_rows_quarantined": (
+            raw_duplicate_option_contract_rows
+        ),
+        "invalid_option_identity_rows_quarantined": (
+            quarantined_option_identity_rows
         ),
     }
     issues = pd.DataFrame(
@@ -3571,6 +3640,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "clean_price_rows_in_database": clean_price_rows_db,
         "options_raw_rows": options_raw_rows,
         "options_usable_rows": options_usable_rows,
+        "raw_duplicate_option_contract_rows": raw_duplicate_option_contract_rows,
+        "quarantined_option_identity_rows": quarantined_option_identity_rows,
+        "duplicate_usable_option_contracts": duplicate_usable_option_contracts,
         "sec_companyfacts_rows": sec_companyfacts_rows_db,
         "sec_companyfacts_rows_before_bulk_repair": sec_companyfacts_rows,
         "sec_bulk_repair_requested": sec_bulk_repair["requested"],

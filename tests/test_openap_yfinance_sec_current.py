@@ -49,6 +49,7 @@ from scripts.run_openap_yfinance_sec_current import (
     _sec_surface_availability,
     _select_chunk_rows,
     _submission_rows,
+    create_options_quality_tables,
     finalize_database_contract,
 )
 
@@ -1404,6 +1405,86 @@ def test_database_contract_covers_every_object_and_creates_unique_index(
             "INSERT INTO prices_daily_raw(symbol, date, adj_close) "
             "VALUES (NULL, DATE '2026-08-01', 1.0)"
         )
+
+
+def test_database_contract_uses_true_quality_keys_and_preserves_raw_options() -> None:
+    assert current_runner.DATABASE_UNIQUE_KEYS["price_quality_current"] == ("symbol",)
+    assert current_runner.DATABASE_UNIQUE_KEYS["data_quality_current"] == ("symbol",)
+    assert "yahoo_options_raw" not in current_runner.DATABASE_UNIQUE_KEYS
+    assert current_runner.DATABASE_UNIQUE_KEYS["yahoo_options_usable"] == (
+        "contractSymbol",
+    )
+
+
+def test_options_quality_quarantines_yahoo_identity_mismatches() -> None:
+    import duckdb
+
+    connection = duckdb.connect()
+    connection.execute("CREATE TABLE security_master(symbol VARCHAR, current_price DOUBLE)")
+    connection.execute("INSERT INTO security_master VALUES ('AAA', 10.0)")
+    rows = pd.DataFrame(
+        [
+            {
+                "contractSymbol": "AAA260918C00010000",
+                "symbol": "AAA",
+                "option_type": "call",
+                "expiration": "2026-09-18",
+            },
+            {
+                "contractSymbol": "AAA260918C00010000",
+                "symbol": "AAA",
+                "option_type": "call",
+                "expiration": "2026-08-21",
+            },
+            {
+                "contractSymbol": "BBB260918C00010000",
+                "symbol": "AAA",
+                "option_type": "call",
+                "expiration": "2026-09-18",
+            },
+        ]
+    )
+    rows["lastTradeDate"] = pd.Timestamp("2026-08-01", tz="UTC")
+    rows["strike"] = 10.0
+    rows["bid"] = 1.0
+    rows["ask"] = 1.1
+    rows["impliedVolatility"] = 0.25
+    rows["retrieved_at"] = "2026-08-03T12:00:00+00:00"
+    connection.register("option_rows", rows)
+    connection.execute(
+        "CREATE TABLE yahoo_options_raw AS SELECT * FROM option_rows"
+    )
+    connection.unregister("option_rows")
+    config = {
+        "yfinance": {
+            "minimum_option_days": 1,
+            "maximum_option_days": 120,
+            "minimum_implied_volatility": 0.001,
+            "maximum_implied_volatility": 5.0,
+            "maximum_option_staleness_days": 30,
+            "minimum_option_moneyness": 0.5,
+            "maximum_option_moneyness": 1.5,
+        }
+    }
+
+    create_options_quality_tables(
+        connection,
+        as_of=pd.Timestamp("2026-08-03", tz="UTC"),
+        config=config,
+    )
+
+    statuses = connection.execute(
+        "SELECT quality_status, COUNT(*) n FROM yahoo_options_quality "
+        "GROUP BY quality_status ORDER BY quality_status"
+    ).fetchall()
+    assert statuses == [
+        ("contract_expiration_mismatch", 1),
+        ("contract_underlying_mismatch", 1),
+        ("usable_candidate", 1),
+    ]
+    assert connection.execute(
+        "SELECT COUNT(*) FROM yahoo_options_usable"
+    ).fetchone()[0] == 1
 
 
 def test_score_gives_one_vote_to_redundancy_group() -> None:
