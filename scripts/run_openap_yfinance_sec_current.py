@@ -56,6 +56,7 @@ WARRANT_SYMBOL_RE = re.compile(r"-(?:WT|WS)$", re.IGNORECASE)
 FOREIGN_SEC_FORMS = frozenset({"20-F", "40-F", "6-K", "F-1", "F-3", "F-4"})
 INVESTMENT_COMPANY_FORMS = frozenset({"N-1A", "N-2", "N-CSR", "N-CSRS", "NPORT-P", "NPORT-NP"})
 ALLOWED_EXCHANGE_RE = re.compile(r"NASDAQ|NYSE|NEW YORK STOCK EXCHANGE|CBOE", re.IGNORECASE)
+_SEC_DIRECT_API_BLOCKED = False
 
 
 def _utcnow() -> str:
@@ -638,8 +639,12 @@ def _request_sec_json(
 
     import requests
 
+    global _SEC_DIRECT_API_BLOCKED
     errors: list[str] = []
     for source_mode, url in (("sec_official_api", direct_url), ("sec_via_jina_readthrough", fallback_url)):
+        if source_mode == "sec_official_api" and _SEC_DIRECT_API_BLOCKED:
+            errors.append("sec_official_api:skipped_after_earlier_401_or_403")
+            continue
         for attempt in range(retries):
             try:
                 response = requests.get(
@@ -647,6 +652,8 @@ def _request_sec_json(
                     headers=dict(headers) if source_mode == "sec_official_api" else {"Accept": "text/plain"},
                     timeout=(20, 120),
                 )
+                if source_mode == "sec_official_api" and response.status_code in {401, 403}:
+                    _SEC_DIRECT_API_BLOCKED = True
                 response.raise_for_status()
                 if source_mode == "sec_official_api":
                     payload = response.json()
@@ -657,6 +664,8 @@ def _request_sec_json(
                 return payload, source_mode, url
             except Exception as exc:
                 errors.append(f"{source_mode}:{type(exc).__name__}:{exc}")
+                if source_mode == "sec_official_api" and _SEC_DIRECT_API_BLOCKED:
+                    break
                 if attempt + 1 < retries:
                     time.sleep(2 ** attempt)
         if source_mode == "sec_official_api":

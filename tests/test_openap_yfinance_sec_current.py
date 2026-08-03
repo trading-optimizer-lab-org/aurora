@@ -3,7 +3,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 from pathlib import Path
+
+import scripts.run_openap_yfinance_sec_current as current_runner
 
 from aurora.research.openap_current_score import (
     EXPECTED_PREDICTORS,
@@ -30,12 +33,55 @@ from scripts.run_openap_yfinance_sec_current import (
     _hashes_by_chunk,
     _json_from_jina_text,
     _options_features,
+    _request_sec_json,
     _sec_exchange_csv_rows,
     _sec_issuer_flags,
     _select_chunk_rows,
     _submission_rows,
     finalize_database_contract,
 )
+
+
+def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class Response:
+        def __init__(self, status_code: int, text: str = "") -> None:
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise requests.HTTPError(f"HTTP {self.status_code}")
+
+        def json(self) -> dict[str, bool]:
+            return {"official": True}
+
+    def fake_get(url: str, **_: object) -> Response:
+        calls.append(url)
+        if url.startswith("https://data.sec.gov"):
+            return Response(403)
+        return Response(200, '{"fallback": true}')
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(current_runner, "_SEC_DIRECT_API_BLOCKED", False)
+
+    first = _request_sec_json(
+        "https://data.sec.gov/one.json",
+        "https://r.jina.ai/http://data.sec.gov/one.json",
+        headers={"User-Agent": "test@example.com"},
+    )
+    second = _request_sec_json(
+        "https://data.sec.gov/two.json",
+        "https://r.jina.ai/http://data.sec.gov/two.json",
+        headers={"User-Agent": "test@example.com"},
+    )
+
+    assert first[1] == "sec_via_jina_readthrough"
+    assert second[1] == "sec_via_jina_readthrough"
+    assert sum(url.startswith("https://data.sec.gov") for url in calls) == 1
 
 
 def _metadata(rows: int = EXPECTED_PREDICTORS) -> pd.DataFrame:

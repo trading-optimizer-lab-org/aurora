@@ -42,6 +42,12 @@ day and marked explicitly. Filing date plus one day is retained only as a
 disclosed fallback. Failed per-company downloads are retried from the official
 SEC bulk archive and recorded in `sec_bulk_repair_audit`.
 
+The official SEC endpoint is always attempted first. If it returns a process-
+wide 401 or 403, the shard opens a circuit breaker instead of repeating the
+same rejected request for every issuer. The Jina read-through remains an
+explicitly labelled transport fallback; canonical JSON hashes and raw run
+archives preserve the retrieved payload for audit.
+
 Selected accounting inputs must satisfy all of the following:
 
 - `available_at` is not after the snapshot time;
