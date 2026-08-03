@@ -1443,12 +1443,12 @@ def calculate_scores(
     formula_available = features.groupby("signalname")["formula_id"].transform(
         lambda values: values.fillna("").astype(str).str.len().gt(0).any()
     )
-    canonical = features.loc[
+    eligible_metric_rows = features.loc[
         features["implementation_status"].isin(["exact", "proxy"])
         & pd.to_numeric(features[potential_column], errors="coerce").gt(0)
         & formula_available
     ].copy()
-    if canonical.empty:
+    if eligible_metric_rows.empty:
         return pd.DataFrame(
             columns=[
                 "as_of", "symbol", "horizon_months", "score", "confidence",
@@ -1456,10 +1456,23 @@ def calculate_scores(
                 "maximum_family_weight_actual",
             ]
         )
+    canonical_signals = set(eligible_metric_rows["signalname"].astype(str))
+    canonical = features.loc[
+        features["signalname"].astype(str).isin(canonical_signals)
+    ].copy()
+    signal_potential_weight = (
+        eligible_metric_rows.assign(
+            _potential=pd.to_numeric(
+                eligible_metric_rows[potential_column], errors="coerce"
+            ).fillna(0.0)
+        )
+        .groupby("signalname")["_potential"]
+        .max()
+    )
 
-    canonical["potential_weight"] = pd.to_numeric(
-        canonical[potential_column], errors="coerce"
-    ).fillna(0.0)
+    canonical["potential_weight"] = (
+        canonical["signalname"].map(signal_potential_weight).fillna(0.0)
+    )
     metric_meta = canonical.groupby(
         ["horizon_months", "signalname", "redundancy_group"], as_index=False
     ).agg(
