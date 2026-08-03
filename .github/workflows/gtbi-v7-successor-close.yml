@@ -14,7 +14,7 @@ env:
 jobs:
   reconcile:
     name: Verify successor and emit COMPLETED_CLEAN
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout reviewed commit

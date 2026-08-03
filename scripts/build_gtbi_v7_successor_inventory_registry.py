@@ -210,18 +210,27 @@ def build(*, inventory_source: Path, repository_root: Path) -> dict[str, Any]:
         )
     for workflow in workflows:
         path = str(workflow["path"])
-        common = dict(
-            identity=path,
-            status=str(workflow["state"]),
-            verified_at=verified_at,
-            open_heads=open_heads,
-            sha_or_id=str(workflow["id"]),
+        registry.append(
+            _registry_row(
+                asset_type="workflow",
+                identity=path,
+                status=str(workflow["state"]),
+                verified_at=verified_at,
+                open_heads=open_heads,
+                sha_or_id=str(workflow["id"]),
+                purpose="workflow definition",
+            )
         )
         registry.append(
-            _registry_row(asset_type="workflow", purpose="workflow definition", **common)
-        )
-        registry.append(
-            _registry_row(asset_type="run_family", purpose="workflow run family", **common)
+            _registry_row(
+                asset_type="run_family",
+                identity=path,
+                status=str(workflow["state"]),
+                verified_at=verified_at,
+                open_heads=open_heads,
+                sha_or_id=str(workflow["id"]),
+                purpose="workflow run family",
+            )
         )
 
     family_stats: dict[str, dict[str, Any]] = defaultdict(

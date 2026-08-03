@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -79,11 +80,23 @@ def test_inventory_registry_has_no_unknown_decisions() -> None:
     assert all(row["decision"] != "unknown" for row in rows)
 
 
+def test_all_preterminal_evidence_is_tracked_by_git() -> None:
+    for relative in completion._all_evidence(preterminal=True):
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", relative],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0, f"untracked successor evidence: {relative}"
+
+
 def test_completion_workflow_is_github_only_and_locked_closed() -> None:
     path = ROOT / ".github/workflows/gtbi-v7-successor-close.yml"
     text = path.read_text(encoding="utf-8")
     assert "workflow_dispatch:" in text
-    assert "runs-on: ubuntu-latest" in text
+    assert "runs-on: ubuntu-24.04" in text
     assert "self-hosted" not in text
     assert "C:\\" not in text
     assert 'locked_start: "2021-01-01"' in text

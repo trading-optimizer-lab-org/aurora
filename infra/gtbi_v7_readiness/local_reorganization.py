@@ -42,9 +42,7 @@ class LocalReorganizationError(RuntimeError):
     """Local state could not be preserved without destructive actions."""
 
 
-def _run(
-    args: list[str], *, cwd: Path, binary: bool = False
-) -> bytes | str:
+def _run(args: list[str], *, cwd: Path, binary: bool = False) -> bytes | str:
     completed = subprocess.run(
         args,
         cwd=cwd,
@@ -110,11 +108,7 @@ def _status_entries(root: Path) -> list[dict[str, str]]:
         binary=True,
     )
     assert isinstance(raw, bytes)
-    fields = [
-        field.decode("utf-8", "surrogateescape")
-        for field in raw.split(b"\0")
-        if field
-    ]
+    fields = [field.decode("utf-8", "surrogateescape") for field in raw.split(b"\0") if field]
     entries: list[dict[str, str]] = []
     index = 0
     while index < len(fields):
@@ -215,9 +209,7 @@ def preserve_local_worktrees(
     private_output_dir.mkdir(parents=True, exist_ok=True)
     restore_root = private_output_dir / ".restore-test"
 
-    worktree_text = _run(
-        ["git", "worktree", "list", "--porcelain"], cwd=repository_path
-    )
+    worktree_text = _run(["git", "worktree", "list", "--porcelain"], cwd=repository_path)
     assert isinstance(worktree_text, str)
     worktrees = _parse_worktrees(worktree_text)
     bundle_path = private_output_dir / "repository-local-only-commits.bundle"
@@ -296,22 +288,20 @@ def preserve_local_worktrees(
             candidate = source / relative
             size = candidate.stat().st_size if candidate.is_file() else 0
             digest = _sha256_file(candidate) if candidate.is_file() else ""
-            findings: list[str] = []
+            entry_findings: list[str] = []
             preservation = "captured_by_verified_patch"
             destination = ""
             if entry["status"] == "??" and candidate.is_file():
                 data = candidate.read_bytes() if size <= 8 * 1024 * 1024 else b""
-                findings = _secret_findings(data)
-                if findings:
+                entry_findings = _secret_findings(data)
+                if entry_findings:
                     unresolved_secret_findings += 1
                     preservation = "retained_in_source_secret_review_required"
                 else:
                     target = destination_root / "untracked" / relative
                     target_digest = _copy_and_verify(candidate, target, restore_root)
                     if target_digest != digest:
-                        raise LocalReorganizationError(
-                            f"copy digest mismatch: {candidate}"
-                        )
+                        raise LocalReorganizationError(f"copy digest mismatch: {candidate}")
                     preservation = "verified_file_copy"
                     destination = str(target)
                     preserved_objects.append(
@@ -335,7 +325,7 @@ def preserve_local_worktrees(
                     "size_in_bytes": size,
                     "sha256": digest,
                     "secret_scan_state": (
-                        "findings" if findings else "no_actionable_findings"
+                        "findings" if entry_findings else "no_actionable_findings"
                     ),
                     "preservation_decision": preservation,
                 }
@@ -350,7 +340,7 @@ def preserve_local_worktrees(
                     "classification": _classification(relative),
                     "size_in_bytes": size,
                     "sha256": digest,
-                    "secret_findings": findings,
+                    "secret_findings": entry_findings,
                     "preservation_decision": preservation,
                 }
             )
@@ -365,9 +355,7 @@ def preserve_local_worktrees(
                 "locked": "locked" in item,
                 "dirty": bool(entries),
                 "dirty_path_count": len(entries),
-                "preservation_state": (
-                    "verified" if exists else "missing_registered_prunable"
-                ),
+                "preservation_state": ("verified" if exists else "missing_registered_prunable"),
                 "patch_count": len(patch_records),
             }
         )
@@ -414,9 +402,7 @@ def preserve_local_worktrees(
         public_worktrees,
         worktree_columns,
     )
-    _write_csv(
-        public_output_dir / "dirty_paths.csv", public_paths, path_columns
-    )
+    _write_csv(public_output_dir / "dirty_paths.csv", public_paths, path_columns)
     _write_json(
         private_output_dir / "private_path_manifest.json",
         {
@@ -430,9 +416,7 @@ def preserve_local_worktrees(
         raise LocalReorganizationError("restore test directory is not empty")
     restore_root.rmdir()
 
-    observed = observed_at_utc or datetime.now(timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    observed = observed_at_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     receipt = {
         "schema_version": SCHEMA_VERSION,
         "observed_at_utc": observed,
@@ -494,9 +478,7 @@ def validate_local_reorganization(public_output_dir: Path) -> list[str]:
 
 
 def iter_unresolved_paths(public_output_dir: Path) -> Iterable[dict[str, str]]:
-    with (public_output_dir / "dirty_paths.csv").open(
-        encoding="utf-8", newline=""
-    ) as handle:
+    with (public_output_dir / "dirty_paths.csv").open(encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
             if row["preservation_decision"].endswith("required"):
                 yield row
