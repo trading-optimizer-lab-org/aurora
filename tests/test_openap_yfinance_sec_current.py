@@ -1760,6 +1760,7 @@ def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() 
     ).read_text(encoding="utf-8")
 
     assert "source_run_id" in text
+    assert "sec_artifact_run_id" in text
     assert 'SEC_CHUNKS: "48"' in text
     assert "matrix.chunk" in text
     assert "sec-chunk" in text
@@ -1771,6 +1772,8 @@ def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() 
     assert 'test "$yfinance_artifacts" -eq 48' in text
     assert 'test("^openap-yfinance-[0-9]+$")' in text
     assert "openap-yfinance-lake-" not in text
+    assert "run-id: ${{ inputs.sec_artifact_run_id }}" in text
+    assert 'test "$sec_artifacts" -eq 48' in text
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text

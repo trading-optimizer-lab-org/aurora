@@ -15,6 +15,10 @@ on:
         required: true
         type: boolean
         default: false
+      sec_artifact_run_id:
+        description: Completed repair run containing SEC shard artifacts when remerge_only is true
+        required: false
+        default: ""
 
 permissions:
   actions: read
@@ -152,12 +156,23 @@ jobs:
           path: inputs/yfinance
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate reusable SEC artifact run
+        if: ${{ inputs.remerge_only }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SEC_ARTIFACT_RUN_ID: ${{ inputs.sec_artifact_run_id }}
+        run: |
+          test -n "$SEC_ARTIFACT_RUN_ID"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SEC_ARTIFACT_RUN_ID}" --jq .status)" = "completed"
+          sec_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SEC_ARTIFACT_RUN_ID}/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | test("^openap-sec-repair-lake-[0-9]+$")))] | length')"
+          test "$sec_artifacts" -eq 48
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         if: ${{ inputs.remerge_only }}
         with:
           pattern: openap-sec*lake-*
           path: inputs/sec
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ inputs.sec_artifact_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         if: ${{ !inputs.remerge_only }}
