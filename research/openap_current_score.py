@@ -148,7 +148,9 @@ def _reference_percentile(values: pd.Series, reference: pd.Series) -> pd.Series:
 
 
 def _normalise_exchange(value: object) -> int | None:
-    text = str(value or "").upper()
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).upper()
     if "NASDAQ" in text:
         return 3
     if "NYSE AMERICAN" in text or "AMEX" in text:

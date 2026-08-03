@@ -1288,7 +1288,12 @@ def _database_layer(table_name: str) -> str:
     return "derived"
 
 
-def finalize_database_contract(connection: Any, output: Path) -> tuple[int, int, int]:
+def finalize_database_contract(
+    connection: Any,
+    output: Path,
+    *,
+    required_tables: set[str] | None = None,
+) -> tuple[int, int, int]:
     """Create physical indexes and a complete contract for every DB object."""
 
     objects = connection.execute(
@@ -1297,7 +1302,12 @@ def finalize_database_contract(connection: Any, output: Path) -> tuple[int, int,
     ).fetchall()
     object_names = {str(row[0]) for row in objects}
     contract_check_rows: list[dict[str, Any]] = []
-    for table_name in sorted(set(DATABASE_UNIQUE_KEYS) | set(DATABASE_REQUIRED_NON_NULL)):
+    contract_tables = (
+        set(required_tables)
+        if required_tables is not None
+        else set(DATABASE_UNIQUE_KEYS) | set(DATABASE_REQUIRED_NON_NULL)
+    )
+    for table_name in sorted(contract_tables):
         if table_name not in object_names:
             contract_check_rows.append(
                 {

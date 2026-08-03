@@ -52,8 +52,8 @@ def _metadata(rows: int = EXPECTED_PREDICTORS) -> pd.DataFrame:
             "Signal.Rep.Quality": "1_good",
             "Cat.Form": "continuous",
             "q_cut": 0.2,
-            "q_filt": np.nan,
-            "filterstr": np.nan,
+            "q_filt": pd.Series([None] * rows, dtype="object"),
+            "filterstr": pd.Series([None] * rows, dtype="object"),
             "sweight": "EW",
             "startmonth": 6.0,
         }
@@ -719,7 +719,11 @@ def test_database_contract_covers_every_object_and_creates_unique_index(
     )
     connection.execute("CREATE VIEW prices_daily AS SELECT * FROM prices_daily_raw")
 
-    contract_rows, index_rows, violations = finalize_database_contract(connection, tmp_path)
+    contract_rows, index_rows, violations = finalize_database_contract(
+        connection,
+        tmp_path,
+        required_tables={"prices_daily_raw"},
+    )
     contract = pd.read_csv(tmp_path / "schema_contract.csv")
 
     assert contract_rows == 5
