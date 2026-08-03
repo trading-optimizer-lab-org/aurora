@@ -722,11 +722,11 @@ def calculate_price_features(
         .resample("ME")
         .last()
     )
-        if as_of is not None and not monthly_with_gaps.empty:
-            as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
-            monthly_with_gaps = monthly_with_gaps.loc[
-                monthly_with_gaps.index.to_period("M") < as_of_period
-            ]
+    if as_of is not None and not monthly_with_gaps.empty:
+        as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
+        monthly_with_gaps = monthly_with_gaps.loc[
+            monthly_with_gaps.index.to_period("M") < as_of_period
+        ]
     monthly_returns = monthly_with_gaps.pct_change(fill_method=None).reset_index(drop=True)
 
     def lag_average(lags: Sequence[int]) -> float | None:
