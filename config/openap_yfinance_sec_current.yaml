@@ -58,7 +58,11 @@ sec:
   ticker_exchange_fallback_url: https://raw.githubusercontent.com/jadchaar/sec-cik-mapper/7883b83389836f9bba9bdfe53031467235746334/mappings/stocks/mappings.csv
   ticker_exchange_fallback_commit: 7883b83389836f9bba9bdfe53031467235746334
   companyfacts_bulk_url: https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
+  companyfacts_bulk_fallback_urls:
+    - https://data.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip
   submissions_bulk_url: https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
+  submissions_bulk_fallback_urls:
+    - https://data.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
   companyfacts_api_template: https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json
   submissions_api_template: https://data.sec.gov/submissions/CIK{cik}.json
   companyfacts_fallback_template: https://r.jina.ai/http://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json

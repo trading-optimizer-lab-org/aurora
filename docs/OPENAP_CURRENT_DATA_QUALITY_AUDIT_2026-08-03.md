@@ -35,6 +35,7 @@ semanticos descritos aqui.
 | Explicabilidad | No existia desglose completo del score | Contribucion por predictor, grupo y familia; debe reconstruir el raw score | `score_contribution_mismatches=0` |
 | Grupos con familias mixtas | Un grupo redundante podia formar una etiqueta de familia combinada y eludir el limite familiar | Cada grupo recibe una sola familia dominante por evidencia y conserva un unico voto | `family_weight_cap_violations=0` |
 | SEC | Miles de peticiones individuales dependian de un read-through externo | El workflow completo usa una sola descarga de los ZIP oficiales SEC con hash | `sec_source_layout=official_bulk_archive` |
+| Acceso SEC desde GitHub | Las IP compartidas de GitHub pueden recibir 403 aun con un User-Agent valido | Identidad completa con contacto, `Host` oficial, backoff y segundo hostname oficial `data.sec.gov`; se registra la URL realmente usada | ZIP valido, hash y `source_url` oficial por archivo |
 | Volumen SEC bulk | El primer lector bulk recorria todo XBRL; limitar sin separar trimestres tambien podia borrar el historial anual de cinco anos | El ZIP se filtra por 52 etiquetas y conserva 24 observaciones recientes mas al menos 8 anuales | Cobertura causal suficiente para lags de cinco anos sin guardar XBRL ajeno |
 | Retencion | Artifacts fuente se eliminaban a los 30 dias | Retencion de 90 dias | Contrato YAML/workflow |
 | Documentacion | Cifras y significado del score habian quedado obsoletos | Estado historico separado y contrato v2 documentado | Revision documental |

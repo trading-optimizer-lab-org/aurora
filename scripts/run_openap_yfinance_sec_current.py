@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit
 import zipfile
 
 import numpy as np
@@ -107,12 +108,51 @@ def _download(url: str, destination: Path, *, headers: Mapping[str, str] | None 
             time.sleep(2 ** attempt)
 
 
-def _sec_headers(user_agent: str) -> dict[str, str]:
-    return {
+def _sec_headers(user_agent: str, *, url: str | None = None) -> dict[str, str]:
+    headers = {
         "User-Agent": user_agent,
-        "Accept": "application/json,text/plain,*/*",
+        "Accept": "application/zip,application/json,text/plain,*/*",
         "Accept-Encoding": "gzip, deflate",
+        "Connection": "close",
+        "Referer": "https://www.sec.gov/",
     }
+    email_match = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", user_agent, re.IGNORECASE)
+    if email_match:
+        headers["From"] = email_match.group(0)
+    if url:
+        headers["Host"] = urlsplit(url).netloc
+    return headers
+
+
+def _download_sec_archive(
+    urls: Iterable[str],
+    destination: Path,
+    *,
+    user_agent: str,
+    retries_per_url: int = 7,
+) -> str:
+    """Download one SEC ZIP through the first working official SEC hostname."""
+
+    candidates = list(dict.fromkeys(str(url).strip() for url in urls if str(url).strip()))
+    if not candidates:
+        raise OpenAPDataError("No SEC bulk archive URL configured")
+    errors: list[str] = []
+    for url in candidates:
+        try:
+            _download(
+                url,
+                destination,
+                headers=_sec_headers(user_agent, url=url),
+                retries=retries_per_url,
+            )
+            if not zipfile.is_zipfile(destination):
+                raise OpenAPDataError(f"SEC response is not a ZIP archive: {url}")
+            return url
+        except Exception as exc:
+            destination.unlink(missing_ok=True)
+            destination.with_suffix(destination.suffix + ".part").unlink(missing_ok=True)
+            errors.append(f"{url}: {type(exc).__name__}: {exc}")
+    raise OpenAPDataError("All official SEC bulk archive URLs failed: " + " | ".join(errors))
 
 
 def _select_chunk_rows(
@@ -967,11 +1007,20 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     lake_dir.mkdir(parents=True, exist_ok=True)
     universe = pd.read_parquet(args.security_master)
     ciks = set(pd.to_numeric(universe["cik"], errors="coerce").dropna().astype(int).tolist())
-    headers = _sec_headers(args.sec_user_agent)
     companyfacts_zip = raw_dir / "companyfacts.zip"
     submissions_zip = raw_dir / "submissions.zip"
-    _download(config["sec"]["companyfacts_bulk_url"], companyfacts_zip, headers=headers)
-    _download(config["sec"]["submissions_bulk_url"], submissions_zip, headers=headers)
+    companyfacts_source_url = _download_sec_archive(
+        [config["sec"]["companyfacts_bulk_url"]]
+        + list(config["sec"].get("companyfacts_bulk_fallback_urls", [])),
+        companyfacts_zip,
+        user_agent=args.sec_user_agent,
+    )
+    submissions_source_url = _download_sec_archive(
+        [config["sec"]["submissions_bulk_url"]]
+        + list(config["sec"].get("submissions_bulk_fallback_urls", [])),
+        submissions_zip,
+        user_agent=args.sec_user_agent,
+    )
 
     submission_rows: list[dict[str, Any]] = []
     with zipfile.ZipFile(submissions_zip) as archive:
@@ -1072,8 +1121,10 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
         "companyfacts_rows": fact_count,
         "companyfacts_zip_bytes": companyfacts_zip.stat().st_size,
         "companyfacts_zip_sha256": sha256_file(companyfacts_zip),
+        "companyfacts_source_url": companyfacts_source_url,
         "submissions_zip_bytes": submissions_zip.stat().st_size,
         "submissions_zip_sha256": sha256_file(submissions_zip),
+        "submissions_source_url": submissions_source_url,
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
     }

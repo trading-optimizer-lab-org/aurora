@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import zipfile
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -35,11 +37,13 @@ from scripts.run_openap_yfinance_sec_current import (
     _add_issuer_market_cap_context,
     _classify_security_eligibility,
     _companyfacts_rows,
+    _download_sec_archive,
     _hashes_by_chunk,
     _json_from_jina_text,
     _options_features,
     _request_sec_json,
     _scorable_feature_counts,
+    _sec_headers,
     _sec_exchange_csv_rows,
     _sec_issuer_flags,
     _sec_surface_availability,
@@ -47,6 +51,59 @@ from scripts.run_openap_yfinance_sec_current import (
     _submission_rows,
     finalize_database_contract,
 )
+
+
+def test_sec_bulk_headers_identify_contact_and_official_host() -> None:
+    headers = _sec_headers(
+        "Aurora Research research@example.com",
+        url="https://data.sec.gov/Archives/example.zip",
+    )
+
+    assert headers["User-Agent"] == "Aurora Research research@example.com"
+    assert headers["From"] == "research@example.com"
+    assert headers["Host"] == "data.sec.gov"
+    assert headers["Referer"] == "https://www.sec.gov/"
+
+
+def test_sec_bulk_archive_uses_next_official_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def fake_download(
+        url: str,
+        destination: Path,
+        *,
+        headers: dict[str, str],
+        retries: int,
+    ) -> None:
+        calls.append((url, headers))
+        assert retries == 7
+        if url.startswith("https://www.sec.gov"):
+            raise requests.HTTPError("403")
+        with zipfile.ZipFile(destination, "w") as archive:
+            archive.writestr("CIK0000000001.json", "{}")
+
+    monkeypatch.setattr(current_runner, "_download", fake_download)
+    destination = tmp_path / "companyfacts.zip"
+    selected = _download_sec_archive(
+        [
+            "https://www.sec.gov/Archives/companyfacts.zip",
+            "https://data.sec.gov/Archives/companyfacts.zip",
+        ],
+        destination,
+        user_agent="Aurora Research research@example.com",
+    )
+
+    assert selected == "https://data.sec.gov/Archives/companyfacts.zip"
+    assert zipfile.is_zipfile(destination)
+    assert [url for url, _ in calls] == [
+        "https://www.sec.gov/Archives/companyfacts.zip",
+        "https://data.sec.gov/Archives/companyfacts.zip",
+    ]
+    assert calls[0][1]["Host"] == "www.sec.gov"
+    assert calls[1][1]["Host"] == "data.sec.gov"
 
 
 def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
