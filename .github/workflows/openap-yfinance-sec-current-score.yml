@@ -348,6 +348,9 @@ jobs:
           assert summary["family_weight_cap_violations"] == 0
           assert summary["required_horizon_denominator_variants"] == 0
           assert summary["ranking_sec_download_failures"] == 0
+          assert summary["sec_source_layout"] == "official_bulk_archive"
+          assert summary["sec_source_manifest_rows"] == 1
+          assert summary["sec_jina_fallback_downloads"] == 0
           assert summary["uninformative_weighted_rows"] == 0
           assert summary["weighted_constant_predictors"] == 0
           assert summary["stale_sec_leaderboard_rows"] == 0
