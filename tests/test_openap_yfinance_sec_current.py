@@ -1766,6 +1766,8 @@ def test_repair_workflow_reuses_v2_source_and_refreshes_one_official_bulk_lake()
     assert "openap-sec-repair-lake-0" in text
     assert "sec_source_layout" in text
     assert 'summary["sec_source_manifest_rows"] == 1' in text
+    assert "Wait for all source YFinance artifacts" in text
+    assert 'test "$yfinance_artifacts" -eq 48' in text
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text

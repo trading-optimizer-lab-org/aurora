@@ -112,6 +112,23 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e ".[dev]" duckdb requests
       - name: Validate OpenAP implementation before remerge
         run: python -m pytest tests/test_openap_yfinance_sec_current.py -q
+      - name: Wait for all source YFinance artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          status=""
+          for attempt in $(seq 1 240); do
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" --jq .status)"
+            if [ "$status" = "completed" ]; then
+              break
+            fi
+            sleep 30
+          done
+          test "$status" = "completed"
+          yfinance_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | startswith("openap-yfinance-lake-")))] | length')"
+          test "$yfinance_artifacts" -eq 48
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: openap-prepare
