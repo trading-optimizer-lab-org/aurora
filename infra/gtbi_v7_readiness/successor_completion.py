@@ -69,7 +69,10 @@ TASK_EVIDENCE: dict[str, tuple[str, ...]] = {
         "docs/readiness/gtbi-v7-successor/modernization_inventory.csv",
         "docs/readiness/gtbi-v7-successor/modernization_receipt.json",
     ),
-    "PREV7-1003": ("docs/readiness/gtbi-v7-successor/completed_clean.json",),
+    "PREV7-1003": (
+        "docs/readiness/gtbi-v7-successor/completed_clean.json",
+        "docs/readiness/gtbi-v7-successor/terminal_publication_receipt.json",
+    ),
 }
 
 
@@ -154,6 +157,99 @@ def _validate_remediation_registry(root: Path, blockers: list[str]) -> None:
     _require(row.get("open_child_count") == 0, "consumer remediation has open children", blockers)
 
 
+def _validate_completed_clean(root: Path, blockers: list[str]) -> None:
+    receipt = _json(root, SUCCESSOR_DIR / "completed_clean.json")
+    claimed_digest = receipt.get("receipt_digest")
+    material = dict(receipt)
+    material.pop("receipt_digest", None)
+    _require(
+        claimed_digest == _canonical_digest(material),
+        "completed-clean receipt digest mismatch",
+        blockers,
+    )
+    _require(
+        receipt.get("terminal_output") == "COMPLETED_CLEAN",
+        "terminal output is not COMPLETED_CLEAN",
+        blockers,
+    )
+    _require(
+        receipt.get("completed_task_count") == len(TASK_EVIDENCE),
+        "completed-clean task count mismatch",
+        blockers,
+    )
+    _require(
+        set(receipt.get("completed_task_ids", [])) == set(TASK_EVIDENCE),
+        "completed-clean task IDs mismatch",
+        blockers,
+    )
+    reviewed_commit = receipt.get("reviewed_commit", "")
+    _require(
+        isinstance(reviewed_commit, str)
+        and len(reviewed_commit) == 40
+        and reviewed_commit == reviewed_commit.lower()
+        and all(character in "0123456789abcdef" for character in reviewed_commit),
+        "completed-clean reviewed commit is invalid",
+        blockers,
+    )
+    _require(receipt.get("github_only") is True, "completed-clean is not GitHub-only", blockers)
+    _require(
+        receipt.get("requires_local_machine") is False,
+        "completed-clean depends on a local machine",
+        blockers,
+    )
+    _require(
+        receipt.get("locked_authorized") is False,
+        "completed-clean authorized locked access",
+        blockers,
+    )
+    _require(
+        receipt.get("locked_data_accessed") is False,
+        "completed-clean accessed locked data",
+        blockers,
+    )
+    _require(
+        receipt.get("locked_start") == "2021-01-01",
+        "completed-clean locked boundary changed",
+        blockers,
+    )
+    _require(
+        receipt.get("incremental_net_spend_usd") == 0.0,
+        "completed-clean incremental spend is non-zero",
+        blockers,
+    )
+
+    publication = _json(root, SUCCESSOR_DIR / "terminal_publication_receipt.json")
+    claimed_publication_digest = publication.get("publication_digest")
+    publication_material = dict(publication)
+    publication_material.pop("publication_digest", None)
+    _require(
+        claimed_publication_digest == _canonical_digest(publication_material),
+        "terminal publication digest mismatch",
+        blockers,
+    )
+    _require(
+        publication.get("completed_clean_sha256")
+        == _sha256(root / SUCCESSOR_DIR / "completed_clean.json"),
+        "published completed-clean file digest mismatch",
+        blockers,
+    )
+    _require(
+        publication.get("completed_clean_receipt_digest") == claimed_digest,
+        "published completed-clean receipt digest mismatch",
+        blockers,
+    )
+    _require(
+        publication.get("reviewed_commit") == reviewed_commit,
+        "terminal publication reviewed commit mismatch",
+        blockers,
+    )
+    _require(
+        publication.get("workflow_conclusion") == "success",
+        "terminal workflow did not conclude successfully",
+        blockers,
+    )
+
+
 def reconcile(root: Path, *, preterminal: bool = True) -> ReconciliationResult:
     root = root.resolve()
     blockers: list[str] = []
@@ -173,6 +269,9 @@ def reconcile(root: Path, *, preterminal: bool = True) -> ReconciliationResult:
         return ReconciliationResult(
             False, (), tuple(blockers), _evidence_digest(root, evidence_files), evidence_files
         )
+
+    if not preterminal:
+        _validate_completed_clean(root, blockers)
 
     inventory = _json(root, PROJECT_INVENTORY / "inventory_reconciliation.json")
     g4 = _json(root, SUCCESSOR_DIR / "g4_completion_receipt.json")

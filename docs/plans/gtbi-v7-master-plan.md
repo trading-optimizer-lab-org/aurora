@@ -3,13 +3,13 @@
 | Field | Value |
 |---|---|
 | Version | `7.1` |
-| Status | `CANONICAL SUCCESSOR READY FOR TERMINAL RECONCILIATION` |
+| Status | `COMPLETED_CLEAN` |
 | Audited at | `2026-07-29T11:42:58+02:00` |
 | Repository | `trading-optimizer-lab-org/aurora` |
 | Scientific execution environment | GitHub Actions only |
 | Security lease deadman | GitHub-native automated control, never the laptop and never scientific execution |
 | External non-scientific runtimes | Closed, attested allowlist in section 4.2 |
-| Current document state | `TRACKED_CANONICAL_PRETERMINAL` |
+| Current document state | `TRACKED_CANONICAL` |
 | Canonical target path | `docs/plans/gtbi-v7-master-plan.md` |
 
 ### Owner Simplification Directive
@@ -84,25 +84,25 @@ unless the owner gives a new explicit authorization in a future task.
 
 ### Canonical Successor Execution Status
 
-The successor implementation and evidence reconciliation has completed 21 of
-the 22 remaining applicable tasks. The sole remaining task is `PREV7-1003`,
-which must run from the reviewed GitHub commit and emit the fail-closed
-`COMPLETED_CLEAN` receipt. The current machine-readable state is:
+The successor implementation and evidence reconciliation completed all 22
+remaining applicable tasks. `PREV7-1003` ran from the reviewed GitHub commit
+and emitted the fail-closed `COMPLETED_CLEAN` receipt. The terminal
+machine-readable state is:
 
 ```text
-docs/readiness/gtbi-v7-successor/preterminal_reconciliation.json
-status=ready_for_terminal_reconciliation
-completed_task_count=21
-terminal_task_id=PREV7-1003
-blockers=[]
+docs/readiness/gtbi-v7-successor/completed_clean.json
+terminal_output=COMPLETED_CLEAN
+completed_task_count=22
+reviewed_commit=ec207d903eb3708c625f2b6c1ca16b7505d55bb8
+github_run_id=30791858365
 locked_data_accessed=false
 incremental_net_spend_usd=0
 ```
 
-The terminal receipt is generated only by
-`.github/workflows/gtbi-v7-successor-close.yml`. That workflow runs tests and
-administrative reconciliation only. It performs no research, backtest,
-optimization or locked-data access.
+The terminal receipt was generated only by
+`.github/workflows/gtbi-v7-successor-close.yml` in successful run
+`30791858365`. That workflow ran tests and administrative reconciliation only.
+It performed no research, backtest, optimization or locked-data access.
 
 ## 1. Purpose
 
