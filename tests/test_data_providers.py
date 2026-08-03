@@ -422,6 +422,23 @@ def test_cli_data_verify_detects_tampering(tmp_path):
     assert "FAIL" in verify_bad.stdout
 
 
+def test_failed_data_verify_bypasses_native_teardown(monkeypatch):
+    """The module runner preserves exit 1 after a failed parquet check."""
+    from aurora.cli import forge
+
+    observed = []
+
+    def fake_exit(code):
+        observed.append(code)
+        raise RuntimeError("immediate exit")
+
+    monkeypatch.setattr(forge.os, "_exit", fake_exit)
+    monkeypatch.setattr(forge.sys, "argv", ["forge", "data", "verify"])
+    with pytest.raises(RuntimeError, match="immediate exit"):
+        forge._exit_after_main(1)
+    assert observed == [1]
+
+
 # ---------------------------------------------------------------------------
 # 13. Default registry singleton
 # ---------------------------------------------------------------------------
