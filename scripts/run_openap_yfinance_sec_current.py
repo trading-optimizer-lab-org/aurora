@@ -1891,7 +1891,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute(
         "UPDATE sec_companyfacts SET fact_identity = md5(concat_ws('|', "
         "CAST(cik AS VARCHAR), taxonomy, tag, unit, COALESCE(period_start, ''), "
-        "period_end, accession_number, printf('%.17g', value)))"
+        "period_end, accession_number))"
     )
 
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
@@ -2411,7 +2411,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     duplicate_companyfacts = int(
         connection.execute(
             "SELECT COALESCE(SUM(n - 1), 0) FROM ("
-            "SELECT cik, taxonomy, tag, unit, period_start, period_end, accession_number, value, COUNT(*) n "
+            "SELECT cik, taxonomy, tag, unit, period_start, period_end, accession_number, COUNT(*) n "
             "FROM sec_companyfacts GROUP BY ALL HAVING COUNT(*) > 1)"
         ).fetchone()[0]
     )
