@@ -42,6 +42,7 @@ class FeatureValue:
     source: str
     formula_id: str
     note: str = ""
+    available_at: str | None = None
 
 
 def sha256_file(path: str | Path) -> str:
@@ -782,6 +783,172 @@ SEC_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# These current two-source calculations are useful, but differ materially from
+# the point-in-time OpenAP construction, its formation-date denominator, or an
+# official sample filter.  Keeping this policy central prevents a new formula
+# from silently being advertised as an exact replication.
+ACCOUNTING_PROXY_LIMITS: dict[str, str] = {
+    "AM": "Uses current rather than portfolio-formation market equity",
+    "BM": "Uses current rather than lagged December market equity",
+    "EP": "Uses current rather than six-month-lagged market equity",
+    "CF": "Uses current rather than portfolio-formation market equity",
+    "cfp": "Uses current rather than portfolio-formation market equity",
+    "SP": "Uses current rather than portfolio-formation market equity",
+    "GP": "Official financial-company exclusion is not reproducible point in time",
+    "Cash": "Uses annual rather than quarterly cash and assets",
+    "CashProd": "Official cash-productivity definition is not fully reproduced",
+    "BookLeverage": "Missing official deferred-tax and preferred-stock denominator",
+    "Leverage": "Uses current market equity and incomplete preferred-stock adjustments",
+    "ChAssetTurnover": "Annual observations are available, but official sample timing is incomplete",
+    "ChTax": "Uses annual rather than four-quarter tax change",
+    "InvGrowth": "Missing GNP deflation and official industry filters",
+    "DelCOA": "SEC aliases do not reproduce every official current operating-asset component",
+    "DelCOL": "SEC aliases do not reproduce every official current operating-liability component",
+    "DelEqu": "Annual SEC mapping does not reproduce every official equity adjustment",
+    "DelFINL": "Preferred-stock and financing-liability mappings are incomplete",
+    "DelLTI": "Long-term investments and advances are not mapped completely",
+    "DelNetFin": "Net financial asset components are incomplete",
+    "RD": "Uses current rather than portfolio-formation market equity",
+    "AdExp": "Uses current rather than portfolio-formation market equity",
+    "SurpriseRD": "Required annual comparability and official eligibility rules are incomplete",
+    "Investment": "Missing firm-specific 36-month normalization",
+    "GrSaleToGrInv": "Historical comparability and official construction remain incomplete",
+    "PayoutYield": "Uses current market cap and incomplete payout components",
+    "NetPayoutYield": "Uses current market cap and incomplete payout components",
+    "NetEquityFinance": "Stock-sale and repurchase cash-flow mapping is incomplete",
+    "CompositeDebtIssuance": "Five-year comparable total-debt history is not complete for every issuer",
+    "DebtIssuance": "Long-term debt issuance mapping is not consistent across issuers",
+    "NetDebtFinance": "Missing complete issuance, reduction and current-debt-change formula",
+    "NetDebtPrice": "Missing preferred stock, arrears, treasury stock and official filters",
+    "OPLeverage": "Official operating-leverage formula and sample timing are incomplete",
+    "OperProf": "Official smallest-size-tercile exclusion is not applied",
+    "XFIN": "Complete equity and debt financing cash-flow mapping is unavailable",
+    "ShareIss1Y": "Uses annual SEC growth rather than shares from months t-18 to t-6",
+    "ShareIss5Y": "Uses annual SEC observations rather than official monthly formation dates",
+    "tang": "Official manufacturing and asset-tercile filters are not applied",
+}
+
+
+ACCOUNTING_FEATURE_DEPENDENCIES: dict[str, tuple[tuple[str, int], ...]] = {
+    "AM": (("assets", 0),),
+    "BM": (("equity", 0),),
+    "EP": (("net_income", 0),),
+    "CF": (("net_income", 0), ("depreciation", 0)),
+    "cfp": (("operating_cash_flow", 0),),
+    "SP": (("revenue", 0),),
+    "GP": (("revenue", 0), ("cogs", 0), ("assets", 0)),
+    "RoE": (("net_income", 0), ("equity", 0)),
+    "Cash": (("cash", 0), ("assets", 0)),
+    "CashProd": (("assets", 0), ("cash", 0)),
+    "BookLeverage": (("liabilities", 0), ("assets", 0)),
+    "Leverage": (("liabilities", 0),),
+    "AssetGrowth": (("assets", 0), ("assets", 1)),
+    "ChAssetTurnover": (("revenue", 0), ("assets", 0), ("revenue", 1), ("assets", 1)),
+    "ChEQ": (("equity", 0), ("equity", 1)),
+    "ChInv": (("inventory", 0), ("inventory", 1), ("assets", 1)),
+    "InvGrowth": (("inventory", 0), ("inventory", 1)),
+    "ChNWC": (("current_assets", 0), ("current_assets", 1), ("current_liabilities", 0), ("current_liabilities", 1), ("assets", 1)),
+    "ChTax": (("tax", 0), ("tax", 1), ("assets", 1)),
+    "Accruals": (("net_income", 0), ("operating_cash_flow", 0), ("assets", 1)),
+    "TotalAccruals": (("net_income", 0), ("operating_cash_flow", 0), ("assets", 1)),
+    "PctAcc": (("net_income", 0), ("operating_cash_flow", 0)),
+    "DelCOA": (("current_assets", 0), ("current_assets", 1), ("cash", 0), ("cash", 1), ("assets", 0), ("assets", 1)),
+    "DelCOL": (("current_liabilities", 0), ("current_liabilities", 1), ("debt_current", 0), ("debt_current", 1), ("assets", 0), ("assets", 1)),
+    "DelEqu": (("equity", 0), ("equity", 1), ("assets", 0), ("assets", 1)),
+    "DelFINL": (("debt_current", 0), ("debt_current", 1), ("debt_long", 0), ("debt_long", 1), ("preferred_stock", 0), ("preferred_stock", 1), ("assets", 0), ("assets", 1)),
+    "DelLTI": (("long_investments", 0), ("long_investments", 1), ("assets", 0), ("assets", 1)),
+    "DelNetFin": (("short_investments", 0), ("short_investments", 1), ("long_investments", 0), ("long_investments", 1), ("debt_current", 0), ("debt_current", 1), ("debt_long", 0), ("debt_long", 1), ("preferred_stock", 0), ("preferred_stock", 1), ("assets", 0), ("assets", 1)),
+    "NOA": (("assets", 0), ("cash", 0), ("debt_current", 0), ("debt_long", 0)),
+    "RD": (("rd", 0),),
+    "RDcap": (("rd", 0), ("assets", 0)),
+    "AdExp": (("advertising", 0),),
+    "GrAdExp": (("advertising", 0), ("advertising", 1)),
+    "SurpriseRD": (("rd", 0), ("rd", 1), ("revenue", 0), ("assets", 0), ("assets", 1)),
+    "grcapx": (("capex", 0), ("capex", 2)),
+    "grcapx3y": (("capex", 0), ("capex", 1), ("capex", 2), ("capex", 3)),
+    "InvestPPEInv": (("ppe", 0), ("ppe", 1), ("inventory", 0), ("inventory", 1), ("assets", 1)),
+    "Investment": (("capex", 0), ("revenue", 0)),
+    "GrSaleToGrInv": (("revenue", 0), ("revenue", 1), ("revenue", 2), ("inventory", 0), ("inventory", 1), ("inventory", 2)),
+    "PayoutYield": (("dividends", 0), ("repurchases", 0)),
+    "NetPayoutYield": (("dividends", 0), ("repurchases", 0), ("share_issuance", 0)),
+    "NetEquityFinance": (("share_issuance", 0), ("repurchases", 0), ("assets", 0), ("assets", 1)),
+    "CompositeDebtIssuance": (("debt_current", 0), ("debt_current", 5), ("debt_long", 0), ("debt_long", 5)),
+    "DebtIssuance": (("debt_issuance", 0),),
+    "NetDebtFinance": (("debt_long", 0), ("debt_long", 1), ("assets", 1)),
+    "NetDebtPrice": (("debt_current", 0), ("debt_long", 0), ("cash", 0)),
+    "OPLeverage": (("sga", 0), ("cogs", 0), ("assets", 0)),
+    "OperProf": (("revenue", 0), ("cogs", 0), ("sga", 0), ("interest", 0), ("equity", 0)),
+    "XFIN": (("share_issuance", 0), ("dividends", 0), ("repurchases", 0), ("debt_issuance", 0), ("debt_reduction", 0), ("assets", 0)),
+    "ShareIss1Y": (("shares", 0), ("shares", 1)),
+    "ShareIss5Y": (("shares", 0), ("shares", 5)),
+    "tang": (("cash", 0), ("receivables", 0), ("inventory", 0), ("ppe", 0), ("assets", 0)),
+    "OrderBacklog": (("backlog", 0), ("assets", 0)),
+    "OrderBacklogChg": (("backlog", 0), ("backlog", 1)),
+    "hire": (("employees", 0), ("employees", 1)),
+}
+
+
+def apply_accounting_input_freshness(
+    values: Mapping[str, FeatureValue],
+    concept_inputs: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp,
+    maximum_age_days: int,
+) -> dict[str, FeatureValue]:
+    """Attach causal input dates and fail closed for stale SEC formulas."""
+
+    output = dict(values)
+    if concept_inputs.empty:
+        return output
+    lookup = concept_inputs.copy()
+    lookup["available_at"] = pd.to_datetime(
+        lookup["available_at"], errors="coerce", utc=True
+    ).dt.tz_localize(None)
+    dates = {
+        (str(row.concept), int(row.concept_lag)): row.available_at
+        for row in lookup.dropna(subset=["concept", "concept_lag"]).itertuples()
+    }
+    as_of_date = pd.Timestamp(as_of).tz_localize(None).normalize()
+    for signalname, dependencies in ACCOUNTING_FEATURE_DEPENDENCIES.items():
+        current = output.get(signalname)
+        if current is None or current.raw_value is None:
+            continue
+        required_dates = [dates.get(dependency) for dependency in dependencies]
+        if any(pd.isna(value) or value is None for value in required_dates):
+            output[signalname] = FeatureValue(
+                signalname,
+                None,
+                "unavailable",
+                "missing_sec_dependency_timestamp",
+                current.formula_id,
+                "A required SEC concept date is unavailable",
+            )
+            continue
+        available_at = max(pd.Timestamp(value) for value in required_dates)
+        age_days = int((as_of_date - available_at.normalize()).days)
+        if age_days > int(maximum_age_days):
+            output[signalname] = FeatureValue(
+                signalname,
+                None,
+                "unavailable",
+                "stale_sec_accounting_input",
+                current.formula_id,
+                f"Newest complete input set is {age_days} days old",
+                available_at.isoformat(),
+            )
+            continue
+        output[signalname] = FeatureValue(
+            current.signalname,
+            current.raw_value,
+            current.status,
+            current.source,
+            current.formula_id,
+            current.note,
+            available_at.isoformat(),
+        )
+    return output
+
+
 def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
     """Return the exact SEC observations selected for each canonical concept.
 
@@ -1264,23 +1431,7 @@ def calculate_accounting_features(
     # These values remain useful as current two-source approximations, but the
     # official formula, lag, deflator or universe filter is incomplete.  They
     # must never inflate the exact-replication count.
-    fidelity_limits = {
-        "EP": "Uses current rather than six-month-lagged market equity",
-        "Cash": "Uses annual rather than quarterly cash and assets",
-        "BookLeverage": "Missing the official deferred-tax and preferred-stock denominator",
-        "ChTax": "Uses annual rather than four-quarter tax change",
-        "InvGrowth": "Missing GNP deflation and official industry filters",
-        "Investment": "Missing the firm-specific 36-month normalization",
-        "NetDebtFinance": "Missing the complete issuance, reduction and current-debt-change formula",
-        "NetDebtPrice": "Missing preferred-stock, arrears, treasury-stock and official filters",
-        "NetPayoutYield": "Uses current market cap and incomplete payout components",
-        "PayoutYield": "Uses current market cap and incomplete payout components",
-        "ShareIss1Y": "Uses annual SEC growth rather than shares from months t-18 to t-6",
-        "GP": "Official financial-company exclusion is not yet reproducible point in time",
-        "OperProf": "Official smallest-size-tercile exclusion is not yet applied",
-        "tang": "Official manufacturing and asset-tercile filters are not yet applied",
-    }
-    for signalname, limitation in fidelity_limits.items():
+    for signalname, limitation in ACCOUNTING_PROXY_LIMITS.items():
         current = result[signalname]
         result[signalname] = FeatureValue(
             signalname,
@@ -1426,6 +1577,7 @@ def assemble_feature_table(
                 status, source, note = computed.status, computed.source, computed.note
                 raw_value = computed.raw_value
                 formula_id = computed.formula_id
+            source_available_at = computed.available_at if computed is not None else None
             implementation_status = status
             value_status = "available" if raw_value is not None and pd.notna(raw_value) else "missing"
             if value_status == "missing":
@@ -1448,6 +1600,18 @@ def assemble_feature_table(
                     "source": source,
                     "formula_id": formula_id,
                     "note": note,
+                    "source_available_at": source_available_at,
+                    "source_input_age_days": (
+                        (
+                            pd.Timestamp(as_of).tz_localize(None).normalize()
+                            - pd.to_datetime(source_available_at, errors="coerce")
+                            .tz_localize(None)
+                            .normalize()
+                        ).days
+                        if source_available_at is not None
+                        and pd.notna(pd.to_datetime(source_available_at, errors="coerce"))
+                        else np.nan
+                    ),
                     "horizon_months": horizon,
                     "official_portfolio_period_months": horizon,
                     "official_start_month": definition.get("startmonth"),

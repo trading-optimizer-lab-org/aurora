@@ -22,10 +22,12 @@ from aurora.core.execution_policy import (
     require_github_actions_or_explicit_local_permission,
 )
 from aurora.research.openap_current_score import (
+    ACCOUNTING_PROXY_LIMITS,
     EXPECTED_PREDICTORS,
     FeatureValue,
     OpenAPDataError,
     SEC_CONCEPT_ALIASES,
+    apply_accounting_input_freshness,
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
@@ -956,11 +958,13 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     submissions["accepted_at"] = pd.to_datetime(submissions["accepted_at"], errors="coerce", utc=True)
     submissions_path = lake_dir / "sec_submissions_000.parquet"
     submissions.to_parquet(submissions_path, index=False, compression="zstd")
-    accepted_map = {
-        (int(row.cik), str(row.accession_number)): row.accepted_at
-        for row in submissions.itertuples()
-        if pd.notna(row.accession_number) and pd.notna(row.accepted_at)
-    }
+    accepted_map: dict[int, dict[str, Any]] = {}
+    for row in submissions.itertuples():
+        if pd.isna(row.accession_number) or pd.isna(row.accepted_at):
+            continue
+        accepted_map.setdefault(int(row.cik), {})[
+            str(row.accession_number)
+        ] = row.accepted_at
 
     def fact_batches() -> Iterable[pd.DataFrame]:
         buffer: list[dict[str, Any]] = []
@@ -973,65 +977,31 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
                     payload = json.loads(archive.read(member).decode("utf-8", errors="replace"))
                 except Exception:
                     continue
-                entity_name = str(payload.get("entityName") or "")
-                facts = payload.get("facts", {})
-                if not isinstance(facts, Mapping):
-                    continue
-                for taxonomy, concepts in facts.items():
-                    if not isinstance(concepts, Mapping):
-                        continue
-                    for tag, definition in concepts.items():
-                        units = definition.get("units", {}) if isinstance(definition, Mapping) else {}
-                        if not isinstance(units, Mapping):
-                            continue
-                        for unit, observations in units.items():
-                            if not isinstance(observations, list):
-                                continue
-                            for observation in observations:
-                                if not isinstance(observation, Mapping):
-                                    continue
-                                accession = str(observation.get("accn") or "")
-                                filed = str(observation.get("filed") or "")
-                                accepted = accepted_map.get((cik, accession))
-                                quality = "sec_acceptance_timestamp"
-                                if pd.isna(accepted) or accepted is None:
-                                    accepted = pd.to_datetime(filed, errors="coerce", utc=True) + pd.Timedelta(days=1)
-                                    quality = "conservative_filing_date_plus_one_day"
-                                buffer.append(
-                                    {
-                                        "cik": cik,
-                                        "entity_name": entity_name,
-                                        "taxonomy": taxonomy,
-                                        "tag": tag,
-                                        "unit": unit,
-                                        "value": observation.get("val"),
-                                        "period_start": observation.get("start"),
-                                        "period_end": observation.get("end"),
-                                        "fy": observation.get("fy"),
-                                        "fp": observation.get("fp"),
-                                        "form": observation.get("form"),
-                                        "filed": filed,
-                                        "accession_number": accession,
-                                        "frame": observation.get("frame"),
-                                        "available_at": accepted,
-                                        "available_at_quality": quality,
-                                        "source": f"zip://companyfacts.zip#{member}",
-                                    }
-                                )
-                                if len(buffer) >= 100_000:
-                                    yield _normalise_fact_batch(pd.DataFrame(buffer))
-                                    buffer = []
+                buffer.extend(
+                    _companyfacts_rows(
+                        payload,
+                        cik,
+                        source_url=f"zip://companyfacts.zip#{member}",
+                        source_mode="sec_official_bulk_archive",
+                        accepted_at_by_accession=accepted_map.get(cik, {}),
+                    )
+                )
+                if len(buffer) >= 100_000:
+                    yield _normalise_fact_batch(pd.DataFrame(buffer))
+                    buffer = []
         if buffer:
             yield _normalise_fact_batch(pd.DataFrame(buffer))
 
     companyfacts_path = lake_dir / "sec_companyfacts_000.parquet"
     fact_count = _write_parquet_batches(companyfacts_path, fact_batches())
+    fact_index = pd.read_parquet(
+        companyfacts_path, columns=["cik", "available_at"]
+    )
     fact_ciks = set(
-        pd.read_parquet(companyfacts_path, columns=["cik"])["cik"]
-        .dropna()
-        .astype(int)
-        .unique()
-        .tolist()
+        fact_index["cik"].dropna().astype(int).unique().tolist()
+    )
+    all_facts_have_available_at = bool(
+        not fact_index.empty and fact_index["available_at"].notna().all()
     )
     submission_ciks = set(
         pd.to_numeric(submissions["cik"], errors="coerce")
@@ -1072,7 +1042,7 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
         "companyfacts_zip_sha256": sha256_file(companyfacts_zip),
         "submissions_zip_bytes": submissions_zip.stat().st_size,
         "submissions_zip_sha256": sha256_file(submissions_zip),
-        "all_facts_have_available_at": True,
+        "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
     }
     write_summary(output / "sec_summary_000.json", manifest)
@@ -2049,14 +2019,20 @@ def _classify_security_eligibility(
     out["eligible_common_stock"] = out["eligibility_reason"].eq(
         "eligible_us_common_stock"
     )
+    out["issuer_share_class_count"] = 1
+    out["issuer_primary_security"] = True
     if "cik" in out:
         candidates = out.loc[out["eligible_common_stock"]].copy()
         candidates["_cap"] = pd.to_numeric(
             candidates.get("marketCap", pd.Series(np.nan, index=candidates.index)),
             errors="coerce",
         ).fillna(-1)
-        candidates["_plain_symbol"] = ~candidates["symbol"].astype(str).str.contains("-", regex=False)
-        keep = (
+        candidates["_plain_symbol"] = ~candidates["symbol"].astype(str).str.contains(
+            "-", regex=False
+        )
+        class_counts = candidates.groupby("cik")["symbol"].transform("nunique")
+        out.loc[candidates.index, "issuer_share_class_count"] = class_counts.astype(int)
+        primary = (
             candidates.sort_values(
                 ["cik", "_plain_symbol", "_cap", "symbol"],
                 ascending=[True, False, False, True],
@@ -2064,9 +2040,8 @@ def _classify_security_eligibility(
             .drop_duplicates("cik", keep="first")
             .index
         )
-        secondary = out["eligible_common_stock"] & ~out.index.isin(keep)
-        out.loc[secondary, "eligible_common_stock"] = False
-        out.loc[secondary, "eligibility_reason"] = "duplicate_cik_secondary_security"
+        out.loc[candidates.index, "issuer_primary_security"] = False
+        out.loc[primary, "issuer_primary_security"] = True
     return out
 
 
@@ -2315,6 +2290,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             market_cap = None
         facts = connection.execute("SELECT * FROM sec_companyfacts WHERE cik = ?", [cik]).df()
         concept_inputs = latest_sec_concept_inputs(facts, as_of)
+        accounting_inputs = concept_inputs.loc[
+            concept_inputs["concept_lag"].eq(0)
+            & ~concept_inputs["concept"].isin(["shares", "employees"])
+        ] if not concept_inputs.empty else concept_inputs
         if not concept_inputs.empty:
             concept_inputs.insert(0, "cik", cik)
             concept_inputs.insert(0, "symbol", symbol)
@@ -2329,17 +2308,23 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             if _is_number(resolved_shares.raw_value):
                 market_cap = float(prices["adj_close"].iloc[-1]) * float(resolved_shares.raw_value)
                 market_cap_source = resolved_shares.source
-        values.update(calculate_accounting_features(concepts, market_cap=market_cap))
+        accounting_values = calculate_accounting_features(
+            concepts, market_cap=market_cap
+        )
+        accounting_values = apply_accounting_input_freshness(
+            accounting_values,
+            concept_inputs,
+            as_of=as_of,
+            maximum_age_days=int(
+                config["score"]["maximum_accounting_input_age_days_for_ranking"]
+            ),
+        )
+        values.update(accounting_values)
         if market_cap is not None:
-            size_status = (
-                "exact"
-                if market_cap_source == "sec_edgar_cross_validated"
-                else "proxy"
-            )
             values["Size"] = FeatureValue(
                 "Size",
                 float(market_cap),
-                size_status,
+                "proxy",
                 market_cap_source,
                 "current_market_cap",
                 "Current snapshot; not the official lagged portfolio-formation market cap",
@@ -2376,6 +2361,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 "last_sec_input_available_at": (
                     concept_inputs["available_at"].max()
                     if not concept_inputs.empty
+                    else None
+                ),
+                "last_accounting_input_available_at": (
+                    accounting_inputs["available_at"].max()
+                    if not accounting_inputs.empty
                     else None
                 ),
                 "resolved_shares": resolved_shares.raw_value,
@@ -2491,6 +2481,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "last_price_date",
             "last_sec_available_at",
             "last_sec_input_available_at",
+            "last_accounting_input_available_at",
             "price_rows",
             "computed_features",
             "exact_features",
@@ -2501,6 +2492,16 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     score_context["sec_input_age_days"] = (
         pd.Timestamp(as_of).tz_localize(None).normalize()
         - pd.to_datetime(score_context["last_sec_input_available_at"], errors="coerce", utc=True)
+        .dt.tz_localize(None)
+        .dt.normalize()
+    ).dt.days
+    score_context["accounting_input_age_days"] = (
+        pd.Timestamp(as_of).tz_localize(None).normalize()
+        - pd.to_datetime(
+            score_context["last_accounting_input_available_at"],
+            errors="coerce",
+            utc=True,
+        )
         .dt.tz_localize(None)
         .dt.normalize()
     ).dt.days
@@ -2529,16 +2530,26 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     minimum_features = int(config["score"]["minimum_computed_features_for_ranking"])
     maximum_missing = int(config["score"]["maximum_missing_features_for_ranking"])
     maximum_sec_age = int(config["score"]["maximum_sec_age_days_for_ranking"])
+    maximum_accounting_age = int(
+        config["score"]["maximum_accounting_input_age_days_for_ranking"]
+    )
     semantic_rejections = [
         pd.to_numeric(aggregate_scores["computed_features"], errors="coerce").lt(minimum_features),
         pd.to_numeric(aggregate_scores["missing_features"], errors="coerce").gt(maximum_missing),
         pd.to_numeric(aggregate_scores["sec_input_age_days"], errors="coerce").gt(maximum_sec_age)
         | pd.to_numeric(aggregate_scores["sec_input_age_days"], errors="coerce").isna(),
+        pd.to_numeric(
+            aggregate_scores["accounting_input_age_days"], errors="coerce"
+        ).gt(maximum_accounting_age)
+        | pd.to_numeric(
+            aggregate_scores["accounting_input_age_days"], errors="coerce"
+        ).isna(),
     ]
     semantic_reasons = [
         "insufficient_computed_features",
         "too_many_missing_features",
         "stale_or_missing_sec_inputs",
+        "stale_or_missing_accounting_inputs",
     ]
     prior_reason = aggregate_scores["ranking_rejection_reason"].fillna("").astype(str)
     semantic_reason = pd.Series(
@@ -2987,6 +2998,32 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             [int(config["score"]["maximum_sec_age_days_for_ranking"])],
         ).fetchone()[0]
     )
+    stale_accounting_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE accounting_input_age_days IS NULL OR accounting_input_age_days > ?",
+            [
+                int(
+                    config["score"][
+                        "maximum_accounting_input_age_days_for_ranking"
+                    ]
+                )
+            ],
+        ).fetchone()[0]
+    )
+    stale_weighted_feature_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE source_input_age_days > ? AND evidence_weight > 0",
+            [
+                int(
+                    config["score"][
+                        "maximum_accounting_input_age_days_for_ranking"
+                    ]
+                )
+            ],
+        ).fetchone()[0]
+    )
     undercovered_leaderboard_rows = int(
         connection.execute(
             "SELECT COUNT(*) FROM openap_current_leaderboard "
@@ -2998,11 +3035,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             ],
         ).fetchone()[0]
     )
-    forbidden_exact_signals = (
-        "EP", "Cash", "BookLeverage", "ChTax", "InvGrowth", "Investment",
-        "NetDebtFinance", "NetDebtPrice", "NetPayoutYield", "PayoutYield",
-        "ShareIss1Y", "GP", "OperProf", "tang",
-    )
+    forbidden_exact_signals = tuple(sorted(ACCOUNTING_PROXY_LIMITS)) + ("Size",)
     placeholders = ",".join("?" for _ in forbidden_exact_signals)
     exact_formula_policy_violations = int(
         connection.execute(
@@ -3069,6 +3102,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "uninformative_weighted_rows": uninformative_weighted_rows,
         "weighted_constant_predictors": weighted_constant_predictors,
         "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
+        "stale_accounting_leaderboard_rows": stale_accounting_leaderboard_rows,
+        "stale_weighted_feature_rows": stale_weighted_feature_rows,
         "undercovered_leaderboard_rows": undercovered_leaderboard_rows,
         "exact_formula_policy_violations": exact_formula_policy_violations,
         "mixed_unit_turnover_rows": mixed_unit_turnover_rows,
@@ -3089,6 +3124,13 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 [int(config["score"]["sec_freshness_warning_days"])],
             ).fetchone()[0]
         ),
+        "stale_accounting_inputs_over_warning_age": int(
+            connection.execute(
+                "SELECT COUNT(*) FROM openap_scores_aggregate_current "
+                "WHERE accounting_input_age_days > ?",
+                [int(config["score"]["accounting_freshness_warning_days"])],
+            ).fetchone()[0]
+        ),
         "nondeployable_research_leaderboard_rows": int(
             connection.execute(
                 "SELECT COUNT(*) FROM openap_current_leaderboard "
@@ -3097,6 +3139,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         ),
         "legacy_redundancy_audit_missing": int(
             redundancy_audit_source_status != "source_artifact"
+        ),
+        "secondary_common_share_classes_retained": int(
+            (
+                security_master["eligible_common_stock"]
+                & ~security_master["issuer_primary_security"]
+            ).sum()
         ),
     }
     issues = pd.DataFrame(
@@ -3207,6 +3255,19 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "security_master_rows": len(security_master),
         "security_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
         "common_stock_exclusion_rows": int((~security_master["eligible_common_stock"]).sum()),
+        "multi_share_class_issuer_count": int(
+            security_master.loc[
+                security_master["eligible_common_stock"]
+                & security_master["issuer_share_class_count"].gt(1),
+                "cik",
+            ].nunique()
+        ),
+        "secondary_common_share_classes_retained": int(
+            (
+                security_master["eligible_common_stock"]
+                & ~security_master["issuer_primary_security"]
+            ).sum()
+        ),
         "ranking_exclusion_rows": int((~security_master["ranking_eligible"]).sum()),
         "price_rows": int(sum(int(item.get("price_rows", 0)) for item in summaries)),
         "raw_price_rows_in_database": raw_price_rows_db,
@@ -3268,6 +3329,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "uninformative_weighted_rows": uninformative_weighted_rows,
         "weighted_constant_predictors": weighted_constant_predictors,
         "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
+        "stale_accounting_leaderboard_rows": stale_accounting_leaderboard_rows,
+        "stale_weighted_feature_rows": stale_weighted_feature_rows,
         "undercovered_leaderboard_rows": undercovered_leaderboard_rows,
         "exact_formula_policy_violations": exact_formula_policy_violations,
         "mixed_unit_turnover_rows": mixed_unit_turnover_rows,

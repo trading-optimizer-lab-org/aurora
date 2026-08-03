@@ -21,12 +21,14 @@ semanticos descritos aqui.
 | Score 0-100 | El valor anterior era una media comprimida, no un percentil final real | Se conserva `raw_score`; el score principal es el percentil transversal real entre acciones admitidas | `overall_score_scale_violations=0` |
 | Universo del percentil | Acciones luego rechazadas influian en el percentil de las validas | El percentil final se recalcula solo entre acciones que pasan todos los requisitos | Minimo 0 y maximo 100 en el leaderboard |
 | Cobertura | Entraban acciones con demasiados predictores ausentes o confianza muy baja | Minimo 60 calculados, maximo 125 ausentes y confianza minima 50 | `undercovered_leaderboard_rows=0` |
-| Frescura SEC | Fundamentales viejos podian permanecer en el ranking | Maximo 183 dias para ranking; aviso desde 92 dias | `stale_sec_leaderboard_rows=0` |
+| Frescura SEC | Un dato reciente de acciones podia ocultar fundamentales antiguos | Fecha causal por predictor y dos relojes globales: actividad SEC maxima 183 dias y cuentas anuales maximo 550 dias; avisos a 92 y 365 dias | `stale_sec_leaderboard_rows=0`, `stale_accounting_leaderboard_rows=0`, `stale_weighted_feature_rows=0` |
 | Historia de precios | Historias reiniciadas o demasiado cortas podian entrar | Minimo 756 sesiones limpias para investigacion | `insufficient_clean_price_history` |
 | Liquidez y small caps | El ranking de investigacion mezclaba valores poco operables con acciones liquidas | Vista separada deployable: market cap >= 1.000 M USD, ADV >= 10 M USD y 1.260 sesiones | `deployment_eligible` y motivo explicito |
+| Clases de acciones | Se eliminaban clases ordinarias validas por compartir CIK con otra clase del mismo emisor | Se conservan todas las clases elegibles y se etiquetan `issuer_share_class_count` e `issuer_primary_security` | Ninguna clase valida se descarta solo por compartir CIK |
 | Horizontes | `portperiod` se describia como horizonte predictivo probado | Se etiqueta como periodo oficial de mantenimiento diagnostico; el ranking usa un score conjunto actual | `score_bucket_semantics` |
 | Explicabilidad | No existia desglose completo del score | Contribucion por predictor, grupo y familia; debe reconstruir el raw score | `score_contribution_mismatches=0` |
 | SEC | Miles de peticiones individuales dependian de un read-through externo | El workflow completo usa una sola descarga de los ZIP oficiales SEC con hash | `sec_source_layout=official_bulk_archive` |
+| Volumen SEC bulk | El primer lector bulk recorria y podia guardar todo XBRL, aunque el score solo usa 52 etiquetas | El ZIP se filtra en streaming mediante el mismo parser causal y limitado usado por la via API | Solo etiquetas `SEC_CONCEPT_ALIASES`, maximo 24 observaciones por etiqueta |
 | Retencion | Artifacts fuente se eliminaban a los 30 dias | Retencion de 90 dias | Contrato YAML/workflow |
 | Documentacion | Cifras y significado del score habian quedado obsoletos | Estado historico separado y contrato v2 documentado | Revision documental |
 
@@ -77,4 +79,3 @@ una base nueva y se comprueben:
 - score 0-100 real;
 - contribuciones reconciliadas;
 - procedencia oficial SEC bulk en el run completo.
-

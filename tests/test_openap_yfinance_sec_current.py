@@ -13,6 +13,7 @@ from aurora.research.openap_current_score import (
     EXPECTED_PREDICTORS,
     FeatureValue,
     OpenAPDataError,
+    apply_accounting_input_freshness,
     assemble_feature_table,
     build_redundancy_groups,
     calculate_accounting_features,
@@ -809,10 +810,14 @@ def test_materially_incomplete_accounting_formulas_are_never_labelled_exact() ->
     }
     result = calculate_accounting_features(concepts, market_cap=1_000.0)
     materially_incomplete = {
-        "EP", "Cash", "BookLeverage", "ChTax", "InvGrowth", "Investment",
-        "NetDebtFinance", "NetDebtPrice", "NetPayoutYield", "PayoutYield",
-        "ShareIss1Y", "GP", "OperProf",
-        "tang",
+        "AM", "BM", "EP", "CF", "cfp", "SP", "GP", "Cash", "CashProd",
+        "BookLeverage", "Leverage", "ChAssetTurnover", "ChTax", "InvGrowth",
+        "DelCOA", "DelCOL", "DelEqu", "DelFINL", "DelLTI", "DelNetFin",
+        "RD", "AdExp", "SurpriseRD", "Investment", "GrSaleToGrInv",
+        "PayoutYield", "NetPayoutYield", "NetEquityFinance",
+        "CompositeDebtIssuance", "DebtIssuance", "NetDebtFinance",
+        "NetDebtPrice", "OPLeverage", "OperProf", "XFIN", "ShareIss1Y",
+        "ShareIss5Y", "tang",
     }
 
     assert all(result[name].status != "exact" for name in materially_incomplete)
@@ -845,6 +850,34 @@ def test_accounting_composites_require_every_reported_component() -> None:
     assert result["OPLeverage"].raw_value is None
     assert result["OperProf"].raw_value is None
     assert result["tang"].raw_value is None
+
+
+def test_accounting_freshness_is_attached_per_feature_and_stale_input_fails_closed() -> None:
+    concepts = {
+        "assets": [100.0, 90.0],
+        "equity": [60.0],
+    }
+    inputs = pd.DataFrame(
+        {
+            "concept": ["assets", "assets", "equity"],
+            "concept_lag": [0, 1, 0],
+            "available_at": ["2024-01-01", "2023-01-01", "2026-07-01"],
+        }
+    )
+    calculated = calculate_accounting_features(concepts, market_cap=200.0)
+
+    result = apply_accounting_input_freshness(
+        calculated,
+        inputs,
+        as_of=pd.Timestamp("2026-08-03"),
+        maximum_age_days=550,
+    )
+
+    assert result["AssetGrowth"].status == "unavailable"
+    assert result["AssetGrowth"].raw_value is None
+    assert result["AssetGrowth"].source == "stale_sec_accounting_input"
+    assert result["BM"].raw_value == pytest.approx(0.3)
+    assert result["BM"].available_at.startswith("2026-07-01")
 
 
 def test_analyst_revision_proxy_does_not_replace_missing_counts_with_zero() -> None:
@@ -961,7 +994,7 @@ def test_security_eligibility_requires_verified_us_equity_and_recent_price() -> 
     assert result.at["STALE", "eligibility_reason"] == "latest_price_is_stale"
 
 
-def test_security_eligibility_excludes_suffixes_foreign_filers_and_secondary_ciks() -> None:
+def test_security_eligibility_excludes_suffixes_and_foreign_filers() -> None:
     frame = pd.DataFrame(
         {
             "symbol": ["GOOD", "GOOD-PB", "UNIT-UN", "FOREIGN"],
@@ -984,6 +1017,32 @@ def test_security_eligibility_excludes_suffixes_foreign_filers_and_secondary_cik
     assert result.at["GOOD-PB", "eligibility_reason"] == "excluded_name_or_instrument"
     assert result.at["UNIT-UN", "eligibility_reason"] == "excluded_name_or_instrument"
     assert result.at["FOREIGN", "eligibility_reason"] == "excluded_foreign_sec_filer"
+
+
+def test_security_eligibility_keeps_valid_common_share_classes_for_same_cik() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["GOOG", "GOOGL"],
+            "cik": [1, 1],
+            "company_name_sec": ["Alphabet Inc", "Alphabet Inc"],
+            "longName": ["Alphabet Inc Class C", "Alphabet Inc Class A"],
+            "quoteType": ["EQUITY", "EQUITY"],
+            "country_yahoo": ["United States", "United States"],
+            "price_rows": [300, 300],
+            "last_price_date": ["2026-08-01", "2026-08-01"],
+            "marketCap": [2_000, 2_100],
+            "sec_foreign_filer": [False, False],
+            "sec_investment_company": [False, False],
+        }
+    )
+
+    result = _classify_security_eligibility(
+        frame, as_of=pd.Timestamp("2026-08-02")
+    ).set_index("symbol")
+
+    assert result["eligible_common_stock"].all()
+    assert result["issuer_share_class_count"].eq(2).all()
+    assert result["issuer_primary_security"].sum() == 1
 
 
 def test_chunk_hash_manifest_uses_three_digit_suffix(tmp_path: Path) -> None:
@@ -1287,6 +1346,9 @@ def test_aggregate_score_requires_all_horizons_and_minimum_confidence() -> None:
 
 def test_workflow_contract_is_github_only_and_complete() -> None:
     text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(encoding="utf-8")
+    config = yaml.safe_load(
+        Path("config/openap_yfinance_sec_current.yaml").read_text(encoding="utf-8")
+    )
     assert "OpenAP Current Score YFinance SEC EDGAR" in text
     assert "YFINANCE_CHUNKS: \"48\"" in text
     assert "max-parallel: 16" in text
@@ -1296,6 +1358,10 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "openap-sec-raw-0" in text
     assert "matrix:\n        chunk:" not in text[text.index("  sec:"):text.index("  merge:")]
     assert "openap-yfinance-sec-current-score-results" in text
+    assert config["dataset_id"] == "openap_yfinance_sec_current_v2"
+    assert config["universe"]["one_primary_security_per_cik"] is False
+    assert config["execution"]["sec_chunks"] == 1
+    assert config["execution"]["sec_max_parallel"] == 1
     assert "overall_redundancy_groups.csv" in text
     assert "locked_opened" in text
     assert "backtest_enabled" in text
@@ -1321,6 +1387,7 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
         "minimum_computed_features_for_ranking",
         "maximum_missing_features_for_ranking",
         "maximum_sec_age_days_for_ranking",
+        "maximum_accounting_input_age_days_for_ranking",
         "minimum_option_contracts_per_side",
         "minimum_cross_sectional_nonmodal_fraction",
     ):
@@ -1329,6 +1396,7 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     assert config["score"]["minimum_computed_features_for_ranking"] >= 60
     assert config["score"]["maximum_missing_features_for_ranking"] <= 125
     assert config["score"]["maximum_sec_age_days_for_ranking"] <= 183
+    assert config["score"]["maximum_accounting_input_age_days_for_ranking"] <= 550
     assert config["yfinance"]["minimum_option_contracts_per_side"] >= 2
     assert config["execution"]["artifact_retention_days"] == 90
 

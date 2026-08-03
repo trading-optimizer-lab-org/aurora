@@ -1,4 +1,4 @@
-dataset_id: openap_yfinance_sec_current_v1
+dataset_id: openap_yfinance_sec_current_v2
 openap:
   repository: https://github.com/OpenSourceAP/CrossSection
   commit: 8db892442c2c3a3779b0f1eac4370d3655be15a1
@@ -27,7 +27,7 @@ universe:
   exclude_warrants: true
   exclude_units: true
   exclude_foreign_sec_filers: true
-  one_primary_security_per_cik: true
+  one_primary_security_per_cik: false
   minimum_market_cap_usd: 100000000
   minimum_price_usd: 1.0
   minimum_average_volume_21d: 10000
@@ -82,7 +82,9 @@ score:
   minimum_computed_features_for_ranking: 60
   maximum_missing_features_for_ranking: 125
   maximum_sec_age_days_for_ranking: 183
+  maximum_accounting_input_age_days_for_ranking: 550
   sec_freshness_warning_days: 92
+  accounting_freshness_warning_days: 365
   minimum_cross_sectional_nonmodal_fraction: 0.01
   validation_status: unvalidated_current_snapshot_only
 deployment:
@@ -95,6 +97,6 @@ execution:
   requires_explicit_user_local_permission: true
   yfinance_chunks: 48
   yfinance_max_parallel: 16
-  sec_chunks: 48
-  sec_max_parallel: 8
+  sec_chunks: 1
+  sec_max_parallel: 1
   artifact_retention_days: 90
