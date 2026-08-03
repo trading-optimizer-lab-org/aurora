@@ -108,7 +108,9 @@ for a ranked issuer. `data_quality_issues`, `schema_contract` and
 `index_contract` persist these checks in DuckDB. Every database object appears
 in the schema contract, key tables receive physical unique indexes, and all
 declared mandatory columns receive physical `NOT NULL` constraints after their
-existing contents pass the contract checks.
+existing contents pass the contract checks. SEC facts also receive a stable
+`fact_identity` over their economic observation key, so instant facts with a
+null start date cannot bypass the physical uniqueness rule.
 
 Locked data is not used. Backtesting and validation-based selection remain
 disabled in this current-snapshot pipeline.

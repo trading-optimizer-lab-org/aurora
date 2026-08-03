@@ -1229,10 +1229,7 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "prices_daily_raw": ("symbol", "date"),
     "prices_daily_clean": ("symbol", "date"),
     "security_master": ("symbol",),
-    "sec_companyfacts": (
-        "cik", "taxonomy", "tag", "unit", "period_start", "period_end",
-        "accession_number", "value",
-    ),
+    "sec_companyfacts": ("fact_identity",),
     "sec_submissions": ("cik", "accession_number", "form", "filing_date"),
     "sec_concept_inputs_current": ("symbol", "concept", "concept_lag"),
     "openap_features_current": ("as_of", "symbol", "signalname"),
@@ -1256,7 +1253,10 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "prices_daily_raw": ("symbol", "date", "adj_close"),
     "prices_daily_clean": ("symbol", "date", "adj_close"),
     "security_master": ("symbol", "cik", "eligible_common_stock", "ranking_eligible"),
-    "sec_companyfacts": ("cik", "tag", "period_end", "filed", "available_at"),
+    "sec_companyfacts": (
+        "fact_identity", "cik", "taxonomy", "tag", "unit", "value",
+        "period_end", "filed", "accession_number", "available_at",
+    ),
     "sec_submissions": ("cik", "accession_number", "form", "filing_date"),
     "sec_concept_inputs_current": ("symbol", "concept", "concept_lag", "available_at"),
     "openap_features_current": (
@@ -1272,7 +1272,17 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "openap_scores_aggregate_current": (
         "as_of", "symbol", "score_validation_status", "required_horizons",
     ),
+    "openap_current_leaderboard": ("as_of", "symbol"),
     "selected_predictors": ("signalname", "tstat", "Sign"),
+    "redundancy_groups": ("signalname",),
+    "current_redundancy_groups": ("signalname",),
+    "coverage_185": ("signalname",),
+    "price_quality_current": ("symbol",),
+    "yahoo_options_raw": ("contractSymbol",),
+    "yahoo_options_usable": ("contractSymbol",),
+    "source_manifest": ("source",),
+    "yfinance_source_manifest": ("chunk_index",),
+    "sec_source_manifest": ("chunk_index",),
 }
 
 
@@ -1862,6 +1872,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     sec_bulk_repair = repair_failed_companyfacts_from_bulk(
         connection, config, output
+    )
+    connection.execute("ALTER TABLE sec_companyfacts ADD COLUMN fact_identity VARCHAR")
+    connection.execute(
+        "UPDATE sec_companyfacts SET fact_identity = md5(concat_ws('|', "
+        "CAST(cik AS VARCHAR), taxonomy, tag, unit, COALESCE(period_start, ''), "
+        "period_end, accession_number, printf('%.17g', value)))"
     )
 
     yahoo_meta = connection.execute("SELECT * FROM yahoo_current_snapshots").df()
@@ -2604,6 +2620,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "sec_concept_input_rows": len(sec_concept_inputs),
         "concept_inputs_without_available_at": concept_inputs_without_available_at,
         "future_concept_inputs": future_concept_inputs,
+        "concept_inputs_before_period_end": concept_inputs_before_period_end,
+        "concept_inputs_before_filed": concept_inputs_before_filed,
         "invalid_concept_units": invalid_concept_units,
         "duplicate_companyfacts": duplicate_companyfacts,
         "duplicate_submissions": duplicate_submissions,
