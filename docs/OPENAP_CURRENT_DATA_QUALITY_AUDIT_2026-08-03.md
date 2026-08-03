@@ -34,8 +34,8 @@ semanticos descritos aqui.
 | Horizontes | `portperiod` se describia como horizonte predictivo probado | Se etiqueta como periodo oficial de mantenimiento diagnostico; el ranking usa un score conjunto actual | `score_bucket_semantics` |
 | Explicabilidad | No existia desglose completo del score | Contribucion por predictor, grupo y familia; debe reconstruir el raw score | `score_contribution_mismatches=0` |
 | Grupos con familias mixtas | Un grupo redundante podia formar una etiqueta de familia combinada y eludir el limite familiar | Cada grupo recibe una sola familia dominante por evidencia y conserva un unico voto | `family_weight_cap_violations=0` |
-| SEC | Miles de peticiones individuales dependian de un read-through externo | El workflow completo usa una sola descarga de los ZIP oficiales SEC con hash | `sec_source_layout=official_bulk_archive` |
-| Acceso SEC desde GitHub | Las IP compartidas de GitHub pueden recibir 403 aun con un User-Agent valido | Identidad completa con contacto, `Host` oficial, backoff y segundo hostname oficial `data.sec.gov`; se registra la URL realmente usada | ZIP valido, hash y `source_url` oficial por archivo |
+| SEC | Miles de peticiones individuales dependian de un read-through externo | La ruta primaria usa un ZIP oficial; si SEC bloquea las IP compartidas de GitHub, la reparacion usa 48 shards de endpoints oficiales y conserva cada JSON canonico con hash | `sec_source_layout` y `source_mode` explicitos |
+| Acceso SEC desde GitHub | Tanto `www.sec.gov` como `data.sec.gov` devolvieron 403 aun con identidad, `Host` y backoff correctos | Fallback fail-closed mediante read-through publico de cada endpoint oficial, con URL SEC original, URL de acceso, JSON canonico y SHA-256 por emisor | Cualquier emisor sin Company Facts o Submissions queda fuera del ranking |
 | Volumen SEC bulk | El primer lector bulk recorria todo XBRL; limitar sin separar trimestres tambien podia borrar el historial anual de cinco anos | El ZIP se filtra por 52 etiquetas y conserva 24 observaciones recientes mas al menos 8 anuales | Cobertura causal suficiente para lags de cinco anos sin guardar XBRL ajeno |
 | Retencion | Artifacts fuente se eliminaban a los 30 dias | Retencion de 90 dias | Contrato YAML/workflow |
 | Documentacion | Cifras y significado del score habian quedado obsoletos | Estado historico separado y contrato v2 documentado | Revision documental |
@@ -86,4 +86,5 @@ una base nueva y se comprueben:
 - leaderboard no vacio;
 - score 0-100 real;
 - contribuciones reconciliadas;
-- procedencia oficial SEC bulk en el run completo.
+- procedencia SEC declarada por fila, JSON canonico con hash y cero fallos SEC
+  entre las acciones admitidas; el uso de read-through debe permanecer visible.

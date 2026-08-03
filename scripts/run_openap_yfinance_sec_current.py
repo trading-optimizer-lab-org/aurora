@@ -691,7 +691,7 @@ def _request_sec_json(
     fallback_url: str,
     *,
     headers: Mapping[str, str],
-    retries: int = 3,
+    retries: int = 6,
 ) -> tuple[Mapping[str, Any], str, str]:
     """Fetch SEC JSON directly, then through a public read-through fallback."""
 
@@ -978,6 +978,7 @@ def sec_chunk(config: dict[str, Any], args: argparse.Namespace) -> None:
     summary = {
             "chunk_index": chunk_index,
             "total_chunks": total_chunks,
+            "source_layout": "official_api_shards_with_audited_readthrough",
             "ciks_expected": int(selected["cik"].nunique()),
             "companyfacts_ciks_ok": int(status.loc[(status["surface"] == "companyfacts") & (status["status"] == "ok"), "cik"].nunique()),
             "submissions_ciks_ok": int(status.loc[(status["surface"] == "submissions") & (status["status"] == "ok"), "cik"].nunique()),
@@ -2295,17 +2296,37 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     sec_submission_paths = sorted(sec_dir.rglob("sec_submissions_*.parquet"))
     sec_status_paths = sorted(sec_dir.rglob("sec_status_*.csv"))
     sec_summary_paths = sorted(sec_dir.rglob("sec_summary_*.json"))
-    sec_layout = "sharded_api"
-    if len(sec_summary_paths) == 1:
-        first_sec_summary = json.loads(
-            sec_summary_paths[0].read_text(encoding="utf-8")
+    preliminary_sec_summaries = [
+        json.loads(path.read_text(encoding="utf-8")) for path in sec_summary_paths
+    ]
+    sec_layouts = {
+        str(item.get("source_layout") or "sharded_api")
+        for item in preliminary_sec_summaries
+    }
+    if len(sec_layouts) != 1:
+        raise OpenAPDataError(f"Mixed SEC source layouts: {sorted(sec_layouts)}")
+    sec_layout = next(iter(sec_layouts), "missing")
+    if sec_layout == "official_bulk_archive":
+        expected_sec_chunks = 1
+    elif sec_layout == "official_api_shards_with_audited_readthrough":
+        declared_totals = {
+            int(item.get("total_chunks", 0)) for item in preliminary_sec_summaries
+        }
+        if len(declared_totals) != 1 or next(iter(declared_totals), 0) <= 0:
+            raise OpenAPDataError(
+                f"Invalid SEC shard total declarations: {sorted(declared_totals)}"
+            )
+        expected_sec_chunks = next(iter(declared_totals))
+        chunk_indexes = sorted(
+            int(item.get("chunk_index", -1)) for item in preliminary_sec_summaries
         )
-        sec_layout = str(first_sec_summary.get("source_layout", sec_layout))
-    expected_sec_chunks = (
-        1
-        if sec_layout == "official_bulk_archive"
-        else int(config["execution"].get("sec_chunks", expected_chunks))
-    )
+        if chunk_indexes != list(range(expected_sec_chunks)):
+            raise OpenAPDataError(
+                "Incomplete SEC shard index set: "
+                f"expected=0..{expected_sec_chunks - 1}, found={chunk_indexes}"
+            )
+    else:
+        expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
     sec_surface_counts = {
         "companyfacts": len(sec_fact_paths),
         "submissions": len(sec_submission_paths),

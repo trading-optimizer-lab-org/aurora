@@ -1754,18 +1754,19 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     assert config["execution"]["artifact_retention_days"] == 90
 
 
-def test_repair_workflow_reuses_v2_source_and_refreshes_one_official_bulk_lake() -> None:
+def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() -> None:
     text = Path(
         ".github/workflows/openap-yfinance-sec-repair-merge.yml"
     ).read_text(encoding="utf-8")
 
     assert "source_run_id" in text
-    assert "SEC_CHUNKS" not in text
-    assert "matrix.chunk" not in text
-    assert "sec-bulk" in text
-    assert "openap-sec-repair-lake-0" in text
+    assert 'SEC_CHUNKS: "48"' in text
+    assert "matrix.chunk" in text
+    assert "sec-chunk" in text
+    assert "openap-sec-repair-lake-${{ matrix.chunk }}" in text
     assert "sec_source_layout" in text
-    assert 'summary["sec_source_manifest_rows"] == 1' in text
+    assert 'summary["sec_source_manifest_rows"] == 48' in text
+    assert 'summary["sec_jina_fallback_downloads"] > 0' in text
     assert "Wait for all source YFinance artifacts" in text
     assert 'test "$yfinance_artifacts" -eq 48' in text
     assert "score_horizons" in text
