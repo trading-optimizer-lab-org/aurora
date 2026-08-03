@@ -80,7 +80,7 @@ time and is never misreported as compute time.
 
 ## 5. System architecture
 
-```mermaid
+```{mermaid}
 flowchart LR
     S["Frozen run spec"] --> V["Static preflight"]
     V --> D["Prepare data once"]
