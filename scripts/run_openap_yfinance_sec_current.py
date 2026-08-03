@@ -1253,10 +1253,7 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
 DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "prices_daily_raw": ("symbol", "date", "adj_close"),
     "prices_daily_clean": ("symbol", "date", "adj_close"),
-    "security_master": (
-        "symbol", "cik", "eligible_common_stock", "ranking_eligible",
-        "clean_price_staleness_days",
-    ),
+    "security_master": ("symbol", "cik", "eligible_common_stock", "ranking_eligible"),
     "sec_companyfacts": (
         "fact_identity", "cik", "taxonomy", "tag", "unit", "value",
         "period_end", "filed", "accession_number", "available_at",
