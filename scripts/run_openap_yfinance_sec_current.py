@@ -2422,6 +2422,19 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "FROM sec_submissions GROUP BY ALL HAVING COUNT(*) > 1)"
         ).fetchone()[0]
     )
+    blank_required_identifiers = int(
+        connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM security_master WHERE trim(symbol) = '') + "
+            "(SELECT COUNT(*) FROM sec_companyfacts WHERE "
+            "trim(taxonomy) = '' OR trim(tag) = '' OR trim(unit) = '' "
+            "OR trim(accession_number) = '') + "
+            "(SELECT COUNT(*) FROM sec_submissions WHERE "
+            "trim(accession_number) = '' OR trim(form) = '') + "
+            "(SELECT COUNT(*) FROM openap_features_current WHERE "
+            "trim(symbol) = '' OR trim(signalname) = '')"
+        ).fetchone()[0]
+    )
     inconsistent_feature_status = int(
         connection.execute(
             "SELECT COUNT(*) FROM openap_features_current "
@@ -2506,6 +2519,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "invalid_concept_units": invalid_concept_units,
         "duplicate_companyfacts": duplicate_companyfacts,
         "duplicate_submissions": duplicate_submissions,
+        "blank_required_identifiers": blank_required_identifiers,
         "inconsistent_feature_status": inconsistent_feature_status,
         "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
         "stale_leaderboard_prices": stale_leaderboard_prices,
@@ -2675,6 +2689,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "invalid_concept_units": invalid_concept_units,
         "duplicate_companyfacts": duplicate_companyfacts,
         "duplicate_submissions": duplicate_submissions,
+        "blank_required_identifiers": blank_required_identifiers,
         "inconsistent_feature_status": inconsistent_feature_status,
         "ineligible_leaderboard_rows": ineligible_leaderboard_rows,
         "stale_leaderboard_prices": stale_leaderboard_prices,

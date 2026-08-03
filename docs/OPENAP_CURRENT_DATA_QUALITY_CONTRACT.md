@@ -134,6 +134,9 @@ null start date cannot bypass the physical uniqueness rule. The reported value
 is deliberately excluded from that identity: conflicting values for the same
 SEC observation therefore fail the contract instead of being accepted as two
 different facts.
+Mandatory identifiers must also contain non-blank text; a non-null empty
+symbol, SEC accession, taxonomy, tag, unit, form or predictor name fails the
+final quality gate.
 
 Locked data is not used. Backtesting and validation-based selection remain
 disabled in this current-snapshot pipeline.

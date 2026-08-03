@@ -386,6 +386,7 @@ jobs:
           assert summary["invalid_concept_units"] == 0
           assert summary["duplicate_companyfacts"] == 0
           assert summary["duplicate_submissions"] == 0
+          assert summary["blank_required_identifiers"] == 0
           assert summary["inconsistent_feature_status"] == 0
           assert summary["ineligible_leaderboard_rows"] == 0
           assert summary["stale_leaderboard_prices"] == 0
