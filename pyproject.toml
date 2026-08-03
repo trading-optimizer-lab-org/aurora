@@ -165,6 +165,7 @@ packages = [
     "config/schemas/*.json",
     "config/gtbi/contracts/*.json",
     "config/gtbi/schemas/v7/operational/*.json",
+    "config/gtbi/schemas/v7/results/*.json",
 ]
 "aurora.exports.lean" = ["templates/*.template"]
 
