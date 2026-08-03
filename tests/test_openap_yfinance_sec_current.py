@@ -1126,6 +1126,18 @@ def test_score_exposes_raw_value_but_primary_score_is_cross_sectional_percentile
     assert horizon["score"].min() == pytest.approx(0.0)
     assert horizon["score"].max() == pytest.approx(100.0)
     assert horizon["score"].is_monotonic_increasing
+    contributions = scores.attrs["score_contributions"]
+    contribution_totals = (
+        contributions.loc[contributions["horizon_months"].eq(1)]
+        .groupby("symbol")["raw_score_contribution"]
+        .sum()
+    )
+    raw_scores = horizon.set_index("symbol")["raw_score"]
+    pd.testing.assert_series_equal(
+        contribution_totals.sort_index(),
+        raw_scores.sort_index(),
+        check_names=False,
+    )
 
 
 def test_coverage_has_one_row_for_every_strict_predictor() -> None:

@@ -1799,14 +1799,62 @@ def calculate_scores(
     result["confidence"] = result["confidence"].fillna(0.0)
     result["minimum_metrics_required"] = int(minimum_metrics)
     result["horizon_evidence_sufficient"] = result["metrics_used"].ge(int(minimum_metrics))
-    return result[
+    result["score_bucket_semantics"] = np.where(
+        result["horizon_months"].eq(0),
+        "all_predictors_current_cross_sectional_score",
+        "official_portfolio_refresh_period_diagnostic_not_validated_forecast_horizon",
+    )
+    contribution_frame = working.merge(
+        group_meta[
+            ["horizon_months", "redundancy_group", "fixed_group_weight"]
+        ],
+        on=["horizon_months", "redundancy_group"],
+        how="left",
+    )
+    contribution_frame["score_weight"] = (
+        contribution_frame["within_group_weight"]
+        * contribution_frame["fixed_group_weight"]
+    )
+    contribution_frame = contribution_frame.merge(
+        summary[
+            ["as_of", "symbol", "horizon_months", "fixed_total_weight"]
+        ],
+        on=["as_of", "symbol", "horizon_months"],
+        how="left",
+    )
+    contribution_frame["score_weight"] = (
+        contribution_frame["score_weight"]
+        / contribution_frame["fixed_total_weight"].replace(0, np.nan)
+    )
+    contribution_frame["raw_score_contribution"] = (
+        contribution_frame["comparable_percentile"]
+        * contribution_frame["score_weight"]
+    )
+    contribution_frame["directional_contribution_vs_neutral"] = (
+        contribution_frame["comparable_percentile"] - 50.0
+    ) * contribution_frame["score_weight"]
+    contribution_frame["observed_score_weight"] = (
+        contribution_frame["score_weight"]
+        * contribution_frame["observed"].astype(float)
+    )
+    contribution_columns = [
+        "as_of", "symbol", "horizon_months", "signalname",
+        "redundancy_group", "economic_family", "raw_value", "status",
+        "source", "formula_id", "score_percentile", "observed",
+        "within_group_weight", "fixed_group_weight", "score_weight",
+        "observed_score_weight", "raw_score_contribution",
+        "directional_contribution_vs_neutral",
+    ]
+    output = result[
         [
             "as_of", "symbol", "horizon_months", "raw_score", "score", "confidence",
             "metrics_used", "metrics_expected", "groups_used", "groups_expected",
             "minimum_metrics_required", "horizon_evidence_sufficient",
-            "maximum_family_weight_actual",
+            "maximum_family_weight_actual", "score_bucket_semantics",
         ]
-    ]
+    ].copy()
+    output.attrs["score_contributions"] = contribution_frame[contribution_columns].copy()
+    return output
 
 
 def calculate_aggregate_scores(

@@ -6,7 +6,7 @@ on:
       source_run_id:
         description: Successful full OpenAP run whose immutable data shards are reused
         required: true
-        default: "30752706708"
+        default: "30736374334"
 
 permissions:
   actions: read
@@ -80,6 +80,8 @@ jobs:
         run: |
           test -s outputs/final/openap_current.duckdb
           test -s outputs/final/openap_current_leaderboard.csv
+          test -s outputs/final/openap_current_deployable_leaderboard.csv
+          test -s outputs/final/openap_score_contributions_current.parquet
           test -s outputs/final/data_quality_issues.csv
           python - <<'PY'
           import json
@@ -91,6 +93,11 @@ jobs:
               "concept_inputs_without_available_at", "future_concept_inputs",
               "invalid_concept_units", "duplicate_companyfacts", "duplicate_submissions",
               "inconsistent_feature_status", "ineligible_leaderboard_rows",
+              "uninformative_weighted_rows", "weighted_constant_predictors",
+              "stale_sec_leaderboard_rows", "undercovered_leaderboard_rows",
+              "exact_formula_policy_violations", "mixed_unit_turnover_rows",
+              "shallow_option_feature_rows", "overall_score_scale_violations",
+              "score_contribution_mismatches",
           ):
               assert summary[key] == 0, (key, summary[key])
           assert summary["locked_opened"] is False
@@ -102,7 +109,7 @@ jobs:
               "coverage_185", "data_quality_current", "proxy_audit",
               "unavailable_predictors", "security_universe_exclusions",
           }.issubset(tables)
-          assert con.execute("SELECT COUNT(*) FROM openap_current_leaderboard WHERE horizons_used < 5 OR aggregate_confidence < 30").fetchone()[0] == 0
+          assert con.execute("SELECT COUNT(*) FROM openap_current_leaderboard WHERE horizons_used < 1 OR aggregate_confidence < 50").fetchone()[0] == 0
           con.close()
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -110,5 +117,5 @@ jobs:
           name: openap-yfinance-sec-current-score-remerged-results
           path: outputs/final/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0

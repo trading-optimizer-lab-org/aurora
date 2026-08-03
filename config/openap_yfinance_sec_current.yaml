@@ -42,6 +42,7 @@ yfinance:
   institutional_snapshot: true
   current_options_snapshot: true
   target_option_days: 30
+  maximum_option_expiries: 3
   minimum_option_days: 14
   maximum_option_days: 60
   maximum_option_staleness_days: 14

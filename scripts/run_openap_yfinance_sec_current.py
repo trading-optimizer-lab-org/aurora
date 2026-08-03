@@ -438,17 +438,21 @@ def _ticker_snapshots(ticker: Any, symbol: str, config: Mapping[str, Any], retri
             expirations = list(ticker.options or [])
             if expirations:
                 target = pd.Timestamp.now(tz="UTC").tz_localize(None) + pd.Timedelta(days=int(config["yfinance"].get("target_option_days", 30)))
-                expiration = min(expirations, key=lambda item: abs((pd.Timestamp(item) - target).days))
-                chain = ticker.option_chain(expiration)
-                for option_type, frame in (("call", chain.calls), ("put", chain.puts)):
-                    if frame is None or frame.empty:
-                        continue
-                    current = frame.copy()
-                    current["symbol"] = symbol
-                    current["option_type"] = option_type
-                    current["expiration"] = expiration
-                    current["retrieved_at"] = retrieved_at
-                    options_frames.append(current)
+                candidates = sorted(
+                    expirations,
+                    key=lambda item: abs((pd.Timestamp(item) - target).days),
+                )[: int(config["yfinance"].get("maximum_option_expiries", 3))]
+                for expiration in candidates:
+                    chain = ticker.option_chain(expiration)
+                    for option_type, frame in (("call", chain.calls), ("put", chain.puts)):
+                        if frame is None or frame.empty:
+                            continue
+                        current = frame.copy()
+                        current["symbol"] = symbol
+                        current["option_type"] = option_type
+                        current["expiration"] = expiration
+                        current["retrieved_at"] = retrieved_at
+                        options_frames.append(current)
         except Exception as exc:
             status_rows.append({"symbol": symbol, "surface": "options", "status": "error", "error": str(exc)[:500]})
     options = pd.concat(options_frames, ignore_index=True) if options_frames else pd.DataFrame()
@@ -1099,13 +1103,41 @@ def _options_features(
             audit.update({"option_contracts_raw": raw_contracts, "option_contracts_usable": 0})
         return {}
     target_days = int(settings.get("target_option_days", 30))
-    nearest_expiry = (
-        data[["expiration", "days_to_expiry"]]
-        .drop_duplicates()
-        .assign(distance=lambda item: (item["days_to_expiry"] - target_days).abs())
-        .sort_values(["distance", "expiration"])
-        .iloc[0]["expiration"]
+    minimum_per_side = int(settings.get("minimum_option_contracts_per_side", 1))
+    minimum_total = int(settings.get("minimum_option_contracts_total", 2))
+    expiry_depth = (
+        data.assign(
+            is_call=data["option_type"].eq("call").astype(int),
+            is_put=data["option_type"].eq("put").astype(int),
+        )
+        .groupby("expiration", as_index=False)
+        .agg(
+            days_to_expiry=("days_to_expiry", "first"),
+            contracts=("option_type", "size"),
+            calls=("is_call", "sum"),
+            puts=("is_put", "sum"),
+        )
     )
+    expiry_depth["distance"] = (expiry_depth["days_to_expiry"] - target_days).abs()
+    qualifying_expiries = expiry_depth.loc[
+        expiry_depth["calls"].ge(minimum_per_side)
+        & expiry_depth["puts"].ge(minimum_per_side)
+        & expiry_depth["contracts"].ge(minimum_total)
+    ].sort_values(["distance", "expiration"])
+    if qualifying_expiries.empty:
+        if audit is not None:
+            audit.update(
+                {
+                    "option_contracts_raw": raw_contracts,
+                    "option_contracts_usable": len(data),
+                    "option_calls_usable": int(data["option_type"].eq("call").sum()),
+                    "option_puts_usable": int(data["option_type"].eq("put").sum()),
+                    "option_depth_pass": False,
+                    "option_rejection_reason": "insufficient_contract_depth",
+                }
+            )
+        return {}
+    nearest_expiry = qualifying_expiries.iloc[0]["expiration"]
     data = data.loc[data["expiration"].eq(nearest_expiry)]
     if audit is not None:
         audit.update(
@@ -1117,8 +1149,6 @@ def _options_features(
         )
     calls = data.loc[data["option_type"].eq("call")]
     puts = data.loc[data["option_type"].eq("put")]
-    minimum_per_side = int(settings.get("minimum_option_contracts_per_side", 1))
-    minimum_total = int(settings.get("minimum_option_contracts_total", 2))
     if (
         len(calls) < minimum_per_side
         or len(puts) < minimum_per_side
@@ -1416,13 +1446,18 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "openap_scores_current": ("as_of", "symbol", "horizon_months"),
     "openap_overall_scores_current": ("as_of", "symbol", "horizon_months"),
     "openap_scores_aggregate_current": ("as_of", "symbol"),
+    "openap_score_contributions_current": (
+        "as_of", "symbol", "horizon_months", "signalname"
+    ),
     "openap_current_leaderboard": ("as_of", "symbol"),
+    "openap_current_deployable_leaderboard": ("as_of", "symbol"),
     "selected_predictors": ("signalname",),
     "redundancy_groups": ("signalname",),
     "current_redundancy_groups": ("signalname",),
     "overall_redundancy_groups": ("signalname",),
     "coverage_185": ("signalname",),
     "price_quality_current": ("symbol",),
+    "data_quality_current": ("symbol",),
     "yahoo_options_raw": ("contractSymbol",),
     "yahoo_options_usable": ("contractSymbol",),
     "source_manifest": ("source",),
@@ -1456,9 +1491,18 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "openap_scores_aggregate_current": (
         "as_of", "symbol", "score_validation_status", "required_horizons",
     ),
+    "openap_score_contributions_current": (
+        "as_of", "symbol", "horizon_months", "signalname",
+        "redundancy_group", "score_weight", "raw_score_contribution",
+        "directional_contribution_vs_neutral",
+    ),
     "openap_current_leaderboard": (
         "as_of", "symbol", "aggregate_score", "aggregate_confidence",
         "ranking_eligible", "clean_price_staleness_days",
+    ),
+    "openap_current_deployable_leaderboard": (
+        "as_of", "symbol", "aggregate_score", "aggregate_confidence",
+        "ranking_eligible", "deployment_eligible",
     ),
     "selected_predictors": ("signalname", "tstat", "Sign"),
     "redundancy_groups": ("signalname",),
@@ -1466,6 +1510,7 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "overall_redundancy_groups": ("signalname",),
     "coverage_185": ("signalname",),
     "price_quality_current": ("symbol",),
+    "data_quality_current": ("symbol",),
     "yahoo_options_raw": ("contractSymbol",),
     "yahoo_options_usable": ("contractSymbol",),
     "source_manifest": ("source",),
@@ -1996,7 +2041,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     sec_dir = Path(args.sec_dir)
     metadata = pd.read_parquet(prepare_dir / "selected_185_predictors.parquet")
     groups = pd.read_csv(prepare_dir / "redundancy_groups.csv")
-    redundancy_audit = pd.read_csv(prepare_dir / "redundancy_correlation_audit.csv")
+    redundancy_audit_path = prepare_dir / "redundancy_correlation_audit.csv"
+    if redundancy_audit_path.exists():
+        redundancy_audit = pd.read_csv(redundancy_audit_path)
+        redundancy_audit_source_status = "source_artifact"
+    else:
+        redundancy_audit = groups[["signalname", "redundancy_group"]].copy()
+        redundancy_audit["correlation"] = np.nan
+        redundancy_audit["audit_status"] = "missing_from_legacy_source_artifact"
+        redundancy_audit_source_status = "reconstructed_manifest_only"
     seed = pd.read_parquet(prepare_dir / "security_master_seed.parquet")
     source_manifest = pd.read_csv(prepare_dir / "source_manifest.csv")
 
@@ -2339,6 +2392,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
         maximum_family_weight=float(config["score"]["maximum_family_weight"]),
     )
+    horizon_score_contributions = scores.attrs.get(
+        "score_contributions", pd.DataFrame()
+    )
     overall_features = feature_frame.copy()
     overall_features["horizon_months"] = 0
     overall_features, overall_redundancy_audit = refine_current_redundancy_groups(
@@ -2352,7 +2408,14 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         maximum_metric_weight_multiple=float(config["score"]["maximum_metric_weight_multiple"]),
         maximum_family_weight=float(config["score"]["maximum_family_weight"]),
     )
+    overall_score_contributions = overall_scores.attrs.get(
+        "score_contributions", pd.DataFrame()
+    )
     overall_scores = overall_scores.loc[overall_scores["horizon_months"].eq(0)].copy()
+    score_contributions = pd.concat(
+        [horizon_score_contributions, overall_score_contributions],
+        ignore_index=True,
+    )
     aggregate_scores = calculate_aggregate_scores(
         overall_scores,
         minimum_horizons=int(config["score"]["minimum_horizons_for_ranking"]),
@@ -2361,6 +2424,18 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
+    for column, default in (
+        ("option_contracts_raw", 0),
+        ("option_contracts_usable", 0),
+        ("option_calls_usable", 0),
+        ("option_puts_usable", 0),
+        ("option_depth_pass", False),
+        ("option_rejection_reason", "no_usable_option_snapshot"),
+    ):
+        if column not in quality:
+            quality[column] = default
+        else:
+            quality[column] = quality[column].fillna(default)
     score_context = quality[
         [
             "symbol",
@@ -2425,6 +2500,21 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         prior_reason.ne(""), semantic_reason
     )
     aggregate_scores["ranking_eligible"] &= semantic_reason.eq("")
+    aggregate_scores["research_universe_score"] = aggregate_scores["aggregate_score"]
+    aggregate_scores["aggregate_score"] = np.nan
+    qualified_index = aggregate_scores.index[aggregate_scores["ranking_eligible"]]
+    qualified_raw = pd.to_numeric(
+        aggregate_scores.loc[qualified_index, "aggregate_raw_score"], errors="coerce"
+    )
+    qualified_count = int(qualified_raw.notna().sum())
+    if qualified_count == 1:
+        aggregate_scores.loc[qualified_index, "aggregate_score"] = 50.0
+    elif qualified_count > 1:
+        aggregate_scores.loc[qualified_index, "aggregate_score"] = (
+            100.0
+            * (qualified_raw.rank(method="average", na_option="keep") - 1.0)
+            / (qualified_count - 1)
+        )
     aggregate_scores["score_is_probability"] = False
     aggregate_scores["score_scale"] = "cross_sectional_percentile_0_100"
 
@@ -2456,6 +2546,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     leaderboard = aggregate_scores.loc[aggregate_scores["ranking_eligible"]].sort_values(
         ["aggregate_score", "aggregate_confidence"], ascending=[False, False]
     )
+    deployable_leaderboard = leaderboard.loc[
+        leaderboard["deployment_eligible"]
+    ].copy()
     sec_concept_inputs = (
         pd.concat(sec_concept_input_frames, ignore_index=True)
         if sec_concept_input_frames
@@ -2476,7 +2569,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         index=False,
         compression="zstd",
     )
+    score_contributions.to_parquet(
+        output / "openap_score_contributions_current.parquet",
+        index=False,
+        compression="zstd",
+    )
     leaderboard.to_csv(output / "openap_current_leaderboard.csv", index=False)
+    deployable_leaderboard.to_csv(
+        output / "openap_current_deployable_leaderboard.csv", index=False
+    )
     sec_concept_inputs.to_parquet(
         output / "sec_concept_inputs_current.parquet",
         index=False,
@@ -2510,6 +2611,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         [str(output / "openap_scores_aggregate_current.parquet")],
     )
     connection.execute(
+        "CREATE OR REPLACE TABLE openap_score_contributions_current AS SELECT * FROM read_parquet(?)",
+        [str(output / "openap_score_contributions_current.parquet")],
+    )
+    connection.execute(
         "CREATE OR REPLACE TABLE sec_concept_inputs_current AS SELECT * FROM read_parquet(?)",
         [str(output / "sec_concept_inputs_current.parquet")],
     )
@@ -2520,6 +2625,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute(
         "CREATE OR REPLACE TABLE price_quality_current AS SELECT * FROM read_csv_auto(?)",
         [str(output / "price_quality_current.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE data_quality_current AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "data_quality.csv")],
     )
     connection.execute(
         """
@@ -2616,6 +2725,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     connection.execute(
         "CREATE OR REPLACE TABLE openap_current_leaderboard AS SELECT * FROM read_csv_auto(?)",
         [str(output / "openap_current_leaderboard.csv")],
+    )
+    connection.execute(
+        "CREATE OR REPLACE TABLE openap_current_deployable_leaderboard AS SELECT * FROM read_csv_auto(?)",
+        [str(output / "openap_current_deployable_leaderboard.csv")],
     )
     for table_name, file_name in (
         ("selected_predictors", "selected_185_predictors.csv"),
@@ -2803,6 +2916,87 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "WHERE status = 'ok' AND source_mode = 'sec_via_jina_readthrough'"
         ).fetchone()[0]
     )
+    uninformative_weighted_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            "WHERE value_status = 'uninformative_cross_section' "
+            "AND (status <> 'unavailable' OR evidence_weight <> 0)"
+        ).fetchone()[0]
+    )
+    weighted_constant_predictors = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT signalname FROM openap_features_current "
+            "WHERE status IN ('exact','proxy') AND evidence_weight > 0 AND raw_value IS NOT NULL "
+            "GROUP BY signalname HAVING COUNT(*) >= 3 AND COUNT(DISTINCT raw_value) <= 1)"
+        ).fetchone()[0]
+    )
+    stale_sec_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE sec_input_age_days IS NULL OR sec_input_age_days > ?",
+            [int(config["score"]["maximum_sec_age_days_for_ranking"])],
+        ).fetchone()[0]
+    )
+    undercovered_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE computed_features < ? OR missing_features > ? OR aggregate_confidence < ?",
+            [
+                int(config["score"]["minimum_computed_features_for_ranking"]),
+                int(config["score"]["maximum_missing_features_for_ranking"]),
+                float(config["score"]["minimum_aggregate_confidence"]),
+            ],
+        ).fetchone()[0]
+    )
+    forbidden_exact_signals = (
+        "EP", "Cash", "BookLeverage", "ChTax", "InvGrowth", "Investment",
+        "NetDebtFinance", "NetDebtPrice", "NetPayoutYield", "PayoutYield",
+        "ShareIss1Y", "GP", "OperProf", "tang",
+    )
+    placeholders = ",".join("?" for _ in forbidden_exact_signals)
+    exact_formula_policy_violations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current "
+            f"WHERE status = 'exact' AND signalname IN ({placeholders})",
+            list(forbidden_exact_signals),
+        ).fetchone()[0]
+    )
+    mixed_unit_turnover_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current WHERE formula_id IN "
+            "('mean_volume_21d','volume_std_proxy_252d','mean_share_volume_over_sec_shares',"
+            "'volume_std_over_sec_shares')"
+        ).fetchone()[0]
+    )
+    shallow_option_feature_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_features_current f "
+            "LEFT JOIN data_quality_current q USING (symbol) "
+            "WHERE f.source = 'yfinance_current_option_chain' "
+            "AND f.raw_value IS NOT NULL AND NOT COALESCE(q.option_depth_pass, FALSE)"
+        ).fetchone()[0]
+    )
+    overall_score_scale_violations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT as_of, MIN(aggregate_score) lo, MAX(aggregate_score) hi, "
+            "COUNT(aggregate_score) n FROM openap_current_leaderboard GROUP BY as_of) "
+            "WHERE n > 1 AND (ABS(lo) > 1e-9 OR ABS(hi - 100.0) > 1e-9)"
+        ).fetchone()[0]
+    )
+    score_contribution_mismatches = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT s.as_of, s.symbol, s.horizon_months, s.raw_score, "
+            "SUM(c.raw_score_contribution) contribution_sum "
+            "FROM openap_overall_scores_current s "
+            "JOIN openap_score_contributions_current c USING (as_of, symbol, horizon_months) "
+            "WHERE s.horizon_months = 0 AND s.raw_score IS NOT NULL "
+            "GROUP BY s.as_of, s.symbol, s.horizon_months, s.raw_score) "
+            "WHERE ABS(raw_score - contribution_sum) > 1e-8"
+        ).fetchone()[0]
+    )
     issue_counts = {
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
@@ -2823,6 +3017,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "family_weight_cap_violations": family_weight_cap_violations,
         "required_horizon_denominator_variants": required_horizon_denominator_variants,
         "ranking_sec_download_failures": ranking_sec_download_failures,
+        "uninformative_weighted_rows": uninformative_weighted_rows,
+        "weighted_constant_predictors": weighted_constant_predictors,
+        "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
+        "undercovered_leaderboard_rows": undercovered_leaderboard_rows,
+        "exact_formula_policy_violations": exact_formula_policy_violations,
+        "mixed_unit_turnover_rows": mixed_unit_turnover_rows,
+        "shallow_option_feature_rows": shallow_option_feature_rows,
+        "overall_score_scale_violations": overall_score_scale_violations,
+        "score_contribution_mismatches": score_contribution_mismatches,
     }
     warning_counts = {
         "nonranking_sec_download_errors": max(
@@ -2830,6 +3033,22 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         ),
         "sec_jina_fallback_downloads": sec_jina_fallback_downloads,
         "raw_nonpositive_price_rows_quarantined": raw_nonpositive_price_rows,
+        "stale_sec_inputs_over_warning_age": int(
+            connection.execute(
+                "SELECT COUNT(*) FROM openap_scores_aggregate_current "
+                "WHERE sec_input_age_days > ?",
+                [int(config["score"]["sec_freshness_warning_days"])],
+            ).fetchone()[0]
+        ),
+        "nondeployable_research_leaderboard_rows": int(
+            connection.execute(
+                "SELECT COUNT(*) FROM openap_current_leaderboard "
+                "WHERE NOT deployment_eligible"
+            ).fetchone()[0]
+        ),
+        "legacy_redundancy_audit_missing": int(
+            redundancy_audit_source_status != "source_artifact"
+        ),
     }
     issues = pd.DataFrame(
         [
@@ -2961,8 +3180,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "overall_scores_rows": len(overall_scores),
         "aggregate_scores_rows": len(aggregate_scores),
         "leaderboard_rows": len(leaderboard),
+        "deployable_leaderboard_rows": len(deployable_leaderboard),
+        "score_contribution_rows": len(score_contributions),
         "score_horizons": sorted(scores["horizon_months"].dropna().astype(int).unique().tolist()),
         "ranking_score_mode": str(config["score"]["ranking_score_mode"]),
+        "redundancy_audit_source_status": redundancy_audit_source_status,
         "features_rows": len(feature_frame),
         "all_facts_have_available_at": all_facts_have_available_at,
         "locked_opened": False,
@@ -2993,6 +3215,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "family_weight_cap_violations": family_weight_cap_violations,
         "required_horizon_denominator_variants": required_horizon_denominator_variants,
         "ranking_sec_download_failures": ranking_sec_download_failures,
+        "uninformative_weighted_rows": uninformative_weighted_rows,
+        "weighted_constant_predictors": weighted_constant_predictors,
+        "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
+        "undercovered_leaderboard_rows": undercovered_leaderboard_rows,
+        "exact_formula_policy_violations": exact_formula_policy_violations,
+        "mixed_unit_turnover_rows": mixed_unit_turnover_rows,
+        "shallow_option_feature_rows": shallow_option_feature_rows,
+        "overall_score_scale_violations": overall_score_scale_violations,
+        "score_contribution_mismatches": score_contribution_mismatches,
         "sec_download_errors": sec_download_errors,
         "sec_direct_downloads": sec_direct_downloads,
         "sec_jina_fallback_downloads": sec_jina_fallback_downloads,

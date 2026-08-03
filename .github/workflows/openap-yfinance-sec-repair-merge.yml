@@ -96,14 +96,14 @@ jobs:
             outputs/sec_${{ matrix.chunk }}/sec_status_*.csv
             outputs/sec_${{ matrix.chunk }}/sec_summary_*.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-sec-repair-raw-${{ matrix.chunk }}
           path: outputs/sec_${{ matrix.chunk }}/raw/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0
 
   merge:
@@ -179,7 +179,9 @@ jobs:
           test -s outputs/final/openap_scores_current.parquet
           test -s outputs/final/openap_overall_scores_current.parquet
           test -s outputs/final/openap_scores_aggregate_current.parquet
+          test -s outputs/final/openap_score_contributions_current.parquet
           test -s outputs/final/openap_current_leaderboard.csv
+          test -s outputs/final/openap_current_deployable_leaderboard.csv
           test -s outputs/final/data_quality_issues.csv
           test -s outputs/final/price_quality_current.csv
           test -s outputs/final/schema_contract.csv
@@ -227,6 +229,15 @@ jobs:
           assert summary["family_weight_cap_violations"] == 0
           assert summary["required_horizon_denominator_variants"] == 0
           assert summary["ranking_sec_download_failures"] == 0
+          assert summary["uninformative_weighted_rows"] == 0
+          assert summary["weighted_constant_predictors"] == 0
+          assert summary["stale_sec_leaderboard_rows"] == 0
+          assert summary["undercovered_leaderboard_rows"] == 0
+          assert summary["exact_formula_policy_violations"] == 0
+          assert summary["mixed_unit_turnover_rows"] == 0
+          assert summary["shallow_option_feature_rows"] == 0
+          assert summary["overall_score_scale_violations"] == 0
+          assert summary["score_contribution_mismatches"] == 0
           assert summary["clean_price_rows_in_database"] > 1_000_000
           assert summary["raw_price_rows_in_database"] >= summary["clean_price_rows_in_database"]
           assert summary["schema_contract_rows"] >= 30
@@ -281,5 +292,5 @@ jobs:
           name: openap-yfinance-sec-current-score-results
           path: outputs/final/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 0
