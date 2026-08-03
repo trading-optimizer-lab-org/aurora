@@ -63,7 +63,7 @@ def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
         calls.append(url)
         if url.startswith("https://data.sec.gov"):
             return Response(403)
-        return Response(200, '{"fallback": true}')
+        return Response(200, 'Markdown Content:\n```json\n{"fallback": true}\n```')
 
     monkeypatch.setattr(requests, "get", fake_get)
     monkeypatch.setattr(current_runner, "_SEC_DIRECT_API_BLOCKED", False)
@@ -81,6 +81,8 @@ def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
 
     assert first[1] == "sec_via_jina_readthrough"
     assert second[1] == "sec_via_jina_readthrough"
+    assert first[0] == {"fallback": True}
+    assert second[0] == {"fallback": True}
     assert sum(url.startswith("https://data.sec.gov") for url in calls) == 1
 
 
