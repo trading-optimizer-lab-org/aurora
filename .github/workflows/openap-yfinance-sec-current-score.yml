@@ -360,6 +360,7 @@ jobs:
           test -s outputs/final/index_contract.csv
           test -s outputs/final/database_contract_checks.csv
           test -s outputs/final/current_redundancy_groups.csv
+          test -s outputs/final/overall_redundancy_groups.csv
           test -s outputs/final/sec_download_status.csv
           test -s outputs/final/yfinance_download_status.csv
           test -s outputs/final/options_quality_summary.csv

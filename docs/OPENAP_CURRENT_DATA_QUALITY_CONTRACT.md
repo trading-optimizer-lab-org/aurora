@@ -80,6 +80,10 @@ signals are recorded as diversification relationships and are not merged.
 Current implementations are audited a second time: formulas that are identical
 or produce at least 0.995 current cross-sectional percentile correlation are
 collapsed into one vote when their official portfolio period also matches.
+The same complete-link audit is repeated after every predictor enters the
+single ranking bucket, so duplicates with different portfolio refresh periods
+cannot regain an extra vote. `overall_redundancy_groups.csv` records the exact
+grouping used by the leaderboard.
 
 The score uses one bounded vote per redundancy group. Metric weights and family
 weights use the configured caps. Unallocated family weight is neutral at 50,

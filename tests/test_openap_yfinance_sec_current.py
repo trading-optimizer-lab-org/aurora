@@ -1009,6 +1009,7 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "sec-chunk" in text
     assert "openap-sec-raw-${{ matrix.chunk }}" in text
     assert "openap-yfinance-sec-current-score-results" in text
+    assert "overall_redundancy_groups.csv" in text
     assert "locked_opened" in text
     assert "backtest_enabled" in text
     assert 'summary["companyfacts_rows"] > 0' in text
@@ -1043,3 +1044,4 @@ def test_repair_workflow_reuses_source_run_and_replaces_only_empty_shards() -> N
     assert "sec_companyfacts_${chunk}.parquet" in text
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
+    assert "overall_redundancy_groups.csv" in text

@@ -1240,6 +1240,7 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "selected_predictors": ("signalname",),
     "redundancy_groups": ("signalname",),
     "current_redundancy_groups": ("signalname",),
+    "overall_redundancy_groups": ("signalname",),
     "coverage_185": ("signalname",),
     "price_quality_current": ("symbol",),
     "yahoo_options_raw": ("contractSymbol",),
@@ -1276,6 +1277,7 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "selected_predictors": ("signalname", "tstat", "Sign"),
     "redundancy_groups": ("signalname",),
     "current_redundancy_groups": ("signalname",),
+    "overall_redundancy_groups": ("signalname",),
     "coverage_185": ("signalname",),
     "price_quality_current": ("symbol",),
     "yahoo_options_raw": ("contractSymbol",),
@@ -2080,6 +2082,11 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     overall_features = feature_frame.copy()
     overall_features["horizon_months"] = 0
+    overall_features, overall_redundancy_audit = refine_current_redundancy_groups(
+        overall_features,
+        threshold=float(config["openap"].get("current_redundancy_threshold", 0.995)),
+        minimum_overlap=int(config["openap"].get("current_redundancy_minimum_overlap", 100)),
+    )
     overall_scores = calculate_scores(
         overall_features,
         minimum_metrics=int(config["score"]["minimum_metrics_per_score"]),
@@ -2160,6 +2167,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     redundancy_audit.to_csv(output / "redundancy_correlation_audit.csv", index=False)
     current_redundancy_audit.to_csv(
         output / "current_redundancy_groups.csv", index=False
+    )
+    overall_redundancy_audit.to_csv(
+        output / "overall_redundancy_groups.csv", index=False
     )
 
     connection.execute("CREATE OR REPLACE TABLE security_master AS SELECT * FROM read_parquet(?)", [str(output / "security_master.parquet")])
@@ -2286,6 +2296,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         ("redundancy_groups", "redundancy_groups.csv"),
         ("redundancy_correlation_audit", "redundancy_correlation_audit.csv"),
         ("current_redundancy_groups", "current_redundancy_groups.csv"),
+        ("overall_redundancy_groups", "overall_redundancy_groups.csv"),
         ("coverage_185", "coverage_185.csv"),
         ("data_quality_current", "data_quality.csv"),
         ("proxy_audit", "proxy_audit.csv"),
