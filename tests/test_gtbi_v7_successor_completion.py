@@ -72,6 +72,22 @@ def test_completed_clean_contains_all_tasks_and_preserves_boundaries(
     assert receipt["incremental_net_spend_usd"] == 0.0
 
 
+def test_committed_terminal_receipt_closes_all_tasks() -> None:
+    result = completion.reconcile(ROOT, preterminal=False)
+    assert result.passed is True
+    assert result.blockers == ()
+    assert len(result.completed_task_ids) == 22
+    assert set(result.completed_task_ids) == set(completion.TASK_EVIDENCE)
+
+    publication = json.loads(
+        (ROOT / "docs/readiness/gtbi-v7-successor/terminal_publication_receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert publication["github_run_id"] == 30791858365
+    assert publication["workflow_conclusion"] == "success"
+
+
 def test_inventory_registry_has_no_unknown_decisions() -> None:
     path = ROOT / "docs/project_inventory/workflow_branch_registry.csv"
     with path.open(newline="", encoding="utf-8") as handle:
