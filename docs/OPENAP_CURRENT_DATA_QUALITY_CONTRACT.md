@@ -106,7 +106,9 @@ row. The merge also fails on missing shard surfaces, unsupported official
 filters, weak score buckets, variable score denominators or missing SEC data
 for a ranked issuer. `data_quality_issues`, `schema_contract` and
 `index_contract` persist these checks in DuckDB. Every database object appears
-in the schema contract and key tables receive physical unique indexes.
+in the schema contract, key tables receive physical unique indexes, and all
+declared mandatory columns receive physical `NOT NULL` constraints after their
+existing contents pass the contract checks.
 
 Locked data is not used. Backtesting and validation-based selection remain
 disabled in this current-snapshot pipeline.

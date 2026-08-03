@@ -125,6 +125,40 @@ def test_current_redundancy_merges_identical_cross_sectional_signals() -> None:
     assert audit["current_merge_applied"].all()
 
 
+def test_current_redundancy_collapses_known_duplicate_openap_implementations() -> None:
+    duplicate_sets = [
+        ("Accruals", "TotalAccruals"),
+        ("CF", "cfp"),
+        ("AnalystRevision", "REV6"),
+        ("CPVolSpread", "SmileSlope", "skew1"),
+    ]
+    rows = []
+    for set_index, names in enumerate(duplicate_sets):
+        for signal_index, signalname in enumerate(names):
+            for symbol_index in range(120):
+                rows.append(
+                    {
+                        "symbol": f"S{symbol_index:03d}",
+                        "signalname": signalname,
+                        "formula_id": f"formula_{signalname}",
+                        "horizon_months": 12 if set_index < 2 else 1,
+                        "percentile": float(symbol_index),
+                        "redundancy_group": f"historical_{signal_index}_{signalname}",
+                    }
+                )
+    features = pd.DataFrame(rows)
+
+    refined, _ = refine_current_redundancy_groups(
+        features, threshold=0.995, minimum_overlap=100
+    )
+    mapping = refined.drop_duplicates("signalname").set_index("signalname")[
+        "redundancy_group"
+    ]
+
+    for names in duplicate_sets:
+        assert mapping.loc[list(names)].nunique() == 1
+
+
 def test_official_filter_mapping_fails_closed_and_applies_known_rules() -> None:
     context = pd.DataFrame(
         {
@@ -725,6 +759,8 @@ def test_database_contract_covers_every_object_and_creates_unique_index(
         required_tables={"prices_daily_raw"},
     )
     contract = pd.read_csv(tmp_path / "schema_contract.csv")
+    checks = pd.read_csv(tmp_path / "database_contract_checks.csv")
+    table_info = connection.execute("PRAGMA table_info('prices_daily_raw')").df()
 
     assert contract_rows == 5
     assert index_rows == 1
@@ -733,6 +769,20 @@ def test_database_contract_covers_every_object_and_creates_unique_index(
         "database_contract_checks", "index_contract", "prices_daily",
         "prices_daily_raw", "schema_contract",
     }
+    assert set(table_info.loc[table_info["notnull"], "name"]) == {
+        "symbol", "date", "adj_close",
+    }
+    physical = checks.loc[
+        (checks["table_name"] == "prices_daily_raw")
+        & (checks["check_type"] == "physical_not_null_constraint")
+    ]
+    assert len(physical) == 1
+    assert bool(physical.iloc[0]["passed"])
+    with pytest.raises(duckdb.ConstraintException):
+        connection.execute(
+            "INSERT INTO prices_daily_raw(symbol, date, adj_close) "
+            "VALUES (NULL, DATE '2026-08-01', 1.0)"
+        )
 
 
 def test_score_gives_one_vote_to_redundancy_group() -> None:

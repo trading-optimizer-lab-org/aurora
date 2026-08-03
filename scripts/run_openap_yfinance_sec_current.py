@@ -1301,6 +1301,7 @@ def finalize_database_contract(
         "WHERE table_schema = 'main' ORDER BY table_name"
     ).fetchall()
     object_names = {str(row[0]) for row in objects}
+    object_types = {str(row[0]): str(row[1]) for row in objects}
     contract_check_rows: list[dict[str, Any]] = []
     contract_tables = (
         set(required_tables)
@@ -1381,6 +1382,53 @@ def finalize_database_contract(
                     "passed": duplicate_count == 0,
                 }
             )
+    for table_name, columns in sorted(DATABASE_REQUIRED_NON_NULL.items()):
+        if table_name not in object_names:
+            continue
+        if object_types.get(table_name) != "BASE TABLE":
+            contract_check_rows.append(
+                {
+                    "table_name": table_name,
+                    "check_type": "physical_not_null_constraint",
+                    "columns": ",".join(columns),
+                    "issue_count": 1,
+                    "passed": False,
+                }
+            )
+            continue
+        existing_failures = [
+            row
+            for row in contract_check_rows
+            if row["table_name"] == table_name
+            and row["check_type"] in {"required_columns", "required_non_null"}
+            and not row["passed"]
+        ]
+        if existing_failures:
+            continue
+        failed_columns: list[str] = []
+        for column in columns:
+            try:
+                connection.execute(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{column}" SET NOT NULL'
+                )
+            except Exception:
+                failed_columns.append(column)
+        table_info = connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        physically_required = {
+            str(row[1]) for row in table_info if bool(row[3])
+        }
+        missing_constraints = sorted(set(columns).difference(physically_required))
+        failed_columns = sorted(set(failed_columns) | set(missing_constraints))
+        contract_check_rows.append(
+            {
+                "table_name": table_name,
+                "check_type": "physical_not_null_constraint",
+                "columns": ",".join(columns),
+                "issue_count": len(failed_columns),
+                "passed": not failed_columns,
+            }
+        )
+
     contract_checks = pd.DataFrame(contract_check_rows)
     contract_checks.to_csv(output / "database_contract_checks.csv", index=False)
     connection.register("database_contract_checks_frame", contract_checks)
@@ -1432,6 +1480,12 @@ def finalize_database_contract(
     schema_rows = []
     for table_name, table_type in objects:
         name = str(table_name)
+        table_info = (
+            connection.execute(f"PRAGMA table_info('{name}')").fetchall()
+            if str(table_type) == "BASE TABLE" and name != "schema_contract"
+            else []
+        )
+        physical_not_null = sorted(str(row[1]) for row in table_info if bool(row[3]))
         schema_rows.append(
             {
                 "table_name": name,
@@ -1443,6 +1497,7 @@ def finalize_database_contract(
                 ),
                 "unique_key": ",".join(DATABASE_UNIQUE_KEYS.get(name, ())),
                 "required_non_null": ",".join(DATABASE_REQUIRED_NON_NULL.get(name, ())),
+                "physical_not_null": ",".join(physical_not_null),
             }
         )
     schema_contract = pd.DataFrame(schema_rows)
