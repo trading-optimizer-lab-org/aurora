@@ -389,7 +389,14 @@ def main() -> int:
         inventory_source=args.inventory_source.resolve(),
         repository_root=args.repository_root.resolve(),
     )
-    print(json.dumps(result, indent=2, sort_keys=True))
+    public_summary = {
+        "complete": result["complete"],
+        "artifact_rows": result["artifact_rows"],
+        "registry_rows": result["registry_rows"],
+        "unknown_decisions": result["unknown_decisions"],
+        "destructive_action_taken": result["destructive_action_taken"],
+    }
+    print(json.dumps(public_summary, sort_keys=True))
     return 0
 
 
