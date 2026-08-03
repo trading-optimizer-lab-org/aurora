@@ -1769,6 +1769,8 @@ def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() 
     assert 'summary["sec_jina_fallback_downloads"] > 0' in text
     assert "Wait for all source YFinance artifacts" in text
     assert 'test "$yfinance_artifacts" -eq 48' in text
+    assert 'test("^openap-yfinance-[0-9]+$")' in text
+    assert "openap-yfinance-lake-" not in text
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text

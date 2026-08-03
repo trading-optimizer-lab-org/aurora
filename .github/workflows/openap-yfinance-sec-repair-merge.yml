@@ -138,7 +138,7 @@ jobs:
           done
           test "$status" = "completed"
           yfinance_artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.expired == false and (.name | startswith("openap-yfinance-lake-")))] | length')"
+            --jq '[.artifacts[] | select(.expired == false and (.name | test("^openap-yfinance-[0-9]+$")))] | length')"
           test "$yfinance_artifacts" -eq 48
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
