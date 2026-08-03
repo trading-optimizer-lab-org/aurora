@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-optimizer-lab-org.github.io/aurora/gtbi/v7/results/yearly-trade-performance-row.schema.json",
+  "title": "GTBI V7 yearly trade performance row",
+  "type": "object",
+  "required": ["candidate_id", "split", "year", "trades", "avg_trade_return_pct", "profit_factor"],
+  "properties": {
+    "candidate_id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["train", "validation"]},
+    "year": {"type": "integer", "maximum": 2020},
+    "trades": {"type": "integer", "minimum": 0},
+    "avg_trade_return_pct": {"type": "number"},
+    "median_trade_return_pct": {"type": "number"},
+    "win_rate": {"type": "number"},
+    "profit_factor": {"type": "number"},
+    "avg_holding_days": {"type": "number"}
+  },
+  "additionalProperties": true
+}

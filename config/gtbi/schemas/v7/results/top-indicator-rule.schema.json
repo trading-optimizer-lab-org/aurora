@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trading-optimizer-lab-org.github.io/aurora/gtbi/v7/results/top-indicator-rule.schema.json",
+  "title": "GTBI V7 top indicator rule",
+  "type": "object",
+  "required": ["candidate_id", "strategy_id", "external_strategy", "config", "score"],
+  "properties": {
+    "candidate_id": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "external_strategy": {"type": "object"},
+    "config": {"type": "object"},
+    "score": {"type": "number"}
+  },
+  "additionalProperties": true
+}

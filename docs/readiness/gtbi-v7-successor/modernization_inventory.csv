@@ -1,0 +1,10 @@
+boundary,current_layout,public_import,decision,reason,rollback,status
+core,flat package mapping,aurora.core,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+validation,flat package mapping,aurora.validation,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+strategies,flat package mapping,aurora.strategies,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+ga,flat package mapping,aurora.ga,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+ml,flat package mapping,aurora.ml,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+research_factory,flat package mapping,aurora.research.factory,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+reporting_daily_ops,flat package mapping,aurora.reporting.daily_ops,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+agent_gateway,flat package mapping,aurora.agent_gateway,retain_current,stable ownership boundary and public API,revert any future boundary-specific PR,verified
+gtbi_feature_store,core authoritative interface,aurora.core.gtbi_feature_store,completed_single_boundary_extraction,one authoritative cache implementation with script adapter,revert FeatureStore extraction commit,verified

@@ -3,13 +3,13 @@
 | Field | Value |
 |---|---|
 | Version | `7.1` |
-| Status | `CANONICAL SUCCESSOR AUTHORIZED, COMPLETED_CLEAN EXECUTION ACTIVE` |
+| Status | `CANONICAL SUCCESSOR READY FOR TERMINAL RECONCILIATION` |
 | Audited at | `2026-07-29T11:42:58+02:00` |
 | Repository | `trading-optimizer-lab-org/aurora` |
 | Scientific execution environment | GitHub Actions only |
 | Security lease deadman | GitHub-native automated control, never the laptop and never scientific execution |
 | External non-scientific runtimes | Closed, attested allowlist in section 4.2 |
-| Current document state | `PROPOSED_UNTRACKED` |
+| Current document state | `TRACKED_CANONICAL_PRETERMINAL` |
 | Canonical target path | `docs/plans/gtbi-v7-master-plan.md` |
 
 ### Owner Simplification Directive
@@ -81,6 +81,28 @@ the retired high-separation operating model are not successor dependencies.
 The normal successor terminal target is `COMPLETED_CLEAN`; `ABANDONED_CLEAN`
 remains the failure/abandonment alternative. Locked access remains prohibited
 unless the owner gives a new explicit authorization in a future task.
+
+### Canonical Successor Execution Status
+
+The successor implementation and evidence reconciliation has completed 21 of
+the 22 remaining applicable tasks. The sole remaining task is `PREV7-1003`,
+which must run from the reviewed GitHub commit and emit the fail-closed
+`COMPLETED_CLEAN` receipt. The current machine-readable state is:
+
+```text
+docs/readiness/gtbi-v7-successor/preterminal_reconciliation.json
+status=ready_for_terminal_reconciliation
+completed_task_count=21
+terminal_task_id=PREV7-1003
+blockers=[]
+locked_data_accessed=false
+incremental_net_spend_usd=0
+```
+
+The terminal receipt is generated only by
+`.github/workflows/gtbi-v7-successor-close.yml`. That workflow runs tests and
+administrative reconciliation only. It performs no research, backtest,
+optimization or locked-data access.
 
 ## 1. Purpose
 

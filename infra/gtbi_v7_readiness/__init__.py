@@ -30,6 +30,15 @@ __all__ = [
     "validate_master_plan_structure",
     "validate_quality_evidence",
     "validate_role_registry",
+    "SuccessorContractError",
+    "schema_inventory",
+    "validate_v7_result_artifact",
+    "ReconciliationResult",
+    "SuccessorCompletionError",
+    "build_completed_clean",
+    "build_preterminal_receipt",
+    "build_security_approval",
+    "reconcile",
 ]
 
 _EXPORT_MODULES = {
@@ -53,6 +62,15 @@ _EXPORT_MODULES = {
     "generate_local_inventory": "inventory",
     "generate_remote_inventory": "inventory",
     "validate_inventory": "inventory",
+    "SuccessorContractError": "successor_contracts",
+    "schema_inventory": "successor_contracts",
+    "validate_v7_result_artifact": "successor_contracts",
+    "ReconciliationResult": "successor_completion",
+    "SuccessorCompletionError": "successor_completion",
+    "build_completed_clean": "successor_completion",
+    "build_preterminal_receipt": "successor_completion",
+    "build_security_approval": "successor_completion",
+    "reconcile": "successor_completion",
 }
 
 
