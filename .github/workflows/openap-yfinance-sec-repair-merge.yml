@@ -1,18 +1,17 @@
-name: OpenAP Repair SEC Shards And Merge
+name: OpenAP V2 Refresh SEC Bulk And Merge
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Completed OpenAP run whose successful artifacts will be reused
+        description: Completed OpenAP v2 run whose prepare and YFinance artifacts will be reused
         required: true
-        default: "30736374334"
       sec_user_agent:
         description: SEC-compliant User-Agent with contact email
         required: true
         default: "Aurora Research gomez5757@users.noreply.github.com"
       remerge_only:
-        description: Reuse every successful shard without redownloading SEC data
+        description: Reuse the v2 SEC bulk artifact without redownloading it
         required: true
         type: boolean
         default: false
@@ -22,13 +21,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: openap-sec-shard-repair
+  group: openap-v2-sec-bulk-refresh
   cancel-in-progress: false
 
 env:
   PYTHONUNBUFFERED: "1"
   OPENAP_CONFIG: config/openap_yfinance_sec_current.yaml
-  SEC_CHUNKS: "48"
 
 jobs:
   framework_contract:
@@ -36,7 +34,7 @@ jobs:
     with:
       spec_path: config/github_performance_reference.yaml
       workload: aurora.infra.github_performance.reference_workload:WORKLOAD
-      run_label: openap-sec-shard-repair-framework-contract
+      run_label: openap-v2-sec-bulk-refresh-framework-contract
       retention_days: 1
       forced_job_count: 1
 
@@ -45,11 +43,6 @@ jobs:
     if: ${{ !inputs.remerge_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        chunk: [7, 23]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -64,24 +57,22 @@ jobs:
           path: inputs/prepare
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Repair SEC shard
+      - name: Refresh official SEC bulk archives
         env:
           AU_SEC_EDGAR_USER_AGENT: ${{ inputs.sec_user_agent }}
         run: |
           python scripts/run_openap_yfinance_sec_current.py \
-            --config "$OPENAP_CONFIG" sec-chunk \
+            --config "$OPENAP_CONFIG" sec-bulk \
             --security-master inputs/prepare/sec_cik_universe.parquet \
             --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
-            --chunk-index "${{ matrix.chunk }}" \
-            --total-chunks "$SEC_CHUNKS" \
-            --output-dir "outputs/sec_${{ matrix.chunk }}"
-      - name: Validate repaired shard
+            --output-dir outputs/sec_0
+      - name: Validate refreshed SEC bulk lake
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          chunk = int("${{ matrix.chunk }}")
-          summary = json.loads(Path(f"outputs/sec_{chunk}/sec_summary_{chunk:03d}.json").read_text())
+          summary = json.loads(Path("outputs/sec_0/sec_summary_000.json").read_text())
+          assert summary["source_layout"] == "official_bulk_archive"
           assert summary["companyfacts_ciks_ok"] > 0
           assert summary["submissions_ciks_ok"] > 0
           assert summary["companyfacts_rows"] > 0
@@ -90,18 +81,18 @@ jobs:
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: openap-sec-repair-lake-${{ matrix.chunk }}
+          name: openap-sec-repair-lake-0
           path: |
-            outputs/sec_${{ matrix.chunk }}/lake/
-            outputs/sec_${{ matrix.chunk }}/sec_status_*.csv
-            outputs/sec_${{ matrix.chunk }}/sec_summary_*.json
+            outputs/sec_0/lake/
+            outputs/sec_0/sec_status_*.csv
+            outputs/sec_0/sec_summary_*.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: openap-sec-repair-raw-${{ matrix.chunk }}
-          path: outputs/sec_${{ matrix.chunk }}/raw/
+          name: openap-sec-repair-raw-0
+          path: outputs/sec_0/raw/
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
@@ -134,6 +125,7 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ inputs.remerge_only }}
         with:
           pattern: openap-sec-lake-*
           path: inputs/sec
@@ -143,27 +135,12 @@ jobs:
         if: ${{ !inputs.remerge_only }}
         with:
           pattern: openap-sec-repair-lake-*
-          path: inputs/repair
-      - name: Replace empty source shards with repaired shards
-        if: ${{ !inputs.remerge_only }}
+          path: inputs/sec
+      - name: Validate one complete v2 SEC bulk lake
         run: |
-          for chunk in 007 023; do
-            find inputs/sec -type f \( \
-              -name "sec_companyfacts_${chunk}.parquet" -o \
-              -name "sec_submissions_${chunk}.parquet" -o \
-              -name "sec_status_${chunk}.csv" -o \
-              -name "sec_summary_${chunk}.json" \
-            \) -delete
-            find inputs/repair -type f \( \
-              -name "sec_companyfacts_${chunk}.parquet" -o \
-              -name "sec_submissions_${chunk}.parquet" -o \
-              -name "sec_status_${chunk}.csv" -o \
-              -name "sec_summary_${chunk}.json" \
-            \) -exec cp {} inputs/sec/ \;
-          done
-          test "$(find inputs/sec -name 'sec_companyfacts_*.parquet' | wc -l)" -eq 48
-          test "$(find inputs/sec -name 'sec_submissions_*.parquet' | wc -l)" -eq 48
-          test "$(find inputs/sec -name 'sec_summary_*.json' | wc -l)" -eq 48
+          test "$(find inputs/sec -name 'sec_companyfacts_*.parquet' | wc -l)" -eq 1
+          test "$(find inputs/sec -name 'sec_submissions_*.parquet' | wc -l)" -eq 1
+          test "$(find inputs/sec -name 'sec_summary_*.json' | wc -l)" -eq 1
       - name: Merge repaired lake and calculate current scores
         run: |
           python scripts/run_openap_yfinance_sec_current.py \
@@ -251,7 +228,9 @@ jobs:
           assert summary["ranking_score_mode"] == "all_predictors_single_cross_sectional_score"
           assert summary["source_manifest_rows"] == 3
           assert summary["yfinance_source_manifest_rows"] == 48
-          assert summary["sec_source_manifest_rows"] == 48
+          assert summary["sec_source_layout"] == "official_bulk_archive"
+          assert summary["sec_source_manifest_rows"] == 1
+          assert summary["sec_jina_fallback_downloads"] == 0
           assert summary["security_master_rows"] > summary["eligible_symbols"]
           assert summary["security_exclusion_rows"] > 0
           assert len(summary["pipeline_git_sha"]) == 40

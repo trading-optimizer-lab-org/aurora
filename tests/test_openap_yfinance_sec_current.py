@@ -1697,15 +1697,18 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     assert config["execution"]["artifact_retention_days"] == 90
 
 
-def test_repair_workflow_reuses_source_run_and_replaces_only_empty_shards() -> None:
+def test_repair_workflow_reuses_v2_source_and_refreshes_one_official_bulk_lake() -> None:
     text = Path(
         ".github/workflows/openap-yfinance-sec-repair-merge.yml"
     ).read_text(encoding="utf-8")
 
     assert "source_run_id" in text
-    assert "chunk: [7, 23]" in text
-    assert "openap-sec-repair-lake-${{ matrix.chunk }}" in text
-    assert "sec_companyfacts_${chunk}.parquet" in text
+    assert "SEC_CHUNKS" not in text
+    assert "matrix.chunk" not in text
+    assert "sec-bulk" in text
+    assert "openap-sec-repair-lake-0" in text
+    assert "sec_source_layout" in text
+    assert 'summary["sec_source_manifest_rows"] == 1' in text
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text
