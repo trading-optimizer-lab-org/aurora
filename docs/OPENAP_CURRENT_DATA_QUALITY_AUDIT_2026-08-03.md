@@ -1,6 +1,14 @@
 # Auditoria De Calidad OpenAP Current
 
-Estado: `PENDING_FINAL_REBUILD`
+Estado: `COMPLETED_CLEAN_WITH_DOCUMENTED_LIMITATIONS`
+
+Run final de GitHub Actions: `30837929185`
+
+Commit: `3e77df856f41910fd187c1388ca5b28d6ba42464`
+
+Artifact: `openap-yfinance-sec-current-score-results`
+
+Base auditada: `E:\AURORA_DATA\OPENAP_FINAL_FIXED_30837929185\openap_current.duckdb`
 
 Esta auditoria cubre la base actual de OpenAP construida con YFinance y SEC
 EDGAR. La integridad estructural por si sola no demuestra que un dato o score
@@ -74,17 +82,56 @@ una alteracion silenciosa del universo cientifico.
 - La estabilidad walk-forward y los costes reales necesitan otra fase con
   historia causal. No se incorporan como pesos ficticios al score actual.
 
-## Evidencia Final Pendiente
+## Evidencia Final Verificada
 
-La auditoria solo cambiara a `COMPLETED_CLEAN` cuando un run de GitHub genere
-una base nueva y se comprueben:
+La reconstruccion final cumple los controles de integridad y aceptacion:
 
-- todos los tests enfocados en verde;
-- todos los errores de `data_quality_issues.csv` a cero;
-- contrato DuckDB sin violaciones;
-- manifiesto y hashes validos;
-- leaderboard no vacio;
-- score 0-100 real;
-- contribuciones reconciliadas;
-- procedencia SEC declarada por fila, JSON canonico con hash y cero fallos SEC
-  entre las acciones admitidas; el uso de read-through debe permanecer visible.
+- 35 de 35 archivos verificados contra `output_manifest.csv`.
+- 5.446.947.489 bytes comprobados y cero diferencias de tamano o SHA-256.
+- 74 de 74 contratos DuckDB aprobados y cero violaciones.
+- 36 de 36 controles duros de calidad aprobados, todos con cero incidencias.
+- 48 de 48 shards YFinance y 48 de 48 shards SEC presentes, indices 0 a 47.
+- 26.525.313 precios raw y 18.717.934 precios clean sin duplicados ni futuro.
+- 3.304.389 filas Company Facts y 3.987.615 filas Submissions.
+- 2.338 acciones elegibles, 876 en ranking de investigacion y 757 deployable.
+- Score transversal en escala real 0-100 y 411.488 contribuciones reconciliadas.
+- Diferencia maxima de reconstruccion del score: aproximadamente `3,55e-14`.
+- 29.297 contratos de opciones utilizables, cero duplicados utilizables.
+- `locked_opened=false`, `backtest_enabled=false`,
+  `validation_used_for_selection=false` y `partial=false`.
+- Cero fallos SEC entre las acciones admitidas en el ranking.
+
+## Problemas Que Siguen Existiendo
+
+No son corrupcion de la base, pero limitan el uso del score:
+
+1. **Cobertura incompleta de OpenAP.** De 185 predictores, 30 tienen valores
+   exactos, 61 proxy, 1 mezcla exact/proxy y 93 siguen `unavailable`. Una accion
+   del ranking tiene entre 60 y 82 predictores utilizables, mediana 67.
+2. **Score sin validacion historica.** El estado oficial es
+   `unvalidated_current_snapshot_only`. El valor 0-100 es atractivo relativo
+   actual, no probabilidad de subida ni evidencia de rentabilidad futura.
+3. **Dependencia de read-through para SEC.** GitHub no obtuvo ninguna descarga
+   SEC directa; 11.497 superficies validas llegaron mediante Jina sobre las URL
+   oficiales. Se conserva URL, JSON canonico y hash, pero el intermediario anade
+   riesgo operativo y de disponibilidad.
+4. **203 Company Facts incompletos fuera del ranking.** Todos pertenecen a
+   valores no elegibles/no admitidos, por lo que no contaminan el leaderboard,
+   pero el lago raw no cubre al 100% esos fondos u otros instrumentos excluidos.
+5. **Frescura desigual.** Hay 463 inputs SEC y 12 inputs contables por encima
+   del umbral de aviso. Ninguno supera el limite duro dentro del ranking ni
+   aporta peso estando caducado.
+6. **Calidad raw de mercado.** Se pusieron en cuarentena 14.609 filas de precio
+   no positivo. La capa clean no las contiene.
+7. **Opciones estrictamente filtradas.** De 224.174 filas raw quedan 29.297
+   utilizables. Se aislaron 7 duplicados raw y 14 identidades OCC incoherentes;
+   no queda ninguna en la capa utilizable.
+8. **119 valores son solo de investigacion.** Pasan el ranking cientifico, pero
+   no los requisitos deployable de capitalizacion, liquidez o historia.
+9. **235 clases secundarias ordinarias conservadas.** Es intencionado y esta
+   auditado por emisor, pero cualquier cartera debe controlar concentracion por
+   CIK para no comprar dos clases del mismo negocio sin querer.
+
+La base queda estructuralmente limpia y reproducible. La siguiente mejora de
+valor no es reparar DuckDB: es conseguir fuentes gratuitas adicionales para
+los 93 predictores ausentes y validar el score con historia causal walk-forward.
