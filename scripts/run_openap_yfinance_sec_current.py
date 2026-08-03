@@ -954,7 +954,8 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
     if submissions.empty:
         raise OpenAPDataError("SEC submissions bulk produced no selected rows")
     submissions["accepted_at"] = pd.to_datetime(submissions["accepted_at"], errors="coerce", utc=True)
-    submissions.to_parquet(lake_dir / "sec_submissions.parquet", index=False, compression="zstd")
+    submissions_path = lake_dir / "sec_submissions_000.parquet"
+    submissions.to_parquet(submissions_path, index=False, compression="zstd")
     accepted_map = {
         (int(row.cik), str(row.accession_number)): row.accepted_at
         for row in submissions.itertuples()
@@ -1023,10 +1024,48 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
         if buffer:
             yield _normalise_fact_batch(pd.DataFrame(buffer))
 
-    fact_count = _write_parquet_batches(lake_dir / "sec_companyfacts.parquet", fact_batches())
+    companyfacts_path = lake_dir / "sec_companyfacts_000.parquet"
+    fact_count = _write_parquet_batches(companyfacts_path, fact_batches())
+    fact_ciks = set(
+        pd.read_parquet(companyfacts_path, columns=["cik"])["cik"]
+        .dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    submission_ciks = set(
+        pd.to_numeric(submissions["cik"], errors="coerce")
+        .dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    status_rows = []
+    for cik in sorted(ciks):
+        for surface, available in (
+            ("companyfacts", cik in fact_ciks),
+            ("submissions", cik in submission_ciks),
+        ):
+            status_rows.append(
+                {
+                    "chunk_index": 0,
+                    "cik": cik,
+                    "surface": surface,
+                    "status": "ok" if available else "missing",
+                    "source_mode": "sec_official_bulk_archive",
+                    "error": "" if available else "CIK absent from official bulk archive",
+                }
+            )
+    pd.DataFrame(status_rows).to_csv(output / "sec_status_000.csv", index=False)
     manifest = {
+        "chunk_index": 0,
+        "total_chunks": 1,
+        "source_layout": "official_bulk_archive",
         "retrieved_at": _utcnow(),
         "universe_ciks": len(ciks),
+        "ciks_expected": len(ciks),
+        "companyfacts_ciks_ok": len(fact_ciks),
+        "submissions_ciks_ok": len(submission_ciks),
         "submissions_rows": len(submissions),
         "companyfacts_rows": fact_count,
         "companyfacts_zip_bytes": companyfacts_zip.stat().st_size,
@@ -1036,7 +1075,7 @@ def sec_bulk(config: dict[str, Any], args: argparse.Namespace) -> None:
         "all_facts_have_available_at": True,
         "locked_opened": False,
     }
-    write_summary(output / "sec_bulk_summary.json", manifest)
+    write_summary(output / "sec_summary_000.json", manifest)
 
 
 def _read_jsonl_files(paths: Iterable[Path]) -> pd.DataFrame:
@@ -2102,7 +2141,17 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     sec_submission_paths = sorted(sec_dir.rglob("sec_submissions_*.parquet"))
     sec_status_paths = sorted(sec_dir.rglob("sec_status_*.csv"))
     sec_summary_paths = sorted(sec_dir.rglob("sec_summary_*.json"))
-    expected_sec_chunks = int(config["execution"].get("sec_chunks", expected_chunks))
+    sec_layout = "sharded_api"
+    if len(sec_summary_paths) == 1:
+        first_sec_summary = json.loads(
+            sec_summary_paths[0].read_text(encoding="utf-8")
+        )
+        sec_layout = str(first_sec_summary.get("source_layout", sec_layout))
+    expected_sec_chunks = (
+        1
+        if sec_layout == "official_bulk_archive"
+        else int(config["execution"].get("sec_chunks", expected_chunks))
+    )
     sec_surface_counts = {
         "companyfacts": len(sec_fact_paths),
         "submissions": len(sec_submission_paths),
@@ -3195,6 +3244,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "raw_sec_archives_in_final_artifact": False,
         "raw_sec_archive_retention_days": int(config["execution"]["artifact_retention_days"]),
         "sec_chunks_found": len(sec_summary_paths),
+        "sec_source_layout": sec_layout,
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
         "facts_without_available_at": facts_without_available_at,
@@ -3283,6 +3333,10 @@ def build_parser() -> argparse.ArgumentParser:
     sec_parser.add_argument("--chunk-index", type=int, required=True)
     sec_parser.add_argument("--total-chunks", type=int, required=True)
     sec_parser.add_argument("--output-dir", required=True)
+    sec_bulk_parser = subparsers.add_parser("sec-bulk")
+    sec_bulk_parser.add_argument("--security-master", required=True)
+    sec_bulk_parser.add_argument("--sec-user-agent", required=True)
+    sec_bulk_parser.add_argument("--output-dir", required=True)
     merge_parser = subparsers.add_parser("merge")
     merge_parser.add_argument("--input-root", required=True)
     merge_parser.add_argument("--prepare-dir", required=True)
@@ -3301,6 +3355,8 @@ def main() -> int:
         yfinance_chunk(config, args)
     elif args.mode == "sec-chunk":
         sec_chunk(config, args)
+    elif args.mode == "sec-bulk":
+        sec_bulk(config, args)
     elif args.mode == "merge":
         merge(config, args)
     else:

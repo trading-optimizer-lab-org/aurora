@@ -1292,7 +1292,8 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     assert "SEC_CHUNKS: \"48\"" in text
     assert "max-parallel: 16" in text
     assert "max-parallel: 8" in text
-    assert "sec-chunk" in text
+    assert "sec-bulk" in text
+    assert "source_layout\"] == \"official_bulk_archive\"" in text
     assert "openap-sec-raw-${{ matrix.chunk }}" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text

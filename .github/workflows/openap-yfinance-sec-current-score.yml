@@ -198,60 +198,12 @@ jobs:
   sec:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 1
       matrix:
-        chunk:
-          - 0
-          - 1
-          - 2
-          - 3
-          - 4
-          - 5
-          - 6
-          - 7
-          - 8
-          - 9
-          - 10
-          - 11
-          - 12
-          - 13
-          - 14
-          - 15
-          - 16
-          - 17
-          - 18
-          - 19
-          - 20
-          - 21
-          - 22
-          - 23
-          - 24
-          - 25
-          - 26
-          - 27
-          - 28
-          - 29
-          - 30
-          - 31
-          - 32
-          - 33
-          - 34
-          - 35
-          - 36
-          - 37
-          - 38
-          - 39
-          - 40
-          - 41
-          - 42
-          - 43
-          - 44
-          - 45
-          - 46
-          - 47
+        chunk: [0]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -264,16 +216,14 @@ jobs:
         with:
           name: openap-prepare
           path: inputs/prepare
-      - name: Download SEC Company Facts and Submissions shard
+      - name: Download official SEC bulk archives once
         env:
           AU_SEC_EDGAR_USER_AGENT: ${{ inputs.sec_user_agent }}
         run: |
           python scripts/run_openap_yfinance_sec_current.py \
-            --config "$OPENAP_CONFIG" sec-chunk \
+            --config "$OPENAP_CONFIG" sec-bulk \
             --security-master inputs/prepare/sec_cik_universe.parquet \
             --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
-            --chunk-index "${{ matrix.chunk }}" \
-            --total-chunks "$SEC_CHUNKS" \
             --output-dir "outputs/sec_${{ matrix.chunk }}"
       - name: Validate SEC output
         run: |
@@ -285,6 +235,7 @@ jobs:
           from pathlib import Path
           chunk = int("${{ matrix.chunk }}")
           summary = json.loads(Path(f"outputs/sec_{chunk}/sec_summary_{chunk:03d}.json").read_text())
+          assert summary["source_layout"] == "official_bulk_archive"
           assert summary["ciks_expected"] > 0
           assert summary["companyfacts_ciks_ok"] > 0
           assert summary["submissions_ciks_ok"] > 0
