@@ -1262,7 +1262,10 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
 DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     "prices_daily_raw": ("symbol", "date", "adj_close"),
     "prices_daily_clean": ("symbol", "date", "adj_close"),
-    "security_master": ("symbol", "cik", "eligible_common_stock", "ranking_eligible"),
+    "security_master": (
+        "symbol", "cik", "eligible_common_stock", "ranking_eligible",
+        "sec_companyfacts_available", "sec_submissions_available",
+    ),
     "sec_companyfacts": (
         "fact_identity", "cik", "taxonomy", "tag", "unit", "value",
         "period_end", "filed", "accession_number", "available_at",
@@ -1690,6 +1693,32 @@ def _sec_issuer_flags(submissions: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+def _sec_surface_availability(status: pd.DataFrame) -> pd.DataFrame:
+    """Return one fail-closed SEC availability row per issuer."""
+
+    columns = ["cik", "sec_companyfacts_available", "sec_submissions_available"]
+    if status.empty:
+        return pd.DataFrame(columns=columns)
+    frame = status.copy()
+    frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce").astype("Int64")
+    frame["surface"] = frame["surface"].astype("string").fillna("").str.lower()
+    frame["available"] = frame["status"].isin(["ok", "repaired_bulk"])
+    frame = frame.dropna(subset=["cik"])
+    rows: list[dict[str, Any]] = []
+    for cik, group in frame.groupby("cik"):
+        by_surface = group.groupby("surface")["available"].any().to_dict()
+        rows.append(
+            {
+                "cik": int(cik),
+                "sec_companyfacts_available": bool(
+                    by_surface.get("companyfacts", False)
+                ),
+                "sec_submissions_available": bool(by_surface.get("submissions", False)),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _classify_security_eligibility(
     frame: pd.DataFrame,
     *,
@@ -1905,6 +1934,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     security_master = security_master.merge(price_coverage, on="symbol", how="left")
     sec_issuer_flags = _sec_issuer_flags(connection.execute("SELECT * FROM sec_submissions").df())
     security_master = security_master.merge(sec_issuer_flags, on="cik", how="left")
+    sec_availability = _sec_surface_availability(
+        connection.execute("SELECT cik, surface, status FROM sec_download_status").df()
+    )
+    security_master = security_master.merge(sec_availability, on="cik", how="left")
+    for column in ("sec_companyfacts_available", "sec_submissions_available"):
+        security_master[column] = security_master[column].fillna(False).astype(bool)
     as_of = pd.Timestamp.now(tz="UTC").tz_localize(None)
     security_master = _classify_security_eligibility(
         security_master,
@@ -1966,6 +2001,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             int(config["universe"]["maximum_price_age_days"])
         ) | pd.to_numeric(security_master.get("clean_price_staleness_days"), errors="coerce").isna(),
         ~security_master.get("price_quality_pass", pd.Series(False, index=security_master.index)).fillna(False).astype(bool),
+        ~security_master["sec_submissions_available"],
+        ~security_master["sec_companyfacts_available"],
     ]
     security_master["ranking_rejection_reason"] = np.select(
         rank_conditions,
@@ -1977,6 +2014,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "insufficient_clean_price_history",
             "stale_or_missing_latest_price",
             "price_quality_failed",
+            "sec_submissions_unavailable",
+            "sec_companyfacts_unavailable",
         ],
         default="",
     )
@@ -2484,9 +2523,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     ranking_sec_download_failures = int(
         connection.execute(
-            "SELECT COUNT(DISTINCT d.cik) FROM sec_download_status d "
+            "SELECT COUNT(*) FROM sec_download_status d "
             "INNER JOIN security_master s ON d.cik = s.cik "
-            "WHERE s.ranking_eligible AND d.surface = 'companyfacts' "
+            "WHERE s.ranking_eligible "
             "AND d.status NOT IN ('ok','repaired_bulk')"
         ).fetchone()[0]
     )

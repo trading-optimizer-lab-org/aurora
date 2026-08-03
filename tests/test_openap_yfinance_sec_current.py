@@ -36,6 +36,7 @@ from scripts.run_openap_yfinance_sec_current import (
     _request_sec_json,
     _sec_exchange_csv_rows,
     _sec_issuer_flags,
+    _sec_surface_availability,
     _select_chunk_rows,
     _submission_rows,
     finalize_database_contract,
@@ -84,6 +85,27 @@ def test_sec_direct_403_opens_process_circuit_and_uses_audited_fallback(
     assert first[0] == {"fallback": True}
     assert second[0] == {"fallback": True}
     assert sum(url.startswith("https://data.sec.gov") for url in calls) == 1
+
+
+def test_sec_surface_availability_fails_closed_per_issuer() -> None:
+    status = pd.DataFrame(
+        [
+            {"cik": 1, "surface": "companyfacts", "status": "ok"},
+            {"cik": 1, "surface": "submissions", "status": "ok"},
+            {"cik": 2, "surface": "companyfacts", "status": "error"},
+            {"cik": 2, "surface": "submissions", "status": "ok"},
+            {"cik": 3, "surface": "companyfacts", "status": "repaired_bulk"},
+        ]
+    )
+
+    result = _sec_surface_availability(status).set_index("cik")
+
+    assert bool(result.loc[1, "sec_companyfacts_available"])
+    assert bool(result.loc[1, "sec_submissions_available"])
+    assert not bool(result.loc[2, "sec_companyfacts_available"])
+    assert bool(result.loc[2, "sec_submissions_available"])
+    assert bool(result.loc[3, "sec_companyfacts_available"])
+    assert not bool(result.loc[3, "sec_submissions_available"])
 
 
 def _metadata(rows: int = EXPECTED_PREDICTORS) -> pd.DataFrame:
@@ -224,11 +246,29 @@ def test_official_filter_mapping_fails_closed_and_applies_known_rules() -> None:
     assert status == "applied"
     assert mask.to_dict() == {"A": True, "B": False, "C": False}
 
+    listed, status = official_filter_mask(
+        {"filterstr": "exchcd %in% c(1,2), shrcd <= 11"}, context
+    )
+    assert status == "applied"
+    assert listed.to_dict() == {"A": True, "B": True, "C": False}
+
+    all_primary, status = official_filter_mask(
+        {"filterstr": "exchcd%in%c(1,2,3),shrcd<=11"}, context
+    )
+    assert status == "applied"
+    assert all_primary.to_dict() == {"A": True, "B": True, "C": True}
+
     unsupported, status = official_filter_mask(
         {"filterstr": "siccd > 0"}, context
     )
     assert not unsupported.any()
     assert status.startswith("unsupported:")
+
+    malformed, status = official_filter_mask(
+        {"filterstr": "exchcd%in%c(1,2"}, context
+    )
+    assert not malformed.any()
+    assert status == "unsupported:unbalanced_parentheses"
 
 
 def test_assemble_uses_nyse_breakpoints_and_neutralises_middle_bucket() -> None:

@@ -276,6 +276,7 @@ jobs:
           con.close()
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() && hashFiles('outputs/final/**') != '' }}
         with:
           name: openap-yfinance-sec-current-score-results
           path: outputs/final/

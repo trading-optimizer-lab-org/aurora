@@ -20,7 +20,8 @@ A common stock enters the ranking only when it also has:
 - 21-day average dollar volume of at least USD 1 million;
 - at least 252 clean daily price observations;
 - a latest clean price no more than 14 calendar days old;
-- no severe price anomaly in the recent quality window.
+- no severe price anomaly in the recent quality window;
+- successful SEC Submissions and Company Facts surfaces for its CIK.
 
 Every exclusion is retained in `security_universe_exclusions.csv`.
 
@@ -47,6 +48,11 @@ wide 401 or 403, the shard opens a circuit breaker instead of repeating the
 same rejected request for every issuer. The Jina read-through remains an
 explicitly labelled transport fallback; canonical JSON hashes and raw run
 archives preserve the retrieved payload for audit.
+
+An issuer whose SEC surface is unavailable is excluded from the ranking with
+`sec_submissions_unavailable` or `sec_companyfacts_unavailable`. Missing SEC
+data is never replaced with zero and cannot enter the leaderboard through a
+price-only score.
 
 Selected accounting inputs must satisfy all of the following:
 
@@ -88,6 +94,8 @@ vote.
 Official OpenAP universe filters and portfolio quantiles are applied before a
 predictor may vote. Middle observations outside the official long and short
 tails are neutral at 50 rather than treated as new evidence.
+Filter clauses are split only at top-level commas, preserving list expressions
+such as `exchcd %in% c(1,2,3)`. Unknown or malformed filters fail closed.
 
 Signals are direction-aligned before redundancy analysis. A shared redundancy
 group requires positive correlation above the threshold, the same economic

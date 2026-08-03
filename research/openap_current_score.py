@@ -182,7 +182,30 @@ def official_filter_mask(
     market_cap = pd.to_numeric(context.get("market_cap"), errors="coerce")
     nyse20 = pd.to_numeric(context.get("nyse_market_cap_p20"), errors="coerce")
 
-    clauses = [clause for clause in compact.split(",") if clause]
+    clauses: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(compact):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth < 0:
+                return (
+                    pd.Series(False, index=context.index, dtype=bool),
+                    "unsupported:unbalanced_parentheses",
+                )
+        elif character == "," and depth == 0:
+            if compact[start:index]:
+                clauses.append(compact[start:index])
+            start = index + 1
+    if depth != 0:
+        return (
+            pd.Series(False, index=context.index, dtype=bool),
+            "unsupported:unbalanced_parentheses",
+        )
+    if compact[start:]:
+        clauses.append(compact[start:])
     supported = {
         "abs(prc)>1",
         "abs(prc)>5",
