@@ -615,7 +615,7 @@ def calculate_price_features(
     monthly = _monthly_close(daily)
     if as_of is not None and not monthly.empty:
         as_of_period = pd.Timestamp(as_of).tz_localize(None).to_period("M")
-        monthly = monthly.loc[monthly.index.to_period("M").lt(as_of_period)]
+        monthly = monthly.loc[monthly.index.to_period("M") < as_of_period]
     month_returns = monthly.pct_change()
     current = float(close.iloc[-1])
     volume = pd.to_numeric(daily["volume"], errors="coerce")
