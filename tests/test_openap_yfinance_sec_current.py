@@ -292,7 +292,11 @@ def test_assemble_uses_nyse_breakpoints_and_neutralises_middle_bucket() -> None:
     )
 
     features = assemble_feature_table(
-        metadata, values, as_of="2026-08-01", security_context=context
+        metadata,
+        values,
+        as_of="2026-08-01",
+        security_context=context,
+        minimum_cross_sectional_observations=2,
     )
     rows = features.loc[features["signalname"].eq("test_signal")].set_index("symbol")
 
@@ -319,6 +323,31 @@ def test_equal_cross_sectional_values_are_rejected_as_uninformative() -> None:
 
     assert rows["status"].eq("unavailable").all()
     assert rows["value_status"].eq("uninformative_cross_section").all()
+    assert rows["evidence_weight"].eq(0.0).all()
+    assert rows["score_percentile"].isna().all()
+
+
+def test_sparse_cross_sectional_signal_is_excluded_from_score() -> None:
+    metadata = _metadata()
+    metadata.loc[0, "signalname"] = "sparse_signal"
+    values = {
+        "AAA": {"sparse_signal": FeatureValue("sparse_signal", 1.0, "exact", "test", "f")},
+        "BBB": {"sparse_signal": FeatureValue("sparse_signal", 2.0, "exact", "test", "f")},
+        "CCC": {"sparse_signal": FeatureValue("sparse_signal", None, "exact", "test", "f")},
+        "DDD": {"sparse_signal": FeatureValue("sparse_signal", None, "exact", "test", "f")},
+    }
+
+    features = assemble_feature_table(
+        metadata,
+        values,
+        as_of="2026-08-01",
+        minimum_cross_sectional_observations=3,
+    )
+    rows = features.loc[features["signalname"].eq("sparse_signal")]
+
+    assert rows.loc[rows["raw_value"].notna(), "value_status"].eq(
+        "insufficient_cross_sectional_coverage"
+    ).all()
     assert rows["evidence_weight"].eq(0.0).all()
     assert rows["score_percentile"].isna().all()
 
@@ -1390,6 +1419,8 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
         "maximum_accounting_input_age_days_for_ranking",
         "minimum_option_contracts_per_side",
         "minimum_cross_sectional_nonmodal_fraction",
+        "minimum_cross_sectional_observations",
+        "minimum_cross_sectional_coverage_fraction",
     ):
         assert requirement in text
     assert config["score"]["minimum_aggregate_confidence"] >= 50
@@ -1398,6 +1429,8 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     assert config["score"]["maximum_sec_age_days_for_ranking"] <= 183
     assert config["score"]["maximum_accounting_input_age_days_for_ranking"] <= 550
     assert config["yfinance"]["minimum_option_contracts_per_side"] >= 2
+    assert config["score"]["minimum_cross_sectional_observations"] >= 100
+    assert config["score"]["minimum_cross_sectional_coverage_fraction"] >= 0.05
     assert config["execution"]["artifact_retention_days"] == 90
 
 

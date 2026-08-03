@@ -17,6 +17,7 @@ semanticos descritos aqui.
 | Ventanas de precio | MRreversal, LRreversal, DolVol e Illiquidity no seguian las ventanas oficiales | MR 18-13, LR 36-13, DolVol mensual lag 2 e Illiquidity 252 sesiones | Tests de formula y `formula_id` |
 | Volatilidad realizada | Volatilidad total se presentaba demasiado cerca de una medida residual | Se mantiene solo como proxy explicito | Ninguna fila proxy puede llamarse exacta |
 | Senales constantes | OptionVolume2 y variantes zerotrade podian aumentar confianza sin discriminar acciones | Deteccion transversal automatica; peso cero y estado `uninformative_cross_section` | `uninformative_weighted_rows=0`, `weighted_constant_predictors=0` |
+| Senales demasiado escasas | Un predictor con muy pocas acciones podia producir percentiles extremos poco comparables | Minimo 100 observaciones y 5% del universo; por debajo pesa cero | `undercovered_weighted_predictors=0` |
 | Opciones | Cadenas con muy pocos contratos producian proxies inestables | Hasta tres vencimientos descargados; se elige el mas cercano con profundidad minima de calls y puts | `shallow_option_feature_rows=0` |
 | Score 0-100 | El valor anterior era una media comprimida, no un percentil final real | Se conserva `raw_score`; el score principal es el percentil transversal real entre acciones admitidas | `overall_score_scale_violations=0` |
 | Universo del percentil | Acciones luego rechazadas influian en el percentil de las validas | El percentil final se recalcula solo entre acciones que pasan todos los requisitos | Minimo 0 y maximo 100 en el leaderboard |

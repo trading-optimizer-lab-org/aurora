@@ -2419,6 +2419,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         minimum_nonmodal_fraction=float(
             config["score"]["minimum_cross_sectional_nonmodal_fraction"]
         ),
+        minimum_cross_sectional_observations=int(
+            config["score"]["minimum_cross_sectional_observations"]
+        ),
+        minimum_cross_sectional_coverage_fraction=float(
+            config["score"]["minimum_cross_sectional_coverage_fraction"]
+        ),
     )
     feature_frame, current_redundancy_audit = refine_current_redundancy_groups(
         feature_frame,
@@ -2991,6 +2997,27 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "GROUP BY signalname HAVING COUNT(*) >= 3 AND COUNT(DISTINCT raw_value) <= 1)"
         ).fetchone()[0]
     )
+    minimum_cross_sectional_count = max(
+        int(config["score"]["minimum_cross_sectional_observations"]),
+        int(
+            math.ceil(
+                len(values_by_symbol)
+                * float(
+                    config["score"]["minimum_cross_sectional_coverage_fraction"]
+                )
+            )
+        ),
+    )
+    undercovered_weighted_predictors = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT signalname, COUNT(*) FILTER (WHERE raw_value IS NOT NULL) n "
+            "FROM openap_features_current "
+            "WHERE status IN ('exact','proxy') AND evidence_weight > 0 "
+            "GROUP BY signalname HAVING n < ?) ",
+            [minimum_cross_sectional_count],
+        ).fetchone()[0]
+    )
     stale_sec_leaderboard_rows = int(
         connection.execute(
             "SELECT COUNT(*) FROM openap_current_leaderboard "
@@ -3101,6 +3128,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "ranking_sec_download_failures": ranking_sec_download_failures,
         "uninformative_weighted_rows": uninformative_weighted_rows,
         "weighted_constant_predictors": weighted_constant_predictors,
+        "undercovered_weighted_predictors": undercovered_weighted_predictors,
         "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
         "stale_accounting_leaderboard_rows": stale_accounting_leaderboard_rows,
         "stale_weighted_feature_rows": stale_weighted_feature_rows,
@@ -3328,6 +3356,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "ranking_sec_download_failures": ranking_sec_download_failures,
         "uninformative_weighted_rows": uninformative_weighted_rows,
         "weighted_constant_predictors": weighted_constant_predictors,
+        "undercovered_weighted_predictors": undercovered_weighted_predictors,
         "stale_sec_leaderboard_rows": stale_sec_leaderboard_rows,
         "stale_accounting_leaderboard_rows": stale_accounting_leaderboard_rows,
         "stale_weighted_feature_rows": stale_weighted_feature_rows,

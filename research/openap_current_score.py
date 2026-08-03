@@ -1558,6 +1558,8 @@ def assemble_feature_table(
     exact_source_multiplier: float = 1.0,
     proxy_source_multiplier: float = 0.55,
     minimum_nonmodal_fraction: float = 0.01,
+    minimum_cross_sectional_observations: int = 1,
+    minimum_cross_sectional_coverage_fraction: float = 0.0,
 ) -> pd.DataFrame:
     """Produce one audited long row per symbol and strict predictor."""
 
@@ -1693,6 +1695,30 @@ def assemble_feature_table(
             reference_mask = eligible & signal_context["exchange_code"].eq(1)
         else:
             reference_mask = eligible
+        required_cross_section = max(
+            int(minimum_cross_sectional_observations),
+            int(
+                math.ceil(
+                    len(signal_index)
+                    * float(minimum_cross_sectional_coverage_fraction)
+                )
+            ),
+        )
+        if (
+            int(eligible.sum()) < required_cross_section
+            or int(reference_mask.sum()) < required_cross_section
+        ):
+            affected = signal_index[eligible.to_numpy()]
+            frame.loc[affected, "status"] = "unavailable"
+            frame.loc[affected, "value_status"] = (
+                "insufficient_cross_sectional_coverage"
+            )
+            frame.loc[affected, "evidence_weight"] = 0.0
+            frame.loc[signal_index, "official_filter_status"] = (
+                frame.loc[signal_index, "official_filter_status"].astype(str)
+                + f"|cross_section_below_{required_cross_section}"
+            )
+            continue
         percentiles = _reference_percentile(aligned.where(eligible), aligned.where(reference_mask))
         frame.loc[signal_index, "percentile"] = percentiles
 
@@ -2004,7 +2030,8 @@ def calculate_scores(
     contribution_columns = [
         "as_of", "symbol", "horizon_months", "signalname",
         "redundancy_group", "economic_family", "raw_value", "status",
-        "source", "formula_id", "score_percentile", "observed",
+        "source", "formula_id", "source_available_at", "source_input_age_days",
+        "score_percentile", "observed",
         "within_group_weight", "fixed_group_weight", "score_weight",
         "observed_score_weight", "raw_score_contribution",
         "directional_contribution_vs_neutral",

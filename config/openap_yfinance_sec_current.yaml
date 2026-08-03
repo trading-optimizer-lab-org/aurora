@@ -86,6 +86,8 @@ score:
   sec_freshness_warning_days: 92
   accounting_freshness_warning_days: 365
   minimum_cross_sectional_nonmodal_fraction: 0.01
+  minimum_cross_sectional_observations: 100
+  minimum_cross_sectional_coverage_fraction: 0.05
   validation_status: unvalidated_current_snapshot_only
 deployment:
   minimum_market_cap_usd: 1000000000
