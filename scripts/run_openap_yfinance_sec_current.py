@@ -3083,7 +3083,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     incomplete_clean_price_rows = int(
         connection.execute(
             "SELECT COUNT(*) FROM prices_daily_clean WHERE CAST(date AS DATE) > CAST(? AS DATE)",
-            [latest_completed_us_session.date().isoformat()],
+            [latest_completed_session.date().isoformat()],
         ).fetchone()[0]
     )
     facts_without_available_at = int(

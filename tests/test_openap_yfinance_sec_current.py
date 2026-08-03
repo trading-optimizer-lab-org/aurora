@@ -1777,3 +1777,11 @@ def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() 
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text
+
+
+def test_merge_uses_the_resolved_latest_completed_session_name() -> None:
+    text = Path("scripts/run_openap_yfinance_sec_current.py").read_text(
+        encoding="utf-8"
+    )
+    assert "latest_completed_us_session.date()" not in text
+    assert "latest_completed_session.date().isoformat()" in text
