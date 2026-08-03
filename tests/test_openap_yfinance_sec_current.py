@@ -557,6 +557,9 @@ def test_accounting_features_do_not_fill_missing_with_zero() -> None:
     result = calculate_accounting_features(concepts, market_cap=200.0)
     assert result["BM"].raw_value == pytest.approx(0.3)
     assert result["AssetGrowth"].raw_value == pytest.approx(0.25)
+    assert result["Accruals"].status == "proxy"
+    assert result["TotalAccruals"].status == "proxy"
+    assert result["Accruals"].formula_id == result["TotalAccruals"].formula_id
     assert result["ChInv"].raw_value is None
     assert result["InvestPPEInv"].raw_value is None
     assert result["PayoutYield"].raw_value is None

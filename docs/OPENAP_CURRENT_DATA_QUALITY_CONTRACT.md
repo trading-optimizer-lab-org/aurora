@@ -67,6 +67,15 @@ implemented. `value_status` describes whether a current value exists. `status`
 is usable status: a formula with no current value is `unavailable` and receives
 no score weight.
 
+`Accruals` and `TotalAccruals` are explicitly classified as proxies. The
+available current implementation uses net income minus operating cash flow
+over lagged assets for both. OpenAP's original `Accruals` requires the full
+balance-sheet accrual formula, while `TotalAccruals` additionally requires
+complete operating, investing and financing cash-flow components. Until those
+inputs and formulas are reproduced separately, neither may be labelled exact
+and their identical proxy values must contribute only one redundancy-group
+vote.
+
 ## Redundancy And Score
 
 Official OpenAP universe filters and portfolio quantiles are applied before a

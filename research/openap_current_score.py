@@ -956,8 +956,18 @@ def calculate_accounting_features(
     result["ChNWC"] = exact("ChNWC", _safe_ratio(nwc_change, assets_lag), "net_working_capital_change_over_lag_assets")
     result["ChTax"] = exact("ChTax", _safe_ratio(delta("tax"), assets_lag), "tax_change_over_lag_assets")
     accruals = (net_income - ocf) if net_income is not None and ocf is not None else None
-    result["Accruals"] = exact("Accruals", _safe_ratio(accruals, assets_lag), "net_income_minus_ocf_over_lag_assets")
-    result["TotalAccruals"] = exact("TotalAccruals", _safe_ratio(accruals, assets_lag), "total_accruals_over_lag_assets")
+    result["Accruals"] = proxy(
+        "Accruals",
+        _safe_ratio(accruals, assets_lag),
+        "net_income_minus_ocf_over_lag_assets_proxy",
+        "OpenAP Accruals requires the full balance-sheet accrual formula",
+    )
+    result["TotalAccruals"] = proxy(
+        "TotalAccruals",
+        _safe_ratio(accruals, assets_lag),
+        "net_income_minus_ocf_over_lag_assets_proxy",
+        "OpenAP TotalAccruals requires complete operating, investing and financing cash-flow components",
+    )
     result["PctAcc"] = exact("PctAcc", _safe_ratio(accruals, abs(net_income) if net_income is not None else None), "accruals_over_abs_earnings")
     current_operating_assets = difference(ca, cash)
     lag_operating_assets = difference(value("current_assets", 1), value("cash", 1))
