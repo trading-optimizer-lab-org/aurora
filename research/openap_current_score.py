@@ -551,6 +551,45 @@ def clean_price_history(
     return clean, quality
 
 
+def latest_completed_us_session_date(as_of: pd.Timestamp) -> pd.Timestamp:
+    """Return the latest US regular session that is safe to treat as closed.
+
+    YFinance can expose today's daily bar while the regular session is still
+    trading.  A fifteen-minute buffer after the 16:00 New York close avoids
+    feeding a partial close or partial volume into daily characteristics.
+    """
+
+    timestamp = pd.Timestamp(as_of)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    new_york = timestamp.tz_convert("America/New_York")
+    session_day = new_york.normalize()
+    closed_today = (
+        new_york.weekday() < 5
+        and (new_york.hour, new_york.minute) >= (16, 15)
+    )
+    if not closed_today:
+        session_day = session_day - pd.offsets.BDay(1)
+    return session_day.tz_localize(None).normalize()
+
+
+def exclude_incomplete_us_session(
+    frame: pd.DataFrame,
+    *,
+    as_of: pd.Timestamp,
+) -> tuple[pd.DataFrame, int, pd.Timestamp]:
+    """Drop any daily rows later than the latest safely completed session."""
+
+    cutoff = latest_completed_us_session_date(as_of)
+    if frame.empty or "date" not in frame:
+        return frame.copy(), 0, cutoff
+    dates = pd.to_datetime(frame["date"], errors="coerce").dt.tz_localize(None)
+    keep = dates.dt.normalize().le(cutoff)
+    return frame.loc[keep.fillna(False)].copy(), int((~keep.fillna(False)).sum()), cutoff
+
+
 def calculate_price_features(
     frame: pd.DataFrame,
     *,
@@ -565,7 +604,10 @@ def calculate_price_features(
     required = {"date", "adj_close", "volume"}
     if required.difference(frame.columns):
         return {}
-    daily, _ = clean_price_history(frame)
+    source = frame
+    if as_of is not None:
+        source, _, _ = exclude_incomplete_us_session(source, as_of=as_of)
+    daily, _ = clean_price_history(source)
     if daily.empty:
         return {}
     close = daily["adj_close"]
@@ -1028,7 +1070,9 @@ def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.Da
         if subset.empty:
             continue
         if "form" in subset:
-            annual_form = subset["form"].astype(str).str.upper().isin({"10-K", "20-F", "40-F"})
+            annual_form = subset["form"].astype(str).str.upper().isin(
+                {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
+            )
         else:
             annual_form = pd.Series(False, index=subset.index)
         if "fp" in subset:
@@ -1849,13 +1893,32 @@ def calculate_scores(
     metric_meta["within_group_weight"] = (
         metric_meta["potential_weight"] / group_weight_sum.replace(0, np.nan)
     )
+    group_family = (
+        metric_meta.groupby(
+            ["horizon_months", "redundancy_group", "economic_family"],
+            as_index=False,
+        )["potential_weight"]
+        .sum()
+        .sort_values(
+            ["horizon_months", "redundancy_group", "potential_weight", "economic_family"],
+            ascending=[True, True, False, True],
+        )
+        .drop_duplicates(["horizon_months", "redundancy_group"], keep="first")
+        .rename(columns={"economic_family": "group_economic_family"})
+    )
     group_meta = metric_meta.groupby(
         ["horizon_months", "redundancy_group"], as_index=False
     ).agg(
         group_evidence=("potential_weight", "mean"),
         metrics_expected=("signalname", "nunique"),
-        economic_family=("economic_family", lambda values: "|".join(sorted(set(values)))),
     )
+    group_meta = group_meta.merge(
+        group_family[
+            ["horizon_months", "redundancy_group", "group_economic_family"]
+        ],
+        on=["horizon_months", "redundancy_group"],
+        how="left",
+    ).rename(columns={"group_economic_family": "economic_family"})
     family_evidence = group_meta.groupby(
         ["horizon_months", "economic_family"], as_index=False
     )["group_evidence"].sum()
@@ -2008,8 +2071,13 @@ def calculate_scores(
     )
     contribution_frame = working.merge(
         group_meta[
-            ["horizon_months", "redundancy_group", "fixed_group_weight"]
-        ],
+            [
+                "horizon_months", "redundancy_group", "fixed_group_weight",
+                "economic_family",
+            ]
+        ].rename(
+            columns={"economic_family": "group_economic_family"}
+        ),
         on=["horizon_months", "redundancy_group"],
         how="left",
     )
@@ -2041,7 +2109,8 @@ def calculate_scores(
     )
     contribution_columns = [
         "as_of", "symbol", "horizon_months", "signalname",
-        "redundancy_group", "economic_family", "raw_value", "status",
+        "redundancy_group", "economic_family", "group_economic_family",
+        "raw_value", "status",
         "source", "formula_id", "source_available_at", "source_input_age_days",
         "score_percentile", "observed",
         "within_group_weight", "fixed_group_weight", "score_weight",
@@ -2240,8 +2309,10 @@ __all__ = [
     "classify_missing_signal",
     "coverage_report",
     "evidence_weight",
+    "exclude_incomplete_us_session",
     "latest_sec_concepts",
     "latest_sec_concept_inputs",
+    "latest_completed_us_session_date",
     "official_filter_mask",
     "refine_current_redundancy_groups",
     "sec_concepts_from_inputs",

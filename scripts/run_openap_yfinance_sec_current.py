@@ -36,6 +36,8 @@ from aurora.research.openap_current_score import (
     calculate_scores,
     clean_price_history,
     coverage_report,
+    exclude_incomplete_us_session,
+    latest_completed_us_session_date,
     latest_sec_concept_inputs,
     redundancy_correlation_audit,
     refine_current_redundancy_groups,
@@ -57,6 +59,12 @@ UNIT_SYMBOL_RE = re.compile(r"-(?:UN|U)$", re.IGNORECASE)
 WARRANT_SYMBOL_RE = re.compile(r"-(?:WT|WS)$", re.IGNORECASE)
 FOREIGN_SEC_FORMS = frozenset({"20-F", "40-F", "6-K", "F-1", "F-3", "F-4"})
 INVESTMENT_COMPANY_FORMS = frozenset({"N-1A", "N-2", "N-CSR", "N-CSRS", "NPORT-P", "NPORT-NP"})
+ANNUAL_FILING_FORMS = frozenset({"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"})
+US_STATE_OR_COUNTRY_CODES = frozenset(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS "
+    "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV "
+    "WI WY DC PR VI GU AS MP US USA".split()
+)
 ALLOWED_EXCHANGE_RE = re.compile(r"NASDAQ|NYSE|NEW YORK STOCK EXCHANGE|CBOE", re.IGNORECASE)
 _SEC_DIRECT_API_BLOCKED = False
 
@@ -571,6 +579,10 @@ def _submission_rows(payload: Mapping[str, Any], cik: int) -> list[dict[str, Any
                 "sic": payload.get("sic"),
                 "sic_description": payload.get("sicDescription"),
                 "fiscal_year_end": payload.get("fiscalYearEnd"),
+                "state_of_incorporation": payload.get("stateOfIncorporation"),
+                "business_state_or_country": (
+                    (payload.get("addresses") or {}).get("business") or {}
+                ).get("stateOrCountry"),
                 "source": "sec_submissions_bulk",
             }
         )
@@ -687,6 +699,7 @@ def _companyfacts_rows(
     source_mode: str,
     accepted_at_by_accession: Mapping[str, Any] | None = None,
     observations_per_tag: int = 24,
+    annual_observations_per_tag: int = 8,
 ) -> list[dict[str, Any]]:
     wanted_tags = {
         alias
@@ -721,7 +734,26 @@ def _companyfacts_rows(
                         str(observation.get("fp") or ""),
                     )
                     by_period[key] = observation
-                for observation in list(by_period.values())[-observations_per_tag:]:
+                deduplicated = list(by_period.values())
+                annual = [
+                    observation
+                    for observation in deduplicated
+                    if str(observation.get("fp") or "").upper() == "FY"
+                    or str(observation.get("form") or "").upper()
+                    in ANNUAL_FILING_FORMS
+                ][-annual_observations_per_tag:]
+                selected_observations: dict[
+                    tuple[str, str, str, str], Mapping[str, Any]
+                ] = {}
+                for observation in deduplicated[-observations_per_tag:] + annual:
+                    key = (
+                        str(observation.get("end") or ""),
+                        str(observation.get("start") or ""),
+                        str(observation.get("form") or ""),
+                        str(observation.get("fp") or ""),
+                    )
+                    selected_observations[key] = observation
+                for observation in selected_observations.values():
                     filed = pd.to_datetime(observation.get("filed"), errors="coerce", utc=True)
                     if pd.isna(filed):
                         continue
@@ -1444,6 +1476,30 @@ def _hashes_by_chunk(paths: Iterable[Path]) -> dict[int, str]:
     return result
 
 
+def _scorable_feature_counts(features: pd.DataFrame) -> pd.DataFrame:
+    """Count only feature values that can actually contribute to the score."""
+
+    columns = ["symbol", "computed_features", "exact_features", "proxy_features"]
+    if features.empty:
+        return pd.DataFrame(columns=columns)
+    frame = features.copy()
+    usable = (
+        frame["status"].isin(["exact", "proxy"])
+        & pd.to_numeric(frame["evidence_weight"], errors="coerce").gt(0)
+        & pd.to_numeric(frame["score_percentile"], errors="coerce").notna()
+    )
+    frame["computed_features"] = usable.astype(int)
+    frame["exact_features"] = (usable & frame["status"].eq("exact")).astype(int)
+    frame["proxy_features"] = (usable & frame["status"].eq("proxy")).astype(int)
+    return (
+        frame.groupby("symbol", as_index=False)[
+            ["computed_features", "exact_features", "proxy_features"]
+        ]
+        .sum()
+        .reindex(columns=columns)
+    )
+
+
 DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "prices_daily_raw": ("symbol", "date"),
     "prices_daily_clean": ("symbol", "date"),
@@ -1465,8 +1521,13 @@ DATABASE_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "current_redundancy_groups": ("signalname",),
     "overall_redundancy_groups": ("signalname",),
     "coverage_185": ("signalname",),
-    "price_quality_current": ("symbol",),
-    "data_quality_current": ("symbol",),
+    "price_quality_current": (
+        "symbol", "incomplete_session_rows_excluded", "latest_completed_session_date",
+    ),
+    "data_quality_current": (
+        "symbol", "computed_features", "exact_features", "proxy_features",
+        "incomplete_session_rows_excluded", "latest_completed_session_date",
+    ),
     "yahoo_options_raw": ("contractSymbol",),
     "yahoo_options_usable": ("contractSymbol",),
     "source_manifest": ("source",),
@@ -1502,16 +1563,19 @@ DATABASE_REQUIRED_NON_NULL: dict[str, tuple[str, ...]] = {
     ),
     "openap_score_contributions_current": (
         "as_of", "symbol", "horizon_months", "signalname",
-        "redundancy_group", "score_weight", "raw_score_contribution",
+        "redundancy_group", "group_economic_family", "score_weight",
+        "raw_score_contribution",
         "directional_contribution_vs_neutral",
     ),
     "openap_current_leaderboard": (
         "as_of", "symbol", "aggregate_score", "aggregate_confidence",
-        "ranking_eligible", "clean_price_staleness_days",
+        "ranking_eligible", "clean_price_staleness_days", "issuer_market_cap",
+        "issuer_market_cap_source",
     ),
     "openap_current_deployable_leaderboard": (
         "as_of", "symbol", "aggregate_score", "aggregate_confidence",
-        "ranking_eligible", "deployment_eligible",
+        "ranking_eligible", "deployment_eligible", "issuer_market_cap",
+        "issuer_market_cap_source",
     ),
     "selected_predictors": ("signalname", "tstat", "Sign"),
     "redundancy_groups": ("signalname",),
@@ -1898,21 +1962,45 @@ def repair_failed_companyfacts_from_bulk(
 def _sec_issuer_flags(submissions: pd.DataFrame) -> pd.DataFrame:
     """Summarise SEC filing evidence used to exclude foreign/fund issuers."""
 
-    columns = ["cik", "sec_foreign_filer", "sec_investment_company", "sec_forms_seen"]
+    columns = [
+        "cik", "sec_foreign_filer", "sec_investment_company",
+        "sec_us_domicile_evidence", "sec_forms_seen",
+        "sec_state_of_incorporation", "sec_business_state_or_country",
+    ]
     if submissions.empty:
         return pd.DataFrame(columns=columns)
     frame = submissions.copy()
     frame["cik"] = pd.to_numeric(frame["cik"], errors="coerce").astype("Int64")
     frame["form"] = frame.get("form", "").astype("string").fillna("").str.upper()
+    for column in ("state_of_incorporation", "business_state_or_country"):
+        frame[column] = (
+            frame.get(column, pd.Series("", index=frame.index))
+            .astype("string")
+            .fillna("")
+            .str.upper()
+            .str.strip()
+        )
     rows = []
     for cik, group in frame.dropna(subset=["cik"]).groupby("cik"):
         forms = sorted(set(group["form"].dropna().astype(str)) - {""})
+        incorporation = next(
+            (value for value in group["state_of_incorporation"] if value), ""
+        )
+        business = next(
+            (value for value in group["business_state_or_country"] if value), ""
+        )
         rows.append(
             {
                 "cik": int(cik),
                 "sec_foreign_filer": bool(set(forms) & FOREIGN_SEC_FORMS),
                 "sec_investment_company": bool(set(forms) & INVESTMENT_COMPANY_FORMS),
+                "sec_us_domicile_evidence": bool(
+                    incorporation in US_STATE_OR_COUNTRY_CODES
+                    or business in US_STATE_OR_COUNTRY_CODES
+                ),
                 "sec_forms_seen": "|".join(forms),
+                "sec_state_of_incorporation": incorporation,
+                "sec_business_state_or_country": business,
             }
         )
     return pd.DataFrame(rows, columns=columns)
@@ -1990,14 +2078,17 @@ def _classify_security_eligibility(
     investment_company = out.get(
         "sec_investment_company", pd.Series(False, index=out.index)
     ).fillna(False).astype(bool)
+    sec_us_domicile = out.get(
+        "sec_us_domicile_evidence", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
     reasons = np.select(
         [
             excluded_name | excluded_symbol,
             foreign_filer,
             investment_company,
             quote_type.ne("EQUITY"),
-            country.eq(""),
-            country.ne("United States"),
+            country.eq("") & ~sec_us_domicile,
+            country.ne("") & country.ne("United States"),
             price_rows.le(0),
             last_price.isna(),
             last_price.lt(cutoff),
@@ -2007,7 +2098,7 @@ def _classify_security_eligibility(
             "excluded_foreign_sec_filer",
             "excluded_investment_company",
             "yahoo_quote_type_not_equity",
-            "yahoo_country_unavailable",
+            "country_unavailable_without_sec_us_evidence",
             "yahoo_country_not_united_states",
             "price_history_unavailable",
             "latest_price_date_unavailable",
@@ -2042,6 +2133,43 @@ def _classify_security_eligibility(
         )
         out.loc[candidates.index, "issuer_primary_security"] = False
         out.loc[primary, "issuer_primary_security"] = True
+    return out
+
+
+def _add_issuer_market_cap_context(
+    frame: pd.DataFrame,
+    *,
+    similarity_ratio_max: float = 1.25,
+) -> pd.DataFrame:
+    """Attach one issuer-level market cap without dropping valid share classes.
+
+    Yahoo sometimes reports the same consolidated market cap for every class
+    and sometimes reports class-specific values.  Similar values are treated
+    as repeated consolidated figures; materially different values are summed.
+    """
+
+    out = frame.copy()
+    out["issuer_market_cap"] = np.nan
+    out["issuer_market_cap_source"] = "missing_yfinance_market_cap"
+    eligible = out.get(
+        "eligible_common_stock", pd.Series(False, index=out.index)
+    ).fillna(False).astype(bool)
+    for cik, group in out.loc[eligible].groupby("cik", dropna=False):
+        caps = pd.to_numeric(group.get("marketCap"), errors="coerce")
+        caps = caps.loc[caps.gt(0)].dropna()
+        if caps.empty:
+            continue
+        if len(caps) == 1:
+            issuer_cap = float(caps.iloc[0])
+            source = "yfinance_single_class_market_cap"
+        elif float(caps.max() / caps.min()) <= float(similarity_ratio_max):
+            issuer_cap = float(caps.max())
+            source = "yfinance_repeated_consolidated_market_cap"
+        else:
+            issuer_cap = float(caps.sum())
+            source = "yfinance_summed_share_class_market_caps"
+        out.loc[group.index, "issuer_market_cap"] = issuer_cap
+        out.loc[group.index, "issuer_market_cap_source"] = source
     return out
 
 
@@ -2186,13 +2314,22 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         connection.execute("SELECT cik, surface, status FROM sec_download_status").df()
     )
     security_master = security_master.merge(sec_availability, on="cik", how="left")
-    for column in ("sec_companyfacts_available", "sec_submissions_available"):
+    for column in (
+        "sec_companyfacts_available", "sec_submissions_available",
+        "sec_us_domicile_evidence",
+    ):
         security_master[column] = security_master[column].fillna(False).astype(bool)
     as_of = pd.Timestamp.now(tz="UTC").tz_localize(None)
     security_master = _classify_security_eligibility(
         security_master,
         as_of=as_of,
         maximum_price_age_days=int(config["universe"]["maximum_price_age_days"]),
+    )
+    security_master = _add_issuer_market_cap_context(
+        security_master,
+        similarity_ratio_max=float(
+            config["universe"]["issuer_market_cap_similarity_ratio_max"]
+        ),
     )
     analysts = _read_jsonl_files(analyst_paths)
     if analysts.empty:
@@ -2210,7 +2347,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         prices = connection.execute(
             "SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]
         ).df()
-        clean_prices, price_quality = clean_price_history(prices)
+        completed_prices, incomplete_rows, completed_cutoff = (
+            exclude_incomplete_us_session(prices, as_of=as_of)
+        )
+        clean_prices, price_quality = clean_price_history(completed_prices)
+        price_quality["incomplete_session_rows_excluded"] = incomplete_rows
+        price_quality["latest_completed_session_date"] = completed_cutoff
         current_price = (
             float(clean_prices["adj_close"].iloc[-1]) if not clean_prices.empty else np.nan
         )
@@ -2238,7 +2380,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     security_master["clean_price_staleness_days"] = (
         as_of_date - last_clean_price_dates
     ).dt.days
-    market_cap = pd.to_numeric(security_master.get("marketCap"), errors="coerce")
+    market_cap = pd.to_numeric(
+        security_master.get("issuer_market_cap"), errors="coerce"
+    )
     rank_conditions = [
         market_cap.lt(float(config["universe"]["minimum_market_cap_usd"])) | market_cap.isna(),
         pd.to_numeric(security_master.get("current_price"), errors="coerce").lt(float(config["universe"]["minimum_price_usd"])),
@@ -2282,10 +2426,13 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         symbol = str(row.symbol)
         cik = int(row.cik)
         prices = connection.execute("SELECT * FROM prices_daily WHERE symbol = ? ORDER BY date", [symbol]).df()
+        prices, _, _ = exclude_incomplete_us_session(prices, as_of=as_of)
         prices, price_quality = clean_price_history(prices)
         values = calculate_price_features(prices, as_of=as_of)
-        market_cap = getattr(row, "marketCap", None)
-        market_cap_source = "yfinance_current_market_cap"
+        market_cap = getattr(row, "issuer_market_cap", None)
+        market_cap_source = getattr(
+            row, "issuer_market_cap_source", "missing_yfinance_market_cap"
+        )
         if not _is_number(market_cap):
             market_cap = None
         facts = connection.execute("SELECT * FROM sec_companyfacts WHERE cik = ?", [cik]).df()
@@ -2372,6 +2519,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 "resolved_shares_status": resolved_shares.status,
                 "resolved_shares_source": resolved_shares.source,
                 "resolved_shares_note": resolved_shares.note,
+                "issuer_market_cap": market_cap,
+                "issuer_market_cap_source": market_cap_source,
                 "sec_fact_rows": len(facts),
                 "computed_features": sum(item.raw_value is not None for item in values.values()),
                 "exact_features": sum(item.status == "exact" and item.raw_value is not None for item in values.values()),
@@ -2469,6 +2618,13 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     )
     coverage = coverage_report(feature_frame, metadata)
     quality = pd.DataFrame(quality_rows)
+    scorable_counts = _scorable_feature_counts(feature_frame)
+    quality = quality.drop(
+        columns=["computed_features", "exact_features", "proxy_features"],
+        errors="ignore",
+    ).merge(scorable_counts, on="symbol", how="left")
+    for column in ("computed_features", "exact_features", "proxy_features"):
+        quality[column] = quality[column].fillna(0).astype(int)
     for column, default in (
         ("option_contracts_raw", 0),
         ("option_contracts_usable", 0),
@@ -2518,6 +2674,8 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         security_master[[
             "symbol",
             "marketCap",
+            "issuer_market_cap",
+            "issuer_market_cap_source",
             "current_price",
             "average_volume_21d",
             "average_dollar_volume_21d",
@@ -2586,7 +2744,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
 
     deployment = config["deployment"]
     deployment_conditions = [
-        pd.to_numeric(aggregate_scores["marketCap"], errors="coerce").lt(
+        pd.to_numeric(
+            aggregate_scores["issuer_market_cap"], errors="coerce"
+        ).lt(
             float(deployment["minimum_market_cap_usd"])
         ),
         pd.to_numeric(
@@ -2696,6 +2856,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "CREATE OR REPLACE TABLE data_quality_current AS SELECT * FROM read_csv_auto(?)",
         [str(output / "data_quality.csv")],
     )
+    latest_completed_session = latest_completed_us_session_date(as_of)
     connection.execute(
         """
         CREATE OR REPLACE TABLE prices_daily_clean AS
@@ -2716,7 +2877,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             )
           )
           AND (q.history_reset_after IS NULL OR p.date > q.history_reset_after)
-        """
+          AND CAST(p.date AS DATE) <= CAST(? AS DATE)
+        """,
+        [latest_completed_session.date().isoformat()],
     )
     connection.execute("CREATE OR REPLACE VIEW prices_daily AS SELECT * FROM prices_daily_clean")
 
@@ -2843,6 +3006,12 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
     future_price_rows = int(
         connection.execute(
             "SELECT COUNT(*) FROM prices_daily WHERE CAST(date AS DATE) > CURRENT_DATE"
+        ).fetchone()[0]
+    )
+    incomplete_clean_price_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM prices_daily_clean WHERE CAST(date AS DATE) > CAST(? AS DATE)",
+            [latest_completed_us_session.date().isoformat()],
         ).fetchone()[0]
     )
     facts_without_available_at = int(
@@ -3106,9 +3275,33 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "WHERE ABS(raw_score - contribution_sum) > 1e-8"
         ).fetchone()[0]
     )
+    feature_count_mismatches = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "SELECT q.symbol, q.computed_features, q.exact_features, q.proxy_features, "
+            "COUNT(*) FILTER (WHERE f.status IN ('exact','proxy') "
+            "AND f.evidence_weight > 0 AND f.score_percentile IS NOT NULL) actual_computed, "
+            "COUNT(*) FILTER (WHERE f.status = 'exact' "
+            "AND f.evidence_weight > 0 AND f.score_percentile IS NOT NULL) actual_exact, "
+            "COUNT(*) FILTER (WHERE f.status = 'proxy' "
+            "AND f.evidence_weight > 0 AND f.score_percentile IS NOT NULL) actual_proxy "
+            "FROM data_quality_current q "
+            "LEFT JOIN openap_features_current f USING (symbol) "
+            "GROUP BY q.symbol, q.computed_features, q.exact_features, q.proxy_features) "
+            "WHERE computed_features <> actual_computed "
+            "OR exact_features <> actual_exact OR proxy_features <> actual_proxy"
+        ).fetchone()[0]
+    )
+    missing_issuer_market_cap_leaderboard_rows = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM openap_current_leaderboard "
+            "WHERE issuer_market_cap IS NULL OR issuer_market_cap <= 0"
+        ).fetchone()[0]
+    )
     issue_counts = {
         "duplicate_price_rows": duplicate_prices,
         "future_price_rows": future_price_rows,
+        "incomplete_clean_price_rows": incomplete_clean_price_rows,
         "facts_without_available_at": facts_without_available_at,
         "concept_inputs_without_available_at": concept_inputs_without_available_at,
         "future_concept_inputs": future_concept_inputs,
@@ -3138,6 +3331,10 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         "shallow_option_feature_rows": shallow_option_feature_rows,
         "overall_score_scale_violations": overall_score_scale_violations,
         "score_contribution_mismatches": score_contribution_mismatches,
+        "feature_count_mismatches": feature_count_mismatches,
+        "missing_issuer_market_cap_leaderboard_rows": (
+            missing_issuer_market_cap_leaderboard_rows
+        ),
     }
     warning_counts = {
         "nonranking_sec_download_errors": max(

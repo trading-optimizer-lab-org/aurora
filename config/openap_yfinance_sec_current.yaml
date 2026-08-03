@@ -28,12 +28,13 @@ universe:
   exclude_units: true
   exclude_foreign_sec_filers: true
   one_primary_security_per_cik: false
+  issuer_market_cap_similarity_ratio_max: 1.25
   minimum_market_cap_usd: 100000000
   minimum_price_usd: 1.0
   minimum_average_volume_21d: 10000
   minimum_average_dollar_volume_21d: 1000000
   minimum_clean_price_rows: 756
-  maximum_price_age_days: 14
+  maximum_price_age_days: 5
 yfinance:
   history_period: max
   batch_size: 25

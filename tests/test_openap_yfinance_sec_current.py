@@ -22,6 +22,8 @@ from aurora.research.openap_current_score import (
     calculate_scores,
     clean_price_history,
     coverage_report,
+    exclude_incomplete_us_session,
+    latest_completed_us_session_date,
     latest_sec_concepts,
     latest_sec_concept_inputs,
     official_filter_mask,
@@ -30,12 +32,14 @@ from aurora.research.openap_current_score import (
 )
 from scripts.run_openap_yfinance_sec_current import (
     _analyst_features,
+    _add_issuer_market_cap_context,
     _classify_security_eligibility,
     _companyfacts_rows,
     _hashes_by_chunk,
     _json_from_jina_text,
     _options_features,
     _request_sec_json,
+    _scorable_feature_counts,
     _sec_exchange_csv_rows,
     _sec_issuer_flags,
     _sec_surface_availability,
@@ -567,6 +571,53 @@ def test_companyfacts_rows_keep_only_needed_tags_and_causal_dates() -> None:
     )
 
 
+def test_companyfacts_retains_annual_history_beyond_recent_quarters() -> None:
+    annual = [
+        {
+            "start": f"{year}-01-01",
+            "end": f"{year}-12-31",
+            "val": year,
+            "filed": f"{year + 1}-02-15",
+            "form": "10-K",
+            "fp": "FY",
+        }
+        for year in range(2018, 2024)
+    ]
+    quarters = []
+    for index in range(30):
+        period_end = pd.Timestamp("2023-01-31") + pd.offsets.MonthEnd(index)
+        quarters.append(
+            {
+                "start": "2023-01-01",
+                "end": period_end.date().isoformat(),
+                "val": index,
+                "filed": (period_end + pd.Timedelta(days=30)).date().isoformat(),
+                "form": "10-Q",
+                "fp": "Q1",
+            }
+        )
+    payload = {
+        "facts": {
+            "us-gaap": {"Assets": {"units": {"USD": annual + quarters}}}
+        }
+    }
+
+    rows = _companyfacts_rows(
+        payload,
+        1,
+        source_url="https://data.sec.gov/example",
+        source_mode="sec_official_bulk_archive",
+        observations_per_tag=4,
+        annual_observations_per_tag=6,
+    )
+
+    annual_rows = [row for row in rows if row["form"] == "10-K"]
+    assert len(annual_rows) == 6
+    assert {row["period_end"] for row in annual_rows} == {
+        f"{year}-12-31" for year in range(2018, 2024)
+    }
+
+
 def test_companyfacts_use_real_sec_acceptance_timestamp_when_available() -> None:
     payload = {
         "facts": {
@@ -709,6 +760,98 @@ def test_monthly_price_features_exclude_the_current_partial_month() -> None:
 
     assert result["STreversal"].raw_value == pytest.approx(
         completed.pct_change().iloc[-1]
+    )
+
+
+def test_daily_price_features_exclude_an_open_us_session() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-31", "2026-08-03"]),
+            "adj_close": [100.0, 250.0],
+            "close": [100.0, 250.0],
+            "high": [101.0, 251.0],
+            "low": [99.0, 249.0],
+            "volume": [1_000_000.0, 10_000.0],
+        }
+    )
+
+    filtered, excluded, cutoff = exclude_incomplete_us_session(
+        frame,
+        as_of=pd.Timestamp("2026-08-03 19:00:00", tz="UTC"),
+    )
+    features = calculate_price_features(
+        frame,
+        as_of=pd.Timestamp("2026-08-03 19:00:00", tz="UTC"),
+    )
+
+    assert cutoff == pd.Timestamp("2026-07-31")
+    assert excluded == 1
+    assert filtered["date"].max() == pd.Timestamp("2026-07-31")
+    assert features["Price"].raw_value == pytest.approx(100.0)
+
+
+def test_daily_price_features_keep_a_closed_us_session() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-31", "2026-08-03"]),
+            "adj_close": [100.0, 110.0],
+            "close": [100.0, 110.0],
+            "high": [101.0, 111.0],
+            "low": [99.0, 109.0],
+            "volume": [1_000_000.0, 1_200_000.0],
+        }
+    )
+
+    assert latest_completed_us_session_date(
+        pd.Timestamp("2026-08-03 21:00:00", tz="UTC")
+    ) == pd.Timestamp("2026-08-03")
+    features = calculate_price_features(
+        frame,
+        as_of=pd.Timestamp("2026-08-03 21:00:00", tz="UTC"),
+    )
+    assert features["Price"].raw_value == pytest.approx(110.0)
+
+
+def test_scorable_feature_counts_exclude_filtered_stale_and_uninformative_rows() -> None:
+    features = pd.DataFrame(
+        [
+            {"symbol": "AAA", "status": "exact", "evidence_weight": 1.0, "score_percentile": 80.0},
+            {"symbol": "AAA", "status": "proxy", "evidence_weight": 0.5, "score_percentile": 70.0},
+            {"symbol": "AAA", "status": "unavailable", "evidence_weight": 0.0, "score_percentile": np.nan},
+            {"symbol": "AAA", "status": "proxy", "evidence_weight": 0.0, "score_percentile": 99.0},
+            {"symbol": "BBB", "status": "exact", "evidence_weight": 1.0, "score_percentile": np.nan},
+        ]
+    )
+
+    counts = _scorable_feature_counts(features).set_index("symbol")
+
+    assert counts.loc["AAA", "computed_features"] == 2
+    assert counts.loc["AAA", "exact_features"] == 1
+    assert counts.loc["AAA", "proxy_features"] == 1
+    assert counts.loc["BBB", "computed_features"] == 0
+
+
+def test_issuer_market_cap_does_not_double_repeated_dual_class_values() -> None:
+    securities = pd.DataFrame(
+        {
+            "symbol": ["AAA", "AAB", "CCC", "CCD"],
+            "cik": [1, 1, 2, 2],
+            "eligible_common_stock": [True, True, True, True],
+            "marketCap": [100.0, 102.0, 60.0, 40.0],
+        }
+    )
+
+    result = _add_issuer_market_cap_context(securities).set_index("symbol")
+
+    assert result.loc["AAA", "issuer_market_cap"] == pytest.approx(102.0)
+    assert result.loc["AAB", "issuer_market_cap"] == pytest.approx(102.0)
+    assert result.loc["AAA", "issuer_market_cap_source"] == (
+        "yfinance_repeated_consolidated_market_cap"
+    )
+    assert result.loc["CCC", "issuer_market_cap"] == pytest.approx(100.0)
+    assert result.loc["CCD", "issuer_market_cap"] == pytest.approx(100.0)
+    assert result.loc["CCC", "issuer_market_cap_source"] == (
+        "yfinance_summed_share_class_market_caps"
     )
 
 
@@ -1017,6 +1160,8 @@ def test_sec_issuer_flags_detect_foreign_and_investment_company_forms() -> None:
         {
             "cik": [1, 1, 2, 3],
             "form": ["10-K", "20-F", "N-CSR", "10-Q"],
+            "state_of_incorporation": ["DE", "DE", "", "CA"],
+            "business_state_or_country": ["NY", "NY", "", "CA"],
         }
     )
 
@@ -1025,6 +1170,28 @@ def test_sec_issuer_flags_detect_foreign_and_investment_company_forms() -> None:
     assert bool(flags.at[1, "sec_foreign_filer"])
     assert bool(flags.at[2, "sec_investment_company"])
     assert not bool(flags.at[3, "sec_foreign_filer"])
+    assert bool(flags.at[3, "sec_us_domicile_evidence"])
+
+
+def test_submission_rows_preserve_sec_domicile_evidence() -> None:
+    rows = _submission_rows(
+        {
+            "entityType": "operating",
+            "stateOfIncorporation": "DE",
+            "addresses": {"business": {"stateOrCountry": "CA"}},
+            "filings": {
+                "recent": {
+                    "accessionNumber": ["0001"],
+                    "filingDate": ["2026-01-01"],
+                    "form": ["10-K"],
+                }
+            },
+        },
+        1,
+    )
+
+    assert rows[0]["state_of_incorporation"] == "DE"
+    assert rows[0]["business_state_or_country"] == "CA"
 
 
 def test_security_eligibility_requires_verified_us_equity_and_recent_price() -> None:
@@ -1050,6 +1217,32 @@ def test_security_eligibility_requires_verified_us_equity_and_recent_price() -> 
     assert result.at["ETF", "eligibility_reason"] == "excluded_name_or_instrument"
     assert result.at["UNKNOWN", "eligibility_reason"] == "yahoo_quote_type_not_equity"
     assert result.at["STALE", "eligibility_reason"] == "latest_price_is_stale"
+
+
+def test_security_eligibility_accepts_missing_yahoo_country_with_sec_us_evidence() -> None:
+    frame = pd.DataFrame(
+        {
+            "symbol": ["DOMESTIC", "UNKNOWN"],
+            "cik": [1, 2],
+            "company_name_sec": ["Domestic Inc", "Unknown Inc"],
+            "longName": ["Domestic Inc", "Unknown Inc"],
+            "quoteType": ["EQUITY", "EQUITY"],
+            "country_yahoo": [None, None],
+            "sec_us_domicile_evidence": [True, False],
+            "price_rows": [100, 100],
+            "last_price_date": ["2026-08-01", "2026-08-01"],
+            "marketCap": [1_000, 1_000],
+        }
+    )
+
+    result = _classify_security_eligibility(
+        frame, as_of=pd.Timestamp("2026-08-02")
+    ).set_index("symbol")
+
+    assert bool(result.at["DOMESTIC", "eligible_common_stock"])
+    assert result.at["UNKNOWN", "eligibility_reason"] == (
+        "country_unavailable_without_sec_us_evidence"
+    )
 
 
 def test_security_eligibility_excludes_suffixes_and_foreign_filers() -> None:
@@ -1223,6 +1416,47 @@ def test_score_family_cap_is_applied_after_normalisation() -> None:
     horizon = scores.loc[scores["horizon_months"].eq(1)]
 
     assert horizon["maximum_family_weight_actual"].le(0.15 + 1e-12).all()
+
+
+def test_redundancy_group_uses_one_dominant_economic_family() -> None:
+    metadata = _metadata(rows=8)
+    metadata["Cat.Economic"] = ["dominant", "other"] + [
+        f"family_{index}" for index in range(6)
+    ]
+    metadata.loc[0, "tstat"] = 8.0
+    metadata.loc[1, "tstat"] = 2.0
+    groups = pd.DataFrame(
+        {
+            "signalname": metadata["signalname"],
+            "redundancy_group": ["mixed", "mixed"]
+            + [f"group_{index}" for index in range(6)],
+        }
+    )
+    values = {
+        f"S{symbol_index:03d}": {
+            signal: FeatureValue(
+                signal,
+                float(symbol_index + signal_index / 100.0),
+                "exact",
+                "test",
+                f"formula_{signal_index}",
+            )
+            for signal_index, signal in enumerate(metadata["signalname"])
+        }
+        for symbol_index in range(20)
+    }
+
+    features = assemble_feature_table(
+        metadata,
+        values,
+        as_of="2026-08-01",
+        redundancy_groups=groups,
+    )
+    scores = calculate_scores(features, minimum_metrics=5)
+    contributions = scores.attrs["score_contributions"]
+    mixed = contributions.loc[contributions["redundancy_group"].eq("mixed")]
+
+    assert set(mixed["group_economic_family"]) == {"dominant"}
 
 
 def test_score_exposes_raw_value_but_primary_score_is_cross_sectional_percentile() -> None:

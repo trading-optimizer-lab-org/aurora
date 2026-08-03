@@ -19,7 +19,7 @@ A common stock enters the ranking only when it also has:
 - 21-day average volume of at least 10,000 shares;
 - 21-day average dollar volume of at least USD 1 million;
 - at least 252 clean daily price observations;
-- a latest clean price no more than 14 calendar days old;
+- a latest clean price no more than 5 calendar days old;
 - no severe price anomaly in the recent quality window;
 - successful SEC Submissions and Company Facts surfaces for its CIK.
 
