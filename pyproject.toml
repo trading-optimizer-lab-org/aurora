@@ -47,6 +47,7 @@ report = ["weasyprint"]
 docs = [
     "sphinx>=7,<9",
     "sphinx-autodoc-typehints>=2",
+    "sphinxcontrib-mermaid>=1",
     "myst-parser>=3",
     "furo>=2024.8",
 ]
