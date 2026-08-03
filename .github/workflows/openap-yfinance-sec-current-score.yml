@@ -25,7 +25,6 @@ env:
   PYTHONUNBUFFERED: "1"
   OPENAP_CONFIG: config/openap_yfinance_sec_current.yaml
   YFINANCE_CHUNKS: "48"
-  SEC_CHUNKS: "48"
 
 jobs:
   framework_contract:
@@ -199,11 +198,6 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        chunk: [0]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -224,17 +218,16 @@ jobs:
             --config "$OPENAP_CONFIG" sec-bulk \
             --security-master inputs/prepare/sec_cik_universe.parquet \
             --sec-user-agent "$AU_SEC_EDGAR_USER_AGENT" \
-            --output-dir "outputs/sec_${{ matrix.chunk }}"
+            --output-dir "outputs/sec_0"
       - name: Validate SEC output
         run: |
-          test -s "outputs/sec_${{ matrix.chunk }}/lake/sec_companyfacts_$(printf '%03d' '${{ matrix.chunk }}').parquet"
-          test -s "outputs/sec_${{ matrix.chunk }}/lake/sec_submissions_$(printf '%03d' '${{ matrix.chunk }}').parquet"
-          test -s "outputs/sec_${{ matrix.chunk }}/sec_summary_$(printf '%03d' '${{ matrix.chunk }}').json"
+          test -s "outputs/sec_0/lake/sec_companyfacts_000.parquet"
+          test -s "outputs/sec_0/lake/sec_submissions_000.parquet"
+          test -s "outputs/sec_0/sec_summary_000.json"
           python - <<'PY'
           import json
           from pathlib import Path
-          chunk = int("${{ matrix.chunk }}")
-          summary = json.loads(Path(f"outputs/sec_{chunk}/sec_summary_{chunk:03d}.json").read_text())
+          summary = json.loads(Path("outputs/sec_0/sec_summary_000.json").read_text())
           assert summary["source_layout"] == "official_bulk_archive"
           assert summary["ciks_expected"] > 0
           assert summary["companyfacts_ciks_ok"] > 0
@@ -245,19 +238,19 @@ jobs:
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: openap-sec-lake-${{ matrix.chunk }}
+          name: openap-sec-lake-0
           path: |
-            outputs/sec_${{ matrix.chunk }}/lake/
-            outputs/sec_${{ matrix.chunk }}/sec_status_*.csv
-            outputs/sec_${{ matrix.chunk }}/sec_summary_*.json
+            outputs/sec_0/lake/
+            outputs/sec_0/sec_status_*.csv
+            outputs/sec_0/sec_summary_*.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
       - if: ${{ inputs.keep_sec_raw_archives }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: openap-sec-raw-${{ matrix.chunk }}
-          path: outputs/sec_${{ matrix.chunk }}/raw/
+          name: openap-sec-raw-0
+          path: outputs/sec_0/raw/
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

@@ -1289,12 +1289,12 @@ def test_workflow_contract_is_github_only_and_complete() -> None:
     text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(encoding="utf-8")
     assert "OpenAP Current Score YFinance SEC EDGAR" in text
     assert "YFINANCE_CHUNKS: \"48\"" in text
-    assert "SEC_CHUNKS: \"48\"" in text
     assert "max-parallel: 16" in text
-    assert "max-parallel: 8" in text
     assert "sec-bulk" in text
     assert "source_layout\"] == \"official_bulk_archive\"" in text
-    assert "openap-sec-raw-${{ matrix.chunk }}" in text
+    assert "openap-sec-lake-0" in text
+    assert "openap-sec-raw-0" in text
+    assert "matrix:\n        chunk:" not in text[text.index("  sec:"):text.index("  merge:")]
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text
     assert "locked_opened" in text
