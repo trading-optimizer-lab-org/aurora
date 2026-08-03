@@ -570,7 +570,6 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     current = float(close.iloc[-1])
     volume = pd.to_numeric(daily["volume"], errors="coerce")
     dollar_volume = close * volume
-    turnover_proxy = volume
 
     def exact(name: str, value: float | None, formula: str, note: str = "") -> FeatureValue:
         return FeatureValue(name, value, "exact", "yfinance", formula, note)
@@ -588,28 +587,65 @@ def calculate_price_features(frame: pd.DataFrame) -> dict[str, FeatureValue]:
     result["Mom6m"] = exact("Mom6m", _return_between(monthly, 6, 1), "return_month_6_to_1")
     result["Mom12m"] = exact("Mom12m", _return_between(monthly, 12, 1), "return_month_12_to_1")
     result["IntMom"] = exact("IntMom", _return_between(monthly, 12, 7), "return_month_12_to_7")
-    result["MRreversal"] = exact("MRreversal", _return_between(monthly, 36, 13), "return_month_36_to_13")
-    result["LRreversal"] = exact("LRreversal", _return_between(monthly, 60, 36), "return_month_60_to_36")
+    result["MRreversal"] = exact("MRreversal", _return_between(monthly, 18, 13), "return_month_18_to_13")
+    result["LRreversal"] = exact("LRreversal", _return_between(monthly, 36, 13), "return_month_36_to_13")
     if len(close) >= 252:
         result["High52"] = exact("High52", _safe_ratio(current, close.iloc[-252:].max()), "price_over_52w_high")
     recent_returns = returns.dropna().iloc[-21:]
     if not recent_returns.empty:
         result["MaxRet"] = exact("MaxRet", float(recent_returns.max()), "max_daily_return_last_month")
-        result["RealizedVol"] = exact("RealizedVol", float(recent_returns.std(ddof=1)), "daily_return_std_last_month")
+        result["RealizedVol"] = proxy(
+            "RealizedVol",
+            float(recent_returns.std(ddof=1)),
+            "total_daily_return_std_last_month_proxy",
+            "Official OpenAP RealizedVol uses CAPM residual volatility",
+        )
         result["ReturnSkew"] = exact("ReturnSkew", float(recent_returns.skew()), "daily_return_skew_last_month")
-    if len(dollar_volume.dropna()) >= 21:
-        result["DolVol"] = exact("DolVol", float(np.log1p(dollar_volume.iloc[-21:].mean())), "log_mean_dollar_volume_21d")
-        illiq = (returns.abs() / dollar_volume.replace(0, np.nan)).iloc[-21:].mean()
-        result["Illiquidity"] = exact("Illiquidity", float(illiq) if pd.notna(illiq) else None, "amihud_21d")
+    monthly_volume = (
+        daily.assign(date=pd.to_datetime(daily["date"], errors="coerce"))
+        .dropna(subset=["date"])
+        .set_index("date")["volume"]
+        .resample("ME")
+        .sum(min_count=1)
+        .dropna()
+    )
+    if len(monthly) >= 3 and len(monthly_volume) >= 3:
+        lagged_dollar_volume = float(monthly.iloc[-3] * monthly_volume.iloc[-3])
+        result["DolVol"] = exact(
+            "DolVol",
+            float(np.log(lagged_dollar_volume)) if lagged_dollar_volume > 0 else None,
+            "log_monthly_dollar_volume_lag_2",
+        )
+    if len(dollar_volume.dropna()) >= 252:
+        illiq = (returns.abs() / dollar_volume.replace(0, np.nan)).iloc[-252:].mean()
+        result["Illiquidity"] = exact(
+            "Illiquidity",
+            float(illiq) if pd.notna(illiq) else None,
+            "amihud_252d",
+        )
     if len(volume.dropna()) >= 252:
-        result["ShareVol"] = proxy("ShareVol", float(volume.iloc[-21:].mean()), "mean_volume_21d", "Shares outstanding PIT is completed from SEC during merge")
+        result["ShareVol"] = FeatureValue(
+            "ShareVol",
+            None,
+            "unavailable",
+            "requires_validated_shares_outstanding",
+            "openap_sharevol_binary_3m_turnover",
+            "Calculated during merge only after share-count validation",
+        )
         result["VolSD"] = proxy("VolSD", float(volume.iloc[-252:].std(ddof=1)), "volume_std_252d", "Uses raw share volume before SEC turnover scaling")
         x = np.arange(min(252, len(volume)), dtype=float)
         y = np.log1p(volume.iloc[-len(x):].to_numpy(dtype=float))
         valid = np.isfinite(y)
         slope = float(np.polyfit(x[valid], y[valid], 1)[0]) if valid.sum() >= 30 else None
         result["VolumeTrend"] = proxy("VolumeTrend", slope, "log_volume_trend_252d", "Yahoo volume replaces CRSP volume")
-        result["std_turn"] = proxy("std_turn", float(turnover_proxy.iloc[-252:].std(ddof=1)), "volume_std_proxy_252d", "Final value is rescaled by SEC shares")
+        result["std_turn"] = FeatureValue(
+            "std_turn",
+            None,
+            "unavailable",
+            "requires_validated_shares_outstanding",
+            "monthly_turnover_std_36m",
+            "Calculated during merge only after share-count validation",
+        )
     for name, sessions in (("zerotrade1M", 21), ("zerotrade6M", 126), ("zerotrade12M", 252)):
         if len(volume) >= sessions:
             zero_days = float((volume.iloc[-sessions:] <= 0).mean())
@@ -820,9 +856,13 @@ def latest_sec_concept_inputs(facts: pd.DataFrame, as_of: pd.Timestamp) -> pd.Da
             fiscal_year = subset["fp"].astype(str).str.upper().eq("FY")
         else:
             fiscal_year = pd.Series(False, index=subset.index)
-        annual = subset.loc[annual_form | fiscal_year].copy()
-        if not annual.empty:
-            subset = annual
+        # Shares and employees are instant observations.  Preferring a 10-K
+        # can select a stale or even class-specific value over a newer 10-Q.
+        # Flow and accounting concepts remain annual to preserve comparability.
+        if concept not in {"shares", "employees"}:
+            annual = subset.loc[annual_form | fiscal_year].copy()
+            if not annual.empty:
+                subset = annual
         subset["alias_rank"] = subset["tag"].map({name: index for index, name in enumerate(aliases)})
         subset = subset.sort_values(
             ["period_end", "available_at", "alias_rank"],
@@ -916,6 +956,7 @@ def calculate_accounting_features(
     revenue = value("revenue")
     net_income = value("net_income")
     ocf = value("operating_cash_flow")
+    depreciation = value("depreciation")
     cash = value("cash")
     ca = value("current_assets")
     cl = value("current_liabilities")
@@ -949,7 +990,11 @@ def calculate_accounting_features(
     result["AM"] = exact("AM", _safe_ratio(assets, market_cap), "assets_over_market_cap")
     result["BM"] = exact("BM", _safe_ratio(equity, market_cap), "book_equity_over_market_cap")
     result["EP"] = exact("EP", _safe_ratio(net_income, market_cap), "net_income_over_market_cap")
-    result["CF"] = exact("CF", _safe_ratio(ocf, market_cap), "operating_cash_flow_over_market_cap")
+    result["CF"] = exact(
+        "CF",
+        _safe_ratio(sum_required(net_income, depreciation), market_cap),
+        "net_income_plus_depreciation_over_market_cap",
+    )
     result["cfp"] = exact("cfp", _safe_ratio(ocf, market_cap), "operating_cash_flow_over_market_cap")
     result["SP"] = exact("SP", _safe_ratio(revenue, market_cap), "revenue_over_market_cap")
     gross_profit = (revenue - cogs) if revenue is not None and cogs is not None else None
@@ -962,7 +1007,11 @@ def calculate_accounting_features(
         "market_cap_minus_assets_over_cash",
     )
     result["BookLeverage"] = exact("BookLeverage", _safe_ratio(liabilities, assets), "liabilities_over_assets")
-    result["Leverage"] = exact("Leverage", _safe_ratio(debt, market_cap), "debt_over_market_cap")
+    result["Leverage"] = exact(
+        "Leverage",
+        _safe_ratio(liabilities, market_cap),
+        "liabilities_over_market_cap",
+    )
     result["AssetGrowth"] = exact("AssetGrowth", growth("assets"), "assets_growth_1y")
     current_asset_turnover = _safe_ratio(revenue, assets)
     lag_asset_turnover = _safe_ratio(value("revenue", 1), assets_lag)
@@ -1050,7 +1099,14 @@ def calculate_accounting_features(
     result["NOA"] = proxy("NOA", _safe_ratio(noa_proxy, assets), "net_operating_assets_proxy", "SEC taxonomy cannot reproduce every financing component exactly")
     result["dNoa"] = proxy("dNoa", None, "change_in_noa_proxy", "Requires lagged canonical financing components")
     result["RD"] = exact("RD", _safe_ratio(rd, market_cap), "rd_over_market_cap")
-    result["RDS"] = exact("RDS", _safe_ratio(rd, revenue), "rd_over_sales")
+    result["RDS"] = FeatureValue(
+        "RDS",
+        None,
+        "unavailable",
+        "missing_dirty_surplus_components",
+        "dirty_surplus_unimplemented",
+        "R&D over sales is a different signal and must not substitute for Dirty Surplus",
+    )
     result["RDcap"] = proxy("RDcap", _safe_ratio(rd, assets), "rd_over_assets_proxy", "Official signal capitalizes R&D recursively")
     result["AdExp"] = exact("AdExp", _safe_ratio(value("advertising"), market_cap), "advertising_over_market_cap")
     result["GrAdExp"] = exact("GrAdExp", growth("advertising"), "advertising_growth_1y")
@@ -1077,8 +1133,19 @@ def calculate_accounting_features(
         else None,
         "rd_intensity_and_growth_four_condition_indicator",
     )
-    result["grcapx"] = exact("grcapx", growth("capex"), "capex_growth_1y")
-    result["grcapx3y"] = exact("grcapx3y", growth("capex", 3), "capex_growth_3y")
+    result["grcapx"] = exact(
+        "grcapx",
+        growth("capex", 2),
+        "capex_growth_vs_two_years_ago",
+    )
+    result["grcapx3y"] = exact(
+        "grcapx3y",
+        _safe_ratio(
+            value("capex"),
+            sum_required(value("capex", 1), value("capex", 2), value("capex", 3)),
+        ),
+        "capex_over_prior_three_year_capex",
+    )
     result["InvestPPEInv"] = exact(
         "InvestPPEInv",
         _safe_ratio(sum_required(delta("ppe"), delta("inventory")), assets_lag),
@@ -1185,7 +1252,44 @@ def calculate_accounting_features(
     result["tang"] = exact("tang", _safe_ratio(tangible, assets), "berger_tangibility_over_assets")
     result["OrderBacklog"] = exact("OrderBacklog", _safe_ratio(value("backlog"), assets), "order_backlog_over_assets")
     result["OrderBacklogChg"] = exact("OrderBacklogChg", growth("backlog"), "order_backlog_growth_1y")
-    result["hire"] = exact("hire", growth("employees"), "employee_growth_1y")
+    result["hire"] = exact(
+        "hire",
+        _safe_ratio(
+            difference(value("employees"), value("employees", 1)),
+            average_required(value("employees"), value("employees", 1)),
+        ),
+        "employee_change_over_two_year_average",
+    )
+
+    # These values remain useful as current two-source approximations, but the
+    # official formula, lag, deflator or universe filter is incomplete.  They
+    # must never inflate the exact-replication count.
+    fidelity_limits = {
+        "EP": "Uses current rather than six-month-lagged market equity",
+        "Cash": "Uses annual rather than quarterly cash and assets",
+        "BookLeverage": "Missing the official deferred-tax and preferred-stock denominator",
+        "ChTax": "Uses annual rather than four-quarter tax change",
+        "InvGrowth": "Missing GNP deflation and official industry filters",
+        "Investment": "Missing the firm-specific 36-month normalization",
+        "NetDebtFinance": "Missing the complete issuance, reduction and current-debt-change formula",
+        "NetDebtPrice": "Missing preferred-stock, arrears, treasury-stock and official filters",
+        "NetPayoutYield": "Uses current market cap and incomplete payout components",
+        "PayoutYield": "Uses current market cap and incomplete payout components",
+        "ShareIss1Y": "Uses annual SEC growth rather than shares from months t-18 to t-6",
+        "GP": "Official financial-company exclusion is not yet reproducible point in time",
+        "OperProf": "Official smallest-size-tercile exclusion is not yet applied",
+        "tang": "Official manufacturing and asset-tercile filters are not yet applied",
+    }
+    for signalname, limitation in fidelity_limits.items():
+        current = result[signalname]
+        result[signalname] = FeatureValue(
+            signalname,
+            current.raw_value,
+            "proxy",
+            current.source,
+            current.formula_id,
+            limitation,
+        )
     return result
 
 
@@ -1302,6 +1406,7 @@ def assemble_feature_table(
     security_context: pd.DataFrame | None = None,
     exact_source_multiplier: float = 1.0,
     proxy_source_multiplier: float = 0.55,
+    minimum_nonmodal_fraction: float = 0.01,
 ) -> pd.DataFrame:
     """Produce one audited long row per symbol and strict predictor."""
 
@@ -1453,6 +1558,23 @@ def assemble_feature_table(
             frame.loc[signal_index[eligible.to_numpy()], "official_portfolio_bucket"] = "discrete"
             score_percentile = percentiles.where(eligible)
         frame.loc[signal_index, "score_percentile"] = score_percentile
+
+        informative_values = aligned.where(eligible).dropna()
+        if len(informative_values) >= 3:
+            modal_count = int(informative_values.value_counts(dropna=False).iloc[0])
+            nonmodal_fraction = 1.0 - modal_count / len(informative_values)
+            minimum_fraction = max(
+                float(minimum_nonmodal_fraction),
+                2.0 / len(informative_values),
+            )
+            if informative_values.nunique(dropna=True) <= 1 or nonmodal_fraction < minimum_fraction:
+                affected = signal_index[eligible.to_numpy()]
+                frame.loc[affected, "status"] = "unavailable"
+                frame.loc[affected, "value_status"] = "uninformative_cross_section"
+                frame.loc[affected, "evidence_weight"] = 0.0
+                frame.loc[affected, "percentile"] = np.nan
+                frame.loc[affected, "score_percentile"] = np.nan
+                frame.loc[affected, "official_portfolio_bucket"] = "uninformative"
     return frame
 
 
@@ -1486,7 +1608,7 @@ def calculate_scores(
     if eligible_metric_rows.empty:
         return pd.DataFrame(
             columns=[
-                "as_of", "symbol", "horizon_months", "score", "confidence",
+                "as_of", "symbol", "horizon_months", "raw_score", "score", "confidence",
                 "metrics_used", "metrics_expected", "groups_used", "groups_expected",
                 "maximum_family_weight_actual",
             ]
@@ -1640,15 +1762,26 @@ def calculate_scores(
         metrics_expected=("metrics_expected", "sum"),
         maximum_family_weight_actual=("family_target_weight", "max"),
     )
-    summary["score"] = summary["weighted_sum"] / summary["fixed_total_weight"].replace(0, np.nan)
+    summary["raw_score"] = summary["weighted_sum"] / summary["fixed_total_weight"].replace(0, np.nan)
     summary["confidence"] = (
         100.0
         * summary["observed_total_weight"]
         / summary["fixed_total_weight"].replace(0, np.nan)
     ).clip(0.0, 100.0)
     insufficient = summary["metrics_used"].lt(int(minimum_metrics))
-    summary.loc[insufficient, "score"] = np.nan
+    summary.loc[insufficient, "raw_score"] = np.nan
     summary.loc[insufficient, "confidence"] = 0.0
+    summary["score"] = summary.groupby(
+        ["as_of", "horizon_months"], group_keys=False
+    )["raw_score"].transform(
+        lambda values: (
+            pd.Series(50.0, index=values.index)
+            if values.notna().sum() == 1
+            else 100.0
+            * (values.rank(method="average", na_option="keep") - 1.0)
+            / max(values.notna().sum() - 1, 1)
+        )
+    )
 
     symbols = sorted(features["symbol"].astype(str).unique())
     as_of_values = sorted(features["as_of"].astype(str).unique())
@@ -1668,7 +1801,7 @@ def calculate_scores(
     result["horizon_evidence_sufficient"] = result["metrics_used"].ge(int(minimum_metrics))
     return result[
         [
-            "as_of", "symbol", "horizon_months", "score", "confidence",
+            "as_of", "symbol", "horizon_months", "raw_score", "score", "confidence",
             "metrics_used", "metrics_expected", "groups_used", "groups_expected",
             "minimum_metrics_required", "horizon_evidence_sufficient",
             "maximum_family_weight_actual",
@@ -1695,6 +1828,7 @@ def calculate_aggregate_scores(
     columns = [
         "as_of",
         "symbol",
+        "aggregate_raw_score",
         "aggregate_score",
         "aggregate_confidence",
         "horizons_used",
@@ -1713,6 +1847,9 @@ def calculate_aggregate_scores(
             "minimum_horizons must match the explicit required_horizons length"
         )
     frame["score"] = pd.to_numeric(frame["score"], errors="coerce")
+    if "raw_score" not in frame:
+        frame["raw_score"] = frame["score"]
+    frame["raw_score"] = pd.to_numeric(frame["raw_score"], errors="coerce")
     frame["confidence"] = pd.to_numeric(frame["confidence"], errors="coerce").fillna(0.0)
     required_frame = frame.loc[frame["horizon_months"].isin(required)].copy()
     usable = required_frame.loc[
@@ -1720,8 +1857,10 @@ def calculate_aggregate_scores(
     ].copy()
     usable["horizon_weight"] = usable["confidence"] / 100.0
     usable["weighted_score"] = usable["score"] * usable["horizon_weight"]
+    usable["weighted_raw_score"] = usable["raw_score"] * usable["horizon_weight"]
     if usable.empty:
         result = frame[["as_of", "symbol"]].drop_duplicates()
+        result["aggregate_raw_score"] = np.nan
         result["aggregate_score"] = np.nan
         result["aggregate_confidence"] = 0.0
         result["horizons_used"] = 0
@@ -1733,11 +1872,15 @@ def calculate_aggregate_scores(
         return result[columns]
     result = usable.groupby(["as_of", "symbol"], as_index=False).agg(
         weighted_sum=("weighted_score", "sum"),
+        weighted_raw_sum=("weighted_raw_score", "sum"),
         total_weight=("horizon_weight", "sum"),
         mean_confidence=("confidence", "mean"),
         horizons_used=("horizon_months", "nunique"),
     )
     result["aggregate_score"] = result["weighted_sum"] / result["total_weight"].replace(0, np.nan)
+    result["aggregate_raw_score"] = (
+        result["weighted_raw_sum"] / result["total_weight"].replace(0, np.nan)
+    )
     result["aggregate_confidence"] = (
         result["mean_confidence"] * result["horizons_used"] / max(len(required), 1)
     )

@@ -1117,6 +1117,34 @@ def _options_features(
         )
     calls = data.loc[data["option_type"].eq("call")]
     puts = data.loc[data["option_type"].eq("put")]
+    minimum_per_side = int(settings.get("minimum_option_contracts_per_side", 1))
+    minimum_total = int(settings.get("minimum_option_contracts_total", 2))
+    if (
+        len(calls) < minimum_per_side
+        or len(puts) < minimum_per_side
+        or len(data) < minimum_total
+    ):
+        if audit is not None:
+            audit.update(
+                {
+                    "option_contracts_raw": raw_contracts,
+                    "option_contracts_usable": len(data),
+                    "option_calls_usable": len(calls),
+                    "option_puts_usable": len(puts),
+                    "option_depth_pass": False,
+                    "option_rejection_reason": "insufficient_contract_depth",
+                }
+            )
+        return {}
+    if audit is not None:
+        audit.update(
+            {
+                "option_calls_usable": len(calls),
+                "option_puts_usable": len(puts),
+                "option_depth_pass": True,
+                "option_rejection_reason": "",
+            }
+        )
     call_iv = calls["impliedVolatility"].median() if "impliedVolatility" in calls else np.nan
     put_iv = puts["impliedVolatility"].median() if "impliedVolatility" in puts else np.nan
     total_volume = data["volume"].sum(min_count=1) if "volume" in data else np.nan
@@ -1124,7 +1152,16 @@ def _options_features(
     values: dict[str, FeatureValue] = {
         "CPVolSpread": FeatureValue("CPVolSpread", float(call_iv - put_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "median_call_iv_minus_put_iv", "Current chain replaces OptionMetrics filters"),
         "OptionVolume1": FeatureValue("OptionVolume1", _safe_numeric_ratio(total_volume, stock_volume), "proxy", "yfinance_current_option_chain", "option_volume_over_stock_volume", "Current nearest-expiry chain only"),
-        "OptionVolume2": FeatureValue("OptionVolume2", _safe_numeric_ratio(total_oi, stock_volume), "proxy", "yfinance_current_option_chain", "option_oi_over_stock_volume", "Open interest proxy for total option activity"),
+        "OptionVolume2": FeatureValue(
+            "OptionVolume2",
+            _safe_numeric_ratio(total_oi, stock_volume)
+            if pd.notna(total_oi) and float(total_oi) > 0
+            else None,
+            "proxy",
+            "yfinance_current_option_chain",
+            "option_oi_over_stock_volume",
+            "Open interest proxy for total option activity",
+        ),
         "SmileSlope": FeatureValue("SmileSlope", float(put_iv - call_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "put_iv_minus_call_iv", "Median IV spread replaces matched-delta smile slope"),
         "skew1": FeatureValue("skew1", float(put_iv - call_iv) if pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "put_iv_minus_call_iv", "Current-chain smirk proxy"),
         "RIVolSpread": FeatureValue("RIVolSpread", float(realized_vol * math.sqrt(252.0) - (call_iv + put_iv) / 2) if realized_vol is not None and pd.notna(call_iv) and pd.notna(put_iv) else None, "proxy", "yfinance_current_option_chain", "annualized_realized_minus_median_implied_vol", "Current-chain proxy with compatible annualized units"),
@@ -1165,6 +1202,140 @@ def _safe_numeric_ratio(left: Any, right: Any) -> float | None:
     if not np.isfinite(left_value) or not np.isfinite(right_value) or right_value == 0:
         return None
     return left_value / right_value
+
+
+def _resolve_current_shares_outstanding(
+    sec_shares: Any,
+    yahoo_shares: Any,
+    *,
+    maximum_ratio: float = 2.0,
+) -> FeatureValue:
+    """Resolve current shares without trusting an implausible SEC class/unit value."""
+
+    sec_value = float(sec_shares) if _is_number(sec_shares) and float(sec_shares) > 0 else None
+    yahoo_value = (
+        float(yahoo_shares)
+        if _is_number(yahoo_shares) and float(yahoo_shares) > 0
+        else None
+    )
+    if sec_value is not None and yahoo_value is not None:
+        ratio = max(sec_value, yahoo_value) / min(sec_value, yahoo_value)
+        if ratio <= float(maximum_ratio):
+            return FeatureValue(
+                "shares_outstanding",
+                sec_value,
+                "exact",
+                "sec_edgar_cross_validated",
+                "latest_instant_shares",
+                f"SEC/Yahoo ratio={ratio:.4f}",
+            )
+        return FeatureValue(
+            "shares_outstanding",
+            yahoo_value,
+            "proxy",
+            "yfinance_current_shares",
+            "yfinance_shares_after_sec_mismatch",
+            f"SEC/Yahoo mismatch ratio={ratio:.4f}; rejected SEC value {sec_value:g}",
+        )
+    if yahoo_value is not None:
+        return FeatureValue(
+            "shares_outstanding",
+            yahoo_value,
+            "proxy",
+            "yfinance_current_shares",
+            "yfinance_current_shares",
+            "SEC shares unavailable; Yahoo snapshot used",
+        )
+    if sec_value is not None:
+        return FeatureValue(
+            "shares_outstanding",
+            sec_value,
+            "proxy",
+            "sec_edgar_unvalidated_shares",
+            "latest_instant_shares_unvalidated",
+            "Yahoo shares unavailable; SEC value could not be cross-validated",
+        )
+    return FeatureValue(
+        "shares_outstanding",
+        None,
+        "unavailable",
+        "missing_shares_outstanding",
+        "",
+        "Neither SEC nor Yahoo supplied a positive current share count",
+    )
+
+
+def _share_turnover_features(
+    prices: pd.DataFrame,
+    resolved_shares: FeatureValue | None,
+) -> dict[str, FeatureValue]:
+    """Calculate OpenAP-style turnover features only in dimensionless units."""
+
+    missing = {
+        "ShareVol": FeatureValue(
+            "ShareVol", None, "unavailable", "missing_shares_outstanding", "", "Share count required"
+        ),
+        "std_turn": FeatureValue(
+            "std_turn", None, "unavailable", "missing_shares_outstanding", "", "Share count required"
+        ),
+    }
+    if (
+        prices.empty
+        or resolved_shares is None
+        or not _is_number(resolved_shares.raw_value)
+        or float(resolved_shares.raw_value) <= 0
+    ):
+        return missing
+    data = prices.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data["volume"] = pd.to_numeric(data["volume"], errors="coerce")
+    monthly_volume = (
+        data.dropna(subset=["date", "volume"])
+        .set_index("date")["volume"]
+        .resample("ME")
+        .sum(min_count=1)
+        .dropna()
+    )
+    if monthly_volume.empty:
+        return missing
+    shares = float(resolved_shares.raw_value)
+    monthly_turnover = monthly_volume / shares
+    three_month_turnover = (
+        float(monthly_volume.iloc[-3:].sum()) / (3.0 * shares)
+        if len(monthly_volume) >= 3
+        else None
+    )
+    sharevol = None
+    if three_month_turnover is not None:
+        if three_month_turnover > 0.10:
+            sharevol = 1.0
+        elif three_month_turnover < 0.05:
+            sharevol = 0.0
+    status = "exact" if resolved_shares.status == "exact" else "proxy"
+    note = resolved_shares.note
+    std_turn = (
+        float(monthly_turnover.iloc[-36:].std(ddof=1))
+        if len(monthly_turnover) >= 36
+        else None
+    )
+    return {
+        "ShareVol": FeatureValue(
+            "ShareVol",
+            sharevol,
+            status,
+            resolved_shares.source,
+            "openap_sharevol_binary_3m_turnover",
+            note,
+        ),
+        "std_turn": FeatureValue(
+            "std_turn",
+            std_turn,
+            "proxy" if std_turn is not None else "unavailable",
+            resolved_shares.source,
+            "monthly_turnover_std_36m" if std_turn is not None else "",
+            "Current shares applied to historical monthly volume; " + note,
+        ),
+    }
 
 
 def _analyst_features(rows: pd.DataFrame) -> dict[str, FeatureValue]:
@@ -2037,6 +2208,7 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         prices, price_quality = clean_price_history(prices)
         values = calculate_price_features(prices)
         market_cap = getattr(row, "marketCap", None)
+        market_cap_source = "yfinance_current_market_cap"
         if not _is_number(market_cap):
             market_cap = None
         facts = connection.execute("SELECT * FROM sec_companyfacts WHERE cik = ?", [cik]).df()
@@ -2046,18 +2218,31 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             concept_inputs.insert(0, "symbol", symbol)
             sec_concept_input_frames.append(concept_inputs)
         concepts = sec_concepts_from_inputs(concept_inputs)
+        sec_shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
+        resolved_shares = _resolve_current_shares_outstanding(
+            sec_shares,
+            getattr(row, "sharesOutstanding", None),
+        )
         if market_cap is None and not prices.empty:
-            shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
-            if _is_number(shares):
-                market_cap = float(prices["adj_close"].iloc[-1]) * float(str(shares))
+            if _is_number(resolved_shares.raw_value):
+                market_cap = float(prices["adj_close"].iloc[-1]) * float(resolved_shares.raw_value)
+                market_cap_source = resolved_shares.source
         values.update(calculate_accounting_features(concepts, market_cap=market_cap))
         if market_cap is not None:
-            values["Size"] = FeatureValue("Size", float(market_cap), "exact", "yfinance_sec", "current_market_cap")
-        shares = concepts.get("shares", [None])[0] if concepts.get("shares") else None
-        if _is_number(shares) and "ShareVol" in values and values["ShareVol"].raw_value is not None:
-            values["ShareVol"] = FeatureValue("ShareVol", _safe_numeric_ratio(values["ShareVol"].raw_value, shares), "exact", "yfinance_sec", "mean_share_volume_over_sec_shares")
-        if _is_number(shares) and "std_turn" in values and values["std_turn"].raw_value is not None:
-            values["std_turn"] = FeatureValue("std_turn", _safe_numeric_ratio(values["std_turn"].raw_value, shares), "proxy", "yfinance_sec", "volume_std_over_sec_shares", "Uses current shares for the full window")
+            size_status = (
+                "exact"
+                if market_cap_source == "sec_edgar_cross_validated"
+                else "proxy"
+            )
+            values["Size"] = FeatureValue(
+                "Size",
+                float(market_cap),
+                size_status,
+                market_cap_source,
+                "current_market_cap",
+                "Current snapshot; not the official lagged portfolio-formation market cap",
+            )
+        values.update(_share_turnover_features(prices, resolved_shares))
         symbol_options = connection.execute("SELECT * FROM yahoo_options_current WHERE symbol = ?", [symbol]).df()
         stock_volume = float(prices["volume"].tail(21).mean()) if not prices.empty else None
         realized = values.get("RealizedVol").raw_value if values.get("RealizedVol") else None
@@ -2086,6 +2271,15 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
                 "first_price_date": prices["date"].min() if not prices.empty else None,
                 "last_price_date": prices["date"].max() if not prices.empty else None,
                 "last_sec_available_at": facts["available_at"].max() if not facts.empty else None,
+                "last_sec_input_available_at": (
+                    concept_inputs["available_at"].max()
+                    if not concept_inputs.empty
+                    else None
+                ),
+                "resolved_shares": resolved_shares.raw_value,
+                "resolved_shares_status": resolved_shares.status,
+                "resolved_shares_source": resolved_shares.source,
+                "resolved_shares_note": resolved_shares.note,
                 "sec_fact_rows": len(facts),
                 "computed_features": sum(item.raw_value is not None for item in values.values()),
                 "exact_features": sum(item.status == "exact" and item.raw_value is not None for item in values.values()),
@@ -2130,6 +2324,9 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         security_context=eligible,
         exact_source_multiplier=float(config["score"]["exact_source_multiplier"]),
         proxy_source_multiplier=float(config["score"]["proxy_source_multiplier"]),
+        minimum_nonmodal_fraction=float(
+            config["score"]["minimum_cross_sectional_nonmodal_fraction"]
+        ),
     )
     feature_frame, current_redundancy_audit = refine_current_redundancy_groups(
         feature_frame,
@@ -2169,12 +2366,20 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
             "symbol",
             "last_price_date",
             "last_sec_available_at",
+            "last_sec_input_available_at",
+            "price_rows",
             "computed_features",
             "exact_features",
             "proxy_features",
         ]
     ].copy()
     score_context["missing_features"] = EXPECTED_PREDICTORS - score_context["computed_features"]
+    score_context["sec_input_age_days"] = (
+        pd.Timestamp(as_of).tz_localize(None).normalize()
+        - pd.to_datetime(score_context["last_sec_input_available_at"], errors="coerce", utc=True)
+        .dt.tz_localize(None)
+        .dt.normalize()
+    ).dt.days
     scores = scores.merge(score_context, on="symbol", how="left")
     overall_scores = overall_scores.merge(score_context, on="symbol", how="left")
     aggregate_scores = aggregate_scores.merge(score_context, on="symbol", how="left")
@@ -2197,6 +2402,57 @@ def merge(config: dict[str, Any], args: argparse.Namespace) -> None:
         & aggregate_scores["ranking_eligible_universe"].fillna(False)
     )
     aggregate_scores = aggregate_scores.drop(columns=["ranking_eligible_universe"])
+    minimum_features = int(config["score"]["minimum_computed_features_for_ranking"])
+    maximum_missing = int(config["score"]["maximum_missing_features_for_ranking"])
+    maximum_sec_age = int(config["score"]["maximum_sec_age_days_for_ranking"])
+    semantic_rejections = [
+        pd.to_numeric(aggregate_scores["computed_features"], errors="coerce").lt(minimum_features),
+        pd.to_numeric(aggregate_scores["missing_features"], errors="coerce").gt(maximum_missing),
+        pd.to_numeric(aggregate_scores["sec_input_age_days"], errors="coerce").gt(maximum_sec_age)
+        | pd.to_numeric(aggregate_scores["sec_input_age_days"], errors="coerce").isna(),
+    ]
+    semantic_reasons = [
+        "insufficient_computed_features",
+        "too_many_missing_features",
+        "stale_or_missing_sec_inputs",
+    ]
+    prior_reason = aggregate_scores["ranking_rejection_reason"].fillna("").astype(str)
+    semantic_reason = pd.Series(
+        np.select(semantic_rejections, semantic_reasons, default=""),
+        index=aggregate_scores.index,
+    )
+    aggregate_scores["ranking_rejection_reason"] = prior_reason.where(
+        prior_reason.ne(""), semantic_reason
+    )
+    aggregate_scores["ranking_eligible"] &= semantic_reason.eq("")
+    aggregate_scores["score_is_probability"] = False
+    aggregate_scores["score_scale"] = "cross_sectional_percentile_0_100"
+
+    deployment = config["deployment"]
+    deployment_conditions = [
+        pd.to_numeric(aggregate_scores["marketCap"], errors="coerce").lt(
+            float(deployment["minimum_market_cap_usd"])
+        ),
+        pd.to_numeric(
+            aggregate_scores["average_dollar_volume_21d"], errors="coerce"
+        ).lt(float(deployment["minimum_average_dollar_volume_21d"])),
+        pd.to_numeric(aggregate_scores["price_rows"], errors="coerce").lt(
+            int(deployment["minimum_clean_price_rows"])
+        ),
+    ]
+    aggregate_scores["deployment_rejection_reason"] = np.select(
+        deployment_conditions,
+        [
+            "deployment_market_cap_below_minimum",
+            "deployment_liquidity_below_minimum",
+            "deployment_price_history_too_short",
+        ],
+        default="",
+    )
+    aggregate_scores["deployment_eligible"] = (
+        aggregate_scores["ranking_eligible"]
+        & aggregate_scores["deployment_rejection_reason"].eq("")
+    )
     leaderboard = aggregate_scores.loc[aggregate_scores["ranking_eligible"]].sort_values(
         ["aggregate_score", "aggregate_confidence"], ascending=[False, False]
     )

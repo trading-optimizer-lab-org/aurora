@@ -32,7 +32,7 @@ universe:
   minimum_price_usd: 1.0
   minimum_average_volume_21d: 10000
   minimum_average_dollar_volume_21d: 1000000
-  minimum_clean_price_rows: 252
+  minimum_clean_price_rows: 756
   maximum_price_age_days: 14
 yfinance:
   history_period: max
@@ -49,6 +49,8 @@ yfinance:
   maximum_option_moneyness: 1.20
   minimum_implied_volatility: 0.01
   maximum_implied_volatility: 5.0
+  minimum_option_contracts_per_side: 2
+  minimum_option_contracts_total: 10
 sec:
   ticker_exchange_url: https://www.sec.gov/files/company_tickers_exchange.json
   ticker_exchange_fallback_url: https://raw.githubusercontent.com/jadchaar/sec-cik-mapper/7883b83389836f9bba9bdfe53031467235746334/mappings/stocks/mappings.csv
@@ -75,8 +77,17 @@ score:
   maximum_family_weight: 0.15
   minimum_metrics_per_score: 5
   minimum_horizons_for_ranking: 1
-  minimum_aggregate_confidence: 30.0
+  minimum_aggregate_confidence: 50.0
+  minimum_computed_features_for_ranking: 60
+  maximum_missing_features_for_ranking: 125
+  maximum_sec_age_days_for_ranking: 183
+  sec_freshness_warning_days: 92
+  minimum_cross_sectional_nonmodal_fraction: 0.01
   validation_status: unvalidated_current_snapshot_only
+deployment:
+  minimum_market_cap_usd: 1000000000
+  minimum_average_dollar_volume_21d: 10000000
+  minimum_clean_price_rows: 1260
 execution:
   execution_location: github_actions
   local_runs_allowed: false
@@ -85,4 +96,4 @@ execution:
   yfinance_max_parallel: 16
   sec_chunks: 48
   sec_max_parallel: 8
-  artifact_retention_days: 30
+  artifact_retention_days: 90

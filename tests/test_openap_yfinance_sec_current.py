@@ -804,17 +804,23 @@ def test_materially_incomplete_accounting_formulas_are_never_labelled_exact() ->
             "operating_cash_flow", "inventory", "tax", "capex", "debt_current",
             "debt_long", "preferred_stock", "dividends", "repurchases",
             "share_issuance", "rd", "employees", "cogs", "sga", "interest",
+            "depreciation",
         )
     }
     result = calculate_accounting_features(concepts, market_cap=1_000.0)
     materially_incomplete = {
-        "EP", "CF", "Cash", "BookLeverage", "Leverage", "ChTax", "InvGrowth",
-        "Investment", "grcapx", "grcapx3y", "NetDebtFinance", "NetDebtPrice",
-        "NetPayoutYield", "PayoutYield", "ShareIss1Y", "hire", "GP", "OperProf",
+        "EP", "Cash", "BookLeverage", "ChTax", "InvGrowth", "Investment",
+        "NetDebtFinance", "NetDebtPrice", "NetPayoutYield", "PayoutYield",
+        "ShareIss1Y", "GP", "OperProf",
         "tang",
     }
 
     assert all(result[name].status != "exact" for name in materially_incomplete)
+    assert result["CF"].formula_id == "net_income_plus_depreciation_over_market_cap"
+    assert result["Leverage"].formula_id == "liabilities_over_market_cap"
+    assert result["grcapx"].formula_id == "capex_growth_vs_two_years_ago"
+    assert result["grcapx3y"].formula_id == "capex_over_prior_three_year_capex"
+    assert result["hire"].formula_id == "employee_change_over_two_year_average"
     assert result["RDS"].status == "unavailable"
     assert result["RDS"].raw_value is None
 
