@@ -1,0 +1,28 @@
+name: OpenAP Current Data Quality Tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openap-current-data-quality-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused_tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install focused dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]" duckdb requests
+      - name: Run OpenAP semantic data-quality regressions
+        env:
+          GITHUB_ACTIONS: "true"
+        run: python -m pytest tests/test_openap_yfinance_sec_current.py -q --tb=short
