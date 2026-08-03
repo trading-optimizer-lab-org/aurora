@@ -12,7 +12,7 @@
 | Current document state | `TRACKED_CANONICAL` |
 | Canonical target path | `docs/plans/gtbi-v7-master-plan.md` |
 
-### Owner Simplification Directive
+## Owner Simplification Directive
 
 The repository owner explicitly authorizes the simplified operating model
 recorded in
@@ -38,7 +38,7 @@ Any later use of words such as `independent`, `distinct`, `custodian`,
 high-separation model. It is optional guidance, not a requirement, dependency
 or reason to return `NO-GO`.
 
-### Canonical Successor Amendment
+## Canonical Successor Amendment
 
 The repository owner explicitly authorizes the already approved and completed
 `gtbi_v7_new_reference_v1` campaign as this plan's canonical successor
@@ -82,7 +82,7 @@ The normal successor terminal target is `COMPLETED_CLEAN`; `ABANDONED_CLEAN`
 remains the failure/abandonment alternative. Locked access remains prohibited
 unless the owner gives a new explicit authorization in a future task.
 
-### Canonical Successor Execution Status
+## Canonical Successor Execution Status
 
 The successor implementation and evidence reconciliation completed all 22
 remaining applicable tasks. `PREV7-1003` ran from the reviewed GitHub commit

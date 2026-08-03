@@ -1179,13 +1179,13 @@ their declared lengths, timestamps in UTC, and safe policy flags by default.
 
 Add:
 
-```toml
+```text
 "aurora.infra.github_performance",
 ```
 
 and:
 
-```toml
+```text
 "aurora.infra.github_performance" = "infra/github_performance"
 ```
 

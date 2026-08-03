@@ -5,6 +5,7 @@ import json
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from scripts.generate_gtbi_v7_canonical_successor_authorization import (
     DESTINATION,
+    PLAN,
     build_authorization,
 )
 
@@ -18,6 +19,12 @@ def test_canonical_successor_authorization_is_reproducible() -> None:
         actual,
         omit_top_level_fields=("receipt_digest",),
     )
+
+
+def test_canonical_successor_amendment_uses_valid_heading_level() -> None:
+    plan_text = PLAN.read_text(encoding="utf-8")
+    assert "## Canonical Successor Amendment" in plan_text
+    assert "### Canonical Successor Amendment" not in plan_text
 
 
 def test_successor_does_not_reopen_or_relabel_v6() -> None:

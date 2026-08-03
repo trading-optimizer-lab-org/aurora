@@ -7,6 +7,12 @@
   },
   "migrations": [
     {
+      "path": ".github/workflows/docs.yml",
+      "previous_sha256": "8c5514b0e0eb4f5a1e31df4199f79de5b5565020afcb99c153ba1dd6082e6fce",
+      "reason": "make documentation dependencies complete and validate warnings on pull requests",
+      "replacement_sha256": "d52455ddefa99912188f7fa522c36ccff92ea4103a6bbebfd2da93de74ae7658"
+    },
+    {
       "path": ".github/workflows/security.yml",
       "previous_sha256": "1adfa87e7b08fcb7b13c1a0a701a2559d3c1daaf8b280caeddc6d2c657687696",
       "reason": "repair Bandit exclusions without weakening the security gate",

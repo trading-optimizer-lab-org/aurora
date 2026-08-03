@@ -43,7 +43,7 @@ def build_authorization() -> dict[str, Any]:
     preservation = _canonical_json(PRESERVATION)
     pr1_merge_receipt = _canonical_json(PR1_MERGE_RECEIPT)
 
-    if "### Canonical Successor Amendment" not in plan_text:
+    if "## Canonical Successor Amendment" not in plan_text:
         raise ValueError("master plan has no canonical-successor amendment")
     if no_go["terminal_state"] != "NO_GO_CLOSED":
         raise ValueError("historical V6-equivalent lineage is not closed")
