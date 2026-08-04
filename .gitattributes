@@ -9,3 +9,4 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 .github/CODEOWNERS text eol=lf
+campaigns/sp500_long_short_daily/research_input/** -text
