@@ -94,6 +94,7 @@ packages = [
     "aurora.reporting.daily_ops",
     "aurora.reporting.tearsheet",
     "aurora.research",
+    "aurora.research.openap_93",
     "aurora.research.agent_loop",
     "aurora.research.factory",
     "aurora.research.factory.factory",
@@ -144,6 +145,7 @@ packages = [
 "aurora.reporting.daily_ops" = "reporting/daily_ops"
 "aurora.reporting.tearsheet" = "reporting/tearsheet"
 "aurora.research" = "research"
+"aurora.research.openap_93" = "research/openap_93"
 "aurora.research.agent_loop" = "research/agent_loop"
 "aurora.research.factory" = "research/factory"
 "aurora.research.factory.factory" = "research/factory/factory"
