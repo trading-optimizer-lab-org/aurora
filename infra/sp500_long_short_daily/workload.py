@@ -1188,9 +1188,9 @@ class Sp500LongShortSmokeWorkload(Sp500LongShortTrainWorkload):
     dataset_name = "bounded_spy_smoke_market"
     result_filename = "sp500_long_short_smoke_results.parquet"
     phase_name = "smoke"
-    data_start = "2004-10-01"
-    data_end = "2007-09-30"
-    evaluation_start = "2005-06-01"
+    data_start = "2005-10-01"
+    data_end = "2009-09-30"
+    evaluation_start = "2006-10-01"
     minimum_rows = 200
     minimum_years = 1
     candidate_limit = 2
