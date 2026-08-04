@@ -35,6 +35,11 @@ on:
         required: false
         default: ""
         type: string
+      prepared_artifact_run_id:
+        description: Source run containing the prepared-input artifact
+        required: false
+        default: ""
+        type: string
       wheelhouse_artifact_name:
         description: Existing immutable wheelhouse artifact to reuse
         required: false
@@ -91,6 +96,11 @@ on:
         type: number
       prepared_artifact_name:
         description: Existing immutable prepared-input artifact to reuse
+        required: false
+        default: ""
+        type: string
+      prepared_artifact_run_id:
+        description: Source run containing the prepared-input artifact
         required: false
         default: ""
         type: string
@@ -455,6 +465,8 @@ jobs:
         with:
           name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.prepared_artifact_run_id || github.run_id }}
       - name: Prepare immutable data once
         if: inputs.prepared_artifact_name == '' && needs.sp500_data_plan.outputs.enabled != 'true'
         env:
