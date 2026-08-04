@@ -7,6 +7,9 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -295,6 +298,67 @@ def _parse_stooq_html_history(payload: bytes) -> tuple[pd.DataFrame, int]:
     return frame, page_count
 
 
+def _request_stooq_history_page(
+    client: requests.Session,
+    params: Mapping[str, Any],
+    *,
+    browser_profile: Path | None,
+) -> bytes:
+    if browser_profile is None:
+        return _request_bytes(
+            client,
+            STOOQ_HISTORY_PAGE,
+            params=params,
+            attempts=2,
+            timeout=15,
+        )
+    browser = next(
+        (
+            path
+            for executable in (
+                "google-chrome",
+                "google-chrome-stable",
+                "chromium",
+                "chromium-browser",
+            )
+            if (path := shutil.which(executable)) is not None
+        ),
+        None,
+    )
+    if browser is None:
+        raise DataGateError("STOOQ_HEADLESS_BROWSER_NOT_AVAILABLE")
+    prepared = requests.Request("GET", STOOQ_HISTORY_PAGE, params=params).prepare()
+    if prepared.url is None:
+        raise DataGateError("STOOQ_HEADLESS_URL_BUILD_FAILED")
+    command = [
+        browser,
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--disable-background-networking",
+        "--virtual-time-budget=15000",
+        f"--user-data-dir={browser_profile}",
+        "--dump-dom",
+        prepared.url,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DataGateError("STOOQ_HEADLESS_BROWSER_FAILED") from exc
+    payload = bytes(completed.stdout)
+    if completed.returncode != 0 or not payload:
+        raise DataGateError(
+            f"STOOQ_HEADLESS_BROWSER_FAILED:returncode={completed.returncode}"
+        )
+    return payload
+
+
 def _download_stooq_html_history(
     client: requests.Session,
     symbol: str,
@@ -303,6 +367,11 @@ def _download_stooq_html_history(
 ) -> tuple[pd.DataFrame, bytes, str, int]:
     """Read Stooq's public bounded historical-data pages."""
 
+    browser_profile: Path | None = None
+    if os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true":
+        temp_root = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir())).resolve()
+        browser_profile = temp_root / "aurora-stooq-browser-profile"
+        browser_profile.mkdir(parents=True, exist_ok=True)
     print("[sp500-data] stooq first page start", flush=True)
     first_params: Mapping[str, Any] = {
         "s": symbol.lower(),
@@ -310,20 +379,16 @@ def _download_stooq_html_history(
         "d2": end_date.strftime("%Y%m%d"),
         "i": "d",
     }
-    first_payload = _request_bytes(
+    first_payload = _request_stooq_history_page(
         client,
-        STOOQ_HISTORY_PAGE,
-        params=first_params,
-        attempts=2,
-        timeout=15,
+        first_params,
+        browser_profile=browser_profile,
     )
-    if _solve_stooq_browser_verification(client, first_payload):
-        first_payload = _request_bytes(
+    if browser_profile is None and _solve_stooq_browser_verification(client, first_payload):
+        first_payload = _request_stooq_history_page(
             client,
-            STOOQ_HISTORY_PAGE,
-            params=first_params,
-            attempts=2,
-            timeout=15,
+            first_params,
+            browser_profile=None,
         )
     first_frame, page_count = _parse_stooq_html_history(first_payload)
     print(
@@ -346,18 +411,16 @@ def _download_stooq_html_history(
             owned_client.cookies.update(client.cookies)
             page_client = owned_client
         try:
-            payload = _request_bytes(
+            payload = _request_stooq_history_page(
                 page_client,
-                STOOQ_HISTORY_PAGE,
-                params={
+                {
                     "s": symbol.lower(),
                     "i": "d",
                     "f": start_date.strftime("%Y%m%d"),
                     "t": end_date.strftime("%Y%m%d"),
                     "l": page,
                 },
-                attempts=2,
-                timeout=15,
+                browser_profile=browser_profile,
             )
             print(f"[sp500-data] stooq page={page} complete", flush=True)
             return page, payload
@@ -617,7 +680,15 @@ def download_stooq_history(
         minimum_date=dates.min().date().isoformat() if len(dates) else None,
         maximum_date=dates.max().date().isoformat() if len(dates) else None,
         status="downloaded_bounded_html_public_history",
-        reason=f"page_count={page_count};raw_response_chain_sha256={html_chain_hash}",
+        reason=(
+            f"page_count={page_count};raw_response_chain_sha256={html_chain_hash};"
+            "transport="
+            + (
+                "headless_chrome"
+                if os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+                else "https"
+            )
+        ),
     )
     return frame[["date", "open", "high", "low", "close", "volume"]], receipt
 

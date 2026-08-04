@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+import requests
 import yaml
 
 from aurora.infra.sp500_long_short_daily.contracts import (
@@ -29,6 +31,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     PreparedMarketData,
     _align_initial_releases,
     _parse_stooq_html_history,
+    _request_stooq_history_page,
     _parse_yahoo_chart,
     _reconcile_spy_sources,
     _repo_campaign_root,
@@ -328,6 +331,41 @@ def test_stooq_html_history_parser_reads_ohlcv_and_page_count() -> None:
     assert frame["Date"].tolist() == [pd.Timestamp("2010-12-31"), pd.Timestamp("2010-12-30")]
     assert frame["Open"].tolist() == pytest.approx([96.8014, 97.0404])
     assert frame["Volume"].tolist() == [78_672_053, 99_285_113]
+
+
+def test_stooq_github_transport_uses_headless_browser(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload = _stooq_html(
+        [("1", "31 Dec 2010", "96.8", "97.1", "96.7", "97.0", "+0.03%", "+0.03", "78,672,053")],
+        pages=1,
+    )
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data.shutil.which",
+        lambda executable: "/usr/bin/google-chrome" if executable == "google-chrome" else None,
+    )
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(command)
+        assert kwargs["capture_output"] is True
+        return subprocess.CompletedProcess(command, 0, stdout=payload, stderr=b"")
+
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data.subprocess.run",
+        fake_run,
+    )
+    result = _request_stooq_history_page(
+        requests.Session(),
+        {"s": "spy.us", "d1": "20041001", "d2": "20070930", "i": "d"},
+        browser_profile=tmp_path,
+    )
+    assert result == payload
+    assert len(commands) == 1
+    assert "--headless=new" in commands[0]
+    assert commands[0][-1].startswith("https://stooq.com/q/d/?")
 
 
 def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
