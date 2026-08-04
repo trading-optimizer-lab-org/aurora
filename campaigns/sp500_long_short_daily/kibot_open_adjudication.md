@@ -21,6 +21,21 @@ fallback cannot select an extreme vendor print. The five-basis-point return
 gate remains unchanged. A wider three-source spread stays unresolved and
 blocks the campaign.
 
+One boundary case needs a separate, auditable rule. If Yahoo and Stooq exceed
+the five-basis-point price limit by no more than one USD price tick, their daily
+volumes agree within 0.001%, and Kibot's volume differs by more than 0.1%, the
+two primary histories identify the same consolidated session while the guest
+adjudicator does not. The canonical value is then Yahoo's unadjusted print and
+the date is recorded as `primary_volume_supported_repair`. The raw
+five-basis-point failure remains visible; this rule reconciles it rather than
+raising the acceptance threshold.
+
+The observed smoke boundary is 2008-09-12: Yahoo close/volume is
+126.09/297,851,200, Stooq is 126.02211778261/297,851,196, and Kibot is
+125.75/288,993,178. Yahoo and Stooq differ by 5.38 basis points and only four
+shares of volume; Kibot's volume differs by roughly 3%. The rule therefore
+chooses 126.09 and records all three raw observations in provenance.
+
 When a confirmed opening or closing print falls just outside Stooq's original
 high-low range, the range is expanded only far enough to include that confirmed
 print. The audit lists every field-level consensus decision and every

@@ -967,6 +967,74 @@ def test_three_source_open_adjudication_keeps_ohlc_ranges_valid() -> None:
     assert audit["expanded_low_count"] == 0
 
 
+def test_three_source_adjudication_resolves_tick_boundary_with_volume_consensus() -> None:
+    date = pd.DatetimeIndex(["2008-09-12"])
+    yahoo = pd.DataFrame(
+        {
+            "date": date,
+            "open": [124.29],
+            "high": [126.19],
+            "low": [123.83],
+            "close": [126.09],
+            "volume": [297_851_200],
+        }
+    )
+    stooq = pd.DataFrame(
+        {
+            "date": date,
+            "open": [124.29894244803],
+            "high": [126.16028287525],
+            "low": [123.83986106141],
+            "close": [126.02211778261],
+            "volume": [297_851_196],
+        }
+    )
+    kibot = pd.DataFrame(
+        {
+            "date": date,
+            "open": [124.29],
+            "high": [125.98],
+            "low": [123.83],
+            "close": [125.75],
+            "volume": [288_993_178],
+        }
+    )
+
+    canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
+
+    assert canonical.loc[0, "close"] == pytest.approx(126.09)
+    close_audit = audit["fields"]["close"]
+    assert close_audit["primary_volume_supported_repair_count"] == 1
+    assert close_audit["primary_volume_supported_repair_dates"] == ["2008-09-12"]
+    assert close_audit["unresolved_level_count"] == 0
+
+
+def test_three_source_adjudication_does_not_hide_wide_price_disagreement() -> None:
+    date = pd.DatetimeIndex(["2008-09-12"])
+    yahoo = pd.DataFrame(
+        {
+            "date": date,
+            "open": [100.0],
+            "high": [102.0],
+            "low": [98.0],
+            "close": [101.0],
+            "volume": [1_000_000],
+        }
+    )
+    stooq = yahoo.copy()
+    stooq.loc[0, "close"] = 100.7
+    kibot = yahoo.copy()
+    kibot.loc[0, "close"] = 101.4
+    kibot.loc[0, "volume"] = 900_000
+
+    canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
+
+    assert canonical.loc[0, "close"] == pytest.approx(100.7)
+    close_audit = audit["fields"]["close"]
+    assert close_audit["primary_volume_supported_repair_count"] == 0
+    assert close_audit["unresolved_level_count"] == 1
+
+
 def test_three_source_close_adjudication_preserves_the_frozen_return_gate() -> None:
     dates = pd.bdate_range("2000-01-03", periods=1001)
     close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))
@@ -1802,7 +1870,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "sp500_prepare_data" in universal
     assert "merge_sp500_stooq_windows.py" in universal
     assert "SP500_STOOQ_HISTORY_CSV" in universal
-    assert "max-parallel: 180" in universal
+    assert "max-parallel: 12" in universal
     assert "C:\\" not in universal
     assert "self-hosted" not in universal
 

@@ -49,6 +49,9 @@ FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
 SPY_RETURN_TOLERANCE = 5e-4
 SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
 SPY_MEDIAN_ADJUDICATION_MAX_SPREAD = 2.5e-3
+SPY_PRICE_TICK_USD = 0.01
+SPY_PRIMARY_VOLUME_RELATIVE_TOLERANCE = 1e-5
+SPY_ADJUDICATOR_VOLUME_OUTLIER_TOLERANCE = 1e-3
 SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 STOOQ_MAX_BOUNDED_PAGES = 100
 STOOQ_PUBLIC_HISTORY_ROW_CAP = 1000
@@ -1051,12 +1054,44 @@ def _adjudicate_stooq_open_prices(
         median_repairs = no_pair_agrees & (
             relative_spread <= SPY_MEDIAN_ADJUDICATION_MAX_SPREAD
         )
-        unresolved = no_pair_agrees & ~median_repairs
-        changed = yahoo_repairs | bridge_repairs | median_repairs
+        yahoo_volume = yahoo.loc[common, "volume"].astype(float)
+        stooq_volume = stooq.loc[common, "volume"].astype(float)
+        kibot_volume = kibot.loc[common, "volume"].astype(float)
+        primary_volume_scale = pd.concat(
+            [yahoo_volume.abs(), stooq_volume.abs()], axis=1
+        ).max(axis=1).clip(lower=1.0)
+        primary_volume_gap = (yahoo_volume - stooq_volume).abs() / primary_volume_scale
+        adjudicator_volume_scale = pd.concat(
+            [yahoo_volume.abs(), kibot_volume.abs()], axis=1
+        ).max(axis=1).clip(lower=1.0)
+        adjudicator_volume_gap = (
+            yahoo_volume - kibot_volume
+        ).abs() / adjudicator_volume_scale
+        primary_price_gap = (yahoo_value - stooq_value).abs()
+        tick_boundary = primary_price_gap <= (
+            SPY_RETURN_TOLERANCE * yahoo_value.abs() + SPY_PRICE_TICK_USD
+        )
+        primary_volume_supported_repairs = (
+            no_pair_agrees
+            & ~median_repairs
+            & tick_boundary
+            & (primary_volume_gap <= SPY_PRIMARY_VOLUME_RELATIVE_TOLERANCE)
+            & (adjudicator_volume_gap > SPY_ADJUDICATOR_VOLUME_OUTLIER_TOLERANCE)
+        )
+        unresolved = no_pair_agrees & ~median_repairs & ~primary_volume_supported_repairs
+        changed = (
+            yahoo_repairs
+            | bridge_repairs
+            | median_repairs
+            | primary_volume_supported_repairs
+        )
 
         canonical.loc[yahoo_repairs, field] = yahoo_value.loc[yahoo_repairs]
         canonical.loc[bridge_repairs, field] = kibot_value.loc[bridge_repairs]
         canonical.loc[median_repairs, field] = median_value.loc[median_repairs]
+        canonical.loc[primary_volume_supported_repairs, field] = yahoo_value.loc[
+            primary_volume_supported_repairs
+        ]
 
         def dates(mask: pd.Series) -> list[str]:
             return [date.date().isoformat() for date in common[mask.to_numpy()]]
@@ -1067,11 +1102,17 @@ def _adjudicate_stooq_open_prices(
             "yahoo_supported_repair_count": int(yahoo_repairs.sum()),
             "kibot_bridge_repair_count": int(bridge_repairs.sum()),
             "three_source_median_repair_count": int(median_repairs.sum()),
+            "primary_volume_supported_repair_count": int(
+                primary_volume_supported_repairs.sum()
+            ),
             "retained_stooq_count": int(retained_stooq.sum()),
             "unresolved_level_count": int(unresolved.sum()),
             "yahoo_supported_repair_dates": dates(yahoo_repairs),
             "kibot_bridge_repair_dates": dates(bridge_repairs),
             "three_source_median_repair_dates": dates(median_repairs),
+            "primary_volume_supported_repair_dates": dates(
+                primary_volume_supported_repairs
+            ),
             "retained_stooq_dates": dates(retained_stooq),
             "unresolved_level_dates": dates(unresolved),
         }
@@ -1089,9 +1130,14 @@ def _adjudicate_stooq_open_prices(
     close_audit = field_audits["close"]
 
     audit = {
-        "method": "three_source_execution_and_signal_price_consensus_v3",
+        "method": "three_source_execution_and_signal_price_consensus_v4",
         "tolerance": SPY_RETURN_TOLERANCE,
         "median_adjudication_max_spread": SPY_MEDIAN_ADJUDICATION_MAX_SPREAD,
+        "price_tick_usd": SPY_PRICE_TICK_USD,
+        "primary_volume_relative_tolerance": SPY_PRIMARY_VOLUME_RELATIVE_TOLERANCE,
+        "adjudicator_volume_outlier_tolerance": (
+            SPY_ADJUDICATOR_VOLUME_OUTLIER_TOLERANCE
+        ),
         "overlap_rows": len(common),
         "fields": field_audits,
         "vendor_disagreement_count": open_audit["vendor_disagreement_count"],
@@ -1929,6 +1975,9 @@ def prepare_market_snapshot(
             price_adjudication["fields"]["close"]["yahoo_supported_repair_dates"]
             + price_adjudication["fields"]["close"]["kibot_bridge_repair_dates"]
             + price_adjudication["fields"]["close"]["three_source_median_repair_dates"]
+            + price_adjudication["fields"]["close"][
+                "primary_volume_supported_repair_dates"
+            ]
             + price_adjudication["fields"]["close"]["retained_stooq_dates"]
         ),
     )
