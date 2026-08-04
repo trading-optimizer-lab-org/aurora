@@ -1870,7 +1870,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "sp500_prepare_data" in universal
     assert "merge_sp500_stooq_windows.py" in universal
     assert "SP500_STOOQ_HISTORY_CSV" in universal
-    assert "max-parallel: 12" in universal
+    assert "max-parallel: 4" in universal
     assert "C:\\" not in universal
     assert "self-hosted" not in universal
 

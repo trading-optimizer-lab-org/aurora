@@ -573,7 +573,7 @@ def _load_stooq_history_page(
     params: Mapping[str, Any],
     *,
     browser_profile: Path | None,
-    attempts: int = 3,
+    attempts: int = 8,
 ) -> tuple[bytes, pd.DataFrame, int]:
     """Fetch and validate one page, retrying transient verification screens."""
 
@@ -597,7 +597,7 @@ def _load_stooq_history_page(
             if str(exc) != "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND" or attempt == attempts:
                 raise
             last_error = exc
-            time.sleep(float(attempt))
+            time.sleep(float(min(30, 5 * attempt)))
     raise DataGateError("STOOQ_HTML_HISTORY_ROWS_NOT_FOUND") from last_error
 
 
