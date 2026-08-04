@@ -263,6 +263,7 @@ def test_alfred_uses_initial_release_dates_and_never_latest_revised_values() -> 
         session=session,
         api_key="test-key",
     )
+    assert session.params is not None
     assert session.params["output_type"] == 4
     assert receipt.status == "downloaded_initial_releases_only"
     sessions = pd.DatetimeIndex(["2000-02-15", "2000-02-16", "2000-03-15", "2000-03-16"])

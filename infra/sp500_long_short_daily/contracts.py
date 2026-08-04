@@ -174,16 +174,16 @@ class CampaignPackage:
         for line in (root / "package_checksums.sha256").read_text("utf-8").splitlines():
             if not line.strip():
                 continue
-            expected, filename = line.split(maxsplit=1)
+            expected_digest, filename = line.split(maxsplit=1)
             filename = filename.lstrip("* ")
             if filename in seen:
                 raise PackageContractError("DUPLICATE_CHECKSUM_ENTRY")
             seen.add(filename)
             path = root / filename
-            if not path.is_file() or sha256_file(path) != expected:
+            if not path.is_file() or sha256_file(path) != expected_digest:
                 raise PackageContractError(f"INTERNAL_CHECKSUM_MISMATCH:{filename}")
-        expected = set(RESULT_FILES_IN_ORDER) - {"package_checksums.sha256"}
-        if seen != expected:
+        expected_files = set(RESULT_FILES_IN_ORDER) - {"package_checksums.sha256"}
+        if seen != expected_files:
             raise PackageContractError("INTERNAL_CHECKSUM_COVERAGE_MISMATCH")
 
     def validate_semantics(self) -> None:
@@ -213,7 +213,8 @@ class CampaignPackage:
             family_counts[family] = family_counts.get(family, 0) + 1
             if list(candidate.get("position_values", ())) != [-1, 1]:
                 raise PackageContractError(f"INVALID_POSITION_CONTRACT:{strategy_id}")
-            if float(candidate.get("absolute_exposure")) != 1.0:
+            exposure = candidate.get("absolute_exposure")
+            if not isinstance(exposure, (int, float)) or float(exposure) != 1.0:
                 raise PackageContractError(f"INVALID_EXPOSURE:{strategy_id}")
             for cost in (
                 "commission_bps",
