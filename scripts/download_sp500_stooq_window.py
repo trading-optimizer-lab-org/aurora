@@ -34,7 +34,11 @@ def download_window(
             raw_dir=output_dir,
         )
     except DataGateError as exc:
-        if str(exc) != "STOOQ_DAILY_HITS_LIMIT":
+        fallback_reason = str(exc)
+        if fallback_reason not in {
+            "STOOQ_DAILY_HITS_LIMIT",
+            "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND",
+        }:
             raise
         frame, fallback_receipt = download_kibot_unadjusted_history(
             "SPY",
@@ -50,14 +54,14 @@ def download_window(
             dataset_id="DS002",
             status="downloaded_documented_free_fallback_kibot_raw_unadjusted",
             reason=(
-                "fallback_for=STOOQ_DAILY_HITS_LIMIT;"
+                f"fallback_for={fallback_reason};"
                 f"fallback_dataset_id={fallback_receipt.dataset_id};"
                 f"fallback_sha256={fallback_receipt.sha256}"
             ),
         )
         effective_source = "kibot_guest_raw_unadjusted_fallback"
         print(
-            "[sp500-data] Stooq daily quota exhausted; "
+            f"[sp500-data] Stooq unavailable ({fallback_reason}); "
             f"using documented bounded Kibot fallback window={window_id}",
             flush=True,
         )

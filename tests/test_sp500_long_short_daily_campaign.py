@@ -462,7 +462,7 @@ def test_stooq_page_loader_retries_transient_verification_screen(
     assert frame["Date"].tolist() == [pd.Timestamp("2010-12-31")]
 
 
-def test_stooq_page_loader_uses_full_transient_retry_budget(
+def test_stooq_page_loader_uses_bounded_transient_retry_budget(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -485,7 +485,7 @@ def test_stooq_page_loader_uses_full_transient_retry_budget(
             {"s": "spy.us", "i": "d"},
             browser_profile=tmp_path,
         )
-    assert calls == 20
+    assert calls == 3
 
 
 def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
@@ -768,9 +768,14 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
     ).hexdigest()
 
 
-def test_stooq_window_uses_documented_kibot_fallback_only_for_daily_limit(
+@pytest.mark.parametrize(
+    "provider_error",
+    ["STOOQ_DAILY_HITS_LIMIT", "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"],
+)
+def test_stooq_window_uses_documented_kibot_fallback_for_provider_unavailability(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    provider_error: str,
 ) -> None:
     frame = pd.DataFrame(
         {
@@ -794,7 +799,7 @@ def test_stooq_window_uses_documented_kibot_fallback_only_for_daily_limit(
 
     def fail_stooq(*args: object, **kwargs: object) -> object:
         del args, kwargs
-        raise DataGateError("STOOQ_DAILY_HITS_LIMIT")
+        raise DataGateError(provider_error)
 
     def fake_kibot(*args: object, **kwargs: object) -> tuple[pd.DataFrame, DownloadReceipt]:
         del args, kwargs
@@ -820,6 +825,7 @@ def test_stooq_window_uses_documented_kibot_fallback_only_for_daily_limit(
     assert isinstance(receipt, dict)
     assert receipt["dataset_id"] == "DS002"
     assert receipt["status"] == "downloaded_documented_free_fallback_kibot_raw_unadjusted"
+    assert f"fallback_for={provider_error}" in str(receipt["reason"])
     written = pd.read_csv(tmp_path / "stooq_spy_us_history.csv")
     assert len(written) == 2
     assert written["date"].tolist() == ["2009-01-02", "2009-01-05"]
