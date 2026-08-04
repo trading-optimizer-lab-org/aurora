@@ -13,7 +13,8 @@ import time
 import pandas as pd
 import requests
 
-from .market_pipeline import implemented_source_pairs
+from .accounting_pipeline import implemented_source_pairs as accounting_source_pairs
+from .market_pipeline import implemented_source_pairs as market_source_pairs
 from .registry import FidelityClass, SignalSpec
 
 
@@ -51,7 +52,9 @@ TEST_SYMBOLS = ("AAPL", "CARR", "KOP", "META", "RDDT")
 # A reachable endpoint is evidence that a source exists, not evidence that the
 # source can calculate a predictor. Entries are added only after an adapter has
 # verified every required field and produced a value under tests.
-IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = implemented_source_pairs()
+IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = frozenset(
+    market_source_pairs() | accounting_source_pairs()
+)
 
 
 def _utcnow() -> str:

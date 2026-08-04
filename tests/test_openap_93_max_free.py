@@ -7,6 +7,10 @@ import pandas as pd
 import pytest
 
 from aurora.core.execution_policy import LocalRunBlocked
+from aurora.research.openap_93.accounting_pipeline import (
+    ACCOUNTING_IMPLEMENTED_SIGNALS,
+    calculate_accounting_signals,
+)
 from aurora.research.openap_93.external import (
     normalize_public_inputs,
     parse_fred_csv,
@@ -78,9 +82,10 @@ def test_source_selection_is_deterministic_and_reports_ablation() -> None:
         key: value for key, value in selected_b.items() if key != "created_at"
     }
     pd.testing.assert_frame_equal(ablation_a, ablation_b)
-    assert selected_a["candidate_signals_covered"] == len(MARKET_IMPLEMENTED_SIGNALS)
+    implemented_signals = MARKET_IMPLEMENTED_SIGNALS | ACCOUNTING_IMPLEMENTED_SIGNALS
+    assert selected_a["candidate_signals_covered"] == len(implemented_signals)
     assert set(selected_a["candidate_signals_uncovered"]) == (
-        set(REQUIRED_93) - MARKET_IMPLEMENTED_SIGNALS
+        set(REQUIRED_93) - implemented_signals
     )
     assert selected_a["selected_source_ids"]
 
@@ -94,7 +99,9 @@ def test_reachable_source_is_not_mistaken_for_implemented_signal() -> None:
     assert IMPLEMENTED_SIGNAL_SOURCES
     assert matrix["candidate_match"].any()
     implemented = matrix.loc[matrix["formula_implemented"]]
-    assert set(implemented["signal"]) == MARKET_IMPLEMENTED_SIGNALS
+    assert set(implemented["signal"]) == (
+        MARKET_IMPLEMENTED_SIGNALS | ACCOUNTING_IMPLEMENTED_SIGNALS
+    )
     assert implemented["required_fields_verified"].all()
     assert implemented["can_produce_value"].all()
     unimplemented = matrix.loc[~matrix["formula_implemented"]]
@@ -306,3 +313,73 @@ def test_market_pipeline_emits_all_supported_signals_without_lookahead() -> None
     proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
     assert not result.loc[proxy, "current_usable"].any()
     assert result.loc[result["current_usable"], "value"].notna().all()
+
+
+def test_accounting_pipeline_emits_registered_subset_and_fails_closed() -> None:
+    symbols = [f"A{i:02d}" for i in range(12)]
+    master = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "marketCap": [1_000_000_000 + index * 50_000_000 for index in range(12)],
+            "industry": [f"industry_{index % 3}" for index in range(12)],
+            "sic_sec": [3571] * 12,
+        }
+    )
+    concepts = (
+        "assets",
+        "liabilities",
+        "equity",
+        "cash",
+        "current_assets",
+        "current_liabilities",
+        "inventory",
+        "receivables",
+        "revenue",
+        "cogs",
+        "net_income",
+        "operating_cash_flow",
+        "capex",
+        "depreciation",
+        "rd",
+        "sga",
+        "tax",
+        "debt_long",
+        "operating_income",
+        "shares",
+        "backlog",
+        "employees",
+    )
+    rows: list[dict[str, object]] = []
+    for symbol_index, symbol in enumerate(symbols):
+        for concept_index, concept in enumerate(concepts):
+            base = 100.0 + symbol_index * 2 + concept_index
+            for lag in (0, 1, 2):
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "concept": concept,
+                        "concept_lag": lag,
+                        "value": base * (1.0 - 0.03 * lag),
+                        "available_at": pd.Timestamp("2026-06-15")
+                        - pd.DateOffset(years=lag),
+                        "period_end": pd.Timestamp("2025-12-31")
+                        - pd.DateOffset(years=lag),
+                    }
+                )
+
+    result = calculate_accounting_signals(
+        master,
+        pd.DataFrame(rows),
+        formation_at="2026-07-31",
+        gnp_deflator=125.0,
+    )
+
+    assert set(result["signal"]) == ACCOUNTING_IMPLEMENTED_SIGNALS
+    assert result.groupby("symbol")["signal"].nunique().eq(
+        len(ACCOUNTING_IMPLEMENTED_SIGNALS)
+    ).all()
+    assert pd.to_datetime(result["available_at"]).le(pd.Timestamp("2026-07-31")).all()
+    proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
+    assert not result.loc[proxy, "current_usable"].any()
+    reconstructed = result["fidelity_class"].eq(FidelityClass.RECONSTRUCTED.value)
+    assert result.loc[reconstructed & result["value"].notna(), "current_usable"].all()
