@@ -1443,29 +1443,51 @@ def _reconcile_spy_sources(
     common = yahoo_prices.index.intersection(comparison.index)
     if len(common) < minimum_overlap:
         raise DataGateError("SPY_RECONCILIATION_TOO_SHORT")
-    yahoo_comparison_column = "close"
-    yahoo = yahoo_prices.loc[common, yahoo_comparison_column].pct_change()
-    stooq_returns = comparison.loc[common, "close"].pct_change()
-    valid = yahoo.notna() & stooq_returns.notna()
-    yahoo = yahoo.loc[valid]
-    stooq_returns = stooq_returns.loc[valid]
-    differences = (yahoo - stooq_returns).abs()
-    within = differences <= SPY_RETURN_TOLERANCE
-    within_fraction = float(within.mean()) if len(within) else 0.0
+
     event_dates = set(pd.to_datetime(distributions.get("date", pd.Series(dtype="datetime64[ns]"))))
     event_dates.update(pd.to_datetime(splits.get("date", pd.Series(dtype="datetime64[ns]"))))
+    if any(date not in common for date in event_dates):
+        raise DataGateError("SPY_CORPORATE_ACTION_SESSION_MISSING_FROM_SOURCE_OVERLAP")
+
+    bounded_distributions = distributions.loc[
+        pd.to_datetime(distributions.get("date", pd.Series(dtype="datetime64[ns]"))).isin(common)
+    ]
+    bounded_splits = splits.loc[
+        pd.to_datetime(splits.get("date", pd.Series(dtype="datetime64[ns]"))).isin(common)
+    ]
+    yahoo_ledger, _ = build_total_return_ledger(
+        yahoo_prices.loc[common].reset_index(names="date"),
+        bounded_distributions,
+        bounded_splits,
+    )
+    stooq_ledger, _ = build_total_return_ledger(
+        comparison.loc[common].reset_index(names="date"),
+        bounded_distributions,
+        bounded_splits,
+    )
+    yahoo_returns = yahoo_ledger["long_return"]
+    stooq_returns = stooq_ledger["long_return"]
+    valid = yahoo_returns.notna() & stooq_returns.notna()
+    yahoo_returns = yahoo_returns.loc[valid]
+    stooq_returns = stooq_returns.loc[valid]
+    differences = (yahoo_returns - stooq_returns).abs()
+    within = differences <= SPY_RETURN_TOLERANCE
+    within_fraction = float(within.mean()) if len(within) else 0.0
     outlier_dates = differences.index[~within]
     unreconciled = [date for date in outlier_dates if date not in event_dates]
-    correlation = float(yahoo.corr(stooq_returns))
-    median_abs_difference = float((yahoo - stooq_returns).abs().median())
+    correlation = float(yahoo_returns.corr(stooq_returns))
+    median_abs_difference = float(differences.median())
     if within_fraction < SPY_REQUIRED_TOLERANCE_FRACTION:
         unreconciled_details = ",".join(
-            f"{pd.Timestamp(date).date().isoformat()}={differences.loc[date]:.9f}"
+            f"{pd.Timestamp(date).date().isoformat()}="
+            f"{differences.loc[date]:.9f}/"
+            f"yahoo={yahoo_returns.loc[date]:.9f}/"
+            f"stooq={stooq_returns.loc[date]:.9f}"
             for date in unreconciled
         )
         raise DataGateError(
             "SPY_RECONCILIATION_99_5_PERCENT_GATE_FAILED:"
-            f"basis={yahoo_comparison_column}:"
+            "basis=open_to_open_total_return:"
             f"within_fraction={within_fraction:.9f}:"
             f"outliers={len(outlier_dates)}:"
             f"unreconciled={len(unreconciled)}:"
@@ -1477,6 +1499,46 @@ def _reconcile_spy_sources(
         raise DataGateError(f"SPY_UNRECONCILED_RETURN_OUTLIERS:{len(unreconciled)}")
     if correlation < 0.999:
         raise DataGateError("SPY_RECONCILIATION_FAILED")
+
+    yahoo_close_returns = yahoo_prices.loc[common, "close"].pct_change()
+    stooq_close_returns = comparison.loc[common, "close"].pct_change()
+    close_valid = yahoo_close_returns.notna() & stooq_close_returns.notna()
+    yahoo_close_returns = yahoo_close_returns.loc[close_valid]
+    stooq_close_returns = stooq_close_returns.loc[close_valid]
+    close_differences = (yahoo_close_returns - stooq_close_returns).abs()
+    close_outlier_dates = list(close_differences.index[close_differences > SPY_RETURN_TOLERANCE])
+
+    level_differences = pd.DataFrame(index=common)
+    for column in ("open", "high", "low", "close"):
+        denominator = yahoo_prices.loc[common, column].abs().replace(0.0, np.nan)
+        level_differences[column] = (
+            (yahoo_prices.loc[common, column] - comparison.loc[common, column]).abs()
+            / denominator
+        )
+    close_only_dates = set(
+        level_differences.index[
+            (level_differences[["open", "high", "low"]] <= SPY_RETURN_TOLERANCE).all(axis=1)
+            & (level_differences["close"] > SPY_RETURN_TOLERANCE)
+            & (comparison.loc[common, "close"] <= yahoo_prices.loc[common, "high"])
+            & (comparison.loc[common, "close"] >= yahoo_prices.loc[common, "low"])
+        ]
+    )
+    close_unreconciled: list[pd.Timestamp] = []
+    for date in close_outlier_dates:
+        location = common.get_loc(date)
+        previous = common[location - 1] if location > 0 else None
+        endpoints = [endpoint for endpoint in (previous, date) if endpoint is not None]
+        bounded_level_difference = all(
+            bool((level_differences.loc[endpoint] <= SPY_RETURN_TOLERANCE).all())
+            or endpoint in close_only_dates
+            for endpoint in endpoints
+        )
+        if date not in event_dates and not bounded_level_difference:
+            close_unreconciled.append(pd.Timestamp(date))
+    if close_unreconciled:
+        details = ",".join(date.date().isoformat() for date in close_unreconciled)
+        raise DataGateError(f"SPY_UNRECONCILED_CLOSE_RETURN_OUTLIERS:{details}")
+
     return {
         "overlap_rows": len(common),
         "daily_return_correlation": correlation,
@@ -1486,7 +1548,17 @@ def _reconcile_spy_sources(
         "unreconciled_outlier_count": 0,
         "return_tolerance": SPY_RETURN_TOLERANCE,
         "required_tolerance_fraction": SPY_REQUIRED_TOLERANCE_FRACTION,
-        "yahoo_comparison_column": yahoo_comparison_column,
+        "comparison_basis": "open_to_open_total_return",
+        "canonical_price_source": "stooq_raw_ohlcv",
+        "independent_reconciliation_source": "yahoo_raw_ohlcv",
+        "close_return_within_5_bps_fraction": float(
+            (close_differences <= SPY_RETURN_TOLERANCE).mean()
+        ),
+        "close_return_outlier_count": len(close_outlier_dates),
+        "close_only_vendor_discrepancy_dates": [
+            date.date().isoformat() for date in sorted(close_only_dates)
+        ],
+        "close_return_unreconciled_outlier_count": 0,
     }
 
 
@@ -1563,7 +1635,6 @@ def prepare_market_snapshot(
             sponsor_path.read_bytes(),
         )
         distribution_receipts = [sponsor_receipt]
-    ledger, audit = build_total_return_ledger(prices, dividends, splits)
     print("[sp500-data] stooq history start", flush=True)
     stooq, stooq_receipt = download_stooq_history(
         "spy.us",
@@ -1579,8 +1650,9 @@ def prepare_market_snapshot(
         stooq,
         dividends,
         splits,
-        minimum_overlap=min(1000, max(200, len(ledger) - 1)),
+        minimum_overlap=min(1000, max(200, len(prices) - 1)),
     )
+    ledger, audit = build_total_return_ledger(stooq, dividends, splits)
 
     receipts: list[DownloadReceipt] = [
         *yahoo_receipts,
