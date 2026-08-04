@@ -64,7 +64,9 @@ def test_source_selection_is_deterministic_and_reports_ablation() -> None:
     matrix = source_coverage_matrix(registry, probes)
     selected_a, ablation_a = select_sources_lexicographically(matrix)
     selected_b, ablation_b = select_sources_lexicographically(matrix)
-    assert selected_a == selected_b
+    assert {key: value for key, value in selected_a.items() if key != "created_at"} == {
+        key: value for key, value in selected_b.items() if key != "created_at"
+    }
     pd.testing.assert_frame_equal(ablation_a, ablation_b)
     assert selected_a["candidate_signals_covered"] == 0
     assert selected_a["candidate_signals_uncovered"] == sorted(REQUIRED_93)
