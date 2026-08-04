@@ -1,0 +1,11 @@
+name: OpenAP 93 Maximum Free Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run_branch_workflow:
+    uses: trading-optimizer-lab-org/aurora/.github/workflows/openap-current-data-quality-tests.yml@codex/openap-full-data-quality-fix
