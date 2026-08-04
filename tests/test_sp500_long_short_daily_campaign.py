@@ -348,6 +348,7 @@ def test_stooq_github_transport_uses_headless_browser(
     )
     commands: list[list[str]] = []
 
+    monkeypatch.setenv("GITHUB_ACTIONS", "false")
     monkeypatch.setattr(
         "aurora.infra.sp500_long_short_daily.data.shutil.which",
         lambda executable: "/usr/bin/google-chrome" if executable == "google-chrome" else None,
@@ -451,6 +452,32 @@ def test_stooq_page_loader_retries_transient_verification_screen(
     assert payload == valid_payload
     assert page_count == 1
     assert frame["Date"].tolist() == [pd.Timestamp("2010-12-31")]
+
+
+def test_stooq_page_loader_uses_full_transient_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def fake_request(*args: object, **kwargs: object) -> bytes:
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        return b"<html>verification required</html>"
+
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data._request_stooq_history_page",
+        fake_request,
+    )
+    monkeypatch.setattr("aurora.infra.sp500_long_short_daily.data.time.sleep", lambda _: None)
+    with pytest.raises(DataGateError, match="STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"):
+        _load_stooq_history_page(
+            requests.Session(),
+            {"s": "spy.us", "i": "d"},
+            browser_profile=tmp_path,
+        )
+    assert calls == 20
 
 
 def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:

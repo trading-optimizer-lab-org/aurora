@@ -573,7 +573,7 @@ def _load_stooq_history_page(
     params: Mapping[str, Any],
     *,
     browser_profile: Path | None,
-    attempts: int = 8,
+    attempts: int = 20,
 ) -> tuple[bytes, pd.DataFrame, int]:
     """Fetch and validate one page, retrying transient verification screens."""
 
