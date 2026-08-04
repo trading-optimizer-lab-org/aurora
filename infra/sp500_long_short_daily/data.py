@@ -309,26 +309,50 @@ def _download_stooq_html_history(
         "d2": end_date.strftime("%Y%m%d"),
         "i": "d",
     }
-    first_payload = _request_bytes(client, STOOQ_HISTORY_PAGE, params=first_params)
+    first_payload = _request_bytes(
+        client,
+        STOOQ_HISTORY_PAGE,
+        params=first_params,
+        attempts=3,
+        timeout=20,
+    )
     if _solve_stooq_browser_verification(client, first_payload):
-        first_payload = _request_bytes(client, STOOQ_HISTORY_PAGE, params=first_params)
-    first_frame, page_count = _parse_stooq_html_history(first_payload)
-    frames = [first_frame]
-    payload_hashes = [_sha256(first_payload)]
-    def fetch_page(page: int) -> tuple[int, bytes]:
-        return page, _request_bytes(
+        first_payload = _request_bytes(
             client,
             STOOQ_HISTORY_PAGE,
-            params={
-                "s": symbol.lower(),
-                "i": "d",
-                "f": start_date.strftime("%Y%m%d"),
-                "t": end_date.strftime("%Y%m%d"),
-                "l": page,
-            },
+            params=first_params,
             attempts=3,
             timeout=20,
         )
+    first_frame, page_count = _parse_stooq_html_history(first_payload)
+    frames = [first_frame]
+    payload_hashes = [_sha256(first_payload)]
+
+    def fetch_page(page: int) -> tuple[int, bytes]:
+        page_client = client
+        owned_client: requests.Session | None = None
+        if isinstance(client, requests.Session):
+            owned_client = requests.Session()
+            owned_client.headers.update(client.headers)
+            owned_client.cookies.update(client.cookies)
+            page_client = owned_client
+        try:
+            return page, _request_bytes(
+                page_client,
+                STOOQ_HISTORY_PAGE,
+                params={
+                    "s": symbol.lower(),
+                    "i": "d",
+                    "f": start_date.strftime("%Y%m%d"),
+                    "t": end_date.strftime("%Y%m%d"),
+                    "l": page,
+                },
+                attempts=3,
+                timeout=20,
+            )
+        finally:
+            if owned_client is not None:
+                owned_client.close()
 
     pages: list[tuple[int, bytes]] = []
     if page_count > 1:
