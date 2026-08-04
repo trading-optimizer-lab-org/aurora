@@ -7,7 +7,12 @@ import pytest
 
 from aurora.core.execution_policy import LocalRunBlocked
 from aurora.research.openap_93.registry import REQUIRED_93, FidelityClass, load_signal_registry
-from aurora.research.openap_93.sources import PUBLIC_SOURCES, select_sources_lexicographically, source_coverage_matrix
+from aurora.research.openap_93.sources import (
+    IMPLEMENTED_SIGNAL_SOURCES,
+    PUBLIC_SOURCES,
+    select_sources_lexicographically,
+    source_coverage_matrix,
+)
 
 
 CONFIG = Path("config/openap_93/signals_93.yaml")
@@ -48,8 +53,22 @@ def test_source_selection_is_deterministic_and_reports_ablation() -> None:
     selected_b, ablation_b = select_sources_lexicographically(matrix)
     assert selected_a == selected_b
     pd.testing.assert_frame_equal(ablation_a, ablation_b)
-    assert selected_a["candidate_signals_covered"] == 92
-    assert selected_a["candidate_signals_uncovered"] == ["ProbInformedTrading"]
+    assert selected_a["candidate_signals_covered"] == 0
+    assert selected_a["candidate_signals_uncovered"] == sorted(REQUIRED_93)
+    assert selected_a["selected_source_ids"] == []
+
+
+def test_reachable_source_is_not_mistaken_for_implemented_signal() -> None:
+    registry = load_signal_registry(CONFIG)
+    probes = pd.DataFrame(
+        {"source_id": [source.source_id for source in PUBLIC_SOURCES], "probe_ok": True}
+    )
+    matrix = source_coverage_matrix(registry, probes)
+    assert IMPLEMENTED_SIGNAL_SOURCES == frozenset()
+    assert matrix["candidate_match"].any()
+    assert not matrix["formula_implemented"].any()
+    assert not matrix["required_fields_verified"].any()
+    assert not matrix["can_produce_value"].any()
 
 
 def test_no_source_requires_registration_or_payment() -> None:

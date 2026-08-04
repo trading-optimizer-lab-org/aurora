@@ -47,6 +47,11 @@ PUBLIC_SOURCES: tuple[SourceSpec, ...] = (
 
 TEST_SYMBOLS = ("AAPL", "CARR", "KOP", "META", "RDDT")
 
+# A reachable endpoint is evidence that a source exists, not evidence that the
+# source can calculate a predictor. Entries are added only after an adapter has
+# verified every required field and produced a value under tests.
+IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = frozenset()
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -176,11 +181,21 @@ def source_coverage_matrix(
     for signal in registry.values():
         for source in PUBLIC_SOURCES:
             candidate = source.source_id in signal.candidate_sources
+            formula_implemented = (signal.name, source.source_id) in IMPLEMENTED_SIGNAL_SOURCES
+            required_fields_verified = formula_implemented
             rows.append({
                 "candidate_source": source.source_id,
                 "domain": source.domain,
                 "signal": signal.name,
-                "can_produce_value": candidate and bool(probe_ok.get(source.source_id, False)),
+                "candidate_match": candidate,
+                "formula_implemented": formula_implemented,
+                "required_fields_verified": required_fields_verified,
+                "can_produce_value": (
+                    candidate
+                    and formula_implemented
+                    and required_fields_verified
+                    and bool(probe_ok.get(source.source_id, False))
+                ),
                 "expected_fidelity": signal.expected_best_class.value if candidate else "unavailable",
                 "source_probe_ok": bool(probe_ok.get(source.source_id, False)),
                 "scraping_required": source.scraping_required,
