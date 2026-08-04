@@ -24,6 +24,7 @@ dependencies = [
     "networkx>=3.0",
     "jsonschema>=4.23",
     "cryptography>=42",
+    "requests>=2.32",
 ]
 
 [project.optional-dependencies]
@@ -90,6 +91,7 @@ packages = [
     "aurora.infra.github_performance",
     "aurora.infra.github_performance.workloads",
     "aurora.infra.gtbi_v7_readiness",
+    "aurora.infra.sp500_long_short_daily",
     "aurora.marketdata",
     "aurora.markets",
     "aurora.ml",
@@ -140,6 +142,7 @@ packages = [
 "aurora.infra.github_performance" = "infra/github_performance"
 "aurora.infra.github_performance.workloads" = "infra/github_performance/workloads"
 "aurora.infra.gtbi_v7_readiness" = "infra/gtbi_v7_readiness"
+"aurora.infra.sp500_long_short_daily" = "infra/sp500_long_short_daily"
 "aurora.marketdata" = "marketdata"
 "aurora.markets" = "markets"
 "aurora.ml" = "ml"

@@ -1,0 +1,814 @@
+"""Bounded, fail-closed data acquisition for the SPY daily campaign."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import requests
+
+from aurora.core.execution_policy import require_github_only_execution
+from aurora.infra.sp500_long_short_daily.contracts import (
+    LOCKED_START,
+    TRAIN_END,
+    VALIDATION_END,
+    CampaignPackage,
+    LockedBoundaryError,
+    assert_frame_before_locked,
+    canonical_json_hash,
+)
+from aurora.infra.sp500_long_short_daily.ledger import build_total_return_ledger
+
+
+YAHOO_DOWNLOAD = "https://query1.finance.yahoo.com/v7/finance/download/{symbol}"
+YAHOO_COOKIE = "https://fc.yahoo.com"
+YAHOO_CRUMB = "https://query2.finance.yahoo.com/v1/test/getcrumb"
+STOOQ_DOWNLOAD = "https://stooq.com/q/d/l/"
+FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
+SPY_RETURN_TOLERANCE = 5e-4
+SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
+
+
+class DataGateError(RuntimeError):
+    """Raised when a required source cannot satisfy the frozen contract."""
+
+
+@dataclass(frozen=True)
+class DownloadReceipt:
+    dataset_id: str
+    url_template: str
+    sha256: str
+    byte_count: int
+    minimum_date: str | None
+    maximum_date: str | None
+    status: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedMarketData:
+    ledger: pd.DataFrame
+    series: Mapping[str, pd.Series]
+    available_dataset_ids: frozenset[str]
+    rejected_datasets: Mapping[str, str]
+    receipts: tuple[DownloadReceipt, ...]
+    split: str
+
+
+def _repo_campaign_root() -> Path:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "campaigns"
+        / "sp500_long_short_daily"
+    )
+
+
+def _epoch_seconds(value: pd.Timestamp) -> int:
+    timestamp = pd.Timestamp(value, tz="UTC")
+    return int(timestamp.timestamp())
+
+
+def _sha256(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _store_raw(raw_dir: Path | None, filename: str, payload: bytes) -> None:
+    if raw_dir is None:
+        return
+    root = Path(raw_dir).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / filename
+    target.write_bytes(payload)
+    if _sha256(target.read_bytes()) != _sha256(payload):
+        raise DataGateError(f"RAW_SNAPSHOT_HASH_MISMATCH:{filename}")
+
+
+def _bounded_dates(start: Any, end: Any, *, split: str) -> tuple[pd.Timestamp, pd.Timestamp]:
+    start_date = pd.Timestamp(start).normalize()
+    end_date = pd.Timestamp(end).normalize()
+    if end_date >= LOCKED_START:
+        raise LockedBoundaryError("TECHNICAL_FAILURE_LOCKED_BREACH:data_request")
+    if split == "train" and end_date > TRAIN_END:
+        raise DataGateError("TRAIN_REQUEST_CROSSES_SELECTION_BOUNDARY")
+    if split == "validation" and (start_date < TRAIN_END + pd.Timedelta(days=1) or end_date > VALIDATION_END):
+        raise DataGateError("VALIDATION_REQUEST_OUTSIDE_FROZEN_BOUNDARY")
+    return start_date, end_date
+
+
+def _request_bytes(
+    session: requests.Session,
+    url: str,
+    *,
+    params: Mapping[str, Any] | None = None,
+    attempts: int = 4,
+    timeout: int = 60,
+) -> bytes:
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            response = session.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
+            payload = response.content
+            if not payload:
+                raise DataGateError("EMPTY_HTTP_RESPONSE")
+            return payload
+        except (requests.RequestException, DataGateError) as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(2**attempt)
+    raise DataGateError(f"DOWNLOAD_FAILED:{type(last_error).__name__}")
+
+
+def _parse_csv(payload: bytes) -> pd.DataFrame:
+    try:
+        return pd.read_csv(io.BytesIO(payload))
+    except Exception as exc:
+        raise DataGateError("INVALID_CSV_RESPONSE") from exc
+
+
+def _assert_response_date_bound(
+    frame: pd.DataFrame,
+    *,
+    date_column: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    label: str,
+) -> pd.DataFrame:
+    dates = pd.to_datetime(frame[date_column], errors="coerce")
+    if dates.isna().any():
+        raise DataGateError(f"INVALID_DATES:{label}")
+    normalized = dates.dt.normalize()
+    if len(normalized) and (normalized.min() < start or normalized.max() > end):
+        raise DataGateError(f"UNBOUNDED_SOURCE_RESPONSE:{label}")
+    result = frame.copy()
+    result[date_column] = normalized
+    assert_frame_before_locked(result, label=label)
+    return result
+
+
+def download_yahoo_history(
+    symbol: str,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+    session: requests.Session | None = None,
+    raw_dir: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
+    """Download bounded raw OHLC, dividends and splits as CSV only.
+
+    The period2 bound is exclusive. The CSV endpoint returns no current quote
+    metadata, unlike the chart endpoint, which is intentionally forbidden.
+    """
+
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    client = session or requests.Session()
+    client.headers.update({"User-Agent": "AuroraResearch/1.0 bounded-csv"})
+    _request_bytes(client, YAHOO_COOKIE, attempts=2)
+    crumb = _request_bytes(client, YAHOO_CRUMB, attempts=3).decode("utf-8").strip()
+    if not crumb or "<" in crumb:
+        raise DataGateError("YAHOO_CRUMB_UNAVAILABLE")
+    common = {
+        "period1": _epoch_seconds(start_date),
+        "period2": _epoch_seconds(end_date + pd.Timedelta(days=1)),
+        "interval": "1d",
+        "crumb": crumb,
+    }
+    receipts: list[DownloadReceipt] = []
+    outputs: list[pd.DataFrame] = []
+    for event, dataset_id in (
+        ("history", "YAHOO_SPY_OHLCV"),
+        ("div", "YAHOO_SPY_DISTRIBUTIONS"),
+        ("split", "YAHOO_SPY_SPLITS"),
+    ):
+        params = {**common, "events": event, "includeAdjustedClose": "true"}
+        payload = _request_bytes(client, YAHOO_DOWNLOAD.format(symbol=symbol), params=params)
+        frame = _parse_csv(payload)
+        if "Date" not in frame:
+            raise DataGateError(f"YAHOO_SCHEMA_MISMATCH:{event}")
+        frame = _assert_response_date_bound(
+            frame,
+            date_column="Date",
+            start=start_date,
+            end=end_date,
+            label=f"yahoo_{event}",
+        )
+        _store_raw(raw_dir, f"yahoo_{symbol.lower()}_{event}.csv", payload)
+        dates = frame["Date"]
+        receipts.append(
+            DownloadReceipt(
+                dataset_id=dataset_id,
+                url_template=YAHOO_DOWNLOAD.format(symbol=symbol),
+                sha256=_sha256(payload),
+                byte_count=len(payload),
+                minimum_date=dates.min().date().isoformat() if len(dates) else None,
+                maximum_date=dates.max().date().isoformat() if len(dates) else None,
+                status="downloaded",
+            )
+        )
+        outputs.append(frame)
+    history, dividends, splits = outputs
+    prices = history.rename(
+        columns={
+            "Date": "date",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Adj Close": "adj_close",
+            "Volume": "volume",
+        }
+    )
+    prices = prices[["date", "open", "high", "low", "close", "adj_close", "volume"]]
+    dividends = dividends.rename(columns={"Date": "date", "Dividends": "distribution"})
+    if "distribution" not in dividends:
+        dividends = pd.DataFrame(columns=["date", "distribution"])
+    else:
+        dividends = dividends[["date", "distribution"]]
+    splits = splits.rename(columns={"Date": "date", "Stock Splits": "split_ratio"})
+    if "split_ratio" not in splits:
+        splits = pd.DataFrame(columns=["date", "split_ratio"])
+    else:
+        splits = splits[["date", "split_ratio"]]
+    return prices, dividends, splits, tuple(receipts)
+
+
+def download_stooq_history(
+    symbol: str,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+    session: requests.Session | None = None,
+    raw_dir: Path | None = None,
+) -> tuple[pd.DataFrame, DownloadReceipt]:
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    client = session or requests.Session()
+    client.headers.update({"User-Agent": "Mozilla/5.0 AuroraResearch bounded-csv"})
+    params = {
+        "s": symbol.lower(),
+        "d1": start_date.strftime("%Y%m%d"),
+        "d2": end_date.strftime("%Y%m%d"),
+        "i": "d",
+    }
+    payload = _request_bytes(client, STOOQ_DOWNLOAD, params=params)
+    frame = _parse_csv(payload)
+    expected = {"Date", "Open", "High", "Low", "Close", "Volume"}
+    if not expected.issubset(frame.columns):
+        raise DataGateError("STOOQ_SCHEMA_MISMATCH")
+    frame = _assert_response_date_bound(
+        frame,
+        date_column="Date",
+        start=start_date,
+        end=end_date,
+        label=f"stooq_{symbol}",
+    ).rename(columns=str.lower)
+    _store_raw(raw_dir, f"stooq_{symbol.replace('.', '_').lower()}_history.csv", payload)
+    dates = frame["date"]
+    receipt = DownloadReceipt(
+        dataset_id="DS002",
+        url_template=STOOQ_DOWNLOAD,
+        sha256=_sha256(payload),
+        byte_count=len(payload),
+        minimum_date=dates.min().date().isoformat() if len(dates) else None,
+        maximum_date=dates.max().date().isoformat() if len(dates) else None,
+        status="downloaded",
+    )
+    return frame[["date", "open", "high", "low", "close", "volume"]], receipt
+
+
+def download_fred_series(
+    series_id: str,
+    dataset_id: str,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+    session: requests.Session | None = None,
+    raw_dir: Path | None = None,
+) -> tuple[pd.Series, DownloadReceipt]:
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    payload = _request_bytes(
+        session or requests.Session(),
+        FRED_DOWNLOAD,
+        params={
+            "id": series_id,
+            "cosd": start_date.date().isoformat(),
+            "coed": end_date.date().isoformat(),
+        },
+    )
+    frame = _parse_csv(payload)
+    if "DATE" not in frame.columns or series_id not in frame.columns:
+        raise DataGateError(f"FRED_SCHEMA_MISMATCH:{series_id}")
+    frame = _assert_response_date_bound(
+        frame,
+        date_column="DATE",
+        start=start_date,
+        end=end_date,
+        label=f"fred_{series_id}",
+    )
+    _store_raw(raw_dir, f"fred_{dataset_id}_{series_id}.csv", payload)
+    values = pd.to_numeric(frame[series_id].replace(".", pd.NA), errors="coerce")
+    series = pd.Series(values.to_numpy(), index=pd.DatetimeIndex(frame["DATE"]), name=series_id)
+    series = series.dropna().sort_index(kind="mergesort")
+    receipt = DownloadReceipt(
+        dataset_id=dataset_id,
+        url_template=FRED_DOWNLOAD,
+        sha256=_sha256(payload),
+        byte_count=len(payload),
+        minimum_date=series.index.min().date().isoformat() if len(series) else None,
+        maximum_date=series.index.max().date().isoformat() if len(series) else None,
+        status="downloaded",
+    )
+    return series, receipt
+
+
+def download_alfred_initial_series(
+    series_id: str,
+    dataset_id: str,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+    session: requests.Session | None = None,
+    api_key: str | None = None,
+    raw_dir: Path | None = None,
+) -> tuple[pd.DataFrame, DownloadReceipt]:
+    """Download initial releases only and retain their actual release dates."""
+
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    key = api_key or os.environ.get("FRED_API_KEY", "").strip()
+    if not key:
+        raise DataGateError("FRED_API_KEY_REQUIRED_FOR_INITIAL_RELEASE_VINTAGES")
+    payload = _request_bytes(
+        session or requests.Session(),
+        FRED_API_OBSERVATIONS,
+        params={
+            "series_id": series_id,
+            "api_key": key,
+            "file_type": "json",
+            "output_type": 4,
+            "observation_start": start_date.date().isoformat(),
+            "observation_end": end_date.date().isoformat(),
+            "realtime_start": "1776-07-04",
+            "realtime_end": end_date.date().isoformat(),
+            "limit": 100000,
+            "sort_order": "asc",
+        },
+    )
+    try:
+        decoded = json.loads(payload)
+        observations = decoded["observations"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise DataGateError(f"ALFRED_SCHEMA_MISMATCH:{series_id}") from exc
+    rows = []
+    for observation in observations:
+        value = pd.to_numeric(observation.get("value"), errors="coerce")
+        if pd.isna(value):
+            continue
+        observation_date = pd.Timestamp(observation["date"]).normalize()
+        release_date = pd.Timestamp(observation["realtime_start"]).normalize()
+        if observation_date < start_date or observation_date > end_date:
+            raise DataGateError(f"UNBOUNDED_SOURCE_RESPONSE:alfred_{series_id}")
+        if release_date > end_date:
+            raise DataGateError(f"POST_PHASE_RELEASE_IN_RESPONSE:alfred_{series_id}")
+        if release_date >= LOCKED_START:
+            raise LockedBoundaryError("TECHNICAL_FAILURE_LOCKED_BREACH:alfred_release")
+        rows.append(
+            {
+                "observation_date": observation_date,
+                "release_date": release_date,
+                "value": float(value),
+            }
+        )
+    frame = pd.DataFrame(rows, columns=["observation_date", "release_date", "value"])
+    if not frame.empty:
+        frame = frame.sort_values(
+            ["release_date", "observation_date"], kind="mergesort"
+        ).drop_duplicates("release_date", keep="last")
+    _store_raw(raw_dir, f"alfred_{dataset_id}_{series_id}.json", payload)
+    receipt = DownloadReceipt(
+        dataset_id=dataset_id,
+        url_template=FRED_API_OBSERVATIONS,
+        sha256=_sha256(payload),
+        byte_count=len(payload),
+        minimum_date=(
+            frame["observation_date"].min().date().isoformat() if len(frame) else None
+        ),
+        maximum_date=(
+            frame["observation_date"].max().date().isoformat() if len(frame) else None
+        ),
+        status="downloaded_initial_releases_only",
+    )
+    return frame, receipt
+
+
+def load_state_street_distributions(
+    path: Path,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+) -> tuple[pd.DataFrame, DownloadReceipt]:
+    """Load a pre-frozen official sponsor export without touching current data."""
+
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    source = Path(path).resolve()
+    if not source.is_file():
+        raise DataGateError("STATE_STREET_DISTRIBUTION_SNAPSHOT_REQUIRED")
+    payload = source.read_bytes()
+    frame = _parse_csv(payload)
+    required = {"ex_date", "distribution"}
+    if not required.issubset(frame.columns):
+        raise DataGateError("STATE_STREET_DISTRIBUTION_SCHEMA_MISMATCH")
+    dates = pd.to_datetime(frame["ex_date"], errors="coerce").dt.normalize()
+    values = pd.to_numeric(frame["distribution"], errors="coerce")
+    if dates.isna().any() or values.isna().any() or (values < 0).any():
+        raise DataGateError("STATE_STREET_DISTRIBUTION_INVALID_VALUES")
+    phase_limit = TRAIN_END if split == "train" else VALIDATION_END
+    if len(dates) and dates.max() > phase_limit:
+        raise DataGateError("STATE_STREET_SNAPSHOT_EXCEEDS_PHASE_BOUNDARY")
+    if len(dates) and dates.max() >= LOCKED_START:
+        raise LockedBoundaryError("TECHNICAL_FAILURE_LOCKED_BREACH:sponsor_snapshot")
+    bounded = pd.DataFrame({"date": dates, "distribution": values})
+    bounded = bounded.loc[(bounded["date"] >= start_date) & (bounded["date"] <= end_date)]
+    bounded = bounded.sort_values("date", kind="mergesort").reset_index(drop=True)
+    if bounded["date"].duplicated().any():
+        raise DataGateError("STATE_STREET_DISTRIBUTION_DUPLICATE_EX_DATE")
+    receipt = DownloadReceipt(
+        dataset_id="DS001",
+        url_template="PINNED_STATE_STREET_SPY_DISTRIBUTION_EXPORT",
+        sha256=_sha256(payload),
+        byte_count=len(payload),
+        minimum_date=bounded["date"].min().date().isoformat() if len(bounded) else None,
+        maximum_date=bounded["date"].max().date().isoformat() if len(bounded) else None,
+        status="loaded_official_frozen_snapshot",
+    )
+    return bounded, receipt
+
+
+def reconcile_sponsor_distributions(
+    sponsor: pd.DataFrame,
+    yahoo: pd.DataFrame,
+    *,
+    absolute_tolerance: float = 5e-6,
+) -> Mapping[str, Any]:
+    left = sponsor.set_index("date")["distribution"].sort_index()
+    right = yahoo.set_index("date")["distribution"].sort_index()
+    if not left.index.equals(right.index):
+        missing_sponsor = right.index.difference(left.index)
+        missing_yahoo = left.index.difference(right.index)
+        raise DataGateError(
+            "SPONSOR_DISTRIBUTION_DATE_MISMATCH:"
+            f"missing_sponsor={len(missing_sponsor)}:missing_yahoo={len(missing_yahoo)}"
+        )
+    differences = (left - right).abs()
+    if len(differences) and bool((differences > absolute_tolerance).any()):
+        raise DataGateError("SPONSOR_DISTRIBUTION_AMOUNT_MISMATCH")
+    return {
+        "event_count": int(len(left)),
+        "maximum_absolute_amount_difference": (
+            float(differences.max()) if len(differences) else 0.0
+        ),
+        "absolute_tolerance": absolute_tolerance,
+    }
+
+
+FRED_DATASETS: Mapping[str, tuple[str, str]] = {
+    "DS004": ("VIXCLS", "VIX"),
+    "DS016": ("DGS10", "DGS10"),
+    "DS017": ("DGS2", "DGS2"),
+    "DS018": ("DGS3MO", "DGS3MO"),
+    "DS019": ("T10Y2Y", "T10Y2Y"),
+    "DS020": ("T10Y3M", "T10Y3M"),
+    "DS021": ("DFF", "DFF"),
+    "DS022": ("BAA10YM", "BAA10Y"),
+    "DS023": ("BAMLC0A0CM", "IG_OAS"),
+    "DS024": ("BAMLH0A0HYM2", "HY_OAS"),
+    "DS025": ("NFCI", "NFCI"),
+    "DS026": ("ANFCI", "ANFCI"),
+    "DS027": ("STLFSI4", "STLFSI"),
+    "DS028": ("OFRFSI", "OFR_FSI"),
+    "DS033": ("CPIAUCSL", "CPI"),
+    "DS034": ("PCEPI", "PCE"),
+    "DS038": ("WALCL", "WALCL"),
+    "DS039": ("M2SL", "M2"),
+    "DS040": ("T10YIE", "T10YIE"),
+    "DS045": ("USEPUINDXD", "EPU"),
+    "DS050": ("DTWEXBGS", "USD"),
+    "DS051": ("DCOILWTICO", "WTI"),
+    "DS052": ("GOLDAMGBD228NLBM", "GOLD"),
+}
+
+
+def _align_causal(series: pd.Series, sessions: pd.DatetimeIndex, *, lag_sessions: int = 1) -> pd.Series:
+    values = series.copy().sort_index(kind="mergesort")
+    values.index = pd.DatetimeIndex(values.index).normalize()
+    aligned = values.reindex(sessions, method="ffill")
+    if lag_sessions:
+        aligned = aligned.shift(lag_sessions)
+    return aligned
+
+
+def _align_initial_releases(
+    releases: pd.DataFrame,
+    sessions: pd.DatetimeIndex,
+    *,
+    first_dissemination: pd.Timestamp | None = None,
+) -> pd.Series:
+    if releases.empty:
+        return pd.Series(np.nan, index=sessions, dtype=float)
+    values = releases.set_index("release_date")["value"].sort_index(kind="mergesort")
+    aligned = values.reindex(sessions, method="ffill").shift(1)
+    if first_dissemination is not None:
+        aligned.loc[aligned.index < first_dissemination] = np.nan
+    return aligned
+
+
+def _reconcile_spy_sources(
+    yahoo_prices: pd.DataFrame,
+    stooq: pd.DataFrame,
+    distributions: pd.DataFrame,
+    splits: pd.DataFrame,
+    *,
+    minimum_overlap: int = 1000,
+) -> Mapping[str, Any]:
+    yahoo_prices = yahoo_prices.set_index("date").sort_index(kind="mergesort")
+    comparison = stooq.set_index("date").sort_index(kind="mergesort")
+    common = yahoo_prices.index.intersection(comparison.index)
+    if len(common) < minimum_overlap:
+        raise DataGateError("SPY_RECONCILIATION_TOO_SHORT")
+    yahoo = yahoo_prices.loc[common, "close"].pct_change()
+    stooq_returns = comparison.loc[common, "close"].pct_change()
+    valid = yahoo.notna() & stooq_returns.notna()
+    yahoo = yahoo.loc[valid]
+    stooq_returns = stooq_returns.loc[valid]
+    differences = (yahoo - stooq_returns).abs()
+    within = differences <= SPY_RETURN_TOLERANCE
+    within_fraction = float(within.mean()) if len(within) else 0.0
+    event_dates = set(pd.to_datetime(distributions.get("date", pd.Series(dtype="datetime64[ns]"))))
+    event_dates.update(pd.to_datetime(splits.get("date", pd.Series(dtype="datetime64[ns]"))))
+    outlier_dates = differences.index[~within]
+    unreconciled = [date for date in outlier_dates if date not in event_dates]
+    correlation = float(yahoo.corr(stooq_returns))
+    median_abs_difference = float((yahoo - stooq_returns).abs().median())
+    if within_fraction < SPY_REQUIRED_TOLERANCE_FRACTION:
+        raise DataGateError("SPY_RECONCILIATION_99_5_PERCENT_GATE_FAILED")
+    if unreconciled:
+        raise DataGateError(f"SPY_UNRECONCILED_RETURN_OUTLIERS:{len(unreconciled)}")
+    if correlation < 0.999:
+        raise DataGateError("SPY_RECONCILIATION_FAILED")
+    return {
+        "overlap_rows": len(common),
+        "daily_return_correlation": correlation,
+        "median_abs_return_difference": median_abs_difference,
+        "within_5_bps_fraction": within_fraction,
+        "outlier_count": int(len(outlier_dates)),
+        "unreconciled_outlier_count": 0,
+        "return_tolerance": SPY_RETURN_TOLERANCE,
+        "required_tolerance_fraction": SPY_REQUIRED_TOLERANCE_FRACTION,
+    }
+
+
+def prepare_market_snapshot(
+    root: Path,
+    package: CampaignPackage,
+    *,
+    start: str,
+    end: str,
+    split: str,
+) -> Mapping[str, Any]:
+    """Acquire one immutable bounded snapshot on GitHub Actions."""
+
+    require_github_only_execution("SP500_LONG_SHORT_DAILY_PREPARE")
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    root = Path(root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    raw_root = root / "raw"
+    raw_root.mkdir(exist_ok=True)
+    client = requests.Session()
+    prices, yahoo_dividends, splits, yahoo_receipts = download_yahoo_history(
+        "SPY",
+        start_date,
+        end_date,
+        split=split,
+        session=client,
+        raw_dir=raw_root,
+    )
+    if not splits.empty:
+        raise DataGateError("SPY_SPLIT_REQUIRES_EXPLICIT_RAW_PRICE_REPAIR")
+    sponsor_path = os.environ.get("SP500_STATE_STREET_DISTRIBUTIONS_CSV", "").strip()
+    if not sponsor_path:
+        sponsor_path = str(
+            _repo_campaign_root()
+            / "official_inputs"
+            / (
+                "state_street_spy_distributions_through_2010.csv"
+                if split == "train"
+                else "state_street_spy_distributions_2011_2020.csv"
+            )
+        )
+    dividends, sponsor_receipt = load_state_street_distributions(
+        Path(sponsor_path), start_date, end_date, split=split
+    )
+    _store_raw(
+        raw_root,
+        f"state_street_spy_distributions_{split}.csv",
+        Path(sponsor_path).read_bytes(),
+    )
+    sponsor_reconciliation = reconcile_sponsor_distributions(
+        dividends, yahoo_dividends
+    )
+    ledger, audit = build_total_return_ledger(prices, dividends, splits)
+    stooq, stooq_receipt = download_stooq_history(
+        "spy.us",
+        start_date,
+        end_date,
+        split=split,
+        session=client,
+        raw_dir=raw_root,
+    )
+    reconciliation = _reconcile_spy_sources(
+        prices,
+        stooq,
+        dividends,
+        splits,
+        minimum_overlap=min(1000, max(200, len(ledger) - 1)),
+    )
+
+    receipts: list[DownloadReceipt] = [
+        *yahoo_receipts,
+        sponsor_receipt,
+        stooq_receipt,
+    ]
+    series: dict[str, pd.Series] = {}
+    available = {"DS001", "DS002"}
+    rejected: dict[str, str] = {}
+    required = set(package.required_dataset_ids())
+    static_rejections = {
+        "DS009": "FIRST_DISSEMINATION_AFTER_TRAIN_END:VIX3M_2013_09_30",
+        "DS011": "NO_BOUNDED_CAUSAL_VIX_FUTURES_ADAPTER",
+        "DS071": "PROXY_ONLY_NOT_EXECUTION_GRADE",
+    }
+    for dataset_id, reason in static_rejections.items():
+        if dataset_id in required:
+            rejected[dataset_id] = reason
+    for dataset_id, (fred_id, logical_name) in FRED_DATASETS.items():
+        if dataset_id not in required:
+            continue
+        try:
+            downloaded, receipt = download_alfred_initial_series(
+                fred_id,
+                dataset_id,
+                start_date,
+                end_date,
+                split=split,
+                session=client,
+                raw_dir=raw_root,
+            )
+            first_dissemination = (
+                pd.Timestamp("2003-09-22") if dataset_id == "DS004" else None
+            )
+            aligned = _align_initial_releases(
+                downloaded,
+                ledger.index,
+                first_dissemination=first_dissemination,
+            )
+            if not aligned.notna().any():
+                raise DataGateError(f"NO_CAUSAL_VALUES_IN_PHASE:{dataset_id}")
+            series[logical_name] = aligned
+            receipts.append(receipt)
+            available.add(dataset_id)
+        except DataGateError as exc:
+            rejected[dataset_id] = str(exc)
+
+    for dataset_id in sorted(required - available - set(rejected)):
+        rejected[dataset_id] = "NO_BOUNDED_CAUSAL_ADAPTER"
+
+    prices_path = root / "spy_ledger.parquet"
+    pq.write_table(pa.Table.from_pandas(ledger.reset_index(names="date"), preserve_index=False), prices_path)
+    series_rows = []
+    for name, values in sorted(series.items()):
+        for date, value in values.items():
+            series_rows.append({"date": date, "series": name, "value": value})
+    series_path = root / "causal_series.parquet"
+    pq.write_table(pa.Table.from_pylist(series_rows), series_path)
+    receipt_payload = [receipt.__dict__ for receipt in receipts]
+    (root / "raw_manifest.jsonl").write_text(
+        "".join(
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+            for row in receipt_payload
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "schema_version": "1",
+        "split": split,
+        "minimum_date": ledger.index.min().date().isoformat(),
+        "maximum_date": ledger.index.max().date().isoformat(),
+        "locked_opened": False,
+        "available_dataset_ids": sorted(available),
+        "rejected_datasets": dict(sorted(rejected.items())),
+        "receipts": receipt_payload,
+        "ledger_audit": audit.__dict__,
+        "spy_reconciliation": reconciliation,
+        "sponsor_distribution_reconciliation": sponsor_reconciliation,
+        "candidate_pack_sha256": canonical_json_hash(list(package.candidates)),
+    }
+    manifest["snapshot_sha256"] = canonical_json_hash(manifest)
+    (root / "market_data_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return manifest
+
+
+def load_market_snapshot(root: Path) -> PreparedMarketData:
+    root = Path(root).resolve()
+    manifest = json.loads((root / "market_data_manifest.json").read_text("utf-8"))
+    if manifest.get("locked_opened") is not False:
+        raise LockedBoundaryError("TECHNICAL_FAILURE_LOCKED_BREACH:snapshot_manifest")
+    ledger = pq.read_table(root / "spy_ledger.parquet").to_pandas()
+    ledger["date"] = pd.to_datetime(ledger["date"])
+    ledger = ledger.set_index("date").sort_index(kind="mergesort")
+    assert_frame_before_locked(ledger, label="loaded_spy_ledger")
+    series_table = pq.read_table(root / "causal_series.parquet").to_pandas()
+    series: dict[str, pd.Series] = {}
+    if len(series_table):
+        series_table["date"] = pd.to_datetime(series_table["date"])
+        assert_frame_before_locked(series_table, label="loaded_causal_series")
+        for name, group in series_table.groupby("series", sort=True):
+            series[str(name)] = pd.Series(
+                group["value"].to_numpy(dtype=float),
+                index=pd.DatetimeIndex(group["date"]),
+                name=str(name),
+            ).sort_index(kind="mergesort")
+    return PreparedMarketData(
+        ledger=ledger,
+        series=series,
+        available_dataset_ids=frozenset(manifest["available_dataset_ids"]),
+        rejected_datasets=manifest["rejected_datasets"],
+        receipts=tuple(DownloadReceipt(**row) for row in manifest["receipts"]),
+        split=str(manifest["split"]),
+    )
+
+
+def write_fixture_snapshot(
+    root: Path,
+    ledger: pd.DataFrame,
+    *,
+    split: str = "train",
+    series: Mapping[str, pd.Series] | None = None,
+    available_dataset_ids: Iterable[str] = ("DS001", "DS002"),
+) -> None:
+    """Write a deterministic test fixture without invoking acquisition."""
+
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    assert_frame_before_locked(ledger, label="fixture_ledger")
+    pq.write_table(
+        pa.Table.from_pandas(ledger.reset_index(names="date"), preserve_index=False),
+        root / "spy_ledger.parquet",
+    )
+    rows = []
+    for name, values in sorted((series or {}).items()):
+        for date, value in values.items():
+            rows.append({"date": date, "series": name, "value": float(value)})
+    pq.write_table(
+        pa.Table.from_pylist(
+            rows,
+            schema=pa.schema(
+                [
+                    pa.field("date", pa.timestamp("ns")),
+                    pa.field("series", pa.string()),
+                    pa.field("value", pa.float64()),
+                ]
+            ),
+        ),
+        root / "causal_series.parquet",
+    )
+    manifest = {
+        "schema_version": "1",
+        "split": split,
+        "minimum_date": ledger.index.min().date().isoformat(),
+        "maximum_date": ledger.index.max().date().isoformat(),
+        "locked_opened": False,
+        "available_dataset_ids": sorted(set(available_dataset_ids)),
+        "rejected_datasets": {},
+        "receipts": [],
+        "snapshot_sha256": canonical_json_hash({"fixture": True, "rows": len(ledger)}),
+    }
+    (root / "market_data_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (root / "raw_manifest.jsonl").write_text("", encoding="utf-8")

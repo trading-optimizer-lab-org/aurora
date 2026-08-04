@@ -1,0 +1,77 @@
+{
+  "absolute_exposure": 1.0,
+  "assertions": {
+    "all_candidates_always_directional": true,
+    "all_costs_exactly_zero": true,
+    "locked_period_opened": false,
+    "mandatory_benchmark_count": 5,
+    "no_candidate_depends_on_paid_or_rejected_data": true,
+    "no_candidate_performance_in_pack": true,
+    "proxy_only_dependencies_are_explicit_and_fail_closed": true,
+    "validation_used_for_candidate_design": false
+  },
+  "candidate_count": 168,
+  "candidate_pack_sha256": "73a80fd7526bb2604c11226eff2b81b6eebb762ef113b12f59e212b4e053f8bc",
+  "canonicalization": "SHA-256 of sorted compact JSON excluding canonical_hash; UTF-8; no NaN/Infinity",
+  "cost_contract": {
+    "borrow_cost_bps": 0,
+    "commission_bps": 0,
+    "financing_bps": 0,
+    "market_impact_bps": 0,
+    "slippage_bps": 0,
+    "switching_cost_bps": 0
+  },
+  "created_for": "SPY daily causal long/short zero-cost Aurora campaign",
+  "data_inventory_sha256": "644cd26edcc7144811f9d0481ad9141df620b0c1b9727b167b273bfba09b711b",
+  "evidence_track_counts": {
+    "post_2010_research": 30,
+    "pre_2011_evidence": 138
+  },
+  "family_count": 28,
+  "family_counts": {
+    "breadth_thrust_proxy": 6,
+    "breadth_trend_proxy": 6,
+    "calendar_seasonality": 6,
+    "correlation_dispersion_proxy": 6,
+    "credit_spread_regime": 6,
+    "cross_asset_risk_off": 6,
+    "dual_ma_cross": 6,
+    "financial_conditions_regime": 6,
+    "markov_regime_filtered": 6,
+    "monetary_inflation_regime": 6,
+    "overnight_futures_proxy": 6,
+    "price_breakout": 6,
+    "price_trend_sma": 6,
+    "realized_volatility_state": 6,
+    "regularized_logit": 6,
+    "sentiment_positioning": 6,
+    "short_horizon_reversal": 6,
+    "simple_rule_ensemble": 6,
+    "time_series_momentum": 6,
+    "trend_ensemble": 6,
+    "valuation_equity_premium": 6,
+    "variance_risk_premium_proxy": 6,
+    "vix_extreme_reversal": 6,
+    "vix_level_change": 6,
+    "vix_term_structure": 6,
+    "volatility_conditioned_trend": 6,
+    "volume_conditioned_reversal": 6,
+    "yield_curve_regime": 6
+  },
+  "family_ranking_sha256": "8bbf1b53e1b2ea4e89a423fdb68b8800eb95d6752ca907e0537a2addc6f48410",
+  "feature_catalog_sha256": "ad931edc3b060145464bc24aec055ccdd063cf023591d9fd194561f8b617dd7f",
+  "feature_count": 168,
+  "position_values": [
+    -1,
+    1
+  ],
+  "research_boundary": {
+    "locked_opened": false,
+    "locked_start": "2021-01-01",
+    "train_end": "2010-12-31",
+    "validation_end": "2020-12-31",
+    "validation_start": "2011-01-01"
+  },
+  "research_library_sha256": "6e0169dec953fac4596201b625781ac2fc800b0e9d32fa6dd4e793197cff8942",
+  "schema_version": "1.1.0"
+}

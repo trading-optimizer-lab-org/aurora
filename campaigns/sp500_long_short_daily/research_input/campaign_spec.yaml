@@ -1,0 +1,204 @@
+schema_version: 1.0.0
+campaign_id: sp500_long_short_daily_zero_cost_v1
+objective: Test frozen causal daily SPY +1/-1 strategies with next-open execution and zero costs without opening 2021+ data.
+boundaries:
+  train_end: '2010-12-31'
+  validation_start: '2011-01-01'
+  validation_end: '2020-12-31'
+  locked_start: '2021-01-01'
+  locked_opened: false
+position_contract:
+  instrument: SPY
+  decision_time: after close t and after all inputs are final
+  execution_time: next SPY open t+1
+  holding_period: open t+1 to next open
+  allowed_positions:
+  - -1
+  - 1
+  absolute_exposure: 1.0
+  cash_allowed: false
+  leverage_scaling_allowed: false
+  volatility_scaling_allowed: false
+  costs:
+    commission_bps: 0
+    slippage_bps: 0
+    borrow_cost_bps: 0
+    financing_bps: 0
+    switching_cost_bps: 0
+    market_impact_bps: 0
+  dividends: long receives; short owes; include in total return
+evidence_tracks:
+  pre_2011_evidence: source publication year <= 2010
+  post_2010_research: source publication year >= 2011; separately flagged and penalized
+inputs:
+  candidate_pack: candidate_strategy_pack.jsonl
+  candidate_manifest: candidate_pack_manifest.json
+  feature_catalog: feature_catalog.csv
+  data_inventory: data_source_inventory.csv
+  research_library: research_library.csv
+  acceptance_gates: acceptance_gates.md
+counts:
+  sources: 249
+  verified_primary_sources: 160
+  datasets: 73
+  free_usable_datasets: 55
+  families: 28
+  candidates: 168
+  features: 168
+  benchmarks: 5
+random_seed: 20260803
+phases:
+- id: preflight
+  allowed_dates_end: '2020-12-31'
+  work: parse, hash, schema, candidate dedupe, source/data connectivity, locked firewall
+  performance_allowed: false
+- id: smoke
+  allowed_dates_end: '1995-12-31'
+  families:
+  - price_trend_sma
+  candidate_limit: 2
+  work: end-to-end deterministic mechanics
+  performance_for_selection: false
+- id: pilot
+  allowed_dates_end: '2010-12-31'
+  families:
+  - price_trend_sma
+  - time_series_momentum
+  - vix_term_structure
+  work: full train mechanics, equivalent-layout benchmark, process-count benchmark, artifact contract and deterministic scheduler_plan.json
+  performance_for_selection: false
+  scheduler_search:
+    candidate_layouts:
+    - candidate_blocks
+    - family_blocks
+    - cost_balanced_blocks
+    process_counts: benchmark values from 1 through min(4, available_vcpu)
+    metrics:
+    - wall_time
+    - startup_overhead
+    - merge_overhead
+    - peak_memory
+    - featurestore_hit_rate
+    - retry_granularity
+    max_concurrent_jobs: 360
+    max_vcpu_per_runner: 4
+- id: full_train
+  allowed_dates_end: '2010-12-31'
+  matrix_by: scheduler_plan_from_pilot
+  max_parallel: scheduler_plan_from_pilot_capped_at_360
+  processes_per_runner: scheduler_plan_from_pilot_capped_at_4
+  work: all candidates, outer walk-forward, metrics, rejection logs; results must be equivalent to causal reference implementation
+- id: merge_and_select
+  allowed_dates_end: '2010-12-31'
+  work: merge exactly all candidates/rejections, multiple-testing controls, Pareto/rank, freeze finalists
+- id: validation_once
+  allowed_dates_start: '2011-01-01'
+  allowed_dates_end: '2020-12-31'
+  ack_required: OPEN_VALIDATION_2011_2020_ONCE
+  work: frozen finalists and benchmarks exactly once
+- id: verify
+  allowed_dates_end: '2020-12-31'
+  work: hash, reproducibility, gate evaluation and final status
+forbidden_phases:
+- locked
+- live
+- post_2020
+- retune_after_validation
+benchmarks:
+- id: buy_and_hold_spy_total_return
+  rule: +1 every evaluable day using the audited SPY open-to-open total-return ledger; report separately even though it must
+    equal always_long under this contract
+- id: always_long
+  rule: +1 every evaluable day
+- id: always_short
+  rule: -1 every evaluable day
+- id: symmetric_sma_200
+  rule: +1 if SPY_TR_CLOSE_t>SMA200_t; -1 if SPY_TR_CLOSE_t<SMA200_t; tie preserves previous; execute next SPY open
+- id: symmetric_momentum_12m
+  rule: +1 if SPY_TR_CLOSE_t/SPY_TR_CLOSE_{t-252}-1>0; -1 if <0; tie preserves previous; execute next SPY open
+train_walk_forward:
+  burn_in_end: '1997-12-31'
+  outer_test_years:
+  - 1998
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  embargo_sessions: 1
+  nested_tuning: chronological within outer train only
+  normalization: train-only
+selection:
+  maximum_finalists: 30
+  maximum_per_family: 2
+  score_definition_file: train_selection_protocol.md
+  pareto_metrics:
+  - CAGR
+  - Calmar
+  - max_drawdown
+  - worst_year
+  - fold_stability
+  - complexity
+  multiple_testing:
+  - White Reality Check
+  - Hansen SPA
+  - CSCV/PBO
+  - Deflated Sharpe Ratio
+  - stationary block bootstrap
+validation:
+  one_shot: true
+  candidate_changes_allowed: false
+  data_repairs_by_outcome_allowed: false
+  acceptance_file: acceptance_gates.md
+github_actions:
+  workflow_path: .github/workflows/sp500-long-short-daily-campaign.yml
+  workflow_dispatch_inputs:
+  - phase
+  - campaign_spec_path
+  - validation_ack
+  - train_freeze_artifact
+  artifact_retention_days: 90
+  full_train_matrix: one family per shard
+required_final_status:
+- POSITIVE_VALIDATED_RESULT
+- NEGATIVE_RESULT
+- TECHNICAL_FAILURE
+- VALIDATION_NOT_OPENED
+prohibitions:
+- read or calculate 2021+ outcomes
+- smoothed Markov probabilities
+- current constituent historical reconstruction
+- validation-driven new variants
+- non-zero headline costs
+- cash or leverage states
+- silent candidate deletion
+required_metrics:
+- CAGR
+- total_return
+- annual_return
+- Sharpe
+- Sortino
+- Calmar
+- max_drawdown
+- worst_year
+- volatility
+- daily_hit_rate
+- monthly_hit_rate
+- positive_years
+- turnover
+- long_days
+- short_days
+- position_switches
+- rolling_1y
+- rolling_3y
+- rolling_5y
+- skew
+- CVaR
+- performance_by_market_regime
