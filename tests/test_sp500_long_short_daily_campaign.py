@@ -30,11 +30,13 @@ from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
     PreparedMarketData,
     _align_initial_releases,
+    _adjudicate_stooq_open_prices,
     _download_stooq_html_history,
     _load_stooq_history_page,
     _parse_stooq_html_history,
     _request_stooq_history_page,
     _parse_yahoo_chart,
+    _parse_kibot_daily_history,
     _reconcile_spy_sources,
     _repo_campaign_root,
     _solve_stooq_browser_verification,
@@ -861,6 +863,111 @@ def test_spy_reconciliation_requires_99_5_percent_and_explains_outliers() -> Non
     broken.loc[500, ["open", "high", "low", "close"]] *= 1.01
     with pytest.raises(DataGateError, match="SPY_RECONCILIATION_99_5_PERCENT_GATE_FAILED"):
         _reconcile_spy_sources(yahoo, broken, distributions, splits, minimum_overlap=1000)
+
+
+def test_kibot_parser_is_bounded_and_rejects_locked_rows() -> None:
+    payload = (
+        b"01/03/2006,125.10,127.00,124.39,126.76,1000000\n"
+        b"01/04/2006,126.83,127.49,126.70,127.26,1100000\n"
+    )
+    frame = _parse_kibot_daily_history(
+        payload,
+        start=pd.Timestamp("2006-01-03"),
+        end=pd.Timestamp("2006-01-04"),
+    )
+    assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2006-01-03", "2006-01-04"]
+    with pytest.raises((DataGateError, LockedBoundaryError), match="UNBOUNDED|LOCKED_BREACH"):
+        _parse_kibot_daily_history(
+            b"01/03/2021,375.31,378.60,375.01,376.13,68766800\n",
+            start=pd.Timestamp("2006-01-03"),
+            end=pd.Timestamp("2020-12-31"),
+        )
+
+
+def test_three_source_open_adjudication_changes_only_supported_values() -> None:
+    dates = pd.bdate_range("2006-01-03", periods=5)
+    base = pd.DataFrame(
+        {
+            "date": dates,
+            "open": [100.0, 100.0, 100.0, 100.0, 100.0],
+            "high": 102.0,
+            "low": 98.0,
+            "close": 101.0,
+            "volume": 1_000_000,
+        }
+    )
+    yahoo = base.copy()
+    stooq = base.copy()
+    kibot = base.copy()
+    stooq.loc[:, "high"] = 103.0
+    stooq.loc[0, "open"] = 99.8  # Kibot supports Yahoo only: use Yahoo.
+    stooq.loc[1, "open"] = 99.91
+    kibot.loc[1, "open"] = 99.955  # Within 5 bps of both: use the bridge.
+    yahoo.loc[2, "open"] = 100.2  # Kibot supports Stooq only: keep Stooq.
+    stooq.loc[3, "open"] = 99.8
+    kibot.loc[3, "open"] = 100.1  # No pair agrees: retain and report unresolved.
+
+    canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
+
+    assert canonical.loc[0, "open"] == pytest.approx(100.0)
+    assert canonical.loc[1, "open"] == pytest.approx(99.955)
+    assert canonical.loc[2, "open"] == pytest.approx(100.0)
+    assert canonical.loc[3, "open"] == pytest.approx(99.8)
+    assert canonical["high"].eq(103.0).all()
+    assert audit["yahoo_supported_repair_count"] == 1
+    assert audit["kibot_bridge_repair_count"] == 1
+    assert audit["retained_stooq_count"] == 1
+    assert audit["unresolved_level_count"] == 1
+
+
+def test_three_source_open_adjudication_requires_complete_overlap() -> None:
+    dates = pd.bdate_range("2006-01-03", periods=3)
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "volume": 1_000_000,
+        }
+    )
+    with pytest.raises(DataGateError, match="KIBOT_ADJUDICATOR_INCOMPLETE"):
+        _adjudicate_stooq_open_prices(frame, frame, frame.iloc[:-1])
+
+
+def test_three_source_open_adjudication_preserves_the_frozen_return_gate() -> None:
+    dates = pd.bdate_range("2000-01-03", periods=1001)
+    daily = 0.0001 + 0.002 * np.sin(np.arange(len(dates), dtype=float) / 17.0)
+    open_prices = 100.0 * np.cumprod(1.0 + daily)
+    yahoo = pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_prices,
+            "high": open_prices * 1.02,
+            "low": open_prices * 0.98,
+            "close": open_prices * 1.001,
+            "volume": 1_000_000,
+        }
+    )
+    stooq = yahoo.copy()
+    kibot = yahoo.copy()
+    stooq.loc[500, "open"] *= 0.998
+    stooq.loc[600, "open"] *= 0.9991
+    kibot.loc[600, "open"] *= 0.99955
+
+    canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
+    report = _reconcile_spy_sources(
+        yahoo,
+        canonical,
+        pd.DataFrame(columns=["date", "distribution"]),
+        pd.DataFrame(columns=["date", "split_ratio"]),
+        minimum_overlap=1000,
+    )
+
+    assert audit["changed_open_count"] == 2
+    assert report["within_5_bps_fraction"] == 1.0
+    assert report["unreconciled_outlier_count"] == 0
 
 
 def test_spy_reconciliation_compares_raw_series_without_using_adjusted_close() -> None:

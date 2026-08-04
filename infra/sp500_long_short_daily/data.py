@@ -41,6 +41,7 @@ YAHOO_CHART_ENDPOINTS = (
     "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
     "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
 )
+KIBOT_API_ENDPOINT = "https://api.kibot.com/"
 STOOQ_HISTORY_PAGE = "https://stooq.com/q/d/"
 STOOQ_VERIFY = "https://stooq.com/__verify"
 FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -918,6 +919,153 @@ def download_yahoo_history(
     return prices, dividends, splits, receipts
 
 
+def _parse_kibot_daily_history(
+    payload: bytes,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    """Parse a bounded unadjusted Kibot daily response."""
+
+    if payload.lstrip().startswith((b"400 ", b"401 ", b"402 ", b"403 ", b"404 ")):
+        message = payload.decode("utf-8", errors="replace").strip().replace("\n", " ")
+        raise DataGateError(f"KIBOT_HISTORY_ERROR:{message}")
+    try:
+        frame = pd.read_csv(
+            io.BytesIO(payload),
+            header=None,
+            names=["date", "open", "high", "low", "close", "volume"],
+        )
+    except (OSError, pd.errors.ParserError) as exc:
+        raise DataGateError("KIBOT_HISTORY_SCHEMA_MISMATCH") from exc
+    if frame.empty or frame.shape[1] != 6:
+        raise DataGateError("KIBOT_HISTORY_EMPTY_OR_INVALID")
+    try:
+        for column in ("open", "high", "low", "close", "volume"):
+            frame[column] = pd.to_numeric(frame[column], errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise DataGateError("KIBOT_HISTORY_NON_NUMERIC") from exc
+    frame = _assert_response_date_bound(
+        frame,
+        date_column="date",
+        start=start,
+        end=end,
+        label="kibot_spy_unadjusted_daily",
+    )
+    if frame["date"].duplicated().any():
+        raise DataGateError("KIBOT_HISTORY_DUPLICATE_DATES")
+    if (frame[["open", "high", "low", "close"]] <= 0.0).any().any():
+        raise DataGateError("KIBOT_HISTORY_NON_POSITIVE_PRICE")
+    if (frame["volume"] < 0.0).any():
+        raise DataGateError("KIBOT_HISTORY_NEGATIVE_VOLUME")
+    return frame.sort_values("date", kind="mergesort").reset_index(drop=True)
+
+
+def download_kibot_unadjusted_history(
+    symbol: str,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+    session: requests.Session | None = None,
+    raw_dir: Path | None = None,
+) -> tuple[pd.DataFrame, DownloadReceipt]:
+    """Download bounded raw ETF OHLCV from Kibot's documented guest API."""
+
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    client = session or requests.Session()
+    client.headers.update({"User-Agent": "Mozilla/5.0 AuroraResearch bounded-kibot-eod"})
+    login_payload = _request_bytes(
+        client,
+        KIBOT_API_ENDPOINT,
+        params={"action": "login", "user": "guest", "password": "guest"},
+        attempts=3,
+    )
+    if not login_payload.lstrip().startswith(b"200 OK"):
+        raise DataGateError("KIBOT_GUEST_LOGIN_FAILED")
+    params = {
+        "action": "history",
+        "symbol": symbol,
+        "interval": "Daily",
+        "startdate": start_date.strftime("%m/%d/%Y"),
+        "enddate": end_date.strftime("%m/%d/%Y"),
+        "unadjusted": "1",
+        "type": "etfs",
+    }
+    payload = _request_bytes(client, KIBOT_API_ENDPOINT, params=params, attempts=3)
+    frame = _parse_kibot_daily_history(payload, start=start_date, end=end_date)
+    filename = f"kibot_{symbol.lower()}_unadjusted_daily.csv"
+    _store_raw(raw_dir, filename, payload)
+    dates = frame["date"]
+    return frame, DownloadReceipt(
+        dataset_id="KIBOT_SPY_UNADJUSTED_ADJUDICATOR",
+        url_template=KIBOT_API_ENDPOINT,
+        sha256=_sha256(payload),
+        byte_count=len(payload),
+        minimum_date=dates.min().date().isoformat(),
+        maximum_date=dates.max().date().isoformat(),
+        status="downloaded_bounded_guest_daily_unadjusted",
+        reason="third_source_open_field_adjudication_only",
+    )
+
+
+def _adjudicate_stooq_open_prices(
+    yahoo_prices: pd.DataFrame,
+    stooq_prices: pd.DataFrame,
+    kibot_prices: pd.DataFrame,
+) -> tuple[pd.DataFrame, Mapping[str, Any]]:
+    """Repair only Stooq opens supported by an independent third source."""
+
+    yahoo = yahoo_prices.set_index("date").sort_index(kind="mergesort")
+    stooq = stooq_prices.set_index("date").sort_index(kind="mergesort")
+    kibot = kibot_prices.set_index("date").sort_index(kind="mergesort")
+    expected = yahoo.index.intersection(stooq.index)
+    common = expected.intersection(kibot.index)
+    if len(common) != len(expected) or not common.equals(expected):
+        missing = expected.difference(kibot.index)
+        details = ",".join(date.date().isoformat() for date in missing[:20])
+        raise DataGateError(f"KIBOT_ADJUDICATOR_INCOMPLETE:{details}")
+
+    yahoo_open = yahoo.loc[common, "open"].astype(float)
+    stooq_open = stooq.loc[common, "open"].astype(float)
+    kibot_open = kibot.loc[common, "open"].astype(float)
+    yahoo_stooq = (yahoo_open - stooq_open).abs() / yahoo_open.abs()
+    yahoo_kibot = (yahoo_open - kibot_open).abs() / yahoo_open.abs()
+    stooq_kibot = (stooq_open - kibot_open).abs() / kibot_open.abs()
+    vendor_disagreement = yahoo_stooq > SPY_RETURN_TOLERANCE
+    kibot_supports_yahoo = yahoo_kibot <= SPY_RETURN_TOLERANCE
+    kibot_supports_stooq = stooq_kibot <= SPY_RETURN_TOLERANCE
+    yahoo_repairs = vendor_disagreement & kibot_supports_yahoo & ~kibot_supports_stooq
+    bridge_repairs = vendor_disagreement & kibot_supports_yahoo & kibot_supports_stooq
+    retained_stooq = vendor_disagreement & ~kibot_supports_yahoo & kibot_supports_stooq
+    unresolved = vendor_disagreement & ~kibot_supports_yahoo & ~kibot_supports_stooq
+
+    canonical = stooq.copy()
+    canonical.loc[yahoo_repairs, "open"] = yahoo_open.loc[yahoo_repairs]
+    canonical.loc[bridge_repairs, "open"] = kibot_open.loc[bridge_repairs]
+    changed = yahoo_repairs | bridge_repairs
+
+    def dates(mask: pd.Series) -> list[str]:
+        return [date.date().isoformat() for date in common[mask.to_numpy()]]
+
+    audit = {
+        "method": "three_source_open_consensus_v1",
+        "tolerance": SPY_RETURN_TOLERANCE,
+        "overlap_rows": len(common),
+        "vendor_disagreement_count": int(vendor_disagreement.sum()),
+        "changed_open_count": int(changed.sum()),
+        "yahoo_supported_repair_count": int(yahoo_repairs.sum()),
+        "kibot_bridge_repair_count": int(bridge_repairs.sum()),
+        "retained_stooq_count": int(retained_stooq.sum()),
+        "unresolved_level_count": int(unresolved.sum()),
+        "yahoo_supported_repair_dates": dates(yahoo_repairs),
+        "kibot_bridge_repair_dates": dates(bridge_repairs),
+        "retained_stooq_dates": dates(retained_stooq),
+        "unresolved_level_dates": dates(unresolved),
+    }
+    return canonical.reset_index(names="date"), audit
+
+
 def download_stooq_history(
     symbol: str,
     start: Any,
@@ -1690,6 +1838,26 @@ def prepare_market_snapshot(
         raw_dir=raw_root,
     )
     print(f"[sp500-data] stooq history complete rows={len(stooq)}", flush=True)
+    print("[sp500-data] kibot adjudication history start", flush=True)
+    kibot, kibot_receipt = download_kibot_unadjusted_history(
+        "SPY",
+        start_date,
+        end_date,
+        split=split,
+        session=client,
+        raw_dir=raw_root,
+    )
+    stooq, open_adjudication = _adjudicate_stooq_open_prices(prices, stooq, kibot)
+    _store_raw(
+        raw_root,
+        "spy_open_adjudication.json",
+        json.dumps(open_adjudication, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    )
+    print(
+        "[sp500-data] kibot adjudication complete "
+        f"changed_opens={open_adjudication['changed_open_count']}",
+        flush=True,
+    )
     reconciliation = _reconcile_spy_sources(
         prices,
         stooq,
@@ -1697,12 +1865,22 @@ def prepare_market_snapshot(
         splits,
         minimum_overlap=min(1000, max(200, len(prices) - 1)),
     )
+    reconciliation = {
+        **reconciliation,
+        "canonical_price_source": "stooq_raw_ohlcv_with_kibot_adjudicated_opens",
+        "independent_reconciliation_sources": [
+            "yahoo_raw_ohlcv",
+            "kibot_unadjusted_daily_ohlcv",
+        ],
+        "open_adjudication": open_adjudication,
+    }
     ledger, audit = build_total_return_ledger(stooq, dividends, splits)
 
     receipts: list[DownloadReceipt] = [
         *yahoo_receipts,
         *distribution_receipts,
         stooq_receipt,
+        kibot_receipt,
     ]
     series: dict[str, pd.Series] = {}
     available = {"DS001", "DS002"}
