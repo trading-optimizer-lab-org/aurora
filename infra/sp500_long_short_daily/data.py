@@ -12,8 +12,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -403,15 +401,26 @@ async def _cdp_render_stooq_history(
         open_timeout=20,
     ) as connection:
         command_id = 0
+        session_id: str | None = None
 
-        async def command(method: str, params: Mapping[str, Any] | None = None) -> Any:
+        async def command(
+            method: str,
+            params: Mapping[str, Any] | None = None,
+            *,
+            browser_scope: bool = False,
+        ) -> Any:
             nonlocal command_id
             command_id += 1
             expected_id = command_id
+            message: dict[str, Any] = {
+                "id": expected_id,
+                "method": method,
+                "params": dict(params or {}),
+            }
+            if session_id is not None and not browser_scope:
+                message["sessionId"] = session_id
             await connection.send(
-                json.dumps(
-                    {"id": expected_id, "method": method, "params": dict(params or {})}
-                )
+                json.dumps(message)
             )
             while True:
                 message = json.loads(await asyncio.wait_for(connection.recv(), timeout=30))
@@ -440,6 +449,26 @@ async def _cdp_render_stooq_history(
                 await asyncio.sleep(0.1)
             raise DataGateError("STOOQ_HEADLESS_CDP_NAVIGATION_TIMEOUT")
 
+        targets = await command("Target.getTargets", browser_scope=True)
+        target_id = next(
+            (
+                info.get("targetId")
+                for info in targets.get("targetInfos", [])
+                if info.get("type") == "page" and info.get("targetId")
+            ),
+            None,
+        )
+        if not isinstance(target_id, str):
+            raise DataGateError("STOOQ_HEADLESS_CDP_TARGET_NOT_FOUND")
+        attached = await command(
+            "Target.attachToTarget",
+            {"targetId": target_id, "flatten": True},
+            browser_scope=True,
+        )
+        attached_session = attached.get("sessionId")
+        if not isinstance(attached_session, str):
+            raise DataGateError("STOOQ_HEADLESS_CDP_ATTACH_FAILED")
+        session_id = attached_session
         await command("Page.enable")
         await command("Runtime.enable")
         await navigate(landing_url)
@@ -478,16 +507,17 @@ def _request_stooq_history_page_via_cdp(
         f"--user-data-dir={browser_profile}",
         "about:blank",
     ]
+    port_file = browser_profile / "DevToolsActivePort"
+    port_file.unlink(missing_ok=True)
     try:
         process = subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-        )
+    )
     except OSError as exc:
         raise DataGateError("STOOQ_HEADLESS_BROWSER_FAILED") from exc
     try:
-        port_file = browser_profile / "DevToolsActivePort"
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline and not port_file.is_file():
             if process.poll() is not None:
@@ -495,35 +525,11 @@ def _request_stooq_history_page_via_cdp(
             time.sleep(0.05)
         if not port_file.is_file():
             raise DataGateError("STOOQ_HEADLESS_CDP_PORT_TIMEOUT")
-        port = int(port_file.read_text(encoding="utf-8").splitlines()[0])
-        targets: list[dict[str, Any]] | None = None
-        endpoint_deadline = time.monotonic() + 20.0
-        while time.monotonic() < endpoint_deadline:
-            if process.poll() is not None:
-                raise DataGateError("STOOQ_HEADLESS_BROWSER_FAILED:early_exit")
-            try:
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{port}/json/list",
-                    timeout=2,
-                ) as response:
-                    candidate_targets = json.loads(response.read())
-                if isinstance(candidate_targets, list):
-                    targets = candidate_targets
-                    break
-            except (OSError, urllib.error.URLError, json.JSONDecodeError):
-                time.sleep(0.05)
-        if targets is None:
-            raise DataGateError("STOOQ_HEADLESS_CDP_ENDPOINT_TIMEOUT")
-        websocket_url = next(
-            (
-                target.get("webSocketDebuggerUrl")
-                for target in targets
-                if target.get("type") == "page" and target.get("webSocketDebuggerUrl")
-            ),
-            None,
-        )
-        if not isinstance(websocket_url, str):
-            raise DataGateError("STOOQ_HEADLESS_CDP_TARGET_NOT_FOUND")
+        port_lines = port_file.read_text(encoding="utf-8").splitlines()
+        if len(port_lines) < 2:
+            raise DataGateError("STOOQ_HEADLESS_CDP_PORT_INVALID")
+        port = int(port_lines[0])
+        browser_websocket_url = f"ws://127.0.0.1:{port}{port_lines[1]}"
         landing = requests.Request(
             "GET",
             STOOQ_HISTORY_PAGE,
@@ -531,13 +537,21 @@ def _request_stooq_history_page_via_cdp(
         ).prepare().url
         if landing is None:
             raise DataGateError("STOOQ_HEADLESS_URL_BUILD_FAILED")
-        return asyncio.run(
-            _cdp_render_stooq_history(
-                websocket_url,
-                landing_url=landing,
-                history_url=history_url,
-            )
-        )
+        endpoint_deadline = time.monotonic() + 20.0
+        last_connection_error: OSError | None = None
+        while time.monotonic() < endpoint_deadline:
+            try:
+                return asyncio.run(
+                    _cdp_render_stooq_history(
+                        browser_websocket_url,
+                        landing_url=landing,
+                        history_url=history_url,
+                    )
+                )
+            except OSError as exc:
+                last_connection_error = exc
+                time.sleep(0.05)
+        raise DataGateError("STOOQ_HEADLESS_CDP_ENDPOINT_TIMEOUT") from last_connection_error
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise DataGateError("STOOQ_HEADLESS_CDP_FAILED") from exc
     finally:
