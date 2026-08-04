@@ -451,6 +451,7 @@ def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
     assert receipt.maximum_date == "2010-12-31"
     assert receipt.reason is not None and "window_count=1;page_count=2" in receipt.reason
     for params in session.seen_params:
+        assert params["c"] == "0"
         assert params["o"] == "1111111"
         assert all(params[f"o_{suffix}"] == "1" for suffix in "sdpnomx")
     assert (tmp_path / "stooq_spy_us_history.csv").is_file()
