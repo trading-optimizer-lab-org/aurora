@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: aaab55e972393648feee3c68a4944e5c38fac380
+        default: 568936b185001696a1a5fe8ede2653aeb9e92a4b
         type: string
 
 permissions:
