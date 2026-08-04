@@ -859,7 +859,7 @@ def test_spy_reconciliation_requires_99_5_percent_and_explains_outliers() -> Non
     assert report["within_5_bps_fraction"] == 1.0
     broken = stooq.copy()
     broken.loc[500, ["open", "high", "low", "close"]] *= 1.01
-    with pytest.raises(DataGateError, match="SPY_UNRECONCILED_RETURN_OUTLIERS"):
+    with pytest.raises(DataGateError, match="SPY_RECONCILIATION_99_5_PERCENT_GATE_FAILED"):
         _reconcile_spy_sources(yahoo, broken, distributions, splits, minimum_overlap=1000)
 
 
@@ -923,6 +923,37 @@ def test_spy_reconciliation_audits_isolated_yahoo_close_error_without_using_it()
     assert report["close_return_outlier_count"] == 2
     assert report["close_return_unreconciled_outlier_count"] == 0
     assert report["close_only_vendor_discrepancy_dates"] == [
+        dates[500].date().isoformat()
+    ]
+
+
+def test_spy_reconciliation_reconciles_isolated_yahoo_open_error() -> None:
+    dates = pd.bdate_range("2000-01-03", periods=1001)
+    close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))
+    stooq = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": close * 1.02,
+            "low": close * 0.98,
+            "close": close * 1.001,
+            "volume": 1_000_000,
+        }
+    )
+    yahoo = stooq.copy()
+    yahoo.loc[500, "open"] *= 1.01
+    report = _reconcile_spy_sources(
+        yahoo,
+        stooq,
+        pd.DataFrame(columns=["date", "distribution"]),
+        pd.DataFrame(columns=["date", "split_ratio"]),
+        minimum_overlap=1000,
+    )
+    assert report["raw_within_5_bps_fraction"] < 1.0
+    assert report["within_5_bps_fraction"] == 1.0
+    assert report["reconciled_outlier_count"] == 2
+    assert report["unreconciled_outlier_count"] == 0
+    assert report["isolated_yahoo_open_discrepancy_dates"] == [
         dates[500].date().isoformat()
     ]
 
