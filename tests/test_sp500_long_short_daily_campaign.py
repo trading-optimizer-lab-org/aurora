@@ -729,14 +729,14 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
                     "requested_start": "2009-01-01",
                     "requested_end": "2009-01-06",
                     "effective_source": (
-                        "kibot_guest_raw_unadjusted_fallback"
+                        "yahoo_chart_raw_unadjusted_fallback"
                         if window_id == "001"
                         else "stooq_public_html_raw_unadjusted"
                     ),
                     "receipt": {
                         "dataset_id": "DS002",
                         "status": (
-                            "downloaded_documented_free_fallback_kibot_raw_unadjusted"
+                            "downloaded_documented_free_fallback_yahoo_raw_unadjusted"
                             if window_id == "001"
                             else "downloaded_bounded_html_public_history_raw_unadjusted"
                         ),
@@ -758,9 +758,9 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
     assert manifest["rows"] == 2
     assert manifest["window_count"] == 2
     assert manifest["locked_opened"] is False
-    assert manifest["source"] == "mixed_stooq_and_documented_kibot_fallback_raw_unadjusted"
+    assert manifest["source"] == "mixed_stooq_and_documented_yahoo_fallback_raw_unadjusted"
     assert manifest["source_counts"] == {
-        "kibot_guest_raw_unadjusted_fallback": 1,
+        "yahoo_chart_raw_unadjusted_fallback": 1,
         "stooq_public_html_raw_unadjusted": 1,
     }
     assert manifest["merged_sha256"] == hashlib.sha256(
@@ -772,7 +772,7 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
     "provider_error",
     ["STOOQ_DAILY_HITS_LIMIT", "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"],
 )
-def test_stooq_window_uses_documented_kibot_fallback_for_provider_unavailability(
+def test_stooq_window_uses_documented_yahoo_fallback_for_provider_unavailability(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_error: str,
@@ -788,30 +788,34 @@ def test_stooq_window_uses_documented_kibot_fallback_for_provider_unavailability
         }
     )
     fallback_receipt = DownloadReceipt(
-        dataset_id="KIBOT_SPY_UNADJUSTED_ADJUDICATOR",
-        url_template="https://api.kibot.com/",
+        dataset_id="YAHOO_SPY_BOUNDED_CHART",
+        url_template="https://query1.finance.yahoo.com/v8/finance/chart/SPY",
         sha256="a" * 64,
         byte_count=123,
         minimum_date="2009-01-02",
         maximum_date="2009-01-05",
-        status="downloaded_bounded_guest_daily_unadjusted",
+        status="downloaded_bounded_chart_json_current_metadata_discarded",
     )
 
     def fail_stooq(*args: object, **kwargs: object) -> object:
         del args, kwargs
         raise DataGateError(provider_error)
 
-    def fake_kibot(*args: object, **kwargs: object) -> tuple[pd.DataFrame, DownloadReceipt]:
+    def fake_yahoo(
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
         del args, kwargs
-        return frame, fallback_receipt
+        empty = pd.DataFrame(columns=["date"])
+        return frame, empty, empty, (fallback_receipt,)
 
     monkeypatch.setattr(
         "scripts.download_sp500_stooq_window.download_stooq_history",
         fail_stooq,
     )
     monkeypatch.setattr(
-        "scripts.download_sp500_stooq_window.download_kibot_unadjusted_history",
-        fake_kibot,
+        "scripts.download_sp500_stooq_window.download_yahoo_history",
+        fake_yahoo,
     )
     metadata = download_window(
         start="2009-01-01",
@@ -820,11 +824,11 @@ def test_stooq_window_uses_documented_kibot_fallback_for_provider_unavailability
         window_id="000",
         output_dir=tmp_path,
     )
-    assert metadata["effective_source"] == "kibot_guest_raw_unadjusted_fallback"
+    assert metadata["effective_source"] == "yahoo_chart_raw_unadjusted_fallback"
     receipt = metadata["receipt"]
     assert isinstance(receipt, dict)
     assert receipt["dataset_id"] == "DS002"
-    assert receipt["status"] == "downloaded_documented_free_fallback_kibot_raw_unadjusted"
+    assert receipt["status"] == "downloaded_documented_free_fallback_yahoo_raw_unadjusted"
     assert f"fallback_for={provider_error}" in str(receipt["reason"])
     written = pd.read_csv(tmp_path / "stooq_spy_us_history.csv")
     assert len(written) == 2
@@ -868,13 +872,13 @@ def test_stooq_window_can_freeze_confirmed_provider_outage_mode(
         }
     )
     receipt = DownloadReceipt(
-        dataset_id="KIBOT_SPY_UNADJUSTED_ADJUDICATOR",
-        url_template="https://api.kibot.com/",
+        dataset_id="YAHOO_SPY_BOUNDED_CHART",
+        url_template="https://query1.finance.yahoo.com/v8/finance/chart/SPY",
         sha256="b" * 64,
         byte_count=64,
         minimum_date="2009-01-02",
         maximum_date="2009-01-02",
-        status="downloaded_bounded_guest_daily_unadjusted",
+        status="downloaded_bounded_chart_json_current_metadata_discarded",
     )
 
     def forbidden_stooq(*args: object, **kwargs: object) -> object:
@@ -886,8 +890,13 @@ def test_stooq_window_can_freeze_confirmed_provider_outage_mode(
         forbidden_stooq,
     )
     monkeypatch.setattr(
-        "scripts.download_sp500_stooq_window.download_kibot_unadjusted_history",
-        lambda *args, **kwargs: (frame, receipt),
+        "scripts.download_sp500_stooq_window.download_yahoo_history",
+        lambda *args, **kwargs: (
+            frame,
+            pd.DataFrame(columns=["date"]),
+            pd.DataFrame(columns=["date"]),
+            (receipt,),
+        ),
     )
     metadata = download_window(
         start="2009-01-01",
@@ -895,9 +904,9 @@ def test_stooq_window_can_freeze_confirmed_provider_outage_mode(
         split="train",
         window_id="000",
         output_dir=tmp_path,
-        source_mode="kibot-fallback",
+        source_mode="yahoo-fallback",
     )
-    assert metadata["effective_source"] == "kibot_guest_raw_unadjusted_fallback"
+    assert metadata["effective_source"] == "yahoo_chart_raw_unadjusted_fallback"
     assert "STOOQ_PROVIDER_OUTAGE_CONFIRMED" in str(metadata["receipt"])
 
 
@@ -2054,7 +2063,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "max-parallel: 4" in universal
     assert "cursor.year + 3" in universal
     assert "dt.timedelta(days=44)" not in universal
-    assert '--source-mode "kibot-fallback"' in universal
+    assert '--source-mode "yahoo-fallback"' in universal
     assert "prepared_artifact_run_id" in universal
     assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 9
     assert universal.count(

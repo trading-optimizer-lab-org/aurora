@@ -7,8 +7,8 @@ from pathlib import Path
 
 from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
-    download_kibot_unadjusted_history,
     download_stooq_history,
+    download_yahoo_history,
 )
 
 
@@ -28,11 +28,11 @@ def download_window(
     effective_source = "stooq_public_html_raw_unadjusted"
     fallback_reason = (
         "STOOQ_PROVIDER_OUTAGE_CONFIRMED"
-        if source_mode == "kibot-fallback"
+        if source_mode == "yahoo-fallback"
         else None
     )
     provider_error: DataGateError | None = None
-    if source_mode not in {"stooq-with-fallback", "kibot-fallback"}:
+    if source_mode not in {"stooq-with-fallback", "yahoo-fallback"}:
         raise ValueError(f"UNSUPPORTED_SP500_PRICE_SOURCE_MODE:{source_mode}")
     if fallback_reason is None:
         try:
@@ -55,29 +55,31 @@ def download_window(
             if provider_error is not None:
                 raise provider_error
             raise DataGateError(fallback_reason)
-        frame, fallback_receipt = download_kibot_unadjusted_history(
+        frame, _, _, fallback_receipts = download_yahoo_history(
             "SPY",
             start,
             end,
             split=split,
             raw_dir=output_dir,
         )
+        frame = frame.loc[:, ["date", "open", "high", "low", "close", "volume"]]
         payload = frame.to_csv(index=False, lineterminator="\n").encode("utf-8")
         (output_dir / "stooq_spy_us_history.csv").write_bytes(payload)
+        fallback_receipt = fallback_receipts[0]
         receipt = replace(
             fallback_receipt,
             dataset_id="DS002",
-            status="downloaded_documented_free_fallback_kibot_raw_unadjusted",
+            status="downloaded_documented_free_fallback_yahoo_raw_unadjusted",
             reason=(
                 f"fallback_for={fallback_reason};"
                 f"fallback_dataset_id={fallback_receipt.dataset_id};"
                 f"fallback_sha256={fallback_receipt.sha256}"
             ),
         )
-        effective_source = "kibot_guest_raw_unadjusted_fallback"
+        effective_source = "yahoo_chart_raw_unadjusted_fallback"
         print(
             f"[sp500-data] Stooq unavailable ({fallback_reason}); "
-            f"using documented bounded Kibot fallback window={window_id}",
+            f"using documented bounded Yahoo fallback window={window_id}",
             flush=True,
         )
     metadata: dict[str, object] = {
@@ -106,7 +108,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--source-mode",
-        choices=("stooq-with-fallback", "kibot-fallback"),
+        choices=("stooq-with-fallback", "yahoo-fallback"),
         default="stooq-with-fallback",
     )
     args = parser.parse_args()

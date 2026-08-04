@@ -368,7 +368,7 @@ jobs:
             --end "${{ matrix.end }}" \
             --split train \
             --window-id "${{ matrix.window_id }}" \
-            --source-mode "kibot-fallback" \
+            --source-mode "yahoo-fallback" \
             --output-dir "$RUNNER_TEMP/stooq-window"
       - name: Upload immutable Stooq window
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

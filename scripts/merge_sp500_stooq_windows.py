@@ -46,7 +46,7 @@ def merge_windows(
         )
         if effective_source not in {
             "stooq_public_html_raw_unadjusted",
-            "kibot_guest_raw_unadjusted_fallback",
+            "yahoo_chart_raw_unadjusted_fallback",
         }:
             raise RuntimeError(f"STOOQ_SHARD_SOURCE_INVALID:{receipt_path}")
         source_counts[effective_source] = source_counts.get(effective_source, 0) + 1
@@ -103,7 +103,7 @@ def merge_windows(
         "source": (
             next(iter(source_counts))
             if len(source_counts) == 1
-            else "mixed_stooq_and_documented_kibot_fallback_raw_unadjusted"
+            else "mixed_stooq_and_documented_yahoo_fallback_raw_unadjusted"
         ),
         "source_counts": dict(sorted(source_counts.items())),
         "requested_start": start.date().isoformat(),

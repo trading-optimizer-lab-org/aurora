@@ -1238,7 +1238,11 @@ def download_stooq_history(
         _store_raw(raw_dir, f"stooq_{symbol.replace('.', '_').lower()}_history.csv", payload)
         return frame, DownloadReceipt(
             dataset_id="DS002",
-            url_template=(KIBOT_API_ENDPOINT if fallback_used else STOOQ_HISTORY_PAGE),
+            url_template=(
+                YAHOO_CHART_ENDPOINTS[0]
+                if "yahoo" in manifest_source
+                else STOOQ_HISTORY_PAGE
+            ),
             sha256=_sha256(payload),
             byte_count=len(payload),
             minimum_date=dates.min().date().isoformat(),
@@ -2011,19 +2015,23 @@ def prepare_market_snapshot(
         ),
     )
     stooq_fallback_used = "fallback" in stooq_receipt.status
+    yahoo_fallback_used = stooq_fallback_used and "yahoo" in (stooq_receipt.reason or "")
     reconciliation = {
         **reconciliation,
         "canonical_price_source": (
-            "kibot_raw_ohlcv_fallback_with_yahoo_reconciliation"
-            if stooq_fallback_used
+            "yahoo_raw_ohlcv_fallback_with_kibot_reconciliation"
+            if yahoo_fallback_used
             else "stooq_raw_ohlcv_with_kibot_adjudicated_open_and_close"
         ),
         "independent_reconciliation_sources": (
-            ["yahoo_raw_ohlcv"]
-            if stooq_fallback_used
+            ["kibot_unadjusted_daily_ohlcv"]
+            if yahoo_fallback_used
             else ["yahoo_raw_ohlcv", "kibot_unadjusted_daily_ohlcv"]
         ),
         "stooq_provider_outage_fallback_used": stooq_fallback_used,
+        "stooq_provider_outage_fallback_source": (
+            "yahoo_raw_ohlcv" if yahoo_fallback_used else None
+        ),
         "price_adjudication": price_adjudication,
     }
     ledger, audit = build_total_return_ledger(stooq, dividends, splits)
