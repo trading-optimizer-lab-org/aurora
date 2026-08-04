@@ -490,6 +490,11 @@ jobs:
 
   freeze_contract:
     needs: [validate, prepare_environment, prepare_data]
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      needs.prepare_environment.result == 'success' &&
+      needs.prepare_data.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

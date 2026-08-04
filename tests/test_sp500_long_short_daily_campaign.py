@@ -1873,6 +1873,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "max-parallel: 4" in universal
     assert "prepared_artifact_run_id" in universal
     assert "inputs.prepared_artifact_run_id || github.run_id" in universal
+    assert "needs.prepare_data.result == 'success'" in universal
     assert "C:\\" not in universal
     assert "self-hosted" not in universal
 
