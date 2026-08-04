@@ -853,6 +853,54 @@ def test_stooq_window_does_not_hide_unexpected_provider_failure(
         )
 
 
+def test_stooq_window_can_freeze_confirmed_provider_outage_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2009-01-02"]),
+            "open": [90.0],
+            "high": [91.0],
+            "low": [89.0],
+            "close": [90.5],
+            "volume": [1_000_000],
+        }
+    )
+    receipt = DownloadReceipt(
+        dataset_id="KIBOT_SPY_UNADJUSTED_ADJUDICATOR",
+        url_template="https://api.kibot.com/",
+        sha256="b" * 64,
+        byte_count=64,
+        minimum_date="2009-01-02",
+        maximum_date="2009-01-02",
+        status="downloaded_bounded_guest_daily_unadjusted",
+    )
+
+    def forbidden_stooq(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("Stooq must not be retried in frozen outage mode")
+
+    monkeypatch.setattr(
+        "scripts.download_sp500_stooq_window.download_stooq_history",
+        forbidden_stooq,
+    )
+    monkeypatch.setattr(
+        "scripts.download_sp500_stooq_window.download_kibot_unadjusted_history",
+        lambda *args, **kwargs: (frame, receipt),
+    )
+    metadata = download_window(
+        start="2009-01-01",
+        end="2009-01-06",
+        split="train",
+        window_id="000",
+        output_dir=tmp_path,
+        source_mode="kibot-fallback",
+    )
+    assert metadata["effective_source"] == "kibot_guest_raw_unadjusted_fallback"
+    assert "STOOQ_PROVIDER_OUTAGE_CONFIRMED" in str(metadata["receipt"])
+
+
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
     ledger, _ = build_total_return_ledger(_prices())
     assert ledger.index[1] == pd.Timestamp("2020-12-24")
@@ -2006,6 +2054,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "max-parallel: 4" in universal
     assert "cursor.year + 3" in universal
     assert "dt.timedelta(days=44)" not in universal
+    assert '--source-mode "kibot-fallback"' in universal
     assert "prepared_artifact_run_id" in universal
     assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 9
     assert universal.count(

@@ -19,27 +19,42 @@ def download_window(
     split: str,
     window_id: str,
     output_dir: Path,
+    source_mode: str = "stooq-with-fallback",
 ) -> dict[str, object]:
     """Download one bounded window with an explicit free provider fallback."""
 
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     effective_source = "stooq_public_html_raw_unadjusted"
-    try:
-        frame, receipt = download_stooq_history(
-            "spy.us",
-            start,
-            end,
-            split=split,
-            raw_dir=output_dir,
-        )
-    except DataGateError as exc:
-        fallback_reason = str(exc)
+    fallback_reason = (
+        "STOOQ_PROVIDER_OUTAGE_CONFIRMED"
+        if source_mode == "kibot-fallback"
+        else None
+    )
+    provider_error: DataGateError | None = None
+    if source_mode not in {"stooq-with-fallback", "kibot-fallback"}:
+        raise ValueError(f"UNSUPPORTED_SP500_PRICE_SOURCE_MODE:{source_mode}")
+    if fallback_reason is None:
+        try:
+            frame, receipt = download_stooq_history(
+                "spy.us",
+                start,
+                end,
+                split=split,
+                raw_dir=output_dir,
+            )
+        except DataGateError as exc:
+            provider_error = exc
+            fallback_reason = str(exc)
+    if fallback_reason is not None:
         if fallback_reason not in {
+            "STOOQ_PROVIDER_OUTAGE_CONFIRMED",
             "STOOQ_DAILY_HITS_LIMIT",
             "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND",
         }:
-            raise
+            if provider_error is not None:
+                raise provider_error
+            raise DataGateError(fallback_reason)
         frame, fallback_receipt = download_kibot_unadjusted_history(
             "SPY",
             start,
@@ -89,6 +104,11 @@ def main() -> int:
     parser.add_argument("--split", choices=("train", "validation"), required=True)
     parser.add_argument("--window-id", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--source-mode",
+        choices=("stooq-with-fallback", "kibot-fallback"),
+        default="stooq-with-fallback",
+    )
     args = parser.parse_args()
 
     download_window(
@@ -97,6 +117,7 @@ def main() -> int:
         split=args.split,
         window_id=args.window_id,
         output_dir=args.output_dir,
+        source_mode=args.source_mode,
     )
     return 0
 
