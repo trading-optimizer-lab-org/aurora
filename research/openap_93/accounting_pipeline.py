@@ -583,6 +583,13 @@ def calculate_accounting_signals(
 
     cross_frame = pd.DataFrame(cross).set_index("symbol") if cross else pd.DataFrame()
     if not cross_frame.empty:
+        numeric_columns = [
+            column for column in cross_frame.columns if column != "industry"
+        ]
+        cross_frame[numeric_columns] = cross_frame[numeric_columns].apply(
+            pd.to_numeric,
+            errors="coerce",
+        )
         accrual_q = _quantile(cross_frame["accrual"], 5)
         bm_q = _quantile(cross_frame["bm"], 5)
         accrual_bm = pd.Series(np.nan, index=cross_frame.index)
