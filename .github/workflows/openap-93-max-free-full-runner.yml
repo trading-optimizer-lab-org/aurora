@@ -93,7 +93,8 @@ jobs:
             score_185_current.parquet score_185_current.csv \
             coverage_93.csv source_coverage_matrix.csv source_ablation.csv \
             validation_per_signal.csv selected_sources.json run_manifest.json \
-            data_lineage.json failures.json FINAL_REPORT.md; do
+            data_lineage.json failures.json openap_reference_metadata.json \
+            FINAL_REPORT.md; do
             test -s "outputs/openap_93_current/$file"
           done
           python - <<'PY'
@@ -120,6 +121,12 @@ jobs:
           assert manifest["locked_opened"] is False
           assert manifest["validation_used_for_selection"] is False
           assert manifest["cost_eur"] == 0
+          reference = json.load(
+              open(f"{root}/openap_reference_metadata.json", encoding="utf-8")
+          )
+          assert reference["reference_only"] is True
+          assert reference["current_signal_source"] is False
+          assert reference["identifier_columns"] == ["permno", "yyyymm"]
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
