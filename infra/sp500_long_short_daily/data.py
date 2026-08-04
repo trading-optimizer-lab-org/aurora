@@ -653,14 +653,24 @@ def reconcile_official_distribution_audit(
     if operational.empty:
         raise DataGateError("OPERATIONAL_DISTRIBUTION_EVENTS_EMPTY")
 
-    exact_start = pd.Timestamp(exact_events["date"].min()).normalize()
-    exact_end = pd.Timestamp(exact_events["date"].max()).normalize()
-    operational_exact_window = operational.loc[operational["date"].between(exact_start, exact_end)]
-    exact_audit = reconcile_sponsor_distributions(
-        exact_events,
-        operational_exact_window,
-        absolute_tolerance=exact_tolerance,
-    )
+    exact_audit: Mapping[str, Any]
+    if exact_events.empty:
+        exact_audit = {
+            "event_count": 0,
+            "maximum_absolute_amount_difference": 0.0,
+            "absolute_tolerance": exact_tolerance,
+        }
+    else:
+        exact_start = pd.Timestamp(exact_events["date"].min()).normalize()
+        exact_end = pd.Timestamp(exact_events["date"].max()).normalize()
+        operational_exact_window = operational.loc[
+            operational["date"].between(exact_start, exact_end)
+        ]
+        exact_audit = reconcile_sponsor_distributions(
+            exact_events,
+            operational_exact_window,
+            absolute_tolerance=exact_tolerance,
+        )
 
     period_rows: list[dict[str, Any]] = []
     covered_dates: set[pd.Timestamp] = set(exact_events["date"])

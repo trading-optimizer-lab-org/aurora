@@ -329,6 +329,27 @@ def test_layered_official_distribution_audit_covers_every_operational_event(
         reconcile_official_distribution_audit(exact, totals, uncovered)
 
 
+def test_sec_totals_can_cover_window_before_exact_event_export() -> None:
+    exact = pd.DataFrame(columns=["date", "distribution"])
+    totals = pd.DataFrame(
+        {
+            "period_start": [pd.Timestamp("1994-01-01")],
+            "period_end": [pd.Timestamp("1994-12-31")],
+            "distribution_total": [1.23],
+        }
+    )
+    operational = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["1994-03-18", "1994-06-17", "1994-09-16", "1994-12-16"]),
+            "distribution": [0.27, 0.30, 0.31, 0.35],
+        }
+    )
+    audit = reconcile_official_distribution_audit(exact, totals, operational)
+    assert audit["exact_event_audit"]["event_count"] == 0
+    assert audit["fiscal_period_audit"][0]["event_count"] == 4
+    assert audit["uncovered_event_count"] == 0
+
+
 def test_layered_official_distribution_audit_rejects_fiscal_total_mismatch(
     tmp_path: Path,
 ) -> None:
