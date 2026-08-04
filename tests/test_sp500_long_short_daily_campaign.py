@@ -371,6 +371,53 @@ def test_stooq_github_transport_uses_headless_browser(
     assert commands[0][-1].startswith("https://stooq.com/q/d/?")
 
 
+def test_stooq_github_transport_preserves_form_session_via_cdp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload = _stooq_html(
+        [("1", "16 Jul 2009", "92.1", "93.1", "91.8", "92.9", "+1.1%", "+1.0", "80,000,000")],
+        pages=1,
+    )
+    seen: dict[str, object] = {}
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data.shutil.which",
+        lambda executable: "/usr/bin/google-chrome" if executable == "google-chrome" else None,
+    )
+
+    def fake_cdp(
+        browser: str,
+        history_url: str,
+        browser_profile: Path,
+        *,
+        symbol: str,
+    ) -> bytes:
+        seen.update(
+            browser=browser,
+            history_url=history_url,
+            browser_profile=browser_profile,
+            symbol=symbol,
+        )
+        return payload
+
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data._request_stooq_history_page_via_cdp",
+        fake_cdp,
+    )
+    result = _request_stooq_history_page(
+        requests.Session(),
+        {"s": "spy.us", "f": "20090701", "t": "20090731", "o": "1111111"},
+        browser_profile=tmp_path,
+    )
+    assert result == payload
+    assert seen["browser"] == "/usr/bin/google-chrome"
+    assert seen["browser_profile"] == tmp_path
+    assert seen["symbol"] == "spy.us"
+    assert "f=20090701" in str(seen["history_url"])
+    assert "o=1111111" in str(seen["history_url"])
+
+
 def test_stooq_page_loader_retries_transient_verification_screen(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
