@@ -19,6 +19,7 @@ from .advanced_accounting_pipeline import (
 )
 from .analyst_pipeline import implemented_source_pairs as analyst_source_pairs
 from .event_pipeline import implemented_source_pairs as event_source_pairs
+from .http import public_headers
 from .institutional_pipeline import (
     OPENFIGI_MAPPING_URL,
     implemented_source_pairs as institutional_source_pairs,
@@ -113,10 +114,7 @@ def probe_source(
     timeout: int = 45,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    headers = {
-        "User-Agent": "Aurora OpenAP public-data research https://github.com/trading-optimizer-lab-org/aurora",
-        "Accept": "application/json,text/csv,text/plain,application/zip,application/octet-stream,*/*",
-    }
+    headers = public_headers(sec=source.source_id in {"sec_edgar", "sec_13f"})
     result: dict[str, Any] = {**asdict(source), "tested_at": _utcnow()}
     try:
         if source.source_id == "openfigi_public":

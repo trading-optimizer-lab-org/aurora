@@ -43,6 +43,7 @@ from aurora.research.openap_93.external import (
     parse_openap_reference_zip,
     parse_pastor_stambaugh,
 )
+from aurora.research.openap_93.http import SEC_USER_AGENT, public_headers
 from aurora.research.openap_93.institutional_pipeline import (
     INSTITUTIONAL_IMPLEMENTED_SIGNALS,
     calculate_institutional_signals,
@@ -312,6 +313,14 @@ def test_every_source_has_an_explicit_five_company_probe_audit() -> None:
         else:
             assert all(not row["probe_applicable"] for row in rows)
             assert all("not_symbol_scoped" in row["error"] for row in rows)
+
+
+def test_sec_requests_use_an_identifiable_fair_access_contact() -> None:
+    headers = public_headers(sec=True)
+    assert headers["User-Agent"] == SEC_USER_AGENT
+    assert "@" in SEC_USER_AGENT
+    assert "github.com" not in SEC_USER_AGENT
+    assert headers["Accept-Encoding"] == "gzip, deflate"
 
 
 def test_script_is_blocked_locally_without_explicit_permission(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -16,6 +16,7 @@ import time
 import pandas as pd
 import requests
 
+from .http import public_headers
 from .institutional_pipeline import map_cusips_openfigi, parse_13f_archives
 
 
@@ -98,12 +99,9 @@ def download_public_inputs(output_dir: str | Path, *, timeout: int = 120) -> lis
     raw = output / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
-    headers = {
-        "User-Agent": "Aurora-OpenAP-Research/1.0 https://github.com/trading-optimizer-lab-org/aurora",
-        "Accept": "text/csv,text/plain,application/zip,application/octet-stream,*/*",
-    }
     with requests.Session() as session:
         for spec in PUBLIC_INPUTS:
+            headers = public_headers(sec=spec.source_id == "sec_13f")
             target = raw / spec.filename
             temporary = target.with_suffix(target.suffix + ".partial")
             last_error: Exception | None = None
