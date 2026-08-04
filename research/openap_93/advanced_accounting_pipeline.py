@@ -18,15 +18,19 @@ from .registry import FidelityClass
 
 ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS = frozenset(
     {
+        "AbnormalAccruals",
         "BrandInvest",
+        "ChNNCOA",
         "CompEquIss",
         "EarningsConsistency",
+        "EquityDuration",
         "Herf",
         "HerfBE",
         "IntanBM",
         "IntanCFP",
         "IntanEP",
         "IntanSP",
+        "MS",
         "MeanRankRevGrowth",
         "OrgCap",
         "RDIPO",
@@ -37,12 +41,20 @@ ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS = frozenset(
 ANNUAL_ALIASES: dict[str, tuple[str, ...]] = {
     "advertising": ("AdvertisingExpense",),
     "assets": ("Assets",),
+    "capex": ("PaymentsToAcquirePropertyPlantAndEquipment",),
+    "current_assets": ("AssetsCurrent",),
+    "current_debt": ("LongTermDebtCurrent", "ShortTermBorrowings"),
     "depreciation": ("DepreciationDepletionAndAmortization", "Depreciation"),
     "equity": (
         "StockholdersEquity",
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
     ),
+    "liabilities": ("Liabilities",),
+    "long_debt": ("LongTermDebtNoncurrent", "LongTermDebt"),
+    "long_investments": ("LongTermInvestments", "OtherInvestments"),
     "net_income": ("NetIncomeLoss", "ProfitLoss"),
+    "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",),
+    "ppe": ("PropertyPlantAndEquipmentNet",),
     "preferred_stock": ("PreferredStockValue", "PreferredStockCarryingValue"),
     "rd": ("ResearchAndDevelopmentExpense",),
     "revenue": (
@@ -56,8 +68,10 @@ ANNUAL_ALIASES: dict[str, tuple[str, ...]] = {
 
 FLOW_CONCEPTS = {
     "advertising",
+    "capex",
     "depreciation",
     "net_income",
+    "operating_cash_flow",
     "rd",
     "revenue",
     "sga",
@@ -444,6 +458,207 @@ def _intangible_residuals(panel: pd.DataFrame) -> dict[str, pd.Series]:
     return output
 
 
+def _abnormal_accruals(annual: pd.DataFrame) -> pd.DataFrame:
+    """Modified-Jones residuals by fiscal year and two-digit SIC."""
+
+    data = annual.sort_values(["symbol", "period_end"]).copy()
+    grouped = data.groupby("symbol", sort=False)
+    data["assets_lag"] = grouped["assets"].shift(1)
+    data["revenue_lag"] = grouped["revenue"].shift(1)
+    data["average_assets"] = 0.5 * (data["assets"] + data["assets_lag"])
+    data["accruals"] = (
+        data["net_income"] - data["operating_cash_flow"]
+    ) / data["average_assets"].replace(0, np.nan)
+    data["inverse_assets"] = 1.0 / data["assets_lag"].replace(0, np.nan)
+    data["revenue_change"] = (
+        data["revenue"] - data["revenue_lag"]
+    ) / data["assets_lag"].replace(0, np.nan)
+    data["ppe_scaled"] = data["ppe"] / data["assets_lag"].replace(0, np.nan)
+    data["fiscal_year"] = data["period_end"].dt.year
+    data["sic2"] = (pd.to_numeric(data["sic"], errors="coerce") // 100).astype("Int64")
+    data["value"] = np.nan
+    columns = ["accruals", "inverse_assets", "revenue_change", "ppe_scaled"]
+    for _, sample in data.groupby(["fiscal_year", "sic2"], dropna=True):
+        valid = sample.dropna(subset=columns)
+        if len(valid) < 8:
+            continue
+        x = np.column_stack(
+            [
+                np.ones(len(valid)),
+                valid["inverse_assets"],
+                valid["revenue_change"],
+                valid["ppe_scaled"],
+            ]
+        )
+        coefficients, *_ = np.linalg.lstsq(x, valid["accruals"].to_numpy(), rcond=None)
+        data.loc[valid.index, "value"] = valid["accruals"].to_numpy() - x @ coefficients
+    return data.sort_values(["symbol", "available_at"]).drop_duplicates(
+        "symbol", keep="last"
+    ).set_index("symbol")
+
+
+def _change_nncoa(annual: pd.DataFrame) -> pd.DataFrame:
+    data = annual.sort_values(["symbol", "period_end"]).copy()
+    numerator = (
+        data["assets"]
+        - data["current_assets"]
+        - data["long_investments"]
+        - data["liabilities"]
+        + data["current_debt"]
+        + data["long_debt"]
+    )
+    data["nncoa"] = numerator / data["assets"].replace(0, np.nan)
+    data["value"] = data["nncoa"] - data.groupby("symbol")["nncoa"].shift(1)
+    return data.sort_values(["symbol", "available_at"]).drop_duplicates(
+        "symbol", keep="last"
+    ).set_index("symbol")
+
+
+def _equity_duration(
+    annual: pd.DataFrame,
+    monthly_prices: pd.DataFrame,
+) -> pd.DataFrame:
+    """Dechow-Sloan-Soliman duration using the pinned OpenAP constants."""
+
+    merged_rows: list[pd.DataFrame] = []
+    price_groups = {symbol: part for symbol, part in monthly_prices.groupby("symbol")}
+    for symbol, facts in annual.groupby("symbol", sort=False):
+        price = price_groups.get(symbol)
+        if price is None or price.empty:
+            continue
+        left = facts.sort_values("period_end")
+        right = price[["month", "close"]].dropna().sort_values("month")
+        merged = pd.merge_asof(
+            left,
+            right,
+            left_on="period_end",
+            right_on="month",
+            direction="backward",
+        )
+        merged["symbol"] = symbol
+        merged_rows.append(merged)
+    if not merged_rows:
+        return pd.DataFrame()
+    data = pd.concat(merged_rows, ignore_index=True).sort_values(
+        ["symbol", "period_end"]
+    )
+    grouped = data.groupby("symbol", sort=False)
+    equity_lag = grouped["equity"].shift(1)
+    revenue_lag = grouped["revenue"].shift(1)
+    roe = data["net_income"] / equity_lag.replace(0, np.nan)
+    growth = data["revenue"] / revenue_lag.replace(0, np.nan) - 1.0
+    growth = growth.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    projected_roe = 0.57 * roe + 0.12 * (1.0 - 0.57)
+    projected_growth = 0.24 * growth + 0.06 * (1.0 - 0.24)
+    prior_book = data["equity"].copy()
+    md_part = pd.Series(0.0, index=data.index)
+    pv_part = pd.Series(0.0, index=data.index)
+    for year in range(1, 11):
+        projected_book = prior_book * (1.0 + projected_growth)
+        distribution = prior_book - projected_book + prior_book * projected_roe
+        discount = 1.12**year
+        md_part += year * distribution / discount
+        pv_part += distribution / discount
+        prior_book = projected_book
+        projected_roe = 0.57 * projected_roe + 0.12 * (1.0 - 0.57)
+        projected_growth = 0.24 * projected_growth + 0.06 * (1.0 - 0.24)
+    market_equity = data["close"] * data["shares"]
+    data["value"] = md_part / market_equity.replace(0, np.nan) + (
+        10.0 + 1.12 / 0.12
+    ) * (1.0 - pv_part / market_equity.replace(0, np.nan))
+    return data.sort_values(["symbol", "available_at"]).drop_duplicates(
+        "symbol", keep="last"
+    ).set_index("symbol")
+
+
+def _mohanram_annual_proxy(
+    annual: pd.DataFrame,
+    monthly_prices: pd.DataFrame,
+) -> pd.DataFrame:
+    """Annual SEC approximation of the official quarterly Mohanram score."""
+
+    price = monthly_prices.sort_values(["symbol", "month"]).drop_duplicates(
+        "symbol", keep="last"
+    )[["symbol", "close", "price_date"]]
+    data = annual.sort_values(["symbol", "period_end"]).copy()
+    grouped = data.groupby("symbol", sort=False)
+    data["assets_lag"] = grouped["assets"].shift(1)
+    data["average_assets"] = 0.5 * (data["assets"] + data["assets_lag"])
+    data["roa"] = data["net_income"] / data["average_assets"].replace(0, np.nan)
+    data["cfroa"] = data["operating_cash_flow"] / data["average_assets"].replace(
+        0, np.nan
+    )
+    data["sales_growth"] = data["revenue"] / grouped["revenue"].shift(1).replace(
+        0, np.nan
+    ) - 1.0
+    data["roa_volatility"] = data.groupby("symbol")["roa"].transform(
+        lambda values: values.rolling(4, min_periods=4).std()
+    )
+    data["sales_growth_volatility"] = data.groupby("symbol")[
+        "sales_growth"
+    ].transform(
+        lambda values: values.rolling(4, min_periods=4).std()
+    )
+    for source, output in (
+        ("rd", "rd_intensity"),
+        ("capex", "capex_intensity"),
+        ("advertising", "advertising_intensity"),
+    ):
+        data[output] = data[source].fillna(0.0) / data["assets_lag"].replace(0, np.nan)
+    latest = data.sort_values(["symbol", "available_at"]).drop_duplicates(
+        "symbol", keep="last"
+    ).merge(price, on="symbol", how="left")
+    latest["market_equity"] = latest["close"] * latest["shares"]
+    latest["bm"] = np.log(
+        (latest["equity"] / latest["market_equity"]).where(
+            (latest["equity"] > 0) & (latest["market_equity"] > 0)
+        )
+    )
+    valid_bm = latest["bm"].notna()
+    latest["bm_quintile"] = np.nan
+    if valid_bm.sum() >= 5:
+        latest.loc[valid_bm, "bm_quintile"] = pd.qcut(
+            latest.loc[valid_bm, "bm"], q=5, labels=False, duplicates="drop"
+        )
+    latest["sic2"] = (pd.to_numeric(latest["sic"], errors="coerce") // 100).astype(
+        "Int64"
+    )
+    eligible = latest.loc[latest["bm_quintile"].eq(0)].copy()
+    eligible["industry_count"] = eligible.groupby("sic2")["symbol"].transform("size")
+    eligible = eligible.loc[eligible["industry_count"].ge(3)]
+    measures = (
+        "roa",
+        "cfroa",
+        "roa_volatility",
+        "sales_growth_volatility",
+        "rd_intensity",
+        "capex_intensity",
+        "advertising_intensity",
+    )
+    for measure in measures:
+        eligible[f"median_{measure}"] = eligible.groupby("sic2")[measure].transform(
+            "median"
+        )
+    components = [
+        eligible["roa"].gt(eligible["median_roa"]),
+        eligible["cfroa"].gt(eligible["median_cfroa"]),
+        eligible["operating_cash_flow"].gt(eligible["net_income"]),
+        eligible["roa_volatility"].lt(eligible["median_roa_volatility"]),
+        eligible["sales_growth_volatility"].lt(
+            eligible["median_sales_growth_volatility"]
+        ),
+        eligible["rd_intensity"].gt(eligible["median_rd_intensity"]),
+        eligible["capex_intensity"].gt(eligible["median_capex_intensity"]),
+        eligible["advertising_intensity"].gt(
+            eligible["median_advertising_intensity"]
+        ),
+    ]
+    eligible["value"] = sum(component.astype(int) for component in components)
+    eligible.loc[eligible["value"].ge(6), "value"] = 6
+    eligible.loc[eligible["value"].le(1), "value"] = 1
+    return eligible.set_index("symbol")
+
+
 def _append_value(
     rows: list[AdvancedValue],
     *,
@@ -499,6 +714,11 @@ def calculate_advanced_accounting_signals(
 
     brand = _brand_invest(annual.loc[annual["period_end"].dt.month.eq(12)])
     org = _org_cap(annual.loc[annual["period_end"].dt.month.eq(12)], gnp_deflator)
+    abnormal = _abnormal_accruals(annual)
+    ch_nncoa = _change_nncoa(annual)
+    equity_duration = _equity_duration(annual, monthly_prices)
+    mohanram = _mohanram_annual_proxy(annual, monthly_prices)
+    annual_counts = annual.groupby("symbol").size().to_dict()
     comp_equity = _comp_equity_issuance(panel) if not panel.empty else pd.Series(dtype=float)
     revenue_rank = _mean_rank_revenue_growth(panel) if not panel.empty else pd.Series(dtype=float)
     consistency = _earnings_consistency(panel) if not panel.empty else pd.Series(dtype=float)
@@ -537,6 +757,71 @@ def calculate_advanced_accounting_signals(
         )
         period_end = latest_row.get("period_end", pd.NaT)
         monthly_count = int((panel["symbol"] == symbol).sum()) if not panel.empty else 0
+
+        abnormal_row = (
+            abnormal.loc[symbol] if symbol in abnormal.index else pd.Series(dtype=object)
+        )
+        _append_value(
+            rows,
+            symbol=symbol,
+            signal="AbnormalAccruals",
+            value=abnormal_row.get("value"),
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_modified_jones_sec_sic2_fiscal_year",
+            source_ids=("sec_edgar",),
+            available_at=abnormal_row.get("available_at", pd.NaT),
+            period_end=abnormal_row.get("period_end", pd.NaT),
+            observation_count=int(annual_counts.get(symbol, 0)),
+            caveat="SEC facts and filing SIC replace Compustat and CRSP SIC; minimum eight firms per regression",
+        )
+        ch_nncoa_row = (
+            ch_nncoa.loc[symbol] if symbol in ch_nncoa.index else pd.Series(dtype=object)
+        )
+        _append_value(
+            rows,
+            symbol=symbol,
+            signal="ChNNCOA",
+            value=ch_nncoa_row.get("value"),
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_chnncoa_sec_annual_change",
+            source_ids=("sec_edgar",),
+            available_at=ch_nncoa_row.get("available_at", pd.NaT),
+            period_end=ch_nncoa_row.get("period_end", pd.NaT),
+            observation_count=int(annual_counts.get(symbol, 0)),
+            caveat="SEC LongTermInvestments/OtherInvestments replace Compustat ivao",
+        )
+        duration_row = (
+            equity_duration.loc[symbol]
+            if symbol in equity_duration.index
+            else pd.Series(dtype=object)
+        )
+        _append_value(
+            rows,
+            symbol=symbol,
+            signal="EquityDuration",
+            value=duration_row.get("value"),
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_equity_duration_dss2004_sec_yahoo",
+            source_ids=("sec_edgar", "yahoo_public"),
+            available_at=duration_row.get("available_at", pd.NaT),
+            period_end=duration_row.get("period_end", pd.NaT),
+            observation_count=int(annual_counts.get(symbol, 0)),
+            caveat="SEC annual equity/income/revenue and Yahoo fiscal-period price replace Compustat/CRSP",
+        )
+        ms_row = mohanram.loc[symbol] if symbol in mohanram.index else pd.Series(dtype=object)
+        _append_value(
+            rows,
+            symbol=symbol,
+            signal="MS",
+            value=ms_row.get("value"),
+            fidelity=FidelityClass.UNVALIDATED_PROXY,
+            formula_id="openap_mohanram_gscore_annual_sec_proxy",
+            source_ids=("sec_edgar", "yahoo_public"),
+            available_at=ms_row.get("available_at", pd.NaT),
+            period_end=ms_row.get("period_end", pd.NaT),
+            observation_count=int(annual_counts.get(symbol, 0)),
+            caveat="Annual SEC stability inputs replace the official quarterly Compustat construction; excluded from current scores until overlap validation",
+        )
 
         brand_value = brand.get(symbol)
         _append_value(
@@ -698,15 +983,19 @@ def calculate_advanced_accounting_signals(
 
 def implemented_source_pairs() -> frozenset[tuple[str, str]]:
     source_map: dict[str, tuple[str, ...]] = {
+        "AbnormalAccruals": ("sec_edgar",),
         "BrandInvest": ("sec_edgar",),
+        "ChNNCOA": ("sec_edgar",),
         "CompEquIss": ("sec_edgar", "yahoo_public"),
         "EarningsConsistency": ("sec_edgar",),
+        "EquityDuration": ("sec_edgar", "yahoo_public"),
         "Herf": ("sec_edgar",),
         "HerfBE": ("sec_edgar",),
         "IntanBM": ("sec_edgar", "yahoo_public"),
         "IntanCFP": ("sec_edgar", "yahoo_public"),
         "IntanEP": ("sec_edgar", "yahoo_public"),
         "IntanSP": ("sec_edgar", "yahoo_public"),
+        "MS": ("sec_edgar", "yahoo_public"),
         "MeanRankRevGrowth": ("sec_edgar",),
         "OrgCap": ("sec_edgar", "fred_public_csv"),
         "RDIPO": ("sec_edgar", "yahoo_public"),

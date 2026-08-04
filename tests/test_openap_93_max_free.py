@@ -465,6 +465,106 @@ def test_accounting_pipeline_emits_registered_subset_and_fails_closed() -> None:
     assert result.loc[reconstructed & result["value"].notna(), "current_usable"].all()
 
 
+def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
+    symbols = [f"M{i:02d}" for i in range(15)]
+    master = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "cik": np.arange(1, len(symbols) + 1),
+            "first_price_date": pd.Timestamp("2018-01-02"),
+        }
+    )
+    submissions = pd.DataFrame(
+        {
+            "cik": master["cik"],
+            "accepted_at": pd.Timestamp("2025-03-01"),
+            "sic": [3571] * len(symbols),
+        }
+    )
+    tag_values = {
+        "Assets": 1000.0,
+        "AssetsCurrent": 450.0,
+        "Liabilities": 600.0,
+        "LongTermDebtCurrent": 35.0,
+        "LongTermDebtNoncurrent": 220.0,
+        "LongTermInvestments": 50.0,
+        "NetIncomeLoss": 90.0,
+        "NetCashProvidedByUsedInOperatingActivities": 110.0,
+        "PropertyPlantAndEquipmentNet": 300.0,
+        "RevenueFromContractWithCustomerExcludingAssessedTax": 1500.0,
+        "StockholdersEquity": 400.0,
+        "EntityCommonStockSharesOutstanding": 20.0,
+        "ResearchAndDevelopmentExpense": 80.0,
+        "PaymentsToAcquirePropertyPlantAndEquipment": 70.0,
+        "SellingGeneralAndAdministrativeExpense": 140.0,
+        "AdvertisingExpense": 25.0,
+        "DepreciationDepletionAndAmortization": 40.0,
+        "PreferredStockValue": 5.0,
+    }
+    facts: list[dict[str, object]] = []
+    for symbol_index, (symbol, cik) in enumerate(zip(symbols, master["cik"], strict=True)):
+        for year_index, year in enumerate(range(2018, 2026)):
+            period_end = pd.Timestamp(year, 12, 31)
+            for tag, base in tag_values.items():
+                value = base * (1.0 + 0.035 * year_index + 0.004 * symbol_index)
+                if tag == "NetCashProvidedByUsedInOperatingActivities":
+                    value *= 1.0 + 0.01 * symbol_index
+                facts.append(
+                    {
+                        "symbol": symbol,
+                        "cik": cik,
+                        "tag": tag,
+                        "value": value,
+                        "period_start": pd.Timestamp(year, 1, 1),
+                        "period_end": period_end,
+                        "form": "10-K",
+                        "filed": period_end + pd.Timedelta(days=60),
+                        "available_at": period_end + pd.Timedelta(days=60),
+                    }
+                )
+    dates = pd.bdate_range("2018-01-02", "2026-07-31")
+    prices = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "symbol": symbol,
+                    "date": dates,
+                    "close": np.linspace(25.0 + index, 80.0 + index, len(dates)),
+                    "adj_close": np.linspace(25.0 + index, 80.0 + index, len(dates)),
+                }
+            )
+            for index, symbol in enumerate(symbols)
+        ],
+        ignore_index=True,
+    )
+    gnp = pd.DataFrame(
+        {"date": pd.date_range("2018-01-01", "2026-01-01", freq="YS"), "gnpdef": 120.0}
+    )
+
+    result = calculate_advanced_accounting_signals(
+        master,
+        pd.DataFrame(facts),
+        submissions,
+        prices,
+        gnp,
+        formation_at="2026-07-31",
+    )
+
+    assert set(result["signal"]) == ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS
+    assert result.groupby("symbol")["signal"].nunique().eq(
+        len(ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS)
+    ).all()
+    assert pd.to_datetime(result["available_at"]).dropna().le(
+        pd.Timestamp("2026-07-31")
+    ).all()
+    for signal in ("AbnormalAccruals", "ChNNCOA", "EquityDuration"):
+        assert result.loc[result["signal"].eq(signal), "value"].notna().any()
+    ms = result.loc[result["signal"].eq("MS")]
+    assert ms["value"].notna().any()
+    assert ms["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value).all()
+    assert not ms["current_usable"].any()
+
+
 def test_event_pipeline_emits_four_signals_and_keeps_proxies_out_of_score() -> None:
     dates = pd.bdate_range("2022-01-03", "2026-06-30")
     prices = pd.DataFrame(
