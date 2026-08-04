@@ -1104,6 +1104,38 @@ def test_spy_reconciliation_audits_isolated_yahoo_close_error_without_using_it()
     ]
 
 
+def test_spy_close_return_reconciliation_does_not_depend_on_other_ohlc_fields() -> None:
+    dates = pd.bdate_range("2000-01-03", periods=1001)
+    close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))
+    yahoo = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": close * 1.02,
+            "low": close * 0.98,
+            "close": close,
+            "volume": 1_000_000,
+        }
+    )
+    stooq = yahoo.copy()
+    stooq.loc[499, "close"] *= 1.00045
+    stooq.loc[500, "close"] *= 0.99955
+    stooq.loc[499:500, "high"] *= 1.01
+    stooq.loc[499:500, "low"] *= 0.99
+
+    report = _reconcile_spy_sources(
+        yahoo,
+        stooq,
+        pd.DataFrame(columns=["date", "distribution"]),
+        pd.DataFrame(columns=["date", "split_ratio"]),
+        minimum_overlap=1000,
+        close_consensus_dates=[dates[499], dates[500]],
+    )
+
+    assert report["close_return_outlier_count"] >= 1
+    assert report["close_return_unreconciled_outlier_count"] == 0
+
+
 def test_spy_reconciliation_reconciles_isolated_yahoo_open_error() -> None:
     dates = pd.bdate_range("2000-01-03", periods=1001)
     close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))

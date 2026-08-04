@@ -1623,6 +1623,7 @@ def _reconcile_spy_sources(
     splits: pd.DataFrame,
     *,
     minimum_overlap: int = 1000,
+    close_consensus_dates: Iterable[Any] | None = None,
 ) -> Mapping[str, Any]:
     yahoo_prices = yahoo_prices.set_index("date").sort_index(kind="mergesort")
     comparison = stooq.set_index("date").sort_index(kind="mergesort")
@@ -1730,21 +1731,28 @@ def _reconcile_spy_sources(
     close_differences = (yahoo_close_returns - stooq_close_returns).abs()
     close_outlier_dates = list(close_differences.index[close_differences > SPY_RETURN_TOLERANCE])
 
-    close_only_dates = set(
-        level_differences.index[
-            (level_differences[["open", "high", "low"]] <= SPY_RETURN_TOLERANCE).all(axis=1)
-            & (level_differences["close"] > SPY_RETURN_TOLERANCE)
-            & (comparison.loc[common, "close"] <= yahoo_prices.loc[common, "high"])
-            & (comparison.loc[common, "close"] >= yahoo_prices.loc[common, "low"])
-        ]
-    )
+    if close_consensus_dates is None:
+        close_only_dates = set(
+            level_differences.index[
+                (level_differences[["open", "high", "low"]] <= SPY_RETURN_TOLERANCE).all(
+                    axis=1
+                )
+                & (level_differences["close"] > SPY_RETURN_TOLERANCE)
+                & (comparison.loc[common, "close"] <= yahoo_prices.loc[common, "high"])
+                & (comparison.loc[common, "close"] >= yahoo_prices.loc[common, "low"])
+            ]
+        )
+    else:
+        close_only_dates = set(pd.to_datetime(list(close_consensus_dates)))
+        if any(date not in common for date in close_only_dates):
+            raise DataGateError("SPY_CLOSE_CONSENSUS_DATE_OUTSIDE_OVERLAP")
     close_unreconciled: list[pd.Timestamp] = []
     for date in close_outlier_dates:
         location = common.get_loc(date)
         previous = common[location - 1] if location > 0 else None
         endpoints = [endpoint for endpoint in (previous, date) if endpoint is not None]
         bounded_level_difference = all(
-            bool((level_differences.loc[endpoint] <= SPY_RETURN_TOLERANCE).all())
+            bool(level_differences.loc[endpoint, "close"] <= SPY_RETURN_TOLERANCE)
             or endpoint in close_only_dates
             for endpoint in endpoints
         )
@@ -1903,6 +1911,11 @@ def prepare_market_snapshot(
         dividends,
         splits,
         minimum_overlap=min(1000, max(200, len(prices) - 1)),
+        close_consensus_dates=(
+            price_adjudication["fields"]["close"]["yahoo_supported_repair_dates"]
+            + price_adjudication["fields"]["close"]["kibot_bridge_repair_dates"]
+            + price_adjudication["fields"]["close"]["retained_stooq_dates"]
+        ),
     )
     reconciliation = {
         **reconciliation,
