@@ -8,7 +8,6 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -45,6 +44,7 @@ SPY_RETURN_TOLERANCE = 5e-4
 SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
 SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 STOOQ_MAX_BOUNDED_PAGES = 100
+STOOQ_PAGE_DELAY_SECONDS = 1.25
 
 
 class DataGateError(RuntimeError):
@@ -337,37 +337,27 @@ def _download_stooq_html_history(
 
     def fetch_page(page: int) -> tuple[int, bytes]:
         print(f"[sp500-data] stooq page={page} start", flush=True)
-        page_client = client
-        owned_client: requests.Session | None = None
-        if isinstance(client, requests.Session):
-            owned_client = requests.Session()
-            owned_client.headers.update(client.headers)
-            owned_client.cookies.update(client.cookies)
-            page_client = owned_client
-        try:
-            payload = _request_bytes(
-                page_client,
-                STOOQ_HISTORY_PAGE,
-                params={
-                    "s": symbol.lower(),
-                    "i": "d",
-                    "f": start_date.strftime("%Y%m%d"),
-                    "t": end_date.strftime("%Y%m%d"),
-                    "l": page,
-                },
-                attempts=3,
-                timeout=20,
-            )
-            print(f"[sp500-data] stooq page={page} complete", flush=True)
-            return page, payload
-        finally:
-            if owned_client is not None:
-                owned_client.close()
+        payload = _request_bytes(
+            client,
+            STOOQ_HISTORY_PAGE,
+            params={
+                "s": symbol.lower(),
+                "i": "d",
+                "f": start_date.strftime("%Y%m%d"),
+                "t": end_date.strftime("%Y%m%d"),
+                "l": page,
+            },
+            attempts=3,
+            timeout=20,
+        )
+        print(f"[sp500-data] stooq page={page} complete", flush=True)
+        return page, payload
 
     pages: list[tuple[int, bytes]] = []
-    if page_count > 1:
-        with ThreadPoolExecutor(max_workers=min(4, page_count - 1)) as executor:
-            pages = list(executor.map(fetch_page, range(2, page_count + 1)))
+    for page in range(2, page_count + 1):
+        if isinstance(client, requests.Session):
+            time.sleep(STOOQ_PAGE_DELAY_SECONDS)
+        pages.append(fetch_page(page))
     for page, page_payload in pages:
         page_frame, reported_page_count = _parse_stooq_html_history(page_payload)
         if reported_page_count > page_count:
