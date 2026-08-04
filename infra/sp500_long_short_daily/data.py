@@ -1014,7 +1014,7 @@ def _adjudicate_stooq_open_prices(
     stooq_prices: pd.DataFrame,
     kibot_prices: pd.DataFrame,
 ) -> tuple[pd.DataFrame, Mapping[str, Any]]:
-    """Repair only Stooq opens supported by an independent third source."""
+    """Repair Stooq execution and signal prices with three-source consensus."""
 
     yahoo = yahoo_prices.set_index("date").sort_index(kind="mergesort")
     stooq = stooq_prices.set_index("date").sort_index(kind="mergesort")
@@ -1026,48 +1026,74 @@ def _adjudicate_stooq_open_prices(
         details = ",".join(date.date().isoformat() for date in missing[:20])
         raise DataGateError(f"KIBOT_ADJUDICATOR_INCOMPLETE:{details}")
 
-    yahoo_open = yahoo.loc[common, "open"].astype(float)
-    stooq_open = stooq.loc[common, "open"].astype(float)
-    kibot_open = kibot.loc[common, "open"].astype(float)
-    yahoo_stooq = (yahoo_open - stooq_open).abs() / yahoo_open.abs()
-    yahoo_kibot = (yahoo_open - kibot_open).abs() / yahoo_open.abs()
-    stooq_kibot = (stooq_open - kibot_open).abs() / kibot_open.abs()
-    vendor_disagreement = yahoo_stooq > SPY_RETURN_TOLERANCE
-    kibot_supports_yahoo = yahoo_kibot <= SPY_RETURN_TOLERANCE
-    kibot_supports_stooq = stooq_kibot <= SPY_RETURN_TOLERANCE
-    yahoo_repairs = vendor_disagreement & kibot_supports_yahoo & ~kibot_supports_stooq
-    bridge_repairs = vendor_disagreement & kibot_supports_yahoo & kibot_supports_stooq
-    retained_stooq = vendor_disagreement & ~kibot_supports_yahoo & kibot_supports_stooq
-    unresolved = vendor_disagreement & ~kibot_supports_yahoo & ~kibot_supports_stooq
-
     canonical = stooq.copy()
-    canonical.loc[yahoo_repairs, "open"] = yahoo_open.loc[yahoo_repairs]
-    canonical.loc[bridge_repairs, "open"] = kibot_open.loc[bridge_repairs]
-    changed = yahoo_repairs | bridge_repairs
-    expanded_high = canonical["open"] > canonical["high"]
-    expanded_low = canonical["open"] < canonical["low"]
-    canonical.loc[expanded_high, "high"] = canonical.loc[expanded_high, "open"]
-    canonical.loc[expanded_low, "low"] = canonical.loc[expanded_low, "open"]
+    field_audits: dict[str, Mapping[str, Any]] = {}
+    for field in ("open", "close"):
+        yahoo_value = yahoo.loc[common, field].astype(float)
+        stooq_value = stooq.loc[common, field].astype(float)
+        kibot_value = kibot.loc[common, field].astype(float)
+        yahoo_stooq = (yahoo_value - stooq_value).abs() / yahoo_value.abs()
+        yahoo_kibot = (yahoo_value - kibot_value).abs() / yahoo_value.abs()
+        stooq_kibot = (stooq_value - kibot_value).abs() / kibot_value.abs()
+        vendor_disagreement = yahoo_stooq > SPY_RETURN_TOLERANCE
+        kibot_supports_yahoo = yahoo_kibot <= SPY_RETURN_TOLERANCE
+        kibot_supports_stooq = stooq_kibot <= SPY_RETURN_TOLERANCE
+        yahoo_repairs = vendor_disagreement & kibot_supports_yahoo & ~kibot_supports_stooq
+        bridge_repairs = vendor_disagreement & kibot_supports_yahoo & kibot_supports_stooq
+        retained_stooq = vendor_disagreement & ~kibot_supports_yahoo & kibot_supports_stooq
+        unresolved = vendor_disagreement & ~kibot_supports_yahoo & ~kibot_supports_stooq
+        changed = yahoo_repairs | bridge_repairs
 
-    def dates(mask: pd.Series) -> list[str]:
-        return [date.date().isoformat() for date in common[mask.to_numpy()]]
+        canonical.loc[yahoo_repairs, field] = yahoo_value.loc[yahoo_repairs]
+        canonical.loc[bridge_repairs, field] = kibot_value.loc[bridge_repairs]
+
+        def dates(mask: pd.Series) -> list[str]:
+            return [date.date().isoformat() for date in common[mask.to_numpy()]]
+
+        field_audits[field] = {
+            "vendor_disagreement_count": int(vendor_disagreement.sum()),
+            "changed_count": int(changed.sum()),
+            "yahoo_supported_repair_count": int(yahoo_repairs.sum()),
+            "kibot_bridge_repair_count": int(bridge_repairs.sum()),
+            "retained_stooq_count": int(retained_stooq.sum()),
+            "unresolved_level_count": int(unresolved.sum()),
+            "yahoo_supported_repair_dates": dates(yahoo_repairs),
+            "kibot_bridge_repair_dates": dates(bridge_repairs),
+            "retained_stooq_dates": dates(retained_stooq),
+            "unresolved_level_dates": dates(unresolved),
+        }
+
+    expanded_high = canonical[["open", "close"]].max(axis=1) > canonical["high"]
+    expanded_low = canonical[["open", "close"]].min(axis=1) < canonical["low"]
+    canonical.loc[expanded_high, "high"] = canonical.loc[
+        expanded_high, ["open", "close"]
+    ].max(axis=1)
+    canonical.loc[expanded_low, "low"] = canonical.loc[
+        expanded_low, ["open", "close"]
+    ].min(axis=1)
+
+    open_audit = field_audits["open"]
+    close_audit = field_audits["close"]
 
     audit = {
-        "method": "three_source_open_consensus_v1",
+        "method": "three_source_execution_and_signal_price_consensus_v2",
         "tolerance": SPY_RETURN_TOLERANCE,
         "overlap_rows": len(common),
-        "vendor_disagreement_count": int(vendor_disagreement.sum()),
-        "changed_open_count": int(changed.sum()),
-        "yahoo_supported_repair_count": int(yahoo_repairs.sum()),
-        "kibot_bridge_repair_count": int(bridge_repairs.sum()),
-        "retained_stooq_count": int(retained_stooq.sum()),
-        "unresolved_level_count": int(unresolved.sum()),
+        "fields": field_audits,
+        "vendor_disagreement_count": open_audit["vendor_disagreement_count"],
+        "changed_open_count": open_audit["changed_count"],
+        "changed_close_count": close_audit["changed_count"],
+        "yahoo_supported_repair_count": open_audit["yahoo_supported_repair_count"],
+        "kibot_bridge_repair_count": open_audit["kibot_bridge_repair_count"],
+        "retained_stooq_count": open_audit["retained_stooq_count"],
+        "unresolved_level_count": open_audit["unresolved_level_count"],
+        "unresolved_close_level_count": close_audit["unresolved_level_count"],
         "expanded_high_count": int(expanded_high.sum()),
         "expanded_low_count": int(expanded_low.sum()),
-        "yahoo_supported_repair_dates": dates(yahoo_repairs),
-        "kibot_bridge_repair_dates": dates(bridge_repairs),
-        "retained_stooq_dates": dates(retained_stooq),
-        "unresolved_level_dates": dates(unresolved),
+        "yahoo_supported_repair_dates": open_audit["yahoo_supported_repair_dates"],
+        "kibot_bridge_repair_dates": open_audit["kibot_bridge_repair_dates"],
+        "retained_stooq_dates": open_audit["retained_stooq_dates"],
+        "unresolved_level_dates": open_audit["unresolved_level_dates"],
         "expanded_high_dates": [
             date.date().isoformat() for date in canonical.index[expanded_high.to_numpy()]
         ],
@@ -1859,15 +1885,16 @@ def prepare_market_snapshot(
         session=client,
         raw_dir=raw_root,
     )
-    stooq, open_adjudication = _adjudicate_stooq_open_prices(prices, stooq, kibot)
+    stooq, price_adjudication = _adjudicate_stooq_open_prices(prices, stooq, kibot)
     _store_raw(
         raw_root,
-        "spy_open_adjudication.json",
-        json.dumps(open_adjudication, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        "spy_price_adjudication.json",
+        json.dumps(price_adjudication, sort_keys=True, separators=(",", ":")).encode("utf-8"),
     )
     print(
         "[sp500-data] kibot adjudication complete "
-        f"changed_opens={open_adjudication['changed_open_count']}",
+        f"changed_opens={price_adjudication['changed_open_count']} "
+        f"changed_closes={price_adjudication['changed_close_count']}",
         flush=True,
     )
     reconciliation = _reconcile_spy_sources(
@@ -1879,12 +1906,14 @@ def prepare_market_snapshot(
     )
     reconciliation = {
         **reconciliation,
-        "canonical_price_source": "stooq_raw_ohlcv_with_kibot_adjudicated_opens",
+        "canonical_price_source": (
+            "stooq_raw_ohlcv_with_kibot_adjudicated_open_and_close"
+        ),
         "independent_reconciliation_sources": [
             "yahoo_raw_ohlcv",
             "kibot_unadjusted_daily_ohlcv",
         ],
-        "open_adjudication": open_adjudication,
+        "price_adjudication": price_adjudication,
     }
     ledger, audit = build_total_return_ledger(stooq, dividends, splits)
 

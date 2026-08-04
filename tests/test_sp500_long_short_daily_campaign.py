@@ -906,6 +906,12 @@ def test_three_source_open_adjudication_changes_only_supported_values() -> None:
     yahoo.loc[2, "open"] = 100.2  # Kibot supports Stooq only: keep Stooq.
     stooq.loc[3, "open"] = 99.8
     kibot.loc[3, "open"] = 100.1  # No pair agrees: retain and report unresolved.
+    stooq.loc[0, "close"] = 100.7  # Kibot supports Yahoo only: use Yahoo.
+    stooq.loc[1, "close"] = 100.91
+    kibot.loc[1, "close"] = 100.955  # Within 5 bps of both: use the bridge.
+    yahoo.loc[2, "close"] = 101.2  # Kibot supports Stooq only: keep Stooq.
+    stooq.loc[3, "close"] = 100.7
+    kibot.loc[3, "close"] = 101.1  # No pair agrees: retain and report unresolved.
 
     canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
 
@@ -913,11 +919,18 @@ def test_three_source_open_adjudication_changes_only_supported_values() -> None:
     assert canonical.loc[1, "open"] == pytest.approx(99.955)
     assert canonical.loc[2, "open"] == pytest.approx(100.0)
     assert canonical.loc[3, "open"] == pytest.approx(99.8)
+    assert canonical.loc[0, "close"] == pytest.approx(101.0)
+    assert canonical.loc[1, "close"] == pytest.approx(100.955)
+    assert canonical.loc[2, "close"] == pytest.approx(101.0)
+    assert canonical.loc[3, "close"] == pytest.approx(100.7)
     assert canonical["high"].eq(103.0).all()
     assert audit["yahoo_supported_repair_count"] == 1
     assert audit["kibot_bridge_repair_count"] == 1
     assert audit["retained_stooq_count"] == 1
     assert audit["unresolved_level_count"] == 1
+    assert audit["changed_close_count"] == 2
+    assert audit["fields"]["close"]["retained_stooq_count"] == 1
+    assert audit["unresolved_close_level_count"] == 1
 
 
 def test_three_source_open_adjudication_keeps_ohlc_ranges_valid() -> None:
@@ -933,16 +946,48 @@ def test_three_source_open_adjudication_keeps_ohlc_ranges_valid() -> None:
         }
     )
     stooq = yahoo.copy()
-    stooq.loc[0, ["open", "high"]] = [99.8, 99.9]
+    stooq.loc[0, ["open", "high", "close"]] = [99.8, 99.9, 99.7]
     kibot = yahoo.copy()
 
     canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
 
     assert canonical.loc[0, "open"] == pytest.approx(100.0)
-    assert canonical.loc[0, "high"] == pytest.approx(100.0)
+    assert canonical.loc[0, "close"] == pytest.approx(100.1)
+    assert canonical.loc[0, "high"] == pytest.approx(100.1)
     assert canonical.loc[0, "low"] == pytest.approx(99.8)
     assert audit["expanded_high_count"] == 1
     assert audit["expanded_low_count"] == 0
+
+
+def test_three_source_close_adjudication_preserves_the_frozen_return_gate() -> None:
+    dates = pd.bdate_range("2000-01-03", periods=1001)
+    close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))
+    yahoo = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": close * 1.02,
+            "low": close * 0.98,
+            "close": close,
+            "volume": 1_000_000,
+        }
+    )
+    stooq = yahoo.copy()
+    kibot = yahoo.copy()
+    stooq.loc[500, "close"] *= 0.998
+
+    canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
+    report = _reconcile_spy_sources(
+        yahoo,
+        canonical,
+        pd.DataFrame(columns=["date", "distribution"]),
+        pd.DataFrame(columns=["date", "split_ratio"]),
+        minimum_overlap=1000,
+    )
+
+    assert audit["changed_close_count"] == 1
+    assert canonical.loc[500, "close"] == pytest.approx(yahoo.loc[500, "close"])
+    assert report["close_return_unreconciled_outlier_count"] == 0
 
 
 def test_three_source_open_adjudication_requires_complete_overlap() -> None:
