@@ -524,6 +524,7 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profiles: list[Path | None] = []
+    sleeps: list[float] = []
 
     def fake_load(
         client: requests.Session,
@@ -550,6 +551,10 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "runner"))
     monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data.time.sleep",
+        sleeps.append,
+    )
+    monkeypatch.setattr(
         "aurora.infra.sp500_long_short_daily.data._load_stooq_history_page",
         fake_load,
     )
@@ -567,6 +572,7 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
     assert profiles[0] != profiles[1]
     assert profiles[0].name == "window-001"
     assert profiles[1].name == "window-002"
+    assert sleeps == [60.0]
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:

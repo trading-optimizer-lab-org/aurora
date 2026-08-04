@@ -49,6 +49,7 @@ SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 STOOQ_MAX_BOUNDED_PAGES = 100
 STOOQ_PUBLIC_HISTORY_ROW_CAP = 1000
 STOOQ_PAGE_DELAY_SECONDS = 1.25
+STOOQ_WINDOW_COOLDOWN_SECONDS = 60.0
 STOOQ_MAX_WINDOW_YEARS = 3
 STOOQ_RAW_OPERATION_PARAMS = {
     "o": "1111111",
@@ -434,6 +435,13 @@ def _download_stooq_html_history(
     payload_hashes: list[str] = []
     total_page_count = 0
     for window_number, (bounded_start, bounded_end) in enumerate(windows, start=1):
+        if browser_profile_root is not None and window_number > 1:
+            print(
+                "[sp500-data] stooq public rate cooldown "
+                f"seconds={STOOQ_WINDOW_COOLDOWN_SECONDS:g}",
+                flush=True,
+            )
+            time.sleep(STOOQ_WINDOW_COOLDOWN_SECONDS)
         browser_profile = (
             browser_profile_root / f"window-{window_number:03d}"
             if browser_profile_root is not None
