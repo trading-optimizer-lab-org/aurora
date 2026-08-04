@@ -14,6 +14,10 @@ explicit start and end dates, requests the unadjusted ETF feed, stores the raw
 bounded response with SHA-256 provenance, and is rejected if it crosses the
 train, validation, or locked boundary.
 
+When a confirmed opening print falls just outside Stooq's original high-low
+range, the range is expanded only far enough to include that opening print. The
+audit lists every such mechanical OHLC repair; close and volume remain intact.
+
 Kibot does not supply strategy features, returns, distributions, rankings, or
 selection data. Its sole role is to adjudicate isolated raw opening-price
 disagreements before the unchanged open-to-open total-return ledger is built.

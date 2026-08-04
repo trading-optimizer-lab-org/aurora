@@ -920,6 +920,31 @@ def test_three_source_open_adjudication_changes_only_supported_values() -> None:
     assert audit["unresolved_level_count"] == 1
 
 
+def test_three_source_open_adjudication_keeps_ohlc_ranges_valid() -> None:
+    date = pd.DatetimeIndex(["2006-01-03"])
+    yahoo = pd.DataFrame(
+        {
+            "date": date,
+            "open": [100.0],
+            "high": [100.2],
+            "low": [99.8],
+            "close": [100.1],
+            "volume": [1_000_000],
+        }
+    )
+    stooq = yahoo.copy()
+    stooq.loc[0, ["open", "high"]] = [99.8, 99.9]
+    kibot = yahoo.copy()
+
+    canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
+
+    assert canonical.loc[0, "open"] == pytest.approx(100.0)
+    assert canonical.loc[0, "high"] == pytest.approx(100.0)
+    assert canonical.loc[0, "low"] == pytest.approx(99.8)
+    assert audit["expanded_high_count"] == 1
+    assert audit["expanded_low_count"] == 0
+
+
 def test_three_source_open_adjudication_requires_complete_overlap() -> None:
     dates = pd.bdate_range("2006-01-03", periods=3)
     frame = pd.DataFrame(

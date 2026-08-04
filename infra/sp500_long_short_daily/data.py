@@ -1044,6 +1044,10 @@ def _adjudicate_stooq_open_prices(
     canonical.loc[yahoo_repairs, "open"] = yahoo_open.loc[yahoo_repairs]
     canonical.loc[bridge_repairs, "open"] = kibot_open.loc[bridge_repairs]
     changed = yahoo_repairs | bridge_repairs
+    expanded_high = canonical["open"] > canonical["high"]
+    expanded_low = canonical["open"] < canonical["low"]
+    canonical.loc[expanded_high, "high"] = canonical.loc[expanded_high, "open"]
+    canonical.loc[expanded_low, "low"] = canonical.loc[expanded_low, "open"]
 
     def dates(mask: pd.Series) -> list[str]:
         return [date.date().isoformat() for date in common[mask.to_numpy()]]
@@ -1058,10 +1062,18 @@ def _adjudicate_stooq_open_prices(
         "kibot_bridge_repair_count": int(bridge_repairs.sum()),
         "retained_stooq_count": int(retained_stooq.sum()),
         "unresolved_level_count": int(unresolved.sum()),
+        "expanded_high_count": int(expanded_high.sum()),
+        "expanded_low_count": int(expanded_low.sum()),
         "yahoo_supported_repair_dates": dates(yahoo_repairs),
         "kibot_bridge_repair_dates": dates(bridge_repairs),
         "retained_stooq_dates": dates(retained_stooq),
         "unresolved_level_dates": dates(unresolved),
+        "expanded_high_dates": [
+            date.date().isoformat() for date in canonical.index[expanded_high.to_numpy()]
+        ],
+        "expanded_low_dates": [
+            date.date().isoformat() for date in canonical.index[expanded_low.to_numpy()]
+        ],
     }
     return canonical.reset_index(names="date"), audit
 
