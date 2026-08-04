@@ -906,12 +906,16 @@ def test_three_source_open_adjudication_changes_only_supported_values() -> None:
     yahoo.loc[2, "open"] = 100.2  # Kibot supports Stooq only: keep Stooq.
     stooq.loc[3, "open"] = 99.8
     kibot.loc[3, "open"] = 100.1  # No pair agrees: retain and report unresolved.
+    stooq.loc[4, "open"] = 99.9
+    kibot.loc[4, "open"] = 100.1  # No pair agrees, but bounded median is safe.
     stooq.loc[0, "close"] = 100.7  # Kibot supports Yahoo only: use Yahoo.
     stooq.loc[1, "close"] = 100.91
     kibot.loc[1, "close"] = 100.955  # Within 5 bps of both: use the bridge.
     yahoo.loc[2, "close"] = 101.2  # Kibot supports Stooq only: keep Stooq.
     stooq.loc[3, "close"] = 100.7
     kibot.loc[3, "close"] = 101.1  # No pair agrees: retain and report unresolved.
+    stooq.loc[4, "close"] = 100.9
+    kibot.loc[4, "close"] = 101.1  # No pair agrees, but bounded median is safe.
 
     canonical, audit = _adjudicate_stooq_open_prices(yahoo, stooq, kibot)
 
@@ -919,17 +923,21 @@ def test_three_source_open_adjudication_changes_only_supported_values() -> None:
     assert canonical.loc[1, "open"] == pytest.approx(99.955)
     assert canonical.loc[2, "open"] == pytest.approx(100.0)
     assert canonical.loc[3, "open"] == pytest.approx(99.8)
+    assert canonical.loc[4, "open"] == pytest.approx(100.0)
     assert canonical.loc[0, "close"] == pytest.approx(101.0)
     assert canonical.loc[1, "close"] == pytest.approx(100.955)
     assert canonical.loc[2, "close"] == pytest.approx(101.0)
     assert canonical.loc[3, "close"] == pytest.approx(100.7)
+    assert canonical.loc[4, "close"] == pytest.approx(101.0)
     assert canonical["high"].eq(103.0).all()
     assert audit["yahoo_supported_repair_count"] == 1
     assert audit["kibot_bridge_repair_count"] == 1
     assert audit["retained_stooq_count"] == 1
     assert audit["unresolved_level_count"] == 1
-    assert audit["changed_close_count"] == 2
+    assert audit["changed_close_count"] == 3
     assert audit["fields"]["close"]["retained_stooq_count"] == 1
+    assert audit["fields"]["open"]["three_source_median_repair_count"] == 1
+    assert audit["fields"]["close"]["three_source_median_repair_count"] == 1
     assert audit["unresolved_close_level_count"] == 1
 
 

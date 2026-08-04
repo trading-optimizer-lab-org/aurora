@@ -48,6 +48,7 @@ FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
 SPY_RETURN_TOLERANCE = 5e-4
 SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
+SPY_MEDIAN_ADJUDICATION_MAX_SPREAD = 2.5e-3
 SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 STOOQ_MAX_BOUNDED_PAGES = 100
 STOOQ_PUBLIC_HISTORY_ROW_CAP = 1000
@@ -1041,11 +1042,21 @@ def _adjudicate_stooq_open_prices(
         yahoo_repairs = vendor_disagreement & kibot_supports_yahoo & ~kibot_supports_stooq
         bridge_repairs = vendor_disagreement & kibot_supports_yahoo & kibot_supports_stooq
         retained_stooq = vendor_disagreement & ~kibot_supports_yahoo & kibot_supports_stooq
-        unresolved = vendor_disagreement & ~kibot_supports_yahoo & ~kibot_supports_stooq
-        changed = yahoo_repairs | bridge_repairs
+        no_pair_agrees = vendor_disagreement & ~kibot_supports_yahoo & ~kibot_supports_stooq
+        vendor_values = pd.concat([yahoo_value, stooq_value, kibot_value], axis=1)
+        median_value = vendor_values.median(axis=1)
+        relative_spread = (
+            vendor_values.max(axis=1) - vendor_values.min(axis=1)
+        ) / median_value.abs()
+        median_repairs = no_pair_agrees & (
+            relative_spread <= SPY_MEDIAN_ADJUDICATION_MAX_SPREAD
+        )
+        unresolved = no_pair_agrees & ~median_repairs
+        changed = yahoo_repairs | bridge_repairs | median_repairs
 
         canonical.loc[yahoo_repairs, field] = yahoo_value.loc[yahoo_repairs]
         canonical.loc[bridge_repairs, field] = kibot_value.loc[bridge_repairs]
+        canonical.loc[median_repairs, field] = median_value.loc[median_repairs]
 
         def dates(mask: pd.Series) -> list[str]:
             return [date.date().isoformat() for date in common[mask.to_numpy()]]
@@ -1055,10 +1066,12 @@ def _adjudicate_stooq_open_prices(
             "changed_count": int(changed.sum()),
             "yahoo_supported_repair_count": int(yahoo_repairs.sum()),
             "kibot_bridge_repair_count": int(bridge_repairs.sum()),
+            "three_source_median_repair_count": int(median_repairs.sum()),
             "retained_stooq_count": int(retained_stooq.sum()),
             "unresolved_level_count": int(unresolved.sum()),
             "yahoo_supported_repair_dates": dates(yahoo_repairs),
             "kibot_bridge_repair_dates": dates(bridge_repairs),
+            "three_source_median_repair_dates": dates(median_repairs),
             "retained_stooq_dates": dates(retained_stooq),
             "unresolved_level_dates": dates(unresolved),
         }
@@ -1076,8 +1089,9 @@ def _adjudicate_stooq_open_prices(
     close_audit = field_audits["close"]
 
     audit = {
-        "method": "three_source_execution_and_signal_price_consensus_v2",
+        "method": "three_source_execution_and_signal_price_consensus_v3",
         "tolerance": SPY_RETURN_TOLERANCE,
+        "median_adjudication_max_spread": SPY_MEDIAN_ADJUDICATION_MAX_SPREAD,
         "overlap_rows": len(common),
         "fields": field_audits,
         "vendor_disagreement_count": open_audit["vendor_disagreement_count"],
@@ -1914,6 +1928,7 @@ def prepare_market_snapshot(
         close_consensus_dates=(
             price_adjudication["fields"]["close"]["yahoo_supported_repair_dates"]
             + price_adjudication["fields"]["close"]["kibot_bridge_repair_dates"]
+            + price_adjudication["fields"]["close"]["three_source_median_repair_dates"]
             + price_adjudication["fields"]["close"]["retained_stooq_dates"]
         ),
     )

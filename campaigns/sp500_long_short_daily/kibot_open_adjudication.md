@@ -15,6 +15,12 @@ agrees. Every request has explicit start and end dates, requests the unadjusted
 ETF feed, stores the raw bounded response with SHA-256 provenance, and is
 rejected if it crosses the train, validation, or locked boundary.
 
+If no pair is within five basis points but all three values remain inside a
+25-basis-point total band, the canonical value is their median. This bounded
+fallback cannot select an extreme vendor print. The five-basis-point return
+gate remains unchanged. A wider three-source spread stays unresolved and
+blocks the campaign.
+
 When a confirmed opening or closing print falls just outside Stooq's original
 high-low range, the range is expanded only far enough to include that confirmed
 print. The audit lists every field-level consensus decision and every
