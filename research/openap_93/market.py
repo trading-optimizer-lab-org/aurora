@@ -240,4 +240,3 @@ def zero_trade_measure(
     total_turnover = float(turnover.sum())
     adjustment = (1.0 / total_turnover) / deflator if total_turnover > 0 else 0.0
     return float(((volume <= 0).sum() + adjustment) * expected_days / len(volume))
-

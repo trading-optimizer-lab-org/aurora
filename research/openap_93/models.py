@@ -47,4 +47,3 @@ class SignalObservation:
         record["fidelity"] = self.fidelity.value
         record["source_ids"] = "|".join(self.source_ids)
         return record
-
