@@ -18,6 +18,11 @@ on:
         required: true
         default: today
         type: string
+      public_inputs_run_id:
+        description: Optional successful OpenAP source-probe run to reuse without redownloading
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -81,7 +86,36 @@ jobs:
           run-id: ${{ inputs.base_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
-      - name: Run the complete no-key current pipeline
+      - name: Reuse audited source-probe evidence
+        if: ${{ inputs.public_inputs_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-max-free-source-probe
+          path: outputs/openap_93_current/source_probe
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Reuse audited normalized public inputs
+        if: ${{ inputs.public_inputs_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-public-inputs
+          path: outputs/openap_93_current/public_inputs
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Run complete pipeline from audited cached inputs
+        if: ${{ inputs.public_inputs_run_id != '' }}
+        run: |
+          python scripts/run_openap_93_max_free.py \
+            --signals-config config/openap_93/signals_93.yaml \
+            run \
+            --base-db inputs/openap_base \
+            --output-dir outputs/openap_93_current \
+            --formation-date "${{ inputs.formation_date }}" \
+            --offline
+      - name: Run complete pipeline from scratch
+        if: ${{ inputs.public_inputs_run_id == '' }}
         run: |
           python scripts/run_openap_93_max_free.py \
             --signals-config config/openap_93/signals_93.yaml \
