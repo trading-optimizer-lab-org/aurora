@@ -359,6 +359,39 @@ def _request_stooq_history_page(
     return payload
 
 
+def _load_stooq_history_page(
+    client: requests.Session,
+    params: Mapping[str, Any],
+    *,
+    browser_profile: Path | None,
+    attempts: int = 3,
+) -> tuple[bytes, pd.DataFrame, int]:
+    """Fetch and validate one page, retrying transient verification screens."""
+
+    last_error: DataGateError | None = None
+    for attempt in range(1, attempts + 1):
+        payload = _request_stooq_history_page(
+            client,
+            params,
+            browser_profile=browser_profile,
+        )
+        if browser_profile is None and _solve_stooq_browser_verification(client, payload):
+            payload = _request_stooq_history_page(
+                client,
+                params,
+                browser_profile=None,
+            )
+        try:
+            frame, page_count = _parse_stooq_html_history(payload)
+            return payload, frame, page_count
+        except DataGateError as exc:
+            if str(exc) != "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND" or attempt == attempts:
+                raise
+            last_error = exc
+            time.sleep(float(attempt))
+    raise DataGateError("STOOQ_HTML_HISTORY_ROWS_NOT_FOUND") from last_error
+
+
 def _download_stooq_html_history(
     client: requests.Session,
     symbol: str,
@@ -379,18 +412,11 @@ def _download_stooq_html_history(
         "d2": end_date.strftime("%Y%m%d"),
         "i": "d",
     }
-    first_payload = _request_stooq_history_page(
+    first_payload, first_frame, page_count = _load_stooq_history_page(
         client,
         first_params,
         browser_profile=browser_profile,
     )
-    if browser_profile is None and _solve_stooq_browser_verification(client, first_payload):
-        first_payload = _request_stooq_history_page(
-            client,
-            first_params,
-            browser_profile=None,
-        )
-    first_frame, page_count = _parse_stooq_html_history(first_payload)
     print(
         f"[sp500-data] stooq first page complete rows={len(first_frame)} pages={page_count}",
         flush=True,
@@ -400,7 +426,7 @@ def _download_stooq_html_history(
     frames = [first_frame]
     payload_hashes = [_sha256(first_payload)]
 
-    def fetch_page(page: int) -> tuple[int, bytes]:
+    def fetch_page(page: int) -> tuple[int, bytes, pd.DataFrame, int]:
         print(f"[sp500-data] stooq page={page} start", flush=True)
         page_client = client
         owned_client: requests.Session | None = None
@@ -411,7 +437,7 @@ def _download_stooq_html_history(
             owned_client.cookies.update(client.cookies)
             page_client = owned_client
         try:
-            payload = _request_stooq_history_page(
+            payload, page_frame, reported_page_count = _load_stooq_history_page(
                 page_client,
                 {
                     "s": symbol.lower(),
@@ -423,18 +449,17 @@ def _download_stooq_html_history(
                 browser_profile=browser_profile,
             )
             print(f"[sp500-data] stooq page={page} complete", flush=True)
-            return page, payload
+            return page, payload, page_frame, reported_page_count
         finally:
             if owned_client is not None:
                 owned_client.close()
 
-    pages: list[tuple[int, bytes]] = []
+    pages: list[tuple[int, bytes, pd.DataFrame, int]] = []
     for page in range(2, page_count + 1):
         if isinstance(client, requests.Session):
             time.sleep(STOOQ_PAGE_DELAY_SECONDS)
         pages.append(fetch_page(page))
-    for page, page_payload in pages:
-        page_frame, reported_page_count = _parse_stooq_html_history(page_payload)
+    for page, page_payload, page_frame, reported_page_count in pages:
         if reported_page_count > page_count:
             raise DataGateError("STOOQ_HTML_PAGINATION_CHANGED_DURING_DOWNLOAD")
         frames.append(page_frame)

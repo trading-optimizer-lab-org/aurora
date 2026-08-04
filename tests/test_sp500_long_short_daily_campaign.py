@@ -30,6 +30,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
     PreparedMarketData,
     _align_initial_releases,
+    _load_stooq_history_page,
     _parse_stooq_html_history,
     _request_stooq_history_page,
     _parse_yahoo_chart,
@@ -366,6 +367,39 @@ def test_stooq_github_transport_uses_headless_browser(
     assert len(commands) == 1
     assert "--headless=new" in commands[0]
     assert commands[0][-1].startswith("https://stooq.com/q/d/?")
+
+
+def test_stooq_page_loader_retries_transient_verification_screen(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    valid_payload = _stooq_html(
+        [("1", "31 Dec 2010", "96.8", "97.1", "96.7", "97.0", "+0.03%", "+0.03", "78,672,053")],
+        pages=1,
+    )
+    payloads = iter([b"<html>verification required</html>", valid_payload])
+    calls = 0
+
+    def fake_request(*args: object, **kwargs: object) -> bytes:
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        return next(payloads)
+
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data._request_stooq_history_page",
+        fake_request,
+    )
+    monkeypatch.setattr("aurora.infra.sp500_long_short_daily.data.time.sleep", lambda _: None)
+    payload, frame, page_count = _load_stooq_history_page(
+        requests.Session(),
+        {"s": "spy.us", "i": "d", "l": 26},
+        browser_profile=tmp_path,
+    )
+    assert calls == 2
+    assert payload == valid_payload
+    assert page_count == 1
+    assert frame["Date"].tolist() == [pd.Timestamp("2010-12-31")]
 
 
 def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
