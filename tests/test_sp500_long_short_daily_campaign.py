@@ -330,7 +330,7 @@ def test_stooq_html_history_parser_reads_ohlcv_and_page_count() -> None:
     assert frame["Volume"].tolist() == [78_672_053, 99_285_113]
 
 
-def test_stooq_download_falls_back_to_bounded_public_html(tmp_path: Path) -> None:
+def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
     pages = {
         1: _stooq_html(
             [("3", "31 Dec 2010", "96.8", "97.1", "96.7", "97.0", "+0.03%", "+0.03", "78,672,053")],
@@ -358,8 +358,6 @@ def test_stooq_download_falls_back_to_bounded_public_html(tmp_path: Path) -> Non
 
         def get(self, url: str, *, params=None, timeout: int) -> Response:
             del timeout
-            if url.endswith("/q/d/l/"):
-                return Response(b"Access denied")
             return Response(pages[int((params or {}).get("l", 1))])
 
     frame, receipt = download_stooq_history(

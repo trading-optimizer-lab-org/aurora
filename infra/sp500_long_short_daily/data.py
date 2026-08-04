@@ -37,7 +37,6 @@ YAHOO_CHART_ENDPOINTS = (
     "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
     "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
 )
-STOOQ_DOWNLOAD = "https://stooq.com/q/d/l/"
 STOOQ_HISTORY_PAGE = "https://stooq.com/q/d/"
 STOOQ_VERIFY = "https://stooq.com/__verify"
 FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -573,26 +572,12 @@ def download_stooq_history(
     start_date, end_date = _bounded_dates(start, end, split=split)
     client = session or requests.Session()
     client.headers.update({"User-Agent": "Mozilla/5.0 AuroraResearch bounded-csv"})
-    params = {
-        "s": symbol.lower(),
-        "d1": start_date.strftime("%Y%m%d"),
-        "d2": end_date.strftime("%Y%m%d"),
-        "i": "d",
-    }
-    payload = _request_bytes(client, STOOQ_DOWNLOAD, params=params)
-    if _solve_stooq_browser_verification(client, payload):
-        payload = _request_bytes(client, STOOQ_DOWNLOAD, params=params)
-    frame = _parse_csv(payload)
-    expected = {"Date", "Open", "High", "Low", "Close", "Volume"}
-    html_chain_hash: str | None = None
-    page_count = 0
-    if not expected.issubset(frame.columns):
-        frame, payload, html_chain_hash, page_count = _download_stooq_html_history(
-            client,
-            symbol,
-            start_date,
-            end_date,
-        )
+    frame, payload, html_chain_hash, page_count = _download_stooq_html_history(
+        client,
+        symbol,
+        start_date,
+        end_date,
+    )
     frame = _assert_response_date_bound(
         frame,
         date_column="Date",
@@ -604,21 +589,13 @@ def download_stooq_history(
     dates = frame["date"]
     receipt = DownloadReceipt(
         dataset_id="DS002",
-        url_template=STOOQ_HISTORY_PAGE if html_chain_hash else STOOQ_DOWNLOAD,
+        url_template=STOOQ_HISTORY_PAGE,
         sha256=_sha256(payload),
         byte_count=len(payload),
         minimum_date=dates.min().date().isoformat() if len(dates) else None,
         maximum_date=dates.max().date().isoformat() if len(dates) else None,
-        status=(
-            "downloaded_bounded_html_public_history"
-            if html_chain_hash
-            else "downloaded_bounded_csv"
-        ),
-        reason=(
-            f"page_count={page_count};raw_response_chain_sha256={html_chain_hash}"
-            if html_chain_hash
-            else None
-        ),
+        status="downloaded_bounded_html_public_history",
+        reason=f"page_count={page_count};raw_response_chain_sha256={html_chain_hash}",
     )
     return frame[["date", "open", "high", "low", "close", "volume"]], receipt
 
