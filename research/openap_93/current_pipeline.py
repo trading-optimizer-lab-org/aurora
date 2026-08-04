@@ -44,6 +44,10 @@ from .quarterly_pipeline import (
     SHARE_TAGS,
     calculate_quarterly_signals,
 )
+from .short_interest_pipeline import (
+    SHORT_INTEREST_IMPLEMENTED_SIGNALS,
+    calculate_short_interest_signals,
+)
 from .registry import REQUIRED_93, FidelityClass, SignalSpec
 from .sources import PUBLIC_SOURCES
 
@@ -81,6 +85,7 @@ IMPLEMENTED_SIGNALS = frozenset(
     | EVENT_IMPLEMENTED_SIGNALS
     | MARKET_IMPLEMENTED_SIGNALS
     | QUARTERLY_IMPLEMENTED_SIGNALS
+    | SHORT_INTEREST_IMPLEMENTED_SIGNALS
 )
 
 SOURCE_URLS = {source.source_id: source.probe_url for source in PUBLIC_SOURCES}
@@ -596,6 +601,8 @@ def _implementation_file(signal: str) -> str:
         return "research/openap_93/market_pipeline.py"
     if signal in QUARTERLY_IMPLEMENTED_SIGNALS:
         return "research/openap_93/quarterly_pipeline.py"
+    if signal in SHORT_INTEREST_IMPLEMENTED_SIGNALS:
+        return "research/openap_93/short_interest_pipeline.py"
     return ""
 
 
@@ -969,6 +976,9 @@ def run_current_pipeline(
         ),
         calculate_event_signals(
             base["master"], base["prices"], formation_at=formation
+        ),
+        calculate_short_interest_signals(
+            base["master"], base["analyst"], formation_at=formation
         ),
     ]
     signals = _normalize_signal_results(

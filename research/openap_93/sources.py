@@ -21,6 +21,9 @@ from .analyst_pipeline import implemented_source_pairs as analyst_source_pairs
 from .event_pipeline import implemented_source_pairs as event_source_pairs
 from .market_pipeline import implemented_source_pairs as market_source_pairs
 from .quarterly_pipeline import implemented_source_pairs as quarterly_source_pairs
+from .short_interest_pipeline import (
+    implemented_source_pairs as short_interest_source_pairs,
+)
 from .registry import FidelityClass, SignalSpec
 
 
@@ -65,6 +68,7 @@ IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = frozenset(
     | analyst_source_pairs()
     | event_source_pairs()
     | quarterly_source_pairs()
+    | short_interest_source_pairs()
 )
 
 

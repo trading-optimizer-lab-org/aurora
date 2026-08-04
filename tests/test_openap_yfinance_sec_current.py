@@ -33,6 +33,7 @@ from aurora.research.openap_current_score import (
     select_strict_predictors,
 )
 from scripts.run_openap_yfinance_sec_current import (
+    YFINANCE_METADATA_FIELDS,
     _analyst_features,
     _add_issuer_market_cap_context,
     _classify_security_eligibility,
@@ -52,6 +53,20 @@ from scripts.run_openap_yfinance_sec_current import (
     create_options_quality_tables,
     finalize_database_contract,
 )
+
+
+def test_yfinance_metadata_contract_includes_current_short_interest_fields() -> None:
+    required = {
+        "sharesShort",
+        "sharesShortPriorMonth",
+        "shortRatio",
+        "shortPercentOfFloat",
+        "dateShortInterest",
+        "sharesPercentSharesOut",
+        "heldPercentInstitutions",
+    }
+
+    assert required <= set(YFINANCE_METADATA_FIELDS)
 
 
 def test_sec_bulk_headers_identify_contact_and_official_host() -> None:
@@ -1858,6 +1873,23 @@ def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() 
     assert "score_horizons" in text
     assert "openap-yfinance-sec-current-score-results" in text
     assert "overall_redundancy_groups.csv" in text
+
+
+def test_current_workflow_requires_short_interest_metadata_in_final_master() -> None:
+    text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(
+        encoding="utf-8"
+    )
+
+    for field in (
+        "sharesShort",
+        "sharesShortPriorMonth",
+        "shortRatio",
+        "shortPercentOfFloat",
+        "dateShortInterest",
+        "sharesPercentSharesOut",
+        "heldPercentInstitutions",
+    ):
+        assert field in text
 
 
 def test_merge_uses_the_resolved_latest_completed_session_name() -> None:

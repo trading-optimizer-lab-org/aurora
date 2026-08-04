@@ -68,6 +68,31 @@ US_STATE_OR_COUNTRY_CODES = frozenset(
 )
 ALLOWED_EXCHANGE_RE = re.compile(r"NASDAQ|NYSE|NEW YORK STOCK EXCHANGE|CBOE", re.IGNORECASE)
 _SEC_DIRECT_API_BLOCKED = False
+YFINANCE_METADATA_FIELDS = (
+    "longName",
+    "shortName",
+    "quoteType",
+    "exchange",
+    "marketCap",
+    "sharesOutstanding",
+    "floatShares",
+    "sector",
+    "industry",
+    "country",
+    "currency",
+    "currentPrice",
+    "regularMarketPrice",
+    "averageDailyVolume3Month",
+    "averageVolume10days",
+    "firstTradeDateEpochUtc",
+    "sharesShort",
+    "sharesShortPriorMonth",
+    "shortRatio",
+    "shortPercentOfFloat",
+    "dateShortInterest",
+    "sharesPercentSharesOut",
+    "heldPercentInstitutions",
+)
 
 
 def _utcnow() -> str:
@@ -458,12 +483,9 @@ def _ticker_snapshots(ticker: Any, symbol: str, config: Mapping[str, Any], retri
     status_rows: list[dict[str, Any]] = []
     try:
         info = ticker.get_info() or {}
-        wanted = (
-            "longName", "shortName", "quoteType", "exchange", "marketCap", "sharesOutstanding",
-            "floatShares", "sector", "industry", "country", "currency", "currentPrice",
-            "regularMarketPrice", "averageDailyVolume3Month", "averageVolume10days", "firstTradeDateEpochUtc",
+        metadata.update(
+            {key: _json_safe(info.get(key)) for key in YFINANCE_METADATA_FIELDS}
         )
-        metadata.update({key: _json_safe(info.get(key)) for key in wanted})
     except Exception as exc:
         metadata["status"] = "metadata_error"
         metadata["error"] = str(exc)[:500]

@@ -59,6 +59,10 @@ from aurora.research.openap_93.quarterly_pipeline import (
     QUARTERLY_IMPLEMENTED_SIGNALS,
     calculate_quarterly_signals,
 )
+from aurora.research.openap_93.short_interest_pipeline import (
+    SHORT_INTEREST_IMPLEMENTED_SIGNALS,
+    calculate_short_interest_signals,
+)
 from aurora.research.openap_93.registry import REQUIRED_93, FidelityClass, load_signal_registry
 from aurora.research.openap_93.sources import (
     IMPLEMENTED_SIGNAL_SOURCES,
@@ -80,6 +84,7 @@ def implemented_signals() -> frozenset[str]:
         | ANALYST_IMPLEMENTED_SIGNALS
         | EVENT_IMPLEMENTED_SIGNALS
         | QUARTERLY_IMPLEMENTED_SIGNALS
+        | SHORT_INTEREST_IMPLEMENTED_SIGNALS
     )
 
 
@@ -769,6 +774,82 @@ def test_analyst_pipeline_reconstructs_direct_fields_and_fails_proxies_closed() 
         FidelityClass.UNVALIDATED_PROXY.value
     ).all()
     assert not result.loc[proxies, "current_usable"].any()
+
+
+def test_short_interest_pipeline_reconstructs_ratio_and_keeps_combined_proxies_closed() -> None:
+    symbols = [f"SI{index:03d}" for index in range(100)]
+    master = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "sharesShort": np.arange(1, 101, dtype=float),
+            "sharesOutstanding": 1_000.0,
+            "dateShortInterest": 1_752_364_800,
+            "retrieved_at": "2025-07-25T12:00:00+00:00",
+            "heldPercentInstitutions": 0.50,
+        }
+    )
+    analyst_rows = []
+    for index, symbol in enumerate(symbols):
+        if index < 20:
+            recommendation = {
+                "period": "0m",
+                "strongBuy": 0,
+                "buy": 0,
+                "hold": 0,
+                "sell": 0,
+                "strongSell": 10,
+            }
+        elif index >= 80:
+            recommendation = {
+                "period": "0m",
+                "strongBuy": 10,
+                "buy": 0,
+                "hold": 0,
+                "sell": 0,
+                "strongSell": 0,
+            }
+        else:
+            recommendation = {
+                "period": "0m",
+                "strongBuy": 0,
+                "buy": 0,
+                "hold": 10,
+                "sell": 0,
+                "strongSell": 0,
+            }
+        analyst_rows.append(
+            {
+                "symbol": symbol,
+                "dataset": "recommendations",
+                "retrieved_at": "2025-07-25T12:00:00+00:00",
+                "payload_json": json.dumps([recommendation]),
+            }
+        )
+
+    result = calculate_short_interest_signals(
+        master,
+        pd.DataFrame(analyst_rows),
+        formation_at="2025-07-31",
+    )
+
+    assert set(result["signal"]) == SHORT_INTEREST_IMPLEMENTED_SIGNALS
+    direct = result.loc[result["signal"].eq("ShortInterest")]
+    assert direct["fidelity_class"].eq(FidelityClass.RECONSTRUCTED.value).all()
+    assert direct["current_usable"].all()
+    assert direct.loc[direct["symbol"].eq("SI099"), "value"].iat[0] == pytest.approx(0.1)
+    combined = result.loc[
+        result["signal"].isin({"Recomm_ShortInterest", "IO_ShortInterest"})
+        & result["value"].notna()
+    ]
+    assert combined["fidelity_class"].eq(
+        FidelityClass.UNVALIDATED_PROXY.value
+    ).all()
+    assert not combined["current_usable"].any()
+    io_values = result.loc[
+        result["signal"].eq("IO_ShortInterest"), "value"
+    ].dropna()
+    assert len(io_values) == 1
+    assert io_values.iat[0] == pytest.approx(50.0)
 
 
 def test_event_pipeline_emits_four_signals_and_keeps_proxies_out_of_score() -> None:

@@ -367,6 +367,20 @@ jobs:
           assert summary["locked_opened"] is False
           assert summary["backtest_enabled"] is False
           assert summary["partial"] is False
+          import pandas as pd
+          required_short_fields = {
+              "sharesShort",
+              "sharesShortPriorMonth",
+              "shortRatio",
+              "shortPercentOfFloat",
+              "dateShortInterest",
+              "sharesPercentSharesOut",
+              "heldPercentInstitutions",
+          }
+          security_master_columns = set(
+              pd.read_parquet("outputs/final/security_master.parquet").columns
+          )
+          assert required_short_fields <= security_master_columns
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
