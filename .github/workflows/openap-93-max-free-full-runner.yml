@@ -1,0 +1,115 @@
+name: OpenAP 93 Maximum Free Full Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact Aurora revision containing the OpenAP 93 implementation
+        required: true
+        type: string
+      base_run_id:
+        description: Run containing openap-yfinance-sec-current-score-results
+        required: true
+        default: "30837929185"
+        type: string
+      formation_date:
+        description: Current formation date or today
+        required: true
+        default: today
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: openap-93-max-free-full-runner
+  cancel-in-progress: false
+
+jobs:
+  full_pipeline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GITHUB_ACTIONS: "true"
+    steps:
+      - name: Checkout exact implementation revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and focused test dependency
+        run: python -m pip install --disable-pip-version-check -e . pytest
+      - name: Compile OpenAP current modules
+        run: |
+          python -m py_compile research/openap_93/registry.py
+          python -m py_compile research/openap_93/sources.py
+          python -m py_compile research/openap_93/external.py
+          python -m py_compile research/openap_93/market.py
+          python -m py_compile research/openap_93/market_pipeline.py
+          python -m py_compile research/openap_93/accounting_pipeline.py
+          python -m py_compile research/openap_93/event_pipeline.py
+          python -m py_compile research/openap_93/quarterly_pipeline.py
+          python -m py_compile research/openap_93/current_pipeline.py
+          python -m py_compile scripts/run_openap_93_max_free.py
+      - name: Run focused tests
+        run: python -m pytest tests/test_openap_93_max_free.py -q --tb=short
+      - name: Download audited 185-signal base database
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-yfinance-sec-current-score-results
+          path: inputs/openap_base
+          run-id: ${{ inputs.base_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Run the complete no-key current pipeline
+        run: |
+          python scripts/run_openap_93_max_free.py \
+            --signals-config config/openap_93/signals_93.yaml \
+            run \
+            --base-db inputs/openap_base \
+            --output-dir outputs/openap_93_current \
+            --formation-date "${{ inputs.formation_date }}" \
+            --refresh
+      - name: Verify mandatory deliverables and contracts
+        run: |
+          for file in \
+            signals_93_current.parquet signals_93_current.csv \
+            score_185_current.parquet score_185_current.csv \
+            coverage_93.csv source_coverage_matrix.csv source_ablation.csv \
+            validation_per_signal.csv selected_sources.json run_manifest.json \
+            data_lineage.json failures.json FINAL_REPORT.md; do
+            test -s "outputs/openap_93_current/$file"
+          done
+          python - <<'PY'
+          import json
+          import pandas as pd
+          root = "outputs/openap_93_current"
+          signals = pd.read_parquet(f"{root}/signals_93_current.parquet")
+          scores = pd.read_parquet(f"{root}/score_185_current.parquet")
+          coverage = pd.read_csv(f"{root}/coverage_93.csv")
+          manifest = json.load(open(f"{root}/run_manifest.json", encoding="utf-8"))
+          assert signals["signal"].nunique() == 93
+          assert coverage["signal"].nunique() == 93 and len(coverage) == 93
+          assert signals["security_id"].notna().all()
+          assert pd.to_datetime(signals["available_at"]).dropna().le(
+              pd.Timestamp(manifest["formation_at"])
+          ).all()
+          required_scores = {
+              "score_strict_current", "score_max_current", "score_research_all"
+          }
+          assert required_scores <= set(scores.columns)
+          assert manifest["locked_opened"] is False
+          assert manifest["validation_used_for_selection"] is False
+          assert manifest["cost_eur"] == 0
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-93-max-free-full-results
+          path: outputs/openap_93_current/
+          if-no-files-found: error
+          retention-days: 90
