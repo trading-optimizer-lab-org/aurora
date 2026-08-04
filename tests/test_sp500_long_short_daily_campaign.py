@@ -30,6 +30,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
     PreparedMarketData,
     _align_initial_releases,
+    _download_stooq_html_history,
     _load_stooq_history_page,
     _parse_stooq_html_history,
     _request_stooq_history_page,
@@ -516,6 +517,56 @@ def test_stooq_download_chunks_long_history_below_public_cap(
     assert max(session.window_sizes) < 1000
     assert receipt.reason is not None and "window_count=2" in receipt.reason
     assert receipt.reason is not None and "page_count=26" in receipt.reason
+
+
+def test_stooq_github_download_uses_fresh_browser_profile_per_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profiles: list[Path | None] = []
+
+    def fake_load(
+        client: requests.Session,
+        params: dict[str, object],
+        *,
+        browser_profile: Path | None,
+        attempts: int = 3,
+    ) -> tuple[bytes, pd.DataFrame, int]:
+        del client, attempts
+        profiles.append(browser_profile)
+        date = pd.Timestamp(str(params["d1"]))
+        frame = pd.DataFrame(
+            {
+                "Date": [date],
+                "Open": [100.0],
+                "High": [101.0],
+                "Low": [99.0],
+                "Close": [100.5],
+                "Volume": [1_000_000],
+            }
+        )
+        return str(date.date()).encode(), frame, 1
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "runner"))
+    monkeypatch.setattr(
+        "aurora.infra.sp500_long_short_daily.data._load_stooq_history_page",
+        fake_load,
+    )
+    frame, _, _, page_count, window_count = _download_stooq_html_history(
+        requests.Session(),
+        "spy.us",
+        pd.Timestamp("2005-10-01"),
+        pd.Timestamp("2009-09-30"),
+    )
+    assert len(frame) == 2
+    assert page_count == 2
+    assert window_count == 2
+    assert len(profiles) == 2
+    assert profiles[0] is not None and profiles[1] is not None
+    assert profiles[0] != profiles[1]
+    assert profiles[0].name == "window-001"
+    assert profiles[1].name == "window-002"
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:

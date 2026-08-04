@@ -412,14 +412,14 @@ def _download_stooq_html_history(
 ) -> tuple[pd.DataFrame, bytes, str, int, int]:
     """Read raw Stooq history in bounded windows below its public row cap."""
 
-    browser_profile: Path | None = None
+    browser_profile_root: Path | None = None
     if (
         os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
         and isinstance(client, requests.Session)
     ):
         temp_root = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir())).resolve()
-        browser_profile = temp_root / "aurora-stooq-browser-profile"
-        browser_profile.mkdir(parents=True, exist_ok=True)
+        browser_profile_root = temp_root / "aurora-stooq-browser-profiles"
+        browser_profile_root.mkdir(parents=True, exist_ok=True)
     windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     window_start = start_date
     while window_start <= end_date:
@@ -434,6 +434,13 @@ def _download_stooq_html_history(
     payload_hashes: list[str] = []
     total_page_count = 0
     for window_number, (bounded_start, bounded_end) in enumerate(windows, start=1):
+        browser_profile = (
+            browser_profile_root / f"window-{window_number:03d}"
+            if browser_profile_root is not None
+            else None
+        )
+        if browser_profile is not None:
+            browser_profile.mkdir(parents=True, exist_ok=True)
         print(
             "[sp500-data] stooq window start "
             f"number={window_number}/{len(windows)} "
@@ -489,7 +496,12 @@ def _download_stooq_html_history(
                     and accumulated_rows >= STOOQ_PUBLIC_HISTORY_ROW_CAP
                 )
                 if not terminal_public_cap:
-                    raise
+                    raise DataGateError(
+                        "STOOQ_WINDOW_PAGE_FAILED:"
+                        f"window={window_number}:page={page}:"
+                        f"start={bounded_start.date()}:end={bounded_end.date()}:"
+                        f"cause={exc}"
+                    ) from exc
                 print(
                     "[sp500-data] stooq terminal empty page accepted "
                     f"after public row cap={accumulated_rows}",
