@@ -127,7 +127,11 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     jobs = _workflow()["jobs"]
     assert _needs(jobs["prepare_environment"]) == set()
     assert _needs(jobs["validate"]) == {"prepare_environment"}
-    assert _needs(jobs["prepare_data"]) == {"validate"}
+    assert _needs(jobs["prepare_data"]) == {
+        "validate",
+        "sp500_data_plan",
+        "sp500_prepare_data",
+    }
     assert _needs(jobs["freeze_contract"]) == {
         "validate",
         "prepare_environment",
@@ -732,15 +736,27 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
         for step in prepared["steps"]
         if step["name"] == "Upload prepared inputs"
     )
-    assert shared_download["if"] == "inputs.prepared_artifact_name != ''"
-    assert prepare["if"] == "inputs.prepared_artifact_name == ''"
-    assert upload["if"] == "inputs.prepared_artifact_name == ''"
+    assert shared_download["if"] == (
+        "inputs.prepared_artifact_name != '' || "
+        "needs.sp500_data_plan.outputs.enabled == 'true'"
+    )
+    assert prepare["if"] == (
+        "inputs.prepared_artifact_name == '' && "
+        "needs.sp500_data_plan.outputs.enabled != 'true'"
+    )
+    assert upload["if"] == prepare["if"]
     assert (
         shared_download["with"]["name"]
         == "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
     )
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    )
+    assert "github.run_attempt" not in str(
+        workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    )
+    assert "github.run_attempt" not in str(
+        workflow["env"]["AURORA_WHEELHOUSE_ARTIFACT_NAME"]
     )
 
 
