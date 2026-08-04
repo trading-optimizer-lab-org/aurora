@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,7 @@ YAHOO_CHART_ENDPOINTS = (
     "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
 )
 STOOQ_DOWNLOAD = "https://stooq.com/q/d/l/"
+STOOQ_VERIFY = "https://stooq.com/__verify"
 FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
 SPY_RETURN_TOLERANCE = 5e-4
@@ -136,6 +138,39 @@ def _request_bytes(
             if attempt + 1 < attempts:
                 time.sleep(2**attempt)
     raise DataGateError(f"DOWNLOAD_FAILED:{type(last_error).__name__}")
+
+
+def _solve_stooq_browser_verification(session: requests.Session, payload: bytes) -> bool:
+    """Complete Stooq's deterministic JavaScript proof-of-work using HTTP only."""
+
+    if b"/__verify" not in payload or b"crypto.subtle.digest" not in payload:
+        return False
+    match = re.search(rb'const c="([^"]+)",d=(\d+)', payload)
+    if match is None:
+        raise DataGateError("STOOQ_VERIFICATION_SCHEMA_MISMATCH")
+    challenge = match.group(1).decode("ascii")
+    difficulty = int(match.group(2))
+    if difficulty < 1 or difficulty > 6:
+        raise DataGateError("STOOQ_VERIFICATION_DIFFICULTY_OUT_OF_RANGE")
+    prefix = "0" * difficulty
+    nonce: int | None = None
+    for candidate in range(10_000_000):
+        digest = hashlib.sha256(f"{challenge}{candidate}".encode()).hexdigest()
+        if digest.startswith(prefix):
+            nonce = candidate
+            break
+    if nonce is None:
+        raise DataGateError("STOOQ_VERIFICATION_NONCE_NOT_FOUND")
+    try:
+        response = session.post(
+            STOOQ_VERIFY,
+            data={"c": challenge, "n": str(nonce)},
+            timeout=60,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise DataGateError("STOOQ_VERIFICATION_POST_FAILED") from exc
+    return True
 
 
 def _parse_csv(payload: bytes) -> pd.DataFrame:
@@ -350,6 +385,8 @@ def download_stooq_history(
         "i": "d",
     }
     payload = _request_bytes(client, STOOQ_DOWNLOAD, params=params)
+    if _solve_stooq_browser_verification(client, payload):
+        payload = _request_bytes(client, STOOQ_DOWNLOAD, params=params)
     frame = _parse_csv(payload)
     expected = {"Date", "Open", "High", "Low", "Close", "Volume"}
     if not expected.issubset(frame.columns):

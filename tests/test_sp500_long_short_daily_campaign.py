@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     _parse_yahoo_chart,
     _reconcile_spy_sources,
     _repo_campaign_root,
+    _solve_stooq_browser_verification,
     download_alfred_initial_series,
     load_sec_distribution_totals,
     load_state_street_distributions,
@@ -265,6 +267,36 @@ def test_yahoo_chart_parser_rejects_observations_outside_requested_period() -> N
             start=pd.Timestamp("2010-01-01"),
             end=pd.Timestamp("2010-12-31"),
         )
+
+
+def test_stooq_javascript_verification_is_solved_without_browser() -> None:
+    challenge = "unit-test-challenge"
+    payload = (
+        '<script>(async()=>{const c="'
+        + challenge
+        + '",d=2,t="0".repeat(d);'
+        + 'crypto.subtle.digest("SHA-256");'
+        + 'await fetch("/__verify")})();</script>'
+    ).encode()
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+    class Session:
+        posted: dict[str, str] | None = None
+
+        def post(self, url: str, *, data: dict[str, str], timeout: int) -> Response:
+            assert url == "https://stooq.com/__verify"
+            assert timeout == 60
+            self.posted = data
+            return Response()
+
+    session = Session()
+    assert _solve_stooq_browser_verification(session, payload)  # type: ignore[arg-type]
+    assert session.posted is not None
+    solved = hashlib.sha256(f"{challenge}{session.posted['n']}".encode()).hexdigest()
+    assert solved.startswith("00")
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
