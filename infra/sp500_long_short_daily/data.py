@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -314,8 +315,8 @@ def _download_stooq_html_history(
     first_frame, page_count = _parse_stooq_html_history(first_payload)
     frames = [first_frame]
     payload_hashes = [_sha256(first_payload)]
-    for page in range(2, page_count + 1):
-        page_payload = _request_bytes(
+    def fetch_page(page: int) -> tuple[int, bytes]:
+        return page, _request_bytes(
             client,
             STOOQ_HISTORY_PAGE,
             params={
@@ -325,7 +326,15 @@ def _download_stooq_html_history(
                 "t": end_date.strftime("%Y%m%d"),
                 "l": page,
             },
+            attempts=3,
+            timeout=20,
         )
+
+    pages: list[tuple[int, bytes]] = []
+    if page_count > 1:
+        with ThreadPoolExecutor(max_workers=min(4, page_count - 1)) as executor:
+            pages = list(executor.map(fetch_page, range(2, page_count + 1)))
+    for page, page_payload in pages:
         page_frame, reported_page_count = _parse_stooq_html_history(page_payload)
         if reported_page_count > page_count:
             raise DataGateError("STOOQ_HTML_PAGINATION_CHANGED_DURING_DOWNLOAD")
