@@ -412,16 +412,27 @@ def test_market_pipeline_emits_all_supported_signals_without_lookahead() -> None
     market = rng.normal(0.0003, 0.01, len(dates))
     for index, symbol in enumerate(symbols):
         returns = 0.7 * market + rng.normal(0.0001 + index / 1_000_000, 0.008, len(dates))
+        close = 20.0 * np.cumprod(1.0 + returns)
+        first_session = ~pd.Series(dates).dt.to_period("M").duplicated().to_numpy()
+        quarterly_dividend = (
+            first_session & pd.Series(dates).dt.month.isin([2, 5, 8, 11]).to_numpy()
+        )
         price_rows.append(
             pd.DataFrame(
                 {
                     "date": dates,
                     "symbol": symbol,
-                    "adj_close": 20.0 * np.cumprod(1.0 + returns),
+                    "close": close,
+                    "adj_close": close,
                     "volume": np.where(
                         np.arange(len(dates)) % (31 + index) == 0,
                         0,
                         1_000_000 + index * 10_000,
+                    ),
+                    "dividends": np.where(
+                        quarterly_dividend,
+                        0.05 * (index + 1),
+                        0.0,
                     ),
                 }
             )
@@ -483,6 +494,10 @@ def test_market_pipeline_emits_all_supported_signals_without_lookahead() -> None
     proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
     assert not result.loc[proxy, "current_usable"].any()
     assert result.loc[result["current_usable"], "value"].notna().all()
+    dividend = result.loc[result["signal"].eq("DivYieldST")]
+    assert dividend["fidelity_class"].eq(FidelityClass.RECONSTRUCTED.value).all()
+    assert dividend["current_usable"].all()
+    assert set(dividend["value"].dropna().unique()).issubset({1.0, 2.0, 3.0})
 
 
 def test_accounting_pipeline_emits_registered_subset_and_fails_closed() -> None:

@@ -34,6 +34,7 @@ MARKET_IMPLEMENTED_SIGNALS = frozenset(
         "BetaTailRisk",
         "CoskewACX",
         "Coskewness",
+        "DivYieldST",
         "FirmAgeMom",
         "IdioVol3F",
         "IndIPO",
@@ -116,6 +117,62 @@ def _monthly_stock(prices: pd.DataFrame, formation_at: pd.Timestamp) -> pd.DataF
     )
     monthly["ret"] = monthly["adj_close"].pct_change(fill_method=None)
     return monthly.reset_index()
+
+
+def _predicted_dividend_yield(
+    prices: pd.DataFrame,
+    formation_at: pd.Timestamp,
+) -> tuple[float | None, int]:
+    """Reproduce DivYieldST's pre-ranking yield from public distributions.
+
+    Yahoo provides ex-date cash distributions but not CRSP's frequency code.
+    The payment cadence is therefore inferred from observed positive-payment
+    months; the official 2/5/11-month lag and twelve-month payer screen remain
+    unchanged.
+    """
+
+    frame = _period_frame(prices)
+    completed_month = formation_at.to_period("M") - 1
+    frame = frame.loc[frame["date"].dt.to_period("M") <= completed_month].copy()
+    if frame.empty or "dividends" not in frame.columns:
+        return None, 0
+    price_column = "close" if "close" in frame.columns else "adj_close"
+    frame["dividends"] = pd.to_numeric(
+        frame["dividends"], errors="coerce"
+    ).fillna(0.0)
+    frame[price_column] = pd.to_numeric(frame[price_column], errors="coerce")
+    monthly = (
+        frame.set_index("date")
+        .resample("ME")
+        .agg(dividend=("dividends", "sum"), price=(price_column, "last"))
+    )
+    if monthly.empty or len(monthly) < 3:
+        return None, len(monthly)
+    if float(monthly["dividend"].tail(12).sum()) <= 0:
+        return None, len(monthly)
+
+    positive = monthly.index[monthly["dividend"].gt(0)]
+    if len(positive) >= 2:
+        positive_periods = positive.to_period("M")
+        intervals = np.diff(
+            np.array([period.year * 12 + period.month for period in positive_periods])
+        )
+        cadence = float(np.median(intervals[-6:])) if len(intervals) else np.nan
+    else:
+        cadence = np.nan
+    if not np.isfinite(cadence) or cadence <= 4:
+        lag = 2
+    elif cadence <= 8:
+        lag = 5
+    else:
+        lag = 11
+    if len(monthly) <= lag:
+        return None, len(monthly)
+    expected_dividend = float(monthly["dividend"].iloc[-1 - lag])
+    price = float(monthly["price"].iloc[-1])
+    if not np.isfinite(price) or abs(price) < 1e-12:
+        return None, len(monthly)
+    return expected_dividend / abs(price), len(monthly)
 
 
 def _aligned_monthly(
@@ -464,6 +521,9 @@ def calculate_market_signals(
             )
 
         returns = monthly.set_index("date")["ret"]
+        predicted_dividend_yield, dividend_months = _predicted_dividend_yield(
+            daily, formation
+        )
         momentum6_window = returns.iloc[-6:-1].dropna() if len(returns) >= 6 else pd.Series(dtype=float)
         momentum36_window = returns.iloc[-37:-13].dropna() if len(returns) >= 37 else pd.Series(dtype=float)
         momentum6 = (
@@ -497,6 +557,8 @@ def calculate_market_signals(
                     pd.Series([master.loc[symbol].get("marketCap")]), errors="coerce"
                 ).iloc[0],
                 "last_month_return": returns.iloc[-1] if len(returns) else np.nan,
+                "predicted_dividend_yield": predicted_dividend_yield,
+                "dividend_months": dividend_months,
                 "period_end": period_end,
                 "monthly_end": monthly_end,
                 "monthly_count": len(monthly),
@@ -526,6 +588,13 @@ def calculate_market_signals(
             .mean()
         )
         ind_ret_big = cross_frame["industry"].map(big_returns).where(industry_rank.lt(0.70))
+        positive_dividend_yield = cross_frame["predicted_dividend_yield"].where(
+            cross_frame["predicted_dividend_yield"].gt(0)
+        )
+        dividend_yield_tercile = _quantile_codes(positive_dividend_yield, 3)
+        dividend_yield_tercile.loc[
+            cross_frame["predicted_dividend_yield"].eq(0)
+        ] = 0.0
 
         for symbol, state in cross_frame.iterrows():
             common = {
@@ -534,6 +603,19 @@ def calculate_market_signals(
                 "period_end": state["monthly_end"],
                 "observation_count": int(state["monthly_count"]),
             }
+            _append(
+                rows,
+                signal="DivYieldST",
+                value=dividend_yield_tercile.loc[symbol],
+                fidelity=FidelityClass.RECONSTRUCTED,
+                formula_id="openap_divyieldst_public_exdate_inferred_frequency_2_5_11m",
+                source_ids=("yahoo_public",),
+                caveat=(
+                    "Yahoo cash distributions replace CRSP distributions; payment "
+                    "frequency is inferred from observed ex-date spacing"
+                ),
+                **common,
+            )
             _append(
                 rows,
                 signal="MomRev",
@@ -594,6 +676,7 @@ def implemented_source_pairs() -> frozenset[tuple[str, str]]:
         "BetaTailRisk": ("yahoo_public",),
         "CoskewACX": ("yahoo_public", "kenneth_french"),
         "Coskewness": ("yahoo_public", "kenneth_french"),
+        "DivYieldST": ("yahoo_public",),
         "FirmAgeMom": ("yahoo_public",),
         "IdioVol3F": ("yahoo_public", "kenneth_french"),
         "IndIPO": ("yahoo_public",),
