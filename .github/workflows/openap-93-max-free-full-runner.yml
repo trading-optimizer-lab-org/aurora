@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: 529dbd3a940e2cab6c6ae8cfb68af04a7a9cc097
+        default: 4e84109a261dc5914086c354137226903a14e5d0
         type: string
       base_run_id:
         description: Run containing openap-yfinance-sec-current-score-results
@@ -40,7 +40,7 @@ jobs:
   full_pipeline:
     needs: framework_contract
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 360
     env:
       GITHUB_ACTIONS: "true"
     steps:
@@ -67,6 +67,7 @@ jobs:
           python -m py_compile research/openap_93/analyst_pipeline.py
           python -m py_compile research/openap_93/short_interest_pipeline.py
           python -m py_compile research/openap_93/event_pipeline.py
+          python -m py_compile research/openap_93/institutional_pipeline.py
           python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile research/openap_93/current_pipeline.py
           python -m py_compile scripts/run_openap_93_max_free.py
@@ -97,7 +98,7 @@ jobs:
             coverage_93.csv source_coverage_matrix.csv source_ablation.csv \
             validation_per_signal.csv selected_sources.json run_manifest.json \
             data_lineage.json failures.json openap_reference_metadata.json \
-            FINAL_REPORT.md; do
+            institutional_input_audit.csv FINAL_REPORT.md; do
             test -s "outputs/openap_93_current/$file"
           done
           python - <<'PY'
@@ -124,6 +125,10 @@ jobs:
           assert manifest["locked_opened"] is False
           assert manifest["validation_used_for_selection"] is False
           assert manifest["cost_eur"] == 0
+          assert manifest["api_keys_required"] is False
+          assert manifest["manual_actions_required"] is False
+          assert manifest["input_signals"] == 93
+          assert sum(manifest["fidelity_counts"].values()) == 93
           reference = json.load(
               open(f"{root}/openap_reference_metadata.json", encoding="utf-8")
           )
