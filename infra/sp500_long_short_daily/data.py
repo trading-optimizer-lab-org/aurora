@@ -1147,7 +1147,12 @@ def _reconcile_spy_sources(
     common = yahoo_prices.index.intersection(comparison.index)
     if len(common) < minimum_overlap:
         raise DataGateError("SPY_RECONCILIATION_TOO_SHORT")
-    yahoo = yahoo_prices.loc[common, "close"].pct_change()
+    yahoo_comparison_column = "close"
+    if "adj_close" in yahoo_prices.columns:
+        adjusted = pd.to_numeric(yahoo_prices.loc[common, "adj_close"], errors="coerce")
+        if adjusted.notna().all():
+            yahoo_comparison_column = "adj_close"
+    yahoo = yahoo_prices.loc[common, yahoo_comparison_column].pct_change()
     stooq_returns = comparison.loc[common, "close"].pct_change()
     valid = yahoo.notna() & stooq_returns.notna()
     yahoo = yahoo.loc[valid]
@@ -1176,6 +1181,7 @@ def _reconcile_spy_sources(
         "unreconciled_outlier_count": 0,
         "return_tolerance": SPY_RETURN_TOLERANCE,
         "required_tolerance_fraction": SPY_REQUIRED_TOLERANCE_FRACTION,
+        "yahoo_comparison_column": yahoo_comparison_column,
     }
 
 

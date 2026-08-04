@@ -639,6 +639,35 @@ def test_spy_reconciliation_requires_99_5_percent_and_explains_outliers() -> Non
         _reconcile_spy_sources(yahoo, broken, distributions, splits, minimum_overlap=1000)
 
 
+def test_spy_reconciliation_compares_adjusted_series_without_changing_raw_prices() -> None:
+    dates = pd.bdate_range("2000-01-03", periods=1001)
+    adjusted_close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))
+    raw_close = adjusted_close.copy()
+    raw_close[500:] *= 0.99
+    yahoo = pd.DataFrame(
+        {
+            "date": dates,
+            "close": raw_close,
+            "adj_close": adjusted_close,
+        }
+    )
+    stooq = pd.DataFrame({"date": dates, "close": adjusted_close})
+    distributions = pd.DataFrame(
+        {"date": [dates[500]], "distribution": [1.0]}
+    )
+    splits = pd.DataFrame(columns=["date", "split_ratio"])
+    report = _reconcile_spy_sources(
+        yahoo,
+        stooq,
+        distributions,
+        splits,
+        minimum_overlap=1000,
+    )
+    assert report["within_5_bps_fraction"] == 1.0
+    assert report["yahoo_comparison_column"] == "adj_close"
+    assert yahoo.loc[500, "close"] == pytest.approx(raw_close[500])
+
+
 class _FakeResponse:
     def __init__(self, payload: bytes) -> None:
         self.content = payload
