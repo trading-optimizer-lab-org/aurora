@@ -24,6 +24,10 @@ from aurora.research.openap_93.market import (
     residual_momentum,
     zero_trade_measure,
 )
+from aurora.research.openap_93.market_pipeline import (
+    MARKET_IMPLEMENTED_SIGNALS,
+    calculate_market_signals,
+)
 from aurora.research.openap_93.models import SignalObservation
 from aurora.research.openap_93.registry import REQUIRED_93, FidelityClass, load_signal_registry
 from aurora.research.openap_93.sources import (
@@ -74,9 +78,11 @@ def test_source_selection_is_deterministic_and_reports_ablation() -> None:
         key: value for key, value in selected_b.items() if key != "created_at"
     }
     pd.testing.assert_frame_equal(ablation_a, ablation_b)
-    assert selected_a["candidate_signals_covered"] == 0
-    assert selected_a["candidate_signals_uncovered"] == sorted(REQUIRED_93)
-    assert selected_a["selected_source_ids"] == []
+    assert selected_a["candidate_signals_covered"] == len(MARKET_IMPLEMENTED_SIGNALS)
+    assert set(selected_a["candidate_signals_uncovered"]) == (
+        set(REQUIRED_93) - MARKET_IMPLEMENTED_SIGNALS
+    )
+    assert selected_a["selected_source_ids"]
 
 
 def test_reachable_source_is_not_mistaken_for_implemented_signal() -> None:
@@ -85,11 +91,14 @@ def test_reachable_source_is_not_mistaken_for_implemented_signal() -> None:
         {"source_id": [source.source_id for source in PUBLIC_SOURCES], "probe_ok": True}
     )
     matrix = source_coverage_matrix(registry, probes)
-    assert IMPLEMENTED_SIGNAL_SOURCES == frozenset()
+    assert IMPLEMENTED_SIGNAL_SOURCES
     assert matrix["candidate_match"].any()
-    assert not matrix["formula_implemented"].any()
-    assert not matrix["required_fields_verified"].any()
-    assert not matrix["can_produce_value"].any()
+    implemented = matrix.loc[matrix["formula_implemented"]]
+    assert set(implemented["signal"]) == MARKET_IMPLEMENTED_SIGNALS
+    assert implemented["required_fields_verified"].all()
+    assert implemented["can_produce_value"].all()
+    unimplemented = matrix.loc[~matrix["formula_implemented"]]
+    assert not unimplemented["can_produce_value"].any()
 
 
 def test_no_source_requires_registration_or_payment() -> None:
@@ -215,3 +224,85 @@ def test_public_factor_parsers_use_decimal_returns_and_official_liquidity(tmp_pa
     fred.write_text("observation_date,GNPDEF\n2026-01-01,125.7\n", encoding="utf-8")
     deflator = parse_fred_csv(fred, value_column="GNPDEF")
     assert deflator.loc[0, "gnpdef"] == pytest.approx(125.7)
+
+
+def test_market_pipeline_emits_all_supported_signals_without_lookahead() -> None:
+    rng = np.random.default_rng(29)
+    dates = pd.bdate_range("2018-01-01", "2026-07-31")
+    symbols = [f"S{i:02d}" for i in range(12)]
+    price_rows: list[pd.DataFrame] = []
+    master_rows: list[dict[str, object]] = []
+    market = rng.normal(0.0003, 0.01, len(dates))
+    for index, symbol in enumerate(symbols):
+        returns = 0.7 * market + rng.normal(0.0001 + index / 1_000_000, 0.008, len(dates))
+        price_rows.append(
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "symbol": symbol,
+                    "adj_close": 20.0 * np.cumprod(1.0 + returns),
+                    "volume": np.where(
+                        np.arange(len(dates)) % (31 + index) == 0,
+                        0,
+                        1_000_000 + index * 10_000,
+                    ),
+                }
+            )
+        )
+        master_rows.append(
+            {
+                "symbol": symbol,
+                "sharesOutstanding": 100_000_000 + index * 1_000_000,
+                "first_clean_price_date": dates.min(),
+                "marketCap": 2_000_000_000 + index * 500_000_000,
+                "industry": f"industry_{index % 3}",
+            }
+        )
+    prices = pd.concat(price_rows, ignore_index=True)
+    ff3_daily = pd.DataFrame(
+        {
+            "date": dates,
+            "mktrf": market,
+            "smb": rng.normal(0, 0.004, len(dates)),
+            "hml": rng.normal(0, 0.004, len(dates)),
+            "rf": np.full(len(dates), 0.0001),
+        }
+    )
+    months = pd.date_range("2018-01-31", "2026-07-31", freq="ME")
+    ff3_monthly = pd.DataFrame(
+        {
+            "date": months,
+            "mktrf": rng.normal(0.006, 0.035, len(months)),
+            "smb": rng.normal(0, 0.02, len(months)),
+            "hml": rng.normal(0, 0.02, len(months)),
+            "rf": np.full(len(months), 0.002),
+        }
+    )
+    liquidity = pd.DataFrame(
+        {"date": months, "ps_innovation": rng.normal(0, 0.02, len(months))}
+    )
+    vix = pd.DataFrame(
+        {"date": dates, "vix_change": rng.normal(0, 0.04, len(dates))}
+    )
+
+    result = calculate_market_signals(
+        pd.DataFrame(master_rows),
+        prices,
+        ff3_daily,
+        ff3_monthly,
+        liquidity,
+        vix,
+        formation_at="2026-08-01",
+    )
+
+    assert set(result["signal"]) == MARKET_IMPLEMENTED_SIGNALS
+    assert (
+        result.groupby("symbol")["signal"]
+        .nunique()
+        .eq(len(MARKET_IMPLEMENTED_SIGNALS))
+        .all()
+    )
+    assert pd.to_datetime(result["available_at"]).le(pd.Timestamp("2026-08-01")).all()
+    proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
+    assert not result.loc[proxy, "current_usable"].any()
+    assert result.loc[result["current_usable"], "value"].notna().all()
