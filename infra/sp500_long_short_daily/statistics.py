@@ -38,15 +38,44 @@ def deflated_sharpe_probability(
     return float(norm.cdf((annual_sharpe - benchmark) / denominator))
 
 
-def _moving_block_indices(
+def _stationary_bootstrap_indices(
     rng: np.random.Generator,
     length: int,
-    block_length: int,
+    expected_block_length: int,
 ) -> np.ndarray:
-    blocks = math.ceil(length / block_length)
-    starts = rng.integers(0, length, size=blocks)
-    offsets = np.arange(block_length)
-    return ((starts[:, None] + offsets[None, :]) % length).reshape(-1)[:length]
+    """Politis-Romano stationary bootstrap with circular continuation."""
+
+    if length <= 0 or expected_block_length <= 0:
+        raise ValueError("length and expected_block_length must be positive")
+    indices = np.empty(length, dtype=np.int64)
+    indices[0] = int(rng.integers(0, length))
+    restart_probability = 1.0 / float(expected_block_length)
+    for offset in range(1, length):
+        if float(rng.random()) < restart_probability:
+            indices[offset] = int(rng.integers(0, length))
+        else:
+            indices[offset] = (indices[offset - 1] + 1) % length
+    return indices
+
+
+def _benjamini_hochberg(pvalues: Mapping[str, float]) -> dict[str, float]:
+    """Return monotone Benjamini-Hochberg q-values keyed like the inputs."""
+
+    ordered = sorted(
+        ((str(key), float(value)) for key, value in pvalues.items()),
+        key=lambda item: (item[1], item[0]),
+    )
+    count = len(ordered)
+    if not count:
+        return {}
+    adjusted = [0.0] * count
+    running = 1.0
+    for reverse_index in range(count - 1, -1, -1):
+        _, value = ordered[reverse_index]
+        rank = reverse_index + 1
+        running = min(running, value * count / rank)
+        adjusted[reverse_index] = min(max(running, 0.0), 1.0)
+    return {ordered[index][0]: adjusted[index] for index in range(count)}
 
 
 def reality_check_and_spa(
@@ -62,27 +91,35 @@ def reality_check_and_spa(
             "white_reality_check_pvalue": None,
             "hansen_spa_pvalue": None,
             "candidate_spa_pvalues": {},
+            "candidate_raw_pvalues": {},
+            "candidate_fdr_qvalues": {},
+            "candidate_mean_differential_ci_95": {},
             "block_sensitivity": {},
+            "bootstrap_method": "politis_romano_stationary_circular",
             "reason": "INSUFFICIENT_COMMON_OBSERVATIONS",
         }
     matrix = frame.to_numpy(dtype=float)
     means = matrix.mean(axis=0)
     standard_errors = matrix.std(axis=0, ddof=1) / math.sqrt(len(matrix))
     observed_white = float(np.max(means))
-    observed_t = np.divide(means, standard_errors, out=np.zeros_like(means), where=standard_errors > 0)
+    observed_t = np.divide(
+        means, standard_errors, out=np.zeros_like(means), where=standard_errors > 0
+    )
     observed_spa = float(np.max(observed_t))
     centered = matrix - means
     automatic = max(2, int(round(len(frame) ** (1.0 / 3.0))))
     lengths = (automatic, *tuple(int(value) for value in block_lengths))
     sensitivity = {}
     selected_bootstrap_t: np.ndarray | None = None
+    selected_bootstrap_means: np.ndarray | None = None
     for block_length in lengths:
         rng = np.random.default_rng(seed + block_length)
         boot_white = np.empty(samples, dtype=float)
         boot_spa = np.empty(samples, dtype=float)
         boot_t = np.empty((samples, matrix.shape[1]), dtype=float)
+        boot_means = np.empty((samples, matrix.shape[1]), dtype=float)
         for sample in range(samples):
-            indices = _moving_block_indices(rng, len(frame), block_length)
+            indices = _stationary_bootstrap_indices(rng, len(frame), block_length)
             sampled = centered[indices]
             sample_means = sampled.mean(axis=0)
             sample_se = sampled.std(axis=0, ddof=1) / math.sqrt(len(sampled))
@@ -93,6 +130,7 @@ def reality_check_and_spa(
                 where=sample_se > 0,
             )
             boot_t[sample] = studentized
+            boot_means[sample] = matrix[indices].mean(axis=0)
             boot_white[sample] = float(np.max(sample_means))
             boot_spa[sample] = float(np.max(studentized))
         white_p = float((1 + np.count_nonzero(boot_white >= observed_white)) / (samples + 1))
@@ -103,18 +141,39 @@ def reality_check_and_spa(
         }
         if block_length == automatic:
             selected_bootstrap_t = boot_t
+            selected_bootstrap_means = boot_means
     assert selected_bootstrap_t is not None
+    assert selected_bootstrap_means is not None
     maxima = np.max(selected_bootstrap_t, axis=1)
     candidate_pvalues = {
         column: float((1 + np.count_nonzero(maxima >= observed_t[index])) / (samples + 1))
+        for index, column in enumerate(frame.columns)
+    }
+    candidate_raw_pvalues = {
+        column: float(
+            (1 + np.count_nonzero(selected_bootstrap_t[:, index] >= observed_t[index]))
+            / (samples + 1)
+        )
+        for index, column in enumerate(frame.columns)
+    }
+    candidate_qvalues = _benjamini_hochberg(candidate_raw_pvalues)
+    candidate_ci = {
+        column: [
+            float(np.quantile(selected_bootstrap_means[:, index], 0.025)),
+            float(np.quantile(selected_bootstrap_means[:, index], 0.975)),
+        ]
         for index, column in enumerate(frame.columns)
     }
     selected = sensitivity[str(automatic)]
     return {
         **selected,
         "candidate_spa_pvalues": candidate_pvalues,
+        "candidate_raw_pvalues": candidate_raw_pvalues,
+        "candidate_fdr_qvalues": candidate_qvalues,
+        "candidate_mean_differential_ci_95": candidate_ci,
         "automatic_block_length": automatic,
         "bootstrap_samples": samples,
+        "bootstrap_method": "politis_romano_stationary_circular",
         "block_sensitivity": sensitivity,
         "reason": None,
     }
@@ -129,7 +188,9 @@ def cscv_pbo(returns: pd.DataFrame, *, partitions: int = 10) -> Mapping[str, Any
     half = partitions // 2
     for selected in itertools.combinations(range(partitions), half):
         train_indices = np.concatenate([blocks[index] for index in selected])
-        test_indices = np.concatenate([blocks[index] for index in range(partitions) if index not in selected])
+        test_indices = np.concatenate(
+            [blocks[index] for index in range(partitions) if index not in selected]
+        )
         train = frame.iloc[train_indices]
         test = frame.iloc[test_indices]
         train_std = train.std(axis=0, ddof=0).replace(0.0, np.nan)
@@ -188,10 +249,14 @@ def frozen_train_ranking(
             "reason": "NO_EVALUATED_CANDIDATES",
         }
     candidate_wide = daily_returns.pivot(index="date", columns="unit_key", values="return")
-    benchmark_wide = benchmark_daily_returns.pivot(index="date", columns="unit_key", values="return")
+    benchmark_wide = benchmark_daily_returns.pivot(
+        index="date", columns="unit_key", values="return"
+    )
     strongest_benchmark = max(
         benchmark_wide.columns,
-        key=lambda column: float(benchmark_wide[column].mean() / max(benchmark_wide[column].std(ddof=0), 1e-15)),
+        key=lambda column: float(
+            benchmark_wide[column].mean() / max(benchmark_wide[column].std(ddof=0), 1e-15)
+        ),
     )
     benchmark = benchmark_wide[strongest_benchmark]
     differential = candidate_wide.subtract(benchmark, axis=0)
@@ -201,6 +266,7 @@ def frozen_train_ranking(
     multiple["pbo"] = pbo["pbo"]
     multiple["strongest_benchmark"] = strongest_benchmark
     candidate_spa = multiple.get("candidate_spa_pvalues", {})
+    candidate_qvalues = multiple.get("candidate_fdr_qvalues", {})
 
     effective_trials = effective_independent_trials(candidate_wide)
     multiple["effective_independent_trials"] = effective_trials
@@ -212,13 +278,20 @@ def frozen_train_ranking(
         )
     )
     metrics["spa_pvalue"] = metrics["unit_key"].map(candidate_spa)
+    metrics["fdr_qvalue"] = metrics["unit_key"].map(candidate_qvalues)
     metrics["pbo"] = pbo["pbo"]
     annual_candidates = annual_metrics.loc[annual_metrics["unit_key"].isin(metrics["unit_key"])]
-    annual_benchmark = annual_metrics.loc[annual_metrics["unit_key"] == strongest_benchmark].set_index("year")
+    annual_benchmark = annual_metrics.loc[
+        annual_metrics["unit_key"] == strongest_benchmark
+    ].set_index("year")
     benchmark_win = {}
     for key, group in annual_candidates.groupby("unit_key"):
-        merged = group.set_index("year").join(annual_benchmark[["return_pct"]], rsuffix="_benchmark")
-        benchmark_win[str(key)] = float((merged["return_pct"] > merged["return_pct_benchmark"]).mean())
+        merged = group.set_index("year").join(
+            annual_benchmark[["return_pct"]], rsuffix="_benchmark"
+        )
+        benchmark_win[str(key)] = float(
+            (merged["return_pct"] > merged["return_pct_benchmark"]).mean()
+        )
     metrics["benchmark_win_fraction"] = metrics["unit_key"].map(benchmark_win).fillna(0.0)
 
     sensitivity = {}
@@ -227,14 +300,10 @@ def frozen_train_ranking(
         passing = (ordered["train_cagr_pct"] > 0) & (ordered["train_sharpe"] > 0)
         for index, key in enumerate(ordered["unit_key"]):
             neighbour_indices = [
-                value
-                for value in (index - 1, index + 1)
-                if 0 <= value < len(ordered)
+                value for value in (index - 1, index + 1) if 0 <= value < len(ordered)
             ]
             sensitivity[str(key)] = (
-                float(passing.iloc[neighbour_indices].mean())
-                if neighbour_indices
-                else 0.0
+                float(passing.iloc[neighbour_indices].mean()) if neighbour_indices else 0.0
             )
     metrics["neighbour_positive_fraction"] = metrics["unit_key"].map(sensitivity)
 

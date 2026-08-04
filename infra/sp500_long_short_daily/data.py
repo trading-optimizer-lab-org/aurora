@@ -67,11 +67,7 @@ class PreparedMarketData:
 
 
 def _repo_campaign_root() -> Path:
-    return (
-        Path(__file__).resolve().parents[2]
-        / "campaigns"
-        / "sp500_long_short_daily"
-    )
+    return Path(__file__).resolve().parents[2] / "campaigns" / "sp500_long_short_daily"
 
 
 def _epoch_seconds(value: pd.Timestamp) -> int:
@@ -101,7 +97,9 @@ def _bounded_dates(start: Any, end: Any, *, split: str) -> tuple[pd.Timestamp, p
         raise LockedBoundaryError("TECHNICAL_FAILURE_LOCKED_BREACH:data_request")
     if split == "train" and end_date > TRAIN_END:
         raise DataGateError("TRAIN_REQUEST_CROSSES_SELECTION_BOUNDARY")
-    if split == "validation" and (start_date < TRAIN_END + pd.Timedelta(days=1) or end_date > VALIDATION_END):
+    if split == "validation" and (
+        start_date < TRAIN_END + pd.Timedelta(days=1) or end_date > VALIDATION_END
+    ):
         raise DataGateError("VALIDATION_REQUEST_OUTSIDE_FROZEN_BOUNDARY")
     return start_date, end_date
 
@@ -403,12 +401,8 @@ def download_alfred_initial_series(
         url_template=FRED_API_OBSERVATIONS,
         sha256=_sha256(payload),
         byte_count=len(payload),
-        minimum_date=(
-            frame["observation_date"].min().date().isoformat() if len(frame) else None
-        ),
-        maximum_date=(
-            frame["observation_date"].max().date().isoformat() if len(frame) else None
-        ),
+        minimum_date=(frame["observation_date"].min().date().isoformat() if len(frame) else None),
+        maximum_date=(frame["observation_date"].max().date().isoformat() if len(frame) else None),
         status="downloaded_initial_releases_only",
     )
     return frame, receipt
@@ -458,6 +452,68 @@ def load_state_street_distributions(
     return bounded, receipt
 
 
+def load_sec_distribution_totals(
+    path: Path,
+    start: Any,
+    end: Any,
+    *,
+    split: str,
+) -> tuple[pd.DataFrame, DownloadReceipt]:
+    """Load audited SPY distribution totals for explicitly bounded fiscal periods."""
+
+    start_date, end_date = _bounded_dates(start, end, split=split)
+    source = Path(path).resolve()
+    if not source.is_file():
+        raise DataGateError("SEC_DISTRIBUTION_TOTALS_SNAPSHOT_REQUIRED")
+    payload = source.read_bytes()
+    frame = _parse_csv(payload)
+    required = {"period_start", "period_end", "distribution_total"}
+    if not required.issubset(frame.columns):
+        raise DataGateError("SEC_DISTRIBUTION_TOTALS_SCHEMA_MISMATCH")
+    starts = pd.to_datetime(frame["period_start"], errors="coerce").dt.normalize()
+    ends = pd.to_datetime(frame["period_end"], errors="coerce").dt.normalize()
+    totals = pd.to_numeric(frame["distribution_total"], errors="coerce")
+    if (
+        starts.isna().any()
+        or ends.isna().any()
+        or totals.isna().any()
+        or (starts > ends).any()
+        or (totals < 0).any()
+    ):
+        raise DataGateError("SEC_DISTRIBUTION_TOTALS_INVALID_VALUES")
+    phase_limit = TRAIN_END if split == "train" else VALIDATION_END
+    if len(ends) and ends.max() > phase_limit:
+        raise DataGateError("SEC_DISTRIBUTION_TOTALS_EXCEED_PHASE_BOUNDARY")
+    if len(ends) and ends.max() >= LOCKED_START:
+        raise LockedBoundaryError("TECHNICAL_FAILURE_LOCKED_BREACH:sec_distribution_totals")
+    bounded = frame.copy()
+    bounded["period_start"] = starts
+    bounded["period_end"] = ends
+    bounded["distribution_total"] = totals
+    bounded = (
+        bounded.loc[(bounded["period_end"] >= start_date) & (bounded["period_start"] <= end_date)]
+        .sort_values("period_start", kind="mergesort")
+        .reset_index(drop=True)
+    )
+    if bounded["period_start"].duplicated().any() or bounded["period_end"].duplicated().any():
+        raise DataGateError("SEC_DISTRIBUTION_TOTALS_DUPLICATE_PERIOD")
+    previous_end: pd.Timestamp | None = None
+    for row in bounded.itertuples(index=False):
+        if previous_end is not None and pd.Timestamp(row.period_start) <= previous_end:
+            raise DataGateError("SEC_DISTRIBUTION_TOTALS_OVERLAPPING_PERIODS")
+        previous_end = pd.Timestamp(row.period_end)
+    receipt = DownloadReceipt(
+        dataset_id="DS001_SEC_AUDITED_TOTALS",
+        url_template="PINNED_SEC_AUDITED_SPY_DISTRIBUTION_TOTALS",
+        sha256=_sha256(payload),
+        byte_count=len(payload),
+        minimum_date=(bounded["period_start"].min().date().isoformat() if len(bounded) else None),
+        maximum_date=(bounded["period_end"].max().date().isoformat() if len(bounded) else None),
+        status="loaded_official_frozen_audited_totals",
+    )
+    return bounded, receipt
+
+
 def reconcile_sponsor_distributions(
     sponsor: pd.DataFrame,
     yahoo: pd.DataFrame,
@@ -482,6 +538,89 @@ def reconcile_sponsor_distributions(
             float(differences.max()) if len(differences) else 0.0
         ),
         "absolute_tolerance": absolute_tolerance,
+    }
+
+
+def reconcile_official_distribution_audit(
+    exact_events: pd.DataFrame,
+    fiscal_totals: pd.DataFrame,
+    yahoo: pd.DataFrame,
+    *,
+    exact_tolerance: float = 5e-6,
+    rounded_total_tolerance: float = 0.005001,
+) -> Mapping[str, Any]:
+    """Verify operational Yahoo events against official event and audited totals."""
+
+    operational = yahoo.loc[:, ["date", "distribution"]].copy()
+    operational["date"] = pd.to_datetime(operational["date"]).dt.normalize()
+    operational["distribution"] = pd.to_numeric(operational["distribution"], errors="coerce")
+    operational = operational.sort_values("date", kind="mergesort").reset_index(drop=True)
+    if (
+        operational["date"].isna().any()
+        or operational["distribution"].isna().any()
+        or operational["date"].duplicated().any()
+    ):
+        raise DataGateError("OPERATIONAL_DISTRIBUTION_EVENTS_INVALID")
+    if operational.empty:
+        raise DataGateError("OPERATIONAL_DISTRIBUTION_EVENTS_EMPTY")
+
+    exact_start = pd.Timestamp(exact_events["date"].min()).normalize()
+    exact_end = pd.Timestamp(exact_events["date"].max()).normalize()
+    operational_exact_window = operational.loc[operational["date"].between(exact_start, exact_end)]
+    exact_audit = reconcile_sponsor_distributions(
+        exact_events,
+        operational_exact_window,
+        absolute_tolerance=exact_tolerance,
+    )
+
+    period_rows: list[dict[str, Any]] = []
+    covered_dates: set[pd.Timestamp] = set(exact_events["date"])
+    for row in fiscal_totals.itertuples(index=False):
+        period_start = pd.Timestamp(row.period_start).normalize()
+        period_end = pd.Timestamp(row.period_end).normalize()
+        in_period = operational.loc[operational["date"].between(period_start, period_end)]
+        observed = float(in_period["distribution"].sum())
+        expected = float(row.distribution_total)
+        difference = abs(observed - expected)
+        if difference > rounded_total_tolerance:
+            raise DataGateError(
+                "SEC_DISTRIBUTION_FISCAL_TOTAL_MISMATCH:"
+                f"{period_start.date()}:{period_end.date()}:"
+                f"observed={observed:.8f}:expected={expected:.8f}"
+            )
+        covered_dates.update(pd.Timestamp(value) for value in in_period["date"])
+        period_rows.append(
+            {
+                "period_start": period_start.date().isoformat(),
+                "period_end": period_end.date().isoformat(),
+                "event_count": int(len(in_period)),
+                "observed_total": observed,
+                "audited_total": expected,
+                "absolute_difference": difference,
+            }
+        )
+
+    uncovered = [
+        date.date().isoformat()
+        for date in operational["date"]
+        if pd.Timestamp(date) not in covered_dates
+    ]
+    if uncovered:
+        raise DataGateError(
+            "OPERATIONAL_DISTRIBUTION_EVENT_WITHOUT_OFFICIAL_COVERAGE:" + ",".join(uncovered[:10])
+        )
+    return {
+        "operational_source": "Yahoo Finance bounded event endpoint",
+        "official_verification_sources": [
+            "State Street exact distribution events",
+            "SEC audited fiscal distribution totals",
+        ],
+        "operational_event_count": int(len(operational)),
+        "exact_event_audit": exact_audit,
+        "fiscal_period_audit": period_rows,
+        "uncovered_event_count": 0,
+        "exact_tolerance": exact_tolerance,
+        "rounded_total_tolerance": rounded_total_tolerance,
     }
 
 
@@ -512,7 +651,9 @@ FRED_DATASETS: Mapping[str, tuple[str, str]] = {
 }
 
 
-def _align_causal(series: pd.Series, sessions: pd.DatetimeIndex, *, lag_sessions: int = 1) -> pd.Series:
+def _align_causal(
+    series: pd.Series, sessions: pd.DatetimeIndex, *, lag_sessions: int = 1
+) -> pd.Series:
     values = series.copy().sort_index(kind="mergesort")
     values.index = pd.DatetimeIndex(values.index).normalize()
     aligned = values.reindex(sessions, method="ffill")
@@ -608,28 +749,49 @@ def prepare_market_snapshot(
     )
     if not splits.empty:
         raise DataGateError("SPY_SPLIT_REQUIRES_EXPLICIT_RAW_PRICE_REPAIR")
-    sponsor_path = os.environ.get("SP500_STATE_STREET_DISTRIBUTIONS_CSV", "").strip()
-    if not sponsor_path:
-        sponsor_path = str(
-            _repo_campaign_root()
+    if split == "train":
+        exact_path = Path(
+            os.environ.get("SP500_STATE_STREET_DISTRIBUTIONS_CSV", "").strip()
+            or _repo_campaign_root()
             / "official_inputs"
-            / (
-                "state_street_spy_distributions_through_2010.csv"
-                if split == "train"
-                else "state_street_spy_distributions_2011_2020.csv"
-            )
+            / "state_street_spy_distribution_events_2006_2010.csv"
         )
-    dividends, sponsor_receipt = load_state_street_distributions(
-        Path(sponsor_path), start_date, end_date, split=split
-    )
-    _store_raw(
-        raw_root,
-        f"state_street_spy_distributions_{split}.csv",
-        Path(sponsor_path).read_bytes(),
-    )
-    sponsor_reconciliation = reconcile_sponsor_distributions(
-        dividends, yahoo_dividends
-    )
+        totals_path = Path(
+            os.environ.get("SP500_SEC_DISTRIBUTION_TOTALS_CSV", "").strip()
+            or _repo_campaign_root()
+            / "official_inputs"
+            / "sec_spy_distribution_fiscal_totals_1993_2009.csv"
+        )
+        exact_events, sponsor_receipt = load_state_street_distributions(
+            exact_path, start_date, end_date, split=split
+        )
+        fiscal_totals, totals_receipt = load_sec_distribution_totals(
+            totals_path, start_date, end_date, split=split
+        )
+        sponsor_reconciliation = reconcile_official_distribution_audit(
+            exact_events, fiscal_totals, yahoo_dividends
+        )
+        dividends = yahoo_dividends.copy()
+        _store_raw(raw_root, exact_path.name, exact_path.read_bytes())
+        _store_raw(raw_root, totals_path.name, totals_path.read_bytes())
+        distribution_receipts = [sponsor_receipt, totals_receipt]
+    else:
+        sponsor_path = Path(
+            os.environ.get("SP500_STATE_STREET_DISTRIBUTIONS_CSV", "").strip()
+            or _repo_campaign_root()
+            / "official_inputs"
+            / "state_street_spy_distributions_2011_2020.csv"
+        )
+        dividends, sponsor_receipt = load_state_street_distributions(
+            sponsor_path, start_date, end_date, split=split
+        )
+        sponsor_reconciliation = reconcile_sponsor_distributions(dividends, yahoo_dividends)
+        _store_raw(
+            raw_root,
+            f"state_street_spy_distributions_{split}.csv",
+            sponsor_path.read_bytes(),
+        )
+        distribution_receipts = [sponsor_receipt]
     ledger, audit = build_total_return_ledger(prices, dividends, splits)
     stooq, stooq_receipt = download_stooq_history(
         "spy.us",
@@ -649,7 +811,7 @@ def prepare_market_snapshot(
 
     receipts: list[DownloadReceipt] = [
         *yahoo_receipts,
-        sponsor_receipt,
+        *distribution_receipts,
         stooq_receipt,
     ]
     series: dict[str, pd.Series] = {}
@@ -677,9 +839,7 @@ def prepare_market_snapshot(
                 session=client,
                 raw_dir=raw_root,
             )
-            first_dissemination = (
-                pd.Timestamp("2003-09-22") if dataset_id == "DS004" else None
-            )
+            first_dissemination = pd.Timestamp("2003-09-22") if dataset_id == "DS004" else None
             aligned = _align_initial_releases(
                 downloaded,
                 ledger.index,
@@ -697,7 +857,9 @@ def prepare_market_snapshot(
         rejected[dataset_id] = "NO_BOUNDED_CAUSAL_ADAPTER"
 
     prices_path = root / "spy_ledger.parquet"
-    pq.write_table(pa.Table.from_pandas(ledger.reset_index(names="date"), preserve_index=False), prices_path)
+    pq.write_table(
+        pa.Table.from_pandas(ledger.reset_index(names="date"), preserve_index=False), prices_path
+    )
     series_rows = []
     for name, values in sorted(series.items()):
         for date, value in values.items():
@@ -707,8 +869,7 @@ def prepare_market_snapshot(
     receipt_payload = [receipt.__dict__ for receipt in receipts]
     (root / "raw_manifest.jsonl").write_text(
         "".join(
-            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
-            for row in receipt_payload
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in receipt_payload
         ),
         encoding="utf-8",
     )

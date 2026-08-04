@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import yaml
 
@@ -27,7 +29,9 @@ from aurora.infra.sp500_long_short_daily.data import (
     _align_initial_releases,
     _reconcile_spy_sources,
     download_alfred_initial_series,
+    load_sec_distribution_totals,
     load_state_street_distributions,
+    reconcile_official_distribution_audit,
     reconcile_sponsor_distributions,
     write_fixture_snapshot,
     load_market_snapshot,
@@ -46,7 +50,10 @@ from aurora.infra.sp500_long_short_daily.workload import (
     TRAIN_WORKLOAD,
 )
 from aurora.infra.sp500_long_short_daily.statistics import (
+    _benjamini_hochberg,
+    _stationary_bootstrap_indices,
     effective_independent_trials,
+    reality_check_and_spa,
 )
 from aurora.infra.sp500_long_short_daily.validation import (
     VALIDATION_ACK,
@@ -66,18 +73,14 @@ CAMPAIGN_ROOT = REPO_ROOT / "campaigns" / "sp500_long_short_daily"
 def _campaign() -> CampaignPackage:
     return CampaignPackage.load(
         CAMPAIGN_ROOT / "research_input",
-        CAMPAIGN_ROOT
-        / "input_package"
-        / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
+        CAMPAIGN_ROOT / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
     )
 
 
 def _prices() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "date": pd.to_datetime(
-                ["2020-12-23", "2020-12-24", "2020-12-28", "2020-12-29"]
-            ),
+            "date": pd.to_datetime(["2020-12-23", "2020-12-24", "2020-12-28", "2020-12-29"]),
             "open": [100.0, 101.0, 50.0, 51.0],
             "high": [102.0, 102.0, 51.0, 52.0],
             "low": [99.0, 100.0, 49.0, 50.0],
@@ -123,12 +126,8 @@ def test_all_positions_and_costs_are_frozen() -> None:
 
 
 def test_dividend_and_split_open_to_open_hand_calculation() -> None:
-    distributions = pd.DataFrame(
-        {"date": [pd.Timestamp("2020-12-24")], "distribution": [1.0]}
-    )
-    splits = pd.DataFrame(
-        {"date": [pd.Timestamp("2020-12-28")], "split_ratio": [2.0]}
-    )
+    distributions = pd.DataFrame({"date": [pd.Timestamp("2020-12-24")], "distribution": [1.0]})
+    splits = pd.DataFrame({"date": [pd.Timestamp("2020-12-28")], "split_ratio": [2.0]})
     ledger, audit = build_total_return_ledger(_prices(), distributions, splits)
     assert audit.distribution_count == 1
     assert audit.split_count == 1
@@ -149,9 +148,7 @@ def test_adjusted_close_is_never_used_as_an_open_price() -> None:
     prices = _prices().assign(adj_close=[1.0, 2.0, 3.0, 4.0])
     plain, _ = build_total_return_ledger(_prices())
     adjusted_column_present, _ = build_total_return_ledger(prices)
-    pd.testing.assert_series_equal(
-        plain["long_return"], adjusted_column_present["long_return"]
-    )
+    pd.testing.assert_series_equal(plain["long_return"], adjusted_column_present["long_return"])
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
@@ -181,6 +178,62 @@ def test_official_sponsor_snapshot_and_yahoo_events_must_match(tmp_path: Path) -
         reconcile_sponsor_distributions(sponsor, mismatched)
 
 
+def test_layered_official_distribution_audit_covers_every_operational_event(
+    tmp_path: Path,
+) -> None:
+    exact_path = tmp_path / "exact.csv"
+    exact_path.write_text(
+        "ex_date,distribution\n2006-06-16,0.55\n2006-09-15,0.58\n",
+        encoding="utf-8",
+    )
+    totals_path = tmp_path / "totals.csv"
+    totals_path.write_text(
+        "period_start,period_end,distribution_total\n2005-10-01,2006-09-30,1.13\n",
+        encoding="utf-8",
+    )
+    exact, _ = load_state_street_distributions(
+        exact_path, "2005-10-01", "2010-12-31", split="train"
+    )
+    totals, _ = load_sec_distribution_totals(totals_path, "2005-10-01", "2010-12-31", split="train")
+    audit = reconcile_official_distribution_audit(exact, totals, exact.copy())
+    assert audit["operational_event_count"] == 2
+    assert audit["uncovered_event_count"] == 0
+
+    uncovered = pd.concat(
+        [
+            exact,
+            pd.DataFrame({"date": pd.to_datetime(["2005-09-16"]), "distribution": [0.10]}),
+        ],
+        ignore_index=True,
+    )
+    with pytest.raises(
+        DataGateError,
+        match="OPERATIONAL_DISTRIBUTION_EVENT_WITHOUT_OFFICIAL_COVERAGE",
+    ):
+        reconcile_official_distribution_audit(exact, totals, uncovered)
+
+
+def test_layered_official_distribution_audit_rejects_fiscal_total_mismatch(
+    tmp_path: Path,
+) -> None:
+    exact_path = tmp_path / "exact.csv"
+    exact_path.write_text(
+        "ex_date,distribution\n2006-06-16,0.55\n2006-09-15,0.58\n",
+        encoding="utf-8",
+    )
+    totals_path = tmp_path / "totals.csv"
+    totals_path.write_text(
+        "period_start,period_end,distribution_total\n2005-10-01,2006-09-30,9.99\n",
+        encoding="utf-8",
+    )
+    exact, _ = load_state_street_distributions(
+        exact_path, "2005-10-01", "2010-12-31", split="train"
+    )
+    totals, _ = load_sec_distribution_totals(totals_path, "2005-10-01", "2010-12-31", split="train")
+    with pytest.raises(DataGateError, match="SEC_DISTRIBUTION_FISCAL_TOTAL_MISMATCH"):
+        reconcile_official_distribution_audit(exact, totals, exact.copy())
+
+
 def test_sponsor_snapshot_cannot_cross_train_or_locked_boundary(tmp_path: Path) -> None:
     path = tmp_path / "bad.csv"
     path.write_text(
@@ -191,9 +244,7 @@ def test_sponsor_snapshot_cannot_cross_train_or_locked_boundary(tmp_path: Path) 
         (DataGateError, LockedBoundaryError),
         match="STATE_STREET_SNAPSHOT_EXCEEDS_PHASE_BOUNDARY|LOCKED_BREACH",
     ):
-        load_state_street_distributions(
-            path, "1993-01-22", "2010-12-31", split="train"
-        )
+        load_state_street_distributions(path, "1993-01-22", "2010-12-31", split="train")
 
 
 def test_spy_reconciliation_requires_99_5_percent_and_explains_outliers() -> None:
@@ -203,16 +254,12 @@ def test_spy_reconciliation_requires_99_5_percent_and_explains_outliers() -> Non
     stooq = yahoo.copy()
     distributions = pd.DataFrame(columns=["date", "distribution"])
     splits = pd.DataFrame(columns=["date", "split_ratio"])
-    report = _reconcile_spy_sources(
-        yahoo, stooq, distributions, splits, minimum_overlap=1000
-    )
+    report = _reconcile_spy_sources(yahoo, stooq, distributions, splits, minimum_overlap=1000)
     assert report["within_5_bps_fraction"] == 1.0
     broken = stooq.copy()
     broken.loc[500, "close"] *= 1.01
     with pytest.raises(DataGateError, match="SPY_UNRECONCILED_RETURN_OUTLIERS"):
-        _reconcile_spy_sources(
-            yahoo, broken, distributions, splits, minimum_overlap=1000
-        )
+        _reconcile_spy_sources(yahoo, broken, distributions, splits, minimum_overlap=1000)
 
 
 class _FakeResponse:
@@ -304,9 +351,7 @@ def test_alfred_rejects_release_after_phase_end_without_persisting_it(
 
 def test_close_decision_executes_at_next_open_and_ties_persist() -> None:
     ledger, _ = build_total_return_ledger(_prices())
-    decisions = pd.Series(
-        [1.0, -1.0, np.nan, 1.0], index=ledger.index, dtype=float
-    )
+    decisions = pd.Series([1.0, -1.0, np.nan, 1.0], index=ledger.index, dtype=float)
     result = apply_positions(ledger, decisions)
     assert result["position"].tolist() == [1, 1, -1, -1]
 
@@ -348,6 +393,29 @@ def _long_fixture() -> PreparedMarketData:
         receipts=(),
         split="train",
     )
+
+
+def test_repository_official_distribution_inputs_are_bounded_and_complete() -> None:
+    official = CAMPAIGN_ROOT / "official_inputs"
+    events, _ = load_state_street_distributions(
+        official / "state_street_spy_distribution_events_2006_2010.csv",
+        "1993-01-22",
+        "2010-12-31",
+        split="train",
+    )
+    totals, _ = load_sec_distribution_totals(
+        official / "sec_spy_distribution_fiscal_totals_1993_2009.csv",
+        "1993-01-22",
+        "2010-12-31",
+        split="train",
+    )
+    audit = json.loads((official / "official_source_audit.json").read_text("utf-8"))
+    assert len(events) == 19
+    assert len(totals) == 17
+    assert events["date"].max() == pd.Timestamp("2010-12-17")
+    assert totals["period_end"].max() == pd.Timestamp("2009-09-30")
+    assert audit["locked_opened"] is False
+    assert audit["validation_boundary_incident"]["response_used"] is False
 
 
 def test_price_candidate_and_benchmarks_are_exact_long_short_states() -> None:
@@ -472,9 +540,7 @@ def test_preholiday_rule_does_not_treat_an_ordinary_weekend_as_a_holiday() -> No
     next_dates = pd.Series(index, index=index).shift(-1)
     following_dates = next_dates.shift(-1)
     ordinary_friday = (
-        (next_dates.dt.dayofweek == 4)
-        & (following_dates.dt.dayofweek == 0)
-        & (trend < 0)
+        (next_dates.dt.dayofweek == 4) & (following_dates.dt.dayofweek == 0) & (trend < 0)
     )
     assert ordinary_friday.any()
     assert (signal.decisions.loc[ordinary_friday] == -1).all()
@@ -538,6 +604,36 @@ def test_train_workload_evaluates_or_rejects_without_silent_drop() -> None:
     assert rejected_records == ()
 
 
+def test_campaign_partial_merge_waits_for_exact_coverage_and_rejects_conflicts(
+    tmp_path: Path,
+) -> None:
+    data = _long_fixture()
+    candidate = _campaign().candidate_by_id()["STRAT0004"]
+    row, _ = TRAIN_WORKLOAD._evaluate(data, "STRAT0004", candidate, "merge-attempt-a")
+    first = tmp_path / "first"
+    first.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist([row], schema=TRAIN_WORKLOAD.result_schema),
+        first / TRAIN_WORKLOAD.result_filename,
+    )
+    partial = tmp_path / "partial"
+    TRAIN_WORKLOAD.merge_group((first,), partial)
+    assert (partial / TRAIN_WORKLOAD.result_filename).is_file()
+    assert not (partial / "train_selection_freeze.json").exists()
+
+    conflicting = dict(row)
+    conflicting["source_attempt_id"] = "merge-attempt-b"
+    conflicting["unit_output_sha256"] = "0" * 64
+    second = tmp_path / "second"
+    second.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist([conflicting], schema=TRAIN_WORKLOAD.result_schema),
+        second / TRAIN_WORKLOAD.result_filename,
+    )
+    with pytest.raises(ValueError, match="conflicting result for STRAT0004"):
+        TRAIN_WORKLOAD.merge_group((first, second), tmp_path / "conflict")
+
+
 def test_fixture_snapshot_round_trip_preserves_boundaries(tmp_path: Path) -> None:
     data = _long_fixture()
     write_fixture_snapshot(tmp_path, data.ledger)
@@ -581,6 +677,31 @@ def test_effective_trial_count_collapses_identical_strategies() -> None:
     )
     assert effective_independent_trials(identical) == pytest.approx(1.0)
     assert effective_independent_trials(independent) > 2.8
+
+
+def test_stationary_bootstrap_and_fdr_are_deterministic_and_bounded() -> None:
+    left = _stationary_bootstrap_indices(np.random.default_rng(7), 200, 10)
+    right = _stationary_bootstrap_indices(np.random.default_rng(7), 200, 10)
+    assert np.array_equal(left, right)
+    assert int(left.min()) >= 0
+    assert int(left.max()) < 200
+    qvalues = _benjamini_hochberg({"a": 0.01, "b": 0.04, "c": 0.03})
+    assert qvalues == pytest.approx({"a": 0.03, "c": 0.04, "b": 0.04})
+
+
+def test_reality_check_uses_stationary_bootstrap_and_reports_ci_and_fdr() -> None:
+    rng = np.random.default_rng(11)
+    frame = pd.DataFrame(
+        {
+            "a": rng.normal(0.001, 0.01, 220),
+            "b": rng.normal(0.0002, 0.01, 220),
+        }
+    )
+    result = reality_check_and_spa(frame, seed=13, samples=80, block_lengths=(5,))
+    assert result["bootstrap_method"] == "politis_romano_stationary_circular"
+    assert set(result["candidate_fdr_qvalues"]) == {"a", "b"}
+    assert set(result["candidate_mean_differential_ci_95"]) == {"a", "b"}
+    assert all(len(bounds) == 2 for bounds in result["candidate_mean_differential_ci_95"].values())
 
 
 def test_train_freeze_hash_and_code_are_verified(tmp_path: Path) -> None:
@@ -693,9 +814,7 @@ def test_one_shot_validation_outputs_only_frozen_candidate_and_2011_2020(
     freeze["freeze_sha256"] = canonical_json_hash(freeze)
     train_results = tmp_path / "train-results"
     train_results.mkdir()
-    (train_results / "train_selection_freeze.json").write_text(
-        json.dumps(freeze), encoding="utf-8"
-    )
+    (train_results / "train_selection_freeze.json").write_text(json.dumps(freeze), encoding="utf-8")
     output = tmp_path / "validation-output"
     summary = run_validation_once(
         train_results_dir=train_results,
@@ -708,9 +827,7 @@ def test_one_shot_validation_outputs_only_frozen_candidate_and_2011_2020(
     metrics = pd.read_csv(output / "validation_candidate_and_benchmark_metrics.csv")
     daily = pd.read_parquet(output / "validation_daily_returns.parquet")
     assert len(metrics) == 6
-    assert set(metrics.loc[metrics["unit_type"] == "candidate", "strategy_id"]) == {
-        "STRAT0004"
-    }
+    assert set(metrics.loc[metrics["unit_type"] == "candidate", "strategy_id"]) == {"STRAT0004"}
     assert pd.to_datetime(daily["date"]).min() >= pd.Timestamp("2011-01-01")
     assert pd.to_datetime(daily["date"]).max() <= pd.Timestamp("2020-12-31")
     assert summary["locked_opened"] is False
@@ -737,9 +854,7 @@ def test_smoke_manifest_advertises_only_opened_train_dates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = yaml.safe_load(
-        (REPO_ROOT / "config" / "sp500_long_short_daily_train_v3.yaml").read_text(
-            encoding="utf-8"
-        )
+        (REPO_ROOT / "config" / "sp500_long_short_daily_train_v3.yaml").read_text(encoding="utf-8")
     )
     payload["policy"]["policy_hash"] = "a" * 64
     spec = RunSpec.model_validate(payload)
@@ -769,9 +884,7 @@ def test_smoke_reduction_cannot_create_train_freeze(tmp_path: Path) -> None:
         )
         rows.append(row)
     SMOKE_WORKLOAD._write_reduction(rows, tmp_path)
-    summary = pd.read_json(
-        tmp_path / "sp500_long_short_daily_smoke_summary.json", typ="series"
-    )
+    summary = pd.read_json(tmp_path / "sp500_long_short_daily_smoke_summary.json", typ="series")
     assert summary["expected_units"] == 7
     assert summary["maximum_date"] == "1995-12-29"
     assert summary["validation_opened"] is False
@@ -784,7 +897,10 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
     monkeypatch.setenv("AURORA_PREPARED_ROOT", str(tmp_path))
     definitions = TRAIN_WORKLOAD._unit_definitions()
     rows = []
-    evaluated_keys = {"STRAT0001", *(key for key, _, _ in definitions if key.startswith("BENCHMARK::"))}
+    evaluated_keys = {
+        "STRAT0001",
+        *(key for key, _, _ in definitions if key.startswith("BENCHMARK::")),
+    }
     for key, payload, _ in definitions:
         if key in evaluated_keys:
             row, _ = TRAIN_WORKLOAD._evaluate(data, key, payload, "test-reduction")
@@ -821,6 +937,7 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
         "scheduler_plan.json",
         "environment_lock.txt",
         "implementation_mapping.md",
+        "official_source_audit.json",
     }
     assert required <= {path.name for path in output.iterdir()}
     final_manifest = json.loads((output / "final_manifest.json").read_text("utf-8"))
@@ -830,3 +947,30 @@ def test_full_coverage_reduction_keeps_every_terminal_unit(tmp_path: Path, monke
     metrics = pd.read_csv(output / "candidate_and_benchmark_metrics.csv")
     assert len(metrics) == 173
     assert metrics["strategy_id"].nunique() == 173
+    folds = pd.read_csv(output / "fold_metrics.csv")
+    assert {
+        "outer_fold_id",
+        "outer_train_end",
+        "outer_test_start",
+        "outer_test_end",
+        "embargo_sessions",
+        "fit_mode",
+        "out_of_fold",
+    } <= set(folds.columns)
+    assert set(folds["fit_mode"]) == {"static_rule_no_fit"}
+    regimes = pd.read_csv(output / "regime_metrics.csv")
+    assert set(regimes["status"]) == {"calculated"}
+    assert set(regimes["regime"]) <= {
+        "spy_above_sma200",
+        "spy_at_or_below_sma200",
+    }
+    freeze = json.loads((output / "train_selection_freeze.json").read_text("utf-8"))
+    assert freeze["position_contract"]["allowed_values"] == [-1, 1]
+    assert freeze["costs"] == {
+        "commission_bps": 0,
+        "spread_bps": 0,
+        "slippage_bps": 0,
+        "market_impact_bps": 0,
+        "borrow_bps": 0,
+        "financing_bps": 0,
+    }

@@ -65,25 +65,28 @@ adapter is unavailable.
 `INCOMPLETE_FROZEN_RULE_SPEC:INFLATION_ACCELERATION_HORIZON`; the pack names
 inflation acceleration but does not freeze its horizon.
 
-## External inputs still required
+## External inputs and fail-closed behavior
 
-The campaign intentionally fails before performance calculation until both are
-available:
+Training dividend events are Yahoo operational rows accepted only after a
+two-layer official audit: exact State Street events for 2006-2010 and audited
+SEC fiscal totals for 1993-2009. The overlap is intentional. The ledger never
+uses an unaudited event.
 
-1. A State Street SPY distribution CSV bounded to the active phase. The train
-   file must contain only events through `2010-12-31`; the validation file must
-   contain only `2011-01-01..2020-12-31`. Columns are `ex_date,distribution`.
-2. A free FRED API key in GitHub secret `FRED_API_KEY`, required to request
-   ALFRED initial-release vintages instead of revised current history.
+Validation still requires an exact State Street file containing only
+`2011-01-01..2020-12-31` and remains unopened until the frozen one-shot gate.
 
-Current State Street downloads contain locked dates and are deliberately not
-used. Yahoo distributions are only a reconciliation source and never silently
-replace the required sponsor snapshot.
+A FRED API key enables ALFRED initial-release vintages. If it is absent or one
+series fails, only candidates requiring that dataset are rejected. Price-only
+and other fully available candidates continue; there is no silent substitution.
 
-## Metrics and declared limitation
+## Metrics and diagnostics
 
-Train metrics are based on calendar outer folds 1998-2010. The package requires
-performance by a "frozen market regime" but provides no regime definition. The
-output records
-`INCOMPLETE_FROZEN_DIAGNOSTIC_REGIME_DEFINITION` for that non-selection
-diagnostic rather than inventing one.
+Static rules have no fitted parameters, so their calendar-year 1998-2010 rows
+are labelled explicitly as out-of-fold static evaluations with one-session
+embargo. Families needing estimation are rejected when the frozen package does
+not specify the complete fitting protocol.
+
+The non-binding market-regime diagnostic uses the already mandatory symmetric
+SMA-200 benchmark's next-open executed state: `spy_above_sma200` and
+`spy_at_or_below_sma200`. This definition is frozen before performance is run,
+does not alter candidate signals and is excluded from selection.

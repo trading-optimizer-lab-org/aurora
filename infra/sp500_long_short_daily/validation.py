@@ -34,6 +34,7 @@ from aurora.infra.sp500_long_short_daily.workload import (
     METRIC_FIELDS,
     _annual_rows,
     _extended_metrics,
+    _market_regime_states,
     _package,
 )
 from aurora.infra.github_performance.shard_planner import sha256_file
@@ -97,9 +98,7 @@ def combine_phase_snapshots(
     return PreparedMarketData(
         ledger=ledger,
         series=series,
-        available_dataset_ids=(
-            train.available_dataset_ids & validation.available_dataset_ids
-        ),
+        available_dataset_ids=(train.available_dataset_ids & validation.available_dataset_ids),
         rejected_datasets={**train.rejected_datasets, **validation.rejected_datasets},
         receipts=(*train.receipts, *validation.receipts),
         split="validation",
@@ -118,7 +117,9 @@ def _evaluate_validation_unit(
         "strategy_id": strategy_id,
         "unit_type": "benchmark" if is_benchmark else "candidate",
         "family": "benchmark" if is_benchmark else str(parameters["family"]),
-        "canonical_hash": canonical_json_hash(parameters) if is_benchmark else parameters["canonical_hash"],
+        "canonical_hash": canonical_json_hash(parameters)
+        if is_benchmark
+        else parameters["canonical_hash"],
         "status": "evaluated",
         "rejection_reason": None,
         "validation_opened": True,
@@ -129,7 +130,9 @@ def _evaluate_validation_unit(
         signal = (
             benchmark_decisions(str(parameters["benchmark_id"]), data)
             if is_benchmark
-            else candidate_decisions(parameters, data, candidate_lookup=_package().candidate_by_id())
+            else candidate_decisions(
+                parameters, data, candidate_lookup=_package().candidate_by_id()
+            )
         )
         if signal.first_evaluable_date is None or signal.missing_fraction > 0.02 + 1e-12:
             raise CandidateRejected("DATA_INELIGIBLE:VALIDATION_CAUSAL_COVERAGE")
@@ -148,12 +151,13 @@ def _evaluate_validation_unit(
         )
         for name in METRIC_FIELDS:
             row[f"validation_{name}"] = record.reported.get(name)
-        extended = _extended_metrics(returns, positions)
+        extended = _extended_metrics(
+            returns,
+            positions,
+            _market_regime_states(data, returns.index),
+        )
         row.update(
-            {
-                key.replace("train_", "validation_", 1): value
-                for key, value in extended.items()
-            }
+            {key.replace("train_", "validation_", 1): value for key, value in extended.items()}
         )
         daily = [
             {
@@ -198,8 +202,7 @@ def _validation_gate_results(
         )
 
     benchmark_rows = [
-        benchmarks[name]
-        for name in ("always_long", "symmetric_sma_200", "symmetric_momentum_12m")
+        benchmarks[name] for name in ("always_long", "symmetric_sma_200", "symmetric_momentum_12m")
     ]
     positive_log = annual.loc[annual["return_pct"] > 0, "return_pct"].map(
         lambda value: np.log1p(float(value) / 100.0)
@@ -218,15 +221,15 @@ def _validation_gate_results(
     candidate_drawdown = finite(row.get("validation_max_drawdown_pct"))
     candidate_rolling = finite(row.get("validation_median_rolling_3y_cagr_pct"))
     cagr_beats = all(
-        candidate_cagr > finite(item.get("validation_cagr_pct"))
-        for item in benchmark_rows
+        candidate_cagr > finite(item.get("validation_cagr_pct")) for item in benchmark_rows
     )
-    calmar_alternative = all(
-        candidate_calmar >= benchmark_ratio(item, "validation_calmar") + 0.15
-        for item in benchmark_rows
-    ) and candidate_cagr >= finite(
-        benchmarks["always_long"].get("validation_cagr_pct")
-    ) - 2.0
+    calmar_alternative = (
+        all(
+            candidate_calmar >= benchmark_ratio(item, "validation_calmar") + 0.15
+            for item in benchmark_rows
+        )
+        and candidate_cagr >= finite(benchmarks["always_long"].get("validation_cagr_pct")) - 2.0
+    )
     return {
         "cagr_positive": candidate_cagr > 0,
         "sharpe_ge_0_45": candidate_sharpe >= 0.45,
@@ -235,9 +238,8 @@ def _validation_gate_results(
         "positive_years_ge_6": int(row["validation_positive_years"]) >= 6,
         "median_rolling_3y_positive": candidate_rolling > 0,
         "benchmark_return_or_calmar_gate": cagr_beats or calmar_alternative,
-        "sharpe_beats_best_benchmark_by_0_10": candidate_sharpe >= max(
-            benchmark_ratio(item, "validation_sharpe") for item in benchmark_rows
-        ) + 0.10,
+        "sharpe_beats_best_benchmark_by_0_10": candidate_sharpe
+        >= max(benchmark_ratio(item, "validation_sharpe") for item in benchmark_rows) + 0.10,
         "positive_growth_concentration_le_50pct": concentration <= 0.50,
         "both_directions_ge_5pct": long_fraction >= 0.05 and short_fraction >= 0.05,
         "sharpe_degradation_gate": candidate_sharpe >= 0.40 * train_metrics["sharpe"],
@@ -386,9 +388,7 @@ def run_validation_once(
         encoding="utf-8",
     )
     files = [
-        path
-        for path in output.iterdir()
-        if path.is_file() and path.name != "final_manifest.json"
+        path for path in output.iterdir() if path.is_file() and path.name != "final_manifest.json"
     ]
     final_manifest = {
         "schema_version": "1",

@@ -14,6 +14,7 @@ from aurora.infra.sp500_long_short_daily.contracts import (
 )
 from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
+    load_sec_distribution_totals,
     load_state_street_distributions,
 )
 
@@ -32,26 +33,20 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     campaign = repo / "campaigns" / "sp500_long_short_daily"
     issues: list[str] = []
+    warnings: list[str] = []
 
     package = CampaignPackage.load(
         campaign / "research_input",
-        campaign
-        / "input_package"
-        / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
+        campaign / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
     )
-    spec_report = validate_run_spec(
-        repo / "config" / "sp500_long_short_daily_train_v3.yaml"
-    )
+    spec_report = validate_run_spec(repo / "config" / "sp500_long_short_daily_train_v3.yaml")
     if not spec_report.valid:
-        issues.extend(
-            f"RUN_SPEC:{item.code}" for item in spec_report.violations
-        )
+        issues.extend(f"RUN_SPEC:{item.code}" for item in spec_report.violations)
 
     sponsor_path = (
-        campaign
-        / "official_inputs"
-        / "state_street_spy_distributions_through_2010.csv"
+        campaign / "official_inputs" / "state_street_spy_distribution_events_2006_2010.csv"
     )
+    totals_path = campaign / "official_inputs" / "sec_spy_distribution_fiscal_totals_1993_2009.csv"
     try:
         load_state_street_distributions(
             sponsor_path,
@@ -59,14 +54,18 @@ def main() -> int:
             "2010-12-31",
             split="train",
         )
+        load_sec_distribution_totals(
+            totals_path,
+            "1993-01-22",
+            "2010-12-31",
+            split="train",
+        )
     except (DataGateError, LockedBoundaryError) as exc:
         issues.append(str(exc))
     if not os.environ.get("FRED_API_KEY", "").strip():
-        issues.append("FRED_API_KEY_REQUIRED_FOR_INITIAL_RELEASE_VINTAGES")
+        warnings.append("FRED_API_KEY_ABSENT:AFFECTED_DATASETS_WILL_BE_REJECTED_PER_CANDIDATE")
 
-    workflow = (
-        repo / ".github" / "workflows" / "sp500-long-short-daily-campaign.yml"
-    )
+    workflow = repo / ".github" / "workflows" / "sp500-long-short-daily-campaign.yml"
     workflow_text = workflow.read_text(encoding="utf-8")
     if "C:\\" in workflow_text:
         issues.append("WINDOWS_PATH_IN_GITHUB_WORKFLOW")
@@ -88,6 +87,7 @@ def main() -> int:
         "locked_opened": False,
         "performance_calculated": False,
         "issues": sorted(set(issues)),
+        "warnings": sorted(set(warnings)),
     }
     (output / "preflight_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
@@ -96,7 +96,11 @@ def main() -> int:
     (output / "RESULT_STATUS.md").write_text(
         "# Preflight result\n\n"
         f"Status: `{report['status']}`\n\n"
-        + ("No blocking issues.\n" if not issues else "\n".join(f"- `{issue}`" for issue in sorted(set(issues))) + "\n"),
+        + (
+            "No blocking issues.\n"
+            if not issues
+            else "\n".join(f"- `{issue}`" for issue in sorted(set(issues))) + "\n"
+        ),
         encoding="utf-8",
     )
     return 0 if not issues else 2

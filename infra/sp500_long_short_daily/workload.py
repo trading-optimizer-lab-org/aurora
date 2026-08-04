@@ -203,21 +203,69 @@ def _annual_rows(returns: pd.Series) -> list[dict[str, Any]]:
     return rows
 
 
-def _extended_metrics(returns: pd.Series, positions: pd.Series) -> dict[str, Any]:
+def _market_regime_states(
+    data: PreparedMarketData,
+    index: pd.DatetimeIndex,
+) -> pd.Series:
+    """Frozen non-selection diagnostic based on the mandatory SMA-200 benchmark."""
+
+    signal = benchmark_decisions("symmetric_sma_200", data)
+    applied = apply_positions(data.ledger, signal.decisions)
+    states = applied.loc[index, "position"].map(
+        {1: "spy_above_sma200", -1: "spy_at_or_below_sma200"}
+    )
+    if states.isna().any():
+        raise CandidateRejected("DIAGNOSTIC_REGIME_STATE_MISSING")
+    return states.astype(str)
+
+
+def _regime_performance_rows(
+    returns: pd.Series,
+    regimes: pd.Series,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    aligned = pd.DataFrame({"return": returns, "regime": regimes}).dropna()
+    for label, group in aligned.groupby("regime", sort=True):
+        raw = group["return"].to_numpy(dtype=float)
+        if not len(raw):
+            continue
+        nav = np.cumprod(1.0 + raw)
+        total = float(nav[-1] - 1.0)
+        years = len(raw) / 252.0
+        annualized = float(nav[-1] ** (1.0 / years) - 1.0) if years > 0 and nav[-1] > 0 else -1.0
+        std = float(np.std(raw, ddof=0))
+        running_peak = np.maximum.accumulate(nav)
+        drawdown = nav / running_peak - 1.0
+        rows.append(
+            {
+                "regime": str(label),
+                "sessions": int(len(raw)),
+                "total_return_pct": total * 100.0,
+                "annualized_return_pct": annualized * 100.0,
+                "sharpe": (float(np.mean(raw) / std * np.sqrt(252.0)) if std > 1e-12 else 0.0),
+                "max_drawdown_pct": float(drawdown.min() * 100.0),
+                "definition": "mandatory_symmetric_sma_200_executed_next_open_state",
+                "selection_binding": False,
+            }
+        )
+    return rows
+
+
+def _extended_metrics(
+    returns: pd.Series,
+    positions: pd.Series,
+    regimes: pd.Series | None = None,
+) -> dict[str, Any]:
     annual = _annual_rows(returns)
     annual_returns = pd.Series(
         {row["year"]: row["return_pct"] / 100.0 for row in annual}, dtype=float
     )
-    rolling_3y = (
-        (1.0 + annual_returns).rolling(3, min_periods=3).apply(np.prod, raw=True)
-        ** (1.0 / 3.0)
-        - 1.0
-    )
-    rolling_5y = (
-        (1.0 + annual_returns).rolling(5, min_periods=5).apply(np.prod, raw=True)
-        ** (1.0 / 5.0)
-        - 1.0
-    )
+    rolling_3y = (1.0 + annual_returns).rolling(3, min_periods=3).apply(np.prod, raw=True) ** (
+        1.0 / 3.0
+    ) - 1.0
+    rolling_5y = (1.0 + annual_returns).rolling(5, min_periods=5).apply(np.prod, raw=True) ** (
+        1.0 / 5.0
+    ) - 1.0
     switches = positions.ne(positions.shift(1))
     if len(switches):
         switches.iloc[0] = False
@@ -229,20 +277,38 @@ def _extended_metrics(returns: pd.Series, positions: pd.Series) -> dict[str, Any
     positive_log = np.log1p(annual_returns.clip(lower=-0.999999))
     positive_log = positive_log[positive_log > 0]
     concentration = (
-        float(positive_log.max() / positive_log.sum()) if len(positive_log) and positive_log.sum() > 0 else 1.0
+        float(positive_log.max() / positive_log.sum())
+        if len(positive_log) and positive_log.sum() > 0
+        else 1.0
     )
     years = max(len(returns) / 252.0, 1.0 / 252.0)
     yearly_switches = switches.groupby(switches.index.year).sum().astype(float)
     return {
-        "train_positive_year_fraction": float((annual_returns > 0).mean()) if len(annual_returns) else None,
+        "train_positive_year_fraction": float((annual_returns > 0).mean())
+        if len(annual_returns)
+        else None,
         "train_positive_years": int((annual_returns > 0).sum()),
-        "train_worst_year_return_pct": float(annual_returns.min() * 100.0) if len(annual_returns) else None,
-        "train_rolling_1y_median_cagr_pct": float(annual_returns.median() * 100.0) if len(annual_returns) else None,
-        "train_median_rolling_3y_cagr_pct": float(rolling_3y.median() * 100.0) if rolling_3y.notna().any() else None,
-        "train_rolling_5y_median_cagr_pct": float(rolling_5y.median() * 100.0) if rolling_5y.notna().any() else None,
-        "train_min_outer_fold_cagr_pct": float(annual_returns.min() * 100.0) if len(annual_returns) else None,
+        "train_worst_year_return_pct": float(annual_returns.min() * 100.0)
+        if len(annual_returns)
+        else None,
+        "train_rolling_1y_median_cagr_pct": float(annual_returns.median() * 100.0)
+        if len(annual_returns)
+        else None,
+        "train_median_rolling_3y_cagr_pct": float(rolling_3y.median() * 100.0)
+        if rolling_3y.notna().any()
+        else None,
+        "train_rolling_5y_median_cagr_pct": float(rolling_5y.median() * 100.0)
+        if rolling_5y.notna().any()
+        else None,
+        "train_min_outer_fold_cagr_pct": float(annual_returns.min() * 100.0)
+        if len(annual_returns)
+        else None,
         "train_turnover": float(switches.sum() / years),
-        "train_turnover_instability": float(yearly_switches.std(ddof=0) / max(yearly_switches.mean(), 1.0)) if len(yearly_switches) else 0.0,
+        "train_turnover_instability": float(
+            yearly_switches.std(ddof=0) / max(yearly_switches.mean(), 1.0)
+        )
+        if len(yearly_switches)
+        else 0.0,
         "train_long_days": int((positions == 1).sum()),
         "train_short_days": int((positions == -1).sum()),
         "train_position_switches": int(switches.sum()),
@@ -255,10 +321,14 @@ def _extended_metrics(returns: pd.Series, positions: pd.Series) -> dict[str, Any
         "train_worst_day_pct": float(returns.min() * 100.0),
         "train_worst_month_pct": float(monthly.min() * 100.0) if len(monthly) else None,
         "performance_by_market_regime_json": json.dumps(
-            {
-                "status": "not_calculated",
-                "reason": "INCOMPLETE_FROZEN_DIAGNOSTIC_REGIME_DEFINITION",
-            },
+            (
+                _regime_performance_rows(returns, regimes)
+                if regimes is not None
+                else {
+                    "status": "not_calculated",
+                    "reason": "REGIME_SERIES_NOT_SUPPLIED",
+                }
+            ),
             sort_keys=True,
             separators=(",", ":"),
         ),
@@ -404,13 +474,15 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "unit_key": unit_key,
             "source_attempt_id": attempt_id,
             "unit_type": "benchmark" if benchmark else "candidate",
-            "strategy_id": str(parameters.get("benchmark_id", parameters.get("strategy_id", unit_key))),
+            "strategy_id": str(
+                parameters.get("benchmark_id", parameters.get("strategy_id", unit_key))
+            ),
             "family": "benchmark" if benchmark else str(parameters["family"]),
-            "variant_label": str(parameters.get("benchmark_id", parameters.get("variant_label", ""))),
+            "variant_label": str(
+                parameters.get("benchmark_id", parameters.get("variant_label", ""))
+            ),
             "canonical_hash": (
-                canonical_json_hash(parameters)
-                if benchmark
-                else str(parameters["canonical_hash"])
+                canonical_json_hash(parameters) if benchmark else str(parameters["canonical_hash"])
             ),
             "status": "evaluated",
             "rejection_reason": None,
@@ -446,9 +518,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             if signal.first_evaluable_date is None:
                 raise CandidateRejected("NO_EVALUABLE_SESSION")
             if signal.missing_fraction > 0.02 + 1e-12:
-                raise CandidateRejected(
-                    "DATA_INELIGIBLE:CAUSAL_COVERAGE_LT_98_PERCENT"
-                )
+                raise CandidateRejected("DATA_INELIGIBLE:CAUSAL_COVERAGE_LT_98_PERCENT")
             applied = apply_positions(data.ledger, signal.decisions)
             first_decision = pd.Timestamp(signal.first_evaluable_date)
             later = data.ledger.index[data.ledger.index > first_decision]
@@ -461,7 +531,10 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             ]
             returns = evaluation["strategy_return"].dropna().astype(float)
             positions = evaluation.loc[returns.index, "position"].astype(np.int8)
-            if len(returns) < self.minimum_rows or len(set(returns.index.year)) < self.minimum_years:
+            if (
+                len(returns) < self.minimum_rows
+                or len(set(returns.index.year)) < self.minimum_years
+            ):
                 raise CandidateRejected("DATA_INELIGIBLE:MINIMUM_TRAIN_COVERAGE")
             if not positions.isin((-1, 1)).all():
                 raise CandidateRejected("TECHNICAL_FAILURE_POSITION")
@@ -471,13 +544,9 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
                 returns.to_numpy(dtype=float),
                 periods_per_year=252,
             )
-            row.update(
-                {
-                    f"train_{key}": record.reported.get(key)
-                    for key in METRIC_FIELDS
-                }
-            )
-            row.update(_extended_metrics(returns, positions))
+            row.update({f"train_{key}": record.reported.get(key) for key in METRIC_FIELDS})
+            regimes = _market_regime_states(data, returns.index)
+            row.update(_extended_metrics(returns, positions, regimes))
             row.update(
                 {
                     "first_evaluable_date": signal.first_evaluable_date,
@@ -529,11 +598,15 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         short_row = by_id.get("always_short")
         if not long_row or not buy_row or long_row["train_returns"] != buy_row["train_returns"]:
             reasons.append("BUY_HOLD_ALWAYS_LONG_MISMATCH")
-        if long_row and short_row and not np.allclose(
-            np.asarray(long_row["train_returns"]),
-            -np.asarray(short_row["train_returns"]),
-            rtol=0,
-            atol=0,
+        if (
+            long_row
+            and short_row
+            and not np.allclose(
+                np.asarray(long_row["train_returns"]),
+                -np.asarray(short_row["train_returns"]),
+                rtol=0,
+                atol=0,
+            )
         ):
             reasons.append("ALWAYS_SHORT_RECONCILIATION_MISMATCH")
         return SmokeResult(
@@ -564,7 +637,10 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             for row in pq.read_table(candidates[0], schema=self.result_schema).to_pylist():
                 key = str(row["unit_key"])
                 previous = rows_by_key.get(key)
-                if previous is not None and previous["unit_output_sha256"] != row["unit_output_sha256"]:
+                if (
+                    previous is not None
+                    and previous["unit_output_sha256"] != row["unit_output_sha256"]
+                ):
                     raise ValueError(f"conflicting result for {key}")
                 rows_by_key[key] = row
         root = Path(output_dir)
@@ -640,10 +716,29 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
                 annual_rows.append({"unit_key": row["unit_key"], **annual})
         pq.write_table(pa.Table.from_pylist(daily_rows), root / "train_daily_returns.parquet")
         annual_frame = pd.DataFrame(annual_rows)
-        annual_frame.to_csv(root / "train_fold_metrics.csv", index=False)
+        fold_frame = annual_frame.copy()
+        if len(fold_frame):
+            fold_frame["outer_fold_id"] = fold_frame["year"].map(
+                lambda year: f"calendar_year_{int(year)}"
+            )
+            fold_frame["outer_train_start"] = "1993-01-22"
+            fold_frame["outer_train_end"] = fold_frame["year"].map(
+                lambda year: f"{int(year) - 1}-12-31"
+            )
+            fold_frame["outer_test_start"] = fold_frame["year"].map(
+                lambda year: f"{int(year)}-01-01"
+            )
+            fold_frame["outer_test_end"] = fold_frame["year"].map(lambda year: f"{int(year)}-12-31")
+            fold_frame["embargo_sessions"] = 1
+            fold_frame["fit_mode"] = "static_rule_no_fit"
+            fold_frame["out_of_fold"] = True
+            fold_frame["validation_used"] = False
+        fold_frame.to_csv(root / "train_fold_metrics.csv", index=False)
 
         daily_frame = pd.DataFrame(daily_rows)
-        candidate_keys = set(candidate_frame.loc[candidate_frame["status"] == "evaluated", "unit_key"])
+        candidate_keys = set(
+            candidate_frame.loc[candidate_frame["status"] == "evaluated", "unit_key"]
+        )
         benchmark_keys = {
             str(row["unit_key"]) for row in benchmarks if row["status"] == "evaluated"
         }
@@ -698,10 +793,14 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         pareto_frame.to_csv(root / "pareto_frontier.csv", index=False)
 
         finalists = []
-        for family, group in ranking.loc[ranking["eligible_for_freeze"]].groupby("family", sort=True):
+        for family, group in ranking.loc[ranking["eligible_for_freeze"]].groupby(
+            "family", sort=True
+        ):
             finalists.extend(group.head(2).to_dict("records"))
         selected_ids = {str(row["unit_key"]) for row in finalists}
-        for family, group in ranking.loc[ranking["hard_train_eligible"]].groupby("family", sort=True):
+        for family, group in ranking.loc[ranking["hard_train_eligible"]].groupby(
+            "family", sort=True
+        ):
             if not any(str(row["family"]) == str(family) for row in finalists):
                 diagnostic = group.head(1).to_dict("records")
                 if diagnostic:
@@ -717,6 +816,12 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         if not manifest_path.is_file():
             manifest_path = self._prepared_root() / "market_data_manifest.json"
         dependency_lock = _repo_root() / "requirements" / "github-performance.lock"
+        campaign_root = _repo_root() / "campaigns" / "sp500_long_short_daily"
+        acceptance_gates = campaign_root / "research_input" / "acceptance_gates.md"
+        selection_protocol = campaign_root / "research_input" / "train_selection_protocol.md"
+        source_audit = campaign_root / "official_inputs" / "official_source_audit.json"
+        candidate_lookup = _package().candidate_by_id()
+        ranking_by_id = {str(row["strategy_id"]): row for row in ranking.to_dict("records")}
         freeze = {
             "schema_version": "1",
             "campaign_id": "sp500_long_short_daily_zero_cost_v1",
@@ -732,6 +837,29 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "data_manifest_sha256": sha256_file(manifest_path),
             "dependency_lock_sha256": sha256_file(dependency_lock),
             "multiple_testing_sha256": sha256_file(root / "multiple_testing.json"),
+            "train_ranking_sha256": sha256_file(root / "train_ranking.csv"),
+            "pareto_frontier_sha256": sha256_file(root / "pareto_frontier.csv"),
+            "acceptance_gates_sha256": sha256_file(acceptance_gates),
+            "train_selection_protocol_sha256": sha256_file(selection_protocol),
+            "official_source_audit_sha256": sha256_file(source_audit),
+            "selection_scope": "train_only_outer_oof_static_rules_1998_2010",
+            "candidate_count": 168,
+            "benchmark_count": 5,
+            "costs": {
+                "commission_bps": 0,
+                "spread_bps": 0,
+                "slippage_bps": 0,
+                "market_impact_bps": 0,
+                "borrow_bps": 0,
+                "financing_bps": 0,
+            },
+            "position_contract": {
+                "allowed_values": [-1, 1],
+                "always_invested": True,
+                "leverage": 1.0,
+                "decision": "after_close_t",
+                "execution": "next_tradable_open_t_plus_1",
+            },
             "finalists": [
                 {
                     "order": order,
@@ -739,17 +867,34 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
                     "canonical_hash": row["canonical_hash"],
                     "family": row["family"],
                     "train_selection_score": row["train_selection_score"],
+                    "candidate_rules": candidate_lookup[str(row["strategy_id"])],
                     "train_metrics": {
                         "cagr_pct": row["train_cagr_pct"],
                         "sharpe": row["train_sharpe"],
                         "calmar": row["train_calmar"],
                         "max_drawdown_pct": row["train_max_drawdown_pct"],
-                        "positive_year_fraction": row[
-                            "train_positive_year_fraction"
-                        ],
-                        "median_rolling_3y_cagr_pct": row[
-                            "train_median_rolling_3y_cagr_pct"
-                        ],
+                        "positive_year_fraction": row["train_positive_year_fraction"],
+                        "median_rolling_3y_cagr_pct": row["train_median_rolling_3y_cagr_pct"],
+                        "worst_year_return_pct": row["train_worst_year_return_pct"],
+                        "min_outer_fold_cagr_pct": row["train_min_outer_fold_cagr_pct"],
+                        "sortino": row["train_sortino"],
+                        "turnover": row["train_turnover"],
+                    },
+                    "annual_oof_metrics": annual_frame.loc[
+                        annual_frame["unit_key"] == str(row["unit_key"])
+                    ]
+                    .sort_values("year", kind="mergesort")
+                    .to_dict("records"),
+                    "selection_gate_results": {
+                        key: bool(value)
+                        for key, value in ranking_by_id[str(row["strategy_id"])].items()
+                        if str(key).startswith("gate_")
+                    },
+                    "multiple_testing": {
+                        "deflated_sharpe_probability": row["deflated_sharpe_probability"],
+                        "spa_pvalue": row["spa_pvalue"],
+                        "fdr_qvalue": row.get("fdr_qvalue"),
+                        "pbo": row["pbo"],
                     },
                     "diagnostic_only": bool(row.get("diagnostic_family_representative", False)),
                 }
@@ -766,16 +911,16 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "schema_version": "1",
             "campaign_id": "sp500_long_short_daily_zero_cost_v1",
             "result_status": (
-                "TRAIN_SELECTION_FROZEN_VALIDATION_NOT_OPENED"
-                if finalists
-                else "NEGATIVE_RESULT"
+                "TRAIN_SELECTION_FROZEN_VALIDATION_NOT_OPENED" if finalists else "NEGATIVE_RESULT"
             ),
             "expected_candidates": 168,
             "expected_benchmarks": 5,
             "evaluated_candidates": sum(row["status"] == "evaluated" for row in candidates),
             "rejected_candidates": sum(row["status"] == "rejected" for row in candidates),
             "evaluated_benchmarks": sum(row["status"] == "evaluated" for row in benchmarks),
-            "hard_train_eligible_candidates": int(ranking["hard_train_eligible"].sum()) if len(ranking) else 0,
+            "hard_train_eligible_candidates": int(ranking["hard_train_eligible"].sum())
+            if len(ranking)
+            else 0,
             "frozen_finalists": len(finalists),
             "locked_opened": False,
             "validation_opened": False,
@@ -832,7 +977,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         )
         compact_rows.to_csv(root / "candidate_and_benchmark_metrics.csv", index=False)
         annual_frame.to_csv(root / "annual_returns.csv", index=False)
-        annual_frame.to_csv(root / "fold_metrics.csv", index=False)
+        shutil.copy2(root / "train_fold_metrics.csv", root / "fold_metrics.csv")
 
         rolling_columns = [
             "unit_key",
@@ -846,18 +991,24 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         compact_rows.reindex(columns=rolling_columns).to_csv(
             root / "rolling_metrics.csv", index=False
         )
-        pd.DataFrame(
-            [
-                {
-                    "unit_key": row["unit_key"],
-                    "strategy_id": row["strategy_id"],
-                    "status": "not_calculated",
-                    "reason": "INCOMPLETE_FROZEN_DIAGNOSTIC_REGIME_DEFINITION",
-                }
-                for row in rows
-                if row["status"] == "evaluated"
-            ]
-        ).to_csv(root / "regime_metrics.csv", index=False)
+        regime_rows = []
+        for row in rows:
+            if row["status"] != "evaluated":
+                continue
+            decoded = json.loads(row["performance_by_market_regime_json"])
+            if not isinstance(decoded, list):
+                raise RuntimeError(f"REGIME_DIAGNOSTIC_MISSING:{row['unit_key']}")
+            for regime in decoded:
+                regime_rows.append(
+                    {
+                        "unit_key": row["unit_key"],
+                        "strategy_id": row["strategy_id"],
+                        "family": row["family"],
+                        "status": "calculated",
+                        **regime,
+                    }
+                )
+        pd.DataFrame(regime_rows).to_csv(root / "regime_metrics.csv", index=False)
 
         multiple_source = root / "multiple_testing.json"
         shutil.copy2(multiple_source, root / "multiple_testing_results.json")
@@ -895,12 +1046,17 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
         )
 
         implementation = (
+            _repo_root() / "campaigns" / "sp500_long_short_daily" / "implementation_mapping.md"
+        )
+        shutil.copy2(implementation, root / "implementation_mapping.md")
+        official_source_audit = (
             _repo_root()
             / "campaigns"
             / "sp500_long_short_daily"
-            / "implementation_mapping.md"
+            / "official_inputs"
+            / "official_source_audit.json"
         )
-        shutil.copy2(implementation, root / "implementation_mapping.md")
+        shutil.copy2(official_source_audit, root / "official_source_audit.json")
         dependency_lock = _repo_root() / "requirements" / "github-performance.lock"
         (root / "environment_lock.txt").write_text(
             "\n".join(
@@ -969,6 +1125,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "scheduler_plan.json",
             "environment_lock.txt",
             "implementation_mapping.md",
+            "official_source_audit.json",
         )
         missing = [name for name in required if not (root / name).is_file()]
         if missing:
@@ -981,10 +1138,7 @@ class Sp500LongShortTrainWorkload(FrozenScientificWorkload):
             "validation_opened": False,
             "locked_start": "2021-01-01",
             "locked_opened": False,
-            "files": {
-                name: sha256_file(root / name)
-                for name in sorted(required)
-            },
+            "files": {name: sha256_file(root / name) for name in sorted(required)},
         }
         manifest["manifest_sha256"] = canonical_json_hash(manifest)
         atomic_json(root / "final_manifest.json", manifest)
