@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: 9aabf6cae201dc30f212fcaf15f01d87ae8785d5
+        default: d8ac7d7c37d917d7d73149d343157c2c50b5eda6
         type: string
       base_run_id:
         description: Run containing openap-yfinance-sec-current-score-results
@@ -65,6 +65,7 @@ jobs:
           python -m py_compile research/openap_93/accounting_pipeline.py
           python -m py_compile research/openap_93/advanced_accounting_pipeline.py
           python -m py_compile research/openap_93/analyst_pipeline.py
+          python -m py_compile research/openap_93/short_interest_pipeline.py
           python -m py_compile research/openap_93/event_pipeline.py
           python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile research/openap_93/current_pipeline.py
