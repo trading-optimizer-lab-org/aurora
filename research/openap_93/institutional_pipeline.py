@@ -407,7 +407,11 @@ def map_cusips_openfigi(
                 "source_id",
             ]
         )
-    return result.drop_duplicates("cusip", keep="last").sort_values("cusip")
+    return (
+        result.drop_duplicates("cusip", keep="last")
+        .sort_values("cusip")
+        .reset_index(drop=True)
+    )
 
 
 def _quintile(values: pd.Series) -> pd.Series:
