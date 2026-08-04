@@ -44,6 +44,7 @@ FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
 SPY_RETURN_TOLERANCE = 5e-4
 SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
 SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
+STOOQ_MAX_BOUNDED_PAGES = 100
 
 
 class DataGateError(RuntimeError):
@@ -300,8 +301,9 @@ def _download_stooq_html_history(
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
 ) -> tuple[pd.DataFrame, bytes, str, int]:
-    """Read Stooq's public bounded HTML when its CSV export rejects automation."""
+    """Read Stooq's public bounded historical-data pages."""
 
+    print("[sp500-data] stooq first page start", flush=True)
     first_params: Mapping[str, Any] = {
         "s": symbol.lower(),
         "d1": start_date.strftime("%Y%m%d"),
@@ -324,10 +326,17 @@ def _download_stooq_html_history(
             timeout=20,
         )
     first_frame, page_count = _parse_stooq_html_history(first_payload)
+    print(
+        f"[sp500-data] stooq first page complete rows={len(first_frame)} pages={page_count}",
+        flush=True,
+    )
+    if page_count > STOOQ_MAX_BOUNDED_PAGES:
+        raise DataGateError(f"STOOQ_HTML_PAGE_COUNT_OUT_OF_RANGE:{page_count}")
     frames = [first_frame]
     payload_hashes = [_sha256(first_payload)]
 
     def fetch_page(page: int) -> tuple[int, bytes]:
+        print(f"[sp500-data] stooq page={page} start", flush=True)
         page_client = client
         owned_client: requests.Session | None = None
         if isinstance(client, requests.Session):
@@ -336,7 +345,7 @@ def _download_stooq_html_history(
             owned_client.cookies.update(client.cookies)
             page_client = owned_client
         try:
-            return page, _request_bytes(
+            payload = _request_bytes(
                 page_client,
                 STOOQ_HISTORY_PAGE,
                 params={
@@ -349,6 +358,8 @@ def _download_stooq_html_history(
                 attempts=3,
                 timeout=20,
             )
+            print(f"[sp500-data] stooq page={page} complete", flush=True)
+            return page, payload
         finally:
             if owned_client is not None:
                 owned_client.close()
@@ -1063,6 +1074,7 @@ def prepare_market_snapshot(
     raw_root = root / "raw"
     raw_root.mkdir(exist_ok=True)
     client = requests.Session()
+    print(f"[sp500-data] yahoo start={start_date.date()} end={end_date.date()}", flush=True)
     prices, yahoo_dividends, splits, yahoo_receipts = download_yahoo_history(
         "SPY",
         start_date,
@@ -1073,6 +1085,7 @@ def prepare_market_snapshot(
     )
     if not splits.empty:
         raise DataGateError("SPY_SPLIT_REQUIRES_EXPLICIT_RAW_PRICE_REPAIR")
+    print(f"[sp500-data] yahoo complete rows={len(prices)}", flush=True)
     if split == "train":
         exact_path = Path(
             os.environ.get("SP500_STATE_STREET_DISTRIBUTIONS_CSV", "").strip()
@@ -1095,6 +1108,7 @@ def prepare_market_snapshot(
         sponsor_reconciliation = reconcile_official_distribution_audit(
             exact_events, fiscal_totals, yahoo_dividends
         )
+        print("[sp500-data] official distribution audit complete", flush=True)
         dividends = yahoo_dividends.copy()
         _store_raw(raw_root, exact_path.name, exact_path.read_bytes())
         _store_raw(raw_root, totals_path.name, totals_path.read_bytes())
@@ -1117,6 +1131,7 @@ def prepare_market_snapshot(
         )
         distribution_receipts = [sponsor_receipt]
     ledger, audit = build_total_return_ledger(prices, dividends, splits)
+    print("[sp500-data] stooq history start", flush=True)
     stooq, stooq_receipt = download_stooq_history(
         "spy.us",
         start_date,
@@ -1125,6 +1140,7 @@ def prepare_market_snapshot(
         session=client,
         raw_dir=raw_root,
     )
+    print(f"[sp500-data] stooq history complete rows={len(stooq)}", flush=True)
     reconciliation = _reconcile_spy_sources(
         prices,
         stooq,
@@ -1154,6 +1170,7 @@ def prepare_market_snapshot(
         if dataset_id not in required:
             continue
         try:
+            print(f"[sp500-data] alfred {dataset_id} start", flush=True)
             downloaded, receipt = download_alfred_initial_series(
                 fred_id,
                 dataset_id,
@@ -1174,8 +1191,10 @@ def prepare_market_snapshot(
             series[logical_name] = aligned
             receipts.append(receipt)
             available.add(dataset_id)
+            print(f"[sp500-data] alfred {dataset_id} complete", flush=True)
         except DataGateError as exc:
             rejected[dataset_id] = str(exc)
+            print(f"[sp500-data] alfred {dataset_id} rejected={exc}", flush=True)
 
     for dataset_id in sorted(required - available - set(rejected)):
         rejected[dataset_id] = "NO_BOUNDED_CAUSAL_ADAPTER"
