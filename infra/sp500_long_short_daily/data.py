@@ -1498,7 +1498,7 @@ def _reconcile_spy_sources(
         following = common[location + 1] if location + 1 < len(common) else None
         endpoints = [endpoint for endpoint in (date, following) if endpoint is not None]
         bounded_level_difference = all(
-            bool((level_differences.loc[endpoint] <= SPY_RETURN_TOLERANCE).all())
+            bool(level_differences.loc[endpoint, "open"] <= SPY_RETURN_TOLERANCE)
             or endpoint in isolated_open_dates
             for endpoint in endpoints
         )
@@ -1594,6 +1594,16 @@ def _reconcile_spy_sources(
             date.date().isoformat() for date in sorted(close_only_dates)
         ],
         "close_return_unreconciled_outlier_count": 0,
+        "field_level_difference_diagnostics": {
+            column: {
+                "median_relative_difference": float(level_differences[column].median()),
+                "maximum_relative_difference": float(level_differences[column].max()),
+                "over_5_bps_count": int(
+                    (level_differences[column] > SPY_RETURN_TOLERANCE).sum()
+                ),
+            }
+            for column in ("open", "high", "low", "close")
+        },
     }
 
 

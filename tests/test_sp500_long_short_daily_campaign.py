@@ -958,6 +958,34 @@ def test_spy_reconciliation_reconciles_isolated_yahoo_open_error() -> None:
     ]
 
 
+def test_spy_execution_reconciliation_does_not_mix_high_low_vendor_noise() -> None:
+    dates = pd.bdate_range("2000-01-03", periods=1001)
+    daily = 0.0001 + 0.002 * np.sin(np.arange(len(dates), dtype=float) / 17.0)
+    close = 100.0 * np.cumprod(1.0 + daily)
+    stooq = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": close * 1.02,
+            "low": close * 0.98,
+            "close": close,
+            "volume": 1_000_000,
+        }
+    )
+    yahoo = stooq.copy()
+    yahoo.loc[500, "open"] *= 1.000049
+    yahoo.loc[500, "high"] *= 0.99
+    report = _reconcile_spy_sources(
+        yahoo,
+        stooq,
+        pd.DataFrame(columns=["date", "distribution"]),
+        pd.DataFrame(columns=["date", "split_ratio"]),
+        minimum_overlap=1000,
+    )
+    assert report["within_5_bps_fraction"] == 1.0
+    assert report["field_level_difference_diagnostics"]["high"]["over_5_bps_count"] == 1
+
+
 class _FakeResponse:
     def __init__(self, payload: bytes) -> None:
         self.content = payload
