@@ -508,6 +508,11 @@ def test_accounting_pipeline_emits_registered_subset_and_fails_closed() -> None:
         "cogs",
         "net_income",
         "operating_cash_flow",
+        "financing_cash_flow",
+        "investing_cash_flow",
+        "repurchases",
+        "share_issuance",
+        "dividends",
         "capex",
         "depreciation",
         "rd",
@@ -553,6 +558,56 @@ def test_accounting_pipeline_emits_registered_subset_and_fails_closed() -> None:
     assert not result.loc[proxy, "current_usable"].any()
     reconstructed = result["fidelity_class"].eq(FidelityClass.RECONSTRUCTED.value)
     assert result.loc[reconstructed & result["value"].notna(), "current_usable"].all()
+
+
+def test_pct_total_accrual_reproduces_openap_formula_and_requires_every_input() -> None:
+    master = pd.DataFrame(
+        {
+            "symbol": ["FULL", "MISSING"],
+            "marketCap": [1_000_000_000.0, 1_000_000_000.0],
+            "industry": ["industrial", "industrial"],
+            "sic_sec": [3571, 3571],
+        }
+    )
+    inputs = {
+        "net_income": 100.0,
+        "repurchases": 20.0,
+        "share_issuance": 5.0,
+        "dividends": 10.0,
+        "operating_cash_flow": 90.0,
+        "financing_cash_flow": -25.0,
+        "investing_cash_flow": -30.0,
+    }
+    rows = []
+    for symbol in ("FULL", "MISSING"):
+        for concept, value in inputs.items():
+            if symbol == "MISSING" and concept == "investing_cash_flow":
+                continue
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "concept": concept,
+                    "concept_lag": 0,
+                    "value": value,
+                    "available_at": pd.Timestamp("2026-03-01"),
+                    "period_end": pd.Timestamp("2025-12-31"),
+                }
+            )
+
+    result = calculate_accounting_signals(
+        master,
+        pd.DataFrame(rows),
+        formation_at="2026-07-31",
+        gnp_deflator=125.0,
+    )
+    pct = result.loc[result["signal"].eq("PctTotAcc")].set_index("symbol")
+
+    assert pct.loc["FULL", "value"] == pytest.approx(0.40)
+    assert pct.loc["FULL", "fidelity_class"] == FidelityClass.RECONSTRUCTED.value
+    assert bool(pct.loc["FULL", "current_usable"])
+    assert pd.isna(pct.loc["MISSING", "value"])
+    assert pct.loc["MISSING", "fidelity_class"] == FidelityClass.UNAVAILABLE.value
+    assert not bool(pct.loc["MISSING", "current_usable"])
 
 
 def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:

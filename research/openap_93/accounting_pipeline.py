@@ -27,6 +27,7 @@ ACCOUNTING_IMPLEMENTED_SIGNALS = frozenset(
         "OScore",
         "OrderBacklog",
         "OrderBacklogChg",
+        "PctTotAcc",
         "PS",
         "Tax",
         "dNoa",
@@ -522,6 +523,62 @@ def calculate_accounting_signals(
             available=available,
             periods=periods,
             caveat="SEC total tax replaces separate federal and foreign tax components",
+        )
+
+        pct_total_accrual_inputs = (
+            net_income,
+            get("repurchases"),
+            get("share_issuance"),
+            get("dividends"),
+            ocf,
+            get("financing_cash_flow"),
+            get("investing_cash_flow"),
+        )
+        pct_total_accrual = None
+        if all(value is not None for value in pct_total_accrual_inputs):
+            (
+                pct_net_income,
+                repurchases,
+                share_issuance,
+                dividends,
+                operating_cash_flow,
+                financing_cash_flow,
+                investing_cash_flow,
+            ) = pct_total_accrual_inputs
+            if abs(float(pct_net_income)) >= 1e-12:
+                pct_total_accrual = (
+                    float(pct_net_income)
+                    - (
+                        float(repurchases)
+                        - float(share_issuance)
+                        + float(dividends)
+                        + float(operating_cash_flow)
+                        + float(financing_cash_flow)
+                        + float(investing_cash_flow)
+                    )
+                ) / abs(float(pct_net_income))
+        _append(
+            rows,
+            symbol=symbol,
+            signal="PctTotAcc",
+            value=pct_total_accrual,
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_pcttotacc_sec_cashflow_components",
+            dependencies=(
+                ("net_income", 0),
+                ("repurchases", 0),
+                ("share_issuance", 0),
+                ("dividends", 0),
+                ("operating_cash_flow", 0),
+                ("financing_cash_flow", 0),
+                ("investing_cash_flow", 0),
+            ),
+            available=available,
+            periods=periods,
+            caveat=(
+                "OpenAP formula reproduced with economically equivalent "
+                "US-GAAP cash-flow tags; issuer-specific extensions fail closed"
+            ),
         )
 
     cross_frame = pd.DataFrame(cross).set_index("symbol") if cross else pd.DataFrame()
