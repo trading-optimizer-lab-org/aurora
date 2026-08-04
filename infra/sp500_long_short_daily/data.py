@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -495,11 +496,24 @@ def _request_stooq_history_page_via_cdp(
         if not port_file.is_file():
             raise DataGateError("STOOQ_HEADLESS_CDP_PORT_TIMEOUT")
         port = int(port_file.read_text(encoding="utf-8").splitlines()[0])
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/json/list",
-            timeout=10,
-        ) as response:
-            targets = json.loads(response.read())
+        targets: list[dict[str, Any]] | None = None
+        endpoint_deadline = time.monotonic() + 20.0
+        while time.monotonic() < endpoint_deadline:
+            if process.poll() is not None:
+                raise DataGateError("STOOQ_HEADLESS_BROWSER_FAILED:early_exit")
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/json/list",
+                    timeout=2,
+                ) as response:
+                    candidate_targets = json.loads(response.read())
+                if isinstance(candidate_targets, list):
+                    targets = candidate_targets
+                    break
+            except (OSError, urllib.error.URLError, json.JSONDecodeError):
+                time.sleep(0.05)
+        if targets is None:
+            raise DataGateError("STOOQ_HEADLESS_CDP_ENDPOINT_TIMEOUT")
         websocket_url = next(
             (
                 target.get("webSocketDebuggerUrl")
