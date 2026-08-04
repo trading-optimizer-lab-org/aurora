@@ -337,21 +337,33 @@ def _download_stooq_html_history(
 
     def fetch_page(page: int) -> tuple[int, bytes]:
         print(f"[sp500-data] stooq page={page} start", flush=True)
-        payload = _request_bytes(
-            client,
-            STOOQ_HISTORY_PAGE,
-            params={
-                "s": symbol.lower(),
-                "i": "d",
-                "f": start_date.strftime("%Y%m%d"),
-                "t": end_date.strftime("%Y%m%d"),
-                "l": page,
-            },
-            attempts=2,
-            timeout=15,
-        )
-        print(f"[sp500-data] stooq page={page} complete", flush=True)
-        return page, payload
+        page_client = client
+        owned_client: requests.Session | None = None
+        if isinstance(client, requests.Session):
+            owned_client = requests.Session()
+            owned_client.headers.update(client.headers)
+            owned_client.headers["Referer"] = STOOQ_HISTORY_PAGE
+            owned_client.cookies.update(client.cookies)
+            page_client = owned_client
+        try:
+            payload = _request_bytes(
+                page_client,
+                STOOQ_HISTORY_PAGE,
+                params={
+                    "s": symbol.lower(),
+                    "i": "d",
+                    "f": start_date.strftime("%Y%m%d"),
+                    "t": end_date.strftime("%Y%m%d"),
+                    "l": page,
+                },
+                attempts=2,
+                timeout=15,
+            )
+            print(f"[sp500-data] stooq page={page} complete", flush=True)
+            return page, payload
+        finally:
+            if owned_client is not None:
+                owned_client.close()
 
     pages: list[tuple[int, bytes]] = []
     for page in range(2, page_count + 1):
