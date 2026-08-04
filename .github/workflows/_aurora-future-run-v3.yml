@@ -263,8 +263,177 @@ jobs:
           compression-level: 0
           retention-days: ${{ inputs.retention_days }}
 
+  sp500_data_plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.plan.outputs.enabled }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      window_count: ${{ steps.plan.outputs.window_count }}
+      requested_start: ${{ steps.plan.outputs.requested_start }}
+      requested_end: ${{ steps.plan.outputs.requested_end }}
+    steps:
+      - name: Plan bounded SPY reconciliation windows
+        id: plan
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+          PREPARED_ARTIFACT_NAME: ${{ inputs.prepared_artifact_name }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+
+          workload = os.environ["WORKLOAD"]
+          enabled = (
+              "sp500_long_short_daily" in workload
+              and not os.environ["PREPARED_ARTIFACT_NAME"]
+          )
+          if "SMOKE_WORKLOAD" in workload:
+              start, end = dt.date(2005, 10, 1), dt.date(2009, 9, 30)
+          else:
+              start, end = dt.date(1993, 1, 22), dt.date(2010, 12, 31)
+
+          windows = []
+          if enabled:
+              cursor = start
+              while cursor <= end:
+                  try:
+                      next_boundary = cursor.replace(year=cursor.year + 2)
+                  except ValueError:
+                      next_boundary = cursor.replace(year=cursor.year + 2, day=28)
+                  bounded_end = min(next_boundary - dt.timedelta(days=1), end)
+                  index = len(windows)
+                  windows.append(
+                      {
+                          "window_id": f"{index:03d}",
+                          "start": cursor.isoformat(),
+                          "end": bounded_end.isoformat(),
+                      }
+                  )
+                  cursor = bounded_end + dt.timedelta(days=1)
+          else:
+              windows.append(
+                  {"window_id": "disabled", "start": start.isoformat(), "end": end.isoformat()}
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"enabled={str(enabled).lower()}\n")
+              handle.write(f"matrix={json.dumps({'include': windows}, separators=(',', ':'))}\n")
+              handle.write(f"window_count={len(windows) if enabled else 0}\n")
+              handle.write(f"requested_start={start.isoformat()}\n")
+              handle.write(f"requested_end={end.isoformat()}\n")
+          PY
+
+  sp500_stooq_windows:
+    needs: [prepare_environment, sp500_data_plan]
+    if: needs.sp500_data_plan.outputs.enabled == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 18
+      matrix: ${{ fromJson(needs.sp500_data_plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download bounded raw Stooq window
+        run: |
+          set -euo pipefail
+          python scripts/download_sp500_stooq_window.py \
+            --start "${{ matrix.start }}" \
+            --end "${{ matrix.end }}" \
+            --split train \
+            --window-id "${{ matrix.window_id }}" \
+            --output-dir "$RUNNER_TEMP/stooq-window"
+      - name: Upload immutable Stooq window
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.run_label }}-stooq-${{ github.run_id }}-${{ matrix.window_id }}
+          path: ${{ runner.temp }}/stooq-window
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
+  sp500_prepare_data:
+    needs: [validate, prepare_environment, sp500_data_plan, sp500_stooq_windows]
+    if: needs.sp500_data_plan.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download immutable wheelhouse
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.AURORA_WHEELHOUSE_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/wheelhouse
+      - name: Restore Aurora runtime
+        uses: ./.github/actions/aurora-runtime-setup
+        with:
+          python-version: "3.12"
+          wheelhouse-path: ${{ runner.temp }}/wheelhouse
+          dependency-lock-path: requirements/github-performance.lock
+      - name: Download every Stooq window
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ inputs.run_label }}-stooq-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/stooq-windows
+      - name: Merge and verify Stooq windows
+        run: |
+          set -euo pipefail
+          python scripts/merge_sp500_stooq_windows.py \
+            --input-root "$RUNNER_TEMP/stooq-windows" \
+            --output-dir "$RUNNER_TEMP/stooq-merged" \
+            --expected-windows "${{ needs.sp500_data_plan.outputs.window_count }}" \
+            --requested-start "${{ needs.sp500_data_plan.outputs.requested_start }}" \
+            --requested-end "${{ needs.sp500_data_plan.outputs.requested_end }}"
+      - name: Prepare immutable SPY data
+        env:
+          SP500_STOOQ_HISTORY_CSV: ${{ runner.temp }}/stooq-merged/stooq_spy_us_history.csv
+          SP500_STOOQ_HISTORY_MANIFEST: ${{ runner.temp }}/stooq-merged/stooq_sharded_manifest.json
+          SPEC_PATH: ${{ inputs.spec_path }}
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github prepare \
+            --spec "$SPEC_PATH" \
+            --workload "$WORKLOAD" \
+            --output-dir "$RUNNER_TEMP/prepared"
+      - name: Upload immutable prepared inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ inputs.retention_days }}
+
   prepare_data:
-    needs: validate
+    needs: [validate, sp500_data_plan, sp500_prepare_data]
+    if: >-
+      always() &&
+      needs.validate.result == 'success' &&
+      (
+        needs.sp500_data_plan.outputs.enabled != 'true' ||
+        needs.sp500_prepare_data.result == 'success'
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -285,13 +454,13 @@ jobs:
           wheelhouse-path: ${{ runner.temp }}/wheelhouse
           dependency-lock-path: requirements/github-performance.lock
       - name: Download shared immutable inputs
-        if: inputs.prepared_artifact_name != ''
+        if: inputs.prepared_artifact_name != '' || needs.sp500_data_plan.outputs.enabled == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/prepared
       - name: Prepare immutable data once
-        if: inputs.prepared_artifact_name == ''
+        if: inputs.prepared_artifact_name == '' && needs.sp500_data_plan.outputs.enabled != 'true'
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
           WORKLOAD: ${{ inputs.workload }}
@@ -302,7 +471,7 @@ jobs:
             --workload "$WORKLOAD" \
             --output-dir "$RUNNER_TEMP/prepared"
       - name: Upload prepared inputs
-        if: inputs.prepared_artifact_name == ''
+        if: inputs.prepared_artifact_name == '' && needs.sp500_data_plan.outputs.enabled != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ env.AURORA_PREPARED_ARTIFACT_NAME }}

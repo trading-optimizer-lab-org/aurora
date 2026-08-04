@@ -1423,6 +1423,18 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "prepared_artifact_name" in text
     assert "max-parallel: 18" in text
 
+    universal = (
+        REPO_ROOT / ".github" / "workflows" / "_aurora-future-run-v3.yml"
+    ).read_text(encoding="utf-8")
+    assert yaml.safe_load(universal)
+    assert "sp500_stooq_windows" in universal
+    assert "sp500_prepare_data" in universal
+    assert "merge_sp500_stooq_windows.py" in universal
+    assert "SP500_STOOQ_HISTORY_CSV" in universal
+    assert "max-parallel: 18" in universal
+    assert "C:\\" not in universal
+    assert "self-hosted" not in universal
+
 
 def test_smoke_manifest_advertises_only_opened_train_dates(
     tmp_path: Path,
