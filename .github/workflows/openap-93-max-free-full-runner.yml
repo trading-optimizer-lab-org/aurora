@@ -27,7 +27,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  framework_contract:
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/github_performance_reference.yaml
+      workload: aurora.infra.github_performance.reference_workload:WORKLOAD
+      run_label: openap-93-full-framework-contract
+      retention_days: 1
+      forced_job_count: 1
+
   full_pipeline:
+    needs: framework_contract
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
@@ -94,8 +104,11 @@ jobs:
           coverage = pd.read_csv(f"{root}/coverage_93.csv")
           manifest = json.load(open(f"{root}/run_manifest.json", encoding="utf-8"))
           assert signals["signal"].nunique() == 93
+          assert len(signals) > 0
           assert coverage["signal"].nunique() == 93 and len(coverage) == 93
+          assert coverage["status"].notna().all()
           assert signals["security_id"].notna().all()
+          assert len(scores) > 0
           assert pd.to_datetime(signals["available_at"]).dropna().le(
               pd.Timestamp(manifest["formation_at"])
           ).all()
