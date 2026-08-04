@@ -27,6 +27,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
     PreparedMarketData,
     _align_initial_releases,
+    _parse_yahoo_chart,
     _reconcile_spy_sources,
     download_alfred_initial_series,
     load_sec_distribution_totals,
@@ -149,6 +150,111 @@ def test_adjusted_close_is_never_used_as_an_open_price() -> None:
     plain, _ = build_total_return_ledger(_prices())
     adjusted_column_present, _ = build_total_return_ledger(prices)
     pd.testing.assert_series_equal(plain["long_return"], adjusted_column_present["long_return"])
+
+
+def test_yahoo_chart_parser_preserves_raw_prices_events_and_bounds() -> None:
+    timestamps = [
+        int(pd.Timestamp("2009-03-19", tz="UTC").timestamp()),
+        int(pd.Timestamp("2009-03-20", tz="UTC").timestamp()),
+    ]
+    payload = json.dumps(
+        {
+            "chart": {
+                "error": None,
+                "result": [
+                    {
+                        "meta": {
+                            "regularMarketTime": int(
+                                pd.Timestamp("2026-08-04", tz="UTC").timestamp()
+                            ),
+                            "regularMarketPrice": 999.0,
+                        },
+                        "timestamp": timestamps,
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [80.0, 81.0],
+                                    "high": [82.0, 83.0],
+                                    "low": [79.0, 80.0],
+                                    "close": [81.0, 82.0],
+                                    "volume": [1000, 1200],
+                                }
+                            ],
+                            "adjclose": [{"adjclose": [75.0, 76.0]}],
+                        },
+                        "events": {
+                            "dividends": {
+                                str(timestamps[1]): {
+                                    "date": timestamps[1],
+                                    "amount": 0.56172,
+                                }
+                            },
+                            "splits": {
+                                str(timestamps[0]): {
+                                    "date": timestamps[0],
+                                    "numerator": 2.0,
+                                    "denominator": 1.0,
+                                }
+                            },
+                        },
+                    }
+                ],
+            }
+        }
+    ).encode()
+
+    prices, dividends, splits, bounded = _parse_yahoo_chart(
+        payload,
+        start=pd.Timestamp("2009-03-19"),
+        end=pd.Timestamp("2009-03-20"),
+    )
+
+    assert prices["close"].tolist() == [81.0, 82.0]
+    assert prices["adj_close"].tolist() == [75.0, 76.0]
+    assert dividends.to_dict(orient="records") == [
+        {"date": pd.Timestamp("2009-03-20"), "distribution": 0.56172}
+    ]
+    assert splits.to_dict(orient="records") == [
+        {"date": pd.Timestamp("2009-03-19"), "split_ratio": 2.0}
+    ]
+    bounded_document = json.loads(bounded)
+    assert "meta" not in bounded_document
+    assert bounded_document["prices"][-1]["date"] == "2009-03-20"
+    assert "2026" not in bounded.decode()
+
+
+def test_yahoo_chart_parser_rejects_observations_outside_requested_period() -> None:
+    timestamp = int(pd.Timestamp("2011-01-03", tz="UTC").timestamp())
+    payload = json.dumps(
+        {
+            "chart": {
+                "error": None,
+                "result": [
+                    {
+                        "timestamp": [timestamp],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [100.0],
+                                    "high": [101.0],
+                                    "low": [99.0],
+                                    "close": [100.5],
+                                    "volume": [1000],
+                                }
+                            ],
+                            "adjclose": [{"adjclose": [100.5]}],
+                        },
+                    }
+                ],
+            }
+        }
+    ).encode()
+    with pytest.raises(DataGateError, match="UNBOUNDED_SOURCE_RESPONSE:yahoo_history"):
+        _parse_yahoo_chart(
+            payload,
+            start=pd.Timestamp("2010-01-01"),
+            end=pd.Timestamp("2010-12-31"),
+        )
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:

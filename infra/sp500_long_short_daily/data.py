@@ -30,9 +30,10 @@ from aurora.infra.sp500_long_short_daily.contracts import (
 from aurora.infra.sp500_long_short_daily.ledger import build_total_return_ledger
 
 
-YAHOO_DOWNLOAD = "https://query1.finance.yahoo.com/v7/finance/download/{symbol}"
-YAHOO_COOKIE = "https://fc.yahoo.com"
-YAHOO_CRUMB = "https://query2.finance.yahoo.com/v1/test/getcrumb"
+YAHOO_CHART_ENDPOINTS = (
+    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+    "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
+)
 STOOQ_DOWNLOAD = "https://stooq.com/q/d/l/"
 FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
@@ -155,6 +156,116 @@ def _assert_response_date_bound(
     return result
 
 
+def _parse_yahoo_chart(
+    payload: bytes,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bytes]:
+    """Parse only bounded daily observations and discard Yahoo quote metadata."""
+
+    try:
+        document = json.loads(payload)
+        chart = document["chart"]
+        if chart.get("error") is not None:
+            raise DataGateError("YAHOO_CHART_ERROR")
+        results = chart.get("result") or []
+        if len(results) != 1:
+            raise DataGateError("YAHOO_CHART_RESULT_COUNT")
+        result = results[0]
+        timestamps = result.get("timestamp") or []
+        quote = (result.get("indicators", {}).get("quote") or [])[0]
+        adjusted_groups = result.get("indicators", {}).get("adjclose") or []
+        adjusted = adjusted_groups[0].get("adjclose", []) if adjusted_groups else []
+    except DataGateError:
+        raise
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise DataGateError("YAHOO_CHART_SCHEMA_MISMATCH") from exc
+
+    columns = {
+        "open": quote.get("open", []),
+        "high": quote.get("high", []),
+        "low": quote.get("low", []),
+        "close": quote.get("close", []),
+        "volume": quote.get("volume", []),
+    }
+    lengths = {len(timestamps), len(adjusted), *(len(values) for values in columns.values())}
+    if len(lengths) != 1:
+        raise DataGateError("YAHOO_CHART_ARRAY_LENGTH_MISMATCH")
+
+    dates = pd.to_datetime(timestamps, unit="s", utc=True).tz_localize(None).normalize()
+    prices = pd.DataFrame(
+        {
+            "date": dates,
+            **columns,
+            "adj_close": adjusted,
+        }
+    )[["date", "open", "high", "low", "close", "adj_close", "volume"]]
+    prices = _assert_response_date_bound(
+        prices,
+        date_column="date",
+        start=start,
+        end=end,
+        label="yahoo_history",
+    )
+
+    events = result.get("events") or {}
+
+    def event_frame(name: str, value_name: str) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for event in (events.get(name) or {}).values():
+            event_timestamp = event.get("date")
+            if event_timestamp is None:
+                raise DataGateError(f"YAHOO_EVENT_DATE_MISSING:{name}")
+            if name == "splits":
+                numerator = event.get("numerator")
+                denominator = event.get("denominator")
+                if numerator is None or denominator in (None, 0):
+                    raise DataGateError("YAHOO_SPLIT_RATIO_MISSING")
+                value = float(numerator) / float(denominator)
+            else:
+                value = event.get("amount")
+            rows.append(
+                {
+                    "date": pd.to_datetime(event_timestamp, unit="s", utc=True)
+                    .tz_localize(None)
+                    .normalize(),
+                    value_name: value,
+                }
+            )
+        frame = pd.DataFrame(rows, columns=["date", value_name])
+        if len(frame):
+            frame[value_name] = pd.to_numeric(frame[value_name], errors="raise")
+            frame = frame.sort_values("date", kind="mergesort").reset_index(drop=True)
+        return _assert_response_date_bound(
+            frame,
+            date_column="date",
+            start=start,
+            end=end,
+            label=f"yahoo_{name}",
+        )
+
+    dividends = event_frame("dividends", "distribution")
+    splits = event_frame("splits", "split_ratio")
+    bounded_prices = prices.assign(date=prices["date"].dt.strftime("%Y-%m-%d"))
+    bounded_prices = bounded_prices.astype(object).where(pd.notna(bounded_prices), None)
+    bounded_snapshot = json.dumps(
+        {
+            "prices": bounded_prices.to_dict(orient="records"),
+            "dividends": dividends.assign(date=dividends["date"].dt.strftime("%Y-%m-%d")).to_dict(
+                orient="records"
+            ),
+            "splits": splits.assign(date=splits["date"].dt.strftime("%Y-%m-%d")).to_dict(
+                orient="records"
+            ),
+        },
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return prices, dividends, splits, bounded_snapshot
+
+
 def download_yahoo_history(
     symbol: str,
     start: Any,
@@ -164,82 +275,51 @@ def download_yahoo_history(
     session: requests.Session | None = None,
     raw_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[DownloadReceipt, ...]]:
-    """Download bounded raw OHLC, dividends and splits as CSV only.
-
-    The period2 bound is exclusive. The CSV endpoint returns no current quote
-    metadata, unlike the chart endpoint, which is intentionally forbidden.
-    """
+    """Download bounded raw OHLC, dividends and splits from Yahoo chart JSON."""
 
     start_date, end_date = _bounded_dates(start, end, split=split)
     client = session or requests.Session()
-    client.headers.update({"User-Agent": "AuroraResearch/1.0 bounded-csv"})
-    _request_bytes(client, YAHOO_COOKIE, attempts=2)
-    crumb = _request_bytes(client, YAHOO_CRUMB, attempts=3).decode("utf-8").strip()
-    if not crumb or "<" in crumb:
-        raise DataGateError("YAHOO_CRUMB_UNAVAILABLE")
-    common = {
+    client.headers.update({"User-Agent": "Mozilla/5.0 AuroraResearch bounded-chart-json"})
+    params = {
         "period1": _epoch_seconds(start_date),
         "period2": _epoch_seconds(end_date + pd.Timedelta(days=1)),
         "interval": "1d",
-        "crumb": crumb,
+        "events": "div,splits",
+        "includeAdjustedClose": "true",
+        "includePrePost": "false",
     }
-    receipts: list[DownloadReceipt] = []
-    outputs: list[pd.DataFrame] = []
-    for event, dataset_id in (
-        ("history", "YAHOO_SPY_OHLCV"),
-        ("div", "YAHOO_SPY_DISTRIBUTIONS"),
-        ("split", "YAHOO_SPY_SPLITS"),
-    ):
-        params = {**common, "events": event, "includeAdjustedClose": "true"}
-        payload = _request_bytes(client, YAHOO_DOWNLOAD.format(symbol=symbol), params=params)
-        frame = _parse_csv(payload)
-        if "Date" not in frame:
-            raise DataGateError(f"YAHOO_SCHEMA_MISMATCH:{event}")
-        frame = _assert_response_date_bound(
-            frame,
-            date_column="Date",
-            start=start_date,
-            end=end_date,
-            label=f"yahoo_{event}",
-        )
-        _store_raw(raw_dir, f"yahoo_{symbol.lower()}_{event}.csv", payload)
-        dates = frame["Date"]
-        receipts.append(
-            DownloadReceipt(
-                dataset_id=dataset_id,
-                url_template=YAHOO_DOWNLOAD.format(symbol=symbol),
-                sha256=_sha256(payload),
-                byte_count=len(payload),
-                minimum_date=dates.min().date().isoformat() if len(dates) else None,
-                maximum_date=dates.max().date().isoformat() if len(dates) else None,
-                status="downloaded",
-            )
-        )
-        outputs.append(frame)
-    history, dividends, splits = outputs
-    prices = history.rename(
-        columns={
-            "Date": "date",
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Adj Close": "adj_close",
-            "Volume": "volume",
-        }
+    payload: bytes | None = None
+    selected_url: str | None = None
+    errors: list[str] = []
+    for endpoint in YAHOO_CHART_ENDPOINTS:
+        selected_url = endpoint.format(symbol=symbol)
+        try:
+            payload = _request_bytes(client, selected_url, params=params, attempts=3)
+            break
+        except DataGateError as exc:
+            errors.append(str(exc))
+    if payload is None or selected_url is None:
+        raise DataGateError(f"YAHOO_CHART_ENDPOINTS_FAILED:{'|'.join(errors)}")
+
+    prices, dividends, splits, bounded_payload = _parse_yahoo_chart(
+        payload,
+        start=start_date,
+        end=end_date,
     )
-    prices = prices[["date", "open", "high", "low", "close", "adj_close", "volume"]]
-    dividends = dividends.rename(columns={"Date": "date", "Dividends": "distribution"})
-    if "distribution" not in dividends:
-        dividends = pd.DataFrame(columns=["date", "distribution"])
-    else:
-        dividends = dividends[["date", "distribution"]]
-    splits = splits.rename(columns={"Date": "date", "Stock Splits": "split_ratio"})
-    if "split_ratio" not in splits:
-        splits = pd.DataFrame(columns=["date", "split_ratio"])
-    else:
-        splits = splits[["date", "split_ratio"]]
-    return prices, dividends, splits, tuple(receipts)
+    _store_raw(raw_dir, f"yahoo_{symbol.lower()}_bounded_chart.json", bounded_payload)
+    dates = prices["date"]
+    receipts = (
+        DownloadReceipt(
+            dataset_id="YAHOO_SPY_BOUNDED_CHART",
+            url_template=selected_url,
+            sha256=_sha256(bounded_payload),
+            byte_count=len(bounded_payload),
+            minimum_date=dates.min().date().isoformat() if len(dates) else None,
+            maximum_date=dates.max().date().isoformat() if len(dates) else None,
+            status="downloaded_bounded_chart_json_current_metadata_discarded",
+        ),
+    )
+    return prices, dividends, splits, receipts
 
 
 def download_stooq_history(
