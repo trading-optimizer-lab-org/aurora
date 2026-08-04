@@ -2,6 +2,7 @@ name: OpenAP Current Data Quality Tests
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
