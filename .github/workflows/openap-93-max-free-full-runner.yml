@@ -64,6 +64,7 @@ jobs:
           python -m py_compile research/openap_93/market_pipeline.py
           python -m py_compile research/openap_93/accounting_pipeline.py
           python -m py_compile research/openap_93/advanced_accounting_pipeline.py
+          python -m py_compile research/openap_93/analyst_pipeline.py
           python -m py_compile research/openap_93/event_pipeline.py
           python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile research/openap_93/current_pipeline.py
