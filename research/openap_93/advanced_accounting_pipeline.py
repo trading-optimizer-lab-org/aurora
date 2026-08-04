@@ -24,6 +24,8 @@ ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS = frozenset(
         "CompEquIss",
         "EarningsConsistency",
         "EquityDuration",
+        "Frontier",
+        "GrLTNOA",
         "Herf",
         "HerfBE",
         "IntanBM",
@@ -42,8 +44,13 @@ ANNUAL_ALIASES: dict[str, tuple[str, ...]] = {
     "advertising": ("AdvertisingExpense",),
     "assets": ("Assets",),
     "capex": ("PaymentsToAcquirePropertyPlantAndEquipment",),
+    "cash": (
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    ),
     "current_assets": ("AssetsCurrent",),
     "current_debt": ("LongTermDebtCurrent", "ShortTermBorrowings"),
+    "current_liabilities": ("LiabilitiesCurrent",),
     "depreciation": ("DepreciationDepletionAndAmortization", "Depreciation"),
     "equity": (
         "StockholdersEquity",
@@ -54,6 +61,7 @@ ANNUAL_ALIASES: dict[str, tuple[str, ...]] = {
     "long_investments": ("LongTermInvestments", "OtherInvestments"),
     "net_income": ("NetIncomeLoss", "ProfitLoss"),
     "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",),
+    "operating_income": ("OperatingIncomeLoss",),
     "ppe": ("PropertyPlantAndEquipmentNet",),
     "preferred_stock": ("PreferredStockValue", "PreferredStockCarryingValue"),
     "rd": ("ResearchAndDevelopmentExpense",),
@@ -64,6 +72,7 @@ ANNUAL_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "sga": ("SellingGeneralAndAdministrativeExpense",),
     "shares": ("EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"),
+    "short_investments": ("ShortTermInvestments", "MarketableSecuritiesCurrent"),
 }
 
 FLOW_CONCEPTS = {
@@ -571,6 +580,162 @@ def _equity_duration(
     ).set_index("symbol")
 
 
+def _growth_long_term_noa(annual: pd.DataFrame) -> pd.DataFrame:
+    """Reconstruct GrLTNOA using equivalent aggregate SEC identities."""
+
+    frame = annual.copy().sort_values(["symbol", "period_end"])
+    required = (
+        "assets",
+        "cash",
+        "current_assets",
+        "current_debt",
+        "current_liabilities",
+        "depreciation",
+        "liabilities",
+        "long_debt",
+    )
+    for column in required:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    for column in ("short_investments", "long_investments"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
+
+    financial_assets = (
+        frame["cash"] + frame["short_investments"] + frame["long_investments"]
+    )
+    financial_liabilities = frame["current_debt"] + frame["long_debt"]
+    frame["noa_scaled"] = (
+        frame["assets"]
+        - financial_assets
+        - (frame["liabilities"] - financial_liabilities)
+    ) / frame["assets"].replace(0.0, np.nan)
+    frame["working_capital"] = (
+        frame["current_assets"]
+        - frame["cash"]
+        - frame["short_investments"]
+        - (frame["current_liabilities"] - frame["current_debt"])
+    )
+
+    grouped = frame.groupby("symbol", sort=False)
+    lag_assets = grouped["assets"].shift(1)
+    lag_noa_scaled = grouped["noa_scaled"].shift(1)
+    lag_working_capital = grouped["working_capital"].shift(1)
+    period_gap = (frame["period_end"] - grouped["period_end"].shift(1)).dt.days
+    average_assets = 0.5 * (frame["assets"] + lag_assets)
+    working_capital_adjustment = (
+        frame["working_capital"] - lag_working_capital - frame["depreciation"]
+    ) / average_assets.replace(0.0, np.nan)
+    frame["value"] = frame["noa_scaled"] - lag_noa_scaled - working_capital_adjustment
+    frame.loc[~period_gap.between(300, 430), "value"] = np.nan
+    return frame.dropna(subset=["value"]).sort_values(
+        ["symbol", "available_at"]
+    ).drop_duplicates("symbol", keep="last").set_index("symbol")
+
+
+def _frontier_current(panel: pd.DataFrame) -> pd.DataFrame:
+    """Current Nguyen-Swanson frontier residual with a causal 60-month window."""
+
+    if panel.empty:
+        return pd.DataFrame()
+    frame = panel.copy()
+    for column in (
+        "assets",
+        "advertising",
+        "capex",
+        "close",
+        "depreciation",
+        "equity",
+        "long_debt",
+        "operating_income",
+        "ppe",
+        "rd",
+        "revenue",
+        "shares",
+        "sic",
+    ):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame["advertising"] = frame["advertising"].fillna(0.0)
+    frame["market_equity"] = frame["close"] * frame["shares"]
+    frame["log_market_equity"] = np.log(
+        frame["market_equity"].where(frame["market_equity"].gt(0))
+    )
+    frame["log_book_equity"] = np.log(
+        frame["equity"].where(frame["equity"].gt(0))
+    )
+    frame["long_debt_assets"] = frame["long_debt"] / frame["assets"].replace(
+        0.0, np.nan
+    )
+    frame["capex_sales"] = frame["capex"] / frame["revenue"].replace(0.0, np.nan)
+    frame["rd_sales"] = frame["rd"] / frame["revenue"].replace(0.0, np.nan)
+    frame["advertising_sales"] = frame["advertising"] / frame["revenue"].replace(
+        0.0, np.nan
+    )
+    frame["ppe_assets"] = frame["ppe"] / frame["assets"].replace(0.0, np.nan)
+    frame["ebitda_assets"] = (
+        frame["operating_income"] + frame["depreciation"]
+    ) / frame["assets"].replace(0.0, np.nan)
+    frame["industry"] = (frame["sic"] // 100).astype("Int64")
+
+    current_month = frame["month"].max()
+    start_month = current_month - pd.DateOffset(months=60)
+    regressors = [
+        "log_book_equity",
+        "long_debt_assets",
+        "capex_sales",
+        "rd_sales",
+        "advertising_sales",
+        "ppe_assets",
+        "ebitda_assets",
+    ]
+    train = frame.loc[
+        frame["month"].gt(start_month) & frame["month"].le(current_month)
+    ].dropna(subset=["log_market_equity", "industry", *regressors])
+    current = frame.loc[frame["month"].eq(current_month)].dropna(
+        subset=["log_market_equity", "industry", *regressors]
+    )
+    if train.empty or current.empty:
+        return pd.DataFrame()
+
+    train_industry = pd.get_dummies(
+        train["industry"], prefix="industry", dtype=float
+    )
+    current_industry = pd.get_dummies(
+        current["industry"], prefix="industry", dtype=float
+    )
+    current_industry = current_industry.reindex(
+        columns=train_industry.columns, fill_value=0.0
+    )
+    x_train = pd.concat(
+        [
+            train[regressors].astype(float).reset_index(drop=True),
+            train_industry.reset_index(drop=True),
+        ],
+        axis=1,
+    )
+    x_current = pd.concat(
+        [
+            current[regressors].astype(float).reset_index(drop=True),
+            current_industry.reset_index(drop=True),
+        ],
+        axis=1,
+    )
+    if len(train) <= x_train.shape[1] + 2:
+        return pd.DataFrame()
+    design_train = np.column_stack(
+        [np.ones(len(x_train)), x_train.to_numpy(dtype=float)]
+    )
+    design_current = np.column_stack(
+        [np.ones(len(x_current)), x_current.to_numpy(dtype=float)]
+    )
+    coefficients, *_ = np.linalg.lstsq(
+        design_train,
+        train["log_market_equity"].to_numpy(dtype=float),
+        rcond=None,
+    )
+    result = current.reset_index(drop=True).copy()
+    result["value"] = design_current @ coefficients - result["log_market_equity"]
+    return result.set_index("symbol")
+
+
 def _mohanram_annual_proxy(
     annual: pd.DataFrame,
     monthly_prices: pd.DataFrame,
@@ -717,6 +882,8 @@ def calculate_advanced_accounting_signals(
     abnormal = _abnormal_accruals(annual)
     ch_nncoa = _change_nncoa(annual)
     equity_duration = _equity_duration(annual, monthly_prices)
+    gr_ltnoa = _growth_long_term_noa(annual)
+    frontier = _frontier_current(panel)
     mohanram = _mohanram_annual_proxy(annual, monthly_prices)
     annual_counts = annual.groupby("symbol").size().to_dict()
     comp_equity = _comp_equity_issuance(panel) if not panel.empty else pd.Series(dtype=float)
@@ -807,6 +974,48 @@ def calculate_advanced_accounting_signals(
             period_end=duration_row.get("period_end", pd.NaT),
             observation_count=int(annual_counts.get(symbol, 0)),
             caveat="SEC annual equity/income/revenue and Yahoo fiscal-period price replace Compustat/CRSP",
+        )
+        gr_ltnoa_row = (
+            gr_ltnoa.loc[symbol]
+            if symbol in gr_ltnoa.index
+            else pd.Series(dtype=object)
+        )
+        _append_value(
+            rows,
+            symbol=symbol,
+            signal="GrLTNOA",
+            value=gr_ltnoa_row.get("value"),
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_grltnoa_sec_aggregate_identities",
+            source_ids=("sec_edgar",),
+            available_at=gr_ltnoa_row.get("available_at", pd.NaT),
+            period_end=gr_ltnoa_row.get("period_end", pd.NaT),
+            observation_count=int(annual_counts.get(symbol, 0)),
+            caveat=(
+                "Equivalent aggregate SEC identities replace the individual "
+                "Compustat operating-asset and liability fields"
+            ),
+        )
+        frontier_row = (
+            frontier.loc[symbol]
+            if symbol in frontier.index
+            else pd.Series(dtype=object)
+        )
+        _append_value(
+            rows,
+            symbol=symbol,
+            signal="Frontier",
+            value=frontier_row.get("value"),
+            fidelity=FidelityClass.RECONSTRUCTED,
+            formula_id="openap_frontier_60m_sec_yahoo_sic2",
+            source_ids=("sec_edgar", "yahoo_public"),
+            available_at=frontier_row.get("available_at", pd.NaT),
+            period_end=frontier_row.get("period_end", pd.NaT),
+            observation_count=monthly_count,
+            caveat=(
+                "SEC filing SIC two-digit dummies replace CRSP SIC FF48 while "
+                "preserving the official 60-month regression design"
+            ),
         )
         ms_row = mohanram.loc[symbol] if symbol in mohanram.index else pd.Series(dtype=object)
         _append_value(
@@ -989,6 +1198,8 @@ def implemented_source_pairs() -> frozenset[tuple[str, str]]:
         "CompEquIss": ("sec_edgar", "yahoo_public"),
         "EarningsConsistency": ("sec_edgar",),
         "EquityDuration": ("sec_edgar", "yahoo_public"),
+        "Frontier": ("sec_edgar", "yahoo_public"),
+        "GrLTNOA": ("sec_edgar",),
         "Herf": ("sec_edgar",),
         "HerfBE": ("sec_edgar",),
         "IntanBM": ("sec_edgar", "yahoo_public"),

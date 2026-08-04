@@ -543,12 +543,15 @@ def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
     tag_values = {
         "Assets": 1000.0,
         "AssetsCurrent": 450.0,
+        "CashAndCashEquivalentsAtCarryingValue": 120.0,
         "Liabilities": 600.0,
+        "LiabilitiesCurrent": 180.0,
         "LongTermDebtCurrent": 35.0,
         "LongTermDebtNoncurrent": 220.0,
         "LongTermInvestments": 50.0,
         "NetIncomeLoss": 90.0,
         "NetCashProvidedByUsedInOperatingActivities": 110.0,
+        "OperatingIncomeLoss": 135.0,
         "PropertyPlantAndEquipmentNet": 300.0,
         "RevenueFromContractWithCustomerExcludingAssessedTax": 1500.0,
         "StockholdersEquity": 400.0,
@@ -556,6 +559,7 @@ def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
         "ResearchAndDevelopmentExpense": 80.0,
         "PaymentsToAcquirePropertyPlantAndEquipment": 70.0,
         "SellingGeneralAndAdministrativeExpense": 140.0,
+        "ShortTermInvestments": 30.0,
         "AdvertisingExpense": 25.0,
         "DepreciationDepletionAndAmortization": 40.0,
         "PreferredStockValue": 5.0,
@@ -616,7 +620,13 @@ def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
     assert pd.to_datetime(result["available_at"]).dropna().le(
         pd.Timestamp("2026-07-31")
     ).all()
-    for signal in ("AbnormalAccruals", "ChNNCOA", "EquityDuration"):
+    for signal in (
+        "AbnormalAccruals",
+        "ChNNCOA",
+        "EquityDuration",
+        "Frontier",
+        "GrLTNOA",
+    ):
         assert result.loc[result["signal"].eq(signal), "value"].notna().any()
     ms = result.loc[result["signal"].eq("MS")]
     assert ms["value"].notna().any()
