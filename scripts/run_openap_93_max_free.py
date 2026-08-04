@@ -26,6 +26,7 @@ NORMALIZED_PUBLIC_DATASETS = (
     "vix_daily",
     "gnp_deflator",
     "signal_doc",
+    "openap_reference_sample",
 )
 
 
@@ -42,6 +43,7 @@ def required_cached_inputs(source_probe: Path, public_inputs: Path) -> tuple[Pat
         source_probe / "sources.lock.json",
         public_inputs / "public_inputs_manifest.json",
         normalized / "normalized_summary.json",
+        normalized / "openap_reference_metadata.json",
         *(normalized / f"{dataset}.parquet" for dataset in NORMALIZED_PUBLIC_DATASETS),
     )
 

@@ -164,6 +164,7 @@ def _load_public_frames(normalized_dir: str | Path) -> dict[str, pd.DataFrame]:
         "vix_daily",
         "gnp_deflator",
         "signal_doc",
+        "openap_reference_sample",
     )
     frames: dict[str, pd.DataFrame] = {}
     for name in required:
@@ -396,13 +397,40 @@ def _normalize_signal_results(
     ).reset_index(drop=True)
 
 
-def build_validation_report(signals: pd.DataFrame) -> pd.DataFrame:
+def build_validation_report(
+    signals: pd.DataFrame,
+    openap_reference_sample: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Emit a fail-closed validation row for every signal.
 
     Current-only reconstruction cannot satisfy the required 12-month overlap,
     so no proxy is promoted merely because a number exists.
     """
 
+    reference = (
+        openap_reference_sample
+        if openap_reference_sample is not None
+        else pd.DataFrame()
+    )
+    reference_has_permno = {"permno", "yyyymm"} <= set(reference.columns)
+    reference_has_public_identity = bool(
+        {"ticker", "cik", "security_id"} & set(reference.columns)
+    )
+    identity_crosswalk_available = reference_has_permno and reference_has_public_identity
+    if reference_has_permno and not identity_crosswalk_available:
+        reference_reason = (
+            "The latest official OpenAP firm-level reference was downloaded "
+            "and inspected, but it exposes permno and yyyymm only. The current "
+            "Aurora universe uses CIK and ticker, and no free authorized "
+            "point-in-time permno crosswalk is available. Therefore no proxy "
+            "is promoted from unpaired or stale observations."
+        )
+    else:
+        reference_reason = (
+            "No public point-in-time historical firm-level overlap was "
+            "available in this execution; stale OpenAP values were not "
+            "used as current data or as evidence of proxy validity."
+        )
     rows: list[dict[str, Any]] = []
     for signal in REQUIRED_93:
         part = signals.loc[signals["signal"].eq(signal)]
@@ -439,11 +467,10 @@ def build_validation_report(signals: pd.DataFrame) -> pd.DataFrame:
                 "next_return_ic": np.nan,
                 "validated_proxy_threshold_pass": False,
                 "reconstructed_target_pass": False,
-                "reason": (
-                    "No public point-in-time historical firm-level overlap was "
-                    "available in this execution; stale OpenAP values were not "
-                    "used as current data or as evidence of proxy validity."
-                ),
+                "reference_rows_inspected": int(len(reference)),
+                "reference_identifier": "permno|yyyymm" if reference_has_permno else "",
+                "identity_crosswalk_available": identity_crosswalk_available,
+                "reason": reference_reason,
             }
         )
     return pd.DataFrame(rows)
@@ -923,7 +950,10 @@ def run_current_pipeline(
     if not finite.all():
         raise RuntimeError("Non-finite values reached the final current-signal table")
 
-    validation = build_validation_report(signals)
+    validation = build_validation_report(
+        signals,
+        openap_reference_sample=public["openap_reference_sample"],
+    )
     coverage = build_coverage_report(signals, registry, validation)
     score_table = build_score_table(base["features"], base["metadata"], signals)
 
@@ -937,9 +967,19 @@ def run_current_pipeline(
         output / "validation_per_month.parquet", index=False, compression="zstd"
     )
     (output / "validation_summary.md").write_text(
-        "# Validation Summary\n\nNo proxy met the historical-overlap contract; no proxy was promoted.\n",
+        "# Validation Summary\n\n"
+        "The latest official OpenAP firm-level archive was downloaded and "
+        "inspected. It identifies observations with `permno` and `yyyymm`; "
+        "Aurora's free current universe uses CIK and ticker. No free authorized "
+        "point-in-time identity crosswalk was available, so zero unpaired or "
+        "stale values were used to validate or promote a proxy.\n",
         encoding="utf-8",
     )
+
+    reference_metadata_path = (
+        Path(normalized_public_inputs) / "openap_reference_metadata.json"
+    )
+    _copy_report(reference_metadata_path, output / "openap_reference_metadata.json")
 
     probe = Path(source_probe_dir)
     for name in (
@@ -985,6 +1025,9 @@ def run_current_pipeline(
             (Path(normalized_public_inputs).parent / "public_inputs_manifest.json").read_text(
                 encoding="utf-8"
             )
+        ),
+        "openap_reference_metadata": json.loads(
+            (output / "openap_reference_metadata.json").read_text(encoding="utf-8")
         ),
         "signal_formulas": {
             name: {

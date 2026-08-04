@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from io import StringIO
+from io import TextIOWrapper
 from pathlib import Path
 from zipfile import ZipFile
 import hashlib
@@ -54,6 +55,11 @@ PUBLIC_INPUTS: tuple[DownloadSpec, ...] = (
         "https://raw.githubusercontent.com/OpenSourceAP/CrossSection/8db892442c2c3a3779b0f1eac4370d3655be15a1/SignalDoc.csv",
         "SignalDoc.csv", "csv",
     ),
+    DownloadSpec(
+        "openap_reference", "firm_characteristics_latest",
+        "https://drive.usercontent.google.com/download?id=1avFIMjz_7LoF3p3nO26eqLW5KdRTOdhW&export=download&confirm=t",
+        "signed_predictors_dl_wide.zip", "openap_reference_zip",
+    ),
 )
 
 
@@ -75,20 +81,41 @@ def download_public_inputs(output_dir: str | Path, *, timeout: int = 120) -> lis
     with requests.Session() as session:
         for spec in PUBLIC_INPUTS:
             target = raw / spec.filename
-            response = session.get(spec.url, headers=headers, timeout=timeout)
-            response.raise_for_status()
-            content = response.content
-            if not content:
-                raise RuntimeError(f"{spec.dataset_id}: empty public download")
-            target.write_bytes(content)
+            temporary = target.with_suffix(target.suffix + ".partial")
+            temporary.unlink(missing_ok=True)
+            digest = hashlib.sha256()
+            byte_count = 0
+            try:
+                with session.get(
+                    spec.url,
+                    headers=headers,
+                    timeout=timeout,
+                    stream=True,
+                ) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("Content-Type", "")
+                    status_code = response.status_code
+                    with temporary.open("wb") as handle:
+                        for block in response.iter_content(chunk_size=8 * 1024 * 1024):
+                            if not block:
+                                continue
+                            handle.write(block)
+                            digest.update(block)
+                            byte_count += len(block)
+                if byte_count == 0:
+                    raise RuntimeError(f"{spec.dataset_id}: empty public download")
+                temporary.replace(target)
+            except Exception:
+                temporary.unlink(missing_ok=True)
+                raise
             rows.append({
                 **asdict(spec),
                 "path": str(target),
-                "bytes": len(content),
-                "sha256": hashlib.sha256(content).hexdigest(),
-                "content_type": response.headers.get("Content-Type", ""),
+                "bytes": byte_count,
+                "sha256": digest.hexdigest(),
+                "content_type": content_type,
                 "retrieved_at": utcnow(),
-                "status_code": response.status_code,
+                "status_code": status_code,
             })
     (output / "public_inputs_manifest.json").write_text(
         json.dumps({"downloads": rows}, indent=2, ensure_ascii=True), encoding="utf-8"
@@ -183,12 +210,60 @@ def parse_fred_csv(path: str | Path, *, value_column: str) -> pd.DataFrame:
     return result.sort_values("date")
 
 
+def parse_openap_reference_zip(
+    path: str | Path,
+    *,
+    sample_rows: int = 2_000,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Read a bounded schema sample from the latest official firm-level archive.
+
+    The official file identifies companies only by CRSP ``permno``.  The sample
+    is retained as stale validation evidence, never as current signal data.
+    """
+
+    with ZipFile(path) as archive:
+        names = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+        if len(names) != 1:
+            raise ValueError(f"Expected one OpenAP reference CSV, found {names}")
+        info = archive.getinfo(names[0])
+        with archive.open(info) as raw_handle:
+            with TextIOWrapper(raw_handle, encoding="utf-8-sig", errors="replace") as handle:
+                frame = pd.read_csv(handle, nrows=sample_rows, low_memory=False)
+    required = {"permno", "yyyymm"}
+    if frame.empty or not required <= set(frame.columns):
+        raise ValueError(
+            "OpenAP firm-level reference must contain permno and yyyymm"
+        )
+    signal_columns = [column for column in frame.columns if column not in required]
+    if not signal_columns:
+        raise ValueError("OpenAP firm-level reference has no signal columns")
+    frame["permno"] = pd.to_numeric(frame["permno"], errors="coerce").astype("Int64")
+    frame["yyyymm"] = pd.to_numeric(frame["yyyymm"], errors="coerce").astype("Int64")
+    metadata: dict[str, object] = {
+        "archive_entry": info.filename,
+        "archive_entry_uncompressed_bytes": info.file_size,
+        "archive_entry_compressed_bytes": info.compress_size,
+        "sample_rows": len(frame),
+        "column_count": len(frame.columns),
+        "signal_column_count": len(signal_columns),
+        "identifier_columns": ["permno", "yyyymm"],
+        "declared_latest_period": "2024-12",
+        "reference_only": True,
+        "current_signal_source": False,
+        "identity_crosswalk_required": "CRSP permno to current CIK/ticker",
+    }
+    return frame, metadata
+
+
 def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict[str, int]:
     """Normalize public inputs to Parquet and return row counts."""
 
     raw = Path(raw_dir)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    openap_sample, openap_metadata = parse_openap_reference_zip(
+        raw / "signed_predictors_dl_wide.zip"
+    )
     frames = {
         "ff3_daily": parse_french_zip(raw / "ff3_daily.zip", daily=True),
         "ff3_monthly": parse_french_zip(raw / "ff3_monthly.zip", daily=False),
@@ -196,6 +271,7 @@ def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict
         "vix_daily": parse_cboe_vix(raw / "vix_history.csv"),
         "gnp_deflator": parse_fred_csv(raw / "gnpdef.csv", value_column="GNPDEF"),
         "signal_doc": pd.read_csv(raw / "SignalDoc.csv"),
+        "openap_reference_sample": openap_sample,
     }
     counts: dict[str, int] = {}
     for dataset_id, frame in frames.items():
@@ -205,5 +281,8 @@ def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict
         counts[dataset_id] = len(frame)
     (output / "normalized_summary.json").write_text(
         json.dumps({"rows": counts, "created_at": utcnow()}, indent=2), encoding="utf-8"
+    )
+    (output / "openap_reference_metadata.json").write_text(
+        json.dumps(openap_metadata, indent=2, ensure_ascii=True), encoding="utf-8"
     )
     return counts

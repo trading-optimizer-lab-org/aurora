@@ -29,6 +29,7 @@ from aurora.research.openap_93.external import (
     normalize_public_inputs,
     parse_fred_csv,
     parse_french_zip,
+    parse_openap_reference_zip,
     parse_pastor_stambaugh,
 )
 from aurora.research.openap_93.market import (
@@ -110,6 +111,26 @@ def test_current_only_values_do_not_promote_a_proxy_without_overlap() -> None:
     assert validation.loc[validation["signal"].eq(REQUIRED_93[0]), "validation_status"].iat[0] == (
         "unvalidated_proxy_no_qualifying_overlap"
     )
+
+
+def test_official_reference_without_permno_crosswalk_fails_closed() -> None:
+    signals = pd.DataFrame(
+        {
+            "signal": list(REQUIRED_93),
+            "value": [1.0] + [np.nan] * 92,
+            "fidelity_class": [FidelityClass.UNVALIDATED_PROXY.value]
+            + [FidelityClass.UNAVAILABLE.value] * 92,
+        }
+    )
+    reference = pd.DataFrame(
+        {"permno": [10001], "yyyymm": [202412], REQUIRED_93[0]: [0.25]}
+    )
+    validation = build_validation_report(signals, reference)
+    assert validation["reference_rows_inspected"].eq(1).all()
+    assert validation["reference_identifier"].eq("permno|yyyymm").all()
+    assert not validation["identity_crosswalk_available"].any()
+    assert validation["reason"].str.contains("no free authorized").all()
+    assert not validation["validated_proxy_threshold_pass"].any()
 
 
 def test_registry_contains_exactly_the_required_93() -> None:
@@ -208,13 +229,15 @@ def test_offline_execution_requires_the_complete_public_cache(tmp_path: Path) ->
 
     required = required_cached_inputs(tmp_path / "probe", tmp_path / "inputs")
     relative = {path.relative_to(tmp_path).as_posix() for path in required}
-    assert len(relative) == 14
+    assert len(relative) == 16
     assert "probe/source_probe_results.csv" in relative
     assert "probe/source_symbol_probe_results.csv" in relative
     assert "probe/sources.lock.json" in relative
     assert "inputs/public_inputs_manifest.json" in relative
     assert "inputs/normalized/ff3_daily.parquet" in relative
     assert "inputs/normalized/signal_doc.parquet" in relative
+    assert "inputs/normalized/openap_reference_sample.parquet" in relative
+    assert "inputs/normalized/openap_reference_metadata.json" in relative
     assert "inputs/normalized/normalized_summary.json" in relative
 
 
@@ -326,6 +349,27 @@ def test_public_factor_parsers_use_decimal_returns_and_official_liquidity(tmp_pa
     fred.write_text("observation_date,GNPDEF\n2026-01-01,125.7\n", encoding="utf-8")
     deflator = parse_fred_csv(fred, value_column="GNPDEF")
     assert deflator.loc[0, "gnpdef"] == pytest.approx(125.7)
+
+
+def test_openap_reference_parser_keeps_permno_reference_only(tmp_path: Path) -> None:
+    from zipfile import ZipFile
+
+    archive_path = tmp_path / "openap.zip"
+    with ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "signed_predictors_dl_wide.csv",
+            "permno,yyyymm,MS,AbnormalAccruals\n10001,202412,2.0,0.1\n",
+        )
+    frame, metadata = parse_openap_reference_zip(archive_path)
+    assert frame.columns.tolist() == [
+        "permno",
+        "yyyymm",
+        "MS",
+        "AbnormalAccruals",
+    ]
+    assert metadata["reference_only"] is True
+    assert metadata["current_signal_source"] is False
+    assert metadata["identifier_columns"] == ["permno", "yyyymm"]
 
 
 def test_market_pipeline_emits_all_supported_signals_without_lookahead() -> None:
