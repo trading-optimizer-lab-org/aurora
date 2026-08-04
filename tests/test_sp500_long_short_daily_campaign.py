@@ -29,6 +29,7 @@ from aurora.infra.sp500_long_short_daily.data import (
     _align_initial_releases,
     _parse_yahoo_chart,
     _reconcile_spy_sources,
+    _repo_campaign_root,
     download_alfred_initial_series,
     load_sec_distribution_totals,
     load_state_street_distributions,
@@ -76,6 +77,15 @@ def _campaign() -> CampaignPackage:
         CAMPAIGN_ROOT / "research_input",
         CAMPAIGN_ROOT / "input_package" / "SP500_LONG_SHORT_DIARIO_RESEARCH_AURORA_FINAL.zip",
     )
+
+
+def test_campaign_root_prefers_explicit_github_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = tmp_path / "campaigns" / "sp500_long_short_daily"
+    (expected / "official_inputs").mkdir(parents=True)
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    assert _repo_campaign_root() == expected.resolve()
 
 
 def _prices() -> pd.DataFrame:

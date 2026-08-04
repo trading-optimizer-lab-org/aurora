@@ -68,7 +68,16 @@ class PreparedMarketData:
 
 
 def _repo_campaign_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "campaigns" / "sp500_long_short_daily"
+    candidates: list[Path] = []
+    github_workspace = os.environ.get("GITHUB_WORKSPACE", "").strip()
+    if github_workspace:
+        candidates.append(Path(github_workspace))
+    candidates.extend((Path.cwd(), Path(__file__).resolve().parents[2]))
+    for root in candidates:
+        campaign = root / "campaigns" / "sp500_long_short_daily"
+        if (campaign / "official_inputs").is_dir():
+            return campaign.resolve()
+    raise DataGateError("SP500_CAMPAIGN_OFFICIAL_INPUTS_NOT_FOUND")
 
 
 def _epoch_seconds(value: pd.Timestamp) -> int:
