@@ -251,11 +251,23 @@ def calculate_market_signals(
         monthly = _monthly_stock(daily, formation)
         aligned_m = _aligned_monthly(monthly, ff3_monthly, liquidity_monthly)
         aligned_d = _aligned_daily(daily, ff3_daily)
+        aligned_daily_end = (
+            aligned_d["date"].max() if not aligned_d.empty else pd.NaT
+        )
         period_end = daily["date"].max()
         available_at = period_end
         monthly_end = monthly["date"].max() if not monthly.empty else period_end
 
         monthly_excess = aligned_m["ret"] - aligned_m["rf"]
+        aligned_month_end = (
+            aligned_m["date"].max() if not aligned_m.empty else pd.NaT
+        )
+        beta_ps_input = aligned_m.dropna(
+            subset=["ret", "ps_innovation", "mktrf", "smb", "hml"]
+        )
+        beta_ps_end = (
+            beta_ps_input["date"].max() if not beta_ps_input.empty else pd.NaT
+        )
         beta_ps = beta_liquidity_ps(
             monthly_excess,
             aligned_m["ps_innovation"],
@@ -271,8 +283,8 @@ def calculate_market_signals(
             fidelity=FidelityClass.RECONSTRUCTED,
             formula_id="openap_beta_liquidity_ps_60m_min36",
             source_ids=("yahoo_public", "kenneth_french", "pastor_stambaugh"),
-            available_at=available_at,
-            period_end=monthly_end,
+            available_at=beta_ps_end,
+            period_end=beta_ps_end,
             observation_count=int(
                 aligned_m[["ret", "ps_innovation", "mktrf", "smb", "hml"]]
                 .dropna()
@@ -290,7 +302,7 @@ def calculate_market_signals(
             fidelity=FidelityClass.RECONSTRUCTED,
             formula_id="openap_cross_section_p5_tail_beta_120m_min72",
             source_ids=("yahoo_public",),
-            available_at=available_at,
+            available_at=monthly_end,
             period_end=monthly_end,
             observation_count=beta_tail_n,
         )
@@ -307,8 +319,8 @@ def calculate_market_signals(
             fidelity=FidelityClass.RECONSTRUCTED,
             formula_id="openap_acx_daily_coskew_trailing_year",
             source_ids=("yahoo_public", "kenneth_french"),
-            available_at=available_at,
-            period_end=period_end,
+            available_at=aligned_daily_end,
+            period_end=aligned_daily_end,
             observation_count=int(aligned_d[["ret", "mktrf", "rf"]].dropna().tail(252).shape[0]),
         )
 
@@ -321,8 +333,8 @@ def calculate_market_signals(
             fidelity=FidelityClass.RECONSTRUCTED,
             formula_id="openap_systematic_coskewness_60m_min12",
             source_ids=("yahoo_public", "kenneth_french"),
-            available_at=available_at,
-            period_end=monthly_end,
+            available_at=aligned_month_end,
+            period_end=aligned_month_end,
             observation_count=int(aligned_m[["ret", "mktrf", "rf"]].dropna().tail(60).shape[0]),
         )
 
@@ -330,6 +342,9 @@ def calculate_market_signals(
         last_month_daily = aligned_d.loc[
             aligned_d["date"].dt.to_period("M").eq(completed_month)
         ]
+        last_month_end = (
+            last_month_daily["date"].max() if not last_month_daily.empty else pd.NaT
+        )
         idio, skew = ff3_month_residual_moments(
             last_month_daily["ret"] - last_month_daily["rf"],
             last_month_daily["mktrf"],
@@ -345,8 +360,8 @@ def calculate_market_signals(
                 fidelity=FidelityClass.RECONSTRUCTED,
                 formula_id=f"openap_ff3_daily_residual_{signal.lower()}_min15",
                 source_ids=("yahoo_public", "kenneth_french"),
-                available_at=available_at,
-                period_end=monthly_end,
+                available_at=last_month_end,
+                period_end=last_month_end,
                 observation_count=len(last_month_daily),
             )
 
@@ -382,12 +397,13 @@ def calculate_market_signals(
             fidelity=FidelityClass.RECONSTRUCTED,
             formula_id="openap_residual_momentum_ff3_36m_prior11",
             source_ids=("yahoo_public", "kenneth_french"),
-            available_at=available_at,
-            period_end=monthly_end,
+            available_at=aligned_month_end,
+            period_end=aligned_month_end,
             observation_count=len(aligned_m),
         )
 
         vix_aligned = aligned_d.merge(vix, on="date", how="inner", suffixes=("", "_vix"))
+        vix_end = vix_aligned["date"].max() if not vix_aligned.empty else pd.NaT
         vix_beta = beta_vix(
             vix_aligned["ret"] - vix_aligned["rf"],
             vix_aligned["mktrf"],
@@ -401,8 +417,8 @@ def calculate_market_signals(
             fidelity=FidelityClass.RECONSTRUCTED,
             formula_id="openap_beta_vix_20d_min15_market_control",
             source_ids=("yahoo_public", "kenneth_french", "cboe_public"),
-            available_at=available_at,
-            period_end=period_end,
+            available_at=vix_end,
+            period_end=vix_end,
             observation_count=int(
                 vix_aligned[["ret", "rf", "mktrf", "vix_change"]]
                 .dropna()
@@ -448,14 +464,16 @@ def calculate_market_signals(
             )
 
         returns = monthly.set_index("date")["ret"]
+        momentum6_window = returns.iloc[-6:-1].dropna() if len(returns) >= 6 else pd.Series(dtype=float)
+        momentum36_window = returns.iloc[-37:-13].dropna() if len(returns) >= 37 else pd.Series(dtype=float)
         momentum6 = (
-            float(np.prod(1.0 + returns.iloc[-6:-1].fillna(0.0)) - 1.0)
-            if len(returns) >= 6
+            float(np.prod(1.0 + momentum6_window) - 1.0)
+            if len(momentum6_window) == 5
             else np.nan
         )
         momentum36 = (
-            float(np.prod(1.0 + returns.iloc[-37:-13].fillna(0.0)) - 1.0)
-            if len(returns) >= 37
+            float(np.prod(1.0 + momentum36_window) - 1.0)
+            if len(momentum36_window) == 24
             else np.nan
         )
         mean_volume6 = float(monthly["volume"].tail(6).mean()) if len(monthly) >= 6 else np.nan

@@ -14,7 +14,9 @@ import pandas as pd
 import requests
 
 from .accounting_pipeline import implemented_source_pairs as accounting_source_pairs
+from .event_pipeline import implemented_source_pairs as event_source_pairs
 from .market_pipeline import implemented_source_pairs as market_source_pairs
+from .quarterly_pipeline import implemented_source_pairs as quarterly_source_pairs
 from .registry import FidelityClass, SignalSpec
 
 
@@ -53,8 +55,23 @@ TEST_SYMBOLS = ("AAPL", "CARR", "KOP", "META", "RDDT")
 # source can calculate a predictor. Entries are added only after an adapter has
 # verified every required field and produced a value under tests.
 IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = frozenset(
-    market_source_pairs() | accounting_source_pairs()
+    market_source_pairs()
+    | accounting_source_pairs()
+    | event_source_pairs()
+    | quarterly_source_pairs()
 )
+
+
+def implemented_signal_requirements() -> dict[str, frozenset[str]]:
+    """Return the complete source bundle required by each implemented signal."""
+
+    requirements: dict[str, set[str]] = {}
+    for signal, source_id in IMPLEMENTED_SIGNAL_SOURCES:
+        requirements.setdefault(signal, set()).add(source_id)
+    return {
+        signal: frozenset(sorted(source_ids))
+        for signal, source_ids in requirements.items()
+    }
 
 
 def _utcnow() -> str:
@@ -181,24 +198,35 @@ def source_coverage_matrix(
     probe_results: pd.DataFrame,
 ) -> pd.DataFrame:
     probe_ok = probe_results.set_index("source_id")["probe_ok"].to_dict()
+    requirements = implemented_signal_requirements()
     rows: list[dict[str, Any]] = []
     for signal in registry.values():
         for source in PUBLIC_SOURCES:
             candidate = source.source_id in signal.candidate_sources
-            formula_implemented = (signal.name, source.source_id) in IMPLEMENTED_SIGNAL_SOURCES
-            required_fields_verified = formula_implemented
+            required_bundle = requirements.get(signal.name, frozenset())
+            signal_formula_implemented = bool(required_bundle)
+            source_required = source.source_id in required_bundle
+            formula_implemented = source_required
+            required_fields_verified = bool(
+                signal_formula_implemented
+                and source_required
+                and all(bool(probe_ok.get(item, False)) for item in required_bundle)
+            )
             rows.append({
                 "candidate_source": source.source_id,
                 "domain": source.domain,
                 "signal": signal.name,
                 "candidate_match": candidate,
                 "formula_implemented": formula_implemented,
+                "signal_formula_implemented": signal_formula_implemented,
+                "source_required_by_formula": source_required,
+                "required_source_bundle": "|".join(sorted(required_bundle)),
                 "required_fields_verified": required_fields_verified,
                 "can_produce_value": (
                     candidate
                     and formula_implemented
+                    and source_required
                     and required_fields_verified
-                    and bool(probe_ok.get(source.source_id, False))
                 ),
                 "expected_fidelity": signal.expected_best_class.value if candidate else "unavailable",
                 "source_probe_ok": bool(probe_ok.get(source.source_id, False)),
@@ -213,28 +241,11 @@ def source_coverage_matrix(
 
 def select_sources_lexicographically(matrix: pd.DataFrame) -> tuple[dict[str, Any], pd.DataFrame]:
     viable = matrix.loc[matrix["can_produce_value"]].copy()
-    uncovered = set(viable["signal"].unique())
-    selected: list[str] = []
+    viable_signals = set(viable["signal"].unique())
+    selected = sorted(set(viable["candidate_source"]))
     ablation_rows: list[dict[str, Any]] = []
-    while uncovered:
-        candidates = []
-        for source, frame in viable.groupby("candidate_source"):
-            if source in selected:
-                continue
-            covered = set(frame["signal"]) & uncovered
-            if covered:
-                risk = int(frame["risk_score"].iloc[0])
-                candidates.append((len(covered), -risk, source, covered))
-        if not candidates:
-            break
-        _, _, chosen, covered = max(candidates)
-        selected.append(chosen)
-        uncovered -= covered
-    all_viable_signals = set(viable["signal"])
     for source in selected:
-        without = viable.loc[viable["candidate_source"].ne(source)]
-        remaining = set(without.loc[without["candidate_source"].isin(set(selected)-{source}), "signal"])
-        lost = sorted(all_viable_signals - remaining)
+        lost = sorted(set(viable.loc[viable["candidate_source"].eq(source), "signal"]))
         ablation_rows.append({
             "source_id": source,
             "signals_lost_count": len(lost),
@@ -245,9 +256,9 @@ def select_sources_lexicographically(matrix: pd.DataFrame) -> tuple[dict[str, An
         "selected_domains": sorted({
             source.domain for source in PUBLIC_SOURCES if source.source_id in selected
         }),
-        "candidate_signals_covered": len(all_viable_signals),
-        "candidate_signals_uncovered": sorted(set(registry_name for registry_name in matrix["signal"].unique()) - all_viable_signals),
-        "selection_method": "greedy_lexicographic_max_coverage_then_min_risk",
+        "candidate_signals_covered": len(viable_signals),
+        "candidate_signals_uncovered": sorted(set(matrix["signal"].unique()) - viable_signals),
+        "selection_method": "exact_required_source_union_after_maximum_coverage",
         "created_at": _utcnow(),
     }
     return payload, pd.DataFrame(ablation_rows)

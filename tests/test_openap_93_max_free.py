@@ -11,6 +11,16 @@ from aurora.research.openap_93.accounting_pipeline import (
     ACCOUNTING_IMPLEMENTED_SIGNALS,
     calculate_accounting_signals,
 )
+from aurora.research.openap_93.current_pipeline import (
+    IMPLEMENTED_SIGNALS,
+    REQUIRED_SIGNAL_COLUMNS,
+    SCORE_VARIANTS,
+    build_validation_report,
+)
+from aurora.research.openap_93.event_pipeline import (
+    EVENT_IMPLEMENTED_SIGNALS,
+    calculate_event_signals,
+)
 from aurora.research.openap_93.external import (
     normalize_public_inputs,
     parse_fred_csv,
@@ -33,16 +43,68 @@ from aurora.research.openap_93.market_pipeline import (
     calculate_market_signals,
 )
 from aurora.research.openap_93.models import SignalObservation
+from aurora.research.openap_93.quarterly_pipeline import (
+    QUARTERLY_IMPLEMENTED_SIGNALS,
+    calculate_quarterly_signals,
+)
 from aurora.research.openap_93.registry import REQUIRED_93, FidelityClass, load_signal_registry
 from aurora.research.openap_93.sources import (
     IMPLEMENTED_SIGNAL_SOURCES,
     PUBLIC_SOURCES,
+    implemented_signal_requirements,
     select_sources_lexicographically,
     source_coverage_matrix,
 )
 
 
 CONFIG = Path("config/openap_93/signals_93.yaml")
+
+
+def implemented_signals() -> frozenset[str]:
+    return frozenset(
+        MARKET_IMPLEMENTED_SIGNALS
+        | ACCOUNTING_IMPLEMENTED_SIGNALS
+        | EVENT_IMPLEMENTED_SIGNALS
+        | QUARTERLY_IMPLEMENTED_SIGNALS
+    )
+
+
+def test_current_pipeline_contract_has_three_scores_and_all_implemented_signals() -> None:
+    assert set(SCORE_VARIANTS) == {
+        "score_strict_current",
+        "score_max_current",
+        "score_research_all",
+    }
+    assert IMPLEMENTED_SIGNALS == implemented_signals()
+    assert {
+        "security_id",
+        "ticker",
+        "cik",
+        "formation_at",
+        "period_end",
+        "available_at",
+        "value",
+        "fidelity_class",
+        "source_id",
+        "coverage_flag",
+    } <= set(REQUIRED_SIGNAL_COLUMNS)
+
+
+def test_current_only_values_do_not_promote_a_proxy_without_overlap() -> None:
+    signals = pd.DataFrame(
+        {
+            "signal": list(REQUIRED_93),
+            "value": [1.0] + [np.nan] * 92,
+            "fidelity_class": [FidelityClass.UNVALIDATED_PROXY.value]
+            + [FidelityClass.UNAVAILABLE.value] * 92,
+        }
+    )
+    validation = build_validation_report(signals)
+    assert len(validation) == 93
+    assert not validation["validated_proxy_threshold_pass"].any()
+    assert validation.loc[validation["signal"].eq(REQUIRED_93[0]), "validation_status"].iat[0] == (
+        "unvalidated_proxy_no_qualifying_overlap"
+    )
 
 
 def test_registry_contains_exactly_the_required_93() -> None:
@@ -82,10 +144,10 @@ def test_source_selection_is_deterministic_and_reports_ablation() -> None:
         key: value for key, value in selected_b.items() if key != "created_at"
     }
     pd.testing.assert_frame_equal(ablation_a, ablation_b)
-    implemented_signals = MARKET_IMPLEMENTED_SIGNALS | ACCOUNTING_IMPLEMENTED_SIGNALS
-    assert selected_a["candidate_signals_covered"] == len(implemented_signals)
+    supported = implemented_signals()
+    assert selected_a["candidate_signals_covered"] == len(supported)
     assert set(selected_a["candidate_signals_uncovered"]) == (
-        set(REQUIRED_93) - implemented_signals
+        set(REQUIRED_93) - supported
     )
     assert selected_a["selected_source_ids"]
 
@@ -99,13 +161,26 @@ def test_reachable_source_is_not_mistaken_for_implemented_signal() -> None:
     assert IMPLEMENTED_SIGNAL_SOURCES
     assert matrix["candidate_match"].any()
     implemented = matrix.loc[matrix["formula_implemented"]]
-    assert set(implemented["signal"]) == (
-        MARKET_IMPLEMENTED_SIGNALS | ACCOUNTING_IMPLEMENTED_SIGNALS
-    )
+    assert set(implemented["signal"]) == implemented_signals()
     assert implemented["required_fields_verified"].all()
     assert implemented["can_produce_value"].all()
     unimplemented = matrix.loc[~matrix["formula_implemented"]]
     assert not unimplemented["can_produce_value"].any()
+
+
+def test_multisource_formulas_require_the_entire_bundle() -> None:
+    registry = load_signal_registry(CONFIG)
+    probes = pd.DataFrame(
+        {"source_id": [source.source_id for source in PUBLIC_SOURCES], "probe_ok": True}
+    )
+    probes.loc[probes["source_id"].eq("kenneth_french"), "probe_ok"] = False
+    matrix = source_coverage_matrix(registry, probes)
+    beta_vix = matrix.loc[matrix["signal"].eq("betaVIX")]
+    assert not beta_vix["can_produce_value"].any()
+    requirements = implemented_signal_requirements()
+    assert requirements["betaVIX"] == frozenset(
+        {"cboe_public", "kenneth_french", "yahoo_public"}
+    )
 
 
 def test_no_source_requires_registration_or_payment() -> None:
@@ -383,3 +458,101 @@ def test_accounting_pipeline_emits_registered_subset_and_fails_closed() -> None:
     assert not result.loc[proxy, "current_usable"].any()
     reconstructed = result["fidelity_class"].eq(FidelityClass.RECONSTRUCTED.value)
     assert result.loc[reconstructed & result["value"].notna(), "current_usable"].all()
+
+
+def test_event_pipeline_emits_four_signals_and_keeps_proxies_out_of_score() -> None:
+    dates = pd.bdate_range("2022-01-03", "2026-06-30")
+    prices = pd.DataFrame(
+        {
+            "date": dates,
+            "symbol": "EVT",
+            "adj_close": np.linspace(20.0, 40.0, len(dates)),
+            "volume": 1_000_000,
+            "dividends": np.where(
+                (dates.year == 2026) & (dates.month == 4) & (dates.day < 8),
+                0.25,
+                0.0,
+            ),
+        }
+    )
+    master = pd.DataFrame(
+        {
+            "symbol": ["EVT"],
+            "first_clean_price_date": [pd.Timestamp("2022-01-03")],
+        }
+    )
+    result = calculate_event_signals(
+        master, prices, formation_at="2026-07-15"
+    )
+    assert set(result["signal"]) == EVENT_IMPLEMENTED_SIGNALS
+    assert pd.to_datetime(result["available_at"]).le(pd.Timestamp("2026-07-15")).all()
+    proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
+    assert not result.loc[proxy, "current_usable"].any()
+
+
+def test_quarterly_pipeline_uses_only_filed_facts_available_at_formation() -> None:
+    quarter_ends = pd.date_range("2023-03-31", periods=13, freq="QE")
+    tags = {
+        "NetIncomeLoss": lambda index: 20.0 + index,
+        "RevenueFromContractWithCustomerExcludingAssessedTax": lambda index: 200.0 + 5 * index,
+        "WeightedAverageNumberOfDilutedSharesOutstanding": lambda index: 10.0,
+        "Assets": lambda index: 500.0 + 10 * index,
+    }
+    rows: list[dict[str, object]] = []
+    for index, period_end in enumerate(quarter_ends):
+        for tag, value in tags.items():
+            rows.append(
+                {
+                    "cik": 1,
+                    "tag": tag,
+                    "value": value(index),
+                    "period_start": period_end - pd.Timedelta(days=89),
+                    "period_end": period_end,
+                    "form": "10-Q",
+                    "filed": period_end + pd.Timedelta(days=35),
+                    "available_at": period_end + pd.Timedelta(days=35),
+                }
+            )
+    rows.append(
+        {
+            "cik": 1,
+            "tag": "NetIncomeLoss",
+            "value": 999999.0,
+            "period_start": pd.Timestamp("2026-07-01"),
+            "period_end": pd.Timestamp("2026-09-30"),
+            "form": "10-Q",
+            "filed": pd.Timestamp("2026-11-01"),
+            "available_at": pd.Timestamp("2026-11-01"),
+        }
+    )
+    dates = pd.bdate_range("2023-01-02", "2026-07-31")
+    prices = pd.DataFrame(
+        {
+            "date": dates,
+            "symbol": "QTR",
+            "adj_close": np.linspace(50.0, 80.0, len(dates)),
+        }
+    )
+    ff3 = pd.DataFrame(
+        {"date": dates, "mktrf": 0.0002, "smb": 0.0, "hml": 0.0, "rf": 0.0001}
+    )
+    master = pd.DataFrame(
+        {
+            "symbol": ["QTR"],
+            "cik": [1],
+            "industry": ["Software"],
+            "issuer_market_cap": [5_000_000_000.0],
+        }
+    )
+    result = calculate_quarterly_signals(
+        master,
+        pd.DataFrame(rows),
+        prices,
+        ff3,
+        formation_at="2026-07-31",
+    )
+    assert set(result["signal"]) == QUARTERLY_IMPLEMENTED_SIGNALS
+    assert pd.to_datetime(result["available_at"]).le(pd.Timestamp("2026-07-31")).all()
+    proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
+    assert not result.loc[proxy, "current_usable"].any()
+    assert not result["value"].eq(999999.0).any()

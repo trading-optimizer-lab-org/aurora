@@ -29,9 +29,12 @@ jobs:
           python -m py_compile research/openap_93/registry.py
           python -m py_compile research/openap_93/sources.py
           python -m py_compile research/openap_93/accounting_pipeline.py
+          python -m py_compile research/openap_93/current_pipeline.py
+          python -m py_compile research/openap_93/event_pipeline.py
           python -m py_compile research/openap_93/external.py
           python -m py_compile research/openap_93/market.py
           python -m py_compile research/openap_93/market_pipeline.py
+          python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile scripts/run_openap_93_max_free.py
       - name: Run focused tests
         run: python -m pytest tests/test_openap_93_max_free.py -q
