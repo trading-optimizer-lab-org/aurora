@@ -29,6 +29,11 @@ from .advanced_accounting_pipeline import (
     ANNUAL_ALIASES,
     calculate_advanced_accounting_signals,
 )
+from .analyst_pipeline import (
+    ANALYST_IMPLEMENTED_SIGNALS,
+    EPS_FACT_TAGS,
+    calculate_analyst_signals,
+)
 from .event_pipeline import EVENT_IMPLEMENTED_SIGNALS, calculate_event_signals
 from .market_pipeline import MARKET_IMPLEMENTED_SIGNALS, calculate_market_signals
 from .quarterly_pipeline import (
@@ -72,6 +77,7 @@ REQUIRED_SIGNAL_COLUMNS = (
 IMPLEMENTED_SIGNALS = frozenset(
     ACCOUNTING_IMPLEMENTED_SIGNALS
     | ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS
+    | ANALYST_IMPLEMENTED_SIGNALS
     | EVENT_IMPLEMENTED_SIGNALS
     | MARKET_IMPLEMENTED_SIGNALS
     | QUARTERLY_IMPLEMENTED_SIGNALS
@@ -115,7 +121,9 @@ COMPANYFACT_TAGS = frozenset(
     tag
     for aliases in ANNUAL_ALIASES.values()
     for tag in aliases
-) | frozenset(NET_INCOME_TAGS + REVENUE_TAGS + SHARE_TAGS + ASSET_TAGS)
+) | frozenset(
+    NET_INCOME_TAGS + REVENUE_TAGS + SHARE_TAGS + ASSET_TAGS + EPS_FACT_TAGS
+)
 
 
 def _utcnow() -> str:
@@ -252,6 +260,26 @@ def _load_base_frames(
             """
         ).fetchdf()
         metadata = connection.execute("SELECT * FROM selected_predictors").fetchdf()
+        table_names = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+            ).fetchall()
+        }
+        if "yahoo_analyst_current" in table_names:
+            analyst = connection.execute(
+                """
+                SELECT a.symbol, a.dataset, a.retrieved_at, a.payload_json
+                FROM yahoo_analyst_current a
+                INNER JOIN selected_symbols s USING (symbol)
+                WHERE TRY_CAST(a.retrieved_at AS TIMESTAMPTZ) <= ?
+                """,
+                [formation_at],
+            ).fetchdf()
+        else:
+            analyst = pd.DataFrame(
+                columns=["symbol", "dataset", "retrieved_at", "payload_json"]
+            )
     finally:
         connection.close()
     return {
@@ -262,6 +290,7 @@ def _load_base_frames(
         "submissions": submissions,
         "features": features,
         "metadata": metadata,
+        "analyst": analyst,
         "load_audit": {
             "price_lookback_months": PRICE_LOOKBACK_MONTHS,
             "price_start": price_start.isoformat(),
@@ -273,6 +302,7 @@ def _load_base_frames(
             "submission_rows": int(len(submissions)),
             "base_feature_rows": int(len(features)),
             "metadata_rows": int(len(metadata)),
+            "analyst_rows": int(len(analyst)),
         },
     }
 
@@ -558,6 +588,8 @@ def _implementation_file(signal: str) -> str:
         return "research/openap_93/accounting_pipeline.py"
     if signal in ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS:
         return "research/openap_93/advanced_accounting_pipeline.py"
+    if signal in ANALYST_IMPLEMENTED_SIGNALS:
+        return "research/openap_93/analyst_pipeline.py"
     if signal in EVENT_IMPLEMENTED_SIGNALS:
         return "research/openap_93/event_pipeline.py"
     if signal in MARKET_IMPLEMENTED_SIGNALS:
@@ -927,6 +959,12 @@ def run_current_pipeline(
             base["companyfacts"],
             base["prices"],
             public["ff3_daily"],
+            formation_at=formation,
+        ),
+        calculate_analyst_signals(
+            base["master"],
+            base["analyst"],
+            base["companyfacts"],
             formation_at=formation,
         ),
         calculate_event_signals(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from zipfile import ZipFile
+import json
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,10 @@ from aurora.research.openap_93.accounting_pipeline import (
 from aurora.research.openap_93.advanced_accounting_pipeline import (
     ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS,
     calculate_advanced_accounting_signals,
+)
+from aurora.research.openap_93.analyst_pipeline import (
+    ANALYST_IMPLEMENTED_SIGNALS,
+    calculate_analyst_signals,
 )
 from aurora.research.openap_93.current_pipeline import (
     IMPLEMENTED_SIGNALS,
@@ -72,6 +77,7 @@ def implemented_signals() -> frozenset[str]:
         MARKET_IMPLEMENTED_SIGNALS
         | ACCOUNTING_IMPLEMENTED_SIGNALS
         | ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS
+        | ANALYST_IMPLEMENTED_SIGNALS
         | EVENT_IMPLEMENTED_SIGNALS
         | QUARTERLY_IMPLEMENTED_SIGNALS
     )
@@ -665,6 +671,104 @@ def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
         FidelityClass.UNAVAILABLE.value
     ).all()
     assert not ms["current_usable"].any()
+
+
+def test_analyst_pipeline_reconstructs_direct_fields_and_fails_proxies_closed() -> None:
+    retrieved = "2026-08-03T12:00:00+00:00"
+    payloads = {
+        "recommendations": [
+            {
+                "period": "0m",
+                "strongBuy": 4,
+                "buy": 5,
+                "hold": 1,
+                "sell": 0,
+                "strongSell": 0,
+            },
+            {
+                "period": "-1m",
+                "strongBuy": 2,
+                "buy": 4,
+                "hold": 3,
+                "sell": 1,
+                "strongSell": 0,
+            },
+        ],
+        "earnings_estimate": [
+            {
+                "period": "0y",
+                "avg": 5.0,
+                "low": 4.5,
+                "high": 5.5,
+                "yearAgoEps": 4.0,
+                "numberOfAnalysts": 10,
+            }
+        ],
+        "growth_estimates": [{"period": "LTG", "stockTrend": 0.12}],
+        "earnings_history": [
+            {
+                "quarter": "2026-03-31T00:00:00",
+                "epsActual": 1.1,
+                "epsEstimate": 1.0,
+                "surprisePercent": 0.10,
+            },
+            {
+                "quarter": "2026-06-30T00:00:00",
+                "epsActual": 1.3,
+                "epsEstimate": 1.2,
+                "surprisePercent": 0.0833,
+            },
+        ],
+    }
+    analyst = pd.DataFrame(
+        [
+            {
+                "symbol": "ANA",
+                "dataset": dataset,
+                "retrieved_at": retrieved,
+                "payload_json": json.dumps(payload),
+            }
+            for dataset, payload in payloads.items()
+        ]
+        + [
+            {
+                "symbol": "ANA",
+                "dataset": "earnings_estimate",
+                "retrieved_at": "2026-09-01T00:00:00+00:00",
+                "payload_json": json.dumps([{"period": "0y", "avg": 999999.0}]),
+            }
+        ]
+    )
+    companyfacts = pd.DataFrame(
+        {
+            "symbol": ["ANA"],
+            "tag": ["EarningsPerShareDiluted"],
+            "value": [1.2],
+            "period_start": [pd.Timestamp("2026-04-01")],
+            "period_end": [pd.Timestamp("2026-06-30")],
+            "available_at": [pd.Timestamp("2026-07-25")],
+        }
+    )
+    result = calculate_analyst_signals(
+        pd.DataFrame({"symbol": ["ANA"]}),
+        analyst,
+        companyfacts,
+        formation_at="2026-08-04",
+    )
+
+    assert set(result["signal"]) == ANALYST_IMPLEMENTED_SIGNALS
+    assert pd.to_datetime(result["available_at"]).le(pd.Timestamp("2026-08-04")).all()
+    direct = result["signal"].isin({"ChangeInRecommendation", "FEPS"})
+    assert result.loc[direct, "fidelity_class"].eq(
+        FidelityClass.RECONSTRUCTED.value
+    ).all()
+    assert result.loc[direct, "current_usable"].all()
+    assert result.loc[result["signal"].eq("FEPS"), "value"].iloc[0] == 5.0
+    proxies = ~direct
+    assert result.loc[proxies, "fidelity_class"].eq(
+        FidelityClass.UNVALIDATED_PROXY.value
+    ).all()
+    assert not result.loc[proxies, "current_usable"].any()
 
 
 def test_event_pipeline_emits_four_signals_and_keeps_proxies_out_of_score() -> None:
