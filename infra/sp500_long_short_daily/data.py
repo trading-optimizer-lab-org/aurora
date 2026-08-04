@@ -1167,6 +1167,10 @@ def _reconcile_spy_sources(
     correlation = float(yahoo.corr(stooq_returns))
     median_abs_difference = float((yahoo - stooq_returns).abs().median())
     if within_fraction < SPY_REQUIRED_TOLERANCE_FRACTION:
+        unreconciled_details = ",".join(
+            f"{pd.Timestamp(date).date().isoformat()}={differences.loc[date]:.9f}"
+            for date in unreconciled
+        )
         raise DataGateError(
             "SPY_RECONCILIATION_99_5_PERCENT_GATE_FAILED:"
             f"basis={yahoo_comparison_column}:"
@@ -1174,7 +1178,8 @@ def _reconcile_spy_sources(
             f"outliers={len(outlier_dates)}:"
             f"unreconciled={len(unreconciled)}:"
             f"correlation={correlation:.9f}:"
-            f"median_abs_difference={median_abs_difference:.12f}"
+            f"median_abs_difference={median_abs_difference:.12f}:"
+            f"unreconciled_details={unreconciled_details}"
         )
     if unreconciled:
         raise DataGateError(f"SPY_UNRECONCILED_RETURN_OUTLIERS:{len(unreconciled)}")
