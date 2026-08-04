@@ -203,6 +203,21 @@ def test_script_is_blocked_locally_without_explicit_permission(monkeypatch: pyte
         main()
 
 
+def test_offline_execution_requires_the_complete_public_cache(tmp_path: Path) -> None:
+    from scripts.run_openap_93_max_free import required_cached_inputs
+
+    required = required_cached_inputs(tmp_path / "probe", tmp_path / "inputs")
+    relative = {path.relative_to(tmp_path).as_posix() for path in required}
+    assert len(relative) == 14
+    assert "probe/source_probe_results.csv" in relative
+    assert "probe/source_symbol_probe_results.csv" in relative
+    assert "probe/sources.lock.json" in relative
+    assert "inputs/public_inputs_manifest.json" in relative
+    assert "inputs/normalized/ff3_daily.parquet" in relative
+    assert "inputs/normalized/signal_doc.parquet" in relative
+    assert "inputs/normalized/normalized_summary.json" in relative
+
+
 def test_signal_observation_only_marks_evidenced_classes_usable() -> None:
     observation = SignalObservation(
         formation_date="2026-07-31",
@@ -561,7 +576,13 @@ def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
         assert result.loc[result["signal"].eq(signal), "value"].notna().any()
     ms = result.loc[result["signal"].eq("MS")]
     assert ms["value"].notna().any()
-    assert ms["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value).all()
+    computed_ms = ms["value"].notna()
+    assert ms.loc[computed_ms, "fidelity_class"].eq(
+        FidelityClass.UNVALIDATED_PROXY.value
+    ).all()
+    assert ms.loc[~computed_ms, "fidelity_class"].eq(
+        FidelityClass.UNAVAILABLE.value
+    ).all()
     assert not ms["current_usable"].any()
 
 

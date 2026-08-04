@@ -26,12 +26,17 @@ from .accounting_pipeline import (
 )
 from .advanced_accounting_pipeline import (
     ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS,
+    ANNUAL_ALIASES,
     calculate_advanced_accounting_signals,
 )
 from .event_pipeline import EVENT_IMPLEMENTED_SIGNALS, calculate_event_signals
 from .market_pipeline import MARKET_IMPLEMENTED_SIGNALS, calculate_market_signals
 from .quarterly_pipeline import (
+    ASSET_TAGS,
+    NET_INCOME_TAGS,
     QUARTERLY_IMPLEMENTED_SIGNALS,
+    REVENUE_TAGS,
+    SHARE_TAGS,
     calculate_quarterly_signals,
 )
 from .registry import REQUIRED_93, FidelityClass, SignalSpec
@@ -102,6 +107,16 @@ SCORE_VARIANTS = {
     | {FidelityClass.UNVALIDATED_PROXY.value},
 }
 
+# The longest implemented price formula needs 60 monthly lags.  Keeping seven
+# years gives those formulas a generous buffer without materialising the entire
+# 18M-row price history in pandas on a standard GitHub runner.
+PRICE_LOOKBACK_MONTHS = 84
+COMPANYFACT_TAGS = frozenset(
+    tag
+    for aliases in ANNUAL_ALIASES.values()
+    for tag in aliases
+) | frozenset(NET_INCOME_TAGS + REVENUE_TAGS + SHARE_TAGS + ASSET_TAGS)
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -165,7 +180,7 @@ def _load_base_frames(
     database: Path,
     formation_at: pd.Timestamp,
     universe_symbols: set[str] | None,
-) -> dict[str, pd.DataFrame]:
+) -> dict[str, Any]:
     connection = duckdb.connect(str(database), read_only=True)
     try:
         master = connection.execute(
@@ -177,14 +192,22 @@ def _load_base_frames(
             raise RuntimeError("No ranking-eligible securities remain in the universe")
         symbols = master["symbol"].astype(str).tolist()
         connection.register("selected_symbols", pd.DataFrame({"symbol": symbols}))
+        connection.register(
+            "required_companyfact_tags",
+            pd.DataFrame({"tag": sorted(COMPANYFACT_TAGS)}),
+        )
+        price_start = formation_at - pd.DateOffset(months=PRICE_LOOKBACK_MONTHS)
         prices = connection.execute(
             """
-            SELECT p.* FROM prices_daily_clean p
+            SELECT p.date, p.symbol, p.open, p.high, p.low, p.close,
+                   p.adj_close, p.volume, p.dividends, p.stock_splits,
+                   p.source, p.retrieved_at
+            FROM prices_daily_clean p
             INNER JOIN selected_symbols s USING (symbol)
-            WHERE p.date <= ?
+            WHERE p.date BETWEEN ? AND ?
             ORDER BY p.symbol, p.date
             """,
-            [formation_at],
+            [price_start, formation_at],
         ).fetchdf()
         concepts = connection.execute(
             """
@@ -196,17 +219,23 @@ def _load_base_frames(
         ).fetchdf()
         companyfacts = connection.execute(
             """
-            SELECT f.*, m.symbol
+            SELECT f.cik, m.symbol, f.entity_name, f.taxonomy, f.tag, f.unit,
+                   f.value, f.period_start, f.period_end, f.fy, f.fp, f.form,
+                   f.filed, f.accession_number, f.frame, f.available_at,
+                   f.available_at_quality, f.source, f.source_mode
             FROM sec_companyfacts f
             INNER JOIN security_master m USING (cik)
             INNER JOIN selected_symbols s ON s.symbol = m.symbol
+            INNER JOIN required_companyfact_tags t ON t.tag = f.tag
             WHERE f.available_at <= ?
             """,
             [formation_at],
         ).fetchdf()
         submissions = connection.execute(
             """
-            SELECT u.*
+            SELECT u.cik, u.accession_number, u.filing_date, u.accepted_at,
+                   u.report_date, u.form, u.sic, u.sic_description,
+                   u.source, u.source_mode
             FROM sec_submissions u
             INNER JOIN security_master m USING (cik)
             INNER JOIN selected_symbols s ON s.symbol = m.symbol
@@ -231,6 +260,18 @@ def _load_base_frames(
         "submissions": submissions,
         "features": features,
         "metadata": metadata,
+        "load_audit": {
+            "price_lookback_months": PRICE_LOOKBACK_MONTHS,
+            "price_start": price_start.isoformat(),
+            "companyfact_tags_requested": len(COMPANYFACT_TAGS),
+            "master_rows": int(len(master)),
+            "price_rows": int(len(prices)),
+            "concept_rows": int(len(concepts)),
+            "companyfact_rows": int(len(companyfacts)),
+            "submission_rows": int(len(submissions)),
+            "base_feature_rows": int(len(features)),
+            "metadata_rows": int(len(metadata)),
+        },
     }
 
 
@@ -695,8 +736,10 @@ def _copy_report(source: Path, target: Path) -> None:
 def _write_final_report(
     path: Path,
     coverage: pd.DataFrame,
+    score_table: pd.DataFrame,
     selected_sources: dict[str, Any],
     manifest: dict[str, Any],
+    source_probes: pd.DataFrame,
 ) -> None:
     exact = int(coverage["fidelity_class"].eq(FidelityClass.EXACT.value).sum())
     reconstructed = int(
@@ -710,6 +753,20 @@ def _write_final_report(
     )
     unavailable = 93 - exact - reconstructed - validated - unvalidated
     selected = selected_sources.get("selected_source_ids", [])
+    usable_total = exact + reconstructed + validated
+    mean_signal_coverage = float(
+        pd.to_numeric(coverage["coverage_pct"], errors="coerce").fillna(0.0).mean()
+    )
+    company_coverage = pd.to_numeric(
+        score_table.get("coverage_pct", pd.Series(dtype=float)), errors="coerce"
+    ).dropna()
+    probe_failures = source_probes.loc[~source_probes["probe_ok"].fillna(False)]
+    unavailable_names = coverage.loc[
+        coverage["status"].eq("unavailable"), "signal"
+    ].astype(str).tolist()
+    research_only_names = coverage.loc[
+        coverage["status"].eq("research_only"), "signal"
+    ].astype(str).tolist()
     table_columns = ["signal", "fidelity_class", "current_usable_count", "coverage_pct"]
     table = coverage[table_columns].copy()
     header = "| " + " | ".join(table_columns) + " |"
@@ -725,14 +782,43 @@ def _write_final_report(
         f"- Exactas actuales: {exact}",
         f"- Reconstruidas actuales: {reconstructed}",
         f"- Proxies validados actuales: {validated}",
-        f"- Total actual utilizable: {exact + reconstructed + validated} de 93",
+        f"- Total actual utilizable: {usable_total} de 93",
         f"- Proxies no validados: {unvalidated}",
         f"- No disponibles: {unavailable}",
         f"- Numero de dominios en la combinacion seleccionada: {len(selected_sources.get('selected_domains', []))}",
+        f"- Cobertura media utilizable por senal: {mean_signal_coverage:.2f}%",
+        f"- Empresas procesadas: {manifest['universe_count']}",
         "",
         "## Combinacion Seleccionada",
         "",
         ", ".join(selected) if selected else "Ninguna fuente supero el contrato completo.",
+        "",
+        "## Cobertura Por Empresa",
+        "",
+        (
+            f"- Media: {company_coverage.mean():.2f}%"
+            if not company_coverage.empty else "- Media: no disponible"
+        ),
+        (
+            f"- Minimo: {company_coverage.min():.2f}%"
+            if not company_coverage.empty else "- Minimo: no disponible"
+        ),
+        (
+            f"- Maximo: {company_coverage.max():.2f}%"
+            if not company_coverage.empty else "- Maximo: no disponible"
+        ),
+        "",
+        "## Senales Excluidas Del Score Principal",
+        "",
+        "- Proxies no validados: " + (", ".join(research_only_names) or "ninguno"),
+        "- No disponibles: " + (", ".join(unavailable_names) or "ninguna"),
+        "",
+        "## Fuentes Que Fallaron La Prueba Real",
+        "",
+        (
+            "- " + ", ".join(probe_failures["source_id"].astype(str).tolist())
+            if not probe_failures.empty else "- Ninguna"
+        ),
         "",
         "## Limites Reales",
         "",
@@ -751,6 +837,9 @@ def _write_final_report(
         f"- Runtime seconds: {manifest['runtime_seconds']}",
         f"- OpenAP commit: {manifest['openap_commit']}",
         f"- Base database SHA-256: {manifest['base_database_sha256']}",
+        "- Los SHA-256 de todos los outputs estan en `run_manifest.json`.",
+        f"- Filas de precios cargadas: {manifest['input_row_counts']['price_rows']}",
+        f"- Filas SEC companyfacts cargadas: {manifest['input_row_counts']['companyfact_rows']}",
         "",
         "## Cobertura Por Senal",
         "",
@@ -854,13 +943,19 @@ def run_current_pipeline(
 
     probe = Path(source_probe_dir)
     for name in (
+        "source_probe_results.csv",
+        "source_symbol_probe_results.csv",
         "source_coverage_matrix.csv",
         "source_ablation.csv",
         "selected_sources.json",
         "sources.lock.json",
     ):
         _copy_report(probe / name, output / name)
+    if not (probe / "evidence" / "source_tests").is_dir():
+        raise RuntimeError("Required per-source evidence directory is missing")
+    shutil.copytree(probe / "evidence", output / "evidence", dirs_exist_ok=True)
     selected_sources = json.loads((output / "selected_sources.json").read_text(encoding="utf-8"))
+    source_probes = pd.read_csv(output / "source_probe_results.csv")
 
     runtime_seconds = round(time.monotonic() - started, 3)
     manifest = {
@@ -879,15 +974,8 @@ def run_current_pipeline(
         "api_keys_required": False,
         "manual_actions_required": False,
         "selected_signals": sorted(selected_signals) if selected_signals else list(REQUIRED_93),
+        "input_row_counts": base["load_audit"],
     }
-    hashes: dict[str, str] = {}
-    for path in sorted(output.iterdir()):
-        if path.is_file() and path.name not in {"run_manifest.json", "FINAL_REPORT.md"}:
-            hashes[path.name] = _sha256(path)
-    manifest["output_hashes"] = hashes
-    (output / "run_manifest.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=True), encoding="utf-8"
-    )
     lineage = {
         "base_database": {
             "path": str(database),
@@ -915,13 +1003,36 @@ def run_current_pipeline(
         "signals": coverage.loc[~coverage["current_usable"]][
             ["signal", "fidelity_class", "reason_if_missing"]
         ].to_dict(orient="records"),
+        "source_probe_failures": source_probes.loc[
+            ~source_probes["probe_ok"].fillna(False),
+            ["source_id", "status_code", "error"],
+        ].to_dict(orient="records"),
         "critical_failures": [],
         "generated_at": retrieved_at,
     }
     (output / "failures.json").write_text(
         json.dumps(failures, indent=2, ensure_ascii=True), encoding="utf-8"
     )
-    _write_final_report(output / "FINAL_REPORT.md", coverage, selected_sources, manifest)
+    _write_final_report(
+        output / "FINAL_REPORT.md",
+        coverage,
+        score_table,
+        selected_sources,
+        manifest,
+        source_probes,
+    )
+    hashes: dict[str, str] = {}
+    output_total_bytes = 0
+    for path in sorted(output.rglob("*")):
+        if path.is_file() and path.name != "run_manifest.json":
+            relative = path.relative_to(output).as_posix()
+            hashes[relative] = _sha256(path)
+            output_total_bytes += path.stat().st_size
+    manifest["output_hashes"] = hashes
+    manifest["output_total_bytes_excluding_manifest"] = output_total_bytes
+    (output / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=True), encoding="utf-8"
+    )
     return manifest
 
 

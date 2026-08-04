@@ -19,6 +19,33 @@ from aurora.research.openap_93.sources import (
 )
 
 
+NORMALIZED_PUBLIC_DATASETS = (
+    "ff3_daily",
+    "ff3_monthly",
+    "liquidity_monthly",
+    "vix_daily",
+    "gnp_deflator",
+    "signal_doc",
+)
+
+
+def required_cached_inputs(source_probe: Path, public_inputs: Path) -> tuple[Path, ...]:
+    """Return every file required for a deterministic offline execution."""
+
+    normalized = public_inputs / "normalized"
+    return (
+        source_probe / "source_probe_results.csv",
+        source_probe / "source_symbol_probe_results.csv",
+        source_probe / "source_coverage_matrix.csv",
+        source_probe / "source_ablation.csv",
+        source_probe / "selected_sources.json",
+        source_probe / "sources.lock.json",
+        public_inputs / "public_inputs_manifest.json",
+        normalized / "normalized_summary.json",
+        *(normalized / f"{dataset}.parquet" for dataset in NORMALIZED_PUBLIC_DATASETS),
+    )
+
+
 def probe_sources(args: argparse.Namespace) -> None:
     registry = load_signal_registry(args.signals_config)
     output = Path(args.output_dir)
@@ -107,10 +134,7 @@ def run_all(args: argparse.Namespace) -> None:
             )
         )
         fetch_public_inputs(argparse.Namespace(output_dir=str(public_inputs)))
-    required_offline = (
-        source_probe / "selected_sources.json",
-        public_inputs / "normalized" / "signal_doc.parquet",
-    )
+    required_offline = required_cached_inputs(source_probe, public_inputs)
     missing = [str(path) for path in required_offline if not path.exists()]
     if missing:
         raise RuntimeError("Offline cache is incomplete: " + ", ".join(missing))
