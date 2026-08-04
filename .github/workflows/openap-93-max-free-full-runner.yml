@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: 0fff5e267c3cd5fc54709e5ea7c63c7a41e18ab7
+        default: 86f6027415491d0830bfc2447826b08ae135d43d
         type: string
       base_run_id:
         description: Run containing openap-yfinance-sec-current-score-results
@@ -63,6 +63,7 @@ jobs:
       - name: Compile OpenAP current modules
         run: |
           python -m py_compile research/openap_93/registry.py
+          python -m py_compile research/openap_93/http.py
           python -m py_compile research/openap_93/sources.py
           python -m py_compile research/openap_93/external.py
           python -m py_compile research/openap_93/market.py
