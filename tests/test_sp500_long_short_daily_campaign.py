@@ -448,6 +448,61 @@ def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
     assert (tmp_path / "stooq_spy_us_history.csv").is_file()
 
 
+def test_stooq_download_accepts_only_terminal_empty_page_after_public_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dates = pd.bdate_range(end="2008-12-31", periods=1000)
+    pages: dict[int, bytes] = {}
+    for page in range(1, 26):
+        offset = (page - 1) * 40
+        rows = [
+            (
+                str(offset + slot + 1),
+                date.strftime("%d %b %Y"),
+                "100.0",
+                "101.0",
+                "99.0",
+                "100.5",
+                "+0.5%",
+                "+0.5",
+                "1000000",
+            )
+            for slot, date in enumerate(dates[offset : offset + 40])
+        ]
+        pages[page] = _stooq_html(rows, pages=26)
+    pages[26] = _stooq_html([], pages=26)
+
+    class Response:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
+        def get(self, url: str, *, params=None, timeout: int) -> Response:
+            del url, timeout
+            return Response(pages[int((params or {}).get("l", 1))])
+
+    monkeypatch.setattr("aurora.infra.sp500_long_short_daily.data.time.sleep", lambda _: None)
+    frame, receipt = download_stooq_history(
+        "spy.us",
+        dates.min().date().isoformat(),
+        dates.max().date().isoformat(),
+        split="train",
+        session=Session(),
+        raw_dir=tmp_path,
+    )
+    assert len(frame) == 1000
+    assert frame["date"].min() == dates.min()
+    assert frame["date"].max() == dates.max()
+    assert receipt.reason is not None and "page_count=26" in receipt.reason
+
+
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
     ledger, _ = build_total_return_ledger(_prices())
     assert ledger.index[1] == pd.Timestamp("2020-12-24")

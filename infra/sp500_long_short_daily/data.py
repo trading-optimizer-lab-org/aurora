@@ -47,6 +47,7 @@ SPY_RETURN_TOLERANCE = 5e-4
 SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
 SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 STOOQ_MAX_BOUNDED_PAGES = 100
+STOOQ_PUBLIC_HISTORY_ROW_CAP = 1000
 STOOQ_PAGE_DELAY_SECONDS = 1.25
 
 
@@ -454,12 +455,26 @@ def _download_stooq_html_history(
             if owned_client is not None:
                 owned_client.close()
 
-    pages: list[tuple[int, bytes, pd.DataFrame, int]] = []
     for page in range(2, page_count + 1):
         if isinstance(client, requests.Session):
             time.sleep(STOOQ_PAGE_DELAY_SECONDS)
-        pages.append(fetch_page(page))
-    for page, page_payload, page_frame, reported_page_count in pages:
+        try:
+            _, page_payload, page_frame, reported_page_count = fetch_page(page)
+        except DataGateError as exc:
+            accumulated_rows = sum(len(frame) for frame in frames)
+            terminal_public_cap = (
+                str(exc) == "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"
+                and page == page_count
+                and accumulated_rows >= STOOQ_PUBLIC_HISTORY_ROW_CAP
+            )
+            if not terminal_public_cap:
+                raise
+            print(
+                "[sp500-data] stooq terminal empty page accepted "
+                f"after public row cap={accumulated_rows}",
+                flush=True,
+            )
+            break
         if reported_page_count > page_count:
             raise DataGateError("STOOQ_HTML_PAGINATION_CHANGED_DURING_DOWNLOAD")
         frames.append(page_frame)
