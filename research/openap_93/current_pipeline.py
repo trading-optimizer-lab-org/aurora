@@ -160,6 +160,7 @@ def _load_public_frames(normalized_dir: str | Path) -> dict[str, pd.DataFrame]:
     required = (
         "ff3_daily",
         "ff3_monthly",
+        "ff48_sic_codes",
         "liquidity_monthly",
         "vix_daily",
         "gnp_deflator",
@@ -918,6 +919,7 @@ def run_current_pipeline(
             base["submissions"],
             base["prices"],
             public["gnp_deflator"],
+            public["ff48_sic_codes"],
             formation_at=formation,
         ),
         calculate_quarterly_signals(

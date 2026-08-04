@@ -10,6 +10,7 @@ from pathlib import Path
 from zipfile import ZipFile
 import hashlib
 import json
+import re
 
 import pandas as pd
 import requests
@@ -34,6 +35,11 @@ PUBLIC_INPUTS: tuple[DownloadSpec, ...] = (
         "kenneth_french", "ff3_monthly",
         "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_CSV.zip",
         "ff3_monthly.zip", "french_zip",
+    ),
+    DownloadSpec(
+        "kenneth_french", "ff48_sic_codes",
+        "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Siccodes48.zip",
+        "siccodes48.zip", "french_sic_zip",
     ),
     DownloadSpec(
         "pastor_stambaugh", "liquidity_monthly",
@@ -153,6 +159,56 @@ def parse_french_zip(path: str | Path, *, daily: bool) -> pd.DataFrame:
     return frame.dropna(subset=["date", "mktrf", "smb", "hml", "rf"]).sort_values("date")
 
 
+def parse_ff48_sic_zip(path: str | Path) -> pd.DataFrame:
+    """Parse Kenneth French's official FF48 SIC interval definitions."""
+
+    with ZipFile(path) as archive:
+        names = [name for name in archive.namelist() if name.lower().endswith(".txt")]
+        if len(names) != 1:
+            raise ValueError(f"Expected one FF48 text file, found {names}")
+        text = archive.read(names[0]).decode("cp1252", errors="replace")
+
+    industry_pattern = re.compile(r"^\s*(\d{1,2})\s+([A-Za-z0-9]+)\s+(.+?)\s*$")
+    range_pattern = re.compile(r"^\s*(\d{4})-(\d{4})\s*(.*?)\s*$")
+    current: tuple[int, str, str] | None = None
+    rows: list[dict[str, object]] = []
+    for line in text.splitlines():
+        industry_match = industry_pattern.match(line)
+        if industry_match:
+            current = (
+                int(industry_match.group(1)),
+                industry_match.group(2),
+                industry_match.group(3).strip(),
+            )
+            continue
+        range_match = range_pattern.match(line)
+        if range_match and current is not None:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            if start > end:
+                raise ValueError(f"Invalid FF48 SIC range: {start}-{end}")
+            rows.append(
+                {
+                    "ff48": current[0],
+                    "industry_abbrev": current[1],
+                    "industry_name": current[2],
+                    "sic_start": start,
+                    "sic_end": end,
+                    "range_description": range_match.group(3).strip(),
+                }
+            )
+    frame = pd.DataFrame(rows)
+    if frame.empty or set(frame["ff48"].unique()) != set(range(1, 49)):
+        raise ValueError("Official FF48 archive did not yield all 48 industries")
+    expanded = frame.apply(
+        lambda row: pd.Series(range(int(row["sic_start"]), int(row["sic_end"]) + 1)),
+        axis=1,
+    ).stack().astype(int)
+    if expanded.duplicated().any():
+        raise ValueError("Official FF48 SIC intervals overlap")
+    return frame.sort_values(["ff48", "sic_start", "sic_end"]).reset_index(drop=True)
+
+
 def parse_pastor_stambaugh(path: str | Path) -> pd.DataFrame:
     """Parse official monthly aggregate liquidity innovations."""
 
@@ -267,6 +323,7 @@ def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict
     frames = {
         "ff3_daily": parse_french_zip(raw / "ff3_daily.zip", daily=True),
         "ff3_monthly": parse_french_zip(raw / "ff3_monthly.zip", daily=False),
+        "ff48_sic_codes": parse_ff48_sic_zip(raw / "siccodes48.zip"),
         "liquidity_monthly": parse_pastor_stambaugh(raw / "pastor_stambaugh_liquidity.txt"),
         "vix_daily": parse_cboe_vix(raw / "vix_history.csv"),
         "gnp_deflator": parse_fred_csv(raw / "gnpdef.csv", value_column="GNPDEF"),

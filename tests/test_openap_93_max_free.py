@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zipfile import ZipFile
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,7 @@ from aurora.research.openap_93.event_pipeline import (
 )
 from aurora.research.openap_93.external import (
     normalize_public_inputs,
+    parse_ff48_sic_zip,
     parse_fred_csv,
     parse_french_zip,
     parse_openap_reference_zip,
@@ -229,12 +231,13 @@ def test_offline_execution_requires_the_complete_public_cache(tmp_path: Path) ->
 
     required = required_cached_inputs(tmp_path / "probe", tmp_path / "inputs")
     relative = {path.relative_to(tmp_path).as_posix() for path in required}
-    assert len(relative) == 16
+    assert len(relative) == 17
     assert "probe/source_probe_results.csv" in relative
     assert "probe/source_symbol_probe_results.csv" in relative
     assert "probe/sources.lock.json" in relative
     assert "inputs/public_inputs_manifest.json" in relative
     assert "inputs/normalized/ff3_daily.parquet" in relative
+    assert "inputs/normalized/ff48_sic_codes.parquet" in relative
     assert "inputs/normalized/signal_doc.parquet" in relative
     assert "inputs/normalized/openap_reference_sample.parquet" in relative
     assert "inputs/normalized/openap_reference_metadata.json" in relative
@@ -278,6 +281,23 @@ def test_market_formula_helpers_match_simple_known_cases() -> None:
     market = np.linspace(-0.04, 0.05, 60)
     stock = 0.5 * market + 4.0 * market**2
     assert coskewness_60m(stock, market) > 0
+
+
+def test_official_ff48_archive_parser_requires_all_industries(tmp_path: Path) -> None:
+    lines: list[str] = []
+    for industry in range(1, 49):
+        lines.extend(
+            [
+                f"{industry} I{industry:02d} Industry {industry}",
+                f"{industry * 100:04d}-{industry * 100 + 9:04d} Synthetic range",
+            ]
+        )
+    archive = tmp_path / "Siccodes48.zip"
+    with ZipFile(archive, "w") as handle:
+        handle.writestr("Siccodes48.txt", "\n".join(lines))
+    parsed = parse_ff48_sic_zip(archive)
+    assert set(parsed["ff48"]) == set(range(1, 49))
+    assert len(parsed) == 48
 
     daily_market = np.linspace(-0.03, 0.03, 252)
     daily_stock = 0.6 * daily_market + 3.0 * daily_market**2
@@ -610,6 +630,13 @@ def test_advanced_accounting_reconstructs_current_formulas_causally() -> None:
         submissions,
         prices,
         gnp,
+        pd.DataFrame(
+            {
+                "ff48": [35],
+                "sic_start": [3570],
+                "sic_end": [3579],
+            }
+        ),
         formation_at="2026-07-31",
     )
 

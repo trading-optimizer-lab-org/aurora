@@ -631,7 +631,33 @@ def _growth_long_term_noa(annual: pd.DataFrame) -> pd.DataFrame:
     ).drop_duplicates("symbol", keep="last").set_index("symbol")
 
 
-def _frontier_current(panel: pd.DataFrame) -> pd.DataFrame:
+def _ff48_from_sic(sic: pd.Series, ff48_sic_codes: pd.DataFrame) -> pd.Series:
+    """Map causal SEC SIC codes through Kenneth French's official FF48 ranges."""
+
+    required = {"ff48", "sic_start", "sic_end"}
+    missing = required - set(ff48_sic_codes.columns)
+    if missing:
+        raise ValueError(f"FF48 SIC map missing columns: {sorted(missing)}")
+    lookup = np.full(10_000, np.nan)
+    for row in ff48_sic_codes.itertuples(index=False):
+        start = int(row.sic_start)
+        end = int(row.sic_end)
+        if start < 0 or end >= len(lookup) or start > end:
+            raise ValueError(f"Invalid FF48 SIC range: {start}-{end}")
+        existing = lookup[start : end + 1]
+        if np.isfinite(existing).any():
+            raise ValueError(f"Overlapping FF48 SIC range: {start}-{end}")
+        lookup[start : end + 1] = int(row.ff48)
+    codes = pd.to_numeric(sic, errors="coerce")
+    valid = codes.between(0, len(lookup) - 1) & codes.notna()
+    mapped = pd.Series(np.nan, index=sic.index, dtype=float)
+    mapped.loc[valid] = lookup[codes.loc[valid].astype(int)]
+    return mapped.astype("Int64")
+
+
+def _frontier_current(
+    panel: pd.DataFrame, ff48_sic_codes: pd.DataFrame
+) -> pd.DataFrame:
     """Current Nguyen-Swanson frontier residual with a causal 60-month window."""
 
     if panel.empty:
@@ -673,7 +699,7 @@ def _frontier_current(panel: pd.DataFrame) -> pd.DataFrame:
     frame["ebitda_assets"] = (
         frame["operating_income"] + frame["depreciation"]
     ) / frame["assets"].replace(0.0, np.nan)
-    frame["industry"] = (frame["sic"] // 100).astype("Int64")
+    frame["industry"] = _ff48_from_sic(frame["sic"], ff48_sic_codes)
 
     current_month = frame["month"].max()
     start_month = current_month - pd.DateOffset(months=60)
@@ -862,6 +888,7 @@ def calculate_advanced_accounting_signals(
     submissions: pd.DataFrame,
     prices_daily: pd.DataFrame,
     gnp_deflator: pd.DataFrame,
+    ff48_sic_codes: pd.DataFrame,
     *,
     formation_at: str | pd.Timestamp,
 ) -> pd.DataFrame:
@@ -883,7 +910,7 @@ def calculate_advanced_accounting_signals(
     ch_nncoa = _change_nncoa(annual)
     equity_duration = _equity_duration(annual, monthly_prices)
     gr_ltnoa = _growth_long_term_noa(annual)
-    frontier = _frontier_current(panel)
+    frontier = _frontier_current(panel, ff48_sic_codes)
     mohanram = _mohanram_annual_proxy(annual, monthly_prices)
     annual_counts = annual.groupby("symbol").size().to_dict()
     comp_equity = _comp_equity_issuance(panel) if not panel.empty else pd.Series(dtype=float)
@@ -1007,14 +1034,14 @@ def calculate_advanced_accounting_signals(
             signal="Frontier",
             value=frontier_row.get("value"),
             fidelity=FidelityClass.RECONSTRUCTED,
-            formula_id="openap_frontier_60m_sec_yahoo_sic2",
-            source_ids=("sec_edgar", "yahoo_public"),
+            formula_id="openap_frontier_60m_sec_yahoo_ff48",
+            source_ids=("sec_edgar", "yahoo_public", "kenneth_french"),
             available_at=frontier_row.get("available_at", pd.NaT),
             period_end=frontier_row.get("period_end", pd.NaT),
             observation_count=monthly_count,
             caveat=(
-                "SEC filing SIC two-digit dummies replace CRSP SIC FF48 while "
-                "preserving the official 60-month regression design"
+                "Causal SEC filing SIC replaces CRSP SIC; industry grouping uses "
+                "the official Kenneth French FF48 interval definition"
             ),
         )
         ms_row = mohanram.loc[symbol] if symbol in mohanram.index else pd.Series(dtype=object)
@@ -1198,7 +1225,7 @@ def implemented_source_pairs() -> frozenset[tuple[str, str]]:
         "CompEquIss": ("sec_edgar", "yahoo_public"),
         "EarningsConsistency": ("sec_edgar",),
         "EquityDuration": ("sec_edgar", "yahoo_public"),
-        "Frontier": ("sec_edgar", "yahoo_public"),
+        "Frontier": ("sec_edgar", "yahoo_public", "kenneth_french"),
         "GrLTNOA": ("sec_edgar",),
         "Herf": ("sec_edgar",),
         "HerfBE": ("sec_edgar",),

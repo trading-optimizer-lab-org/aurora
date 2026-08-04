@@ -22,6 +22,7 @@ from aurora.research.openap_93.sources import (
 NORMALIZED_PUBLIC_DATASETS = (
     "ff3_daily",
     "ff3_monthly",
+    "ff48_sic_codes",
     "liquidity_monthly",
     "vix_daily",
     "gnp_deflator",
