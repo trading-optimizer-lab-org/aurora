@@ -149,6 +149,16 @@ def calculate_event_signals(
         ):
             finite = value is not None and np.isfinite(float(value))
             actual_fidelity = fidelity if finite else FidelityClass.UNAVAILABLE
+            if finite:
+                missing_reason = ""
+            elif (
+                signal == "AgeIPO"
+                and months_since_listing is not None
+                and not 3 <= months_since_listing <= 36
+            ):
+                missing_reason = "not_applicable:listing_age_outside_3_36_months"
+            else:
+                missing_reason = "insufficient_event_history"
             rows.append(
                 {
                     **common,
@@ -167,7 +177,7 @@ def calculate_event_signals(
                     "formula_id": formula,
                     "source_ids": "yahoo_public",
                     "observation_count": int(len(paid)),
-                    "reason_if_missing": "" if finite else "insufficient_or_not_applicable_event_history",
+                    "reason_if_missing": missing_reason,
                     "caveat": caveat,
                 }
             )

@@ -35,6 +35,10 @@ from .analyst_pipeline import (
     calculate_analyst_signals,
 )
 from .event_pipeline import EVENT_IMPLEMENTED_SIGNALS, calculate_event_signals
+from .institutional_pipeline import (
+    INSTITUTIONAL_IMPLEMENTED_SIGNALS,
+    calculate_institutional_signals,
+)
 from .market_pipeline import MARKET_IMPLEMENTED_SIGNALS, calculate_market_signals
 from .quarterly_pipeline import (
     ASSET_TAGS,
@@ -83,6 +87,7 @@ IMPLEMENTED_SIGNALS = frozenset(
     | ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS
     | ANALYST_IMPLEMENTED_SIGNALS
     | EVENT_IMPLEMENTED_SIGNALS
+    | INSTITUTIONAL_IMPLEMENTED_SIGNALS
     | MARKET_IMPLEMENTED_SIGNALS
     | QUARTERLY_IMPLEMENTED_SIGNALS
     | SHORT_INTEREST_IMPLEMENTED_SIGNALS
@@ -179,6 +184,10 @@ def _load_public_frames(normalized_dir: str | Path) -> dict[str, pd.DataFrame]:
         "gnp_deflator",
         "signal_doc",
         "openap_reference_sample",
+        "sec_13f_filings",
+        "sec_13f_holdings",
+        "sec_13f_exclusions",
+        "openfigi_cusip_map",
     )
     frames: dict[str, pd.DataFrame] = {}
     for name in required:
@@ -186,7 +195,7 @@ def _load_public_frames(normalized_dir: str | Path) -> dict[str, pd.DataFrame]:
         if not path.exists():
             raise RuntimeError(f"Missing normalized public input: {path}")
         frames[name] = pd.read_parquet(path)
-        if frames[name].empty:
+        if frames[name].empty and name != "sec_13f_exclusions":
             raise RuntimeError(f"Normalized public input is empty: {name}")
     return frames
 
@@ -403,14 +412,24 @@ def _normalize_signal_results(
     )
     frame["reason_if_missing"] = frame["reason_if_missing"].fillna("")
     not_implemented = frame["signal"].map(lambda value: value not in IMPLEMENTED_SIGNALS)
+    registry_reasons = frame["signal"].map(
+        {name: spec.notes for name, spec in registry.items()}
+    ).fillna("")
     frame.loc[not_implemented & frame["reason_if_missing"].eq(""), "reason_if_missing"] = (
-        "no_authorized_free_current_formula_implemented"
+        registry_reasons.loc[not_implemented & frame["reason_if_missing"].eq("")]
+    )
+    frame.loc[not_implemented & frame["reason_if_missing"].eq(""), "reason_if_missing"] = (
+        "no_authorized_free_current_formula_implemented_and_no_specific_blocker_recorded"
     )
     frame.loc[
         ~not_implemented & frame["value"].isna() & frame["reason_if_missing"].eq(""),
         "reason_if_missing",
     ] = "required_inputs_missing_for_security"
     frame["caveat"] = frame["caveat"].fillna("")
+    not_applicable = (
+        frame["value"].isna()
+        & frame["reason_if_missing"].str.startswith("not_applicable:")
+    )
     frame["coverage_flag"] = np.select(
         [
             frame["current_usable"],
@@ -420,8 +439,14 @@ def _normalize_signal_results(
             frame["value"].notna() & frame["fidelity_class"].eq(
                 FidelityClass.STALE_REFERENCE_ONLY.value
             ),
+            not_applicable,
         ],
-        ["current_usable", "research_only", "stale_reference_only"],
+        [
+            "current_usable",
+            "research_only",
+            "stale_reference_only",
+            "not_applicable",
+        ],
         default="missing",
     )
     frame = frame.rename(columns={"ticker": "ticker"})
@@ -535,12 +560,20 @@ def build_coverage_report(
         best = _best_fidelity(part)
         non_null = int(part["value"].notna().sum())
         usable = int(part["current_usable"].sum())
+        not_applicable = int(part["coverage_flag"].eq("not_applicable").sum())
+        applicable = max(0, len(part) - not_applicable)
         validation_row = validation_by_signal.loc[signal]
         rows.append(
             {
                 "signal": signal,
-                "status": "current_usable" if usable else (
-                    "research_only" if non_null else "unavailable"
+                "status": (
+                    "current_usable"
+                    if usable
+                    else "research_only"
+                    if non_null
+                    else "not_applicable"
+                    if not_applicable == len(part)
+                    else "unavailable"
                 ),
                 "fidelity_class": best,
                 "current_usable": bool(usable),
@@ -557,9 +590,12 @@ def build_coverage_report(
                 "latest_available_at": part["available_at"].max(),
                 "natural_frequency": spec.natural_frequency,
                 "universe_count": len(part),
+                "applicable_count": applicable,
                 "non_null_count": non_null,
                 "current_usable_count": usable,
-                "coverage_pct": 100.0 * usable / len(part) if len(part) else 0.0,
+                "not_applicable_count": not_applicable,
+                "missing_count": max(0, len(part) - non_null - not_applicable),
+                "coverage_pct": 100.0 * usable / applicable if applicable else 0.0,
                 "validation_start": validation_row["validation_start"],
                 "validation_end": validation_row["validation_end"],
                 "paired_observations": validation_row["paired_observations"],
@@ -581,6 +617,7 @@ def build_coverage_report(
                 "reason_if_missing": "|".join(
                     sorted(set(part.loc[part["value"].isna(), "reason_if_missing"]) - {""})
                 ),
+                "registry_notes": spec.notes,
                 "openap_script": spec.openap_script,
                 "implementation_file": _implementation_file(signal),
             }
@@ -597,6 +634,8 @@ def _implementation_file(signal: str) -> str:
         return "research/openap_93/analyst_pipeline.py"
     if signal in EVENT_IMPLEMENTED_SIGNALS:
         return "research/openap_93/event_pipeline.py"
+    if signal in INSTITUTIONAL_IMPLEMENTED_SIGNALS:
+        return "research/openap_93/institutional_pipeline.py"
     if signal in MARKET_IMPLEMENTED_SIGNALS:
         return "research/openap_93/market_pipeline.py"
     if signal in QUARTERLY_IMPLEMENTED_SIGNALS:
@@ -644,6 +683,7 @@ def _integrate_features(
         ("source_available_at", "available_at"),
         ("source_input_age_days", "staleness_days"),
         ("is_current_for_natural_frequency", "is_current_for_natural_frequency"),
+        ("value_status", "coverage_flag"),
     ):
         features.loc[common, target] = updates.loc[common, source].to_numpy()
     features = features.reset_index()
@@ -672,6 +712,9 @@ def _integrate_features(
 
 def _score_variant(features: pd.DataFrame, score_name: str, allowed: set[str]) -> pd.DataFrame:
     frame = features.copy()
+    not_applicable = frame.get(
+        "value_status", pd.Series("", index=frame.index, dtype=str)
+    ).eq("not_applicable")
     formula_allowed = frame["formula_fidelity_class"].isin(allowed)
     numeric_allowed = (
         frame["fidelity_class"].isin(allowed)
@@ -687,7 +730,11 @@ def _score_variant(features: pd.DataFrame, score_name: str, allowed: set[str]) -
     frame["status"] = np.where(
         numeric_allowed, np.where(proxy_formula, "proxy", "exact"), "unavailable"
     )
-    frame["value_status"] = np.where(numeric_allowed, "computed", "missing_or_excluded")
+    frame["value_status"] = np.select(
+        [numeric_allowed, not_applicable],
+        ["computed", "not_applicable"],
+        default="missing_or_excluded",
+    )
     potential = np.where(proxy_formula, frame["_proxy_weight"], frame["_exact_weight"])
     frame["potential_evidence_weight"] = np.where(formula_allowed, potential, 0.0)
     frame["evidence_weight"] = np.where(numeric_allowed, potential, 0.0)
@@ -765,6 +812,7 @@ def build_score_table(
         ).astype(int)
     counts["_previous"] = (numeric_current & ~counts["signalname"].isin(REQUIRED_93)).astype(int)
     counts["_new"] = (numeric_current & counts["signalname"].isin(REQUIRED_93)).astype(int)
+    counts["_not_applicable"] = counts["value_status"].eq("not_applicable").astype(int)
     summary = counts.groupby("symbol", as_index=False).agg(
         signals_total=("_numeric", "sum"),
         signals_previous_92=("_previous", "sum"),
@@ -774,9 +822,17 @@ def build_score_table(
         validated_proxy_count=("_validated_proxy", "sum"),
         unvalidated_proxy_count=("_unvalidated_proxy", "sum"),
         stale_reference_count=("_stale_reference_only", "sum"),
+        not_applicable_count=("_not_applicable", "sum"),
     )
-    summary["missing_count"] = 185 - summary["signals_total"]
-    summary["coverage_pct"] = 100.0 * summary["signals_total"] / 185.0
+    summary["applicable_count"] = 185 - summary["not_applicable_count"]
+    summary["missing_count"] = (
+        summary["applicable_count"] - summary["signals_total"]
+    ).clip(lower=0)
+    summary["coverage_pct"] = (
+        100.0
+        * summary["signals_total"]
+        / summary["applicable_count"].replace(0, np.nan)
+    )
     oldest = (
         signals.loc[signals["value"].notna()]
         .groupby("ticker", as_index=False)["available_at"]
@@ -800,6 +856,61 @@ def _copy_report(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
+def _institutional_input_audit(
+    public_inputs: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    filings = public_inputs["sec_13f_filings"]
+    holdings = public_inputs["sec_13f_holdings"]
+    exclusions = public_inputs["sec_13f_exclusions"]
+    mapping = public_inputs["openfigi_cusip_map"]
+    status_counts = {
+        str(status): int(count)
+        for status, count in mapping["mapping_status"].value_counts(dropna=False).items()
+    }
+    mapped_cusips = set(
+        mapping.loc[mapping["mapping_status"].eq("mapped_unique"), "cusip"].astype(str)
+    )
+    holding_cusips = holdings["cusip"].astype(str)
+    mapped_holding_rows = int(holding_cusips.isin(mapped_cusips).sum())
+    latest_report = pd.to_datetime(filings["report_period"], errors="coerce").max()
+    latest_filing = pd.to_datetime(filings["filing_date"], errors="coerce").max()
+    payload: dict[str, Any] = {
+        "filing_rows": int(len(filings)),
+        "holding_rows": int(len(holdings)),
+        "excluded_amendment_groups": int(len(exclusions)),
+        "cusips_requested": int(mapping["cusip"].nunique()),
+        "mapping_status_counts": status_counts,
+        "mapped_holding_rows": mapped_holding_rows,
+        "mapped_holding_rows_pct": (
+            round(100.0 * mapped_holding_rows / len(holdings), 6)
+            if len(holdings)
+            else 0.0
+        ),
+        "latest_report_period": (
+            pd.Timestamp(latest_report).isoformat() if pd.notna(latest_report) else None
+        ),
+        "latest_filing_date": (
+            pd.Timestamp(latest_filing).isoformat() if pd.notna(latest_filing) else None
+        ),
+        "request_failed_count": int(status_counts.get("request_failed", 0)),
+        "ambiguous_count": int(status_counts.get("ambiguous", 0)),
+        "no_common_stock_match_count": int(
+            status_counts.get("no_common_stock_match", 0)
+        ),
+    }
+    rows: list[dict[str, Any]] = []
+    for metric, value in payload.items():
+        rows.append(
+            {
+                "metric": metric,
+                "value": json.dumps(value, sort_keys=True)
+                if isinstance(value, dict)
+                else value,
+            }
+        )
+    return pd.DataFrame(rows), payload
+
+
 def _write_final_report(
     path: Path,
     coverage: pd.DataFrame,
@@ -818,7 +929,12 @@ def _write_final_report(
     unvalidated = int(
         coverage["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value).sum()
     )
-    unavailable = 93 - exact - reconstructed - validated - unvalidated
+    stale_reference = int(
+        coverage["fidelity_class"].eq(FidelityClass.STALE_REFERENCE_ONLY.value).sum()
+    )
+    unavailable = int(
+        coverage["fidelity_class"].eq(FidelityClass.UNAVAILABLE.value).sum()
+    )
     selected = selected_sources.get("selected_source_ids", [])
     usable_total = exact + reconstructed + validated
     mean_signal_coverage = float(
@@ -830,6 +946,9 @@ def _write_final_report(
     probe_failures = source_probes.loc[~source_probes["probe_ok"].fillna(False)]
     unavailable_names = coverage.loc[
         coverage["status"].eq("unavailable"), "signal"
+    ].astype(str).tolist()
+    not_applicable_names = coverage.loc[
+        coverage["status"].eq("not_applicable"), "signal"
     ].astype(str).tolist()
     research_only_names = coverage.loc[
         coverage["status"].eq("research_only"), "signal"
@@ -851,6 +970,7 @@ def _write_final_report(
         f"- Proxies validados actuales: {validated}",
         f"- Total actual utilizable: {usable_total} de 93",
         f"- Proxies no validados: {unvalidated}",
+        f"- Solo referencia antigua: {stale_reference}",
         f"- No disponibles: {unavailable}",
         f"- Numero de dominios en la combinacion seleccionada: {len(selected_sources.get('selected_domains', []))}",
         f"- Cobertura media utilizable por senal: {mean_signal_coverage:.2f}%",
@@ -879,6 +999,7 @@ def _write_final_report(
         "",
         "- Proxies no validados: " + (", ".join(research_only_names) or "ninguno"),
         "- No disponibles: " + (", ".join(unavailable_names) or "ninguna"),
+        "- No aplicables al universo actual: " + (", ".join(not_applicable_names) or "ninguna"),
         "",
         "## Fuentes Que Fallaron La Prueba Real",
         "",
@@ -907,6 +1028,16 @@ def _write_final_report(
         "- Los SHA-256 de todos los outputs estan en `run_manifest.json`.",
         f"- Filas de precios cargadas: {manifest['input_row_counts']['price_rows']}",
         f"- Filas SEC companyfacts cargadas: {manifest['input_row_counts']['companyfact_rows']}",
+        f"- Filings 13F seleccionados: {manifest['institutional_inputs']['filing_rows']}",
+        f"- Holdings 13F normalizados: {manifest['institutional_inputs']['holding_rows']}",
+        (
+            "- Holdings 13F con CUSIP unico mapeado: "
+            f"{manifest['institutional_inputs']['mapped_holding_rows_pct']:.2f}%"
+        ),
+        (
+            "- Fallos de solicitud OpenFIGI tras reintentos: "
+            f"{manifest['institutional_inputs']['request_failed_count']}"
+        ),
         "",
         "## Cobertura Por Senal",
         "",
@@ -980,6 +1111,17 @@ def run_current_pipeline(
         calculate_short_interest_signals(
             base["master"], base["analyst"], formation_at=formation
         ),
+        calculate_institutional_signals(
+            base["master"],
+            base["prices"],
+            base["companyfacts"],
+            base["concepts"],
+            base["analyst"],
+            public["sec_13f_filings"],
+            public["sec_13f_holdings"],
+            public["openfigi_cusip_map"],
+            formation_at=formation,
+        ),
     ]
     signals = _normalize_signal_results(
         results, base["master"], registry, formation, retrieved_at
@@ -1006,6 +1148,7 @@ def run_current_pipeline(
     )
     coverage = build_coverage_report(signals, registry, validation)
     score_table = build_score_table(base["features"], base["metadata"], signals)
+    institutional_audit, institutional_payload = _institutional_input_audit(public)
 
     signals.to_parquet(output / "signals_93_current.parquet", index=False, compression="zstd")
     signals.to_csv(output / "signals_93_current.csv", index=False)
@@ -1013,6 +1156,7 @@ def run_current_pipeline(
     score_table.to_csv(output / "score_185_current.csv", index=False)
     coverage.to_csv(output / "coverage_93.csv", index=False)
     validation.to_csv(output / "validation_per_signal.csv", index=False)
+    institutional_audit.to_csv(output / "institutional_input_audit.csv", index=False)
     pd.DataFrame(columns=["signal", "month", "paired_observations", "spearman"]).to_parquet(
         output / "validation_per_month.parquet", index=False, compression="zstd"
     )
@@ -1065,6 +1209,17 @@ def run_current_pipeline(
         "manual_actions_required": False,
         "selected_signals": sorted(selected_signals) if selected_signals else list(REQUIRED_93),
         "input_row_counts": base["load_audit"],
+        "public_input_row_counts": {
+            name: int(len(frame)) for name, frame in sorted(public.items())
+        },
+        "institutional_inputs": institutional_payload,
+        "fidelity_counts": {
+            fidelity.value: int(
+                coverage["fidelity_class"].eq(fidelity.value).sum()
+            )
+            for fidelity in FidelityClass
+        },
+        "current_usable_signal_count": int(coverage["current_usable"].sum()),
     }
     lineage = {
         "base_database": {
@@ -1084,9 +1239,11 @@ def run_current_pipeline(
                 "openap_script": spec.openap_script,
                 "required_inputs": list(spec.required_inputs),
                 "candidate_sources": list(spec.candidate_sources),
+                "notes": spec.notes,
             }
             for name, spec in registry.items()
         },
+        "institutional_inputs": institutional_payload,
         "generated_at": retrieved_at,
     }
     (output / "data_lineage.json").write_text(
@@ -1100,6 +1257,18 @@ def run_current_pipeline(
             ~source_probes["probe_ok"].fillna(False),
             ["source_id", "status_code", "error"],
         ].to_dict(orient="records"),
+        "institutional_mapping": {
+            "status_counts": institutional_payload["mapping_status_counts"],
+            "request_failed_count": institutional_payload["request_failed_count"],
+            "ambiguous_count": institutional_payload["ambiguous_count"],
+            "no_common_stock_match_count": institutional_payload[
+                "no_common_stock_match_count"
+            ],
+            "unresolved_samples": public["openfigi_cusip_map"].loc[
+                ~public["openfigi_cusip_map"]["mapping_status"].eq("mapped_unique"),
+                ["cusip", "mapping_status", "warning"],
+            ].head(100).to_dict(orient="records"),
+        },
         "critical_failures": [],
         "generated_at": retrieved_at,
     }

@@ -19,6 +19,10 @@ from .advanced_accounting_pipeline import (
 )
 from .analyst_pipeline import implemented_source_pairs as analyst_source_pairs
 from .event_pipeline import implemented_source_pairs as event_source_pairs
+from .institutional_pipeline import (
+    OPENFIGI_MAPPING_URL,
+    implemented_source_pairs as institutional_source_pairs,
+)
 from .market_pipeline import implemented_source_pairs as market_source_pairs
 from .quarterly_pipeline import implemented_source_pairs as quarterly_source_pairs
 from .short_interest_pipeline import (
@@ -50,13 +54,21 @@ PUBLIC_SOURCES: tuple[SourceSpec, ...] = (
     SourceSpec("fred_public_csv", "fred.stlouisfed.org", "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS,GNPDEF", "https://fred.stlouisfed.org/legal/", "Federal Reserve public series; per-series rights apply", "public_csv", False, False, "authorized_public", 1),
     SourceSpec("kenneth_french", "mba.tuck.dartmouth.edu", "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip", "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html", "Academic public download", "public_zip", False, False, "authorized_public", 1),
     SourceSpec("cboe_public", "cdn.cboe.com", "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv", "https://www.cboe.com/terms/", "Cboe website terms", "public_csv", False, False, "public_download_terms_review", 3),
-    SourceSpec("sec_13f", "sec.gov", "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/2025q4_form13f.zip", "https://www.sec.gov/dera/data/form-13f", "US government public data", "official_bulk_zip", False, False, "authorized_public_rate_limited", 1),
+    SourceSpec("sec_13f", "sec.gov", "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01mar2026-31may2026_form13f.zip", "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets", "US government public data", "official_bulk_zip", False, False, "authorized_public_rate_limited", 1),
+    SourceSpec("openfigi_public", "api.openfigi.com", OPENFIGI_MAPPING_URL, "https://www.openfigi.com/api/documentation", "OpenFIGI public API terms", "official_public_api", False, False, "authorized_public_rate_limited", 2),
     SourceSpec("bea_public", "apps.bea.gov", "https://apps.bea.gov/industry/xls/io-annual/IxI_TR_1997-2024_Summary.xlsx", "https://apps.bea.gov/terms-of-service/index.htm", "US government public data", "official_bulk_file", False, False, "authorized_public", 1),
-    SourceSpec("patentsview_public", "search.patentsview.org", "https://search.patentsview.org/docs/", "https://patentsview.org/terms", "USPTO public patent data; current access policy applies", "public_documentation", False, False, "authorized_public_policy_review", 2),
+    SourceSpec("patentsview_public", "search.patentsview.org", "https://search.patentsview.org/docs/", "https://patentsview.org/terms", "USPTO public patent data; current API registration policy applies", "api_key_or_bulk_migration", True, False, "not_eligible_no_account_or_key", 2),
     SourceSpec("pastor_stambaugh", "faculty.chicagobooth.edu", "https://faculty.chicagobooth.edu/-/media/faculty/lubos-pastor/data/liq_data_1962_2024.txt", "https://faculty.chicagobooth.edu/lubos-pastor/research", "Academic public download", "public_file", False, False, "authorized_public", 1),
 )
 
 TEST_SYMBOLS = ("AAPL", "CARR", "KOP", "META", "RDDT")
+TEST_CUSIPS = {
+    "AAPL": "037833100",
+    "CARR": "14448C104",
+    "KOP": "50060P106",
+    "META": "30303M102",
+    "RDDT": "75734B100",
+}
 
 # A reachable endpoint is evidence that a source exists, not evidence that the
 # source can calculate a predictor. Entries are added only after an adapter has
@@ -69,6 +81,7 @@ IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = frozenset(
     | event_source_pairs()
     | quarterly_source_pairs()
     | short_interest_source_pairs()
+    | institutional_source_pairs()
 )
 
 
@@ -106,7 +119,18 @@ def probe_source(
     }
     result: dict[str, Any] = {**asdict(source), "tested_at": _utcnow()}
     try:
-        response = session.get(source.probe_url, headers=headers, timeout=timeout, stream=True)
+        if source.source_id == "openfigi_public":
+            response = session.post(
+                source.probe_url,
+                headers={**headers, "Content-Type": "application/json"},
+                json=[{"idType": "ID_CUSIP", "idValue": "037833100"}],
+                timeout=timeout,
+                stream=True,
+            )
+        else:
+            response = session.get(
+                source.probe_url, headers=headers, timeout=timeout, stream=True
+            )
         prefix = response.raw.read(4096, decode_content=True)
         digest = hashlib.sha256(prefix).hexdigest()
         content_type = response.headers.get("Content-Type", "")
@@ -143,14 +167,105 @@ def probe_symbol_coverage(
     session: requests.Session,
     timeout: int = 30,
 ) -> list[dict[str, Any]]:
-    if not source.symbol_template:
-        return []
     headers = {
         "User-Agent": "Mozilla/5.0 Aurora-OpenAP-Research/1.0",
         "Accept": "application/json,text/plain,*/*",
         "Accept-Language": "en-US,en;q=0.8",
     }
     rows: list[dict[str, Any]] = []
+    if source.source_id == "openfigi_public":
+        for symbol in TEST_SYMBOLS:
+            cusip = TEST_CUSIPS[symbol]
+            try:
+                response = session.post(
+                    source.probe_url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=[
+                        {
+                            "idType": "ID_CUSIP",
+                            "idValue": cusip,
+                            "marketSecDes": "Equity",
+                        }
+                    ],
+                    timeout=timeout,
+                )
+                payload = response.json() if response.content else []
+                candidates = (
+                    payload[0].get("data", [])
+                    if isinstance(payload, list)
+                    and payload
+                    and isinstance(payload[0], dict)
+                    else []
+                )
+                tickers = {
+                    str(candidate.get("ticker", "")).upper().strip()
+                    for candidate in candidates
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("marketSector", "")).lower() == "equity"
+                    and str(candidate.get("exchCode", "")).upper() == "US"
+                    and (
+                        "common stock"
+                        in str(candidate.get("securityType2", "")).lower()
+                        or "common stock"
+                        in str(candidate.get("securityType", "")).lower()
+                    )
+                }
+                rows.append(
+                    {
+                        "source_id": source.source_id,
+                        "symbol": symbol,
+                        "url": source.probe_url,
+                        "probe_applicable": True,
+                        "probe_key": cusip,
+                        "status_code": response.status_code,
+                        "content_type": response.headers.get("Content-Type", ""),
+                        "nonempty": bool(response.content),
+                        "looks_like_error_html": False,
+                        "probe_ok": (
+                            200 <= response.status_code < 300
+                            and symbol in tickers
+                        ),
+                        "tested_at": _utcnow(),
+                        "error": "",
+                    }
+                )
+            except (requests.RequestException, ValueError, TypeError) as exc:
+                rows.append(
+                    {
+                        "source_id": source.source_id,
+                        "symbol": symbol,
+                        "url": source.probe_url,
+                        "probe_applicable": True,
+                        "probe_key": cusip,
+                        "status_code": 0,
+                        "content_type": "",
+                        "nonempty": False,
+                        "looks_like_error_html": False,
+                        "probe_ok": False,
+                        "tested_at": _utcnow(),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+            time.sleep(0.25)
+        return rows
+    if not source.symbol_template:
+        return [
+            {
+                "source_id": source.source_id,
+                "symbol": symbol,
+                "url": source.probe_url,
+                "probe_applicable": False,
+                "probe_key": "",
+                "status_code": "",
+                "content_type": "",
+                "nonempty": "",
+                "looks_like_error_html": False,
+                "probe_ok": "",
+                "tested_at": _utcnow(),
+                "error": "source_is_not_symbol_scoped; see source-level probe",
+            }
+            for symbol in TEST_SYMBOLS
+        ]
     for symbol in TEST_SYMBOLS:
         url = source.symbol_template.format(symbol=symbol)
         try:
@@ -164,6 +279,8 @@ def probe_symbol_coverage(
                 "source_id": source.source_id,
                 "symbol": symbol,
                 "url": url,
+                "probe_applicable": True,
+                "probe_key": symbol,
                 "status_code": response.status_code,
                 "content_type": content_type,
                 "nonempty": bool(response.content),
@@ -174,6 +291,7 @@ def probe_symbol_coverage(
         except requests.RequestException as exc:
             rows.append({
                 "source_id": source.source_id, "symbol": symbol, "url": url,
+                "probe_applicable": True, "probe_key": symbol,
                 "status_code": 0, "content_type": "", "nonempty": False,
                 "looks_like_error_html": False, "probe_ok": False,
                 "tested_at": _utcnow(), "error": f"{type(exc).__name__}: {exc}",
@@ -192,9 +310,15 @@ def write_source_evidence(output_dir: str | Path) -> tuple[pd.DataFrame, pd.Data
         for source in PUBLIC_SOURCES:
             row = probe_source(source, session=session)
             source_rows.append(row)
-            symbol_rows.extend(probe_symbol_coverage(source, session=session))
+            source_symbol_rows = probe_symbol_coverage(source, session=session)
+            symbol_rows.extend(source_symbol_rows)
             (evidence / f"{source.source_id}.json").write_text(
-                json.dumps(row, indent=2, ensure_ascii=True), encoding="utf-8"
+                json.dumps(
+                    {**row, "five_company_probe": source_symbol_rows},
+                    indent=2,
+                    ensure_ascii=True,
+                ),
+                encoding="utf-8",
             )
     source_frame = pd.DataFrame(source_rows)
     symbol_frame = pd.DataFrame(symbol_rows)
@@ -237,6 +361,8 @@ def source_coverage_matrix(
                     and formula_implemented
                     and source_required
                     and required_fields_verified
+                    and not source.registration_required
+                    and not source.automation_status.startswith("not_eligible_")
                 ),
                 "expected_fidelity": signal.expected_best_class.value if candidate else "unavailable",
                 "source_probe_ok": bool(probe_ok.get(source.source_id, False)),

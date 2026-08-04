@@ -11,9 +11,12 @@ from zipfile import ZipFile
 import hashlib
 import json
 import re
+import time
 
 import pandas as pd
 import requests
+
+from .institutional_pipeline import map_cusips_openfigi, parse_13f_archives
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,21 @@ PUBLIC_INPUTS: tuple[DownloadSpec, ...] = (
         "https://drive.usercontent.google.com/download?id=1avFIMjz_7LoF3p3nO26eqLW5KdRTOdhW&export=download&confirm=t",
         "signed_predictors_dl_wide.zip", "openap_reference_zip",
     ),
+    DownloadSpec(
+        "sec_13f", "sec_13f_2026_march_may",
+        "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01mar2026-31may2026_form13f.zip",
+        "sec_13f_2026_march_may.zip", "sec_13f_zip",
+    ),
+    DownloadSpec(
+        "sec_13f", "sec_13f_2025_december_2026_february",
+        "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01dec2025-28feb2026_form13f.zip",
+        "sec_13f_2025_december_2026_february.zip", "sec_13f_zip",
+    ),
+    DownloadSpec(
+        "sec_13f", "sec_13f_2025_september_november",
+        "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01sep2025-30nov2025_form13f.zip",
+        "sec_13f_2025_september_november.zip", "sec_13f_zip",
+    ),
 )
 
 
@@ -88,32 +106,46 @@ def download_public_inputs(output_dir: str | Path, *, timeout: int = 120) -> lis
         for spec in PUBLIC_INPUTS:
             target = raw / spec.filename
             temporary = target.with_suffix(target.suffix + ".partial")
-            temporary.unlink(missing_ok=True)
+            last_error: Exception | None = None
             digest = hashlib.sha256()
             byte_count = 0
-            try:
-                with session.get(
-                    spec.url,
-                    headers=headers,
-                    timeout=timeout,
-                    stream=True,
-                ) as response:
-                    response.raise_for_status()
-                    content_type = response.headers.get("Content-Type", "")
-                    status_code = response.status_code
-                    with temporary.open("wb") as handle:
-                        for block in response.iter_content(chunk_size=8 * 1024 * 1024):
-                            if not block:
-                                continue
-                            handle.write(block)
-                            digest.update(block)
-                            byte_count += len(block)
-                if byte_count == 0:
-                    raise RuntimeError(f"{spec.dataset_id}: empty public download")
-                temporary.replace(target)
-            except Exception:
+            content_type = ""
+            status_code = 0
+            for attempt in range(4):
                 temporary.unlink(missing_ok=True)
-                raise
+                digest = hashlib.sha256()
+                byte_count = 0
+                try:
+                    with session.get(
+                        spec.url,
+                        headers=headers,
+                        timeout=(30, timeout),
+                        stream=True,
+                    ) as response:
+                        response.raise_for_status()
+                        content_type = response.headers.get("Content-Type", "")
+                        status_code = response.status_code
+                        with temporary.open("wb") as handle:
+                            for block in response.iter_content(chunk_size=8 * 1024 * 1024):
+                                if not block:
+                                    continue
+                                handle.write(block)
+                                digest.update(block)
+                                byte_count += len(block)
+                    if byte_count == 0:
+                        raise RuntimeError(f"{spec.dataset_id}: empty public download")
+                    temporary.replace(target)
+                    last_error = None
+                    break
+                except (requests.RequestException, OSError, RuntimeError) as exc:
+                    temporary.unlink(missing_ok=True)
+                    last_error = exc
+                    if attempt < 3:
+                        time.sleep(2.0**attempt)
+            if last_error is not None:
+                raise RuntimeError(
+                    f"{spec.dataset_id}: public download failed after four attempts"
+                ) from last_error
             rows.append({
                 **asdict(spec),
                 "path": str(target),
@@ -200,10 +232,14 @@ def parse_ff48_sic_zip(path: str | Path) -> pd.DataFrame:
     frame = pd.DataFrame(rows)
     if frame.empty or set(frame["ff48"].unique()) != set(range(1, 49)):
         raise ValueError("Official FF48 archive did not yield all 48 industries")
-    expanded = frame.apply(
-        lambda row: pd.Series(range(int(row["sic_start"]), int(row["sic_end"]) + 1)),
-        axis=1,
-    ).stack().astype(int)
+    expanded = pd.Series(
+        [
+            sic
+            for row in frame.itertuples(index=False)
+            for sic in range(int(row.sic_start), int(row.sic_end) + 1)
+        ],
+        dtype="int64",
+    )
     if expanded.duplicated().any():
         raise ValueError("Official FF48 SIC intervals overlap")
     return frame.sort_values(["ff48", "sic_start", "sic_end"]).reset_index(drop=True)
@@ -311,7 +347,13 @@ def parse_openap_reference_zip(
     return frame, metadata
 
 
-def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict[str, int]:
+def normalize_public_inputs(
+    raw_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    openfigi_http_post=None,
+    openfigi_sleep=None,
+) -> dict[str, int]:
     """Normalize public inputs to Parquet and return row counts."""
 
     raw = Path(raw_dir)
@@ -320,6 +362,30 @@ def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict
     openap_sample, openap_metadata = parse_openap_reference_zip(
         raw / "signed_predictors_dl_wide.zip"
     )
+    institutional_filings, institutional_holdings, institutional_exclusions = (
+        parse_13f_archives(
+            [
+                raw / "sec_13f_2026_march_may.zip",
+                raw / "sec_13f_2025_december_2026_february.zip",
+                raw / "sec_13f_2025_september_november.zip",
+            ]
+        )
+    )
+    mapping_checkpoint = output / "openfigi_cusip_map.partial.jsonl"
+    mapping_inputs = institutional_holdings["cusip"].dropna().astype(str)
+    if openfigi_sleep is None:
+        openfigi_cusip_map = map_cusips_openfigi(
+            mapping_inputs,
+            output_checkpoint=mapping_checkpoint,
+            http_post=openfigi_http_post,
+        )
+    else:
+        openfigi_cusip_map = map_cusips_openfigi(
+            mapping_inputs,
+            output_checkpoint=mapping_checkpoint,
+            http_post=openfigi_http_post,
+            sleep=openfigi_sleep,
+        )
     frames = {
         "ff3_daily": parse_french_zip(raw / "ff3_daily.zip", daily=True),
         "ff3_monthly": parse_french_zip(raw / "ff3_monthly.zip", daily=False),
@@ -329,15 +395,33 @@ def normalize_public_inputs(raw_dir: str | Path, output_dir: str | Path) -> dict
         "gnp_deflator": parse_fred_csv(raw / "gnpdef.csv", value_column="GNPDEF"),
         "signal_doc": pd.read_csv(raw / "SignalDoc.csv"),
         "openap_reference_sample": openap_sample,
+        "sec_13f_filings": institutional_filings,
+        "sec_13f_holdings": institutional_holdings,
+        "sec_13f_exclusions": institutional_exclusions,
+        "openfigi_cusip_map": openfigi_cusip_map,
     }
     counts: dict[str, int] = {}
     for dataset_id, frame in frames.items():
-        if frame.empty:
+        if frame.empty and dataset_id != "sec_13f_exclusions":
             raise RuntimeError(f"{dataset_id}: normalized dataset is empty")
         frame.to_parquet(output / f"{dataset_id}.parquet", index=False, compression="zstd")
         counts[dataset_id] = len(frame)
+    if not openfigi_cusip_map["mapping_status"].eq("request_failed").any():
+        mapping_checkpoint.unlink(missing_ok=True)
     (output / "normalized_summary.json").write_text(
-        json.dumps({"rows": counts, "created_at": utcnow()}, indent=2), encoding="utf-8"
+        json.dumps(
+            {
+                "rows": counts,
+                "created_at": utcnow(),
+                "openfigi_mapping_complete": bool(
+                    not openfigi_cusip_map["mapping_status"]
+                    .eq("request_failed")
+                    .any()
+                ),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
     )
     (output / "openap_reference_metadata.json").write_text(
         json.dumps(openap_metadata, indent=2, ensure_ascii=True), encoding="utf-8"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 from zipfile import ZipFile
 import json
 
@@ -25,6 +27,8 @@ from aurora.research.openap_93.current_pipeline import (
     IMPLEMENTED_SIGNALS,
     REQUIRED_SIGNAL_COLUMNS,
     SCORE_VARIANTS,
+    _normalize_signal_results,
+    build_coverage_report,
     build_validation_report,
 )
 from aurora.research.openap_93.event_pipeline import (
@@ -38,6 +42,12 @@ from aurora.research.openap_93.external import (
     parse_french_zip,
     parse_openap_reference_zip,
     parse_pastor_stambaugh,
+)
+from aurora.research.openap_93.institutional_pipeline import (
+    INSTITUTIONAL_IMPLEMENTED_SIGNALS,
+    calculate_institutional_signals,
+    map_cusips_openfigi,
+    parse_13f_archives,
 )
 from aurora.research.openap_93.market import (
     beta_liquidity_ps,
@@ -67,7 +77,9 @@ from aurora.research.openap_93.registry import REQUIRED_93, FidelityClass, load_
 from aurora.research.openap_93.sources import (
     IMPLEMENTED_SIGNAL_SOURCES,
     PUBLIC_SOURCES,
+    TEST_SYMBOLS,
     implemented_signal_requirements,
+    probe_symbol_coverage,
     select_sources_lexicographically,
     source_coverage_matrix,
 )
@@ -85,6 +97,7 @@ def implemented_signals() -> frozenset[str]:
         | EVENT_IMPLEMENTED_SIGNALS
         | QUARTERLY_IMPLEMENTED_SIGNALS
         | SHORT_INTEREST_IMPLEMENTED_SIGNALS
+        | INSTITUTIONAL_IMPLEMENTED_SIGNALS
     )
 
 
@@ -164,6 +177,16 @@ def test_every_signal_has_formula_inputs_sources_and_fidelity() -> None:
             assert signal.candidate_sources
 
 
+def test_every_unimplemented_signal_has_a_specific_blocker() -> None:
+    registry = load_signal_registry(CONFIG)
+    missing = {
+        name
+        for name, signal in registry.items()
+        if name not in implemented_signals() and not signal.notes.strip()
+    }
+    assert missing == set()
+
+
 def test_every_candidate_source_is_registered() -> None:
     registry = load_signal_registry(CONFIG)
     source_ids = {source.source_id for source in PUBLIC_SOURCES}
@@ -222,9 +245,73 @@ def test_multisource_formulas_require_the_entire_bundle() -> None:
     )
 
 
-def test_no_source_requires_registration_or_payment() -> None:
-    assert all(not source.registration_required for source in PUBLIC_SOURCES)
-    assert all(source.access_mode for source in PUBLIC_SOURCES)
+def test_registration_sources_are_audit_only_and_never_selectable() -> None:
+    requirements = implemented_signal_requirements()
+    implemented_sources = {
+        source_id for source_ids in requirements.values() for source_id in source_ids
+    }
+    for source in PUBLIC_SOURCES:
+        assert source.access_mode
+        if source.registration_required:
+            assert source.source_id not in implemented_sources
+            assert source.automation_status.startswith("not_eligible_")
+
+
+def test_every_source_has_an_explicit_five_company_probe_audit() -> None:
+    cusip_to_symbol = {
+        "037833100": "AAPL",
+        "14448C104": "CARR",
+        "50060P106": "KOP",
+        "30303M102": "META",
+        "75734B100": "RDDT",
+    }
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        content = b"{}"
+        text = "{}"
+
+        def __init__(self, payload: Any) -> None:
+            self._payload = payload
+
+        def json(self) -> Any:
+            return self._payload
+
+    class FakeSession:
+        def get(self, url: str, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse({"url": url})
+
+        def post(
+            self, _url: str, *, json: Sequence[Mapping[str, Any]], **_kwargs: Any
+        ) -> FakeResponse:
+            symbol = cusip_to_symbol[str(json[0]["idValue"])]
+            return FakeResponse(
+                [
+                    {
+                        "data": [
+                            {
+                                "ticker": symbol,
+                                "marketSector": "Equity",
+                                "securityType2": "Common Stock",
+                                "exchCode": "US",
+                            }
+                        ]
+                    }
+                ]
+            )
+
+    session = FakeSession()
+    for source in PUBLIC_SOURCES:
+        rows = probe_symbol_coverage(source, session=session, timeout=1)
+        assert len(rows) == len(TEST_SYMBOLS)
+        assert {row["symbol"] for row in rows} == set(TEST_SYMBOLS)
+        if source.source_id in {"yahoo_public", "nasdaq_public", "openfigi_public"}:
+            assert all(row["probe_applicable"] for row in rows)
+            assert all(row["probe_ok"] for row in rows)
+        else:
+            assert all(not row["probe_applicable"] for row in rows)
+            assert all("not_symbol_scoped" in row["error"] for row in rows)
 
 
 def test_script_is_blocked_locally_without_explicit_permission(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,7 +329,7 @@ def test_offline_execution_requires_the_complete_public_cache(tmp_path: Path) ->
 
     required = required_cached_inputs(tmp_path / "probe", tmp_path / "inputs")
     relative = {path.relative_to(tmp_path).as_posix() for path in required}
-    assert len(relative) == 17
+    assert len(relative) == 21
     assert "probe/source_probe_results.csv" in relative
     assert "probe/source_symbol_probe_results.csv" in relative
     assert "probe/sources.lock.json" in relative
@@ -251,8 +338,49 @@ def test_offline_execution_requires_the_complete_public_cache(tmp_path: Path) ->
     assert "inputs/normalized/ff48_sic_codes.parquet" in relative
     assert "inputs/normalized/signal_doc.parquet" in relative
     assert "inputs/normalized/openap_reference_sample.parquet" in relative
+    assert "inputs/normalized/sec_13f_filings.parquet" in relative
+    assert "inputs/normalized/sec_13f_holdings.parquet" in relative
+    assert "inputs/normalized/sec_13f_exclusions.parquet" in relative
+    assert "inputs/normalized/openfigi_cusip_map.parquet" in relative
     assert "inputs/normalized/openap_reference_metadata.json" in relative
     assert "inputs/normalized/normalized_summary.json" in relative
+
+
+def test_run_command_reuses_complete_cache_unless_refresh_is_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import argparse
+    import scripts.run_openap_93_max_free as command
+
+    output = tmp_path / "run"
+    for path in command.required_cached_inputs(
+        output / "source_probe", output / "public_inputs"
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"cached")
+
+    calls: list[str] = []
+    monkeypatch.setattr(command, "probe_sources", lambda _args: calls.append("probe"))
+    monkeypatch.setattr(
+        command, "fetch_public_inputs", lambda _args: calls.append("fetch")
+    )
+    monkeypatch.setattr(command, "build_current", lambda _args: calls.append("build"))
+    common = {
+        "output_dir": str(output),
+        "signals_config": str(CONFIG),
+        "base_db": "unused.duckdb",
+        "formation_date": "today",
+        "universe_file": "",
+        "signals": "",
+        "offline": False,
+    }
+
+    command.run_all(argparse.Namespace(**common, refresh=False))
+    assert calls == ["build"]
+
+    calls.clear()
+    command.run_all(argparse.Namespace(**common, refresh=True))
+    assert calls == ["probe", "fetch", "build"]
 
 
 def test_signal_observation_only_marks_evidenced_classes_usable() -> None:
@@ -313,6 +441,389 @@ def test_official_ff48_archive_parser_requires_all_industries(tmp_path: Path) ->
     daily_market = np.linspace(-0.03, 0.03, 252)
     daily_stock = 0.6 * daily_market + 3.0 * daily_market**2
     assert coskew_acx(daily_stock, daily_market) > 0
+
+
+def test_sec_13f_parser_keeps_unambiguous_filings_and_excludes_additive_amendments(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "13f.zip"
+    submission = pd.DataFrame(
+        [
+            {
+                "ACCESSION_NUMBER": "0001",
+                "FILING_DATE": "2025-08-14",
+                "SUBMISSIONTYPE": "13F-HR",
+                "CIK": "0000000001",
+                "PERIODOFREPORT": "2025-06-30",
+            },
+            {
+                "ACCESSION_NUMBER": "0002",
+                "FILING_DATE": "2025-11-14",
+                "SUBMISSIONTYPE": "13F-HR",
+                "CIK": "0000000001",
+                "PERIODOFREPORT": "2025-09-30",
+            },
+            {
+                "ACCESSION_NUMBER": "0003",
+                "FILING_DATE": "2025-11-10",
+                "SUBMISSIONTYPE": "13F-HR",
+                "CIK": "0000000002",
+                "PERIODOFREPORT": "2025-09-30",
+            },
+            {
+                "ACCESSION_NUMBER": "0004",
+                "FILING_DATE": "2025-11-20",
+                "SUBMISSIONTYPE": "13F-HR/A",
+                "CIK": "0000000002",
+                "PERIODOFREPORT": "2025-09-30",
+            },
+            {
+                "ACCESSION_NUMBER": "0005",
+                "FILING_DATE": "2025-11-09",
+                "SUBMISSIONTYPE": "13F-HR",
+                "CIK": "0000000003",
+                "PERIODOFREPORT": "2025-09-30",
+            },
+            {
+                "ACCESSION_NUMBER": "0006",
+                "FILING_DATE": "2025-11-21",
+                "SUBMISSIONTYPE": "13F-HR/A",
+                "CIK": "0000000003",
+                "PERIODOFREPORT": "2025-09-30",
+            },
+        ]
+    )
+    cover = pd.DataFrame(
+        {
+            "ACCESSION_NUMBER": ["0001", "0002", "0003", "0004", "0005", "0006"],
+            "ISAMENDMENT": ["N", "N", "N", "Y", "N", "Y"],
+            "AMENDMENTNO": ["", "", "", "1", "", "1"],
+            "AMENDMENTTYPE": ["", "", "", "ADD NEW HOLDINGS", "", "RESTATEMENT"],
+        }
+    )
+    infotable = pd.DataFrame(
+        [
+            {
+                "ACCESSION_NUMBER": accession,
+                "NAMEOFISSUER": f"Issuer {accession}",
+                "TITLEOFCLASS": "COM",
+                "CUSIP": f"0000000{index:02d}",
+                "VALUE": "100",
+                "SSHPRNAMT": "10",
+                "SSHPRNAMTTYPE": "SH",
+                "PUTCALL": "",
+                "INVESTMENTDISCRETION": "SOLE",
+            }
+            for index, accession in enumerate(
+                ["0001", "0002", "0003", "0004", "0005", "0006"], start=1
+            )
+        ]
+    )
+    with ZipFile(archive, "w") as handle:
+        handle.writestr("SUBMISSION.tsv", submission.to_csv(sep="\t", index=False))
+        handle.writestr("COVERPAGE.tsv", cover.to_csv(sep="\t", index=False))
+        handle.writestr("INFOTABLE.tsv", infotable.to_csv(sep="\t", index=False))
+
+    filings, holdings, exclusions = parse_13f_archives([archive])
+
+    assert set(filings["accession_number"]) == {"0001", "0002", "0006"}
+    assert set(holdings["accession_number"]) == {"0001", "0002", "0006"}
+    assert exclusions["accession_number"].tolist() == ["0004"]
+    assert exclusions["reason"].eq("non_restatement_or_ambiguous_amendment").all()
+
+
+def test_openfigi_mapping_fails_closed_on_ambiguous_or_missing_matches(
+    tmp_path: Path,
+) -> None:
+    def fake_post(
+        url: str,
+        payload: Sequence[Mapping[str, Any]],
+        headers: Mapping[str, str],
+    ) -> list[dict[str, Any]]:
+        assert url.endswith("/mapping")
+        assert headers["Content-Type"] == "application/json"
+        rows = []
+        for job in payload:
+            cusip = job["idValue"]
+            if cusip == "037833100":
+                rows.append(
+                    {
+                        "data": [
+                            {
+                                "ticker": "AAPL",
+                                "marketSector": "Equity",
+                                "securityType2": "Common Stock",
+                                "exchCode": "US",
+                            }
+                        ]
+                    }
+                )
+            elif cusip == "30303M102":
+                rows.append(
+                    {
+                        "data": [
+                            {
+                                "ticker": "META",
+                                "marketSector": "Equity",
+                                "securityType2": "Common Stock",
+                                "exchCode": "US",
+                            },
+                            {
+                                "ticker": "META.A",
+                                "marketSector": "Equity",
+                                "securityType2": "Common Stock",
+                                "exchCode": "US",
+                            },
+                        ]
+                    }
+                )
+            else:
+                rows.append({"data": []})
+        return rows
+
+    result = map_cusips_openfigi(
+        ["037833100", "30303M102", "999999999"],
+        output_checkpoint=tmp_path / "mapping.jsonl",
+        http_post=fake_post,
+        sleep=lambda _seconds: None,
+    ).set_index("cusip")
+
+    assert result.loc["037833100", "mapping_status"] == "mapped_unique"
+    assert result.loc["037833100", "ticker"] == "AAPL"
+    assert result.loc["30303M102", "mapping_status"] == "ambiguous"
+    assert pd.isna(result.loc["30303M102", "ticker"])
+    assert result.loc["999999999", "mapping_status"] == "no_common_stock_match"
+
+
+def test_openfigi_request_failure_remains_resumable(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "mapping.jsonl"
+
+    def failing_post(
+        _url: str,
+        _payload: Sequence[Mapping[str, Any]],
+        _headers: Mapping[str, str],
+    ) -> list[dict[str, Any]]:
+        raise OSError("temporary network failure")
+
+    failed = map_cusips_openfigi(
+        ["037833100"],
+        output_checkpoint=checkpoint,
+        http_post=failing_post,
+        sleep=lambda _seconds: None,
+    )
+    assert failed.loc[0, "mapping_status"] == "request_failed"
+    assert checkpoint.exists()
+
+    def successful_post(
+        _url: str,
+        _payload: Sequence[Mapping[str, Any]],
+        _headers: Mapping[str, str],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "data": [
+                    {
+                        "ticker": "AAPL",
+                        "marketSector": "Equity",
+                        "securityType2": "Common Stock",
+                        "exchCode": "US",
+                    }
+                ]
+            }
+        ]
+
+    resumed = map_cusips_openfigi(
+        ["037833100"],
+        output_checkpoint=checkpoint,
+        http_post=successful_post,
+        sleep=lambda _seconds: None,
+    )
+    assert resumed.loc[0, "mapping_status"] == "mapped_unique"
+    assert resumed.loc[0, "ticker"] == "AAPL"
+
+
+def test_institutional_signals_use_lagged_13f_and_current_characteristics() -> None:
+    formation = pd.Timestamp("2026-08-04")
+    symbols = [f"I{index:02d}" for index in range(10)]
+    managers = [f"M{index:02d}" for index in range(6)]
+    master = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "exchange_sec": ["NYSE"] * len(symbols),
+            "marketCap": np.linspace(
+                1_000_000_000.0, 10_000_000_000.0, len(symbols)
+            ),
+            "sharesOutstanding": 1_000_000.0,
+            "retrieved_at": pd.Timestamp("2026-08-01"),
+        }
+    )
+    master.loc[master["symbol"].eq(symbols[-1]), "marketCap"] = np.nan
+    filing_rows = []
+    holding_rows = []
+    periods = (
+        (pd.Timestamp("2025-12-31"), pd.Timestamp("2026-01-30")),
+        (pd.Timestamp("2026-03-31"), pd.Timestamp("2026-05-15")),
+    )
+    cusips = {symbol: f"00000{index:04d}" for index, symbol in enumerate(symbols)}
+    for period_index, (period, filed_at) in enumerate(periods):
+        for manager_index, manager in enumerate(managers):
+            filing_rows.append(
+                {
+                    "accession_number": f"{period_index}-{manager_index}",
+                    "manager_cik": manager,
+                    "filing_date": filed_at,
+                    "report_period": period,
+                }
+            )
+            for symbol_index, symbol in enumerate(symbols):
+                holder_limit = min(len(managers), 1 + symbol_index // 2 + period_index)
+                if manager_index >= holder_limit:
+                    continue
+                holding_rows.append(
+                    {
+                        "accession_number": f"{period_index}-{manager_index}",
+                        "manager_cik": manager,
+                        "filing_date": filed_at,
+                        "report_period": period,
+                        "cusip": cusips[symbol],
+                        "shares_held": 10_000.0 * (manager_index + 1),
+                    }
+                )
+    filing_rows.append(
+        {
+            "accession_number": "future-amendment",
+            "manager_cik": "M99",
+            "filing_date": pd.Timestamp("2026-09-01"),
+            "report_period": pd.Timestamp("2026-03-31"),
+        }
+    )
+    holding_rows.append(
+        {
+            "accession_number": "future-amendment",
+            "manager_cik": "M99",
+            "filing_date": pd.Timestamp("2026-09-01"),
+            "report_period": pd.Timestamp("2026-03-31"),
+            "cusip": cusips[symbols[0]],
+            "shares_held": 999_999.0,
+        }
+    )
+    mapping = pd.DataFrame(
+        {
+            "cusip": list(cusips.values()),
+            "ticker": symbols,
+            "mapping_status": "mapped_unique",
+        }
+    )
+    companyfacts = pd.DataFrame(
+        {
+            "symbol": symbols,
+            "tag": "EntityCommonStockSharesOutstanding",
+            "period_end": pd.Timestamp("2025-12-31"),
+            "available_at": pd.Timestamp("2026-01-20"),
+            "value": 1_000_000.0,
+        }
+    )
+    concept_rows = []
+    for index, symbol in enumerate(symbols):
+        for concept, value in (
+            ("equity", 100_000_000.0 + index * 10_000_000.0),
+            ("deferred_tax", 1_000_000.0),
+            ("preferred_stock", 0.0),
+        ):
+            concept_rows.append(
+                {
+                    "symbol": symbol,
+                    "concept": concept,
+                    "concept_lag": 0,
+                    "value": value,
+                    "period_end": pd.Timestamp("2025-12-31"),
+                    "available_at": pd.Timestamp("2026-03-01"),
+                }
+            )
+    dates = pd.bdate_range("2025-07-01", "2026-07-31")
+    rng = np.random.default_rng(2026)
+    price_frames = []
+    for index, symbol in enumerate(symbols):
+        returns = rng.normal(0.0003, 0.004 + index * 0.001, len(dates))
+        price_frames.append(
+            pd.DataFrame(
+                {
+                    "symbol": symbol,
+                    "date": dates,
+                    "adj_close": 50.0 * np.cumprod(1.0 + returns),
+                    "volume": 100_000.0 * (index + 1),
+                }
+            )
+        )
+    analyst = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "dataset": "earnings_estimate",
+                "retrieved_at": "2026-08-01T00:00:00+00:00",
+                "payload_json": json.dumps(
+                    [
+                        {
+                            "period": "0y",
+                            "low": 1.0,
+                            "high": 1.1 + index * 0.1,
+                            "avg": 1.0,
+                        }
+                    ]
+                ),
+            }
+            for index, symbol in enumerate(symbols)
+        ]
+    )
+
+    result = calculate_institutional_signals(
+        master,
+        pd.concat(price_frames, ignore_index=True),
+        companyfacts,
+        pd.DataFrame(concept_rows),
+        analyst,
+        pd.DataFrame(filing_rows),
+        pd.DataFrame(holding_rows),
+        mapping,
+        formation_at=formation,
+    )
+
+    assert set(result["signal"]) == INSTITUTIONAL_IMPLEMENTED_SIGNALS
+    assert result.groupby("symbol")["signal"].nunique().eq(5).all()
+    assert pd.to_datetime(result["available_at"]).dropna().le(formation).all()
+    breadth = result.loc[result["signal"].eq("DelBreadth")]
+    assert pd.isna(breadth.loc[breadth["symbol"].eq("I00"), "value"].iat[0])
+    assert not breadth.loc[breadth["symbol"].eq("I00"), "current_usable"].iat[0]
+    assert breadth.loc[
+        breadth["symbol"].eq("I00"), "reason_if_missing"
+    ].iat[0] == "not_applicable:official_nyse_size_filter"
+    assert breadth.loc[breadth["symbol"].eq("I02"), "value"].iat[0] == pytest.approx(
+        100.0 / len(managers)
+    )
+    assert breadth.loc[breadth["symbol"].eq("I02"), "current_usable"].iat[0]
+    for signal in ("RIO_MB", "RIO_Turnover", "RIO_Volatility"):
+        rows = result.loc[result["signal"].eq(signal) & result["value"].notna()]
+        assert not rows.empty
+        assert pd.to_datetime(rows["available_at"]).ge(
+            pd.Timestamp("2026-07-30")
+        ).all()
+        assert rows["fidelity_class"].eq(FidelityClass.RECONSTRUCTED.value).all()
+        assert rows["current_usable"].all()
+        assert pd.isna(
+            result.loc[
+                result["signal"].eq(signal)
+                & result["symbol"].eq(symbols[-1]),
+                "value",
+            ].iat[0]
+        )
+    dispersion = result.loc[
+        result["signal"].eq("RIO_Disp") & result["value"].notna()
+    ]
+    assert not dispersion.empty
+    assert dispersion["fidelity_class"].eq(
+        FidelityClass.UNVALIDATED_PROXY.value
+    ).all()
+    assert not dispersion["current_usable"].any()
 
 
 def test_factor_and_delay_formulas_are_causal_and_finite() -> None:
@@ -950,6 +1461,55 @@ def test_event_pipeline_emits_four_signals_and_keeps_proxies_out_of_score() -> N
     assert pd.to_datetime(result["available_at"]).le(pd.Timestamp("2026-07-15")).all()
     proxy = result["fidelity_class"].eq(FidelityClass.UNVALIDATED_PROXY.value)
     assert not result.loc[proxy, "current_usable"].any()
+    age = result.loc[result["signal"].eq("AgeIPO")].iloc[0]
+    assert age["reason_if_missing"] == (
+        "not_applicable:listing_age_outside_3_36_months"
+    )
+
+
+def test_not_applicable_is_distinct_from_missing_in_normalized_coverage() -> None:
+    registry = load_signal_registry(CONFIG)
+    master = pd.DataFrame({"symbol": ["NA1"], "cik": [1]})
+    observed = pd.DataFrame(
+        {
+            "symbol": ["NA1"],
+            "signal": ["AgeIPO"],
+            "formation_at": [pd.Timestamp("2026-07-15")],
+            "period_end": [pd.Timestamp("2026-06-30")],
+            "available_at": [pd.Timestamp("2026-06-30")],
+            "staleness_days": [15],
+            "value": [np.nan],
+            "fidelity_class": [FidelityClass.UNAVAILABLE.value],
+            "current_usable": [False],
+            "formula_id": ["openap_recent_ipo_listing_age_proxy"],
+            "source_ids": ["yahoo_public"],
+            "observation_count": [1],
+            "reason_if_missing": [
+                "not_applicable:listing_age_outside_3_36_months"
+            ],
+            "caveat": ["outside the official proxy scope"],
+        }
+    )
+    normalized = _normalize_signal_results(
+        [observed],
+        master,
+        registry,
+        pd.Timestamp("2026-07-15"),
+        "2026-07-15T00:00:00Z",
+    )
+    age = normalized.loc[normalized["signal"].eq("AgeIPO")].iloc[0]
+    assert age["coverage_flag"] == "not_applicable"
+    validation = build_validation_report(normalized)
+    coverage = build_coverage_report(normalized, registry, validation).set_index(
+        "signal"
+    )
+    assert coverage.at["AgeIPO", "not_applicable_count"] == 1
+    assert coverage.at["AgeIPO", "applicable_count"] == 0
+    assert coverage.at["AgeIPO", "missing_count"] == 0
+    assert coverage.at["AgeIPO", "status"] == "not_applicable"
+    assert coverage.at["AOP", "not_applicable_count"] == 0
+    assert coverage.at["AOP", "applicable_count"] == 1
+    assert coverage.at["AOP", "missing_count"] == 1
 
 
 def test_quarterly_pipeline_uses_only_filed_facts_available_at_formation() -> None:

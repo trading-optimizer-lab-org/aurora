@@ -13,6 +13,7 @@ from aurora.research.openap_93.external import download_public_inputs, normalize
 from aurora.research.openap_93.registry import load_signal_registry
 from aurora.research.openap_93.sources import (
     PUBLIC_SOURCES,
+    TEST_SYMBOLS,
     select_sources_lexicographically,
     source_coverage_matrix,
     write_source_evidence,
@@ -28,6 +29,10 @@ NORMALIZED_PUBLIC_DATASETS = (
     "gnp_deflator",
     "signal_doc",
     "openap_reference_sample",
+    "sec_13f_filings",
+    "sec_13f_holdings",
+    "sec_13f_exclusions",
+    "openfigi_cusip_map",
 )
 
 
@@ -69,7 +74,11 @@ def probe_sources(args: argparse.Namespace) -> None:
     (output / "sources.lock.json").write_text(
         json.dumps(lock, indent=2, ensure_ascii=True), encoding="utf-8"
     )
-    if len(registry) != 93 or len(probes) != len(PUBLIC_SOURCES):
+    if (
+        len(registry) != 93
+        or len(probes) != len(PUBLIC_SOURCES)
+        or len(symbol_probes) != len(PUBLIC_SOURCES) * len(TEST_SYMBOLS)
+    ):
         raise RuntimeError("Source probe contract incomplete")
 
 
@@ -129,7 +138,9 @@ def run_all(args: argparse.Namespace) -> None:
     public_inputs = output / "public_inputs"
     if args.refresh and args.offline:
         raise RuntimeError("--refresh and --offline cannot be used together")
-    if not args.offline:
+    required_offline = required_cached_inputs(source_probe, public_inputs)
+    cache_complete = all(path.exists() for path in required_offline)
+    if not args.offline and (args.refresh or not cache_complete):
         probe_sources(
             argparse.Namespace(
                 signals_config=args.signals_config,
@@ -137,7 +148,6 @@ def run_all(args: argparse.Namespace) -> None:
             )
         )
         fetch_public_inputs(argparse.Namespace(output_dir=str(public_inputs)))
-    required_offline = required_cached_inputs(source_probe, public_inputs)
     missing = [str(path) for path in required_offline if not path.exists()]
     if missing:
         raise RuntimeError("Offline cache is incomplete: " + ", ".join(missing))
