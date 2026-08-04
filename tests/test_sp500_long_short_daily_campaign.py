@@ -427,51 +427,38 @@ def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
     class Session:
         def __init__(self) -> None:
             self.headers: dict[str, str] = {}
+            self.seen_params: list[dict[str, object]] = []
 
         def get(self, url: str, *, params=None, timeout: int) -> Response:
-            del timeout
+            del url, timeout
+            self.seen_params.append(dict(params or {}))
             return Response(pages[int((params or {}).get("l", 1))])
 
+    session = Session()
     frame, receipt = download_stooq_history(
         "spy.us",
         "2010-12-29",
         "2010-12-31",
         split="train",
-        session=Session(),
+        session=session,
         raw_dir=tmp_path,
     )
     assert frame["date"].tolist() == list(pd.date_range("2010-12-29", "2010-12-31"))
-    assert receipt.status == "downloaded_bounded_html_public_history"
+    assert receipt.status == "downloaded_bounded_html_public_history_raw_unadjusted"
     assert receipt.minimum_date == "2010-12-29"
     assert receipt.maximum_date == "2010-12-31"
-    assert receipt.reason is not None and "page_count=2" in receipt.reason
+    assert receipt.reason is not None and "window_count=1;page_count=2" in receipt.reason
+    for params in session.seen_params:
+        assert params["o"] == "1111111"
+        assert all(params[f"o_{suffix}"] == "1" for suffix in "sdpnomx")
     assert (tmp_path / "stooq_spy_us_history.csv").is_file()
 
 
-def test_stooq_download_accepts_only_terminal_empty_page_after_public_cap(
+def test_stooq_download_chunks_long_history_below_public_cap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dates = pd.bdate_range(end="2008-12-31", periods=1000)
-    pages: dict[int, bytes] = {}
-    for page in range(1, 26):
-        offset = (page - 1) * 40
-        rows = [
-            (
-                str(offset + slot + 1),
-                date.strftime("%d %b %Y"),
-                "100.0",
-                "101.0",
-                "99.0",
-                "100.5",
-                "+0.5%",
-                "+0.5",
-                "1000000",
-            )
-            for slot, date in enumerate(dates[offset : offset + 40])
-        ]
-        pages[page] = _stooq_html(rows, pages=26)
-    pages[26] = _stooq_html([], pages=26)
 
     class Response:
         def __init__(self, content: bytes) -> None:
@@ -483,23 +470,51 @@ def test_stooq_download_accepts_only_terminal_empty_page_after_public_cap(
     class Session:
         def __init__(self) -> None:
             self.headers: dict[str, str] = {}
+            self.window_sizes: list[int] = []
 
         def get(self, url: str, *, params=None, timeout: int) -> Response:
             del url, timeout
-            return Response(pages[int((params or {}).get("l", 1))])
+            values = params or {}
+            start = pd.Timestamp(str(values.get("d1") or values.get("f")))
+            end = pd.Timestamp(str(values.get("d2") or values.get("t")))
+            bounded = dates[(dates >= start) & (dates <= end)][::-1]
+            if "l" not in values:
+                self.window_sizes.append(len(bounded))
+            page = int(values.get("l", 1))
+            page_count = max(1, int(np.ceil(len(bounded) / 40)))
+            selected = bounded[(page - 1) * 40 : page * 40]
+            rows: list[tuple[str, ...]] = [
+                (
+                    str((page - 1) * 40 + slot + 1),
+                    pd.Timestamp(date).strftime("%d %b %Y"),
+                    "100.0",
+                    "101.0",
+                    "99.0",
+                    "100.5",
+                    "+0.5%",
+                    "+0.5",
+                    "1000000",
+                )
+                for slot, date in enumerate(selected)
+            ]
+            return Response(_stooq_html(rows, pages=page_count))
 
     monkeypatch.setattr("aurora.infra.sp500_long_short_daily.data.time.sleep", lambda _: None)
+    session = Session()
     frame, receipt = download_stooq_history(
         "spy.us",
         dates.min().date().isoformat(),
         dates.max().date().isoformat(),
         split="train",
-        session=Session(),
+        session=session,
         raw_dir=tmp_path,
     )
     assert len(frame) == 1000
     assert frame["date"].min() == dates.min()
     assert frame["date"].max() == dates.max()
+    assert len(session.window_sizes) == 2
+    assert max(session.window_sizes) < 1000
+    assert receipt.reason is not None and "window_count=2" in receipt.reason
     assert receipt.reason is not None and "page_count=26" in receipt.reason
 
 
@@ -639,7 +654,7 @@ def test_spy_reconciliation_requires_99_5_percent_and_explains_outliers() -> Non
         _reconcile_spy_sources(yahoo, broken, distributions, splits, minimum_overlap=1000)
 
 
-def test_spy_reconciliation_compares_adjusted_series_without_changing_raw_prices() -> None:
+def test_spy_reconciliation_compares_raw_series_without_using_adjusted_close() -> None:
     dates = pd.bdate_range("2000-01-03", periods=1001)
     adjusted_close = 100.0 * np.cumprod(np.full(len(dates), 1.0001))
     raw_close = adjusted_close.copy()
@@ -651,7 +666,7 @@ def test_spy_reconciliation_compares_adjusted_series_without_changing_raw_prices
             "adj_close": adjusted_close,
         }
     )
-    stooq = pd.DataFrame({"date": dates, "close": adjusted_close})
+    stooq = pd.DataFrame({"date": dates, "close": raw_close})
     distributions = pd.DataFrame(
         {"date": [dates[500]], "distribution": [1.0]}
     )
@@ -664,7 +679,7 @@ def test_spy_reconciliation_compares_adjusted_series_without_changing_raw_prices
         minimum_overlap=1000,
     )
     assert report["within_5_bps_fraction"] == 1.0
-    assert report["yahoo_comparison_column"] == "adj_close"
+    assert report["yahoo_comparison_column"] == "close"
     assert yahoo.loc[500, "close"] == pytest.approx(raw_close[500])
 
 

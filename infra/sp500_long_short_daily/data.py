@@ -49,6 +49,17 @@ SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 STOOQ_MAX_BOUNDED_PAGES = 100
 STOOQ_PUBLIC_HISTORY_ROW_CAP = 1000
 STOOQ_PAGE_DELAY_SECONDS = 1.25
+STOOQ_MAX_WINDOW_YEARS = 3
+STOOQ_RAW_OPERATION_PARAMS = {
+    "o": "1111111",
+    "o_s": "1",
+    "o_d": "1",
+    "o_p": "1",
+    "o_n": "1",
+    "o_o": "1",
+    "o_m": "1",
+    "o_x": "1",
+}
 
 
 class DataGateError(RuntimeError):
@@ -398,87 +409,109 @@ def _download_stooq_html_history(
     symbol: str,
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
-) -> tuple[pd.DataFrame, bytes, str, int]:
-    """Read Stooq's public bounded historical-data pages."""
+) -> tuple[pd.DataFrame, bytes, str, int, int]:
+    """Read raw Stooq history in bounded windows below its public row cap."""
 
     browser_profile: Path | None = None
-    if os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true":
+    if (
+        os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+        and isinstance(client, requests.Session)
+    ):
         temp_root = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir())).resolve()
         browser_profile = temp_root / "aurora-stooq-browser-profile"
         browser_profile.mkdir(parents=True, exist_ok=True)
-    print("[sp500-data] stooq first page start", flush=True)
-    first_params: Mapping[str, Any] = {
-        "s": symbol.lower(),
-        "d1": start_date.strftime("%Y%m%d"),
-        "d2": end_date.strftime("%Y%m%d"),
-        "i": "d",
-    }
-    first_payload, first_frame, page_count = _load_stooq_history_page(
-        client,
-        first_params,
-        browser_profile=browser_profile,
-    )
-    print(
-        f"[sp500-data] stooq first page complete rows={len(first_frame)} pages={page_count}",
-        flush=True,
-    )
-    if page_count > STOOQ_MAX_BOUNDED_PAGES:
-        raise DataGateError(f"STOOQ_HTML_PAGE_COUNT_OUT_OF_RANGE:{page_count}")
-    frames = [first_frame]
-    payload_hashes = [_sha256(first_payload)]
+    windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    window_start = start_date
+    while window_start <= end_date:
+        window_end = min(
+            window_start + pd.DateOffset(years=STOOQ_MAX_WINDOW_YEARS) - pd.Timedelta(days=1),
+            end_date,
+        )
+        windows.append((window_start, window_end))
+        window_start = window_end + pd.Timedelta(days=1)
 
-    def fetch_page(page: int) -> tuple[int, bytes, pd.DataFrame, int]:
-        print(f"[sp500-data] stooq page={page} start", flush=True)
-        page_client = client
-        owned_client: requests.Session | None = None
-        if isinstance(client, requests.Session):
-            owned_client = requests.Session()
-            owned_client.headers.update(client.headers)
-            owned_client.headers["Referer"] = STOOQ_HISTORY_PAGE
-            owned_client.cookies.update(client.cookies)
-            page_client = owned_client
-        try:
-            payload, page_frame, reported_page_count = _load_stooq_history_page(
-                page_client,
-                {
-                    "s": symbol.lower(),
-                    "i": "d",
-                    "f": start_date.strftime("%Y%m%d"),
-                    "t": end_date.strftime("%Y%m%d"),
-                    "l": page,
-                },
-                browser_profile=browser_profile,
-            )
-            print(f"[sp500-data] stooq page={page} complete", flush=True)
-            return page, payload, page_frame, reported_page_count
-        finally:
-            if owned_client is not None:
-                owned_client.close()
+    frames: list[pd.DataFrame] = []
+    payload_hashes: list[str] = []
+    total_page_count = 0
+    for window_number, (bounded_start, bounded_end) in enumerate(windows, start=1):
+        print(
+            "[sp500-data] stooq window start "
+            f"number={window_number}/{len(windows)} "
+            f"start={bounded_start.date()} end={bounded_end.date()}",
+            flush=True,
+        )
+        first_params: dict[str, Any] = {
+            "s": symbol.lower(),
+            "d1": bounded_start.strftime("%Y%m%d"),
+            "d2": bounded_end.strftime("%Y%m%d"),
+            "i": "d",
+            **STOOQ_RAW_OPERATION_PARAMS,
+        }
+        first_payload, first_frame, page_count = _load_stooq_history_page(
+            client,
+            first_params,
+            browser_profile=browser_profile,
+        )
+        if page_count > STOOQ_MAX_BOUNDED_PAGES:
+            raise DataGateError(f"STOOQ_HTML_PAGE_COUNT_OUT_OF_RANGE:{page_count}")
+        window_frames = [first_frame]
+        payload_hashes.append(_sha256(first_payload))
 
-    for page in range(2, page_count + 1):
-        if isinstance(client, requests.Session):
-            time.sleep(STOOQ_PAGE_DELAY_SECONDS)
-        try:
-            _, page_payload, page_frame, reported_page_count = fetch_page(page)
-        except DataGateError as exc:
-            accumulated_rows = sum(len(frame) for frame in frames)
-            terminal_public_cap = (
-                str(exc) == "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"
-                and page == page_count
-                and accumulated_rows >= STOOQ_PUBLIC_HISTORY_ROW_CAP
-            )
-            if not terminal_public_cap:
-                raise
-            print(
-                "[sp500-data] stooq terminal empty page accepted "
-                f"after public row cap={accumulated_rows}",
-                flush=True,
-            )
-            break
-        if reported_page_count > page_count:
-            raise DataGateError("STOOQ_HTML_PAGINATION_CHANGED_DURING_DOWNLOAD")
-        frames.append(page_frame)
-        payload_hashes.append(_sha256(page_payload))
+        for page in range(2, page_count + 1):
+            if isinstance(client, requests.Session):
+                time.sleep(STOOQ_PAGE_DELAY_SECONDS)
+            page_client = client
+            owned_client: requests.Session | None = None
+            if isinstance(client, requests.Session):
+                owned_client = requests.Session()
+                owned_client.headers.update(client.headers)
+                owned_client.headers["Referer"] = STOOQ_HISTORY_PAGE
+                owned_client.cookies.update(client.cookies)
+                page_client = owned_client
+            try:
+                page_payload, page_frame, reported_page_count = _load_stooq_history_page(
+                    page_client,
+                    {
+                        "s": symbol.lower(),
+                        "i": "d",
+                        "f": bounded_start.strftime("%Y%m%d"),
+                        "t": bounded_end.strftime("%Y%m%d"),
+                        "l": page,
+                        **STOOQ_RAW_OPERATION_PARAMS,
+                    },
+                    browser_profile=browser_profile,
+                )
+            except DataGateError as exc:
+                accumulated_rows = sum(len(item) for item in window_frames)
+                terminal_public_cap = (
+                    str(exc) == "STOOQ_HTML_HISTORY_ROWS_NOT_FOUND"
+                    and page == page_count
+                    and accumulated_rows >= STOOQ_PUBLIC_HISTORY_ROW_CAP
+                )
+                if not terminal_public_cap:
+                    raise
+                print(
+                    "[sp500-data] stooq terminal empty page accepted "
+                    f"after public row cap={accumulated_rows}",
+                    flush=True,
+                )
+                break
+            finally:
+                if owned_client is not None:
+                    owned_client.close()
+            if reported_page_count > page_count:
+                raise DataGateError("STOOQ_HTML_PAGINATION_CHANGED_DURING_DOWNLOAD")
+            window_frames.append(page_frame)
+            payload_hashes.append(_sha256(page_payload))
+        frames.extend(window_frames)
+        total_page_count += page_count
+        print(
+            "[sp500-data] stooq window complete "
+            f"number={window_number}/{len(windows)} rows={sum(len(item) for item in window_frames)} "
+            f"pages={page_count}",
+            flush=True,
+        )
+
     frame = (
         pd.concat(frames, ignore_index=True)
         .drop_duplicates(subset=["Date"], keep="last")
@@ -487,7 +520,7 @@ def _download_stooq_html_history(
     )
     canonical_payload = frame.to_csv(index=False, lineterminator="\n").encode("utf-8")
     response_chain_hash = _sha256("\n".join(payload_hashes).encode("ascii"))
-    return frame, canonical_payload, response_chain_hash, page_count
+    return frame, canonical_payload, response_chain_hash, total_page_count, len(windows)
 
 
 def _assert_response_date_bound(
@@ -697,7 +730,7 @@ def download_stooq_history(
             "Accept-Language": "en-US,en;q=0.9",
         }
     )
-    frame, payload, html_chain_hash, page_count = _download_stooq_html_history(
+    frame, payload, html_chain_hash, page_count, window_count = _download_stooq_html_history(
         client,
         symbol,
         start_date,
@@ -719,9 +752,11 @@ def download_stooq_history(
         byte_count=len(payload),
         minimum_date=dates.min().date().isoformat() if len(dates) else None,
         maximum_date=dates.max().date().isoformat() if len(dates) else None,
-        status="downloaded_bounded_html_public_history",
+        status="downloaded_bounded_html_public_history_raw_unadjusted",
         reason=(
-            f"page_count={page_count};raw_response_chain_sha256={html_chain_hash};"
+            f"window_count={window_count};page_count={page_count};"
+            f"operation_adjustments_skipped={','.join(STOOQ_RAW_OPERATION_PARAMS)};"
+            f"raw_response_chain_sha256={html_chain_hash};"
             "transport="
             + (
                 "headless_chrome"
@@ -1148,10 +1183,6 @@ def _reconcile_spy_sources(
     if len(common) < minimum_overlap:
         raise DataGateError("SPY_RECONCILIATION_TOO_SHORT")
     yahoo_comparison_column = "close"
-    if "adj_close" in yahoo_prices.columns:
-        adjusted = pd.to_numeric(yahoo_prices.loc[common, "adj_close"], errors="coerce")
-        if adjusted.notna().all():
-            yahoo_comparison_column = "adj_close"
     yahoo = yahoo_prices.loc[common, yahoo_comparison_column].pct_change()
     stooq_returns = comparison.loc[common, "close"].pct_change()
     valid = yahoo.notna() & stooq_returns.notna()
