@@ -901,8 +901,8 @@ def test_github_train_spec_passes_universal_preflight() -> None:
 
 
 def test_phase_workloads_are_bounded_and_have_exact_unit_counts() -> None:
-    assert SMOKE_WORKLOAD.data_start == "2005-02-25"
-    assert SMOKE_WORKLOAD.data_end == "2007-12-31"
+    assert SMOKE_WORKLOAD.data_start == "2004-10-01"
+    assert SMOKE_WORKLOAD.data_end == "2007-09-30"
     assert PILOT_WORKLOAD.data_end == "2010-12-31"
     assert TRAIN_WORKLOAD.data_end == "2010-12-31"
     assert len(SMOKE_WORKLOAD._unit_definitions()) == 7
@@ -1119,7 +1119,7 @@ def test_smoke_manifest_advertises_only_opened_train_dates(
     prepared = SMOKE_WORKLOAD.prepare_shared_inputs(spec, tmp_path)
     manifest = pd.read_json(prepared.manifest_path, typ="series")
     assert manifest["campaign_phase"] == "smoke"
-    assert manifest["max_date"] == "2007-12-31"
+    assert manifest["max_date"] == "2007-09-30"
     assert manifest["validation_opened"] is False
     assert manifest["locked_opened"] is False
 
@@ -1139,7 +1139,7 @@ def test_smoke_reduction_cannot_create_train_freeze(tmp_path: Path) -> None:
     SMOKE_WORKLOAD._write_reduction(rows, tmp_path)
     summary = pd.read_json(tmp_path / "sp500_long_short_daily_smoke_summary.json", typ="series")
     assert summary["expected_units"] == 7
-    assert summary["maximum_date"] == "2007-12-31"
+    assert summary["maximum_date"] == "2007-09-30"
     assert summary["validation_opened"] is False
     assert not (tmp_path / "train_selection_freeze.json").exists()
 
