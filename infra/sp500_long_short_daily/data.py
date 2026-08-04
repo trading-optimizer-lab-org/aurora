@@ -314,16 +314,16 @@ def _download_stooq_html_history(
         client,
         STOOQ_HISTORY_PAGE,
         params=first_params,
-        attempts=3,
-        timeout=20,
+        attempts=2,
+        timeout=15,
     )
     if _solve_stooq_browser_verification(client, first_payload):
         first_payload = _request_bytes(
             client,
             STOOQ_HISTORY_PAGE,
             params=first_params,
-            attempts=3,
-            timeout=20,
+            attempts=2,
+            timeout=15,
         )
     first_frame, page_count = _parse_stooq_html_history(first_payload)
     print(
@@ -347,8 +347,8 @@ def _download_stooq_html_history(
                 "t": end_date.strftime("%Y%m%d"),
                 "l": page,
             },
-            attempts=3,
-            timeout=20,
+            attempts=2,
+            timeout=15,
         )
         print(f"[sp500-data] stooq page={page} complete", flush=True)
         return page, payload
@@ -572,7 +572,16 @@ def download_stooq_history(
 ) -> tuple[pd.DataFrame, DownloadReceipt]:
     start_date, end_date = _bounded_dates(start, end, split=split)
     client = session or requests.Session()
-    client.headers.update({"User-Agent": "Mozilla/5.0 AuroraResearch bounded-csv"})
+    client.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+    )
     frame, payload, html_chain_hash, page_count = _download_stooq_html_history(
         client,
         symbol,
