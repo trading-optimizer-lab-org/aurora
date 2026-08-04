@@ -28,10 +28,12 @@ from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
     PreparedMarketData,
     _align_initial_releases,
+    _parse_stooq_html_history,
     _parse_yahoo_chart,
     _reconcile_spy_sources,
     _repo_campaign_root,
     _solve_stooq_browser_verification,
+    download_stooq_history,
     download_alfred_initial_series,
     load_sec_distribution_totals,
     load_state_street_distributions,
@@ -293,10 +295,87 @@ def test_stooq_javascript_verification_is_solved_without_browser() -> None:
             return Response()
 
     session = Session()
-    assert _solve_stooq_browser_verification(session, payload)  # type: ignore[arg-type]
+    assert _solve_stooq_browser_verification(session, payload)
     assert session.posted is not None
     solved = hashlib.sha256(f"{challenge}{session.posted['n']}".encode()).hexdigest()
     assert solved.startswith("00")
+
+
+def _stooq_html(rows: list[tuple[str, ...]], *, pages: int) -> bytes:
+    body = "".join(
+        "<tr>" + "".join(f"<td>{value}</td>" for value in row) + "</tr>"
+        for row in rows
+    )
+    return (
+        "<html><body><table>"
+        "<tr><th>No.</th><th>Date</th><th>Open</th><th>High</th><th>Low</th>"
+        "<th>Close</th><th>Change</th><th>Move</th><th>Volume</th></tr>"
+        f"{body}</table><a href='q/d/?s=spy.us&amp;i=d&amp;l={pages}'>&gt;&gt;</a>"
+        "</body></html>"
+    ).encode()
+
+
+def test_stooq_html_history_parser_reads_ohlcv_and_page_count() -> None:
+    payload = _stooq_html(
+        [
+            ("2", "31 Dec 2010", "96.8014", "97.0694", "96.7251", "97.0026", "+0.03%", "+0.0291", "78,672,053"),
+            ("1", "30 Dec 2010", "97.0404", "97.2702", "96.8303", "96.9735", "-0.13%", "-0.1251", "99,285,113"),
+        ],
+        pages=3,
+    )
+    frame, pages = _parse_stooq_html_history(payload)
+    assert pages == 3
+    assert frame["Date"].tolist() == [pd.Timestamp("2010-12-31"), pd.Timestamp("2010-12-30")]
+    assert frame["Open"].tolist() == pytest.approx([96.8014, 97.0404])
+    assert frame["Volume"].tolist() == [78_672_053, 99_285_113]
+
+
+def test_stooq_download_falls_back_to_bounded_public_html(tmp_path: Path) -> None:
+    pages = {
+        1: _stooq_html(
+            [("3", "31 Dec 2010", "96.8", "97.1", "96.7", "97.0", "+0.03%", "+0.03", "78,672,053")],
+            pages=2,
+        ),
+        2: _stooq_html(
+            [
+                ("2", "30 Dec 2010", "97.0", "97.3", "96.8", "96.9", "-0.13%", "-0.13", "99,285,113"),
+                ("1", "29 Dec 2010", "97.1", "97.4", "97.0", "97.1", "+0.05%", "+0.05", "75,179,103"),
+            ],
+            pages=1,
+        ),
+    }
+
+    class Response:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
+        def get(self, url: str, *, params=None, timeout: int) -> Response:
+            del timeout
+            if url.endswith("/q/d/l/"):
+                return Response(b"Access denied")
+            return Response(pages[int((params or {}).get("l", 1))])
+
+    frame, receipt = download_stooq_history(
+        "spy.us",
+        "2010-12-29",
+        "2010-12-31",
+        split="train",
+        session=Session(),
+        raw_dir=tmp_path,
+    )
+    assert frame["date"].tolist() == list(pd.date_range("2010-12-29", "2010-12-31"))
+    assert receipt.status == "downloaded_bounded_html_public_history"
+    assert receipt.minimum_date == "2010-12-29"
+    assert receipt.maximum_date == "2010-12-31"
+    assert receipt.reason is not None and "page_count=2" in receipt.reason
+    assert (tmp_path / "stooq_spy_us_history.csv").is_file()
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
@@ -818,7 +897,8 @@ def test_github_train_spec_passes_universal_preflight() -> None:
 
 
 def test_phase_workloads_are_bounded_and_have_exact_unit_counts() -> None:
-    assert SMOKE_WORKLOAD.data_end == "1995-12-29"
+    assert SMOKE_WORKLOAD.data_start == "2005-02-25"
+    assert SMOKE_WORKLOAD.data_end == "2007-12-31"
     assert PILOT_WORKLOAD.data_end == "2010-12-31"
     assert TRAIN_WORKLOAD.data_end == "2010-12-31"
     assert len(SMOKE_WORKLOAD._unit_definitions()) == 7
@@ -1035,7 +1115,7 @@ def test_smoke_manifest_advertises_only_opened_train_dates(
     prepared = SMOKE_WORKLOAD.prepare_shared_inputs(spec, tmp_path)
     manifest = pd.read_json(prepared.manifest_path, typ="series")
     assert manifest["campaign_phase"] == "smoke"
-    assert manifest["max_date"] == "1995-12-29"
+    assert manifest["max_date"] == "2007-12-31"
     assert manifest["validation_opened"] is False
     assert manifest["locked_opened"] is False
 
@@ -1055,7 +1135,7 @@ def test_smoke_reduction_cannot_create_train_freeze(tmp_path: Path) -> None:
     SMOKE_WORKLOAD._write_reduction(rows, tmp_path)
     summary = pd.read_json(tmp_path / "sp500_long_short_daily_smoke_summary.json", typ="series")
     assert summary["expected_units"] == 7
-    assert summary["maximum_date"] == "1995-12-29"
+    assert summary["maximum_date"] == "2007-12-31"
     assert summary["validation_opened"] is False
     assert not (tmp_path / "train_selection_freeze.json").exists()
 

@@ -9,6 +9,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -36,6 +37,7 @@ YAHOO_CHART_ENDPOINTS = (
     "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
 )
 STOOQ_DOWNLOAD = "https://stooq.com/q/d/l/"
+STOOQ_HISTORY_PAGE = "https://stooq.com/q/d/"
 STOOQ_VERIFY = "https://stooq.com/__verify"
 FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
@@ -178,6 +180,165 @@ def _parse_csv(payload: bytes) -> pd.DataFrame:
         return pd.read_csv(io.BytesIO(payload))
     except Exception as exc:
         raise DataGateError("INVALID_CSV_RESPONSE") from exc
+
+
+class _StooqHistoryHTMLParser(HTMLParser):
+    """Collect Stooq history rows and pagination links from public HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self.hrefs: list[str] = []
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self._row = []
+        elif tag in {"td", "th"} and self._row is not None:
+            self._cell = []
+        elif tag == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self.hrefs.append(href)
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self._cell is not None and self._row is not None:
+            self._row.append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            if self._row:
+                self.rows.append(self._row)
+            self._row = None
+            self._cell = None
+
+
+_STOOQ_MONTHS = {
+    "jan": 1,
+    "sty": 1,
+    "feb": 2,
+    "lut": 2,
+    "mar": 3,
+    "apr": 4,
+    "kwi": 4,
+    "may": 5,
+    "maj": 5,
+    "jun": 6,
+    "cze": 6,
+    "jul": 7,
+    "lip": 7,
+    "aug": 8,
+    "sie": 8,
+    "sep": 9,
+    "wrz": 9,
+    "oct": 10,
+    "paz": 10,
+    "paź": 10,
+    "nov": 11,
+    "lis": 11,
+    "dec": 12,
+    "gru": 12,
+}
+
+
+def _parse_stooq_display_date(value: str) -> pd.Timestamp:
+    parts = value.replace("\xa0", " ").strip().split()
+    if len(parts) != 3:
+        raise DataGateError("STOOQ_HTML_DATE_SCHEMA_MISMATCH")
+    month = _STOOQ_MONTHS.get(parts[1].casefold())
+    if month is None:
+        raise DataGateError("STOOQ_HTML_MONTH_SCHEMA_MISMATCH")
+    try:
+        return pd.Timestamp(year=int(parts[2]), month=month, day=int(parts[0]))
+    except ValueError as exc:
+        raise DataGateError("STOOQ_HTML_INVALID_DATE") from exc
+
+
+def _parse_stooq_html_history(payload: bytes) -> tuple[pd.DataFrame, int]:
+    """Parse bounded Stooq OHLCV rows without retaining page-level current quotes."""
+
+    parser = _StooqHistoryHTMLParser()
+    parser.feed(payload.decode("utf-8", errors="ignore"))
+    parsed: list[dict[str, Any]] = []
+    for cells in parser.rows:
+        if len(cells) < 7 or not cells[0].replace(",", "").isdigit():
+            continue
+        try:
+            parsed.append(
+                {
+                    "Date": _parse_stooq_display_date(cells[1]),
+                    "Open": float(cells[2].replace(",", "")),
+                    "High": float(cells[3].replace(",", "")),
+                    "Low": float(cells[4].replace(",", "")),
+                    "Close": float(cells[5].replace(",", "")),
+                    "Volume": int(float(cells[-1].replace(",", ""))),
+                }
+            )
+        except (ValueError, DataGateError) as exc:
+            raise DataGateError("STOOQ_HTML_ROW_SCHEMA_MISMATCH") from exc
+    if not parsed:
+        raise DataGateError("STOOQ_HTML_HISTORY_ROWS_NOT_FOUND")
+    page_numbers = [
+        int(match.group(1))
+        for href in parser.hrefs
+        if "q/d/?" in href
+        and (match := re.search(r"(?:[?&])l=(\d+)(?:&|$)", href)) is not None
+    ]
+    page_count = max(page_numbers, default=1)
+    frame = pd.DataFrame(parsed).drop_duplicates(subset=["Date"], keep="last")
+    return frame, page_count
+
+
+def _download_stooq_html_history(
+    client: requests.Session,
+    symbol: str,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> tuple[pd.DataFrame, bytes, str, int]:
+    """Read Stooq's public bounded HTML when its CSV export rejects automation."""
+
+    first_params: Mapping[str, Any] = {
+        "s": symbol.lower(),
+        "d1": start_date.strftime("%Y%m%d"),
+        "d2": end_date.strftime("%Y%m%d"),
+        "i": "d",
+    }
+    first_payload = _request_bytes(client, STOOQ_HISTORY_PAGE, params=first_params)
+    if _solve_stooq_browser_verification(client, first_payload):
+        first_payload = _request_bytes(client, STOOQ_HISTORY_PAGE, params=first_params)
+    first_frame, page_count = _parse_stooq_html_history(first_payload)
+    frames = [first_frame]
+    payload_hashes = [_sha256(first_payload)]
+    for page in range(2, page_count + 1):
+        page_payload = _request_bytes(
+            client,
+            STOOQ_HISTORY_PAGE,
+            params={
+                "s": symbol.lower(),
+                "i": "d",
+                "f": start_date.strftime("%Y%m%d"),
+                "t": end_date.strftime("%Y%m%d"),
+                "l": page,
+            },
+        )
+        page_frame, reported_page_count = _parse_stooq_html_history(page_payload)
+        if reported_page_count > page_count:
+            raise DataGateError("STOOQ_HTML_PAGINATION_CHANGED_DURING_DOWNLOAD")
+        frames.append(page_frame)
+        payload_hashes.append(_sha256(page_payload))
+    frame = (
+        pd.concat(frames, ignore_index=True)
+        .drop_duplicates(subset=["Date"], keep="last")
+        .sort_values("Date", kind="mergesort")
+        .reset_index(drop=True)
+    )
+    canonical_payload = frame.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    response_chain_hash = _sha256("\n".join(payload_hashes).encode("ascii"))
+    return frame, canonical_payload, response_chain_hash, page_count
 
 
 def _assert_response_date_bound(
@@ -389,8 +550,15 @@ def download_stooq_history(
         payload = _request_bytes(client, STOOQ_DOWNLOAD, params=params)
     frame = _parse_csv(payload)
     expected = {"Date", "Open", "High", "Low", "Close", "Volume"}
+    html_chain_hash: str | None = None
+    page_count = 0
     if not expected.issubset(frame.columns):
-        raise DataGateError("STOOQ_SCHEMA_MISMATCH")
+        frame, payload, html_chain_hash, page_count = _download_stooq_html_history(
+            client,
+            symbol,
+            start_date,
+            end_date,
+        )
     frame = _assert_response_date_bound(
         frame,
         date_column="Date",
@@ -402,12 +570,21 @@ def download_stooq_history(
     dates = frame["date"]
     receipt = DownloadReceipt(
         dataset_id="DS002",
-        url_template=STOOQ_DOWNLOAD,
+        url_template=STOOQ_HISTORY_PAGE if html_chain_hash else STOOQ_DOWNLOAD,
         sha256=_sha256(payload),
         byte_count=len(payload),
         minimum_date=dates.min().date().isoformat() if len(dates) else None,
         maximum_date=dates.max().date().isoformat() if len(dates) else None,
-        status="downloaded",
+        status=(
+            "downloaded_bounded_html_public_history"
+            if html_chain_hash
+            else "downloaded_bounded_csv"
+        ),
+        reason=(
+            f"page_count={page_count};raw_response_chain_sha256={html_chain_hash}"
+            if html_chain_hash
+            else None
+        ),
     )
     return frame[["date", "open", "high", "low", "close", "volume"]], receipt
 
