@@ -28,6 +28,7 @@ from aurora.infra.sp500_long_short_daily.ledger import (
 )
 from aurora.infra.sp500_long_short_daily.data import (
     DataGateError,
+    DownloadReceipt,
     PreparedMarketData,
     _align_initial_releases,
     _adjudicate_stooq_open_prices,
@@ -78,6 +79,7 @@ from aurora.infra.sp500_long_short_daily.validation import (
 from aurora.infra.github_performance.contracts import RunSpec
 from aurora.infra.github_performance.preflight import validate_run_spec
 from scripts.merge_sp500_stooq_windows import merge_windows
+from scripts.download_sp500_stooq_window import download_window
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -336,6 +338,12 @@ def test_stooq_html_history_parser_reads_ohlcv_and_page_count() -> None:
     assert frame["Date"].tolist() == [pd.Timestamp("2010-12-31"), pd.Timestamp("2010-12-30")]
     assert frame["Open"].tolist() == pytest.approx([96.8014, 97.0404])
     assert frame["Volume"].tolist() == [78_672_053, 99_285_113]
+
+
+def test_stooq_html_history_parser_reports_daily_hit_limit() -> None:
+    payload = b"<html><body>Exceeded the daily site hits limit</body></html>"
+    with pytest.raises(DataGateError, match="STOOQ_DAILY_HITS_LIMIT"):
+        _parse_stooq_html_history(payload)
 
 
 def test_stooq_github_transport_uses_headless_browser(
@@ -724,7 +732,19 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
                     "window_id": window_id,
                     "requested_start": "2009-01-01",
                     "requested_end": "2009-01-06",
-                    "receipt": {"dataset_id": "DS002"},
+                    "effective_source": (
+                        "kibot_guest_raw_unadjusted_fallback"
+                        if window_id == "001"
+                        else "stooq_public_html_raw_unadjusted"
+                    ),
+                    "receipt": {
+                        "dataset_id": "DS002",
+                        "status": (
+                            "downloaded_documented_free_fallback_kibot_raw_unadjusted"
+                            if window_id == "001"
+                            else "downloaded_bounded_html_public_history_raw_unadjusted"
+                        ),
+                    },
                 }
             ),
             encoding="utf-8",
@@ -742,9 +762,93 @@ def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: 
     assert manifest["rows"] == 2
     assert manifest["window_count"] == 2
     assert manifest["locked_opened"] is False
+    assert manifest["source"] == "mixed_stooq_and_documented_kibot_fallback_raw_unadjusted"
+    assert manifest["source_counts"] == {
+        "kibot_guest_raw_unadjusted_fallback": 1,
+        "stooq_public_html_raw_unadjusted": 1,
+    }
     assert manifest["merged_sha256"] == hashlib.sha256(
         (output / "stooq_spy_us_history.csv").read_bytes()
     ).hexdigest()
+
+
+def test_stooq_window_uses_documented_kibot_fallback_only_for_daily_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2009-01-02", "2009-01-05"]),
+            "open": [90.0, 91.0],
+            "high": [91.0, 92.0],
+            "low": [89.0, 90.0],
+            "close": [90.5, 91.5],
+            "volume": [1_000_000, 1_100_000],
+        }
+    )
+    fallback_receipt = DownloadReceipt(
+        dataset_id="KIBOT_SPY_UNADJUSTED_ADJUDICATOR",
+        url_template="https://api.kibot.com/",
+        sha256="a" * 64,
+        byte_count=123,
+        minimum_date="2009-01-02",
+        maximum_date="2009-01-05",
+        status="downloaded_bounded_guest_daily_unadjusted",
+    )
+
+    def fail_stooq(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise DataGateError("STOOQ_DAILY_HITS_LIMIT")
+
+    def fake_kibot(*args: object, **kwargs: object) -> tuple[pd.DataFrame, DownloadReceipt]:
+        del args, kwargs
+        return frame, fallback_receipt
+
+    monkeypatch.setattr(
+        "scripts.download_sp500_stooq_window.download_stooq_history",
+        fail_stooq,
+    )
+    monkeypatch.setattr(
+        "scripts.download_sp500_stooq_window.download_kibot_unadjusted_history",
+        fake_kibot,
+    )
+    metadata = download_window(
+        start="2009-01-01",
+        end="2009-01-06",
+        split="train",
+        window_id="000",
+        output_dir=tmp_path,
+    )
+    assert metadata["effective_source"] == "kibot_guest_raw_unadjusted_fallback"
+    receipt = metadata["receipt"]
+    assert isinstance(receipt, dict)
+    assert receipt["dataset_id"] == "DS002"
+    assert receipt["status"] == "downloaded_documented_free_fallback_kibot_raw_unadjusted"
+    written = pd.read_csv(tmp_path / "stooq_spy_us_history.csv")
+    assert len(written) == 2
+    assert written["date"].tolist() == ["2009-01-02", "2009-01-05"]
+
+
+def test_stooq_window_does_not_hide_unexpected_provider_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_stooq(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise DataGateError("STOOQ_HTML_ROW_SCHEMA_MISMATCH")
+
+    monkeypatch.setattr(
+        "scripts.download_sp500_stooq_window.download_stooq_history",
+        fail_stooq,
+    )
+    with pytest.raises(DataGateError, match="STOOQ_HTML_ROW_SCHEMA_MISMATCH"):
+        download_window(
+            start="2009-01-01",
+            end="2009-01-06",
+            split="train",
+            window_id="000",
+            output_dir=tmp_path,
+        )
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
@@ -1898,6 +2002,8 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "merge_sp500_stooq_windows.py" in universal
     assert "SP500_STOOQ_HISTORY_CSV" in universal
     assert "max-parallel: 4" in universal
+    assert "cursor.year + 3" in universal
+    assert "dt.timedelta(days=44)" not in universal
     assert "prepared_artifact_run_id" in universal
     assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 9
     assert universal.count(

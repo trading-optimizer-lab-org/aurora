@@ -287,8 +287,11 @@ def _parse_stooq_display_date(value: str) -> pd.Timestamp:
 def _parse_stooq_html_history(payload: bytes) -> tuple[pd.DataFrame, int]:
     """Parse bounded Stooq OHLCV rows without retaining page-level current quotes."""
 
+    decoded = payload.decode("utf-8", errors="ignore")
+    if "Exceeded the daily site hits limit" in decoded:
+        raise DataGateError("STOOQ_DAILY_HITS_LIMIT")
     parser = _StooqHistoryHTMLParser()
-    parser.feed(payload.decode("utf-8", errors="ignore"))
+    parser.feed(decoded)
     parsed: list[dict[str, Any]] = []
     for cells in parser.rows:
         if len(cells) < 7 or not cells[0].replace(",", "").isdigit():
@@ -476,6 +479,19 @@ async def _cdp_render_stooq_history(
         session_id = attached_session
         await command("Page.enable")
         await command("Runtime.enable")
+        await command("Network.enable")
+        cookie = await command(
+            "Network.setCookie",
+            {
+                "name": "privacy",
+                "value": str(int(time.time())),
+                "url": "https://stooq.com/",
+                "expires": time.time() + 30 * 24 * 60 * 60,
+                "secure": True,
+            },
+        )
+        if cookie.get("success") is not True:
+            raise DataGateError("STOOQ_HEADLESS_PRIVACY_COOKIE_FAILED")
         await navigate(landing_url)
         await navigate(history_url, referrer=landing_url)
         rendered = await command(
@@ -1211,19 +1227,33 @@ def download_stooq_history(
         if frame.empty:
             raise DataGateError("STOOQ_PREBUILT_EMPTY")
         dates = frame["date"]
+        manifest_source = str(
+            manifest.get("source") or "stooq_public_html_raw_unadjusted"
+        )
+        fallback_used = "fallback" in manifest_source
+        prebuilt_transport = (
+            "github_actions_sharded_provider_fallback"
+            if fallback_used
+            else "github_actions_sharded_headless_chrome"
+        )
         _store_raw(raw_dir, f"stooq_{symbol.replace('.', '_').lower()}_history.csv", payload)
         return frame, DownloadReceipt(
             dataset_id="DS002",
-            url_template=STOOQ_HISTORY_PAGE,
+            url_template=(KIBOT_API_ENDPOINT if fallback_used else STOOQ_HISTORY_PAGE),
             sha256=_sha256(payload),
             byte_count=len(payload),
             minimum_date=dates.min().date().isoformat(),
             maximum_date=dates.max().date().isoformat(),
-            status="loaded_github_sharded_html_history_raw_unadjusted",
+            status=(
+                "loaded_github_sharded_documented_free_fallback_raw_unadjusted"
+                if fallback_used
+                else "loaded_github_sharded_html_history_raw_unadjusted"
+            ),
             reason=(
                 f"window_count={int(manifest.get('window_count', 0))};"
                 f"manifest_sha256={_sha256(manifest_path.read_bytes())};"
-                "transport=github_actions_sharded_headless_chrome"
+                f"effective_source={manifest_source};"
+                f"transport={prebuilt_transport}"
             ),
         )
     client = session or requests.Session()
@@ -1981,15 +2011,20 @@ def prepare_market_snapshot(
             + price_adjudication["fields"]["close"]["retained_stooq_dates"]
         ),
     )
+    stooq_fallback_used = "fallback" in stooq_receipt.status
     reconciliation = {
         **reconciliation,
         "canonical_price_source": (
-            "stooq_raw_ohlcv_with_kibot_adjudicated_open_and_close"
+            "kibot_raw_ohlcv_fallback_with_yahoo_reconciliation"
+            if stooq_fallback_used
+            else "stooq_raw_ohlcv_with_kibot_adjudicated_open_and_close"
         ),
-        "independent_reconciliation_sources": [
-            "yahoo_raw_ohlcv",
-            "kibot_unadjusted_daily_ohlcv",
-        ],
+        "independent_reconciliation_sources": (
+            ["yahoo_raw_ohlcv"]
+            if stooq_fallback_used
+            else ["yahoo_raw_ohlcv", "kibot_unadjusted_daily_ohlcv"]
+        ),
+        "stooq_provider_outage_fallback_used": stooq_fallback_used,
         "price_adjudication": price_adjudication,
     }
     ledger, audit = build_total_return_ledger(stooq, dividends, splits)

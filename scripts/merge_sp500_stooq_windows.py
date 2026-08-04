@@ -34,11 +34,22 @@ def merge_windows(
 
     frames: list[pd.DataFrame] = []
     windows: list[dict[str, object]] = []
+    source_counts: dict[str, int] = {}
     for csv_path, receipt_path in zip(csv_paths, receipt_paths, strict=True):
         receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
         receipt = receipt_payload.get("receipt") or {}
         if receipt.get("dataset_id") != "DS002":
             raise RuntimeError(f"STOOQ_SHARD_RECEIPT_INVALID:{receipt_path}")
+        effective_source = str(
+            receipt_payload.get("effective_source")
+            or "stooq_public_html_raw_unadjusted"
+        )
+        if effective_source not in {
+            "stooq_public_html_raw_unadjusted",
+            "kibot_guest_raw_unadjusted_fallback",
+        }:
+            raise RuntimeError(f"STOOQ_SHARD_SOURCE_INVALID:{receipt_path}")
+        source_counts[effective_source] = source_counts.get(effective_source, 0) + 1
         frame = pd.read_csv(csv_path)
         frame.columns = [str(column).strip().lower() for column in frame.columns]
         if tuple(frame.columns) != EXPECTED_COLUMNS or frame.empty:
@@ -53,6 +64,8 @@ def merge_windows(
                 "requested_start": receipt_payload["requested_start"],
                 "requested_end": receipt_payload["requested_end"],
                 "rows": len(frame),
+                "effective_source": effective_source,
+                "receipt_status": receipt.get("status"),
                 "csv_sha256": _sha256(csv_path.read_bytes()),
                 "receipt_sha256": _sha256(receipt_path.read_bytes()),
             }
@@ -86,8 +99,13 @@ def merge_windows(
     csv_target = output_dir / "stooq_spy_us_history.csv"
     csv_target.write_bytes(csv_payload)
     manifest = {
-        "schema_version": "1",
-        "source": "stooq_public_html_raw_unadjusted",
+        "schema_version": "2",
+        "source": (
+            next(iter(source_counts))
+            if len(source_counts) == 1
+            else "mixed_stooq_and_documented_kibot_fallback_raw_unadjusted"
+        ),
+        "source_counts": dict(sorted(source_counts.items())),
         "requested_start": start.date().isoformat(),
         "requested_end": end.date().isoformat(),
         "minimum_date": combined["date"].min().date().isoformat(),

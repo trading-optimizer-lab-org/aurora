@@ -307,7 +307,11 @@ jobs:
           if enabled:
               cursor = start
               while cursor <= end:
-                  bounded_end = min(cursor + dt.timedelta(days=44), end)
+                  try:
+                      next_window = cursor.replace(year=cursor.year + 3)
+                  except ValueError:
+                      next_window = cursor.replace(year=cursor.year + 3, day=28)
+                  bounded_end = min(next_window - dt.timedelta(days=1), end)
                   index = len(windows)
                   windows.append(
                       {
