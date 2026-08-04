@@ -2,10 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from aurora.core.execution_policy import LocalRunBlocked
+from aurora.research.openap_93.market import (
+    beta_liquidity_ps,
+    beta_vix,
+    compound_lags,
+    coskew_acx,
+    coskewness_60m,
+    ff3_month_residual_moments,
+    price_delay_rsq,
+    residual_momentum,
+    zero_trade_measure,
+)
+from aurora.research.openap_93.models import SignalObservation
 from aurora.research.openap_93.registry import REQUIRED_93, FidelityClass, load_signal_registry
 from aurora.research.openap_93.sources import (
     IMPLEMENTED_SIGNAL_SOURCES,
@@ -84,3 +97,86 @@ def test_script_is_blocked_locally_without_explicit_permission(monkeypatch: pyte
     monkeypatch.setattr("sys.argv", ["run_openap_93_max_free.py", "probe-sources", "--output-dir", "unused"])
     with pytest.raises(LocalRunBlocked):
         main()
+
+
+def test_signal_observation_only_marks_evidenced_classes_usable() -> None:
+    observation = SignalObservation(
+        formation_date="2026-07-31",
+        symbol="AAPL",
+        signal="Coskewness",
+        value=0.25,
+        fidelity=FidelityClass.RECONSTRUCTED,
+        current_usable=True,
+        formula_id="openap_coskewness_60m",
+        source_ids=("yahoo_public", "kenneth_french"),
+        data_available_at="2026-08-01T00:00:00Z",
+        observation_count=60,
+    )
+    assert observation.to_record()["fidelity"] == "reconstructed"
+    assert observation.to_record()["source_ids"] == "yahoo_public|kenneth_french"
+    with pytest.raises(ValueError, match="current_usable"):
+        SignalObservation(
+            formation_date="2026-07-31",
+            symbol="AAPL",
+            signal="AOP",
+            value=1.0,
+            fidelity=FidelityClass.UNVALIDATED_PROXY,
+            current_usable=True,
+            formula_id="proxy",
+            source_ids=("yahoo_public",),
+            data_available_at="2026-08-01T00:00:00Z",
+            observation_count=1,
+        )
+
+
+def test_market_formula_helpers_match_simple_known_cases() -> None:
+    values = pd.Series([0.01] * 40)
+    assert compound_lags(values, [1, 2, 3, 4, 5]) == pytest.approx(1.01**5 - 1)
+
+    market = np.linspace(-0.04, 0.05, 60)
+    stock = 0.5 * market + 4.0 * market**2
+    assert coskewness_60m(stock, market) > 0
+
+    daily_market = np.linspace(-0.03, 0.03, 252)
+    daily_stock = 0.6 * daily_market + 3.0 * daily_market**2
+    assert coskew_acx(daily_stock, daily_market) > 0
+
+
+def test_factor_and_delay_formulas_are_causal_and_finite() -> None:
+    rng = np.random.default_rng(7)
+    n = 260
+    market = rng.normal(0, 0.01, n)
+    lagged = np.r_[0.0, market[:-1]]
+    stock = 0.4 * market + 0.6 * lagged + rng.normal(0, 0.002, n)
+    delay = price_delay_rsq(stock, market)
+    assert delay is not None and delay > 0
+
+    vix = rng.normal(0, 0.05, n)
+    stock_vix = 0.3 * market - 0.8 * vix + rng.normal(0, 0.002, n)
+    assert beta_vix(stock_vix, market, vix) == pytest.approx(-0.8, abs=0.15)
+
+    smb = rng.normal(0, 0.01, n)
+    hml = rng.normal(0, 0.01, n)
+    idio, skew = ff3_month_residual_moments(
+        stock_vix[-21:], market[-21:], smb[-21:], hml[-21:]
+    )
+    assert idio is not None and idio > 0
+    assert skew is not None and np.isfinite(skew)
+
+
+def test_long_window_formulas_and_zero_trade_measure() -> None:
+    rng = np.random.default_rng(11)
+    n = 90
+    ps = rng.normal(0, 0.02, n)
+    market = rng.normal(0, 0.03, n)
+    smb = rng.normal(0, 0.02, n)
+    hml = rng.normal(0, 0.02, n)
+    stock = 1.7 * ps + 0.3 * market + rng.normal(0, 0.003, n)
+    assert beta_liquidity_ps(stock, ps, market, smb, hml) == pytest.approx(1.7, abs=0.1)
+    assert residual_momentum(stock, market, smb, hml) is not None
+
+    volume = np.ones(21)
+    volume[[1, 4, 9]] = 0
+    turnover = np.full(21, 0.01)
+    value = zero_trade_measure(volume, turnover, expected_days=21, deflator=480_000)
+    assert value is not None and value > 2.9
