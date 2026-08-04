@@ -739,6 +739,58 @@ def download_stooq_history(
     raw_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, DownloadReceipt]:
     start_date, end_date = _bounded_dates(start, end, split=split)
+    prebuilt_path_value = os.environ.get("SP500_STOOQ_HISTORY_CSV", "").strip()
+    if prebuilt_path_value:
+        prebuilt_path = Path(prebuilt_path_value).resolve()
+        manifest_path_value = os.environ.get("SP500_STOOQ_HISTORY_MANIFEST", "").strip()
+        if not prebuilt_path.is_file() or not manifest_path_value:
+            raise DataGateError("STOOQ_PREBUILT_INPUTS_INCOMPLETE")
+        manifest_path = Path(manifest_path_value).resolve()
+        if not manifest_path.is_file():
+            raise DataGateError("STOOQ_PREBUILT_MANIFEST_NOT_FOUND")
+        payload = prebuilt_path.read_bytes()
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise DataGateError("STOOQ_PREBUILT_MANIFEST_INVALID") from exc
+        if manifest.get("merged_sha256") != _sha256(payload):
+            raise DataGateError("STOOQ_PREBUILT_HASH_MISMATCH")
+        frame = _parse_csv(payload)
+        expected_columns = {"date", "open", "high", "low", "close", "volume"}
+        frame.columns = [str(column).strip().lower() for column in frame.columns]
+        if not expected_columns.issubset(frame.columns):
+            raise DataGateError("STOOQ_PREBUILT_SCHEMA_MISMATCH")
+        frame = _assert_response_date_bound(
+            frame,
+            date_column="date",
+            start=start_date,
+            end=end_date,
+            label=f"stooq_prebuilt_{symbol}",
+        )
+        frame = (
+            frame.loc[:, ["date", "open", "high", "low", "close", "volume"]]
+            .drop_duplicates(subset=["date"], keep="last")
+            .sort_values("date", kind="mergesort")
+            .reset_index(drop=True)
+        )
+        if frame.empty:
+            raise DataGateError("STOOQ_PREBUILT_EMPTY")
+        dates = frame["date"]
+        _store_raw(raw_dir, f"stooq_{symbol.replace('.', '_').lower()}_history.csv", payload)
+        return frame, DownloadReceipt(
+            dataset_id="DS002",
+            url_template=STOOQ_HISTORY_PAGE,
+            sha256=_sha256(payload),
+            byte_count=len(payload),
+            minimum_date=dates.min().date().isoformat(),
+            maximum_date=dates.max().date().isoformat(),
+            status="loaded_github_sharded_html_history_raw_unadjusted",
+            reason=(
+                f"window_count={int(manifest.get('window_count', 0))};"
+                f"manifest_sha256={_sha256(manifest_path.read_bytes())};"
+                "transport=github_actions_sharded_headless_chrome"
+            ),
+        )
     client = session or requests.Session()
     client.headers.update(
         {

@@ -75,6 +75,7 @@ from aurora.infra.sp500_long_short_daily.validation import (
 )
 from aurora.infra.github_performance.contracts import RunSpec
 from aurora.infra.github_performance.preflight import validate_run_spec
+from scripts.merge_sp500_stooq_windows import merge_windows
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -573,6 +574,97 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
     assert profiles[0].name == "window-001"
     assert profiles[1].name == "window-002"
     assert sleeps == [60.0]
+
+
+def test_stooq_prebuilt_sharded_input_is_hash_bound_and_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csv_path = tmp_path / "stooq_spy_us_history.csv"
+    csv_path.write_text(
+        "date,open,high,low,close,volume\n"
+        "2009-01-02,90,91,89,90.5,1000000\n"
+        "2009-01-05,91,92,90,91.5,1100000\n",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "stooq_sharded_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "window_count": 2,
+                "merged_sha256": hashlib.sha256(csv_path.read_bytes()).hexdigest(),
+                "locked_opened": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SP500_STOOQ_HISTORY_CSV", str(csv_path))
+    monkeypatch.setenv("SP500_STOOQ_HISTORY_MANIFEST", str(manifest_path))
+    frame, receipt = download_stooq_history(
+        "spy.us",
+        "2009-01-01",
+        "2009-01-06",
+        split="train",
+        raw_dir=tmp_path / "raw",
+    )
+    assert len(frame) == 2
+    assert frame["date"].max() == pd.Timestamp("2009-01-05")
+    assert receipt.status == "loaded_github_sharded_html_history_raw_unadjusted"
+    assert receipt.reason is not None and "window_count=2" in receipt.reason
+
+    manifest_path.write_text(
+        json.dumps({"merged_sha256": "0" * 64}),
+        encoding="utf-8",
+    )
+    with pytest.raises(DataGateError, match="STOOQ_PREBUILT_HASH_MISMATCH"):
+        download_stooq_history(
+            "spy.us",
+            "2009-01-01",
+            "2009-01-06",
+            split="train",
+        )
+
+
+def test_stooq_window_merge_preserves_rows_hashes_and_locked_boundary(tmp_path: Path) -> None:
+    input_root = tmp_path / "windows"
+    for window_id, row in (
+        ("000", "2009-01-02,90,91,89,90.5,1000000\n"),
+        ("001", "2009-01-05,91,92,90,91.5,1100000\n"),
+    ):
+        root = input_root / f"window-{window_id}"
+        root.mkdir(parents=True)
+        (root / "stooq_spy_us_history.csv").write_text(
+            "date,open,high,low,close,volume\n" + row,
+            encoding="utf-8",
+        )
+        (root / "stooq_window_receipt.json").write_text(
+            json.dumps(
+                {
+                    "window_id": window_id,
+                    "requested_start": "2009-01-01",
+                    "requested_end": "2009-01-06",
+                    "receipt": {"dataset_id": "DS002"},
+                }
+            ),
+            encoding="utf-8",
+        )
+    output = tmp_path / "merged"
+    manifest = merge_windows(
+        input_root,
+        output,
+        expected_windows=2,
+        requested_start="2009-01-01",
+        requested_end="2009-01-06",
+    )
+    merged = pd.read_csv(output / "stooq_spy_us_history.csv")
+    assert len(merged) == 2
+    assert manifest["rows"] == 2
+    assert manifest["window_count"] == 2
+    assert manifest["locked_opened"] is False
+    assert manifest["merged_sha256"] == hashlib.sha256(
+        (output / "stooq_spy_us_history.csv").read_bytes()
+    ).hexdigest()
 
 
 def test_next_session_open_crosses_nyse_holiday_without_calendar_day_fill() -> None:
@@ -1326,6 +1418,10 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "C:\\" not in text
     assert "self-hosted" not in text
     assert "ubuntu-24.04" in text
+    assert "stooq_windows" in text
+    assert "merge_sp500_stooq_windows.py" in text
+    assert "prepared_artifact_name" in text
+    assert "max-parallel: 18" in text
 
 
 def test_smoke_manifest_advertises_only_opened_train_dates(
