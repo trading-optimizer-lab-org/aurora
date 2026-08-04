@@ -460,7 +460,6 @@ def _download_stooq_html_history(
             "s": symbol.lower(),
             "d1": bounded_start.strftime("%Y%m%d"),
             "d2": bounded_end.strftime("%Y%m%d"),
-            "i": "d",
             **STOOQ_RAW_OPERATION_PARAMS,
         }
         first_payload, first_frame, page_count = _load_stooq_history_page(
@@ -489,7 +488,6 @@ def _download_stooq_html_history(
                     page_client,
                     {
                         "s": symbol.lower(),
-                        "i": "d",
                         "f": bounded_start.strftime("%Y%m%d"),
                         "t": bounded_end.strftime("%Y%m%d"),
                         "l": page,

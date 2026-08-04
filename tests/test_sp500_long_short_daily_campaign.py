@@ -454,6 +454,7 @@ def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
         assert params["c"] == "0"
         assert params["o"] == "1111111"
         assert all(params[f"o_{suffix}"] == "1" for suffix in "sdpnomx")
+        assert "i" not in params
     assert (tmp_path / "stooq_spy_us_history.csv").is_file()
 
 
