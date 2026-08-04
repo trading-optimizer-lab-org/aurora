@@ -608,7 +608,7 @@ def test_stooq_download_chunks_long_history_below_public_cap(
     assert receipt.reason is not None and "page_count=26" in receipt.reason
 
 
-def test_stooq_github_download_uses_fresh_browser_profile_per_window(
+def test_stooq_github_download_uses_verified_http_session_per_window(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -638,7 +638,6 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
         return str(date.date()).encode(), frame, 1
 
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path / "runner"))
     monkeypatch.setattr(
         "aurora.infra.sp500_long_short_daily.data.time.sleep",
         sleeps.append,
@@ -657,11 +656,8 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
     assert page_count == 2
     assert window_count == 2
     assert len(profiles) == 2
-    assert profiles[0] is not None and profiles[1] is not None
-    assert profiles[0] != profiles[1]
-    assert profiles[0].name == "window-001"
-    assert profiles[1].name == "window-002"
-    assert sleeps == [60.0]
+    assert profiles == [None, None]
+    assert sleeps == []
 
 
 def test_stooq_prebuilt_sharded_input_is_hash_bound_and_bounded(

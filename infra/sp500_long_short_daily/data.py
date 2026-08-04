@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -626,13 +625,13 @@ def _download_stooq_html_history(
     """Read raw Stooq history in bounded windows below its public row cap."""
 
     browser_profile_root: Path | None = None
-    if (
-        os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
-        and isinstance(client, requests.Session)
-    ):
-        temp_root = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir())).resolve()
-        browser_profile_root = temp_root / "aurora-stooq-browser-profiles"
-        browser_profile_root.mkdir(parents=True, exist_ok=True)
+    if isinstance(client, requests.Session):
+        client.cookies.set(
+            "privacy",
+            str(int(time.time())),
+            domain="stooq.com",
+            path="/",
+        )
     windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     window_start = start_date
     while window_start <= end_date:
