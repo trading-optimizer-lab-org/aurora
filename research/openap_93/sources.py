@@ -14,6 +14,9 @@ import pandas as pd
 import requests
 
 from .accounting_pipeline import implemented_source_pairs as accounting_source_pairs
+from .advanced_accounting_pipeline import (
+    implemented_source_pairs as advanced_accounting_source_pairs,
+)
 from .event_pipeline import implemented_source_pairs as event_source_pairs
 from .market_pipeline import implemented_source_pairs as market_source_pairs
 from .quarterly_pipeline import implemented_source_pairs as quarterly_source_pairs
@@ -57,6 +60,7 @@ TEST_SYMBOLS = ("AAPL", "CARR", "KOP", "META", "RDDT")
 IMPLEMENTED_SIGNAL_SOURCES: frozenset[tuple[str, str]] = frozenset(
     market_source_pairs()
     | accounting_source_pairs()
+    | advanced_accounting_source_pairs()
     | event_source_pairs()
     | quarterly_source_pairs()
 )

@@ -24,6 +24,10 @@ from .accounting_pipeline import (
     ACCOUNTING_IMPLEMENTED_SIGNALS,
     calculate_accounting_signals,
 )
+from .advanced_accounting_pipeline import (
+    ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS,
+    calculate_advanced_accounting_signals,
+)
 from .event_pipeline import EVENT_IMPLEMENTED_SIGNALS, calculate_event_signals
 from .market_pipeline import MARKET_IMPLEMENTED_SIGNALS, calculate_market_signals
 from .quarterly_pipeline import (
@@ -62,6 +66,7 @@ REQUIRED_SIGNAL_COLUMNS = (
 
 IMPLEMENTED_SIGNALS = frozenset(
     ACCOUNTING_IMPLEMENTED_SIGNALS
+    | ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS
     | EVENT_IMPLEMENTED_SIGNALS
     | MARKET_IMPLEMENTED_SIGNALS
     | QUARTERLY_IMPLEMENTED_SIGNALS
@@ -199,6 +204,16 @@ def _load_base_frames(
             """,
             [formation_at],
         ).fetchdf()
+        submissions = connection.execute(
+            """
+            SELECT u.*
+            FROM sec_submissions u
+            INNER JOIN security_master m USING (cik)
+            INNER JOIN selected_symbols s ON s.symbol = m.symbol
+            WHERE u.accepted_at IS NOT NULL AND u.accepted_at <= ?
+            """,
+            [formation_at],
+        ).fetchdf()
         features = connection.execute(
             """
             SELECT f.* FROM openap_features_current f
@@ -213,6 +228,7 @@ def _load_base_frames(
         "prices": prices,
         "concepts": concepts,
         "companyfacts": companyfacts,
+        "submissions": submissions,
         "features": features,
         "metadata": metadata,
     }
@@ -471,6 +487,8 @@ def build_coverage_report(
 def _implementation_file(signal: str) -> str:
     if signal in ACCOUNTING_IMPLEMENTED_SIGNALS:
         return "research/openap_93/accounting_pipeline.py"
+    if signal in ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS:
+        return "research/openap_93/advanced_accounting_pipeline.py"
     if signal in EVENT_IMPLEMENTED_SIGNALS:
         return "research/openap_93/event_pipeline.py"
     if signal in MARKET_IMPLEMENTED_SIGNALS:
@@ -692,6 +710,13 @@ def _write_final_report(
     )
     unavailable = 93 - exact - reconstructed - validated - unvalidated
     selected = selected_sources.get("selected_source_ids", [])
+    table_columns = ["signal", "fidelity_class", "current_usable_count", "coverage_pct"]
+    table = coverage[table_columns].copy()
+    header = "| " + " | ".join(table_columns) + " |"
+    divider = "| " + " | ".join("---" for _ in table_columns) + " |"
+    table_rows = [header, divider]
+    for row in table.itertuples(index=False, name=None):
+        table_rows.append("| " + " | ".join(str(value) for value in row) + " |")
     lines = [
         "# OpenAP 93 Current Maximum-Free Report",
         "",
@@ -729,8 +754,7 @@ def _write_final_report(
         "",
         "## Cobertura Por Senal",
         "",
-        coverage[["signal", "fidelity_class", "current_usable_count", "coverage_pct"]]
-        .to_markdown(index=False),
+        *table_rows,
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -771,6 +795,14 @@ def run_current_pipeline(
             base["concepts"],
             formation_at=formation,
             gnp_deflator=_gnp_deflator(public["gnp_deflator"], formation),
+        ),
+        calculate_advanced_accounting_signals(
+            base["master"],
+            base["companyfacts"],
+            base["submissions"],
+            base["prices"],
+            public["gnp_deflator"],
+            formation_at=formation,
         ),
         calculate_quarterly_signals(
             base["master"],

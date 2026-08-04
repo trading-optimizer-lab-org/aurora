@@ -11,6 +11,10 @@ from aurora.research.openap_93.accounting_pipeline import (
     ACCOUNTING_IMPLEMENTED_SIGNALS,
     calculate_accounting_signals,
 )
+from aurora.research.openap_93.advanced_accounting_pipeline import (
+    ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS,
+    calculate_advanced_accounting_signals,
+)
 from aurora.research.openap_93.current_pipeline import (
     IMPLEMENTED_SIGNALS,
     REQUIRED_SIGNAL_COLUMNS,
@@ -64,6 +68,7 @@ def implemented_signals() -> frozenset[str]:
     return frozenset(
         MARKET_IMPLEMENTED_SIGNALS
         | ACCOUNTING_IMPLEMENTED_SIGNALS
+        | ADVANCED_ACCOUNTING_IMPLEMENTED_SIGNALS
         | EVENT_IMPLEMENTED_SIGNALS
         | QUARTERLY_IMPLEMENTED_SIGNALS
     )
