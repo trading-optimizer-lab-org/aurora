@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from aurora.core.execution_policy import require_github_execution
+from aurora.research.openap_93.external import download_public_inputs, normalize_public_inputs
 from aurora.research.openap_93.registry import load_signal_registry
 from aurora.research.openap_93.sources import (
     PUBLIC_SOURCES,
@@ -40,12 +41,20 @@ def probe_sources(args: argparse.Namespace) -> None:
         raise RuntimeError("Source probe contract incomplete")
 
 
+def fetch_public_inputs(args: argparse.Namespace) -> None:
+    output = Path(args.output_dir)
+    download_public_inputs(output)
+    normalize_public_inputs(output / "raw", output / "normalized")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--signals-config", default="config/openap_93/signals_93.yaml")
     sub = parser.add_subparsers(dest="mode", required=True)
     probe = sub.add_parser("probe-sources")
     probe.add_argument("--output-dir", required=True)
+    fetch = sub.add_parser("fetch-public-inputs")
+    fetch.add_argument("--output-dir", required=True)
     return parser
 
 
@@ -54,6 +63,8 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.mode == "probe-sources":
         probe_sources(args)
+    elif args.mode == "fetch-public-inputs":
+        fetch_public_inputs(args)
     else:
         raise RuntimeError(f"Unsupported mode: {args.mode}")
     return 0

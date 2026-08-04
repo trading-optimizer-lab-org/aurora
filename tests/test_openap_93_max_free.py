@@ -7,6 +7,12 @@ import pandas as pd
 import pytest
 
 from aurora.core.execution_policy import LocalRunBlocked
+from aurora.research.openap_93.external import (
+    normalize_public_inputs,
+    parse_fred_csv,
+    parse_french_zip,
+    parse_pastor_stambaugh,
+)
 from aurora.research.openap_93.market import (
     beta_liquidity_ps,
     beta_vix,
@@ -182,3 +188,30 @@ def test_long_window_formulas_and_zero_trade_measure() -> None:
     turnover = np.full(21, 0.01)
     value = zero_trade_measure(volume, turnover, expected_days=21, deflator=480_000)
     assert value is not None and value > 2.9
+
+
+def test_public_factor_parsers_use_decimal_returns_and_official_liquidity(tmp_path: Path) -> None:
+    from zipfile import ZipFile
+
+    french = tmp_path / "ff.zip"
+    with ZipFile(french, "w") as archive:
+        archive.writestr(
+            "ff.csv",
+            "metadata\n,Mkt-RF,SMB,HML,RF\n20260731,1.00,-2.00,3.00,0.10\n",
+        )
+    frame = parse_french_zip(french, daily=True)
+    assert frame.loc[0, "mktrf"] == pytest.approx(0.01)
+    assert frame.loc[0, "smb"] == pytest.approx(-0.02)
+
+    liquidity = tmp_path / "liq.txt"
+    liquidity.write_text(
+        "% header\n202606  -0.10  0.025  0.03\n202607  0.05  -0.015  0.01\n",
+        encoding="utf-8",
+    )
+    parsed = parse_pastor_stambaugh(liquidity)
+    assert parsed["ps_innovation"].tolist() == [0.025, -0.015]
+
+    fred = tmp_path / "fred.csv"
+    fred.write_text("observation_date,GNPDEF\n2026-01-01,125.7\n", encoding="utf-8")
+    deflator = parse_fred_csv(fred, value_column="GNPDEF")
+    assert deflator.loc[0, "gnpdef"] == pytest.approx(125.7)
