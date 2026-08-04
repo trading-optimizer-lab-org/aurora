@@ -399,6 +399,10 @@ def test_official_sponsor_snapshot_and_yahoo_events_must_match(tmp_path: Path) -
     assert receipt.status == "loaded_official_frozen_snapshot"
     audit = reconcile_sponsor_distributions(sponsor, sponsor.copy())
     assert audit["event_count"] == 2
+    rounded = sponsor.copy()
+    rounded["distribution"] = rounded["distribution"].round(3)
+    rounded_audit = reconcile_sponsor_distributions(sponsor, rounded)
+    assert rounded_audit["maximum_absolute_amount_difference"] == pytest.approx(0.00028)
     mismatched = sponsor.copy()
     mismatched.loc[0, "distribution"] += 0.01
     with pytest.raises(DataGateError, match="SPONSOR_DISTRIBUTION_AMOUNT_MISMATCH"):

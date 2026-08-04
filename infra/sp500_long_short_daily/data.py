@@ -43,6 +43,7 @@ FRED_DOWNLOAD = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 FRED_API_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
 SPY_RETURN_TOLERANCE = 5e-4
 SPY_REQUIRED_TOLERANCE_FRACTION = 0.995
+SPONSOR_EVENT_AMOUNT_TOLERANCE = 5.001e-4
 
 
 class DataGateError(RuntimeError):
@@ -821,7 +822,7 @@ def reconcile_sponsor_distributions(
     sponsor: pd.DataFrame,
     yahoo: pd.DataFrame,
     *,
-    absolute_tolerance: float = 5e-6,
+    absolute_tolerance: float = SPONSOR_EVENT_AMOUNT_TOLERANCE,
 ) -> Mapping[str, Any]:
     left = sponsor.set_index("date")["distribution"].sort_index()
     right = yahoo.set_index("date")["distribution"].sort_index()
@@ -849,7 +850,7 @@ def reconcile_official_distribution_audit(
     fiscal_totals: pd.DataFrame,
     yahoo: pd.DataFrame,
     *,
-    exact_tolerance: float = 5e-6,
+    exact_tolerance: float = SPONSOR_EVENT_AMOUNT_TOLERANCE,
     rounded_total_tolerance: float = 0.005001,
 ) -> Mapping[str, Any]:
     """Verify operational Yahoo events against official event and audited totals."""
