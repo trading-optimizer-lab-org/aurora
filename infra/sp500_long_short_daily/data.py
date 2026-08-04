@@ -458,8 +458,8 @@ def _download_stooq_html_history(
         )
         first_params: dict[str, Any] = {
             "s": symbol.lower(),
-            "d1": bounded_start.strftime("%Y%m%d"),
-            "d2": bounded_end.strftime("%Y%m%d"),
+            "f": bounded_start.strftime("%Y%m%d"),
+            "t": bounded_end.strftime("%Y%m%d"),
             **STOOQ_RAW_OPERATION_PARAMS,
         }
         first_payload, first_frame, page_count = _load_stooq_history_page(

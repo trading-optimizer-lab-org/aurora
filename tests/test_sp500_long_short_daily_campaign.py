@@ -455,6 +455,8 @@ def test_stooq_download_uses_bounded_public_html(tmp_path: Path) -> None:
         assert params["o"] == "1111111"
         assert all(params[f"o_{suffix}"] == "1" for suffix in "sdpnomx")
         assert "i" not in params
+        assert "f" in params and "t" in params
+        assert "d1" not in params and "d2" not in params
     assert (tmp_path / "stooq_spy_us_history.csv").is_file()
 
 
@@ -538,7 +540,7 @@ def test_stooq_github_download_uses_fresh_browser_profile_per_window(
     ) -> tuple[bytes, pd.DataFrame, int]:
         del client, attempts
         profiles.append(browser_profile)
-        date = pd.Timestamp(str(params["d1"]))
+        date = pd.Timestamp(str(params["f"]))
         frame = pd.DataFrame(
             {
                 "Date": [date],
@@ -1423,7 +1425,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "stooq_windows" in text
     assert "merge_sp500_stooq_windows.py" in text
     assert "prepared_artifact_name" in text
-    assert "max-parallel: 18" in text
+    assert "max-parallel: 180" in text
 
     universal = (
         REPO_ROOT / ".github" / "workflows" / "_aurora-future-run-v3.yml"
@@ -1433,7 +1435,7 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "sp500_prepare_data" in universal
     assert "merge_sp500_stooq_windows.py" in universal
     assert "SP500_STOOQ_HISTORY_CSV" in universal
-    assert "max-parallel: 18" in universal
+    assert "max-parallel: 180" in universal
     assert "C:\\" not in universal
     assert "self-hosted" not in universal
 

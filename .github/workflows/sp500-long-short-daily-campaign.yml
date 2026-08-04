@@ -100,11 +100,7 @@ jobs:
           windows = []
           cursor = start
           while cursor <= end:
-              try:
-                  next_boundary = cursor.replace(year=cursor.year + 2)
-              except ValueError:
-                  next_boundary = cursor.replace(year=cursor.year + 2, day=28)
-              bounded_end = min(next_boundary - dt.timedelta(days=1), end)
+              bounded_end = min(cursor + dt.timedelta(days=44), end)
               index = len(windows)
               windows.append(
                   {
@@ -131,7 +127,7 @@ jobs:
     if: inputs.phase != 'preflight'
     strategy:
       fail-fast: false
-      max-parallel: 18
+      max-parallel: 180
       matrix: ${{ fromJson(needs.resolve_data_windows.outputs.matrix) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
