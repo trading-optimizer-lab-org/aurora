@@ -20,6 +20,10 @@ inputs:
   prepared-artifact-name:
     description: Immutable prepared data artifact
     required: true
+  prepared-artifact-run-id:
+    description: Source run containing the prepared data artifact
+    required: false
+    default: ""
   contract-artifact-name:
     description: Frozen scientific contract artifact
     required: true
@@ -51,6 +55,8 @@ runs:
       with:
         name: ${{ inputs.prepared-artifact-name }}
         path: ${{ runner.temp }}/prepared
+        github-token: ${{ github.token }}
+        run-id: ${{ inputs.prepared-artifact-run-id || github.run_id }}
     - name: Download assignment plan
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:

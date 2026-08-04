@@ -612,9 +612,10 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     inputs = workflow["on"]["workflow_call"]["inputs"]
     assert set(inputs) == {
         "execution_mode",
-        "forced_job_count",
-        "prepared_artifact_name",
-        "wheelhouse_artifact_name",
+            "forced_job_count",
+            "prepared_artifact_name",
+            "prepared_artifact_run_id",
+            "wheelhouse_artifact_name",
         "performance_profile_run_id",
         "performance_profile_artifact_name",
         "fault_injection_shard_id",

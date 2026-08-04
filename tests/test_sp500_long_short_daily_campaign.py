@@ -1872,8 +1872,18 @@ def test_workflow_exposes_fail_closed_one_shot_validation() -> None:
     assert "SP500_STOOQ_HISTORY_CSV" in universal
     assert "max-parallel: 4" in universal
     assert "prepared_artifact_run_id" in universal
-    assert "inputs.prepared_artifact_run_id || github.run_id" in universal
+    assert universal.count("inputs.prepared_artifact_run_id || github.run_id") == 9
+    assert universal.count(
+        "prepared-artifact-run-id: ${{ inputs.prepared_artifact_run_id }}"
+    ) == 8
     assert "needs.prepare_data.result == 'success'" in universal
+
+    retry_action = (
+        REPO_ROOT / ".github" / "actions" / "aurora-retry-shard" / "action.yml"
+    ).read_text(encoding="utf-8")
+    assert yaml.safe_load(retry_action)
+    assert "prepared-artifact-run-id" in retry_action
+    assert "inputs.prepared-artifact-run-id || github.run_id" in retry_action
     assert "C:\\" not in universal
     assert "self-hosted" not in universal
 
