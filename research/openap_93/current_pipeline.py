@@ -961,10 +961,7 @@ def _write_final_report(
     for row in table.itertuples(index=False, name=None):
         table_rows.append("| " + " | ".join(str(value) for value in row) + " |")
     lines = [
-        "# OpenAP 93 Current Maximum-Free Report",
-        "",
-        "## RESULTADO",
-        "",
+        "RESULTADO:",
         f"- Exactas actuales: {exact}",
         f"- Reconstruidas actuales: {reconstructed}",
         f"- Proxies validados actuales: {validated}",
@@ -975,6 +972,8 @@ def _write_final_report(
         f"- Numero de dominios en la combinacion seleccionada: {len(selected_sources.get('selected_domains', []))}",
         f"- Cobertura media utilizable por senal: {mean_signal_coverage:.2f}%",
         f"- Empresas procesadas: {manifest['universe_count']}",
+        "",
+        "# OpenAP 93 Current Maximum-Free Report",
         "",
         "## Combinacion Seleccionada",
         "",
