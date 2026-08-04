@@ -36,6 +36,31 @@ def _complete_months(frame: pd.DataFrame, through: pd.Period) -> pd.DataFrame:
     return result.reset_index()
 
 
+def _omission(
+    paid: pd.Series,
+    completed_month: pd.Period,
+    window: int,
+    payer_window: int,
+) -> bool:
+    recent = paid.loc[
+        (paid.index > completed_month - window) & (paid.index <= completed_month)
+    ]
+    previous = paid.loc[
+        (paid.index > completed_month - 2 * window)
+        & (paid.index <= completed_month - window)
+    ]
+    payer_history = paid.loc[
+        (paid.index > completed_month - payer_window - window)
+        & (paid.index <= completed_month - window)
+    ]
+    return (
+        len(recent) >= window
+        and recent.sum() == 0
+        and previous.sum() > 0
+        and payer_history.sum() >= max(1, payer_window // window)
+    )
+
+
 def calculate_event_signals(
     security_master: pd.DataFrame,
     prices: pd.DataFrame,
@@ -73,23 +98,11 @@ def calculate_event_signals(
         ]
         initiation = float(any(initiation_events))
 
-        def omission(window: int, payer_window: int) -> bool:
-            recent = paid.loc[(paid.index > completed_month - window) & (paid.index <= completed_month)]
-            previous = paid.loc[
-                (paid.index > completed_month - 2 * window) & (paid.index <= completed_month - window)
-            ]
-            payer_history = paid.loc[
-                (paid.index > completed_month - payer_window - window)
-                & (paid.index <= completed_month - window)
-            ]
-            return (
-                len(recent) >= window
-                and recent.sum() == 0
-                and previous.sum() > 0
-                and payer_history.sum() >= max(1, payer_window // window)
-            )
-
-        omitted = float(omission(3, 18) or omission(6, 18) or omission(12, 24))
+        omitted = float(
+            _omission(paid, completed_month, 3, 18)
+            or _omission(paid, completed_month, 6, 18)
+            or _omission(paid, completed_month, 12, 24)
+        )
         pay_months = [period for period, value in paid.items() if value > 0]
         expected = False
         if pay_months:

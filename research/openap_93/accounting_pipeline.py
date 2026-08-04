@@ -241,7 +241,13 @@ def calculate_accounting_signals(
     cross: list[dict[str, Any]] = []
 
     for symbol in symbols:
-        get = lambda concept, lag=0: _lookup(values, symbol, concept, lag)
+        def get(
+            concept: str,
+            lag: int = 0,
+            bound_symbol: str = symbol,
+        ) -> float | None:
+            return _lookup(values, bound_symbol, concept, lag)
+
         assets = get("assets")
         assets_lag = get("assets", 1)
         cash = get("cash")
