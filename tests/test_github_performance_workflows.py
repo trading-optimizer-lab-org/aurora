@@ -146,6 +146,20 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "plan",
         "freeze_contract",
     }
+    assert jobs["smoke"]["if"] == (
+        "always() && needs.freeze_contract.result == 'success'"
+    )
+    assert jobs["pilot"]["if"] == "always() && needs.smoke.result == 'success'"
+    assert jobs["plan"]["if"] == "always() && needs.pilot.result == 'success'"
+    assert jobs["fanout_a"]["if"] == "always() && needs.plan.result == 'success'"
+    assert jobs["fanout_b"]["if"] == (
+        "always() && needs.plan.result == 'success' && "
+        "needs.plan.outputs.has_matrix_b == 'true'"
+    )
+    assert jobs["campaign_initialize"]["if"] == (
+        "always() && needs.plan.result == 'success' && "
+        "needs.freeze_contract.result == 'success'"
+    )
     assert _needs(jobs["recovery_plan"]) == {
         "plan",
         "fanout_a",
@@ -612,10 +626,10 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
     inputs = workflow["on"]["workflow_call"]["inputs"]
     assert set(inputs) == {
         "execution_mode",
-            "forced_job_count",
-            "prepared_artifact_name",
-            "prepared_artifact_run_id",
-            "wheelhouse_artifact_name",
+        "forced_job_count",
+        "prepared_artifact_name",
+        "prepared_artifact_run_id",
+        "wheelhouse_artifact_name",
         "performance_profile_run_id",
         "performance_profile_artifact_name",
         "fault_injection_shard_id",

@@ -558,6 +558,7 @@ jobs:
 
   smoke:
     needs: freeze_contract
+    if: always() && needs.freeze_contract.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -609,6 +610,7 @@ jobs:
 
   pilot:
     needs: smoke
+    if: always() && needs.smoke.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -688,6 +690,7 @@ jobs:
 
   plan:
     needs: pilot
+    if: always() && needs.pilot.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -830,6 +833,7 @@ jobs:
 
   fanout_a:
     needs: plan
+    if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -960,7 +964,10 @@ jobs:
 
   fanout_b:
     needs: plan
-    if: needs.plan.outputs.has_matrix_b == 'true'
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.has_matrix_b == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
@@ -1091,6 +1098,10 @@ jobs:
 
   campaign_initialize:
     needs: [plan, freeze_contract]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.freeze_contract.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
