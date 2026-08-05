@@ -1,6 +1,9 @@
 name: OpenAP Five Proxy Historical Validation
 
 on:
+  push:
+    branches:
+      - codex/openap-full-data-quality-fix
   workflow_dispatch:
     inputs:
       source_sha:
@@ -61,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -85,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -98,15 +101,15 @@ jobs:
         with:
           name: openap-yfinance-sec-current-score-results
           path: inputs/openap_base
-          run-id: ${{ inputs.base_run_id }}
+          run-id: ${{ inputs.base_run_id || '30837929185' }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Download audited public inputs artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ inputs.public_inputs_artifact_name }}
+          name: ${{ inputs.public_inputs_artifact_name || 'openap-93-max-free-full-results' }}
           path: inputs/public
-          run-id: ${{ inputs.public_inputs_run_id }}
+          run-id: ${{ inputs.public_inputs_run_id || '30995267332' }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
       - name: Download optional crosswalk artifact
@@ -138,7 +141,7 @@ jobs:
           echo "crosswalk=$crosswalk" >> "$GITHUB_OUTPUT"
       - name: Run causal historical validation
         run: |
-          args=(--base-db "${{ steps.locate.outputs.db }}" --reference "${{ steps.locate.outputs.reference }}" --output-dir outputs/openap_five_proxy_historical_validation --min-pairs "${{ inputs.min_pairs }}")
+          args=(--base-db "${{ steps.locate.outputs.db }}" --reference "${{ steps.locate.outputs.reference }}" --output-dir outputs/openap_five_proxy_historical_validation --min-pairs "${{ inputs.min_pairs || '30' }}")
           if [ -n "${{ steps.locate.outputs.ff3 }}" ]; then args+=(--ff3-daily "${{ steps.locate.outputs.ff3 }}"); fi
           if [ -n "${{ steps.locate.outputs.crosswalk }}" ]; then args+=(--crosswalk "${{ steps.locate.outputs.crosswalk }}"); fi
           python scripts/run_openap_93_five_proxy_validation.py "${args[@]}"
