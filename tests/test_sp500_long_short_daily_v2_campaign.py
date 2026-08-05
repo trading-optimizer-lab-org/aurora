@@ -158,6 +158,10 @@ def test_v2_module_is_in_distribution_package_map() -> None:
     text = (ROOT / "pyproject.toml").read_text("utf-8")
     assert '"aurora.infra.sp500_long_short_daily_v2"' in text
     assert '"aurora.infra.sp500_long_short_daily_v2" = "infra/sp500_long_short_daily_v2"' in text
+    lock = (ROOT / "requirements" / "github-performance.lock").read_text("utf-8")
+    assert "scikit-learn==1.9.0" in lock
+    assert "joblib==1.5.3" in lock
+    assert "threadpoolctl==3.6.0" in lock
 
 
 def test_no_post_2020_boundary_in_spec() -> None:
