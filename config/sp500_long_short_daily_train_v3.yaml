@@ -1,0 +1,234 @@
+schema_version: "3.0"
+
+identity:
+  campaign_id: "sp500-long-short-daily-zero-cost-v1-train"
+  run_type: "sp500_long_short_daily_train"
+  repo: "trading-optimizer-lab-org/aurora"
+  code_ref: "codex/sp500-long-short-daily-research"
+  code_sha: ""
+  workflow: ".github/workflows/_aurora-future-run-v3.yml"
+  workflow_sha256: ""
+  deadline_utc: "2027-12-31T23:59:59Z"
+
+objective:
+  description: "Evaluate the frozen 168-candidate daily SPY long/short universe on train only"
+  success_criteria:
+    - "all 168 candidates and five benchmarks reach an explicit terminal state"
+    - "selection uses market observations no later than 2010-12-31"
+    - "locked_opened=false"
+    - "validation_used_for_selection=false"
+  negative_result_criteria:
+    - "zero candidates satisfy the frozen train eligibility and multiplicity gates"
+  technical_failure_criteria:
+    - "partial=true"
+    - "scientific output hashes conflict"
+    - "target market data cannot pass the frozen reconciliation gates"
+
+policy:
+  policy_hash: ""
+  train_start: "1993-01-22"
+  train_end: "2010-12-31"
+  validation_start: "2011-01-01"
+  validation_end: "2020-12-31"
+  locked_start: "2021-01-01"
+  locked_opened: false
+  locked_rows_allowed: 0
+  validation_used_for_selection: false
+  causal_lag_minimum: 1
+  decision_timezone: "America/New_York"
+  decision_timestamp_rule: "after SPY regular-session close"
+  execution_timestamp_rule: "next tradable SPY regular-session open"
+  market_calendar: "observed SPY sessions reconciled to NYSE"
+  purging_periods: 1
+  embargo_periods: 1
+
+data:
+  manifest: "market_data_manifest.json"
+  manifest_sha256: ""
+  snapshot_hash: ""
+  schema_version: "1"
+  max_date: "2010-12-31"
+  required_datasets:
+    - "bounded_spy_train_market"
+  total_return_policy: "raw corporate-action-consistent open-to-open SPY total return"
+  corporate_actions_policy: "long receives and short owes each distribution; split events audited"
+  delisting_policy: "not applicable to SPY"
+  fx_policy: "USD only"
+  cash_yield_policy: "no cash state"
+
+execution:
+  github_only: true
+  execution_location: "github_actions"
+  local_runs_allowed: false
+  requires_explicit_user_local_permission: true
+  waves: 1
+  jobs_per_wave: 173
+  matrices_per_wave: 1
+  max_matrix_jobs: 256
+  requested_parallelism: 173
+  conservative_parallelism: 173
+  internal_minutes_per_job: 30
+  job_timeout_minutes: 360
+  merge_timeout_minutes: 180
+  fail_fast: false
+  global_seed: 20260803
+  shard_seed_formula: "global_seed + stable_shard_index"
+  timezone: "UTC"
+  locale: "C.UTF-8"
+  python_version: "3.12"
+  dependency_lock_sha256: ""
+  environment_sha256: ""
+  runner_image: "ubuntu-24.04"
+
+resources:
+  max_billable_minutes: 20000
+  max_cost: 0
+  max_artifact_gb: 20
+  min_free_disk_gb: 5
+  max_memory_pct: 80
+  max_peak_temporary_disk_gb: 12
+  atomic_rewrite_multiplier: 2.0
+
+performance:
+  optimize_for: "wall_clock"
+  capacity_profile_path: "config/github_capacity_profile.json"
+  capacity_profile_sha256: ""
+  confirmed_standard_concurrency: 360
+  concurrency_confirmation_source: "github_support"
+  reserve_concurrency: 0
+  capacity_probe_required: false
+  planner_selects_job_count: true
+  planner_min_jobs: 1
+  planner_max_jobs: 173
+  planner_job_count_search: "adaptive_exact"
+  planner_large_unit_threshold: 50000
+  planner_exact_lpt_candidates_max: 3
+  matrix_max_jobs: 256
+  auto_split_matrices: true
+  runner_label: "ubuntu-24.04"
+  detect_runner_resources: true
+  record_runner_image_metadata: true
+  reuse_valid_gates: true
+  prepare_data_once: true
+  precompute_common_features_once: true
+  distribute_only_required_partitions: true
+  transport_mode: "auto"
+  artifact_granularity: "coarse_partition"
+  forbid_partial_download_claim_for_monolithic_artifact: true
+  shard_planning: "weighted_lpt"
+  work_unit_manifest_format: "parquet"
+  shard_assignment_format: "parquet"
+  matrix_descriptors_only: true
+  max_github_output_kb: 256
+  target_setup_fraction_max: 0.10
+  target_checkpoint_fraction_max: 0.03
+  target_straggler_ratio_max: 1.50
+  adaptive_batch_size: true
+  adaptive_threads: true
+  adaptive_shard_size: true
+  forbid_nested_process_pools: true
+  pin_numeric_library_threads: true
+  parquet_projection: true
+  parquet_predicate_pushdown: true
+  forbid_repeated_full_scans: true
+  forbid_large_csv_intermediates: true
+  artifact_compression_precompressed: 0
+  artifact_compression_text: 1
+  cache_single_writer: true
+  hierarchical_merge: true
+  merge_fan_in: 30
+  merge_incremental: true
+  preserve_partial_merges: true
+  larger_runners_allowed: false
+  native_acceleration_allowed_after_profile: true
+  native_hot_path_min_fraction: 0.10
+  native_projected_end_to_end_gain_min: 0.05
+  native_python_fallback_required: true
+  engine_candidates:
+    - "python_reference"
+    - "numpy"
+    - "numba"
+    - "pyarrow"
+    - "threads"
+    - "processes"
+  require_engine_equivalence_before_timing: true
+  record_queue_time: true
+  record_parallelism_timeline: true
+  record_phase_breakdown: true
+  generate_bottleneck_report: true
+
+retries:
+  transient_network: 3
+  github_5xx: 3
+  provider_429: 5
+  artifact_upload: 3
+  runner_lost: 2
+
+artifacts:
+  shard_format: "parquet"
+  final_name: "sp500-long-short-daily-train-results"
+  retention_days_shards: 7
+  retention_days_final: 90
+  if_no_files_found: "error"
+  require_final_artifact_manifest: true
+  require_requirement_traceability: true
+  require_final_verification_report: true
+
+security:
+  default_permissions: "contents:read"
+  actions_pinned_by_sha: true
+  checkout_persist_credentials: false
+  external_code_allowlist:
+    - "query1.finance.yahoo.com"
+    - "query2.finance.yahoo.com"
+    - "fc.yahoo.com"
+    - "stooq.com"
+    - "fred.stlouisfed.org"
+    - "api.stlouisfed.org"
+  pinned_actions:
+    checkout: "d23441a48e516b6c34aea4fa41551a30e30af803"
+    setup_python: "ece7cb06caefa5fff74198d8649806c4678c61a1"
+    upload_artifact: "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    download_artifact: "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+
+statistics:
+  hypothesis_family: "frozen_sp500_daily_long_short_168"
+  null_hypothesis: "no candidate outperforms the strongest mandatory benchmark"
+  alternative_hypothesis: "at least one frozen candidate has positive benchmark-relative expected return"
+  n_trials_global: 168
+  alpha: 0.05
+  multiple_testing_correction: "White Reality Check, Hansen SPA, CSCV/PBO, Deflated Sharpe Ratio"
+  bootstrap_method: "moving block bootstrap with automatic and fixed sensitivity lengths"
+  bootstrap_samples: 1000
+  bootstrap_block_length: 0
+  statistical_seed: 20260803
+  minimum_sample_size: 1000
+
+metrics:
+  contract_path: "config/github_performance_reference_metrics.json"
+  contract_sha256: ""
+  return_type: "simple"
+  return_basis: "SPY total return open-to-open"
+  annualization_rule: "actual sessions with 252 annualization for ratios"
+  risk_free_source: "zero"
+  undefined_metric_policy: "null"
+
+reconciliation:
+  required_terminal_states:
+    - completed
+    - right_censored
+    - unsupported
+    - failed_technical
+  require_expected_equals_terminal_sum: true
+  forbid_silent_row_drops: true
+
+gates:
+  require_preflight: true
+  require_smoke: true
+  require_pilot: true
+  require_complete_merge: true
+  require_policy_audit: true
+  require_reconciliation: true
+  require_independent_metric_reference: true
+  require_final_verifier: true
+  require_traceability_matrix: true

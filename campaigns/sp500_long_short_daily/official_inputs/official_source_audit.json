@@ -1,0 +1,43 @@
+{
+  "campaign_id": "sp500_long_short_daily_zero_cost_v1",
+  "locked_opened": false,
+  "sources": [
+    {
+      "id": "state_street_exact_events_2006_2010",
+      "maximum_observation": "2010-12-17",
+      "page_as_of": "2010-12-29",
+      "role": "exact_event_date_and_amount_verification",
+      "source_capture_sha256": "fccdddddf8bc1b5e5dca160087f1293821e54cbd0fed3d3c2331fd9c0b94bd4e",
+      "url": "https://web.archive.org/web/20110103050231id_/https://www.spdrs.com/resources/distributions/index.seam"
+    },
+    {
+      "id": "sec_audited_totals_1993_1995",
+      "role": "audited_fiscal_total_verification",
+      "url": "https://www.sec.gov/Archives/edgar/data/884394/000091205796003840/0000912057-96-003840.txt"
+    },
+    {
+      "id": "sec_audited_totals_1996_1999",
+      "role": "audited_fiscal_total_verification",
+      "url": "https://www.sec.gov/Archives/edgar/data/884394/000095013599005434/0000950135-99-005434.txt"
+    },
+    {
+      "id": "sec_audited_totals_2000_2004",
+      "role": "audited_fiscal_total_verification",
+      "url": "https://www.sec.gov/Archives/edgar/data/884394/000095013605000453/file001.htm"
+    },
+    {
+      "id": "sec_audited_totals_2005_2009",
+      "role": "audited_fiscal_total_verification",
+      "url": "https://www.sec.gov/Archives/edgar/data/884394/000095012309003975/y0117097e497.htm"
+    }
+  ],
+  "train_end": "2010-12-31",
+  "validation_boundary_incident": {
+    "candidate_pack_was_already_frozen": true,
+    "performance_observed": false,
+    "reason": "Wayback redirected a requested 2011 workbook capture to 2012-10-16",
+    "response_used": false,
+    "rows_used": 0,
+    "status": "discarded_fail_closed"
+  }
+}

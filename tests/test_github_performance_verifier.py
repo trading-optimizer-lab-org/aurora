@@ -597,6 +597,72 @@ def test_final_verifier_accepts_complete_untampered_artifact(
     assert report.partial is False
 
 
+def test_final_verifier_requires_metrics_only_for_evaluated_results(
+    tmp_path: Path,
+) -> None:
+    spec = _write_complete_final_fixture(tmp_path)
+    reconciliation = reconcile_attempts(
+        {"u1", "u2"},
+        [
+            completed_unit("u1", "a1", "1" * 64),
+            completed_unit("u2", "a2", "2" * 64),
+        ],
+    )
+    write_reconciliation(
+        reconciliation,
+        tmp_path / "unit_reconciliation.parquet",
+    )
+    scientific = tmp_path / "result.parquet"
+    schema = pa.schema(
+        [
+            pa.field("unit_key", pa.string(), nullable=False),
+            pa.field("unit_output_sha256", pa.string(), nullable=False),
+            pa.field("status", pa.string(), nullable=False),
+        ],
+        metadata={b"schema_version": b"1"},
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "unit_key": "u1",
+                    "unit_output_sha256": "1" * 64,
+                    "status": "evaluated",
+                },
+                {
+                    "unit_key": "u2",
+                    "unit_output_sha256": "2" * 64,
+                    "status": "rejected",
+                },
+            ],
+            schema=schema,
+        ),
+        scientific,
+    )
+    identity = scientific_content_identity_from_output(scientific)
+    summary_path = tmp_path / "final_merge_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary.update(
+        {
+            "scientific_output_sha256": _sha256(scientific),
+            "scientific_content_sha256": identity[
+                "scientific_content_sha256"
+            ],
+            "scientific_content_rows": identity["unit_count"],
+        }
+    )
+    summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+    write_final_artifact_manifest(
+        tmp_path,
+        tmp_path / "final_artifact_manifest.json",
+    )
+
+    report = verify_final_artifact(tmp_path, spec)
+
+    assert report.passed is True
+    assert "METRIC_EVIDENCE_INCOMPLETE" not in report.failure_codes
+
+
 def test_final_verifier_rejects_pilot_resolution_mismatch(
     tmp_path: Path,
 ) -> None:

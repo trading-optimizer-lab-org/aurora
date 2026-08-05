@@ -1,0 +1,415 @@
+name: SP500 Long Short Daily Campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Frozen campaign phase
+        required: true
+        default: train
+        type: choice
+        options:
+          - preflight
+          - smoke
+          - pilot
+          - train
+          - full_train
+          - validation_once
+      execution_mode:
+        description: Universal planner execution mode
+        required: false
+        default: optimized
+        type: choice
+        options:
+          - optimized
+          - baseline
+      forced_job_count:
+        description: Zero lets the measured planner choose
+        required: false
+        default: 0
+        type: number
+      validation_ack:
+        description: Exact one-shot validation authorization
+        required: false
+        default: ""
+        type: string
+      train_run_id:
+        description: Verified full-train GitHub run ID
+        required: false
+        default: ""
+        type: string
+      train_results_artifact:
+        description: Verified train result artifact name
+        required: false
+        default: ""
+        type: string
+      train_prepared_artifact:
+        description: Immutable train prepared-input artifact name
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resolve_data_windows:
+    if: inputs.phase != 'preflight'
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      window_count: ${{ steps.plan.outputs.window_count }}
+      requested_start: ${{ steps.plan.outputs.requested_start }}
+      requested_end: ${{ steps.plan.outputs.requested_end }}
+      split: ${{ steps.plan.outputs.split }}
+      workload: ${{ steps.plan.outputs.workload }}
+      prepared_artifact_name: ${{ steps.plan.outputs.prepared_artifact_name }}
+    steps:
+      - name: Plan bounded Stooq windows
+        id: plan
+        env:
+          PHASE: ${{ inputs.phase }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+
+          phase = os.environ["PHASE"]
+          if phase == "smoke":
+              start, end = dt.date(2005, 10, 1), dt.date(2009, 9, 30)
+              workload = "aurora.infra.sp500_long_short_daily.workload:SMOKE_WORKLOAD"
+              label = "sp500-ls-smoke"
+              split = "train"
+          elif phase == "validation_once":
+              start, end = dt.date(2011, 1, 1), dt.date(2020, 12, 31)
+              workload = ""
+              label = "sp500-ls-validation"
+              split = "validation"
+          else:
+              start, end = dt.date(1993, 1, 22), dt.date(2010, 12, 31)
+              workload = (
+                  "aurora.infra.sp500_long_short_daily.workload:PILOT_WORKLOAD"
+                  if phase == "pilot"
+                  else "aurora.infra.sp500_long_short_daily.workload:TRAIN_WORKLOAD"
+              )
+              label = "sp500-ls-pilot" if phase == "pilot" else "sp500-ls-train"
+              split = "train"
+
+          windows = []
+          cursor = start
+          while cursor <= end:
+              bounded_end = min(cursor + dt.timedelta(days=44), end)
+              index = len(windows)
+              windows.append(
+                  {
+                      "window_id": f"{index:03d}",
+                      "start": cursor.isoformat(),
+                      "end": bounded_end.isoformat(),
+                  }
+              )
+              cursor = bounded_end + dt.timedelta(days=1)
+
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as handle:
+              handle.write(f"matrix={json.dumps({'include': windows}, separators=(',', ':'))}\n")
+              handle.write(f"window_count={len(windows)}\n")
+              handle.write(f"requested_start={start.isoformat()}\n")
+              handle.write(f"requested_end={end.isoformat()}\n")
+              handle.write(f"split={split}\n")
+              handle.write(f"workload={workload}\n")
+              handle.write(f"prepared_artifact_name={label}-prepared-{os.environ['GITHUB_RUN_ID']}\n")
+          PY
+
+  stooq_windows:
+    needs: resolve_data_windows
+    if: inputs.phase != 'preflight'
+    strategy:
+      fail-fast: false
+      max-parallel: 180
+      matrix: ${{ fromJson(needs.resolve_data_windows.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download bounded raw Stooq window
+        run: |
+          set -euo pipefail
+          python scripts/download_sp500_stooq_window.py \
+            --start "${{ matrix.start }}" \
+            --end "${{ matrix.end }}" \
+            --split "${{ needs.resolve_data_windows.outputs.split }}" \
+            --window-id "${{ matrix.window_id }}" \
+            --output-dir "$RUNNER_TEMP/stooq-window"
+      - name: Upload immutable Stooq window
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-ls-stooq-window-${{ github.run_id }}-${{ matrix.window_id }}
+          path: ${{ runner.temp }}/stooq-window
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  prepare_campaign_data:
+    needs: [resolve_data_windows, stooq_windows]
+    if: inputs.phase != 'preflight' && inputs.phase != 'validation_once'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Download every Stooq window
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-ls-stooq-window-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/stooq-windows
+      - name: Merge and verify Stooq windows
+        run: |
+          set -euo pipefail
+          python scripts/merge_sp500_stooq_windows.py \
+            --input-root "$RUNNER_TEMP/stooq-windows" \
+            --output-dir "$RUNNER_TEMP/stooq-merged" \
+            --expected-windows "${{ needs.resolve_data_windows.outputs.window_count }}" \
+            --requested-start "${{ needs.resolve_data_windows.outputs.requested_start }}" \
+            --requested-end "${{ needs.resolve_data_windows.outputs.requested_end }}"
+      - name: Prepare immutable campaign data
+        env:
+          SP500_STOOQ_HISTORY_CSV: ${{ runner.temp }}/stooq-merged/stooq_spy_us_history.csv
+          SP500_STOOQ_HISTORY_MANIFEST: ${{ runner.temp }}/stooq-merged/stooq_sharded_manifest.json
+          WORKLOAD: ${{ needs.resolve_data_windows.outputs.workload }}
+        run: |
+          set -euo pipefail
+          aurora github prepare \
+            --spec config/sp500_long_short_daily_train_v3.yaml \
+            --workload "$WORKLOAD" \
+            --output-dir "$RUNNER_TEMP/prepared"
+      - name: Upload immutable prepared inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.resolve_data_windows.outputs.prepared_artifact_name }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  preflight:
+    if: inputs.phase == 'preflight'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Run fail-closed preflight
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          set -euo pipefail
+          python scripts/preflight_sp500_long_short_daily_campaign.py \
+            --repo-root . \
+            --output-dir "$RUNNER_TEMP/preflight"
+      - name: Upload preflight evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-ls-preflight-${{ github.run_id }}
+          path: ${{ runner.temp }}/preflight
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  smoke:
+    needs: [resolve_data_windows, prepare_campaign_data]
+    if: inputs.phase == 'smoke'
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/sp500_long_short_daily_train_v3.yaml
+      workload: aurora.infra.sp500_long_short_daily.workload:SMOKE_WORKLOAD
+      run_label: sp500-ls-smoke
+      retention_days: 30
+      execution_mode: ${{ inputs.execution_mode }}
+      forced_job_count: ${{ inputs.forced_job_count }}
+      prepared_artifact_name: ${{ needs.resolve_data_windows.outputs.prepared_artifact_name }}
+    secrets: inherit
+
+  pilot:
+    needs: [resolve_data_windows, prepare_campaign_data]
+    if: inputs.phase == 'pilot'
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/sp500_long_short_daily_train_v3.yaml
+      workload: aurora.infra.sp500_long_short_daily.workload:PILOT_WORKLOAD
+      run_label: sp500-ls-pilot
+      retention_days: 30
+      execution_mode: ${{ inputs.execution_mode }}
+      forced_job_count: ${{ inputs.forced_job_count }}
+      prepared_artifact_name: ${{ needs.resolve_data_windows.outputs.prepared_artifact_name }}
+    secrets: inherit
+
+  train:
+    needs: [resolve_data_windows, prepare_campaign_data]
+    if: inputs.phase == 'train' || inputs.phase == 'full_train'
+    uses: ./.github/workflows/_aurora-future-run-v3.yml
+    with:
+      spec_path: config/sp500_long_short_daily_train_v3.yaml
+      workload: aurora.infra.sp500_long_short_daily.workload:TRAIN_WORKLOAD
+      run_label: sp500-ls-train
+      retention_days: 90
+      execution_mode: ${{ inputs.execution_mode }}
+      forced_job_count: ${{ inputs.forced_job_count }}
+      prepared_artifact_name: ${{ needs.resolve_data_windows.outputs.prepared_artifact_name }}
+    secrets: inherit
+
+  validation_once:
+    needs: [resolve_data_windows, stooq_windows]
+    if: inputs.phase == 'validation_once'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact frozen revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: ""
+      - name: Restore locked runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/github-performance.lock
+          python -m pip install --no-deps -e .
+      - name: Verify one-shot inputs
+        env:
+          VALIDATION_ACK: ${{ inputs.validation_ack }}
+          TRAIN_RUN_ID: ${{ inputs.train_run_id }}
+          TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+          TRAIN_PREPARED_ARTIFACT: ${{ inputs.train_prepared_artifact }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATION_ACK" == "OPEN_VALIDATION_2011_2020_ONCE" ]] || {
+            echo "::error::VALIDATION_ACK_MISMATCH"
+            exit 2
+          }
+          [[ "$TRAIN_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::TRAIN_RUN_ID_REQUIRED"; exit 2; }
+          [[ -n "$TRAIN_RESULTS_ARTIFACT" ]] || { echo "::error::TRAIN_RESULTS_ARTIFACT_REQUIRED"; exit 2; }
+          [[ -n "$TRAIN_PREPARED_ARTIFACT" ]] || { echo "::error::TRAIN_PREPARED_ARTIFACT_REQUIRED"; exit 2; }
+      - name: Download validation Stooq windows
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: sp500-ls-stooq-window-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/stooq-windows
+      - name: Merge and verify validation Stooq windows
+        run: |
+          set -euo pipefail
+          python scripts/merge_sp500_stooq_windows.py \
+            --input-root "$RUNNER_TEMP/stooq-windows" \
+            --output-dir "$RUNNER_TEMP/stooq-merged" \
+            --expected-windows "${{ needs.resolve_data_windows.outputs.window_count }}" \
+            --requested-start "${{ needs.resolve_data_windows.outputs.requested_start }}" \
+            --requested-end "${{ needs.resolve_data_windows.outputs.requested_end }}"
+      - name: Download verified frozen train artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRAIN_RUN_ID: ${{ inputs.train_run_id }}
+          TRAIN_RESULTS_ARTIFACT: ${{ inputs.train_results_artifact }}
+          TRAIN_PREPARED_ARTIFACT: ${{ inputs.train_prepared_artifact }}
+        run: |
+          set -euo pipefail
+          gh run download "$TRAIN_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$TRAIN_RESULTS_ARTIFACT" --dir "$RUNNER_TEMP/train-results"
+          gh run download "$TRAIN_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$TRAIN_PREPARED_ARTIFACT" --dir "$RUNNER_TEMP/train-prepared"
+      - name: Open validation exactly once
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          VALIDATION_ACK: ${{ inputs.validation_ack }}
+          SP500_STOOQ_HISTORY_CSV: ${{ runner.temp }}/stooq-merged/stooq_spy_us_history.csv
+          SP500_STOOQ_HISTORY_MANIFEST: ${{ runner.temp }}/stooq-merged/stooq_sharded_manifest.json
+        run: |
+          set -euo pipefail
+          python scripts/run_sp500_long_short_daily_validation.py \
+            --train-results-dir "$RUNNER_TEMP/train-results" \
+            --train-prepared-dir "$RUNNER_TEMP/train-prepared" \
+            --validation-prepared-dir "$RUNNER_TEMP/validation-prepared" \
+            --output-dir "$RUNNER_TEMP/validation-results" \
+            --validation-ack "$VALIDATION_ACK"
+      - name: Independently verify validation boundaries and counts
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import pandas as pd
+          import pyarrow.parquet as pq
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "validation-results"
+          summary = json.loads((root / "validation_summary.json").read_text("utf-8"))
+          if summary["locked_opened"] is not False:
+              raise SystemExit("TECHNICAL_FAILURE_LOCKED_BREACH")
+          if summary["validation_used_for_selection"] is not False:
+              raise SystemExit("VALIDATION_USED_FOR_SELECTION")
+          daily = pq.read_table(root / "validation_daily_returns.parquet").to_pandas()
+          if len(daily):
+              dates = pd.to_datetime(daily["date"])
+              if dates.min() < pd.Timestamp("2011-01-01") or dates.max() > pd.Timestamp("2020-12-31"):
+                  raise SystemExit("VALIDATION_OUTPUT_BOUNDARY_BREACH")
+          metrics = pd.read_csv(root / "validation_candidate_and_benchmark_metrics.csv")
+          if len(metrics) != summary["frozen_finalists"] + 5:
+              raise SystemExit("VALIDATION_UNIT_COUNT_MISMATCH")
+          PY
+      - name: Upload immutable one-shot validation artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-ls-validation-once-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/validation-results
+            ${{ runner.temp }}/validation-prepared/market_data_manifest.json
+            ${{ runner.temp }}/validation-prepared/raw_manifest.jsonl
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

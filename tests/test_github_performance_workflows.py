@@ -127,7 +127,11 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
     jobs = _workflow()["jobs"]
     assert _needs(jobs["prepare_environment"]) == set()
     assert _needs(jobs["validate"]) == {"prepare_environment"}
-    assert _needs(jobs["prepare_data"]) == {"validate"}
+    assert _needs(jobs["prepare_data"]) == {
+        "validate",
+        "sp500_data_plan",
+        "sp500_prepare_data",
+    }
     assert _needs(jobs["freeze_contract"]) == {
         "validate",
         "prepare_environment",
@@ -142,6 +146,20 @@ def test_reusable_workflow_has_complete_dependency_spine() -> None:
         "plan",
         "freeze_contract",
     }
+    assert jobs["smoke"]["if"] == (
+        "always() && needs.freeze_contract.result == 'success'"
+    )
+    assert jobs["pilot"]["if"] == "always() && needs.smoke.result == 'success'"
+    assert jobs["plan"]["if"] == "always() && needs.pilot.result == 'success'"
+    assert jobs["fanout_a"]["if"] == "always() && needs.plan.result == 'success'"
+    assert jobs["fanout_b"]["if"] == (
+        "always() && needs.plan.result == 'success' && "
+        "needs.plan.outputs.has_matrix_b == 'true'"
+    )
+    assert jobs["campaign_initialize"]["if"] == (
+        "always() && needs.plan.result == 'success' && "
+        "needs.freeze_contract.result == 'success'"
+    )
     assert _needs(jobs["recovery_plan"]) == {
         "plan",
         "fanout_a",
@@ -570,6 +588,17 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
             == "./.github/actions/aurora-merge-level"
             for step in job["steps"]
         )
+        merge_step = next(
+            step
+            for step in job["steps"]
+            if step.get("uses") == "./.github/actions/aurora-merge-level"
+        )
+        assert merge_step["with"]["prepared-artifact-name"] == (
+            "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
+        )
+        assert merge_step["with"]["prepared-artifact-run-id"] == (
+            "${{ inputs.prepared_artifact_run_id || github.run_id }}"
+        )
     for level_index in range(1, 4):
         assert _needs(jobs[f"merge_level_{level_index}"]) == {
             "plan",
@@ -580,9 +609,32 @@ def test_reusable_workflow_executes_every_bounded_merge_plan_level() -> None:
         "freeze_contract",
         *level_names,
     }
+    final_steps = jobs["final_merge"]["steps"]
+    prepared_download = next(
+        step
+        for step in final_steps
+        if step.get("name") == "Download prepared inputs"
+    )
+    assert prepared_download["with"] == {
+        "name": "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}",
+        "path": "${{ runner.temp }}/prepared",
+        "github-token": "${{ github.token }}",
+        "run-id": "${{ inputs.prepared_artifact_run_id || github.run_id }}",
+    }
+    final_build = next(
+        step
+        for step in final_steps
+        if step.get("name") == "Build final artifact and reconciliation"
+    )
+    assert final_build["env"]["AURORA_PREPARED_ROOT"] == (
+        "${{ runner.temp }}/prepared"
+    )
     merge_text = MERGE_LEVEL_ACTION_PATH.read_text(encoding="utf-8")
     assert "aurora github merge-plan-group" in merge_text
     assert "inputs.output-artifact" in merge_text
+    assert "inputs.prepared-artifact-name" in merge_text
+    assert "inputs.prepared-artifact-run-id" in merge_text
+    assert "AURORA_PREPARED_ROOT: ${{ runner.temp }}/prepared" in merge_text
     final_text = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "_aurora-merge-level-v3.yml" not in final_text
     assert "needs.plan.outputs.merge_root_artifact" in final_text
@@ -610,6 +662,7 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "execution_mode",
         "forced_job_count",
         "prepared_artifact_name",
+        "prepared_artifact_run_id",
         "wheelhouse_artifact_name",
         "performance_profile_run_id",
         "performance_profile_artifact_name",
@@ -619,6 +672,11 @@ def test_reusable_workflow_inputs_and_permissions_are_minimal() -> None:
         "workload",
         "run_label",
         "retention_days",
+        "autonomous_batch_id",
+        "autonomous_candidate_count",
+        "autonomous_previous_trial_count",
+        "autonomous_prior_ledger_artifact_name",
+        "autonomous_prior_ledger_run_id",
     }
     assert inputs["fault_injection_shard_id"]["default"] == ""
     assert inputs["fault_injection_after_units"]["default"] == 0
@@ -732,15 +790,27 @@ def test_reusable_workflow_can_reuse_exact_prepared_artifact() -> None:
         for step in prepared["steps"]
         if step["name"] == "Upload prepared inputs"
     )
-    assert shared_download["if"] == "inputs.prepared_artifact_name != ''"
-    assert prepare["if"] == "inputs.prepared_artifact_name == ''"
-    assert upload["if"] == "inputs.prepared_artifact_name == ''"
+    assert shared_download["if"] == (
+        "inputs.prepared_artifact_name != '' || "
+        "needs.sp500_data_plan.outputs.enabled == 'true'"
+    )
+    assert prepare["if"] == (
+        "inputs.prepared_artifact_name == '' && "
+        "needs.sp500_data_plan.outputs.enabled != 'true'"
+    )
+    assert upload["if"] == prepare["if"]
     assert (
         shared_download["with"]["name"]
         == "${{ env.AURORA_PREPARED_ARTIFACT_NAME }}"
     )
     assert "inputs.prepared_artifact_name" in str(
         workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    )
+    assert "github.run_attempt" in str(
+        workflow["env"]["AURORA_PREPARED_ARTIFACT_NAME"]
+    )
+    assert "github.run_attempt" in str(
+        workflow["env"]["AURORA_WHEELHOUSE_ARTIFACT_NAME"]
     )
 
 

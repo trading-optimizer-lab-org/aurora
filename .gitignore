@@ -41,6 +41,7 @@ env/
 *.sqlite
 *.sqlite3
 *.jsonl
+!campaigns/sp500_long_short_daily/research_input/candidate_strategy_pack.jsonl
 !docs/readiness/gtbi-v7/task_events.jsonl
 !docs/readiness/gtbi-v7/task_attempts.jsonl
 !docs/readiness/gtbi-v7/gate_events.jsonl

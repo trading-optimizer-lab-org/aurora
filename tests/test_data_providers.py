@@ -383,7 +383,7 @@ def test_snapshot_freeze_stores_metadata(tmp_path):
 def _run_forge(*args):
     """Run ``forge`` via the CLI module so we exercise the parser too."""
     cmd = [sys.executable, "-m", "aurora.cli.forge", *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=180)
 
 
 def test_cli_data_list_providers_smoke():

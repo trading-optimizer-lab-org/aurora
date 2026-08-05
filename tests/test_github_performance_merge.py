@@ -261,6 +261,40 @@ def test_partitioned_transport_is_deterministic_bounded_and_lossless(
     assert len(keys) == len(set(keys)) == 1200
 
 
+def test_partitioned_transport_hashes_persisted_nan_representation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "nan-source.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "unit_key": ["u2", "u1"],
+                "metric": [float("nan"), 1.0],
+            }
+        ),
+        source,
+        compression="zstd",
+    )
+    transport = merge_runtime.write_partitioned_parquet_transport(
+        source,
+        tmp_path / "transport",
+        logical_name="scientific_output",
+        key_columns=("unit_key",),
+        target_bytes=4096,
+    )
+
+    paths = merge_runtime.verify_partitioned_parquet_transport(
+        tmp_path / "transport",
+        transport,
+    )
+
+    assert len(paths) == 1
+    assert pq.read_table(paths[0]).column("unit_key").to_pylist() == [
+        "u1",
+        "u2",
+    ]
+
+
 def test_merge_plan_rejects_unsafe_disk_projection() -> None:
     with pytest.raises(MergePlanError, match="MERGE_DISK_BUDGET_EXCEEDED"):
         build_merge_plan(
