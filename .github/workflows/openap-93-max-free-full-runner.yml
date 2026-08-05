@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: 4e84109a261dc5914086c354137226903a14e5d0
+        default: cb2accc42f274793d78bd467a6f1fe89ee657c0e
         type: string
       base_run_id:
         description: Run containing openap-yfinance-sec-current-score-results
@@ -17,6 +17,11 @@ on:
         description: Current formation date or today
         required: true
         default: today
+        type: string
+      public_inputs_run_id:
+        description: Optional successful OpenAP source-probe run to reuse without redownloading
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -58,6 +63,7 @@ jobs:
       - name: Compile OpenAP current modules
         run: |
           python -m py_compile research/openap_93/registry.py
+          python -m py_compile research/openap_93/http.py
           python -m py_compile research/openap_93/sources.py
           python -m py_compile research/openap_93/external.py
           python -m py_compile research/openap_93/market.py
@@ -71,6 +77,7 @@ jobs:
           python -m py_compile research/openap_93/quarterly_pipeline.py
           python -m py_compile research/openap_93/current_pipeline.py
           python -m py_compile scripts/run_openap_93_max_free.py
+          python -m py_compile scripts/verify_openap_93_outputs.py
       - name: Run focused tests
         run: python -m pytest tests/test_openap_93_max_free.py -q --tb=short
       - name: Download audited 185-signal base database
@@ -81,7 +88,36 @@ jobs:
           run-id: ${{ inputs.base_run_id }}
           repository: trading-optimizer-lab-org/aurora
           github-token: ${{ github.token }}
-      - name: Run the complete no-key current pipeline
+      - name: Reuse audited source-probe evidence
+        if: ${{ inputs.public_inputs_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-max-free-source-probe
+          path: outputs/openap_93_current/source_probe
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Reuse audited normalized public inputs
+        if: ${{ inputs.public_inputs_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: openap-93-public-inputs
+          path: outputs/openap_93_current/public_inputs
+          run-id: ${{ inputs.public_inputs_run_id }}
+          repository: trading-optimizer-lab-org/aurora
+          github-token: ${{ github.token }}
+      - name: Run complete pipeline from audited cached inputs
+        if: ${{ inputs.public_inputs_run_id != '' }}
+        run: |
+          python scripts/run_openap_93_max_free.py \
+            --signals-config config/openap_93/signals_93.yaml \
+            run \
+            --base-db inputs/openap_base \
+            --output-dir outputs/openap_93_current \
+            --formation-date "${{ inputs.formation_date }}" \
+            --offline
+      - name: Run complete pipeline from scratch
+        if: ${{ inputs.public_inputs_run_id == '' }}
         run: |
           python scripts/run_openap_93_max_free.py \
             --signals-config config/openap_93/signals_93.yaml \
@@ -136,6 +172,10 @@ jobs:
           assert reference["current_signal_source"] is False
           assert reference["identifier_columns"] == ["permno", "yyyymm"]
           PY
+      - name: Independently reopen and verify the complete artifact
+        run: |
+          python scripts/verify_openap_93_outputs.py \
+            --output-dir outputs/openap_93_current
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-93-max-free-full-results
