@@ -178,7 +178,13 @@ def _candidate_metric(row: Mapping[str, Any], benchmark: np.ndarray, global_tria
     return result, diff
 
 
-def evaluate_batch(rows: Sequence[Mapping[str, Any]], root: Path, *, batch_id: int) -> dict[str, Any]:
+def evaluate_batch(
+    rows: Sequence[Mapping[str, Any]],
+    root: Path,
+    *,
+    batch_id: int,
+    previous_trial_count: int = PREVIOUS_TRIAL_COUNT,
+) -> dict[str, Any]:
     """Write auditable train metrics, multiplicity results, and freeze evidence."""
 
     root = Path(root)
@@ -189,7 +195,9 @@ def evaluate_batch(rows: Sequence[Mapping[str, Any]], root: Path, *, batch_id: i
     benchmark = np.asarray((benchmark_row or {}).get("train_returns") or [], dtype=float)
     metrics: list[dict[str, Any]] = []
     differential_rows: dict[str, np.ndarray] = {}
-    global_trials = PREVIOUS_TRIAL_COUNT + len([row for row in rows if row.get("unit_type") == "candidate"])
+    if previous_trial_count < PREVIOUS_TRIAL_COUNT:
+        raise ValueError("PREVIOUS_TRIAL_COUNT_MOVED_BACKWARD")
+    global_trials = previous_trial_count + len([row for row in rows if row.get("unit_type") == "candidate"])
     for index, row in enumerate(candidates):
         result, diff = _candidate_metric(row, benchmark, global_trials, batch_id * 100_000 + index)
         metrics.append(result)

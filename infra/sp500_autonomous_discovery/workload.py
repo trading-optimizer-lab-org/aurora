@@ -48,6 +48,7 @@ from .registry import (
     base_package,
     generate_candidates,
     read_batch_registry,
+    get_previous_trial_count,
     repo_root,
     write_batch_registry,
 )
@@ -128,7 +129,12 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
         batch_id = _batch_id()
         count = _candidate_count(self.default_candidate_count)
         candidates = generate_candidates(batch_id, count=count)
-        write_batch_registry(root, batch_id=batch_id, candidates=candidates)
+        write_batch_registry(
+            root,
+            batch_id=batch_id,
+            candidates=candidates,
+            previous_trial_count=get_previous_trial_count(),
+        )
         with (Path(root) / "dedupe_map.csv").open("w", newline="", encoding="utf-8") as handle:
             dedupe_rows = build_dedupe_map(candidates)
             writer = csv.DictWriter(handle, fieldnames=["strategy_id", "canonical_hash", "canonical_strategy_id", "deduped"])
@@ -295,7 +301,12 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
         if expected != observed:
             raise RuntimeError(f"INCOMPLETE_BATCH_COVERAGE:expected={len(expected)}:observed={len(observed)}")
         root = Path(root)
-        summary = evaluate_batch(rows, root, batch_id=_batch_id())
+        summary = evaluate_batch(
+            rows,
+            root,
+            batch_id=_batch_id(),
+            previous_trial_count=get_previous_trial_count(),
+        )
         (root / "candidate_registry.jsonl").write_text(
             self._registry_path(self._prepared_root()).read_text(encoding="utf-8"),
             encoding="utf-8",

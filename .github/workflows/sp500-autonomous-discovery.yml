@@ -23,6 +23,11 @@ on:
         required: false
         default: 96
         type: number
+      prior_trial_count:
+        description: Monotonic candidates tested before this batch
+        required: false
+        default: 312
+        type: number
       execution_mode:
         description: Universal planner mode
         required: false
@@ -118,6 +123,7 @@ jobs:
       forced_job_count: ${{ inputs.forced_job_count }}
       autonomous_batch_id: ${{ inputs.batch_id }}
       autonomous_candidate_count: 24
+      autonomous_previous_trial_count: ${{ inputs.prior_trial_count }}
     secrets: inherit
 
   train_batch:
@@ -132,6 +138,7 @@ jobs:
       forced_job_count: ${{ inputs.forced_job_count }}
       autonomous_batch_id: ${{ inputs.batch_id }}
       autonomous_candidate_count: ${{ inputs.candidate_count }}
+      autonomous_previous_trial_count: ${{ inputs.prior_trial_count }}
     secrets: inherit
 
   continue_or_freeze:
@@ -153,6 +160,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BATCH_ID: ${{ inputs.batch_id }}
           CANDIDATE_COUNT: ${{ inputs.candidate_count }}
+          PRIOR_TRIAL_COUNT: ${{ inputs.prior_trial_count }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -171,6 +179,7 @@ jobs:
                   "phase": "validation_once",
                   "batch_id": str(batch_id),
                   "candidate_count": os.environ["CANDIDATE_COUNT"],
+                  "prior_trial_count": str(summary["global_trial_count"]),
                   "execution_mode": "optimized",
                   "forced_job_count": "0",
                   "validation_ack": "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS",
@@ -183,6 +192,7 @@ jobs:
                   "phase": "search_batch",
                   "batch_id": str(batch_id + 1),
                   "candidate_count": os.environ["CANDIDATE_COUNT"],
+                  "prior_trial_count": str(summary["global_trial_count"]),
                   "execution_mode": "optimized",
                   "forced_job_count": "0",
               }

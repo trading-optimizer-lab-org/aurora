@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -41,6 +42,13 @@ def base_package() -> CampaignPackage:
 def _seed(batch_id: int) -> int:
     digest = hashlib.sha256(f"sp500-autonomous:{batch_id}".encode()).hexdigest()
     return int(digest[:16], 16)
+
+
+def get_previous_trial_count() -> int:
+    value = os.environ.get("AURORA_AUTONOMOUS_PREVIOUS_TRIAL_COUNT", str(PREVIOUS_TRIAL_COUNT))
+    if not value.isdigit() or int(value) < PREVIOUS_TRIAL_COUNT:
+        raise ValueError("INVALID_PREVIOUS_TRIAL_COUNT")
+    return int(value)
 
 
 def _numeric_mutation(value: Any, rng: random.Random) -> Any:
@@ -135,7 +143,7 @@ def write_batch_registry(
     *,
     batch_id: int,
     candidates: tuple[Mapping[str, Any], ...],
-    previous_trial_count: int = PREVIOUS_TRIAL_COUNT,
+    previous_trial_count: int | None = None,
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
     write_jsonl(root / "candidate_registry.jsonl", candidates)
@@ -155,6 +163,7 @@ def write_batch_registry(
         writer = csv.DictWriter(handle, fieldnames=sorted({key for row in dataset_rows for key in row}))
         writer.writeheader()
         writer.writerows(dataset_rows)
+    previous_trial_count = previous_trial_count if previous_trial_count is not None else get_previous_trial_count()
     manifest = {
         "schema_version": "1",
         "batch_id": batch_id,
