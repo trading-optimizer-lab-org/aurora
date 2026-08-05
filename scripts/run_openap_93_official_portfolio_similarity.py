@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
 
-from research.openap_93.official_portfolio_similarity import run_official_portfolio_similarity
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(ROOT.parent))
+
+from aurora.research.openap_93.official_portfolio_similarity import (  # noqa: E402
+    run_official_portfolio_similarity,
+)
 
 
 def main() -> None:

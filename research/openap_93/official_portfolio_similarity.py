@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from aurora.core.execution_policy import require_github_execution
-from research.openap_93.historical_proxy_validation import FIVE_PROXY_SIGNALS
+from aurora.research.openap_93.historical_proxy_validation import FIVE_PROXY_SIGNALS
 
 
 def _column(frame: pd.DataFrame, names: Iterable[str]) -> str | None:
