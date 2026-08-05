@@ -27,6 +27,7 @@ from aurora.research.openap_93.current_pipeline import (
     IMPLEMENTED_SIGNALS,
     REQUIRED_SIGNAL_COLUMNS,
     SCORE_VARIANTS,
+    _integrate_features,
     _normalize_signal_results,
     build_coverage_report,
     build_validation_report,
@@ -1475,6 +1476,55 @@ def test_event_pipeline_emits_four_signals_and_keeps_proxies_out_of_score() -> N
     assert age["reason_if_missing"] == (
         "not_applicable:listing_age_outside_3_36_months"
     )
+
+
+def test_feature_integration_normalizes_empty_arrow_like_columns() -> None:
+    signal = sorted(IMPLEMENTED_SIGNALS)[0]
+    base = pd.DataFrame(
+        {
+            "symbol": ["TYPE1"],
+            "signalname": [signal],
+            "raw_value": pd.Series([pd.NA], dtype="string"),
+            "implementation_status": ["unavailable"],
+            "source": pd.Series([pd.NA], dtype="string"),
+            "formula_id": pd.Series([pd.NA], dtype="string"),
+            "note": pd.Series([pd.NA], dtype="string"),
+            "source_available_at": pd.Series([pd.NA], dtype="string"),
+            "source_input_age_days": pd.Series([pd.NA], dtype="string"),
+            "is_current_for_natural_frequency": pd.Series([pd.NA], dtype="string"),
+            "value_status": pd.Series([pd.NA], dtype="string"),
+        }
+    )
+    metadata = pd.DataFrame(
+        {
+            "signalname": [signal],
+            "tstat": [3.0],
+            "T.Stat": [2.5],
+            "Signal.Rep.Quality": ["1_good"],
+        }
+    )
+    observed = pd.DataFrame(
+        {
+            "symbol": ["TYPE1"],
+            "signal": [signal],
+            "value": [1.25],
+            "fidelity_class": [FidelityClass.RECONSTRUCTED.value],
+            "source_id": ["sec_edgar"],
+            "formula_id": ["regression_dtype_contract"],
+            "caveat": [""],
+            "available_at": [pd.Timestamp("2026-08-01", tz="UTC")],
+            "staleness_days": [4],
+            "is_current_for_natural_frequency": [True],
+            "coverage_flag": ["reconstructed"],
+        }
+    )
+
+    integrated = _integrate_features(base, metadata, observed)
+
+    assert integrated.loc[0, "raw_value"] == pytest.approx(1.25)
+    assert pd.api.types.is_float_dtype(integrated["raw_value"])
+    assert integrated.loc[0, "formula_id"] == "regression_dtype_contract"
+    assert integrated.loc[0, "source_available_at"] == pd.Timestamp("2026-08-01")
 
 
 def test_not_applicable_is_distinct_from_missing_in_normalized_coverage() -> None:

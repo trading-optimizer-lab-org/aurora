@@ -660,6 +660,19 @@ def _integrate_features(
     signals: pd.DataFrame,
 ) -> pd.DataFrame:
     features = base_features.copy()
+    for column in ("raw_value", "source_input_age_days"):
+        features[column] = pd.to_numeric(features[column], errors="coerce").astype(float)
+    features["source_available_at"] = pd.to_datetime(
+        features["source_available_at"], errors="coerce", utc=True
+    ).dt.tz_convert(None)
+    for column in (
+        "source",
+        "formula_id",
+        "note",
+        "value_status",
+        "is_current_for_natural_frequency",
+    ):
+        features[column] = features[column].astype(object)
     base_fidelity = np.select(
         [
             features["implementation_status"].eq("exact"),
@@ -671,6 +684,9 @@ def _integrate_features(
     features["fidelity_class"] = base_fidelity
     features["is_current_for_natural_frequency"] = features["raw_value"].notna()
     updates = signals.rename(columns={"ticker": "symbol", "signal": "signalname"})
+    updates["available_at"] = pd.to_datetime(
+        updates["available_at"], errors="coerce", utc=True
+    ).dt.tz_convert(None)
     updates = updates.set_index(["symbol", "signalname"])
     features = features.set_index(["symbol", "signalname"])
     common = features.index.intersection(updates.index)
