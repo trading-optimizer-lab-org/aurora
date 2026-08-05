@@ -70,8 +70,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install project
-        run: python -m pip install --disable-pip-version-check -e .
+      - name: Install project and focused test dependency
+        run: python -m pip install --disable-pip-version-check -e . pytest
       - name: Compile validator
         run: |
           python -m py_compile research/openap_93/historical_proxy_validation.py
