@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: a2f99c803fbe10bada0d3313f74142921bfbc5d7
+        default: a26d9f6c3875391f21ae6e183df8da325d021201
         type: string
       base_run_id:
         description: Run containing openap-yfinance-sec-current-score-results
