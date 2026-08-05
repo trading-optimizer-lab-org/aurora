@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import hashlib
 import json
 import os
 import random
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+import pandas as pd
 
 from aurora.infra.sp500_long_short_daily.contracts import CampaignPackage
 from aurora.infra.sp500_long_short_daily.signals import IMPLEMENTED_FAMILIES
@@ -165,7 +166,7 @@ def write_batch_registry(
         writer.writeheader()
         writer.writerows(dataset_rows)
     previous_trial_count = previous_trial_count if previous_trial_count is not None else get_previous_trial_count()
-    ledger_rows = [
+    new_ledger_rows = [
         {
             "batch_id": batch_id,
             "canonical_hash": str(candidate["canonical_hash"]),
@@ -176,10 +177,25 @@ def write_batch_registry(
         }
         for index, candidate in enumerate(candidates)
     ]
+    prior_ledger_value = os.environ.get("AURORA_PRIOR_TRIAL_LEDGER_PATH", "").strip()
+    prior_ledger_path = Path(prior_ledger_value) if prior_ledger_value else None
+    prior_ledger_rows = (
+        read_jsonl(prior_ledger_path)
+        if prior_ledger_path is not None and prior_ledger_path.is_file()
+        else []
+    )
+    if previous_trial_count > PREVIOUS_TRIAL_COUNT and not prior_ledger_rows:
+        raise ValueError("PRIOR_TRIAL_LEDGER_REQUIRED")
+    if prior_ledger_rows:
+        last_index = int(prior_ledger_rows[-1].get("global_trial_index", 0))
+        if last_index != previous_trial_count:
+            raise ValueError("PRIOR_TRIAL_LEDGER_COUNT_MISMATCH")
+    ledger_rows = [*prior_ledger_rows, *new_ledger_rows]
     ledger_payload = "".join(
         json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in ledger_rows
     )
     (root / "trial_ledger.jsonl").write_text(ledger_payload, encoding="utf-8")
+    pd.DataFrame(ledger_rows).to_parquet(root / "autonomous_trial_ledger.parquet", index=False)
     manifest = {
         "schema_version": "1",
         "batch_id": batch_id,
@@ -196,8 +212,10 @@ def write_batch_registry(
         "validation_used_for_selection": False,
         "trial_ledger_file": "trial_ledger.jsonl",
         "trial_ledger_rows": len(ledger_rows),
+        "new_trial_ledger_rows": len(new_ledger_rows),
+        "prior_trial_ledger_rows": len(prior_ledger_rows),
         "trial_ledger_sha256": hashlib.sha256(ledger_payload.encode("utf-8")).hexdigest(),
-        "trial_indices": [row["global_trial_index"] for row in ledger_rows],
+        "trial_indices": [row["global_trial_index"] for row in new_ledger_rows],
     }
     (root / "candidate_registry_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

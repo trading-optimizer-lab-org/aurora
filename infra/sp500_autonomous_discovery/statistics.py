@@ -310,11 +310,14 @@ def evaluate_batch(
         "train_end": "2010-12-31",
         "validation_start": "2011-01-01",
         "validation_end": "2020-12-31",
+        "locked_start": "2021-01-01",
         "finalists": finalists,
         "candidate_ids": [str(item["strategy_id"]) for item in finalists],
     }
     freeze["freeze_sha256"] = canonical_json_hash(freeze)
-    (root / "train_freeze_candidate.json").write_text(json.dumps(freeze, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    freeze_payload = json.dumps(freeze, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    (root / "train_selection_freeze.json").write_text(freeze_payload, encoding="utf-8")
+    (root / "train_freeze_candidate.json").write_text(freeze_payload, encoding="utf-8")
     summary = {
         "schema_version": "1",
         "batch_id": batch_id,

@@ -30,7 +30,12 @@ from aurora.infra.sp500_long_short_daily.workload import (
 
 from aurora.infra.sp500_long_short_daily.contracts import canonical_json_hash
 
-from .contracts import LOCKED_START, VALIDATION_END, VALIDATION_START
+from .contracts import (
+    LOCKED_START,
+    VALIDATION_END,
+    VALIDATION_START,
+    VALIDATION_WARMUP_START,
+)
 from .feature_store import FeatureStore
 from .registry import base_package, read_batch_registry
 
@@ -42,7 +47,7 @@ class ValidationGateError(RuntimeError):
     """Raised before validation output exists when the freeze is invalid."""
 
 
-def _verify_freeze(path: Path) -> Mapping[str, Any]:
+def _verify_freeze(path: Path, *, require_finalized: bool = False) -> Mapping[str, Any]:
     freeze = json.loads(path.read_text(encoding="utf-8"))
     claimed = str(freeze.get("freeze_sha256", ""))
     content = dict(freeze)
@@ -55,6 +60,31 @@ def _verify_freeze(path: Path) -> Mapping[str, Any]:
         raise ValidationGateError("TRAIN_FREEZE_BOUNDARY_INVALID")
     if freeze.get("train_end") != "2010-12-31" or freeze.get("locked_start") != LOCKED_START:
         raise ValidationGateError("TRAIN_FREEZE_DATES_INVALID")
+    if require_finalized:
+        if freeze.get("freeze_status") != "eligible" or not freeze.get("finalists"):
+            raise ValidationGateError("TRAIN_FREEZE_NOT_ELIGIBLE")
+        required_fields = (
+            "campaign_version",
+            "repository",
+            "commit_sha",
+            "dataset_hashes",
+            "candidate_registry_hash",
+            "trial_ledger_hash",
+            "total_accumulated_trials",
+            "exact_rules",
+            "multiple_testing_results",
+        )
+        if any(not freeze.get(field) for field in required_fields):
+            raise ValidationGateError("TRAIN_FREEZE_PROVENANCE_INCOMPLETE")
+        if not all(str(value) for value in freeze["dataset_hashes"].values()):
+            raise ValidationGateError("TRAIN_FREEZE_DATASET_HASH_MISSING")
+        current_sha = os.environ.get("GITHUB_SHA", "")
+        frozen_sha = str(freeze.get("commit_sha", ""))
+        if current_sha and frozen_sha not in {current_sha, "LOCAL_TEST_ONLY"}:
+            raise ValidationGateError("TRAIN_FREEZE_CODE_SHA_MISMATCH")
+        for finalist in freeze["finalists"]:
+            if finalist.get("eligible_for_freeze") is not True:
+                raise ValidationGateError("TRAIN_FREEZE_FINALIST_GATE_MISSING")
     return freeze
 
 
@@ -146,7 +176,10 @@ def run_validation_once(
     train_results_dir = Path(train_results_dir).resolve()
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    freeze = _verify_freeze(train_results_dir / "train_selection_freeze.json")
+    freeze = _verify_freeze(
+        train_results_dir / "train_selection_freeze.json",
+        require_finalized=True,
+    )
     finalists = list(freeze.get("finalists", []))
     if not finalists:
         raise ValidationGateError("NO_FROZEN_FINALISTS_VALIDATION_MUST_NOT_OPEN")
@@ -163,7 +196,7 @@ def run_validation_once(
     validation = load_market_snapshot(Path(validation_prepared_dir))
     if train.ledger.index.max() > pd.Timestamp("2010-12-31"):
         raise ValidationGateError("TRAIN_BOUNDARY_BREACH")
-    if validation.ledger.index.min() < pd.Timestamp(VALIDATION_START) or validation.ledger.index.max() > pd.Timestamp(VALIDATION_END):
+    if validation.ledger.index.min() < pd.Timestamp(VALIDATION_WARMUP_START) or validation.ledger.index.max() > pd.Timestamp(VALIDATION_END):
         raise ValidationGateError("VALIDATION_BOUNDARY_BREACH")
     data = validation
     manifest = json.loads(
@@ -174,7 +207,7 @@ def run_validation_once(
     feature_store = FeatureStore(
         dataset_sha256=str(manifest["snapshot_sha256"]),
         code_sha=os.environ.get("GITHUB_SHA", "LOCAL_TEST_ONLY"),
-        start=VALIDATION_START,
+        start=VALIDATION_WARMUP_START,
         end=VALIDATION_END,
     )
     feature_frame = feature_store.get_or_build("SPY", data.ledger)

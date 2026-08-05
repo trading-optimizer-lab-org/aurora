@@ -34,6 +34,16 @@ on:
         required: false
         default: 312
         type: number
+      prior_trial_ledger_run_id:
+        description: Previous train run containing the cumulative trial ledger
+        required: false
+        default: ""
+        type: string
+      prior_trial_ledger_artifact:
+        description: Previous results artifact containing trial_ledger.jsonl
+        required: false
+        default: ""
+        type: string
       execution_mode:
         description: Universal planner mode
         required: false
@@ -130,6 +140,8 @@ jobs:
       autonomous_batch_id: ${{ inputs.batch_id }}
       autonomous_candidate_count: 24
       autonomous_previous_trial_count: ${{ inputs.prior_trial_count }}
+      autonomous_prior_ledger_run_id: ${{ inputs.prior_trial_ledger_run_id }}
+      autonomous_prior_ledger_artifact_name: ${{ inputs.prior_trial_ledger_artifact }}
     secrets: inherit
 
   research:
@@ -223,6 +235,8 @@ jobs:
       autonomous_batch_id: ${{ inputs.batch_id }}
       autonomous_candidate_count: ${{ inputs.candidate_count }}
       autonomous_previous_trial_count: ${{ inputs.prior_trial_count }}
+      autonomous_prior_ledger_run_id: ${{ inputs.prior_trial_ledger_run_id }}
+      autonomous_prior_ledger_artifact_name: ${{ inputs.prior_trial_ledger_artifact }}
     secrets: inherit
 
   continue_or_freeze:
@@ -279,6 +293,8 @@ jobs:
                   "prior_trial_count": str(summary["global_trial_count"]),
                   "execution_mode": "optimized",
                   "forced_job_count": "0",
+                  "prior_trial_ledger_run_id": os.environ["GITHUB_RUN_ID"],
+                  "prior_trial_ledger_artifact": f"sp500-auto-batch-{batch_id}-results",
               }
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write(json.dumps({"batch_summary": summary, "next_inputs": next_inputs}, indent=2))
@@ -342,6 +358,9 @@ jobs:
 
   validation_once:
     if: inputs.phase == 'validation_once'
+    concurrency:
+      group: sp500-autonomous-discovery-validation-once
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -359,6 +378,30 @@ jobs:
           set -euo pipefail
           python -m pip install --require-hashes -r requirements/github-performance.lock
           python -m pip install --no-deps -e .
+      - name: Reserve the single validation opening
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing="$({
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "sp500-autonomous-validation-once" and .expired == false) | .id'
+          })"
+          if [[ -n "$existing" ]]; then
+            echo "::error::VALIDATION_ALREADY_OPENED"
+            exit 2
+          fi
+          mkdir -p "$RUNNER_TEMP/validation-reservation"
+          printf '{"campaign_id":"sp500-autonomous-discovery","validation_start":"2011-01-01","validation_end":"2020-12-31","locked_opened":false,"run_id":"%s","commit_sha":"%s"}\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_SHA" > "$RUNNER_TEMP/validation-reservation/reservation.json"
+      - name: Publish one-shot reservation marker
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sp500-autonomous-validation-once
+          path: ${{ runner.temp }}/validation-reservation/reservation.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify one-shot authorization
         env:
           VALIDATION_ACK: ${{ inputs.validation_ack }}
@@ -393,7 +436,7 @@ jobs:
           prepare_market_snapshot(
               Path(os.environ["RUNNER_TEMP_VALUE"]) / "validation-prepared",
               base_package(),
-              start="2011-01-01",
+              start="2010-01-01",
               end="2020-12-31",
               split="validation",
           )

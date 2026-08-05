@@ -24,6 +24,7 @@ from aurora.infra.github_performance.contracts import (
 from aurora.infra.github_performance.metric_verifier import MetricInputRecord
 from aurora.infra.github_performance.workloads.common import primary_metric_record
 from aurora.infra.sp500_long_short_daily.contracts import CampaignPackage
+from aurora.infra.sp500_long_short_daily.contracts import canonical_json_hash
 from aurora.infra.sp500_long_short_daily.data import (
     PreparedMarketData,
     load_market_snapshot,
@@ -196,6 +197,7 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
             "feature_registry_source.csv",
             "dataset_registry_source.csv",
             "trial_ledger.jsonl",
+            "autonomous_trial_ledger.parquet",
         ), str(manifest["snapshot_sha256"])
 
     def _load_dataset(self, root: Path) -> PreparedMarketData:
@@ -350,7 +352,13 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
                 "feature_store_file": "feature_store_manifest.json",
                 "feature_store_enabled": self._feature_frame is not None,
                 "trial_ledger_file": "trial_ledger.jsonl",
-                "trial_ledger_rows": len(read_batch_registry(self._prepared_root())),
+                "trial_ledger_rows": sum(
+                    1
+                    for line in (self._prepared_root() / "trial_ledger.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                    if line.strip()
+                ),
             }
         )
         (root / "autonomous_batch_summary.json").write_text(
@@ -364,6 +372,7 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
             )
         prepared_root = self._prepared_root()
         for filename in (
+            "market_data_manifest.json",
             "candidate_registry_manifest.json",
             "dedupe_map.csv",
             "job_manifest.csv",
@@ -374,10 +383,12 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
             "feature_registry_source.csv",
             "dataset_registry_source.csv",
             "trial_ledger.jsonl",
+            "autonomous_trial_ledger.parquet",
         ):
             source = prepared_root / filename
             if source.is_file():
                 shutil.copy2(source, root / filename)
+        self._finalize_train_freeze(root, summary)
         (root / "autonomous_batch_identity.json").write_text(
             json.dumps({
                 "batch_id": _batch_id(),
@@ -390,6 +401,83 @@ class AutonomousDiscoveryWorkload(Sp500LongShortTrainWorkload):
             }, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+
+    def _finalize_train_freeze(self, root: Path, summary: Mapping[str, Any]) -> None:
+        """Bind the selection freeze to the exact batch inputs and hashes."""
+
+        root = Path(root)
+        freeze_path = root / "train_selection_freeze.json"
+        if not freeze_path.is_file():
+            raise RuntimeError("TRAIN_SELECTION_FREEZE_MISSING")
+        freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
+        candidates = {row["strategy_id"]: row for row in self._candidate_rows()}
+
+        def sha256_file(path: Path) -> str:
+            import hashlib
+
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        def read_json(path: Path) -> Mapping[str, Any]:
+            return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+        commit_sha = os.environ.get("GITHUB_SHA", "LOCAL_TEST_ONLY")
+        freeze.update(
+            {
+                "campaign_version": "sp500-autonomous-discovery-v1",
+                "repository": os.environ.get(
+                    "GITHUB_REPOSITORY", "trading-optimizer-lab-org/aurora"
+                ),
+                "branch": os.environ.get("GITHUB_REF_NAME", "LOCAL_TEST_ONLY"),
+                "commit_sha": commit_sha,
+                "environment_hash": os.environ.get("AURORA_ENVIRONMENT_SHA256", ""),
+                "code_hashes": {"commit_sha": commit_sha},
+                "dataset_hashes": {
+                    "market_snapshot": str(
+                        read_json(root / "market_data_manifest.json").get(
+                            "snapshot_sha256", ""
+                        )
+                    )
+                },
+                "feature_registry_hash": (
+                    sha256_file(root / "feature_registry.csv")
+                    if (root / "feature_registry.csv").is_file()
+                    else ""
+                ),
+                "candidate_registry_hash": sha256_file(root / "candidate_registry.jsonl"),
+                "trial_ledger_hash": sha256_file(root / "autonomous_trial_ledger.parquet"),
+                "total_prior_trials": int(summary["global_trial_count"])
+                - int(summary["total_strategies_loaded"]),
+                "total_new_trials": int(summary["total_strategies_loaded"]),
+                "total_accumulated_trials": int(summary["global_trial_count"]),
+                "ranking_complete": True,
+                "Pareto_front": list(freeze.get("finalists", [])),
+                "eligible_candidates": list(freeze.get("finalists", [])),
+                "exact_rules": {
+                    str(item["strategy_id"]): candidates[str(item["strategy_id"])]
+                    for item in freeze.get("finalists", [])
+                    if str(item["strategy_id"]) in candidates
+                },
+                "train_oof_metrics": list(freeze.get("finalists", [])),
+                "outer_fold_metrics_file": "train_fold_metrics.csv",
+                "multiple_testing_results": read_json(root / "multiple_testing.json"),
+                "selection_reason": "all frozen train gates passed",
+                "rejection_reasons": {
+                    str(row.get("strategy_id")): str(row.get("rejection_reason"))
+                    for row in self._candidate_rows()
+                    if row.get("status") != "evaluated"
+                },
+                "authorization_token_required": "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS",
+                "locked_state": "closed",
+                "timestamp": commit_sha,
+            }
+        )
+        freeze.pop("freeze_sha256", None)
+        freeze["freeze_sha256"] = canonical_json_hash(freeze)
+        payload = json.dumps(freeze, indent=2, sort_keys=True, allow_nan=False) + "\n"
+        freeze_path.write_text(payload, encoding="utf-8")
+        # Compatibility alias for older readers; validation uses the explicit
+        # immutable selection-freeze filename above.
+        (root / "train_freeze_candidate.json").write_text(payload, encoding="utf-8")
 
     def smoke(self, spec: RunSpec, prepared: PreparedInputs) -> SmokeResult:
         result = super().smoke(spec, prepared)

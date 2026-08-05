@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
 from aurora.infra.sp500_autonomous_discovery import registry
@@ -13,6 +14,10 @@ from aurora.infra.sp500_autonomous_discovery.dedupe import build_dedupe_map
 from aurora.infra.sp500_autonomous_discovery.feature_store import FeatureStore
 from aurora.infra.sp500_autonomous_discovery.scheduling import assign_by_cost
 from aurora.infra.sp500_autonomous_discovery.statistics import evaluate_batch
+from aurora.infra.sp500_autonomous_discovery.validation import (
+    ValidationGateError,
+    _verify_freeze,
+)
 from aurora.infra.sp500_long_short_daily.data import PreparedMarketData
 from aurora.infra.sp500_long_short_daily.signals import candidate_decisions
 
@@ -91,6 +96,57 @@ def test_trial_ledger_is_cumulative_and_pre_registered(tmp_path, monkeypatch) ->
     assert manifest["trial_ledger_rows"] == 3
 
 
+def test_trial_ledger_appends_to_prior_batch(tmp_path, monkeypatch) -> None:
+    prior = [
+        {
+            "batch_id": 0,
+            "canonical_hash": f"hash-{index}",
+            "global_trial_index": index,
+            "pre_registered_before_performance": True,
+            "status": "registered",
+            "strategy_id": f"prior-{index}",
+        }
+        for index in range(1, 4)
+    ]
+    prior_path = tmp_path / "prior" / "trial_ledger.jsonl"
+    registry.write_jsonl(prior_path, prior)
+    monkeypatch.setenv("AURORA_PRIOR_TRIAL_LEDGER_PATH", str(prior_path))
+    candidate = _template() | {
+        "strategy_id": "candidate-4",
+        "canonical_hash": canonical_rule_hash(_template() | {"strategy_id": "candidate-4"}),
+    }
+    monkeypatch.setattr(
+        registry,
+        "base_package",
+        lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()),
+    )
+    registry.write_batch_registry(
+        tmp_path / "current",
+        batch_id=1,
+        candidates=(candidate,),
+        previous_trial_count=3,
+    )
+    rows = registry.read_jsonl(tmp_path / "current" / "trial_ledger.jsonl")
+    assert [row["global_trial_index"] for row in rows] == [1, 2, 3, 4]
+    assert (tmp_path / "current" / "autonomous_trial_ledger.parquet").is_file()
+
+
+def test_trial_ledger_requires_prior_source_after_first_batch(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AURORA_PRIOR_TRIAL_LEDGER_PATH", raising=False)
+    monkeypatch.setattr(
+        registry,
+        "base_package",
+        lambda: SimpleNamespace(candidates=(), research=(), features=(), datasets=()),
+    )
+    with pytest.raises(ValueError, match="PRIOR_TRIAL_LEDGER_REQUIRED"):
+        registry.write_batch_registry(
+            tmp_path,
+            batch_id=2,
+            candidates=(_template(),),
+            previous_trial_count=313,
+        )
+
+
 def _metric_row(strategy_id: str, values: np.ndarray, *, family: str = "price_trend_sma") -> dict[str, object]:
     dates = pd.date_range("2000-01-03", periods=len(values), freq="B")
     return {
@@ -120,6 +176,11 @@ def test_evaluate_batch_writes_auditable_rows(tmp_path) -> None:
     summary = json.loads((tmp_path / "autonomous_batch_summary.json").read_text(encoding="utf-8"))
     assert summary["locked_opened"] is False
     assert summary["validation_used_for_selection"] is False
+    freeze = _verify_freeze(tmp_path / "train_selection_freeze.json")
+    assert freeze["locked_opened"] is False
+    assert json.loads((tmp_path / "train_freeze_candidate.json").read_text(encoding="utf-8")) == freeze
+    with pytest.raises(ValidationGateError, match="TRAIN_FREEZE_NOT_ELIGIBLE"):
+        _verify_freeze(tmp_path / "train_selection_freeze.json", require_finalized=True)
 
 
 def test_dedupe_and_cost_assignment_are_traceable() -> None:
@@ -219,5 +280,10 @@ def test_workflow_is_github_only_and_bounded() -> None:
     assert "2020-12-31" in text
     assert "2021-01-01" in text
     assert "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS" in text
+    assert "sp500-autonomous-validation-once" in text
+    assert "cancel-in-progress: false" in text
+    assert "autonomous_prior_ledger_artifact_name" in open(
+        ".github/workflows/_aurora-future-run-v3.yml", encoding="utf-8"
+    ).read()
     for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
         assert f"- {phase}" in text
