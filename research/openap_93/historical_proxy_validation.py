@@ -298,13 +298,16 @@ def _build_announcement_return(
     earnings = earnings.dropna(subset=["filed", "symbol"])
     rows: list[dict[str, object]] = []
     prices_daily = prices_daily.copy()
-    prices_daily["date"] = pd.to_datetime(prices_daily["date"], errors="coerce")
+    # Arrow-backed Parquet columns can arrive as datetime64[us], while CSV
+    # inputs usually arrive as datetime64[ns].  merge_asof requires identical
+    # units, so normalise every date key explicitly before joining.
+    prices_daily["date"] = pd.to_datetime(prices_daily["date"], errors="coerce").astype("datetime64[ns]")
     prices_daily["adj_close"] = pd.to_numeric(prices_daily["adj_close"], errors="coerce")
     prices_daily = prices_daily.sort_values(["symbol", "date"])
     prices_daily["ret"] = prices_daily.groupby("symbol")["adj_close"].pct_change()
     if ff3_daily is not None and not ff3_daily.empty:
         ff3 = ff3_daily.copy()
-        ff3["date"] = pd.to_datetime(ff3["date"], errors="coerce")
+        ff3["date"] = pd.to_datetime(ff3["date"], errors="coerce").astype("datetime64[ns]")
         for col in ("mktrf", "rf"):
             if col in ff3:
                 ff3[col] = pd.to_numeric(ff3[col], errors="coerce").fillna(0.0)
@@ -338,8 +341,11 @@ def _build_announcement_return(
         if not event_rows:
             continue
         event_frame = pd.DataFrame(event_rows).sort_values("available_at").drop_duplicates("available_at", keep="last")
+        event_frame["available_at"] = pd.to_datetime(event_frame["available_at"], errors="coerce").astype("datetime64[ns]")
         formation = monthly.loc[monthly["symbol"].eq(symbol), ["completed_month", "formation_month"]].copy()
-        formation["cutoff"] = formation["completed_month"] + pd.offsets.MonthEnd(0)
+        formation["completed_month"] = pd.to_datetime(formation["completed_month"], errors="coerce").astype("datetime64[ns]")
+        formation["formation_month"] = pd.to_datetime(formation["formation_month"], errors="coerce").astype("datetime64[ns]")
+        formation["cutoff"] = (formation["completed_month"] + pd.offsets.MonthEnd(0)).astype("datetime64[ns]")
         aligned = pd.merge_asof(
             formation.sort_values("cutoff"),
             event_frame.rename(columns={"available_at": "event_complete_at"}).sort_values("event_complete_at"),
