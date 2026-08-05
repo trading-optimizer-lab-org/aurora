@@ -348,7 +348,10 @@ jobs:
 
           workload = os.environ["WORKLOAD"]
           enabled = (
-              "sp500_long_short_daily" in workload
+              (
+                  "sp500_long_short_daily" in workload
+                  or "sp500_autonomous_discovery" in workload
+              )
               and not os.environ["PREPARED_ARTIFACT_NAME"]
           )
           if "SMOKE_WORKLOAD" in workload:

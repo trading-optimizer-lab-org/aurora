@@ -292,8 +292,10 @@ def test_workflow_is_github_only_and_bounded() -> None:
     assert "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS" in text
     assert "sp500-autonomous-validation-once" in text
     assert "cancel-in-progress: false" in text
-    assert "autonomous_prior_ledger_artifact_name" in open(
+    reusable_text = open(
         ".github/workflows/_aurora-future-run-v3.yml", encoding="utf-8"
     ).read()
+    assert "autonomous_prior_ledger_artifact_name" in reusable_text
+    assert 'or "sp500_autonomous_discovery" in workload' in reusable_text
     for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
         assert f"- {phase}" in text
