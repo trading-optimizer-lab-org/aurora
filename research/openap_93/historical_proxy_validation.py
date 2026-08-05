@@ -322,10 +322,17 @@ def _build_announcement_return(
         event_rows: list[dict[str, object]] = []
         for event_date in sorted(pd.to_datetime(events["filed"]).dropna().unique()):
             event = pd.Timestamp(event_date)
-            cutoff = event + pd.Timedelta(days=4)
-            window = px.loc[px["date"].between(event - pd.Timedelta(days=4), cutoff)]
-            if len(window) < 3:
+            # OpenAP uses the event trading day plus [-1, +2] trading days.
+            # A calendar window accidentally includes extra sessions around
+            # weekends and holidays and changes the signal.
+            event_position = int(px["date"].searchsorted(event, side="left"))
+            if event_position >= len(px):
                 continue
+            start_position = event_position - 1
+            end_position = event_position + 2
+            if start_position < 0 or end_position >= len(px):
+                continue
+            window = px.iloc[start_position:end_position + 1]
             value = float(window["abret"].sum())
             event_rows.append({"available_at": window["date"].max(), "proxy_value": value})
         if not event_rows:
@@ -359,52 +366,84 @@ def _build_earnings_streak(
     monthly: pd.DataFrame,
     earnings_history: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build a conservative earnings-surprise streak proxy when history exists.
+    """Build the closest causal EarningsStreak proxy available.
 
-    The free DoltHub history has period-end dates but not a reliable filing
-    timestamp. We therefore expose the observation only after a conservative
-    90-day lag. This is explicitly a partial proxy, not the IBES replica.
+    OpenAP uses ``(actual - meanest) / price`` and the IBES announcement
+    date. The free EPS history normally has neither a point-in-time IBES
+    timestamp nor the exact IBES price. We use those fields when supplied;
+    otherwise we use the period-end price and a conservative 90-day lag.
     """
 
     result = monthly[["symbol", "completed_month", "formation_month"]].copy()
     result["signal"] = "EarningsStreak"
     result["proxy_value"] = np.nan
-    result["proxy_formula_id"] = "openap_earnings_streak_yahoo_two_same_sign_surprises_proxy"
+    result["proxy_formula_id"] = "openap_earnings_streak_price_scaled_surprise_lag_proxy"
     result["reconstruction_status"] = "unavailable_missing_historical_analyst_source"
-    result["caveat"] = "No historical point-in-time Yahoo earnings-surprise snapshots are present"
+    result["caveat"] = "No historical point-in-time analyst-surprise source is present"
     if earnings_history is None or earnings_history.empty:
         return result
+
     source = earnings_history.copy()
     lowered = {str(col).lower(): col for col in source.columns}
-    symbol_col = lowered.get("symbol") or lowered.get("act_symbol")
-    period_col = lowered.get("period_end_date")
-    reported_col = lowered.get("reported")
-    estimate_col = lowered.get("estimate")
+    symbol_col = lowered.get("symbol") or lowered.get("act_symbol") or lowered.get("tickeribes")
+    period_col = lowered.get("period_end_date") or lowered.get("period_end")
+    reported_col = lowered.get("reported") or lowered.get("actual")
+    estimate_col = lowered.get("estimate") or lowered.get("meanest")
+    price_col = lowered.get("price")
+    announcement_col = (
+        lowered.get("anndats_act")
+        or lowered.get("announcement_date")
+        or lowered.get("reported_date")
+    )
     if not all((symbol_col, period_col, reported_col, estimate_col)):
         return result
+
     history = pd.DataFrame({
         "symbol": source[symbol_col].astype("string").str.upper().str.strip(),
         "period_end_date": pd.to_datetime(source[period_col], errors="coerce"),
         "reported": pd.to_numeric(source[reported_col], errors="coerce"),
         "estimate": pd.to_numeric(source[estimate_col], errors="coerce"),
-    }).dropna(subset=["symbol", "period_end_date", "reported", "estimate"])
+    })
+    history["price"] = (
+        pd.to_numeric(source[price_col], errors="coerce") if price_col else np.nan
+    )
+    history["available_at_proxy"] = (
+        pd.to_datetime(source[announcement_col], errors="coerce")
+        if announcement_col else pd.NaT
+    )
+    history = history.dropna(subset=["symbol", "period_end_date", "reported", "estimate"])
     if history.empty:
         return result
-    history["surprise"] = history["reported"] - history["estimate"]
+
+    monthly_price = monthly[["symbol", "completed_month", "month_end_adj_close"]].copy()
+    monthly_price["period_end_month"] = pd.to_datetime(monthly_price["completed_month"]).dt.to_period("M")
+    history["period_end_month"] = history["period_end_date"].dt.to_period("M")
+    history = history.merge(
+        monthly_price[["symbol", "period_end_month", "month_end_adj_close"]],
+        on=["symbol", "period_end_month"], how="left",
+    )
+    history["price"] = history["price"].fillna(history["month_end_adj_close"])
+    history["surprise"] = (
+        history["reported"] - history["estimate"]
+    ) / history["price"].replace(0, np.nan)
+    history.loc[history["available_at_proxy"].isna(), "available_at_proxy"] = (
+        history["period_end_date"] + pd.Timedelta(days=90)
+    )
+    history = history.dropna(subset=["surprise", "available_at_proxy"])
     history = history.sort_values(["symbol", "period_end_date"])
     history["previous_surprise"] = history.groupby("symbol")["surprise"].shift(1)
     same_sign = (
         history["surprise"].ne(0)
         & history["previous_surprise"].ne(0)
-        & history["surprise"].notna()
-        & history["previous_surprise"].notna()
         & (np.sign(history["surprise"]) == np.sign(history["previous_surprise"]))
     )
     history["streak_value"] = history["surprise"].where(same_sign)
-    history["available_at_proxy"] = history["period_end_date"] + pd.Timedelta(days=90)
+
     rows: list[pd.DataFrame] = []
     for symbol, group in monthly.groupby("symbol", sort=False):
-        events = history.loc[history["symbol"].eq(symbol), ["available_at_proxy", "streak_value"]]
+        events = history.loc[
+            history["symbol"].eq(symbol), ["available_at_proxy", "streak_value"]
+        ]
         if events.empty:
             continue
         cutoffs = group[["completed_month", "formation_month"]].copy()
@@ -412,28 +451,24 @@ def _build_earnings_streak(
         aligned = pd.merge_asof(
             cutoffs.sort_values("cutoff"),
             events.sort_values("available_at_proxy"),
-            left_on="cutoff",
-            right_on="available_at_proxy",
-            direction="backward",
+            left_on="cutoff", right_on="available_at_proxy", direction="backward",
         )
         aligned["symbol"] = symbol
         aligned["signal"] = "EarningsStreak"
         aligned["proxy_value"] = aligned["streak_value"]
-        aligned["proxy_formula_id"] = "openap_earnings_streak_dolthub_eps_history_90d_lag_proxy"
+        aligned["proxy_formula_id"] = "openap_earnings_streak_price_scaled_surprise_lag_proxy"
         aligned["reconstruction_status"] = np.where(
             aligned["proxy_value"].notna(), "reconstructed", "insufficient_history"
         )
         aligned["caveat"] = (
-            "DoltHub eps_history reported-minus-estimate; period-end plus 90-day "
-            "conservative availability lag; not PIT IBES"
+            "Surprise is price-scaled like OpenAP; announcement date is used when present, "
+            "otherwise period-end plus 90 days; source is not PIT IBES"
         )
         rows.append(aligned[[
             "symbol", "completed_month", "formation_month", "signal", "proxy_value",
             "proxy_formula_id", "reconstruction_status", "caveat",
         ]])
-    if rows:
-        return pd.concat(rows, ignore_index=True)
-    return result
+    return pd.concat(rows, ignore_index=True) if rows else result
 
 
 def _build_indretbig(monthly: pd.DataFrame, master: pd.DataFrame, facts: pd.DataFrame) -> pd.DataFrame:
@@ -499,27 +534,42 @@ def _build_delnetfin(monthly: pd.DataFrame, master: pd.DataFrame, facts: pd.Data
         issuer = facts.loc[facts["cik"].eq(cik)].copy() if pd.notna(cik) else pd.DataFrame()
         group = group.sort_values("completed_month").copy()
         group["cutoff"] = group["completed_month"] + pd.offsets.MonthEnd(0)
-        current = _pit_values(issuer, short_inv, group["cutoff"]).fillna(0.0)
-        current += _pit_values(issuer, long_inv, group["cutoff"]).fillna(0.0)
-        current -= _pit_values(issuer, debt_current, group["cutoff"]).fillna(0.0)
-        current -= _pit_values(issuer, debt_long, group["cutoff"]).fillna(0.0)
-        current -= _pit_values(issuer, preferred, group["cutoff"]).fillna(0.0)
+        net_fin = _pit_values(issuer, short_inv, group["cutoff"]).fillna(0.0)
+        net_fin += _pit_values(issuer, long_inv, group["cutoff"]).fillna(0.0)
+        net_fin -= _pit_values(issuer, debt_current, group["cutoff"]).fillna(0.0)
+        net_fin -= _pit_values(issuer, debt_long, group["cutoff"]).fillna(0.0)
+        net_fin -= _pit_values(issuer, preferred, group["cutoff"]).fillna(0.0)
         assets = _pit_values(issuer, ["Assets"], group["cutoff"])
-        state = (current / assets.replace(0, np.nan)).set_axis(group["completed_month"].to_numpy())
-        state = state.sort_index()
-        for completed_month, current in state.items():
-            previous = state.loc[state.index < completed_month].dropna()
-            previous_value = previous.iloc[-1] if not previous.empty else np.nan
-            value = current - previous_value if pd.notna(current) and pd.notna(previous_value) else np.nan
+        state = pd.DataFrame({
+            "completed_month": group["completed_month"].to_numpy(),
+            "net_fin": net_fin.to_numpy(),
+            "assets": assets.to_numpy(),
+        }).sort_values("completed_month")
+        prior = state[["completed_month", "net_fin", "assets"]].rename(
+            columns={
+                "completed_month": "prior_month",
+                "net_fin": "prior_net_fin",
+                "assets": "prior_assets",
+            }
+        )
+        state["prior_month"] = state["completed_month"] - pd.DateOffset(months=12)
+        state = state.merge(prior, on="prior_month", how="left")
+        state["average_assets"] = 0.5 * (state["assets"] + state["prior_assets"])
+        state["signal_value"] = (
+            state["net_fin"] - state["prior_net_fin"]
+        ) / state["average_assets"].replace(0, np.nan)
+        for item in state.itertuples(index=False):
+            completed_month = item.completed_month
+            value = item.signal_value
             result_rows.append({
                 "symbol": symbol,
                 "completed_month": completed_month,
                 "formation_month": pd.Timestamp(completed_month) + pd.offsets.MonthBegin(1),
                 "signal": "DelNetFin",
                 "proxy_value": value,
-                "proxy_formula_id": "openap_delnetfin_sec_alias_proxy",
+                "proxy_formula_id": "openap_delnetfin_sec_alias_official_scaling_proxy",
                 "reconstruction_status": "reconstructed" if pd.notna(value) else "insufficient_history",
-                "caveat": "SEC aliases replace Compustat net-financial-asset components; missing optional components are zero",
+                "caveat": "SEC aliases replace Compustat components; formula uses 12-month lag and average assets",
             })
     return pd.DataFrame(result_rows)
 

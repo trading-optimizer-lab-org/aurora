@@ -75,9 +75,13 @@ jobs:
       - name: Compile validator
         run: |
           python -m py_compile research/openap_93/historical_proxy_validation.py
+          python -m py_compile research/openap_93/official_portfolio_similarity.py
           python -m py_compile scripts/run_openap_93_five_proxy_validation.py
+          python -m py_compile scripts/run_openap_93_official_portfolio_similarity.py
       - name: Run focused validator tests
-        run: python -m pytest tests/test_openap_93_five_proxy_validation.py -q --tb=short
+        run: |
+          python -m pytest tests/test_openap_93_five_proxy_validation.py -q --tb=short
+          python -m pytest tests/test_openap_93_official_portfolio_similarity.py -q --tb=short
 
   historical_validate:
     needs: validate
@@ -94,8 +98,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install project
-        run: python -m pip install --disable-pip-version-check -e .
+      - name: Install project and official OpenAP downloader
+        run: python -m pip install --disable-pip-version-check -e . openassetpricing==0.0.2
       - name: Download audited base database artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -158,6 +162,11 @@ jobs:
             --panel outputs/openap_five_proxy_historical_validation/proxy_reconstruction_panel.parquet \
             --output-dir outputs/openap_five_proxy_historical_validation \
             --min-pairs "${{ inputs.min_pairs || '30' }}"
+          python scripts/run_openap_93_official_portfolio_similarity.py \
+            --proxy-panel outputs/openap_five_proxy_historical_validation/proxy_reconstruction_panel.parquet \
+            --monthly outputs/openap_five_proxy_historical_validation/proxy_validation_monthly.csv \
+            --output-dir outputs/openap_five_proxy_historical_validation/official_portfolio_similarity \
+            --release 202510
       - name: Verify fail-closed invariants
         run: |
           test -s outputs/openap_five_proxy_historical_validation/proxy_validation_summary.json
@@ -171,6 +180,12 @@ jobs:
           assert summary['backtest_enabled'] is False
           assert summary['validation_used_for_selection'] is False
           assert audit['lookahead_checked'] is True
+          portfolio_summary = json.loads((root / 'official_portfolio_similarity' / 'official_proxy_portfolio_similarity_summary.json').read_text())
+          assert portfolio_summary['locked_opened'] is False
+          assert portfolio_summary['backtest_enabled'] is False
+          assert portfolio_summary['validation_used_for_selection'] is False
+          assert portfolio_summary['official_spread_rows'] > 0
+          assert portfolio_summary['proxy_spread_rows'] > 0
           PY
       - name: Upload five-proxy validation artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
