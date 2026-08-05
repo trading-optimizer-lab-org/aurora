@@ -11,12 +11,14 @@ def main() -> None:
     parser.add_argument("--monthly", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--release", default="202510")
+    parser.add_argument("--official-deciles", default="")
     args = parser.parse_args()
     run_official_portfolio_similarity(
         proxy_panel=args.proxy_panel,
         monthly=args.monthly,
         output_dir=args.output_dir,
         release=args.release,
+        official_deciles=args.official_deciles or None,
     )
 
 

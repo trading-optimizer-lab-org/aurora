@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import zipfile
 from pathlib import Path
 from typing import Iterable
 
@@ -36,6 +37,20 @@ def _month(value: pd.Series) -> pd.Series:
     return result.dt.to_period("M").dt.to_timestamp()
 
 
+def _read_official_archive(path: str | Path) -> pd.DataFrame:
+    source = Path(path)
+    if source.suffix.lower() == ".zip":
+        with zipfile.ZipFile(source) as archive:
+            names = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+            if not names:
+                raise ValueError(f"Official archive has no CSV: {source}")
+            with archive.open(names[0]) as handle:
+                return pd.read_csv(handle)
+    if source.suffix.lower() == ".parquet":
+        return pd.read_parquet(source)
+    return pd.read_csv(source)
+
+
 def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
     """Normalise an OpenAP decile download to signal/month/decile/return."""
 
@@ -49,8 +64,13 @@ def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
             f"received {list(frame.columns)}"
         )
     raw_port = frame[port_col].astype("string").str.lower().str.strip()
-    decile = pd.to_numeric(raw_port.str.extract(r"(\d+)", expand=False), errors="coerce")
-    decile = decile.fillna(
+    decile = pd.Series(np.nan, index=frame.index, dtype="float64")
+    low_mask = raw_port.str.match(r"^(lo|low|bottom|bot|l)(?:\b|\d)", na=False)
+    high_mask = raw_port.str.match(r"^(hi|high|top|h)(?:\b|\d)", na=False)
+    decile.loc[low_mask] = 1.0
+    decile.loc[high_mask] = 10.0
+    numeric = pd.to_numeric(raw_port.str.extract(r"(\d+)", expand=False), errors="coerce")
+    decile = decile.fillna(numeric).fillna(
         raw_port.map({
             "low": 1.0, "lo": 1.0, "bottom": 1.0,
             "high": 10.0, "hi": 10.0, "top": 10.0,
@@ -71,16 +91,38 @@ def normalise_official_deciles(frame: pd.DataFrame) -> pd.DataFrame:
     return result.drop_duplicates(["signal", "formation_month", "decile"])
 
 
-def download_official_deciles(*, release: str = "202510") -> pd.DataFrame:
+def download_official_deciles(
+    *,
+    release: str = "202510",
+    archive_path: str | Path | None = None,
+) -> pd.DataFrame:
     """Download the public official OpenAP equal-weighted decile file."""
+
+    if archive_path:
+        result = normalise_official_deciles(_read_official_archive(archive_path))
+        if result.empty:
+            raise ValueError(f"Official archive contains no requested signals: {archive_path}")
+        return result
 
     try:
         import openassetpricing as oap
     except ImportError as exc:  # pragma: no cover - exercised in GitHub
         raise RuntimeError("openassetpricing package is required for official comparison") from exc
-    client = oap.OpenAP(int(release))
-    raw = client.dl_port("deciles_ew", "pandas", list(FIVE_PROXY_SIGNALS))
-    return normalise_official_deciles(raw)
+    errors: list[str] = []
+    for candidate in (item.strip() for item in str(release).split(",")):
+        if not candidate:
+            continue
+        try:
+            client = oap.OpenAP(int(candidate))
+            # Download the complete archive and filter after normalisation.
+            raw = client.dl_port("deciles_ew", "pandas")
+            result = normalise_official_deciles(raw)
+            if result.empty:
+                raise ValueError("no requested signals found in decile archive")
+            return result
+        except Exception as exc:  # pragma: no cover - exercised in GitHub
+            errors.append(f"release {candidate}: {type(exc).__name__}: {exc}")
+    raise RuntimeError("Unable to obtain official OpenAP deciles; " + " | ".join(errors))
 
 
 def _decile_spread(frame: pd.DataFrame, *, return_col: str) -> pd.DataFrame:
@@ -203,13 +245,14 @@ def run_official_portfolio_similarity(
     monthly: str | Path,
     output_dir: str | Path,
     release: str = "202510",
+    official_deciles: str | Path | None = None,
 ) -> dict[str, object]:
     require_github_execution("OpenAP official portfolio similarity")
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     proxy = pd.read_parquet(proxy_panel)
     monthly_frame = pd.read_parquet(monthly) if str(monthly).lower().endswith(".parquet") else pd.read_csv(monthly)
-    official = download_official_deciles(release=release)
+    official = download_official_deciles(release=release, archive_path=official_deciles)
     official_spreads = build_official_spreads(official)
     proxy_spreads = build_proxy_spreads(proxy, monthly_frame)
     merged, summary = compare_official_and_proxy(official_spreads, proxy_spreads)

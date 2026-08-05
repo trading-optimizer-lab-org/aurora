@@ -24,6 +24,19 @@ def test_official_deciles_normalise_and_form_spread() -> None:
     assert spreads.iloc[0]["official_spread_return"] == pytest.approx(0.09)
 
 
+def test_official_low_high_labels_do_not_collapse() -> None:
+    raw = pd.DataFrame({
+        "signalname": ["DivSeason", "DivSeason"],
+        "date": ["2020-01-31", "2020-01-31"],
+        "port": ["Lo10", "Hi10"],
+        "ret": [0.01, 0.09],
+    })
+    official = normalise_official_deciles(raw)
+    spreads = build_official_spreads(official)
+    assert set(official["decile"]) == {1.0, 10.0}
+    assert spreads.iloc[0]["official_spread_return"] == pytest.approx(0.08)
+
+
 def test_proxy_deciles_use_next_formation_month_return() -> None:
     proxy = pd.DataFrame({
         "symbol": ["A", "B", "C", "D"],
