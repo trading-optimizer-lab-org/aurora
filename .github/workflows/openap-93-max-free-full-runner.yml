@@ -6,7 +6,7 @@ on:
       source_sha:
         description: Exact Aurora revision containing the OpenAP 93 implementation
         required: true
-        default: cb2accc42f274793d78bd467a6f1fe89ee657c0e
+        default: 897900212b2b506f8891f08796fe913036c199e1
         type: string
       base_run_id:
         description: Run containing openap-yfinance-sec-current-score-results
@@ -151,6 +151,8 @@ jobs:
           assert coverage["status"].notna().all()
           assert signals["security_id"].notna().all()
           assert len(scores) > 0
+          assert scores["security_id"].notna().all()
+          assert not scores["security_id"].duplicated().any()
           assert pd.to_datetime(signals["available_at"]).dropna().le(
               pd.Timestamp(manifest["formation_at"])
           ).all()
@@ -176,6 +178,14 @@ jobs:
         run: |
           python scripts/verify_openap_93_outputs.py \
             --output-dir outputs/openap_93_current
+      - name: Preserve failed output for diagnosis
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: openap-93-max-free-failed-output-${{ github.run_id }}
+          path: outputs/openap_93_current/
+          if-no-files-found: warn
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: openap-93-max-free-full-results
